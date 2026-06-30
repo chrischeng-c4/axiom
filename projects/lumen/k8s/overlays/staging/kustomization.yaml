@@ -13,13 +13,12 @@ resources:
 components:
   - ../../components/observability
 
-# staging: 3 serving nodes, a single Relay broker, modest resources,
-# json logs, auth off (a pre-prod soak environment).
+# staging: single-node direct install, modest resources, json logs, auth off.
+# Use `lumen k8s instance render --profile staging` plus the operator for
+# raft-backed multi-replica soak environments.
 
 replicas:
   - name: lumen
-    count: 3
-  - name: lumen-relay
     count: 1
 
 patches:
@@ -68,19 +67,8 @@ patches:
     patch: |-
       - op: replace
         path: /spec/minReplicas
-        value: 3
+        value: 1
       - op: replace
         path: /spec/maxReplicas
-        value: 8
-  - target:
-      kind: StatefulSet
-      name: lumen-relay
-    patch: |-
-      # Cloud SSD storage class (base omits storageClassName for portability).
-      - op: add
-        path: /spec/volumeClaimTemplates/0/spec/storageClassName
-        value: "ssd"
-      - op: replace
-        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
-        value: "10Gi"
+        value: 1
 # CODEGEN-END

@@ -7,9 +7,8 @@
 //! `Collection / Field` primitive over `external_id` — lumen never owns
 //! the source of truth and has no document concept of its own.
 //!
-//! - Durable via the configured write log; multi-pod Lumen is moving to
-//!   Lumen-owned primary/replica replication, while Relay remains an explicit
-//!   external broker mode. Rebuildable from the caller.
+//! - Durable via the configured write log; multi-pod Lumen uses Lumen-owned
+//!   primary/replica replication. Rebuildable from the caller.
 //! - HTTP/2 transport, client-side collection-shard routing.
 //!
 //! Full surface and v1 scope: `projects/lumen/README.md`.
@@ -34,7 +33,7 @@ pub mod metrics;
 /// over a lower fixed-cost transport than HTTP/JSON.
 pub mod native_wire;
 /// K8s Operator: the `Lumen` CRD plus the reconcile loop that renders + applies
-/// the serving fleet and Relay broker. Behind the `operator` feature so the
+/// the Lumen serving/data-plane resources. Behind the `operator` feature so the
 /// serving binary never pulls in kube-rs.
 #[cfg(feature = "operator")]
 pub mod operator;
@@ -72,6 +71,4 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
-#[cfg(feature = "relay-wal")]
-pub mod wal_relay;
 // CODEGEN-END

@@ -5,23 +5,22 @@ paced qps, write qps, and disk footprint. The authoritative regression contract
 lives in `projects/lumen/tests/perf-baseline.json`; this document is the human
 handoff for what the current numbers mean.
 
-> **Status (2026-06-08):** the official competitive gate is `N=1,000,000`
-> docs. At that size lumen now clears every OpenSearch read/search cell in both
-> in-memory and segment-disk modes, clears the `LUMEN_PERF_STRICT=1` qps100 and
-> qps1000 OpenSearch + pg-native rows with no TARGET rows, and clears the NATS
-> write gate against both Postgres and OpenSearch. A dedicated qps10 strict rerun
-> also clears every OpenSearch row, with the lowest retained row at 2.66x; qps10
-> remains local-noise-sensitive and should be repeated on an isolated perf host
-> before becoming a release-stable throughput claim. `1M` docs is now the
-> standard local scale target; larger row counts are not part of the developer
-> benchmark contract because benchmark cost would become the bottleneck.
+> **Status (2026-06-08 calibration):** the retained competitive calibration was
+> run at `N=1,000,000` docs. At that size lumen cleared every OpenSearch
+> read/search cell in both in-memory and segment-disk modes, cleared the
+> `LUMEN_PERF_STRICT=1` qps100 and qps1000 OpenSearch + pg-native rows with no
+> TARGET rows, and cleared the NATS write gate against both Postgres and
+> OpenSearch. Routine AW/release checks do not remeasure Postgres/OpenSearch;
+> they run a 10K Lumen-only regression against retained calibrated floors.
+> Refresh peer data only when benchmark cells, peer versions/configuration, or
+> an explicit release-soak request require it.
 
 ## Benchmark Standard
 
 | axis | standard |
 |---|---|
-| Engines | PostgreSQL, OpenSearch, lumen |
-| Data sizes | 1K smoke/trend; **1M official proof** |
+| Engines | lumen by default; PostgreSQL/OpenSearch only for explicit calibration |
+| Data sizes | 1K smoke/trend; **10K routine regression**; 100K explicit release-local calibration; 1M soak/research |
 | QPS targets | 10, 100, 1000 paced requests/sec |
 | Latency metrics | p50, p95, p99 |
 | Reliability | error rate / timeout / status / transport failures |
@@ -36,8 +35,7 @@ OpenSearch (`_stats/store`). The qps table also reports process-level
 `RUSAGE_SELF` resource columns for the lumen in-process test server:
 `cpu_ms`, `rss_mib`, minor/major page faults, and block input/output counts.
 Full server-side CPU/RSS/disk-IO isolation for PostgreSQL and OpenSearch belongs
-in a dedicated perf-host report; it should not expand the local row count beyond
-1M.
+in a dedicated perf-host report. It is not part of routine AW/release checks.
 
 ## How To Reproduce
 
@@ -61,19 +59,19 @@ lumen-only disk scale bench:
 
 ```sh
 ./scripts/lumen_scale.sh
-LUMEN_GATE_WINDOW_S=0.2 LUMEN_SCALE_CHUNK_ROWS=500000 ./scripts/lumen_scale.sh 1000000
+LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1 LUMEN_GATE_WINDOW_S=0.2 LUMEN_SCALE_CHUNK_ROWS=100000 ./scripts/lumen_scale.sh 1000000
 ```
 
 The bench stream-generates docs, so it no longer allocates a full corpus Vec.
 The single-segment path still builds the mutable Engine index in RAM before
-`flush_to_segments`; the standard script and test harness now reject row counts
-above `1,000,000` unless an explicit research run sets
-`LUMEN_SCALE_ALLOW_ABOVE_1M=1`. The point is operational: the competitive proof
-already comes from 1M docs, and larger local runs consume enough time/RAM that
-they become a development bottleneck.
+`flush_to_segments`; the standard script and test harness default to
+`1,000 / 10,000 / 100,000` rows and reject larger row counts unless an explicit
+release-soak/research run sets `LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1`. The point is
+operational: routine readiness should stay fast, while retained 1M probes remain
+available when scale evidence is actually needed.
 
-Chunked reopened mode remains useful inside the 1M cap. The smoke command above
-builds two 500k-doc sealed chunks, reopens them as read shards, and runs the qps
+Chunked reopened mode remains useful for explicit 1M soaks. The smoke command above
+builds ten 100k-doc sealed chunks, reopens them as read shards, and runs the qps
 ladder through the real API search backend seam:
 `/collections/docs/search` dispatches to an injected `SearchBackend`, fan-ins
 with `lumen::routing::search_shards_parallel`, and serializes the normal HTTP
@@ -85,23 +83,29 @@ chunk-level build/write/seal/reopen for these bounded 1M probes. This is
 chunk-level parallelism with independent Engines, not a multi-threaded write
 lock inside one collection.
 
-Three-way read/search gate against Postgres + OpenSearch:
+Routine Lumen-only read/search regression gate:
 
 ```sh
 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --nocapture
 ```
 
-Strict qps proof for qps10/qps100/qps1000 OpenSearch and pg-native rows:
+Explicit peer calibration gate against Postgres + OpenSearch:
 
 ```sh
-LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
-LUMEN_PERF_STRICT=1 LUMEN_GATE_QPS_TARGETS=10 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
-LUMEN_PERF_STRICT=1 LUMEN_GATE_CELLS=text_bm25 LUMEN_GATE_QPS_TARGETS=1000 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
+LUMEN_GATE_COMPARE_PEERS=1 LUMEN_GATE_N=100000 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
 ```
 
-The second command makes qps10 part of the strict diagnostic proof. The third
-command is a focused diagnostic path for one qps cell. Defaults still run the
-full 10/100/1000 matrix over every cell.
+Explicit strict qps proof for qps10/qps100/qps1000 OpenSearch and pg-native rows:
+
+```sh
+LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
+LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1 LUMEN_GATE_QPS_TARGETS=10 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
+LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1 LUMEN_GATE_CELLS=text_bm25 LUMEN_GATE_QPS_TARGETS=1000 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
+```
+
+The second command makes qps10 part of the strict peer diagnostic proof. The
+third command is a focused diagnostic path for one qps cell. Defaults keep the
+routine runner Lumen-only.
 
 Historical write-path qps gate through the legacy NATS JetStream WAL path:
 
@@ -115,8 +119,8 @@ LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test write_qps write_qps_ben
 `LUMEN_WRITE_SHARDS` (default 4) to route one HTTP `/index` request by
 `external_id` across independent `WriteCoordinator`/`Engine` shards. That row is
 for multi-core write-apply exploration. The retained historical JetStream
-comparison is against Postgres and OpenSearch; Relay is the current serving /
-operator broker. The strict historical cell is the single-stream row
+comparison is against Postgres and OpenSearch; the current serving/operator HA
+path uses Lumen-owned raft. The strict historical cell is the single-stream row
 (`nats_index_100`); the partitioned row
 (`natssharded_index_100`) is a TARGET/trend row until it is stable under the same
 timeout/error envelope. `LUMEN_WRITE_MODES=embedded,sharded` plus a short
@@ -141,7 +145,7 @@ on the same 1s quick window. The result is useful for direction; the retained
 NATS-vs-peer run below is historical benchmark evidence, not the current broker
 deployment path.
 
-Current Relay write-path quick trend (`LUMEN_WRITE_MODES=embedded,relay`,
+Retired Relay write-path quick trend (`LUMEN_WRITE_MODES=embedded,relay`,
 `LUMEN_WRITE_WARMUP_S=0.1`, `LUMEN_WRITE_WINDOW_S=1.0`,
 `LUMEN_WRITE_BATCH_DOCS=100`, `--features relay-wal`, 2026-06-21):
 
@@ -150,16 +154,10 @@ Current Relay write-path quick trend (`LUMEN_WRITE_MODES=embedded,relay`,
 | embedded local WAL | 927.4k | 941.9k | 9.383 ms | 13.499 ms | 62.442 ms | 0 |
 | RelayWal + in-process relay broker | 702.7k | 829.7k | 10.972 ms | 16.246 ms | 39.853 ms | 0 |
 
-Relay is **0.88x** of embedded throughput at 100 workers in this short local
+Relay was **0.88x** of embedded throughput at 100 workers in this short local
 run. That row includes the HTTP/2 broker hop plus the Lumen apply path waiting
-for subscriber delivery. A pre-wakeup probe exposed the old 25 ms subscribe
-polling floor (`196.2k` docs/s, p95 `70.972 ms` at 100 workers); subject-scoped
-publish observer wakeup raised the same quick row to `275.1k` docs/s and p95
-`45.500 ms`, the `RelayWal` binary payload envelope plus CBOR publish fast path
-raised it to `678.1k` docs/s and p95 `17.975 ms`, and the compact versioned
-string envelope raised it to `829.7k` docs/s and p95 `16.246 ms`. Keep this row
-report-only until it is repeated with a longer window and the same environment
-used for strict peer comparisons.
+for subscriber delivery. This is retained only as historical evidence; Relay WAL
+is no longer an active Lumen backend or perf gate.
 
 Latest JetStream trend (`LUMEN_TEST_NATS_URL=nats://localhost:4223`,
 `LUMEN_WRITE_MODES=nats,natssharded`, `LUMEN_WRITE_WARMUP_S=0.1`,
@@ -190,8 +188,8 @@ OpenSearch**. The same-code full partitioned JetStream trend run timed out at
 100 workers (200 timeouts), so `natssharded_index_100` remains TARGET/report-only
 instead of a release blocker.
 
-The three-way gates need Postgres `dbname=lumenbench` and OpenSearch on
-`localhost:9200`. The write gate also needs a JetStream broker; set
+The explicit peer gates need Postgres `dbname=lumenbench` and OpenSearch on
+`localhost:9200`. The write peer gate also needs a JetStream broker; set
 `LUMEN_TEST_NATS_URL` when it is not on the default local URL.
 
 Corpus per doc: `bio` (Text), `city` (Keyword), and `age` (Number). No vectors in
@@ -201,8 +199,8 @@ the competitive search gate.
 
 | class | meaning | current repo posture |
 |---|---|---|
-| Small | thousands of docs | dev smoke and API correctness only; not competitive proof |
-| Medium | millions of docs | official release gate; current proof is `N=1,000,000` |
+| Small | thousands of docs | routine AW/release regression and API correctness |
+| Medium | 100K to 1M docs | explicit peer calibration or release-soak evidence |
 | Above 1M | research-only | not a local benchmark target; use storage-model math and distributed/sharded design work, not developer-machine runs |
 
 ## Footprint
@@ -269,16 +267,17 @@ not a 1000-concurrent-worker storm. The qps harness pre-serializes request JSON
 and runs lumen HTTP/native servers on dedicated Tokio runtime threads, so
 p50/p95/p99 do not include load-client JSON encoding or same-runtime server
 contention. The report also includes in-window error rate.
-The default run reports qps rows; setting `LUMEN_PERF_STRICT=1` makes rows
-recorded in `tests/perf-baseline.json` strict (`LUMEN_QPS_GATE=1` still works
-for qps-only debug, and `LUMEN_GATE_QPS_TARGETS=10` focuses the low-QPS
-diagnostic). Harness-bound rows that still beat the peer but miss the ratcheted
-margin are retried once after a short cooldown; true losses still fail. Latest
-retained strict runs passed with no WIN-cell regressions and no TARGET rows. The
-retained retries were qps100 `text_bm25` (2.34x -> 2.63x), qps10 `range` (2.17x
--> 13.12x), and qps10 `bool_filter` (2.36x -> 3.80x) vs OpenSearch. Repeated
-top-k serving queries reuse cached results, while writes/deletes/schema changes
-clear the cache before mutating postings.
+The default run reports qps rows and gates only Lumen qps health. Setting
+`LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1` makes peer rows recorded in
+`tests/perf-baseline.json` strict (`LUMEN_QPS_GATE=1` still works for qps-only
+debug when peer comparison is also enabled, and `LUMEN_GATE_QPS_TARGETS=10`
+focuses the low-QPS diagnostic). Harness-bound rows that still beat the peer but
+miss the ratcheted margin are retried once after a short cooldown; true losses
+still fail. Latest retained strict runs passed with no WIN-cell regressions and
+no TARGET rows. The retained retries were qps100 `text_bm25` (2.34x -> 2.63x),
+qps10 `range` (2.17x -> 13.12x), and qps10 `bool_filter` (2.36x -> 3.80x) vs
+OpenSearch. Repeated top-k serving queries reuse cached results, while
+writes/deletes/schema changes clear the cache before mutating postings.
 
 | cell | qps10 vs OpenSearch | qps100 vs OpenSearch | qps1000 vs OpenSearch | qps1000 lumen p50 | qps1000 `/healthz` p50 |
 |---|---:|---:|---:|---:|---:|
@@ -325,8 +324,9 @@ Latest retained strict 5s release run:
 
 That is **8.51x vs Postgres** and **3.40x vs OpenSearch** at the 100-worker
 NATS write row. `LUMEN_PERF_STRICT=1` enforces the ratcheted margins from
-`perf-baseline.json` when NATS, Postgres, and OpenSearch are all reachable;
-`LUMEN_WRITE_GATE=1` remains available for write-only debug.
+`perf-baseline.json` only on explicit write-peer runs where NATS, Postgres, and
+OpenSearch are all reachable; `LUMEN_WRITE_GATE=1` remains available for
+write-only debug.
 
 Direct `Engine::index` isolates the storage hot path from HTTP/WAL and currently
 measures about **912.5k docs/s** at 100 workers on the same 100-doc batch shape.

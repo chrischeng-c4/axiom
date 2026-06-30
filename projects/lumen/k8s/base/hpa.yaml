@@ -11,10 +11,10 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: lumen
-  # Serving nodes scale on read QPS, proxied here by CPU utilization.
-  # Stateless + log-rebuildable, so scaling out is cheap and safe.
-  minReplicas: 3
-  maxReplicas: 12
+  # Direct kustomize install stays single-node. HA/scaling uses the operator's
+  # raft StatefulSet path (`replicasPerShard > 1`).
+  minReplicas: 1
+  maxReplicas: 1
   metrics:
     - type: Resource
       resource:
@@ -31,8 +31,7 @@ spec:
           value: 100
           periodSeconds: 30
     scaleDown:
-      # Each new pod must rebuild its index from the log, so scale down
-      # slowly to avoid thrashing that warm-up cost.
+      # Keep the singleton stable under noisy metrics.
       stabilizationWindowSeconds: 300
       policies:
         - type: Pods

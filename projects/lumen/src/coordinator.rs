@@ -122,7 +122,7 @@ impl WriteCoordinator {
         tokio::spawn(async move {
             let mut backoff = std::time::Duration::from_millis(100);
             // Outer loop: re-subscribe from the last-applied sequence whenever
-            // the stream ends or the subscribe fails. A broker restart can tear
+            // the stream ends or the subscribe fails. An external-log restart can tear
             // down our ephemeral subscription, so the apply loop MUST recreate
             // it and resume tailing — otherwise writes silently stop applying
             // after a broker blip. Resuming from `applied` is safe:
@@ -242,7 +242,7 @@ impl WriteCoordinator {
                         break;
                     }
                 }
-                // Stream ended (e.g. broker restart killed the ephemeral
+                // Stream ended (e.g. external-log restart killed the ephemeral
                 // consumer). Re-subscribe from the applied head after a short
                 // pause so we don't tight-spin if the broker is flapping.
                 tracing::warn!("apply loop: stream ended; re-subscribing from applied seq");
@@ -309,7 +309,7 @@ impl WriteCoordinator {
 
 /// The write seam the API binds to: submit a log entry, get its applied outcome,
 /// and report the applied head. Implemented by [`WriteCoordinator`] (the WAL-seam
-/// path for embedded/nats/relay) and by `RaftWriteSink` (the raft-host path).
+/// path for embedded/nats) and by `RaftWriteSink` (the raft-host path).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 #[async_trait::async_trait]
 pub trait WriteSink: Send + Sync {

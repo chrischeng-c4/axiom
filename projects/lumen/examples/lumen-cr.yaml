@@ -1,10 +1,10 @@
 # Example Lumen custom resources. Apply after `kubectl apply -k k8s/operator`.
-# The operator reconciles each into a full serving fleet + Relay write-log
-# broker. Inspect with: kubectl get lumen -A
+# The operator reconciles each into a Lumen-owned data plane. Inspect with:
+# kubectl get lumen -A
 
 ---
-# Dev / kind: one serving pod, a single managed Relay broker, no
-# auth, pretty logs, cluster-default storage. The smallest thing that runs.
+# Dev / kind: one serving pod, embedded WAL, no auth, pretty logs. The smallest
+# thing that runs.
 apiVersion: lumen.dev/v1alpha1
 kind: Lumen
 metadata:
@@ -13,21 +13,19 @@ metadata:
 spec:
   image: lumen:latest
   shardCount: 1
+  replicasPerShard: 1
+  voterCount: 1
   logFormat: pretty
   serving:
     autoscaling:
       minReplicas: 1
       maxReplicas: 3
       targetCpuUtilization: 70
-  broker:
-    image: relay:latest
-    storage: 10Gi
 
 ---
-# Production: 6 serving pods (HPA 6→12), external HA Relay broker,
+# Production: 6 shards x 3 replicas per shard, Lumen-owned raft WAL,
 # bearer-token auth (tokens from a Secret), json logs, and Prometheus
-# ServiceMonitor + alerts. Managed relay-server stays single-replica; use
-# externalUrl for production HA until relay-raft exposes subscribe/len.
+# ServiceMonitor + alerts.
 apiVersion: lumen.dev/v1alpha1
 kind: Lumen
 metadata:
@@ -37,6 +35,8 @@ spec:
   image: registry.example.com/lumen:1.2.3
   imagePullPolicy: Always
   shardCount: 6
+  replicasPerShard: 3
+  voterCount: 3
   logFormat: json
   logLevel: warn
   auth: required
@@ -49,27 +49,6 @@ spec:
     cpu: "4"
     memory: 16Gi
     graceSecs: 45
-  broker:
-    externalUrl: http://relay.infra.svc:7000
-    subject: lumen-wal
+    raftStorage: 100Gi
+    raftStorageClass: ssd
   observability: true
-
----
-# Bring-your-own broker: point at an existing Relay and the operator
-# manages only the stateless serving fleet (no StatefulSet).
-apiVersion: lumen.dev/v1alpha1
-kind: Lumen
-metadata:
-  name: search-byo-relay
-  namespace: default
-spec:
-  image: lumen:latest
-  shardCount: 3
-  logFormat: json
-  serving:
-    autoscaling:
-      minReplicas: 2
-      maxReplicas: 8
-      targetCpuUtilization: 70
-  broker:
-    externalUrl: http://shared-relay.infra.svc:7000

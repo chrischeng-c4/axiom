@@ -4,8 +4,8 @@
 //! the SAME NATS write log. Write through node A's HTTP API; read it
 //! back through node B's HTTP API. This exercises the entire data plane
 //! end to end — write handler → coordinator → NATS publish → both nodes'
-//! apply loops → B's local index → B's read handler. RelayWal is the current
-//! deployment default; this preserves compatibility coverage for `--wal nats`.
+//! apply loops → B's local index → B's read handler. This preserves
+//! compatibility coverage for `--wal nats`.
 //!
 //! Run a JetStream server first: `nats-server -js` (or point
 //! `LUMEN_TEST_NATS_URL` at one). Skips if unavailable.

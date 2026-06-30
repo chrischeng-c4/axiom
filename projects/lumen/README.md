@@ -48,7 +48,7 @@ agent integration remain first-class domain roots.
 |---|---:|---|---|---|---|---|
 | CLI Interface | 4143 | implemented | verified | conformance | ready | mandatory baseline: serve/spec/llm/dockerfile/k8s command surfaces |
 | Competitive Search Feature Parity | - | implemented | verified | conformance | ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
-| Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: pg/OpenSearch comparisons and ratchets pass in vat |
+| Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: Lumen-only perf regression passes in vat against retained pg/OpenSearch-calibrated floors |
 | Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
 | Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
 | HTTP/2 API List | 4143 | implemented | verified | conformance | ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
@@ -136,28 +136,28 @@ Gate Inventory:
 
 ID: long-running-stability
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s`, `lumen k8s crd/operator/instance`, and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Relay WAL - rebuildable derived-index mutation stream.
+Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s`, `lumen k8s crd/operator/instance`, and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Lumen WAL / raft-host - rebuildable derived-index mutation stream.
 EC Dimensions: stability: `rig` - resilience, endurance, load, and recovery scenarios; behavior: `projects/lumen/scripts/kind-e2e.sh` - k8s/operator dogfood gate
 Root WI: -
 Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Run as a long-lived derived-index service that rebuilds from the log, survives
-pod/broker fault scenarios, exposes usable probes and observability, and keeps
+pod fault scenarios, exposes usable probes and observability, and keeps
 latency/resource behavior stable over soak.
 Gate Inventory:
 - projects/lumen/tests/rig/cases/resilience; projects/lumen/tests/rig/cases/endurance; projects/lumen/tests/backup_restore_e2e.rs; projects/lumen/scripts/kind-e2e.sh; projects/lumen/k8s; projects/lumen/src/operator
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| log-fan-out-rebuild-from-log | epic | - | implemented | passing | dogfood | projects/lumen/tech-design/interfaces/rest/relay-wal.md<br>projects/lumen/src/wal_relay.rs |
+| log-fan-out-rebuild-from-log | epic | - | implemented | passing | dogfood | projects/lumen/src/raft_sm.rs<br>libs/raft-host/src/host.rs |
 | search-p99-survives-fault-and-recovers | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/resilience |
 | graceful-degradation-under-overload | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/load<br>projects/lumen/tests/rig/config/pins |
 | no-fd-socket-thread-leak | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/endurance |
 | no-latency-drift-over-soak | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/endurance |
 | kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | projects/lumen/k8s |
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
-| stateless-serving-rebuild-from-log-no-pvc | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
+| kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 | meta-api-health-ready-metrics-version | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 
 ### Security Hardening
@@ -429,7 +429,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | projects/lumen/k8s |
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
-| stateless-serving-rebuild-from-log-no-pvc | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
+| kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 
 ### Agent Offline Integration
 
@@ -473,18 +473,21 @@ How the comparison stays honest (separate metrics, never conflated):
   (annotated) and gated instead through a **native prepared-binary** path (Rust
   wire over Unix socket) — the cheap predicates still carry a hard floor.
 - **Concurrent qps (10/100/1000)** and **write-path qps** are report-only by
-  default; `LUMEN_PERF_STRICT=1` strict-gates the rows recorded in
-  `perf-baseline.json`. Co-located CI keeps them report-only until CPU isolation;
-  isolated-host repeats are the release-stable bar.
+  default; `LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1` strict-gates the peer
+  rows recorded in `perf-baseline.json`. Co-located CI keeps them report-only
+  until CPU isolation; isolated-host repeats are the release-stable bar.
 
 Each cell carries a threshold in `perf-baseline.json`: a **WIN cell** must hold
 `max(1.0, 0.8 × recorded margin)` — a **ratchet**, so improving a cell locks the
 new bar and it can only get better. **HTTP-EXEMPT cells** (pg btree lookups on
 loopback) are separately gated by `pg_native` floors through the native path.
-**Scale tiers:** 1K smoke/trend, **1M official competitive proof**; above 1M is
-research-only.
+**Scale tiers:** 1K smoke/trend, **10K routine AW/release regression**,
+**100K explicit release-local calibration**, and 1M release-soak/research only.
+The historical 1M proof is retained evidence; refresh it only with an explicit
+soak (`LUMEN_GATE_RELEASE_SOAK=1` or `LUMEN_GATE_N=1000000`).
 
-**Current status — GREEN** (release, N=1M, in-memory + disk tier). Representative
+**Current status — GREEN** (routine gate defaults to 10K Lumen-only regression;
+retained historical N=1M in-memory + disk-tier peer evidence). Representative
 serial search margins (full set, qps 10/100/1000 tiers, and history in
 [`docs/benchmarks-scale.md`](docs/benchmarks-scale.md) / `perf-baseline.json`):
 
@@ -506,10 +509,10 @@ paced qps tiers stay ahead of OpenSearch on every WIN cell.
 
 **Write path** — `tests/write_qps.rs` drives the real HTTP `POST /index`; the
 legacy NATS/JetStream row remains the historical write-path comparison while
-the serving/operator broker uses Relay. Latest historical 100-worker JetStream run: **8.5× vs
+the serving/operator HA path uses Lumen-owned raft. Latest historical 100-worker JetStream run: **8.5× vs
 Postgres**, **3.4× vs OpenSearch**, 0 errors. `LUMEN_PERF_STRICT=1` strict-gates
-the write margins when peer services are present; per-mode numbers and tuning
-history live in `benchmarks-scale.md`.
+the write margins only when peer services are explicitly present; per-mode
+numbers and tuning history live in `benchmarks-scale.md`.
 
 ### Footprint & stability
 
@@ -524,9 +527,11 @@ history live in `benchmarks-scale.md`.
 - **Stability:** 2M sustained searches held RSS flat with zero failed/errored/
   timed-out requests (Rust, no GC; mmap'd segments demand-paged by the kernel).
 
-Full row-count × qps scaling, footprint tables, and the vs-pg / vs-OS breakdowns
-live in **[`docs/benchmarks-scale.md`](docs/benchmarks-scale.md)** (reproduce with
-`./scripts/lumen_scale.sh`; rows above 1M are research-only).
+Full row-count x qps scaling, footprint tables, and retained vs-pg / vs-OS
+breakdowns live in **[`docs/benchmarks-scale.md`](docs/benchmarks-scale.md)**.
+Routine checks use the Lumen-only vat runner; peer comparisons are refreshed
+only through explicit calibration/soak runners when a benchmark cell or peer
+configuration changes.
 
 ## Data model
 

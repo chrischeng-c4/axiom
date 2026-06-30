@@ -64,14 +64,22 @@ e2e_tests:
     category: efficiency
     command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
     assertions:
-      - "The vat efficiency runner executes the Postgres/OpenSearch comparison path and resource attribution gate."
+      - "The vat efficiency runner executes the Lumen-only regression path against retained Postgres/OpenSearch-calibrated floors; explicit calibration runners refresh peers only on demand."
+  - id: lumen-claim-competitor-performance-depth-invariant
+    capability_id: competitor-performance
+    claim_id: depth-invariant-filter-sort-pagination
+    contract_id: competitor-performance-depth-invariant
+    category: efficiency
+    command: "cargo test -p lumen --test lumen_bench_cli --test perf_gate_vs_db -- --nocapture"
+    assertions:
+      - "The Lumen-only deep-page and filter/sort perf gates stay depth-invariant against the retained calibrated floors without rerunning peer databases by default."
 
   - id: lumen-claim-long-running-log-fanout
     capability_id: long-running-stability
     claim_id: log-fan-out-rebuild-from-log
     contract_id: long-running-log-fanout
     category: stability
-    command: "cargo test -p lumen --test wal_relay --test wal_nats_e2e -- --nocapture"
+    command: "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
     assertions:
       - "A late or second node can replay the published write stream and converge with live writes."
   - id: lumen-claim-long-running-kustomize-base
@@ -84,12 +92,12 @@ e2e_tests:
       - "The base, dev, staging, prod, and operator kustomize surfaces render valid Kubernetes manifests."
   - id: lumen-claim-long-running-stateless-kind
     capability_id: long-running-stability
-    claim_id: stateless-serving-rebuild-from-log-no-pvc
+    claim_id: kind-api-recovery-no-relay
     contract_id: long-running-stateless-kind-dogfood
     category: stability
     command: "projects/lumen/scripts/kind-e2e.sh"
     assertions:
-      - "The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC."
+      - "The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."
 
   - id: lumen-claim-security-bearer-auth
     capability_id: security-hardening
@@ -345,12 +353,12 @@ e2e_tests:
       - "The kube-rs operator render path reconciles Lumen CRD inputs into serving resources."
   - id: lumen-claim-k8s-stateless-kind
     capability_id: kubernetes-native-deployment
-    claim_id: stateless-serving-rebuild-from-log-no-pvc
+    claim_id: kind-api-recovery-no-relay
     contract_id: k8s-stateless-kind-dogfood
     category: stability
     command: "projects/lumen/scripts/kind-e2e.sh"
     assertions:
-      - "The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC."
+      - "The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."
 
   - id: lumen-claim-agent-offline-spec
     capability_id: agent-offline-integration

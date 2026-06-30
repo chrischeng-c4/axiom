@@ -20,60 +20,60 @@ Public API manifest for `projects/lumen/src/storage.rs` generated from AST durin
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4063 |  |
-| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 7985 |  |
-| `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 58 |  |
-| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2900 |  |
-| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 7995 |  |
-| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 54 |  |
+| `ApplyOutcome` | projects/lumen/src/storage.rs | enum | pub | 4229 |  |
+| `CollectionSnapshot` | projects/lumen/src/storage.rs | struct | pub | 8185 |  |
+| `DropOutcome` | projects/lumen/src/storage.rs | enum | pub | 64 |  |
+| `Engine` | projects/lumen/src/storage.rs | struct | pub | 2914 |  |
+| `FieldIndexSnapshot` | projects/lumen/src/storage.rs | enum | pub | 8195 |  |
+| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub | 55 |  |
 | `MAX_SORT_KEYS` | projects/lumen/src/storage.rs | constant | pub | 60 |  |
-| `Postings` | projects/lumen/src/storage.rs | struct | pub | 313 |  |
-| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 7976 |  |
-| `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 104 |  |
-| `StorageError` | projects/lumen/src/storage.rs | enum | pub | 71 |  |
-| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 9501 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>> |
-| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 9538 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)> |
-| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 9517 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>> |
-| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 9485 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()> |
-| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9421 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9231 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9168 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9297 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9365 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9458 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
-| `add_field` | projects/lumen/src/storage.rs | function | pub | 3095 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
-| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4024 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
-| `bits` | projects/lumen/src/storage.rs | function | pub | 141 | bits(self) -> u64 |
-| `create_collection` | projects/lumen/src/storage.rs | function | pub | 2954 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
-| `delete` | projects/lumen/src/storage.rs | function | pub | 3302 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
-| `docids` | projects/lumen/src/storage.rs | function | pub | 330 | docids(&self) -> &[u32] |
-| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3020 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
-| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3040 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
-| `duplicates` | projects/lumen/src/storage.rs | function | pub | 3779 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
-| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9018 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()> |
-| `from_bits` | projects/lumen/src/storage.rs | function | pub | 149 | from_bits(bits: u64) -> Self |
-| `from_sorted` | projects/lumen/src/storage.rs | function | pub | 324 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
-| `index` | projects/lumen/src/storage.rs | function | pub | 3134 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
-| `is_draining` | projects/lumen/src/storage.rs | function | pub | 2938 | is_draining(&self) -> bool |
-| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3122 | list_collections(&self) -> Result<Vec<String>> |
-| `metrics` | projects/lumen/src/storage.rs | function | pub | 2926 | metrics(&self) -> &Metrics |
-| `new` | projects/lumen/src/storage.rs | function | pub | 110 | new(x: f64) -> Result<Self> |
-| `new` | projects/lumen/src/storage.rs | function | pub | 2922 | new() -> Self |
-| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3352 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 8831 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self> |
-| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9062 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64> |
-| `restore` | projects/lumen/src/storage.rs | function | pub | 3950 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 8796 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()> |
-| `search` | projects/lumen/src/storage.rs | function | pub | 3380 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
-| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 3720 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9104 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)> |
-| `snapshot` | projects/lumen/src/storage.rs | function | pub | 3935 | snapshot(&self) -> Result<SnapshotV1> |
-| `start_drain` | projects/lumen/src/storage.rs | function | pub | 2934 | start_drain(&self) |
-| `stats` | projects/lumen/src/storage.rs | function | pub | 3968 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
-| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3070 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
-| `tfs` | projects/lumen/src/storage.rs | function | pub | 334 | tfs(&self) -> &[u32] |
-| `to_f64` | projects/lumen/src/storage.rs | function | pub | 126 | to_f64(self) -> f64 |
-| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4284 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
+| `Postings` | projects/lumen/src/storage.rs | struct | pub | 319 |  |
+| `SnapshotV1` | projects/lumen/src/storage.rs | struct | pub | 8176 |  |
+| `SortableF64` | projects/lumen/src/storage.rs | struct | pub | 110 |  |
+| `StorageError` | projects/lumen/src/storage.rs | enum | pub | 77 |  |
+| `__collection_schema` | projects/lumen/src/storage.rs | function | pub | 9703 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>> |
+| `__field_forward_probe` | projects/lumen/src/storage.rs | function | pub | 9740 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)> |
+| `__open_collection_from_segments` | projects/lumen/src/storage.rs | function | pub | 9719 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>> |
+| `__seal_collection_to_segments` | projects/lumen/src/storage.rs | function | pub | 9687 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()> |
+| `__seal_hash_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9623 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_keyword_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9433 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_number_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9370 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_set_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9499 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_text_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9567 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_vector_field_to_segment` | projects/lumen/src/storage.rs | function | pub | 9660 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `add_field` | projects/lumen/src/storage.rs | function | pub | 3109 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
+| `apply_raft_entry` | projects/lumen/src/storage.rs | function | pub | 4190 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
+| `bits` | projects/lumen/src/storage.rs | function | pub | 147 | bits(self) -> u64 |
+| `create_collection` | projects/lumen/src/storage.rs | function | pub | 2968 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
+| `delete` | projects/lumen/src/storage.rs | function | pub | 3339 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
+| `docids` | projects/lumen/src/storage.rs | function | pub | 336 | docids(&self) -> &[u32] |
+| `drop_collection` | projects/lumen/src/storage.rs | function | pub | 3034 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
+| `drop_field` | projects/lumen/src/storage.rs | function | pub | 3054 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
+| `duplicates` | projects/lumen/src/storage.rs | function | pub | 3945 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
+| `flush_to_segments` | projects/lumen/src/storage.rs | function | pub | 9220 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()> |
+| `from_bits` | projects/lumen/src/storage.rs | function | pub | 155 | from_bits(bits: u64) -> Self |
+| `from_sorted` | projects/lumen/src/storage.rs | function | pub | 330 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
+| `index` | projects/lumen/src/storage.rs | function | pub | 3148 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
+| `is_draining` | projects/lumen/src/storage.rs | function | pub | 2952 | is_draining(&self) -> bool |
+| `list_collections` | projects/lumen/src/storage.rs | function | pub | 3136 | list_collections(&self) -> Result<Vec<String>> |
+| `metrics` | projects/lumen/src/storage.rs | function | pub | 2940 | metrics(&self) -> &Metrics |
+| `new` | projects/lumen/src/storage.rs | function | pub | 116 | new(x: f64) -> Result<Self> |
+| `new` | projects/lumen/src/storage.rs | function | pub | 2936 | new() -> Self |
+| `number_value_for_external_id` | projects/lumen/src/storage.rs | function | pub | 3389 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
+| `open_from_segments` | projects/lumen/src/storage.rs | function | pub | 9032 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self> |
+| `reopen_from_segment_dir` | projects/lumen/src/storage.rs | function | pub | 9264 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64> |
+| `restore` | projects/lumen/src/storage.rs | function | pub | 4116 | restore(&self, snap: SnapshotV1) -> Result<()> |
+| `seal_to_segments` | projects/lumen/src/storage.rs | function | pub | 8997 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()> |
+| `search` | projects/lumen/src/storage.rs | function | pub | 3417 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
+| `search_fast_string_term` | projects/lumen/src/storage.rs | function | pub | 3886 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
+| `segment_field_probe` | projects/lumen/src/storage.rs | function | pub | 9306 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)> |
+| `snapshot` | projects/lumen/src/storage.rs | function | pub | 4101 | snapshot(&self) -> Result<SnapshotV1> |
+| `start_drain` | projects/lumen/src/storage.rs | function | pub | 2948 | start_drain(&self) |
+| `stats` | projects/lumen/src/storage.rs | function | pub | 4134 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
+| `sweep_deleted` | projects/lumen/src/storage.rs | function | pub | 3084 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
+| `tfs` | projects/lumen/src/storage.rs | function | pub | 340 | tfs(&self) -> &[u32] |
+| `to_f64` | projects/lumen/src/storage.rs | function | pub | 132 | to_f64(self) -> f64 |
+| `validate_query` | projects/lumen/src/storage.rs | function | pub | 4450 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

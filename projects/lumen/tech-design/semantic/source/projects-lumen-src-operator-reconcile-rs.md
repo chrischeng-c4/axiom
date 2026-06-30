@@ -20,8 +20,7 @@ Public API manifest for `projects/lumen/src/operator/reconcile.rs` generated fro
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Error` | projects/lumen/src/operator/reconcile.rs | enum | pub | 36 |  |
-| `run` | projects/lumen/src/operator/reconcile.rs | function | pub | 67 | run() -> anyhow::Result<()> |
+| `run` | projects/lumen/src/operator/reconcile.rs | function | pub | 81 | run() -> anyhow::Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

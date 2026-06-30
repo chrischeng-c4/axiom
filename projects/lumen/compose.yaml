@@ -1,31 +1,13 @@
-# Local verification stack: Relay log-replication + OTLP observability.
+# Local verification stack: Lumen + OTLP observability.
 #
 #   docker compose -f projects/lumen/compose.yaml up --build
 #
-# Proves two things end-to-end on one machine:
-#   1. Relay log-replication — write to lumen-0, search hits on lumen-1
-#      (both tail the same Relay write-log; no per-node state).
-#   2. OTLP — both replicas PUSH traces+metrics to otel-collector, which fans out
-#      to Prometheus (metrics) and Jaeger (traces). In production you point
-#      LUMEN_OTLP_ENDPOINT at your GKE otlp-gateway instead of this collector;
-#      lumen ships no collector of its own.
+# Proves the local service and OTLP path on one machine. For multi-node local
+# raft replication, use scripts/dev-cluster.sh.
 #
-# UIs:  lumen-0 http://localhost:7373/docs · Prometheus :9090 · Jaeger :16686 · Grafana :3000
+# UIs:  Lumen http://localhost:7373/docs · Prometheus :9090 · Jaeger :16686 · Grafana :3000
 
 services:
-  relay:
-    build:
-      context: ../..
-      dockerfile: projects/relay/Dockerfile
-    image: relay:dev
-    entrypoint: ["relay-server"]
-    environment:
-      RELAY_BIND: "0.0.0.0:7000"
-      RELAY_DATA_DIR: /data
-    ports: ["7000:7000"]
-    volumes:
-      - relay-data:/data
-
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.119.0
     command: ["--config=/etc/otel/config.yaml"]
@@ -36,40 +18,20 @@ services:
       - "8889:8889" # Prometheus exporter (what Prometheus scrapes)
     depends_on: [jaeger]
 
-  # Serving replica A. Builds from source so the image includes relay-wal.
-  lumen-0:
+  lumen:
     build:
       context: ../..
       dockerfile: projects/lumen/Dockerfile
     image: lumen:dev
-    hostname: lumen-0
-    depends_on: [relay, otel-collector]
+    hostname: lumen
+    depends_on: [otel-collector]
     environment:
       LUMEN_HOST: "0.0.0.0"
-      LUMEN_WAL: relay
-      LUMEN_RELAY_URL: http://relay:7000
-      LUMEN_RELAY_SUBJECT: lumen-wal
-      LUMEN_RELAY_SUBSCRIBER_ID: lumen-0
+      LUMEN_WAL: embedded
       LUMEN_OTLP_ENDPOINT: http://otel-collector:4317
       LUMEN_AUTH: "off"
       LUMEN_LOG_FORMAT: json
     ports: ["7373:7373"]
-
-  # Serving replica B. Same image; tails the same Relay log → same index.
-  lumen-1:
-    image: lumen:dev
-    hostname: lumen-1
-    depends_on: [relay, otel-collector, lumen-0]
-    environment:
-      LUMEN_HOST: "0.0.0.0"
-      LUMEN_WAL: relay
-      LUMEN_RELAY_URL: http://relay:7000
-      LUMEN_RELAY_SUBJECT: lumen-wal
-      LUMEN_RELAY_SUBSCRIBER_ID: lumen-1
-      LUMEN_OTLP_ENDPOINT: http://otel-collector:4317
-      LUMEN_AUTH: "off"
-      LUMEN_LOG_FORMAT: json
-    ports: ["7374:7373"]
 
   prometheus:
     image: prom/prometheus:v3.1.0
@@ -98,6 +60,3 @@ services:
 networks:
   default:
     name: lumen-otlp
-
-volumes:
-  relay-data:
