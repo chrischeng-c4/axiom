@@ -9,6 +9,7 @@
 # case = "AbstractContextManager____exit____exc_type_as_typed_wrong"
 # subject = "contextlib.AbstractContextManager.__exit__(exc_type: typed)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"

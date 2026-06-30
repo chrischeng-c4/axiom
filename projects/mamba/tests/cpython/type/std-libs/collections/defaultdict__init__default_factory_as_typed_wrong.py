@@ -9,6 +9,7 @@
 # case = "defaultdict__init__default_factory_as_typed_wrong"
 # subject = "collections.defaultdict.__init__(default_factory: typed)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

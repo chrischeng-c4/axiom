@@ -9,6 +9,7 @@
 # case = "nullcontext__init__enter_result_as__T_wrong"
 # subject = "contextlib.nullcontext.__init__(enter_result: _T)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"

@@ -9,6 +9,7 @@
 # case = "UserList__init__initlist_as_typed_wrong"
 # subject = "collections.UserList.__init__(initlist: typed)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

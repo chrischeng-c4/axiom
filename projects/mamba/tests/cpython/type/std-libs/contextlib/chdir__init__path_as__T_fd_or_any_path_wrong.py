@@ -9,6 +9,7 @@
 # case = "chdir__init__path_as__T_fd_or_any_path_wrong"
 # subject = "contextlib.chdir.__init__(path: _T_fd_or_any_path)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"

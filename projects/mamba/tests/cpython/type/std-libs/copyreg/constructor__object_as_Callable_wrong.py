@@ -9,6 +9,7 @@
 # case = "constructor__object_as_Callable_wrong"
 # subject = "copyreg.constructor(object: Callable)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copyreg.pyi"
 # status = "filled"

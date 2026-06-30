@@ -9,6 +9,7 @@
 # case = "OrderedDict__move_to_end__key_as__KT_wrong"
 # subject = "collections.OrderedDict.move_to_end(key: _KT)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
