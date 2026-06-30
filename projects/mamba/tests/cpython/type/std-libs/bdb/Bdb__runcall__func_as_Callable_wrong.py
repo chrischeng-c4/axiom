@@ -9,12 +9,11 @@
 # case = "Bdb__runcall__func_as_Callable_wrong"
 # subject = "bdb.Bdb.runcall(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: bdb.Bdb.runcall(func: Callable); call it with the wrong type.
 
