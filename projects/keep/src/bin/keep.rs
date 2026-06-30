@@ -388,7 +388,37 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             tracing::info!("claim-check token enforcement ON");
         }
     }
-    let app = keep::router(state.clone());
+    #[cfg_attr(not(feature = "raft"), allow(unused_mut))]
+    let mut app = keep::router(state.clone());
+
+    // Peer raft RPCs (`/shard/{id}/raft/*`, `/shard/{id}/raftz`) share the h2c
+    // serve port. Built only when the raft feature is compiled in and k8s has
+    // scaled the StatefulSet into replica/HA mode (REPLICAS_PER_SHARD > 1);
+    // single-node deployments keep the direct-to-engine write path. The hosts
+    // are held for the server's lifetime (Drop aborts their tick/pump tasks).
+    #[cfg(feature = "raft")]
+    let _shard_hosts = if raft_host::cluster::replica_mode() {
+        let replicas = std::env::var("KEEP_REPLICAS_PER_SHARD")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(1);
+        let hosts = keep::raft::ShardHosts::new(
+            (*state.cluster).clone(),
+            state.engine.clone(),
+            &args.data_dir,
+            replicas,
+        )
+        .await?;
+        info!(
+            shard_hosts = hosts.host_count(),
+            replicas_per_shard = replicas,
+            "raft: per-shard hosts up; peer transport merged onto serve port"
+        );
+        app = app.merge(hosts.router());
+        Some(hosts)
+    } else {
+        None
+    };
 
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening (HTTP/1.1 + HTTP/2 cleartext)");

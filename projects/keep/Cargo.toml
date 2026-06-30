@@ -62,8 +62,11 @@ h2c = { path = "../../libs/h2c", optional = true }
 cli-std = { path = "../../libs/cli-std", default-features = false }
 # Error glue for the binary dispatch + the raft module.
 anyhow = { workspace = true }
-# Shared Raft consensus engine (libs/raft-core, serde-only) — replaces openraft.
-raft-core = { path = "../../libs/raft-core", optional = true }
+# Shared Raft host driver (libs/raft-host: tick/pump loop, h2c peer transport,
+# sole-applier apply + snapshot/compaction over libs/raft-core). keep supplies a
+# per-shard RaftStateMachine and gets the HA + backup layer for free, instead of
+# hand-rolling a single-node driver.
+raft-host = { path = "../../libs/raft-host", optional = true }
 
 # Config
 clap = { workspace = true, features = ["env"] }
@@ -73,8 +76,9 @@ default = []
 # keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
 client = ["dep:reqwest", "dep:h2c"]
-# raft — raft-core-backed consensus (HA phase C; see HA.md).
-raft = ["dep:raft-core"]
+# raft — raft-host-backed consensus (HA phase C; per-shard hosts + h2c peer
+# transport; see HA.md). raft-host pulls libs/raft-core transitively.
+raft = ["dep:raft-host"]
 # Online (HTTPS) paths of the standard CLI ops (#471): `upgrade` self-install +
 # `issue` search/view/create. Offline paths (llm, `upgrade --check`, `issue
 # create --dry-run`) always build; release builds enable these.

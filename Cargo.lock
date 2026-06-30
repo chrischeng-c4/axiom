@@ -5789,7 +5789,7 @@ dependencies = [
  "futures",
  "h2c",
  "parking_lot",
- "raft-core",
+ "raft-host",
  "redis",
  "reqwest 0.12.28",
  "rust_decimal",
