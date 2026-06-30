@@ -9,12 +9,11 @@
 # case = "RawConfigParser__read_dict__dictionary_as_Mapping_wrong"
 # subject = "configparser.RawConfigParser.read_dict(dictionary: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dictionary"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dictionary
 # mamba-strict-type: TypeError
 """Type wall: configparser.RawConfigParser.read_dict(dictionary: Mapping); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from configparser import RawConfigParser
-obj = object.__new__(RawConfigParser)
+obj = RawConfigParser()
 try:
     obj.read_dict(_W())  # dictionary: Mapping <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
