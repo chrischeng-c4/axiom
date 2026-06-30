@@ -59,7 +59,7 @@ nodes:
     label: "A (re)connecting subscriber replays from its requested from_seq over the same durable log"
   lease:
     kind: process
-    label: "Work-queue/competing: offer the message to exactly one available consumer under a lease"
+    label: "Work-queue/competing: offer the message into EVERY named consumer group's queue (multicast — each group gets it once); within a group it is leased to exactly one consumer. Default group \"\" = the single-queue path. Each group has its own cursor / committed / redeliver / delay; delete-on-ack GC truncates below the MIN committed across groups."
   lease_ok:
     kind: decision
     label: "Did the leased consumer ack before the lease expired?"
@@ -398,6 +398,12 @@ nodes:
   a_both_models:
     kind: terminal
     label: "assert the broadcast subscriber sees every message AND the work-queue consumer leases each exactly once, over the same durable log"
+  t_groups:
+    kind: process
+    label: "two named consumer groups on one subject; competing consumers within a group; an Ack-mode subject where one group lags"
+  a_groups:
+    kind: terminal
+    label: "assert each group independently receives every message, within a group each message leases once, and delete-on-ack GC is pinned until the slowest group acks"
 edges:
   - { from: suite, to: t_seq, label: "case: sequencing" }
   - { from: t_seq, to: a_seq }
@@ -415,6 +421,8 @@ edges:
   - { from: t_ack_commit, to: a_ack_commit }
   - { from: suite, to: t_both_models, label: "case: acceptance" }
   - { from: t_both_models, to: a_both_models }
+  - { from: suite, to: t_groups, label: "case: consumer groups / multicast" }
+  - { from: t_groups, to: a_groups }
 ---
 flowchart TD
     suite([relay core test suite]) --> t_seq[append N -> monotonic seq]
@@ -433,6 +441,8 @@ flowchart TD
     t_ack_commit --> a_ack_commit([committed_seq advances, no redelivery])
     suite --> t_both_models[broadcast + work-queue on same log]
     t_both_models --> a_both_models([subscriber sees all; consumer leases each once])
+    suite --> t_groups[two groups; compete within; one lags]
+    t_groups --> a_groups([each group gets all; once within group; GC pinned by slowest])
 ```
 
 ## Changes
@@ -479,12 +489,22 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "Relay core engine tying publish -> classify -> broadcast / work-queue delivery over one durable log. Per-subject retention override (subject_modes + set_retention_mode, applied to all shards); ack/ack_batch persist the committed watermark then, in ack mode, truncate the fully-acked segment prefix (persist-before-truncate ordering)."
+    reason: "Relay core engine tying publish -> classify -> broadcast / work-queue delivery over one durable log. Per-subject retention override (subject_modes + set_retention_mode, applied to all shards); ack/ack_batch persist the committed watermark then, in ack mode, truncate the fully-acked segment prefix (persist-before-truncate ordering). Phase 6: SubjectState.workqueue -> groups: HashMap<String, WorkQueue> (named consumer groups / multicast); lease_in/ack_in/release_in target a group (lease/ack/release delegate to default \"\"); groups created lazily (\"\" resumes from .commit, named from start_seq) so an unused group never pins GC; publish offers each message to EVERY group; persist_and_truncate truncates below the MIN committed across groups; reconcile sweeps all groups."
+  - path: projects/relay/src/consume.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Subscribe frame gains an optional group; the streaming consume drive leases/acks/nacks within that named group (default \"\")."
   - path: projects/relay/tests/relay_core.rs
     action: create
     section: unit-test
     impl_mode: hand-written
     reason: "Deterministic tests for the unit-test plan, including the #122 acceptance (both delivery models over the same log)."
+  - path: projects/relay/tests/consumer_groups.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Phase 6 tests: two named groups each receive every message, competing consumers within a group split the work, and delete-on-ack GC is pinned by the slowest group."
 ```
 
 # Reviews
