@@ -79,6 +79,7 @@ SAMPLE_VALUE = {
 SENTINEL = "_W()"
 NOT_WRONGABLE = {"object", "Any", "_typeshed.Incomplete", "Incomplete"}
 BUILTINS = "builtins"
+NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
 
 
 def annotation_label(node: ast.expr | None) -> str:
@@ -207,6 +208,11 @@ def _walk_module(body, mod, kinds, v312=True):
 def candidates(kinds: set[str]):
     for pyi in sorted(TYPESHED_STDLIB.rglob("*.pyi")):
         mod = module_name(pyi)
+        if any(
+            mod == prefix or mod.startswith(f"{prefix}.")
+            for prefix in NON_RUNTIME_STUB_MODULE_PREFIXES
+        ):
+            continue
         try:
             tree = ast.parse(pyi.read_text(encoding="utf-8", errors="replace"))
         except SyntaxError:
