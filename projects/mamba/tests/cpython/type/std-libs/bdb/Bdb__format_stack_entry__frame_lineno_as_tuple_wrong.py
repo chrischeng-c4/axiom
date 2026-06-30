@@ -9,12 +9,11 @@
 # case = "Bdb__format_stack_entry__frame_lineno_as_tuple_wrong"
 # subject = "bdb.Bdb.format_stack_entry(frame_lineno: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed frame_lineno"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed frame_lineno
 # mamba-strict-type: TypeError
 """Type wall: bdb.Bdb.format_stack_entry(frame_lineno: tuple); call it with the wrong type.
 
