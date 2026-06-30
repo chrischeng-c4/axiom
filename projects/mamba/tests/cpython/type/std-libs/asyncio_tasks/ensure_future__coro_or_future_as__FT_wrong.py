@@ -9,12 +9,11 @@
 # case = "ensure_future__coro_or_future_as__FT_wrong"
 # subject = "asyncio.tasks.ensure_future(coro_or_future: _FT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro_or_future"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/tasks.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro_or_future
 # mamba-strict-type: TypeError
 """Type wall: asyncio.tasks.ensure_future(coro_or_future: _FT); call it with the wrong type.
 
