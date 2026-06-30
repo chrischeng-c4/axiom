@@ -16,8 +16,32 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/state.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/state.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ArtifactRecord` | projects/vat/src/state.rs | struct | pub | 194 |  |
+| `ChangeSet` | projects/vat/src/state.rs | struct | pub | 226 |  |
+| `ChangeSummary` | projects/vat/src/state.rs | struct | pub | 272 |  |
+| `ClusterRunRecord` | projects/vat/src/state.rs | struct | pub | 88 |  |
+| `ConfigRef` | projects/vat/src/state.rs | struct | pub | 80 |  |
+| `ProcessStatus` | projects/vat/src/state.rs | enum | pub | 182 |  |
+| `RouteRecord` | projects/vat/src/state.rs | struct | pub | 158 |  |
+| `RunRecord` | projects/vat/src/state.rs | struct | pub | 44 |  |
+| `RunnerRunRecord` | projects/vat/src/state.rs | struct | pub | 143 |  |
+| `ScenarioRunRecord` | projects/vat/src/state.rs | struct | pub | 167 |  |
+| `ServiceRunRecord` | projects/vat/src/state.rs | struct | pub | 105 |  |
+| `Status` | projects/vat/src/state.rs | enum | pub | 30 |  |
+| `TestRunEvidence` | projects/vat/src/state.rs | struct | pub | 203 |  |
+| `VatMeta` | projects/vat/src/state.rs | struct | pub | 59 |  |
+| `VatState` | projects/vat/src/state.rs | struct | pub | 297 |  |
+| `WorkspaceInfo` | projects/vat/src/state.rs | struct | pub | 287 |  |
+| `is_empty` | projects/vat/src/state.rs | function | pub | 238 | is_empty(&self) -> bool |
+| `oneline` | projects/vat/src/state.rs | function | pub | 243 | oneline(&self) -> String |
+| `summary` | projects/vat/src/state.rs | function | pub | 254 | summary(&self, sample: usize) -> ChangeSummary |
+| `total` | projects/vat/src/state.rs | function | pub | 234 | total(&self) -> usize |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

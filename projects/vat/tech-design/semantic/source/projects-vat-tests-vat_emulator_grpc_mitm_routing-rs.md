@@ -15,22 +15,11 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/tests/vat_emulator_grpc_mitm_routing.rs`, captured as a rust-source-unit (td_ast) item-tree
-during vat standardization onto the codegen ladder.
+Public API manifest for `projects/vat/tests/vat_emulator_grpc_mitm_routing.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `vat_bin` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 28 | fn vat_bin() -> &'static str |
-| `free_port` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 32 | fn free_port() -> u16 |
-| `wait_for_port` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 40 | fn wait_for_port(addr: &str) |
-| `drop` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 53 | fn drop(&mut self) |
-| `spawn_sink` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 60 | fn spawn_sink() -> (u16, mpsc::Receiver<String>) |
-| `connect_tunnel` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 79 | async fn connect_tunnel(proxy_addr: &str, target: &str) -> tokio::net::TcpStream |
-| `grpc_frame` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 105 | fn grpc_frame(msg: &[u8]) -> Bytes |
-| `grpc_routed_through_mitm_reaches_emulator` | projects/vat/tests/vat_emulator_grpc_mitm_routing.rs | function | private | 114 | async fn grpc_routed_through_mitm_reaches_emulator() |
-
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

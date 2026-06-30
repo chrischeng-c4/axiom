@@ -16,8 +16,13 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/workflows/interp.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/workflows/interp.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `run` | projects/vat/src/emulator/workflows/interp.rs | function | pub | 47 | run(source: &str, argument: Value, client: &reqwest::Client) -> Result<Value, String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

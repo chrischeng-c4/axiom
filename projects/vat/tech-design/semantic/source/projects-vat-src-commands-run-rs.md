@@ -16,8 +16,16 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/commands/run.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/commands/run.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Args` | projects/vat/src/commands/run.rs | struct | pub | 42 |  |
+| `Target` | projects/vat/src/commands/run.rs | enum | pub | 58 |  |
+| `exec` | projects/vat/src/commands/run.rs | function | pub | 74 | exec(args: Args) -> Result<ExitCode> |
+| `sandbox_wrap` | projects/vat/src/commands/run.rs | function | pub | 946 | sandbox_wrap(     backend: &dyn sandbox::Sandbox,     rootfs: &Path,     cmd: &[String], ) -> Vec<String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

@@ -16,8 +16,14 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/cli.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/cli.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `EmulatorKind` | projects/vat/src/cli.rs | enum | pub | 222 |  |
+| `run` | projects/vat/src/cli.rs | function | pub | 278 | run() -> Result<ExitCode> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -197,6 +203,7 @@ enum LlmFormat {
     Json,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cli-rs.md#source
 impl From<LlmFormat> for cli_std::llm::Format {
     fn from(format: LlmFormat) -> Self {
         match format {

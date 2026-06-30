@@ -16,8 +16,43 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/config.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/config.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ClusterBackend` | projects/vat/src/config.rs | enum | pub | 337 |  |
+| `ExternalServiceConfig` | projects/vat/src/config.rs | struct | pub | 201 |  |
+| `FILE_NAME` | projects/vat/src/config.rs | constant | pub | 18 |  |
+| `NetworkConfig` | projects/vat/src/config.rs | struct | pub | 56 |  |
+| `PortSpec` | projects/vat/src/config.rs | enum | pub | 353 |  |
+| `RetentionPolicy` | projects/vat/src/config.rs | enum | pub | 104 |  |
+| `RouteConfig` | projects/vat/src/config.rs | struct | pub | 68 |  |
+| `RunnerConfig` | projects/vat/src/config.rs | struct | pub | 408 |  |
+| `RunnerSelectionReason` | projects/vat/src/config.rs | enum | pub | 368 |  |
+| `ScenarioConfig` | projects/vat/src/config.rs | struct | pub | 383 |  |
+| `ScenarioNetworkMode` | projects/vat/src/config.rs | enum | pub | 397 |  |
+| `ServiceConfig` | projects/vat/src/config.rs | struct | pub | 124 |  |
+| `ServicePreset` | projects/vat/src/config.rs | enum | pub | 217 |  |
+| `ServiceRuntime` | projects/vat/src/config.rs | enum | pub | 319 |  |
+| `SetupStep` | projects/vat/src/config.rs | struct | pub | 114 |  |
+| `VatConfig` | projects/vat/src/config.rs | struct | pub | 23 |  |
+| `WorkspaceConfig` | projects/vat/src/config.rs | struct | pub | 76 |  |
+| `base_dir` | projects/vat/src/config.rs | function | pub | 803 | base_dir(&self) -> PathBuf |
+| `is_builtin` | projects/vat/src/config.rs | function | pub | 266 | is_builtin(self) -> bool |
+| `is_builtin_only` | projects/vat/src/config.rs | function | pub | 283 | is_builtin_only(self) -> bool |
+| `is_emulator` | projects/vat/src/config.rs | function | pub | 244 | is_emulator(self) -> bool |
+| `load_file` | projects/vat/src/config.rs | function | pub | 437 | load_file(path: &Path) -> Result<VatConfig> |
+| `load_nearest` | projects/vat/src/config.rs | function | pub | 421 | load_nearest(start: &Path) -> Result<VatConfig> |
+| `preset_gcp_host` | projects/vat/src/config.rs | function | pub | 300 | preset_gcp_host(self) -> Option<&'static str> |
+| `resolve_relative` | projects/vat/src/config.rs | function | pub | 809 | resolve_relative(root: &Path, path: &Path) -> PathBuf |
+| `runner` | projects/vat/src/config.rs | function | pub | 782 | runner(&self, id: &str) -> Result<&RunnerConfig> |
+| `scenario` | projects/vat/src/config.rs | function | pub | 796 | scenario(&self, id: &str) -> Result<&ScenarioConfig> |
+| `select_runner` | projects/vat/src/config.rs | function | pub | 760 | select_runner(         &self,         requested: Option<&str>,     ) -> Result<(&RunnerConfig, RunnerSelectionReason)> |
+| `service` | projects/vat/src/config.rs | function | pub | 789 | service(&self, id: &str) -> Result<&ServiceConfig> |
+| `should_run_setup` | projects/vat/src/config.rs | function | pub | 818 | should_run_setup(rootfs: &Path, step: &SetupStep) -> bool |
+| `validate` | projects/vat/src/config.rs | function | pub | 457 | validate(cfg: &VatConfig) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

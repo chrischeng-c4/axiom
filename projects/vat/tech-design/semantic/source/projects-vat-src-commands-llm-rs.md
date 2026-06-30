@@ -16,8 +16,13 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/commands/llm.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/commands/llm.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `exec` | projects/vat/src/commands/llm.rs | function | pub | 254 | exec(topic: &str, format: cli_std::llm::Format) -> Result<ExitCode> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

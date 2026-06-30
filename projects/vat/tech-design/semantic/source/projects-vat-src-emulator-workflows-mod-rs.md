@@ -16,8 +16,15 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/workflows/mod.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/workflows/mod.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `expr` | projects/vat/src/emulator/workflows/mod.rs | module | pub | 13 |  |
+| `interp` | projects/vat/src/emulator/workflows/mod.rs | module | pub | 14 |  |
+| `serve` | projects/vat/src/emulator/workflows/mod.rs | function | pub | 40 | serve(host_port: &str) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

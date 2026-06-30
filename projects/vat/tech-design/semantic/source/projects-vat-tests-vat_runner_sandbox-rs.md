@@ -15,18 +15,11 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/tests/vat_runner_sandbox.rs`, captured as a rust-source-unit (td_ast) item-tree
-during vat standardization onto the codegen ladder.
+Public API manifest for `projects/vat/tests/vat_runner_sandbox.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `vat_bin` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 25 | fn vat_bin() -> &'static str |
-| `seatbelt_active` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 30 | fn seatbelt_active() -> bool |
-| `bash_available` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 38 | fn bash_available() -> bool |
-| `runner_mode_seatbelt_egress_allows_localhost_denies_external` | projects/vat/tests/vat_runner_sandbox.rs | function | private | 47 | fn runner_mode_seatbelt_egress_allows_localhost_denies_external() |
-
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

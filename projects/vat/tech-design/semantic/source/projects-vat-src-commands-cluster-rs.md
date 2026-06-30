@@ -16,8 +16,17 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/commands/cluster.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/commands/cluster.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ClusterRecord` | projects/vat/src/commands/cluster.rs | struct | pub | 30 |  |
+| `create` | projects/vat/src/commands/cluster.rs | function | pub | 40 | create(     name: Option<String>,     backend: ClusterBackend,     k8s_version: Option<String>,     nodes: u32,     json: bool, ) -> Result<ExitCode> |
+| `delete` | projects/vat/src/commands/cluster.rs | function | pub | 183 | delete(name: String, json: bool) -> Result<ExitCode> |
+| `kubeconfig` | projects/vat/src/commands/cluster.rs | function | pub | 170 | kubeconfig(name: String, json: bool) -> Result<ExitCode> |
+| `ls` | projects/vat/src/commands/cluster.rs | function | pub | 127 | ls(json: bool) -> Result<ExitCode> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
