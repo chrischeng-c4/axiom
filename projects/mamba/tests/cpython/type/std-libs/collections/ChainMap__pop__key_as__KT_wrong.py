@@ -9,12 +9,11 @@
 # case = "ChainMap__pop__key_as__KT_wrong"
 # subject = "collections.ChainMap.pop(key: _KT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key
 # mamba-strict-type: TypeError
 """Type wall: collections.ChainMap.pop(key: _KT); call it with the wrong type.
 

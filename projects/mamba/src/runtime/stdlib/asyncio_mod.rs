@@ -836,6 +836,10 @@ mod tests {
 
     use super::*;
 
+    fn call_noargs(f: unsafe extern "C" fn(MbValue, MbValue) -> MbValue, this: MbValue) -> MbValue {
+        unsafe { f(this, MbValue::none()) }
+    }
+
     #[test]
     fn test_shield_passthrough() {
         let input = MbValue::from_int(42);
@@ -847,10 +851,10 @@ mod tests {
     fn test_future_cancel_marks_cancelled_and_result_raises() {
         exception::mb_clear_exception();
         let fut = make_future();
-        assert_eq!(future_cancelled(fut).as_bool(), Some(false));
-        assert_eq!(future_cancel(fut).as_bool(), Some(true));
-        assert_eq!(future_cancelled(fut).as_bool(), Some(true));
-        let _ = future_result(fut);
+        assert_eq!(call_noargs(future_cancelled, fut).as_bool(), Some(false));
+        assert_eq!(call_noargs(future_cancel, fut).as_bool(), Some(true));
+        assert_eq!(call_noargs(future_cancelled, fut).as_bool(), Some(true));
+        let _ = call_noargs(future_result, fut);
         assert_eq!(
             exception::current_exception_type().as_deref(),
             Some("CancelledError")
@@ -862,7 +866,7 @@ mod tests {
     fn test_future_pending_result_raises_invalid_state() {
         exception::mb_clear_exception();
         let fut = make_future();
-        let _ = future_result(fut);
+        let _ = call_noargs(future_result, fut);
         assert_eq!(
             exception::current_exception_type().as_deref(),
             Some("InvalidStateError")
@@ -879,10 +883,10 @@ mod tests {
         let coro = crate::runtime::async_rt::mb_coroutine_new(name, locals);
         let task = make_task(coro);
 
-        assert_eq!(task_cancelled(task).as_bool(), Some(false));
-        assert_eq!(task_cancel(task).as_bool(), Some(true));
-        assert_eq!(task_done(task).as_bool(), Some(true));
-        assert_eq!(task_cancelled(task).as_bool(), Some(true));
+        assert_eq!(call_noargs(task_cancelled, task).as_bool(), Some(false));
+        assert_eq!(call_noargs(task_cancel, task).as_bool(), Some(true));
+        assert_eq!(call_noargs(task_done, task).as_bool(), Some(true));
+        assert_eq!(call_noargs(task_cancelled, task).as_bool(), Some(true));
 
         let _ = crate::runtime::async_task::mb_await(task);
         assert_eq!(
