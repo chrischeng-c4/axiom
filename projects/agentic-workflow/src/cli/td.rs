@@ -3322,6 +3322,29 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
         })?;
         return Ok(());
     }
+    let td_lock =
+        match super::td_lock::check_project_td_lock_for_spec_at_root(&worktree_abs, &spec_abs) {
+            Ok(status) => status,
+            Err(err) => {
+                let msg = format!("cannot check TD IR lock for {}: {}", spec_path, err);
+                print_envelope(&TdEnvelope::Error {
+                    slug,
+                    message: &msg,
+                })?;
+                return Ok(());
+            }
+        };
+    if !td_lock.clean {
+        let msg = format!(
+            "td gen requires a clean TD IR lock before generation: {}",
+            td_lock.message
+        );
+        print_envelope(&TdEnvelope::Error {
+            slug,
+            message: &msg,
+        })?;
+        return Ok(());
+    }
 
     // Run codegen
     let report = run_apply_worktree(&spec_abs, &worktree_abs)
@@ -4812,8 +4835,8 @@ label = "project:agentic-workflow"
 
     #[test]
     fn derive_spec_dir_uses_project_label_name() {
-        let labels = vec!["type:enhancement".to_string(), "project:cue".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "projects/cue/logic/");
+        let labels = vec!["type:enhancement".to_string(), "project:jet".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "projects/jet/logic/");
     }
 
     #[test]

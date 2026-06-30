@@ -262,13 +262,13 @@ mod tests {
 
     #[test]
     fn test_parse_attr_style_preserves_optional_attrs() {
-        let content = r#"<!-- score-section type="wireframe" lang="yaml" workspace="cue-artifact-studio" surface="studio" role="owner" -->"#;
+        let content = r#"<!-- score-section type="wireframe" lang="yaml" workspace="jet-artifact-studio" surface="studio" role="owner" -->"#;
         let meta = parse_section_annotation(content).unwrap();
         assert_eq!(meta.section_type, SectionType::Wireframe);
         assert_eq!(meta.lang.as_deref(), Some("yaml"));
         assert_eq!(
             meta.attributes.get("workspace").map(String::as_str),
-            Some("cue-artifact-studio")
+            Some("jet-artifact-studio")
         );
         assert_eq!(
             meta.attributes.get("surface").map(String::as_str),

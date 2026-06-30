@@ -23,7 +23,7 @@ Layer 1: Runtime    — mamba, jet, kv, core, cli
 Layer 2: Libraries  — pg, fetch, log, schema, array, frame, sci, learn, plot, media, text, grid
 Layer 3: Framework  — api, queue, agent, qc, server
 Layer 4: Agkit      — agkit (domain models + UI + prompts), @cclab/ui, spec-viewer, pipeline
-Projects            — agentic-workflow, cue
+Projects            — agentic-workflow
 ```
 
 Full details: `ECOSYSTEM.md`. Domain model schemas: `projects/agentic-workflow/schemas/`.

@@ -7,6 +7,7 @@ use crate::cli::capability;
 use crate::cli::chat;
 use crate::cli::ec;
 use crate::cli::generator;
+use crate::cli::guard;
 use crate::cli::init;
 use crate::cli::issues;
 use crate::cli::llm;
@@ -50,6 +51,9 @@ pub enum Commands {
 
     /// Generator gap request surface after takeover readiness.
     Generator(generator::GeneratorArgs),
+
+    /// Agent-runtime direct edit/create guard for Codex and Claude Code.
+    Guard(guard::GuardArgs),
 
     /// Root-driven workflow runner for project, capability, epic, or change scopes.
     Run(run_root::RunArgs),
@@ -114,6 +118,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Generator(args) => {
             generator::run(args).await?;
+        }
+        Commands::Guard(args) => {
+            guard::run(args)?;
         }
         Commands::Run(args) => {
             run_root::run(args).await?;

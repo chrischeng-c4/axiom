@@ -16,7 +16,6 @@ mod tests {
     mod cloud_sdk_umbrella_gate;
     mod cpython_lib_test_denominator_gate;
     mod cpython_lib_test_real_assertions_gate;
-    mod cue_backend_loader_gate;
     mod mvp_perf_10x_umbrella_gate;
     mod mvp_py312_ecosystem_umbrella_gate;
     mod mvp_test_completeness_epic_gate;

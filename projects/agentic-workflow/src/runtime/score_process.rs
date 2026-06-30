@@ -734,33 +734,33 @@ mod tests {
         write_stored_issue(
             tmp.path(),
             &stored_issue(
-                "open-cue",
+                "open-jet",
                 StoredIssueState::Open,
-                vec!["project:cue", "priority:p1"],
+                vec!["project:jet", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
             &stored_issue(
-                "draft-cue",
+                "draft-jet",
                 StoredIssueState::Draft,
-                vec!["project:cue", "priority:p1"],
+                vec!["project:jet", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
             &stored_issue(
-                "closed-cue",
+                "closed-jet",
                 StoredIssueState::Closed,
-                vec!["project:cue", "priority:p1"],
+                vec!["project:jet", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
-            &stored_issue("open-other", StoredIssueState::Open, vec!["project:cue"]),
+            &stored_issue("open-other", StoredIssueState::Open, vec!["project:jet"]),
         )
         .await;
 
@@ -768,13 +768,13 @@ mod tests {
         let refs = backend
             .list(&ListFilter {
                 state: RuntimeIssueState::Open,
-                labels: vec!["project:cue".into(), "priority:p1".into()],
+                labels: vec!["project:jet".into(), "priority:p1".into()],
             })
             .await
             .unwrap();
         let ids: Vec<_> = refs.into_iter().map(|r| r.id.0).collect();
 
-        assert_eq!(ids, vec!["draft-cue", "open-cue"]);
+        assert_eq!(ids, vec!["draft-jet", "open-jet"]);
     }
 
     #[tokio::test]
@@ -783,7 +783,7 @@ mod tests {
         let mut issue = stored_issue(
             "enhancement-read",
             StoredIssueState::Open,
-            vec!["project:cue"],
+            vec!["project:jet"],
         );
         issue.phase = Some("reviewed".into());
         issue.review_count = Some(1);
