@@ -9,12 +9,11 @@
 # case = "FancyGetopt__getopt__args_as_typed_wrong"
 # subject = "distutils.fancy_getopt.FancyGetopt.getopt(args: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/fancy_getopt.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args
 # mamba-strict-type: TypeError
 """Type wall: distutils.fancy_getopt.FancyGetopt.getopt(args: typed); call it with the wrong type.
 
