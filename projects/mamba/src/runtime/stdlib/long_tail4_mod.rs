@@ -840,6 +840,9 @@ fn register_codec_shims() {
         "encodings.mac_romanian",
         "encodings.mac_turkish",
         "encodings.mbcs",
+        "encodings.palmos",
+        "encodings.ptcp154",
+        "encodings.tis_620",
         "encodings.utf_16",
     ] {
         register_codec_module(name);
