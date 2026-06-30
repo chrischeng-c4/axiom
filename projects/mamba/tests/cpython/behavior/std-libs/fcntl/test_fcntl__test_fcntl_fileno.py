@@ -9,12 +9,11 @@
 # case = "test_fcntl__test_fcntl_fileno"
 # subject = "cpython.test_fcntl.TestFcntl.test_fcntl_fileno"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_fcntl.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_fcntl.py::TestFcntl::test_fcntl_fileno
 """Auto-ported test: TestFcntl::test_fcntl_fileno (CPython 3.12 oracle)."""
 
