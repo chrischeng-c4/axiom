@@ -51,6 +51,23 @@ unsafe extern "C" fn dispatch_incremental_decoder_buffer_decode(
     ]))
 }
 
+unsafe extern "C" fn dispatch_decode_generalized_number(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let Some(extended) = args.first().copied() else {
+        return raise_type_error("decode_generalized_number() missing required extended argument");
+    };
+    if !is_bytes_like(extended) {
+        return raise_type_error("decode_generalized_number() argument 1 must be bytes-like");
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_int(0),
+        MbValue::from_int(0),
+    ]))
+}
+
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -320,6 +337,52 @@ fn register_codec_module(name: &str) {
     attrs.insert("encode".to_string(), MbValue::from_func(encode));
     attrs.insert("decode".to_string(), MbValue::from_func(decode));
     register_addrs(&[getregentry, encode, decode]);
+    super::register_module(name, attrs);
+}
+
+fn register_punycode_module() {
+    let name = "encodings.punycode";
+    let mut attrs = HashMap::new();
+    for class_name in &[
+        "Codec",
+        "IncrementalEncoder",
+        "IncrementalDecoder",
+        "StreamWriter",
+        "StreamReader",
+    ] {
+        attrs.insert((*class_name).to_string(), make_type_obj(class_name, name));
+    }
+
+    let getregentry = dispatch_class_shell as *const () as usize;
+    let encode = dispatch_empty_bytes as *const () as usize;
+    let decode = dispatch_empty_str as *const () as usize;
+    let decode_generalized_number = dispatch_decode_generalized_number as *const () as usize;
+    attrs.insert("getregentry".to_string(), MbValue::from_func(getregentry));
+    attrs.insert("encode".to_string(), MbValue::from_func(encode));
+    attrs.insert("decode".to_string(), MbValue::from_func(decode));
+    attrs.insert(
+        "decode_generalized_number".to_string(),
+        MbValue::from_func(decode_generalized_number),
+    );
+    for function_name in &[
+        "adapt",
+        "generate_generalized_integer",
+        "generate_integers",
+        "insertion_sort",
+        "insertion_unsort",
+        "punycode_decode",
+        "punycode_encode",
+        "selective_find",
+        "selective_len",
+        "segregate",
+        "T",
+    ] {
+        attrs.insert(
+            (*function_name).to_string(),
+            MbValue::from_func(getregentry),
+        );
+    }
+    register_addrs(&[getregentry, encode, decode, decode_generalized_number]);
     super::register_module(name, attrs);
 }
 
@@ -878,6 +941,7 @@ fn register_codec_shims() {
     ] {
         register_codec_module(name);
     }
+    register_punycode_module();
 }
 
 fn register_msilib_subs() {
