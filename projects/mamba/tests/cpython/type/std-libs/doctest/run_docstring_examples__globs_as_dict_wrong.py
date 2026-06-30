@@ -9,12 +9,11 @@
 # case = "run_docstring_examples__globs_as_dict_wrong"
 # subject = "doctest.run_docstring_examples(globs: dict)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed globs"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed globs
 # mamba-strict-type: TypeError
 """Type wall: doctest.run_docstring_examples(globs: dict); call it with the wrong type.
 
