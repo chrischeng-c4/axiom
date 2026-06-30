@@ -40,6 +40,11 @@ VERSION_SPECIFIC_TYPE_LIBS = {
     "compression_zstd": (3, 14),
     "compression_zstd__zstdfile": (3, 14),
 }
+VERSION_REMOVED_TYPE_LIBS = {
+    "asyncore": (3, 12),
+    "asynchat": (3, 12),
+    "smtpd": (3, 12),
+}
 VERSION_SPECIFIC_TYPE_FIXTURES = {
     "std-libs/ast/TemplateStr__init__values_as_list_wrong.py": (3, 14),
 }
@@ -98,7 +103,10 @@ def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
     if lib is None:
         return False
     required = VERSION_SPECIFIC_TYPE_LIBS.get(lib)
-    return required is not None and sys.version_info[:2] < required
+    if required is not None and sys.version_info[:2] < required:
+        return True
+    removed = VERSION_REMOVED_TYPE_LIBS.get(lib)
+    return removed is not None and sys.version_info[:2] >= removed
 
 
 def has_pipeline_run_directive(text: str) -> bool:
