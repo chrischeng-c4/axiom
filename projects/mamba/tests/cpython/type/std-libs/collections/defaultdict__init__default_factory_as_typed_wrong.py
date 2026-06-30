@@ -9,12 +9,10 @@
 # case = "defaultdict__init__default_factory_as_typed_wrong"
 # subject = "collections.defaultdict.__init__(default_factory: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed default_factory"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed default_factory
 # mamba-strict-type: TypeError
 """Type wall: collections.defaultdict.__init__(default_factory: typed); call it with the wrong type.
 
