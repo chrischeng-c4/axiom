@@ -2149,6 +2149,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("attrs", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: distutils.file_util accepts str/bytes/path-like sources. The
+    // generator sees only Unknown; reject bare user instances while keeping
+    // real non-scalar path-like values skip-safe.
+    StdlibSig {
+        module: "distutils.file_util",
+        qualifier: "",
+        name: "copy_file",
+        kind: SigKind::ModuleFn,
+        params: &[p("src", CoreTy::Typed), p("dst", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.file_util",
+        qualifier: "",
+        name: "move_file",
+        kind: SigKind::ModuleFn,
+        params: &[p("src", CoreTy::Typed), p("dst", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4469,6 +4488,19 @@ mod tests {
         assert_eq!(sig.kind, SigKind::Method);
         assert_eq!(sig.params[0].name, "attrs");
         assert_eq!(sig.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_distutils_file_util_src_path_walls() {
+        for name in ["copy_file", "move_file"] {
+            let sig = get("distutils.file_util", "", name).expect("file_util row present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].name, "src");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+            assert_eq!(sig.params[1].name, "dst");
+            assert_eq!(sig.params[1].ty, CoreTy::Typed);
+        }
     }
 
     #[test]

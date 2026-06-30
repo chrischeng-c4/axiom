@@ -9,12 +9,11 @@
 # case = "copy_file__src_as_StrPath_wrong"
 # subject = "distutils.file_util.copy_file(src: StrPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed src"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/file_util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed src
 # mamba-strict-type: TypeError
 """Type wall: distutils.file_util.copy_file(src: StrPath); call it with the wrong type.
 
