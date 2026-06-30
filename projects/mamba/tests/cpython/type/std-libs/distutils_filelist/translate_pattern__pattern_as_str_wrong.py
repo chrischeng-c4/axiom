@@ -9,12 +9,11 @@
 # case = "translate_pattern__pattern_as_str_wrong"
 # subject = "distutils.filelist.translate_pattern(pattern: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/filelist.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern
 # mamba-strict-type: TypeError
 """Type wall: distutils.filelist.translate_pattern(pattern: str); call it with the wrong type.
 

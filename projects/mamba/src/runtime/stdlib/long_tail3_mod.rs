@@ -452,6 +452,17 @@ fn register_distutils() {
         &[],
     );
     register_with(
+        "distutils.filelist",
+        &["FileList"],
+        &[
+            ("findall", dispatch_empty_list as *const () as usize),
+            ("glob_to_re", dispatch_empty_str as *const () as usize),
+            ("translate_pattern", dispatch_empty_str as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "distutils.fancy_getopt",
         &["FancyGetopt", "OptionDummy"],
         &[
