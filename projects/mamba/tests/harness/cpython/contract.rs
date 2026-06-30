@@ -483,6 +483,36 @@ fn optional_stdlib_extension_type_libs_are_excluded_consistently() {
 }
 
 #[test]
+fn non_stdlib_backport_type_libs_are_excluded_consistently() {
+    for rel in [
+        "tools/verify_cpython_oracle.py",
+        "tools/strict_type_accounting.py",
+    ] {
+        let path = cpython_harness_dir().join(rel);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+        for required in [
+            "NON_STDLIB_BACKPORT_TYPE_LIBS",
+            "\"typing_extensions\"",
+            "is_non_stdlib_backport_type_fixture",
+        ] {
+            assert!(
+                raw.contains(required),
+                "{} missing non-stdlib backport exclusion marker `{required}`",
+                path.display()
+            );
+        }
+        if rel == "tools/verify_cpython_oracle.py" {
+            assert!(
+                raw.contains("non-stdlib-backport-type-helper"),
+                "{} missing non-stdlib backport oracle skip reason",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn removed_importlib_type_fixtures_are_excluded_consistently() {
     for rel in [
         "tools/verify_cpython_oracle.py",

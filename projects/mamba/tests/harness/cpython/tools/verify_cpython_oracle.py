@@ -34,6 +34,7 @@ CPYTHON_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython (fixtures + .cac
 MAMBA_DIR = CPYTHON_DIR.parent.parent
 FIXTURES_ROOT = CPYTHON_DIR
 NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
+NON_STDLIB_BACKPORT_TYPE_LIBS = {"typing_extensions"}
 PLATFORM_SPECIFIC_TYPE_LIBS = {
     "_winapi": "win32",
     "msilib": "win32",
@@ -115,6 +116,11 @@ def is_non_runtime_stub_type_fixture(path: Path) -> bool:
         lib == prefix or lib.startswith(f"{prefix}_")
         for prefix in NON_RUNTIME_STUB_TYPE_LIB_PREFIXES
     )
+
+
+def is_non_stdlib_backport_type_fixture(path: Path) -> bool:
+    lib = type_fixture_lib(path)
+    return lib in NON_STDLIB_BACKPORT_TYPE_LIBS
 
 
 def type_fixture_lib(path: Path) -> str | None:
@@ -281,6 +287,8 @@ def run_one(
     text = path.read_text(encoding="utf-8", errors="replace")
     if is_non_runtime_stub_type_fixture(path):
         return CaseResult(path, "skip", "non-runtime-stub-type-helper")
+    if is_non_stdlib_backport_type_fixture(path):
+        return CaseResult(path, "skip", "non-stdlib-backport-type-helper")
     if is_platform_specific_unavailable_type_fixture(path):
         return CaseResult(path, "skip", "platform-specific-type-helper")
     if is_optional_stdlib_extension_unavailable_type_fixture(path):
