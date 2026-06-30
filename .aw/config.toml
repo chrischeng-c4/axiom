@@ -153,6 +153,58 @@ test_cmd = "cargo test -p loom"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
+[[projects]]
+name = "tape"
+path = "projects/tape"
+td_path = "projects/tape/tech-design"
+cap_path = "projects/tape/README.md"
+label = "project:tape"
+
+[[projects.workspaces]]
+name = "tape"
+paths = ["projects/tape/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "defer"
+path = "projects/defer"
+td_path = "projects/defer/tech-design"
+cap_path = "projects/defer/README.md"
+label = "project:defer"
+
+[[projects.workspaces]]
+name = "defer"
+paths = ["projects/defer/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "cube"
+path = "projects/cube"
+td_path = "projects/cube/tech-design"
+cap_path = "projects/cube/README.md"
+label = "project:cube"
+
+[[projects.workspaces]]
+name = "cube"
+paths = ["projects/cube/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "beam"
+path = "projects/beam"
+td_path = "projects/beam/tech-design"
+cap_path = "projects/beam/README.md"
+label = "project:beam"
+
+[[projects.workspaces]]
+name = "beam"
+paths = ["projects/beam/**"]
+target = "schemas"
+test_cmd = "true"
+
 
 [[projects]]
 name = "arena"
