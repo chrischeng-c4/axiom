@@ -9,12 +9,11 @@
 # case = "Counter__update__m_as_Mapping_wrong"
 # subject = "collections.Counter.update(m: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed m"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed m
 # mamba-strict-type: TypeError
 """Type wall: collections.Counter.update(m: Mapping); call it with the wrong type.
 

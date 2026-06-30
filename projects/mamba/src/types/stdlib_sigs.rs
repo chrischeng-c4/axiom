@@ -582,6 +582,122 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: collections.Counter multiset operations and mutators are
+    // nominal/protocol-shaped (`Counter`, `Mapping`, `Iterable`, typevars).
+    // The generated rows keep these Unknown unless typeshed collapses the
+    // annotation to `typed`; curate the fixture-backed first argument walls.
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__add__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__and__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__ge__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__gt__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("iterable", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__ixor__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__le__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__lt__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__missing__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__sub__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "__xor__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "subtract",
+        kind: SigKind::Method,
+        params: &[p("iterable", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "Counter",
+        name: "update",
+        kind: SigKind::Method,
+        params: &[p("m", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
@@ -2959,6 +3075,31 @@ mod tests {
         ] {
             let sig = get("collections", "ChainMap", name).expect("ChainMap row present");
             assert!(sig.enforceable, "ChainMap.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+    }
+
+    #[test]
+    fn curated_counter_walls_override_unknown_generated_rows() {
+        for (name, first_param) in [
+            ("__add__", "other"),
+            ("__and__", "other"),
+            ("__ge__", "other"),
+            ("__gt__", "other"),
+            ("__init__", "iterable"),
+            ("__ixor__", "other"),
+            ("__le__", "other"),
+            ("__lt__", "other"),
+            ("__missing__", "key"),
+            ("__or__", "other"),
+            ("__sub__", "other"),
+            ("__xor__", "other"),
+            ("subtract", "iterable"),
+            ("update", "m"),
+        ] {
+            let sig = get("collections", "Counter", name).expect("Counter row present");
+            assert!(sig.enforceable, "Counter.{name} must stay enforceable");
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
