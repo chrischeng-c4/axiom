@@ -23,8 +23,9 @@ and the exact gates that prove a build is release-ready.
 - Raft peer traffic (HA) uses **`7374`**; relay broker uses **`7000`**.
 
 ```bash
-docker build -f projects/lumen/Dockerfile.release -t lumen:0.4.4 projects/lumen
-docker run --rm -p 7373:7373 lumen:0.4.4            # serves by default
+lumen dockerfile render --variant release --version 0.4.5 --out /tmp/lumen-image
+docker build -f /tmp/lumen-image/Dockerfile.release -t lumen:0.4.5 .
+docker run --rm -p 7373:7373 lumen:0.4.5            # serves by default
 ```
 
 ---
@@ -38,9 +39,10 @@ docker run --rm -p 7373:7373 lumen:0.4.4            # serves by default
 | `lumen serve` | Run a serving node: HTTP API + background apply loop. |
 | `lumen spec` | Print the machine-readable contract (OpenAPI 3 / JSON-schema) — offline, no server. |
 | `lumen llm` | Print agent-facing integration topics — offline. |
-| `lumen k8s` | Operator controller + CRD generation (`k8s operator`, `k8s gen-crd`). |
+| `lumen dockerfile` | Render source/release Dockerfiles for compose, kind, or a registry build. |
+| `lumen k8s` | Render Kubernetes layers: `crd render`, `operator render|run`, and `instance render`. |
 | `lumen upgrade` | Self-update from the published GitHub release. |
-| `lumen issue` | Search / view / file lumen issues. (Currently shipped as `lumen report-issue`; migrating to the `issue` group — see #542.) |
+| `lumen issue` | Search / view / file Lumen issues through the standard `issue search`, `issue view`, and `issue create` group. |
 
 ---
 
@@ -58,7 +60,7 @@ lumen serve --host 0.0.0.0 --port 7373          # in-process log; no broker need
 ```bash
 docker run --rm -p 7373:7373 \
   -e LUMEN_LOG_FORMAT=json \
-  lumen:0.4.4 serve --host 0.0.0.0
+  lumen:0.4.5 serve --host 0.0.0.0
 ```
 
 ### 3c. With a relay broadcast WAL (multi-node fan-out)
@@ -83,20 +85,18 @@ Structure: `k8s/base` (Deployment, Service, HPA, PDB, ConfigMap, relay StatefulS
 ### 3e. Operator (CRD-driven)
 
 ```bash
-kubectl apply -k projects/lumen/k8s/operator          # installs CRD lumens.lumen.dev + controller
+lumen k8s crd render --out /tmp/lumen-k8s/crd.yaml
+lumen k8s operator render --namespace lumen-system --out /tmp/lumen-k8s
+kubectl apply -f /tmp/lumen-k8s/crd.yaml              # cluster-scoped API
+kubectl apply -f /tmp/lumen-k8s/operator.yaml         # control-plane namespace/RBAC/controller
 ```
 
-Then create a `Lumen` CR; the operator reconciles all child objects into the CR's namespace:
+Then create a `Lumen` CR in the app namespace; the operator reconciles all
+child objects into that CR's namespace:
 
-```yaml
-apiVersion: lumen.dev/v1alpha1
-kind: Lumen
-metadata: { name: my-lumen, namespace: lumen }
-spec:
-  shards: 3
-  auth: required          # or: disabled
-  serving: { replicas: 3, cpu: "2", memory: 4Gi }
-  broker:  { replicas: 1, storage: 20Gi }
+```bash
+lumen k8s instance render --profile staging --namespace search --name catalog --out /tmp/lumen-k8s
+kubectl apply -f /tmp/lumen-k8s/lumen.yaml
 ```
 
 ---

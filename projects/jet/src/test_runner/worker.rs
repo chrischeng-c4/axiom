@@ -70,7 +70,6 @@ pub async fn run_spec(
     //    off `@playwright/test` in Phase 5b) resolve the bare specifier via
     //    Node's standard ESM resolver.
     let tmp = tempfile::tempdir().context("Failed to create worker temp dir")?;
-    let spec_path = tmp.path().join("__jet_spec.mjs");
     let boot_path = tmp.path().join("__jet_boot.mjs");
 
     let shim_dir = tmp.path().join("node_modules").join("@jet").join("test");
@@ -110,7 +109,13 @@ export default __jet;
 "#,
     )?;
 
-    std::fs::write(&spec_path, transformed)?;
+    let modules_dir = tmp.path().join("__jet_modules");
+    let spec_path = {
+        let mut emitter = TempModuleGraphEmitter::new(&modules_dir);
+        emitter
+            .emit(&spec.path, Some(transformed))
+            .context("Failed to emit transformed spec module graph")?
+    };
     std::fs::write(&boot_path, build_boot(&spec_path, spec, config))?;
 
     // 3. Spawn node with the boot script.
@@ -2134,6 +2139,193 @@ fn transform_spec(path: &Path) -> Result<String> {
         .transform_js(&source, path)
         .with_context(|| format!("Failed to type-strip {}", path.display()))?;
     Ok(normalize_jet_test_virtual_imports(result.code))
+}
+
+struct TempModuleGraphEmitter<'a> {
+    out_dir: &'a Path,
+    outputs: HashMap<PathBuf, PathBuf>,
+    next_id: usize,
+}
+
+impl<'a> TempModuleGraphEmitter<'a> {
+    fn new(out_dir: &'a Path) -> Self {
+        Self {
+            out_dir,
+            outputs: HashMap::new(),
+            next_id: 0,
+        }
+    }
+
+    fn emit(&mut self, path: &Path, pretransformed: Option<String>) -> Result<PathBuf> {
+        let canonical = path
+            .canonicalize()
+            .with_context(|| format!("canonicalizing test module {}", path.display()))?;
+        if let Some(out) = self.outputs.get(&canonical) {
+            return Ok(out.clone());
+        }
+
+        let out_path = self.out_dir.join(temp_module_file_name(path, self.next_id));
+        self.next_id += 1;
+        self.outputs.insert(canonical, out_path.clone());
+
+        let transformed = match pretransformed {
+            Some(source) => source,
+            None => transform_spec(path)?,
+        };
+        let rewritten = rewrite_relative_test_imports(&transformed, path, self)
+            .with_context(|| format!("rewriting relative imports in {}", path.display()))?;
+
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&out_path, rewritten)
+            .with_context(|| format!("writing transformed test module {}", out_path.display()))?;
+        Ok(out_path)
+    }
+}
+
+fn temp_module_file_name(path: &Path, id: usize) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("module");
+    let safe: String = stem
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
+    let safe = safe.trim_matches('-');
+    let safe = if safe.is_empty() { "module" } else { safe };
+    format!("{id:04}-{safe}.mjs")
+}
+
+fn rewrite_relative_test_imports(
+    source: &str,
+    source_path: &Path,
+    emitter: &mut TempModuleGraphEmitter<'_>,
+) -> Result<String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .context("setting tree-sitter JavaScript language")?;
+    let tree = parser
+        .parse(source, None)
+        .context("parsing transformed test module")?;
+    let root = tree.root_node();
+
+    let mut replacements = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        let kind = child.kind();
+        if kind != "import_statement" && kind != "export_statement" {
+            continue;
+        }
+        let Some((start, end)) = first_module_string_range(&child) else {
+            continue;
+        };
+        let raw = &source[start..end];
+        let spec = strip_module_quotes(raw);
+        if !is_relative_or_absolute_specifier(&spec) {
+            continue;
+        }
+        let Some(target) = resolve_test_relative_module(source_path, &spec)? else {
+            continue;
+        };
+        let target_out = emitter.emit(&target, None)?;
+        let rewritten = serde_json::to_string(&path_to_file_url(&target_out))
+            .expect("file URL string serializes");
+        replacements.push((start, end, rewritten));
+    }
+
+    if replacements.is_empty() {
+        return Ok(source.to_string());
+    }
+
+    let mut out = String::with_capacity(source.len());
+    let mut last = 0usize;
+    for (start, end, replacement) in replacements {
+        out.push_str(&source[last..start]);
+        out.push_str(&replacement);
+        last = end;
+    }
+    out.push_str(&source[last..]);
+    Ok(out)
+}
+
+fn first_module_string_range(node: &tree_sitter::Node) -> Option<(usize, usize)> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "string" {
+            return Some((child.start_byte(), child.end_byte()));
+        }
+    }
+    None
+}
+
+fn strip_module_quotes(raw: &str) -> String {
+    raw.trim()
+        .trim_start_matches(['"', '\''])
+        .trim_end_matches(['"', '\''])
+        .to_string()
+}
+
+fn is_relative_or_absolute_specifier(spec: &str) -> bool {
+    spec.starts_with("./") || spec.starts_with("../") || spec.starts_with('/')
+}
+
+fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBuf>> {
+    let base = if spec.starts_with('/') {
+        PathBuf::from(spec)
+    } else {
+        let Some(parent) = from.parent() else {
+            return Ok(None);
+        };
+        parent.join(spec)
+    };
+
+    if base.is_file() {
+        return Ok(if is_test_source_module(&base) {
+            Some(base)
+        } else {
+            None
+        });
+    }
+
+    if matches!(
+        base.extension().and_then(|e| e.to_str()),
+        Some("js" | "jsx" | "mjs")
+    ) {
+        for ext in ["ts", "tsx"] {
+            let candidate = base.with_extension(ext);
+            if candidate.is_file() {
+                return Ok(Some(candidate));
+            }
+        }
+    }
+
+    if base.extension().is_none() {
+        for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
+            let candidate = base.with_extension(ext);
+            if candidate.is_file() {
+                return Ok(Some(candidate));
+            }
+        }
+        for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
+            let candidate = base.join(format!("index.{ext}"));
+            if candidate.is_file() {
+                return Ok(Some(candidate));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn is_test_source_module(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")
+    )
 }
 
 fn normalize_jet_test_virtual_imports(source: String) -> String {

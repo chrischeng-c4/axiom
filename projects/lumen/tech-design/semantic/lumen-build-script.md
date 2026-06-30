@@ -17,6 +17,8 @@ fill_sections: [text-source-unit, changes]
 
 ```bash
 #!/usr/bin/env bash
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-build-script.md#text-source-unit
+# CODEGEN-BEGIN
 set -euo pipefail
 
 usage() {
@@ -83,11 +85,9 @@ if [[ "$MODE" == "debug" ]]; then
   exit 0
 fi
 
-# lumen uses the shared workspace version (version.workspace = true), so the
-# bump lands in the root Cargo.toml — same convention as cap/vat/meter. The
-# version number is a shared monotonic counter; the tag lumen@<v> is what makes
-# this an independent lumen release.
-CURRENT_VERSION="$(grep -m1 '^version = "' Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
+# lumen owns its version in projects/lumen/Cargo.toml and releases
+# independently; the tag lumen@<v> is what triggers cross-platform binaries.
+CURRENT_VERSION="$(grep -m1 '^version = "' projects/lumen/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 
 NEW_PATCH=$((PATCH + 1))
@@ -104,14 +104,14 @@ fi
 NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
 
 echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" projects/lumen/Cargo.toml
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p lumen --bin lumen --features "otel relay-wal"
+cargo build --release -p lumen --bin lumen --features "otel operator relay-wal self-update issue"
 install_lumen release
 
 TAG="lumen@${NEW_VERSION}"
-git add Cargo.toml Cargo.lock projects/lumen
+git add Cargo.lock projects/lumen
 git commit -m "release(lumen): ${TAG}"
 git tag -a "$TAG" -m "Release ${TAG}"
 
@@ -119,6 +119,7 @@ echo ""
 echo "Build complete. lumen ${TAG} installed and tagged."
 echo "Push the tag to trigger cross-platform release binaries:"
 echo "  git push origin ${TAG}"
+# CODEGEN-END
 ```
 
 ## Changes

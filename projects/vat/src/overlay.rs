@@ -117,6 +117,20 @@ fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
         let target = dst.join(rel);
         if entry.file_type().is_dir() {
             std::fs::create_dir_all(&target)?;
+        } else if entry.file_type().is_symlink() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let link_target = std::fs::read_link(entry.path())
+                .with_context(|| format!("read symlink {}", entry.path().display()))?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&link_target, &target)
+                .with_context(|| format!("copy symlink {}", target.display()))?;
+            #[cfg(not(unix))]
+            bail!(
+                "copy symlink unsupported on this platform: {}",
+                entry.path().display()
+            );
         } else if entry.file_type().is_file() {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -243,6 +257,33 @@ mod tests {
         assert!(
             !dst.join(".vat").exists(),
             "repo-local vat state must never be copied into a vat rootfs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_fallback_preserves_symlinks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".venv/bin")).expect("venv dir");
+        std::fs::write(repo.join("python3.12-real"), "python").expect("real file");
+        std::os::unix::fs::symlink("../../python3.12-real", repo.join(".venv/bin/python"))
+            .expect("symlink");
+
+        let dst = repo.join(".vat/vats/new/rootfs");
+        clone_tree(&repo, &dst).expect("clone tree");
+
+        let copied = dst.join(".venv/bin/python");
+        assert!(
+            std::fs::symlink_metadata(&copied)
+                .expect("copied link metadata")
+                .file_type()
+                .is_symlink(),
+            "recursive fallback must preserve symlink entries"
+        );
+        assert_eq!(
+            std::fs::read_link(&copied).expect("copied link target"),
+            Path::new("../../python3.12-real")
         );
     }
 }

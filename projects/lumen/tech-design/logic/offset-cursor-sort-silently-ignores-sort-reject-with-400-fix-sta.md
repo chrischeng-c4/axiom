@@ -126,6 +126,28 @@ requirementDiagram
     test_offset_sort_rejected - verifies -> R1
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Reject unsupported offset-cursor plus sort combinations before they can silently ignore the sort."
+  - path: projects/lumen/src/api.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Map unsupported sort planner errors to HTTP 400 responses."
+  - path: projects/lumen/tests/api_e2e.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Verify unsupported sort shapes return a client error instead of a successful misordered response."
+```
+
 # Reviews
 
 ### Review 1

@@ -7,17 +7,20 @@ usage() {
   cat <<'EOF'
 Usage: projects/cap/build.sh <debug|release>
 
-debug    Build cap and install target/debug/cap to ~/.cargo/bin/cap.
+debug    Build cap and install target/debug/{cap,cap-fast,cap-full}.
 release  Build/install cap, create a release commit, and print the tag to push after git:land.
+
+Set CAP_INSTALL to choose the install directory; default is ~/.cargo/bin.
 EOF
 }
 
 fail_hint() {
   local mode="$1"
+  local install_dir="${CAP_INSTALL:-$HOME/.cargo/bin}"
   echo ""
   echo "Build failed."
   echo "Retry with: projects/cap/build.sh ${mode}"
-  echo "Verify with: ~/.cargo/bin/cap --version"
+  echo "Verify with: ${install_dir}/cap --version"
 }
 
 MODE="${1:-}"
@@ -45,6 +48,8 @@ esac
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 . scripts/project-build-lib.sh
+
+INSTALL_DIR="${CAP_INSTALL:-$HOME/.cargo/bin}"
 
 trap 'fail_hint "$MODE"' ERR
 
@@ -80,14 +85,21 @@ install_cap() {
     "${cflags[@]}" \
     projects/cap/src/cap_fast_frontend.c \
     -o "target/${profile}/cap-fast"
-  install -m 755 "target/${profile}/cap" "$HOME/.cargo/bin/cap"
-  install -m 755 "target/${profile}/cap-fast" "$HOME/.cargo/bin/cap-fast"
-  install -m 755 "target/${profile}/cap-full" "$HOME/.cargo/bin/cap-full"
-  codesign -s - -f --options runtime "$HOME/.cargo/bin/cap" 2>/dev/null || true
-  codesign -s - -f --options runtime "$HOME/.cargo/bin/cap-fast" 2>/dev/null || true
-  codesign -s - -f "$HOME/.cargo/bin/cap-full" 2>/dev/null || true
-  echo "Installed: $("$HOME/.cargo/bin/cap" --version 2>/dev/null || echo 'cap')"
-  echo "Verify with: ~/.cargo/bin/cap --version"
+  mkdir -p "$INSTALL_DIR"
+  install -m 755 "target/${profile}/cap" "$INSTALL_DIR/cap"
+  install -m 755 "target/${profile}/cap-fast" "$INSTALL_DIR/cap-fast"
+  install -m 755 "target/${profile}/cap-full" "$INSTALL_DIR/cap-full"
+  codesign -s - -f --options runtime "$INSTALL_DIR/cap" 2>/dev/null || true
+  codesign -s - -f --options runtime "$INSTALL_DIR/cap-fast" 2>/dev/null || true
+  codesign -s - -f "$INSTALL_DIR/cap-full" 2>/dev/null || true
+  echo "Installed: $("$INSTALL_DIR/cap" --version 2>/dev/null || echo 'cap')"
+  echo "Verify with: ${INSTALL_DIR}/cap --version"
+  local active_cap
+  active_cap="$(command -v cap 2>/dev/null || true)"
+  if [[ -n "$active_cap" && "$active_cap" != "$INSTALL_DIR/cap" ]]; then
+    echo "Note: active cap on PATH is ${active_cap}; it shadows ${INSTALL_DIR}/cap."
+    echo "      Re-run with CAP_INSTALL=$(dirname "$active_cap") to update that entry."
+  fi
 }
 
 if [[ "$MODE" == "debug" ]]; then

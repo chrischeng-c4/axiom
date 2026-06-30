@@ -46,33 +46,33 @@ agent integration remain first-class domain roots.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| CLI Interface | 4143 | implemented | passing | conformance | not_ready | mandatory baseline: serve/spec/llm/k8s/operator command surfaces |
-| Competitive Search Feature Parity | - | implemented | auditing | conformance | not_ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
-| Competitive Search Performance | - | implemented | auditing | conformance | not_ready | mandatory baseline: pg/OpenSearch comparisons and ratchets exist; isolated-host repeatability remains open |
-| Long-Running Stability | - | implemented | auditing | dogfood | not_ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
-| Security Hardening | - | implemented | auditing | negative | not_ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
-| HTTP/2 API List | 4143 | implemented | passing | conformance | not_ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
-| Search Core | - | implemented | auditing | conformance | not_ready | domain: pure search index returning ranked external_ids only |
-| Lexical Search | - | implemented | passing | conformance | not_ready | domain: BM25 and analyzer-backed text search |
-| Exact & Filter Search | - | implemented | passing | conformance | not_ready | domain: keyword, number, set, boolean, range, and sorted filters |
-| Vector & Hash Search | 4141 | implemented | passing | conformance | not_ready | domain: CPU vector kNN, filtered kNN, and Hamming hash search |
-| Hybrid Search | 4139 | implemented | passing | conformance | not_ready | domain: lexical+semantic RRF fusion |
-| Duplicate & Nested Search | - | implemented | passing | conformance | not_ready | domain: duplicates, group/has_child/collapse, exists, and CJK substring cases |
-| Schema & Ops Lifecycle | - | implemented | passing | conformance | not_ready | domain: collection DDL, drop-field drain, reindex/replay, stats, and metadata |
-| Elastic Scale | - | implemented | passing | conformance | not_ready | domain: RAM-hot/disk-all columnar mmap segment tier |
-| Backup & Restore | - | implemented | passing | conformance | not_ready | domain: RDB snapshots and bounded cold start |
-| Observability | - | implemented | passing | conformance | not_ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
-| Kubernetes-Native Deployment | - | implemented | auditing | dogfood | not_ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
-| Agent Offline Integration | 4143 | implemented | passing | conformance | not_ready | domain: installed binary self-onboards agents with spec and llm topics |
+| CLI Interface | 4143 | implemented | verified | conformance | ready | mandatory baseline: serve/spec/llm/dockerfile/k8s command surfaces |
+| Competitive Search Feature Parity | - | implemented | verified | conformance | ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
+| Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: pg/OpenSearch comparisons and ratchets pass in vat |
+| Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
+| Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
+| HTTP/2 API List | 4143 | implemented | verified | conformance | ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
+| Search Core | - | implemented | verified | conformance | ready | domain: pure search index returning ranked external_ids only |
+| Lexical Search | - | implemented | verified | conformance | ready | domain: BM25 and analyzer-backed text search |
+| Exact & Filter Search | - | implemented | verified | conformance | ready | domain: keyword, number, set, boolean, range, and sorted filters |
+| Vector & Hash Search | 4141 | implemented | verified | conformance | ready | domain: CPU vector kNN, filtered kNN, and Hamming hash search |
+| Hybrid Search | 4139 | implemented | verified | conformance | ready | domain: lexical+semantic RRF fusion |
+| Duplicate & Nested Search | - | implemented | verified | conformance | ready | domain: duplicates, group/has_child/collapse, exists, and CJK substring cases |
+| Schema & Ops Lifecycle | - | implemented | verified | conformance | ready | domain: collection DDL, drop-field drain, reindex/replay, stats, and metadata |
+| Elastic Scale | - | implemented | verified | conformance | ready | domain: RAM-hot/disk-all columnar mmap segment tier |
+| Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
+| Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
+| Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
+| Agent Offline Integration | 4143 | implemented | verified | conformance | ready | domain: installed binary self-onboards agents with spec and llm topics |
 
 ### CLI Interface
 
 ID: cli-interface
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; CLI: `lumen spec` - offline OpenAPI/JSON-schema contract.; CLI: `lumen llm` - offline agent integration topics.; CLI: `lumen k8s` and `lumen operator` - manifest/operator-facing surfaces.; HTTP: `POST /index`, `POST /search`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served API surface.
+Surfaces: CLI: `lumen serve` - long-running search service process.; CLI: `lumen spec` - offline OpenAPI/JSON-schema contract.; CLI: `lumen llm` - offline agent integration topics.; CLI: `lumen dockerfile render` - source/release image artifacts.; CLI: `lumen k8s crd render`, `lumen k8s operator render|run`, and `lumen k8s instance render` - cluster API, control-plane, and app-namespace deployment surfaces.; HTTP: `POST /index`, `POST /search`, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served API surface.
 EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline CLI contract; API probe/OpenAPI/metrics evidence is tracked by named api_e2e subtests because the full api_e2e suite currently has an unrelated unsupported-sort regression
 Root WI: 4143
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Expose lumen as one long-running binary with stable service, schema, agent,
@@ -82,11 +82,11 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| service-process-interface | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs; projects/lumen/tests/api_e2e.rs (health_and_ready, openapi_spec_served, metrics_exposes_prometheus_text) |
+| service-process-interface | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>projects/lumen/tests/api_e2e.rs |
 | lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | query-shape-cookbook-field-analyzer-catalog | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
-| deployment-operator-command-surface | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs; projects/lumen/src/operator |
+| deployment-operator-command-surface | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>projects/lumen/src/operator |
 
 ### Competitive Search Feature Parity
 
@@ -95,7 +95,7 @@ Type: RuntimeTool
 Surfaces: HTTP: `POST /index`, `POST /search` - OLTP-derived search API.; Rust API: lumen engine/query planner - search execution over caller-owned external IDs.; CLI: `lumen serve` - hosts the search API.
 EC Dimensions: behavior: `cargo test -p lumen` - search planner, field type, query, and API conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Lumen covers the search-side replacement breadth expected from this runtime
@@ -106,39 +106,40 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| search-feature-breadth | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs; projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/tests/collapse_nested.rs |
+| search-feature-breadth | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs<br>projects/lumen/tests/vector_e2e.rs<br>projects/lumen/tests/hash_hamming.rs<br>projects/lumen/tests/collapse_nested.rs |
 | query-planner-boolean-eval-roaring-postings | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
-| schema-and-metadata-breadth | epic | - | implemented | passing | conformance | projects/lumen/tests/drop_field_e2e.rs; projects/lumen/tests/reindex_stream_e2e.rs; projects/lumen/tests/stats_metadata_e2e.rs |
+| schema-and-metadata-breadth | epic | - | implemented | passing | conformance | projects/lumen/tests/drop_field_e2e.rs<br>projects/lumen/tests/reindex_stream_e2e.rs<br>projects/lumen/tests/stats_metadata_e2e.rs |
 
 ### Competitive Search Performance
 
 ID: competitor-performance
 Type: RuntimeTool
-Surfaces: Bench: `projects/lumen/scripts/bench_vs_db.py` - pg/OpenSearch/MongoDB comparison.; Rig/Meter: `projects/lumen/vat.toml` and EC efficiency cube - load and resource attribution.; HTTP: `POST /search` - performance-relevant search surface.
+Surfaces: Bench: `projects/lumen/scripts/bench_vs_db.py` - pg/OpenSearch/MongoDB comparison.; Bench: `lumen-bench run --types sorted_page_deep` - filter+sort deep-page keyset regression cell.; Rig/Meter: `projects/lumen/vat.toml` and EC efficiency cube - load and resource attribution.; HTTP: `POST /search` - performance-relevant search surface.
 EC Dimensions: efficiency: `rig + meter + arena` - latency, throughput, RSS, footprint, and competitor comparison; behavior: `cargo test -p lumen --test perf_gate --test perf_gate_vs_db` - perf gate conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Keep lumen's speed and footprint claims tied to ratcheted tests and competitor
 comparisons against Postgres/OpenSearch/MongoDB instead of local-only anecdotes.
 Gate Inventory:
-- projects/lumen/tests/perf_gate.rs; projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json; projects/lumen/scripts/bench_vs_db.py; projects/arena/examples/lumen-vs-pg.toml; projects/arena/examples/lumen-vs-opensearch.toml
+- projects/lumen/tests/perf_gate.rs; projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json; projects/lumen/src/bin/lumen-bench.rs; projects/lumen/tests/rig/cases/load/data_table_browse.toml; projects/lumen/scripts/bench_vs_db.py; projects/arena/examples/lumen-vs-pg.toml; projects/arena/examples/lumen-vs-opensearch.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | perf-gate-envelope-absolute-latency-throughput-floors | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate.rs |
-| competitive-regression-gate-beat-pg-os-per-cell-ratcheting | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json |
-| external-pg-and-opensearch-arena-comparison | epic | - | implemented | planned | dogfood | projects/arena/examples/lumen-vs-pg.toml; projects/arena/examples/lumen-vs-opensearch.toml |
+| competitive-regression-gate-beat-pg-os-per-cell-ratcheting | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs<br>projects/lumen/tests/perf-baseline.json |
+| depth-invariant-filter-sort-pagination | change | 10 | implemented | passing | conformance | projects/lumen/src/bin/lumen-bench.rs<br>projects/lumen/tests/perf_gate_vs_db.rs<br>projects/lumen/tests/rig/cases/load/data_table_browse.toml |
+| external-pg-and-opensearch-arena-comparison | epic | - | implemented | passing | dogfood | projects/lumen/vat.toml<br>projects/lumen/tests/perf_gate_vs_db.rs<br>projects/lumen/tests/perf-baseline.json<br>projects/arena/examples/lumen-vs-pg.toml<br>projects/arena/examples/lumen-vs-opensearch.toml |
 
 ### Long-Running Stability
 
 ID: long-running-stability
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s` and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Relay WAL - rebuildable derived-index mutation stream.
+Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s`, `lumen k8s crd/operator/instance`, and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Relay WAL - rebuildable derived-index mutation stream.
 EC Dimensions: stability: `rig` - resilience, endurance, load, and recovery scenarios; behavior: `projects/lumen/scripts/kind-e2e.sh` - k8s/operator dogfood gate
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Run as a long-lived derived-index service that rebuilds from the log, survives
@@ -149,24 +150,24 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| log-fan-out-rebuild-from-log | epic | - | implemented | passing | dogfood | projects/lumen/tech-design/interfaces/rest/relay-wal.md; projects/lumen/src/wal_relay.rs |
+| log-fan-out-rebuild-from-log | epic | - | implemented | passing | dogfood | projects/lumen/tech-design/interfaces/rest/relay-wal.md<br>projects/lumen/src/wal_relay.rs |
 | search-p99-survives-fault-and-recovers | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/resilience |
-| graceful-degradation-under-overload | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/load; projects/lumen/tests/rig/config/pins |
+| graceful-degradation-under-overload | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/load<br>projects/lumen/tests/rig/config/pins |
 | no-fd-socket-thread-leak | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/endurance |
 | no-latency-drift-over-soak | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/endurance |
 | kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | projects/lumen/k8s |
-| lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator; projects/lumen/tests/operator_render.rs |
+| lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
 | stateless-serving-rebuild-from-log-no-pvc | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
-| meta-api-health-ready-metrics-version | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs (health_and_ready, metrics_exposes_prometheus_text) |
+| meta-api-health-ready-metrics-version | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 
 ### Security Hardening
 
 ID: security-hardening
-Type: RuntimeTool
+Type: SecurityTool
 Surfaces: HTTP: lumen API - bearer-token auth, RBAC, and query boundary.; Peer transport: rustls/mTLS config - long-running cluster transport security.; Guard: future negative security inventory.
 EC Dimensions: security: `guard` - auth/RBAC/query-safety/security findings gate; behavior: `cargo test -p lumen --test auth_e2e --test authz_matrix_e2e` - security behavior conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance, negative
 Promise:
 Keep the long-running search service safe by enforcing API auth/RBAC, preserving
@@ -181,7 +182,7 @@ Gate Inventory:
 | role-based-authz-matrix-per-route | epic | - | implemented | passing | conformance | projects/lumen/tests/authz_matrix_e2e.rs |
 | adversarial-query-safety | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
 | score-confidentiality | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
-| tls-rustls | epic | - | implemented | passing | smoke | cargo test -p lumen tls; projects/lumen/src/tls.rs |
+| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen tls`<br>projects/lumen/src/tls.rs |
 
 ### HTTP/2 API List
 
@@ -190,7 +191,7 @@ Type: Service
 Surfaces: HTTP: `POST /index`, `POST /search`, collection/schema/stats/reindex/replay routes, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - concise HTTP/2 API list for clients and operators.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline API/schema inventory.
 EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline API/schema inventory; behavior: named `api_e2e` subtests - served OpenAPI, health, readiness, and metrics smoke
 Root WI: 4143
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Publish Lumen's supported HTTP/2 API surface as a compact endpoint inventory
@@ -202,7 +203,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | client-search-and-index-route-list | epic | - | implemented | passing | conformance | projects/lumen/README.md#api-surface; projects/lumen/tests/api_e2e.rs |
-| ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs (health_and_ready, metrics_exposes_prometheus_text) |
+| ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 | offline-spec-openapi-list | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 
 ### Search Core
@@ -212,7 +213,7 @@ Type: Service
 Surfaces: HTTP: `POST /index` + `POST /search` - client API for indexing caller-owned records and querying ranked external_id results.; CLI: `lumen serve` - search service process.
 EC Dimensions: behavior: `cargo test -p lumen --test planner_diff` - query planner conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Input a query with relevance, filters, and sort, and output ranked/sorted
@@ -223,7 +224,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | query-planner-boolean-eval-roaring-postings | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
-| filter-sort-early-termination | epic | - | implemented | passing | conformance | projects/lumen/scripts/bench_vs_db.py |
+| filter-sort-early-termination | epic | - | implemented | passing | conformance | projects/lumen/scripts/bench_vs_db.py<br>projects/lumen/src/bin/lumen-bench.rs<br>projects/lumen/tests/perf_gate_vs_db.rs |
 
 ### Lexical Search
 
@@ -232,7 +233,7 @@ Type: Service
 Surfaces: HTTP: `POST /search` - text BM25 query surface.; CLI: `lumen serve` - analyzer-backed planner.
 EC Dimensions: behavior: `cargo test -p lumen` - BM25 analyzer/ranking conformance; efficiency: `meter` - BM25 search profile
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 BM25 ranking over `text`, with tokenization built in through whitespace, ngram,
@@ -242,7 +243,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| bm25-ranking-and-analyzers | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/src/storage.rs |
+| bm25-ranking-and-analyzers | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs<br>projects/lumen/src/storage.rs |
 
 ### Exact & Filter Search
 
@@ -251,7 +252,7 @@ Type: Service
 Surfaces: HTTP: `POST /search` - keyword, number, set, boolean, range, and sort filters.; CLI: `lumen serve` - exact/filter planner.
 EC Dimensions: behavior: `cargo test -p lumen` - term/range/set planner conformance; efficiency: `meter` - filter and range profile
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Support keyword terms, number ranges, set membership, boolean composition, and
@@ -262,7 +263,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | term-range-set-early-termination | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs |
-| wide-range-filter-index-on-disk-sorted-value-range | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/src/storage.rs |
+| wide-range-filter-index-on-disk-sorted-value-range | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs<br>projects/lumen/src/storage.rs |
 
 ### Vector & Hash Search
 
@@ -271,7 +272,7 @@ Type: Service
 Surfaces: HTTP: `POST /search` - vector kNN, filtered kNN, and hash Hamming query surface.; CLI: `lumen serve` - vector/hash planner.
 EC Dimensions: behavior: `cargo test -p lumen --test vector_e2e --test hash_hamming` - vector/hash conformance; efficiency: `meter` - kNN profile
 Root WI: 4141
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Index caller-owned embeddings and perceptual/structural hashes, then answer CPU
@@ -293,7 +294,7 @@ Type: Service
 Surfaces: HTTP: `POST /search` - RRF hybrid lexical+semantic query surface.; CLI: `lumen serve` - hybrid planner.
 EC Dimensions: behavior: `cargo test -p lumen --test hybrid_rrf` - RRF fusion conformance
 Root WI: 4139
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Fuse lexical BM25 and semantic vector rankings with Reciprocal Rank Fusion,
@@ -312,7 +313,7 @@ Type: Service
 Surfaces: HTTP: `POST /search` - duplicate, group, has_child, collapse, exists, and CJK substring query surface.; CLI: `lumen serve` - nested/data-table planner.
 EC Dimensions: behavior: `cargo test -p lumen --test collapse_nested` - nested planner and data-table conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Cover Airtable-style data tables and duplicate/group use cases with
@@ -333,7 +334,7 @@ Type: Service
 Surfaces: HTTP: collection DDL, drop-field, reindex, replay, stats, and metadata API routes.; CLI: `lumen serve` - schema/ops lifecycle endpoints.
 EC Dimensions: behavior: `cargo test -p lumen --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e` - schema and ops lifecycle conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Provide the operational surface beyond search: collection DDL, online
@@ -343,7 +344,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| schema-ddl-drop-field-drain | epic | - | implemented | passing | conformance | projects/lumen/tests/drop_field_e2e.rs; projects/lumen/tests/drop_drain_e2e.rs |
+| schema-ddl-drop-field-drain | epic | - | implemented | passing | conformance | projects/lumen/tests/drop_field_e2e.rs<br>projects/lumen/tests/drop_drain_e2e.rs |
 | reindex-replay-stream | epic | - | implemented | passing | conformance | projects/lumen/tests/reindex_stream_e2e.rs |
 | stats-metadata | epic | - | implemented | passing | conformance | projects/lumen/tests/stats_metadata_e2e.rs |
 
@@ -354,7 +355,7 @@ Type: Service
 Surfaces: Storage: columnar mmap segment tier - RAM=hot/disk=all storage path.; CLI: `lumen serve` - segment-backed persistence mode.
 EC Dimensions: behavior: `cargo test -p lumen --test disk_scale_proof` - disk/RAM boundedness and reopen conformance; efficiency: `meter` - RSS/footprint profile
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Keep hot working sets in RAM while the full indexed corpus lives on disk-backed
@@ -364,7 +365,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log | epic | - | implemented | passing | conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/src/storage.rs |
+| ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log | epic | - | implemented | passing | conformance | projects/lumen/tests/disk_scale_proof.rs<br>projects/lumen/src/storage.rs |
 
 ### Backup & Restore
 
@@ -373,7 +374,7 @@ Type: Service
 Surfaces: CLI: `lumen serve` - snapshot restore and periodic snapshot loop.; Rust API: `LocalFsRdbStore` - local snapshot sink implementation.
 EC Dimensions: behavior: `cargo test -p lumen --test backup_restore_e2e` - snapshot/restore conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 RDB snapshots to a pluggable sink as a cold-start baseline; a starting node
@@ -393,7 +394,7 @@ Type: Devops
 Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint.; K8s: ServiceMonitor + PrometheusRule manifests.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.
 EC Dimensions: behavior: `cargo test -p lumen` - metrics endpoint and observability wiring conformance
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 Expose metrics and telemetry surfaces for long-running operations: Prometheus
@@ -404,9 +405,9 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| prometheus-metrics-endpoint | epic | - | implemented | passing | smoke | projects/lumen/tests/api_e2e.rs (metrics_exposes_prometheus_text) |
+| prometheus-metrics-endpoint | epic | - | implemented | passing | smoke | projects/lumen/tests/api_e2e.rs |
 | servicemonitor-prometheusrule-bundle | epic | - | implemented | passing | smoke | projects/lumen/k8s/components/observability |
-| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs; projects/lumen/compose.yaml |
+| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>projects/lumen/compose.yaml |
 
 ### Kubernetes-Native Deployment
 
@@ -415,7 +416,7 @@ Type: Devops
 Surfaces: K8s: `projects/lumen/k8s` - kustomize base, overlays, HPA, PDB, ServiceMonitor.; K8s: `Lumen` CRD + kube-rs operator - declarative reconcile surface.
 EC Dimensions: behavior: `cargo test -p lumen --features operator --test operator_render` - offline operator render conformance; stability: `projects/lumen/scripts/kind-e2e.sh` - live operator dogfood
 Root WI: -
-Status: auditing
+Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Ship both namespaced kustomize deployment artifacts and a CRD/operator path for
@@ -427,7 +428,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | projects/lumen/k8s |
-| lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator; projects/lumen/tests/operator_render.rs |
+| lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
 | stateless-serving-rebuild-from-log-no-pvc | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 
 ### Agent Offline Integration
@@ -437,7 +438,7 @@ Type: AgentFirst
 Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm outline` + `lumen llm workflow` + `lumen llm integration` + `lumen llm quickstart` + `lumen llm recipes` - offline self-description and agent onboarding commands.
 EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline schema and LLM topic conformance
 Root WI: 4143
-Status: auditing
+Status: verified
 Required Verification: conformance
 Promise:
 An installed `lumen` binary self-onboards an agent offline: `lumen spec` emits

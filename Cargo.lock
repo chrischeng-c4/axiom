@@ -1338,11 +1338,12 @@ checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
 
 [[package]]
 name = "cap"
-version = "0.3.61"
+version = "0.3.62"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "cli-std",
  "dirs",
  "libc",
  "serde",
@@ -5343,7 +5344,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jet"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -6308,7 +6309,7 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -6355,6 +6356,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "service-auth",
+ "service-http",
  "smallvec",
  "tempfile",
  "thiserror 2.0.18",
@@ -12859,7 +12862,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vat"
-version = "0.3.63"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-stream",

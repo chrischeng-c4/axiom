@@ -1,9 +1,10 @@
 // <HANDWRITE gap="missing-generator:logic:d172c696" tracker="standardize-gap-projects-jet-src-bundler-dts-rs" reason="New isolatedDeclarations-style declaration emitter: parse a library entry with tree-sitter-typescript, walk top-level exported declarations, emit type/interface/enum decls verbatim and `export declare` signatures for explicitly-typed exported values, error on untyped exports, and return the assembled `<entry>.d.ts` text (external type imports preserved).">
 //! isolatedDeclarations-style `.d.ts` emission for `jet build --lib`.
 //!
-//! Mirrors the TypeScript 5.5 `isolatedDeclarations` model: declarations are
-//! emitted from the *explicit* types at the export boundary, never from full
-//! type inference. Per library entry we:
+//! Mirrors the TypeScript 5.5 `isolatedDeclarations` model where practical:
+//! declarations are emitted from explicit export-boundary types or from a small
+//! deterministic set of local return-expression inferences, never from a whole
+//! program type-check. Per library entry we:
 //!
 //!   1. tree-sitter parse the entry source (TSX grammar, a superset that also
 //!      parses plain TS/JS),
@@ -15,7 +16,8 @@
 //!      `#private` members dropped, `async` stripped from ambient methods,
 //!   4. for exported values (`export const`, `export function`) emit an
 //!      `export declare`-style signature with the body dropped — requiring an
-//!      explicit type annotation (isolatedDeclarations: error otherwise),
+//!      explicit type annotation or a locally inferable return type
+//!      (isolatedDeclarations: error otherwise),
 //!   5. preserve `import`/`export … from "pkg"` re-exports so external type
 //!      references still resolve,
 //!   6. assemble and return the entry's `.d.ts` text.
@@ -24,8 +26,10 @@
 //! `// TODO(#171 follow-up)` marker rather than crashing the build.
 //!
 //! @issue #171
+//! @issue #722
 
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
 use tree_sitter::Node;
 
 /// Emit the `.d.ts` text for one library entry's source.
@@ -34,9 +38,10 @@ use tree_sitter::Node;
 /// returned string is the full `.d.ts` content (imports preserved, exported
 /// declarations reduced to type-only signatures).
 ///
-/// Errors (isolatedDeclarations contract): an exported `const`/`let`/`var` or
-/// `function` that lacks an explicit type annotation cannot have its type
-/// emitted without inference, so this returns `Err`.
+/// Errors (isolatedDeclarations contract): an exported `const`/`let`/`var` that
+/// lacks an explicit type annotation, or an exported function/member whose
+/// return type is neither explicit nor locally inferable, cannot have its type
+/// emitted safely, so this returns `Err`.
 pub fn emit_declarations(entry_source: &str) -> Result<String> {
     let mut parser = tree_sitter::Parser::new();
     let language: tree_sitter::Language = tree_sitter_typescript::LANGUAGE_TSX.into();
@@ -103,7 +108,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
             }
             "class_declaration" | "abstract_class_declaration" => {
                 let is_abstract = child.kind() == "abstract_class_declaration";
-                let decl = emit_class_declaration(child, source);
+                let decl = emit_class_declaration(child, source)?;
                 // Ambient classes are valid as `export declare class` /
                 // `export declare abstract class`; a default-exported class is
                 // emitted as `export default class` (no `declare` — TS forbids
@@ -276,9 +281,10 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
 /// type) with the body dropped.
 ///
 /// isolatedDeclarations: an exported function should declare its return type
-/// explicitly. We do not hard-error on a missing return type (a `void`-bodied
-/// helper is common); instead the signature is emitted as written and the
-/// return annotation, if present, is preserved verbatim.
+/// explicitly. For compatibility with `tsc --declaration` on common library
+/// shapes, the emitter also infers a small set of local return expressions
+/// (`number`, `string`, `boolean`, primitive unions, and `void`) instead of
+/// silently turning them into implicit `any`.
 fn emit_function_signature(node: Node, source: &str) -> Result<String> {
     let name = node
         .child_by_field_name("name")
@@ -293,10 +299,18 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
         .child_by_field_name("parameters")
         .map(|n| node_text(n, source))
         .unwrap_or("()");
-    let ret = node
-        .child_by_field_name("return_type")
-        .map(|n| node_text(n, source))
-        .unwrap_or("");
+    let ret = match node.child_by_field_name("return_type") {
+        Some(n) => node_text(n, source).to_string(),
+        None => infer_function_return_type(node, source)?
+            .map(|ty| format!(": {ty}"))
+            .ok_or_else(|| {
+                anyhow!(
+                    "dts: isolatedDeclarations error — exported function `{name}` \
+                     lacks an explicit or locally inferable return type; add \
+                     `: <Type>` so its declaration can be emitted safely"
+                )
+            })?,
+    };
 
     Ok(format!("{name}{type_params}{params}{ret}"))
 }
@@ -318,7 +332,7 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
 ///   * `private` / `protected` accessibility members are dropped, as are
 ///     `#private` fields and methods (not part of the public ambient surface
 ///     for an isolatedDeclarations-style emit).
-fn emit_class_declaration(node: Node, source: &str) -> String {
+fn emit_class_declaration(node: Node, source: &str) -> Result<String> {
     let name = node
         .child_by_field_name("name")
         .map(|n| node_text(n, source))
@@ -346,55 +360,59 @@ fn emit_class_declaration(node: Node, source: &str) -> String {
     let Some(body) = node.child_by_field_name("body") else {
         // No body field — emit an empty ambient class shape.
         header.push_str(" {\n}");
-        return header;
+        return Ok(header);
     };
 
     let mut members = String::new();
     let mut cursor = body.walk();
     for member in body.named_children(&mut cursor) {
-        if let Some(line) = reduce_class_member(member, source) {
+        if let Some(line) = reduce_class_member(member, source)? {
             members.push_str("    ");
             members.push_str(&line);
             members.push('\n');
         }
     }
 
-    if members.is_empty() {
+    let decl = if members.is_empty() {
         format!("{header} {{\n}}")
     } else {
         format!("{header} {{\n{members}}}")
-    }
+    };
+    Ok(decl)
 }
 
 /// Reduce one class-body member to its ambient signature line (without the
 /// trailing newline / leading indentation), or `None` when the member is
 /// dropped (`private` / `protected` / `#private`, or an unreducible shape).
-fn reduce_class_member(node: Node, source: &str) -> Option<String> {
-    match node.kind() {
+fn reduce_class_member(node: Node, source: &str) -> Result<Option<String>> {
+    let line = match node.kind() {
         "method_definition" => reduce_method(node, source),
         "public_field_definition" => reduce_field(node, source),
         // index signatures (`[key: string]: T;`) are already declaration-only.
-        "index_signature" => Some(format!(
+        "index_signature" => Ok(Some(format!(
             "{};",
             node_text(node, source).trim_end_matches(';')
-        )),
+        ))),
         // Static initialization blocks, decorators-only members, etc. carry no
         // public type surface — drop them.
-        _ => None,
-    }
+        _ => Ok(None),
+    }?;
+    Ok(line)
 }
 
 /// Reduce a `method_definition` to a signature line. Drops the body and
 /// `async`; keeps `static` / `get` / `set` / `readonly` modifiers.
-fn reduce_method(node: Node, source: &str) -> Option<String> {
+fn reduce_method(node: Node, source: &str) -> Result<Option<String>> {
     // `#private` methods are never part of the public surface.
-    let name_node = node.child_by_field_name("name")?;
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
     if name_node.kind() == "private_property_identifier" {
-        return None;
+        return Ok(None);
     }
     // `private` / `protected` members are dropped from the ambient surface.
     if has_dropped_accessibility(node, source) {
-        return None;
+        return Ok(None);
     }
 
     let name = node_text(name_node, source);
@@ -435,24 +453,431 @@ fn reduce_method(node: Node, source: &str) -> Option<String> {
         .child_by_field_name("parameters")
         .map(|n| node_text(n, source))
         .unwrap_or("()");
-    let ret = node
-        .child_by_field_name("return_type")
-        .map(|n| node_text(n, source))
-        .unwrap_or("");
+    let is_constructor = name == "constructor";
+    let is_setter = has_child_kind(node, "set");
+    let ret = match node.child_by_field_name("return_type") {
+        Some(n) => node_text(n, source).to_string(),
+        None if is_constructor || is_setter => String::new(),
+        None => infer_function_return_type(node, source)?
+            .map(|ty| format!(": {ty}"))
+            .ok_or_else(|| {
+                anyhow!(
+                    "dts: isolatedDeclarations error — exported class member `{name}` \
+                     lacks an explicit or locally inferable return type; add \
+                     `: <Type>` so its declaration can be emitted safely"
+                )
+            })?,
+    };
 
-    Some(format!("{modifiers}{name}{optional}{params}{ret};"))
+    Ok(Some(format!("{modifiers}{name}{optional}{params}{ret};")))
+}
+
+/// Infer a safe return type for a function-like node from its local body. This
+/// is intentionally bounded: it handles primitive literal returns, typed
+/// parameter identifiers, template strings, and arithmetic/string/boolean
+/// binary expressions. Unknown shapes return `None`, keeping the build
+/// fail-loud instead of emitting `any`.
+fn infer_function_return_type(node: Node, source: &str) -> Result<Option<String>> {
+    let param_types = node
+        .child_by_field_name("parameters")
+        .map(|n| parse_parameter_type_map(node_text(n, source)))
+        .unwrap_or_default();
+    let Some(body) = node
+        .child_by_field_name("body")
+        .or_else(|| find_child_by_kind(node, "statement_block"))
+    else {
+        return Ok(None);
+    };
+
+    let mut returns = Vec::new();
+    collect_return_statement_types(body, source, &param_types, &mut returns);
+    if returns.is_empty() {
+        return Ok(Some("void".to_string()));
+    }
+    union_return_types(returns)
+}
+
+fn collect_return_statement_types(
+    node: Node,
+    source: &str,
+    param_types: &HashMap<String, String>,
+    out: &mut Vec<Option<String>>,
+) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "return_statement" => out.push(infer_return_statement_type(child, source, param_types)),
+            kind if nested_return_scope(kind) => {}
+            _ => collect_return_statement_types(child, source, param_types, out),
+        }
+    }
+}
+
+fn nested_return_scope(kind: &str) -> bool {
+    matches!(
+        kind,
+        "function_declaration"
+            | "generator_function_declaration"
+            | "function"
+            | "function_expression"
+            | "generator_function"
+            | "arrow_function"
+            | "method_definition"
+            | "class_declaration"
+            | "abstract_class_declaration"
+            | "class"
+    )
+}
+
+fn infer_return_statement_type(
+    node: Node,
+    source: &str,
+    param_types: &HashMap<String, String>,
+) -> Option<String> {
+    let text = node_text(node, source).trim();
+    let expr = text
+        .strip_prefix("return")
+        .unwrap_or(text)
+        .trim()
+        .trim_end_matches(';')
+        .trim();
+    if expr.is_empty() {
+        return Some("void".to_string());
+    }
+    infer_expression_type(expr, param_types)
+}
+
+fn union_return_types(types: Vec<Option<String>>) -> Result<Option<String>> {
+    let mut known = Vec::new();
+    for ty in types {
+        let Some(ty) = ty else {
+            return Ok(None);
+        };
+        known.push(ty);
+    }
+    if known.is_empty() {
+        return Ok(Some("void".to_string()));
+    }
+
+    let mixed_with_void = known.len() > 1 && known.iter().any(|ty| ty == "void");
+    let mut unique = Vec::new();
+    for ty in known {
+        let ty = if mixed_with_void && ty == "void" {
+            "undefined".to_string()
+        } else {
+            ty
+        };
+        if !unique.iter().any(|seen| seen == &ty) {
+            unique.push(ty);
+        }
+    }
+    Ok(Some(unique.join(" | ")))
+}
+
+fn parse_parameter_type_map(params: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let inner = params
+        .trim()
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(params)
+        .trim();
+    if inner.is_empty() {
+        return out;
+    }
+
+    for raw_param in split_top_level(inner, ',') {
+        let param_head = split_once_top_level(&raw_param, '=')
+            .map(|(left, _)| left)
+            .unwrap_or(raw_param.as_str());
+        let param = param_head.trim().trim_start_matches("...").trim();
+        let Some((name, ty)) = split_once_top_level(param, ':') else {
+            continue;
+        };
+        let name = name.trim().trim_end_matches('?').trim();
+        if is_identifier(name) {
+            out.insert(name.to_string(), ty.trim().to_string());
+        }
+    }
+    out
+}
+
+fn infer_expression_type(expr: &str, param_types: &HashMap<String, String>) -> Option<String> {
+    let expr = trim_wrapping_parens(expr.trim());
+    if expr.is_empty() {
+        return None;
+    }
+    if is_string_literal(expr) || expr.starts_with('`') {
+        return Some("string".to_string());
+    }
+    if is_number_literal(expr) {
+        return Some("number".to_string());
+    }
+    if matches!(expr, "true" | "false") {
+        return Some("boolean".to_string());
+    }
+    if matches!(expr, "null" | "undefined") {
+        return Some(expr.to_string());
+    }
+    if is_identifier(expr) {
+        return param_types.get(expr).cloned();
+    }
+
+    if let Some((left, op, right)) = split_binary_expression(expr) {
+        let left_ty = infer_expression_type(left, param_types)?;
+        let right_ty = infer_expression_type(right, param_types)?;
+        return match op {
+            "+" if left_ty == "string" || right_ty == "string" => Some("string".to_string()),
+            "+" if left_ty == "number" && right_ty == "number" => Some("number".to_string()),
+            "-" | "*" | "/" | "%" if left_ty == "number" && right_ty == "number" => {
+                Some("number".to_string())
+            }
+            "===" | "!==" | "==" | "!=" | "<" | "<=" | ">" | ">=" => Some("boolean".to_string()),
+            "&&" | "||" if left_ty == right_ty => Some(left_ty),
+            "??" if left_ty == right_ty => Some(left_ty),
+            _ => None,
+        };
+    }
+
+    None
+}
+
+fn trim_wrapping_parens(mut expr: &str) -> &str {
+    loop {
+        let trimmed = expr.trim();
+        if !(trimmed.starts_with('(') && trimmed.ends_with(')')) {
+            return trimmed;
+        }
+        if !outer_parens_wrap(trimmed) {
+            return trimmed;
+        }
+        expr = &trimmed[1..trimmed.len() - 1];
+    }
+}
+
+fn outer_parens_wrap(expr: &str) -> bool {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in expr.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && idx != expr.len() - 1 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+fn is_string_literal(expr: &str) -> bool {
+    (expr.starts_with('"') && expr.ends_with('"'))
+        || (expr.starts_with('\'') && expr.ends_with('\''))
+}
+
+fn is_number_literal(expr: &str) -> bool {
+    let expr = expr.trim();
+    if expr.is_empty() {
+        return false;
+    }
+    let expr = expr.strip_prefix('-').unwrap_or(expr);
+    expr.parse::<f64>().is_ok()
+        || expr.starts_with("0x")
+        || expr.starts_with("0b")
+        || expr.starts_with("0o")
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
+fn split_binary_expression(expr: &str) -> Option<(&str, &str, &str)> {
+    const GROUPS: &[&[&str]] = &[
+        &["??", "||"],
+        &["&&"],
+        &["===", "!==", "==", "!=", "<=", ">=", "<", ">"],
+        &["+", "-"],
+        &["*", "/", "%"],
+    ];
+    for ops in GROUPS {
+        if let Some((idx, op)) = find_top_level_operator(expr, ops) {
+            let left = expr[..idx].trim();
+            let right = expr[idx + op.len()..].trim();
+            if !left.is_empty() && !right.is_empty() {
+                return Some((left, op, right));
+            }
+        }
+    }
+    None
+}
+
+fn find_top_level_operator<'a>(expr: &str, ops: &'a [&str]) -> Option<(usize, &'a str)> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut found = None;
+    for (idx, ch) in expr.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if depth == 0 => {
+                for op in ops {
+                    if expr[idx..].starts_with(op) && !is_unary_sign(expr, idx, op) {
+                        found = Some((idx, *op));
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+fn is_unary_sign(expr: &str, idx: usize, op: &str) -> bool {
+    if op != "+" && op != "-" {
+        return false;
+    }
+    let left = expr[..idx].trim_end();
+    left.is_empty()
+        || left.ends_with('(')
+        || left.ends_with('[')
+        || left.ends_with('{')
+        || left.ends_with(',')
+        || left.ends_with('=')
+        || left.ends_with(':')
+        || left.ends_with('?')
+        || left.ends_with('+')
+        || left.ends_with('-')
+        || left.ends_with('*')
+        || left.ends_with('/')
+        || left.ends_with('%')
+        || left.ends_with('!')
+        || left.ends_with('<')
+        || left.ends_with('>')
+        || left.ends_with('&')
+        || left.ends_with('|')
+}
+
+fn split_top_level(text: &str, delimiter: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth -= 1,
+            _ if ch == delimiter && depth == 0 => {
+                parts.push(text[start..idx].to_string());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(text[start..].to_string());
+    parts
+}
+
+fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, &'a str)> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth -= 1,
+            _ if ch == delimiter && depth == 0 => {
+                return Some((&text[..idx], &text[idx + ch.len_utf8()..]));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Reduce a `public_field_definition` to a `field: Type;` line, dropping the
 /// initializer. Keeps `static` / `readonly`. Drops `private` / `protected` /
 /// `#private` fields.
-fn reduce_field(node: Node, source: &str) -> Option<String> {
-    let name_node = node.child_by_field_name("name")?;
+fn reduce_field(node: Node, source: &str) -> Result<Option<String>> {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
     if name_node.kind() == "private_property_identifier" {
-        return None;
+        return Ok(None);
     }
     if has_dropped_accessibility(node, source) {
-        return None;
+        return Ok(None);
     }
 
     let name = node_text(name_node, source);
@@ -492,8 +917,15 @@ fn reduce_field(node: Node, source: &str) -> Option<String> {
         .child_by_field_name("type")
         .map(|n| node_text(n, source).trim().to_string())
         .unwrap_or_default();
+    if ty.is_empty() {
+        return Err(anyhow!(
+            "dts: isolatedDeclarations error — exported class field `{name}` \
+             lacks an explicit type annotation; add `: <Type>` so its \
+             declaration can be emitted without type inference"
+        ));
+    }
 
-    Some(format!("{modifiers}{name}{marker}{ty};"))
+    Ok(Some(format!("{modifiers}{name}{marker}{ty};")))
 }
 
 /// True when the member carries a `private` or `protected` accessibility
@@ -613,6 +1045,39 @@ mod tests {
         assert!(
             !dts.contains("return a + b"),
             "function body must be dropped, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_function_number_return() {
+        let src = "export function add(a: number, b: number) { return a + b; }\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare function add(a: number, b: number): number;"),
+            "function return inferred from typed numeric params, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_class_member_string_return() {
+        let src = r#"export class Greeter {
+    greet(name: string) { return `hi ${name}`; }
+}
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("greet(name: string): string;"),
+            "method return inferred from template string, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn uninferrable_exported_function_return_errors() {
+        let src = "export function makeThing() { return createThing(); }\n";
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("locally inferable return type"),
+            "unknown return expression must stay fail-loud, got: {err}"
         );
     }
 

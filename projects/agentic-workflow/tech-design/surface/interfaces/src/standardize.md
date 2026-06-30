@@ -1153,6 +1153,9 @@ async fn run_project_standardize_health_gate(project: &str) -> Result<()> {
 }
 
 fn project_standardize_layers_ready(report: &crate::cli::project::ProjectHealthReport) -> bool {
+    if crate::cli::project::project_health_caps_ec_only(&report.project) {
+        return report.capability_ready && report.ec.check_clean;
+    }
     report.capability_ready
         && report.managed_ready
         && report.semantic_ready
@@ -1190,6 +1193,21 @@ fn project_standardize_parent_summary(
         "payload_path".to_string(),
         serde_json::Value::String(payload_path.to_string()),
     );
+    let criteria = if crate::cli::project::project_health_caps_ec_only(project) {
+        vec![
+            "capability roots are defined and runnable",
+            "capability claims map to production EC cases",
+            "EC inventory/check is clean",
+        ]
+    } else {
+        vec![
+            "capability roots are defined and runnable",
+            "managed source ownership is complete",
+            "semantic TD coverage and stack migration are complete",
+            "TD/source/CB/command traceability is closed",
+            "full project health production gates pass",
+        ]
+    };
 
     serde_json::json!({
         "schema_version": "aw.cli.v1",
@@ -1201,13 +1219,7 @@ fn project_standardize_parent_summary(
             "root_complete": workflow_complete,
             "workflow_complete": workflow_complete,
             "requires_hitl": requires_hitl,
-            "criteria": [
-                "capability roots are defined and runnable",
-                "managed source ownership is complete",
-                "semantic TD coverage and stack migration are complete",
-                "TD/source/CB/command traceability is closed",
-                "full project health production gates pass"
-            ],
+            "criteria": criteria,
             "missing": if workflow_complete { Vec::<String>::new() } else { vec![reason] },
         },
         "next": serde_json::Value::Object(next),
@@ -1220,7 +1232,8 @@ fn project_standardize_parent_summary(
 fn project_standardize_parent_step(
     report: &crate::cli::project::ProjectHealthReport,
 ) -> (&'static str, &'static str, bool, Option<String>, String) {
-    if report.workflow_lock_count > 0 {
+    let caps_ec_only = crate::cli::project::project_health_caps_ec_only(&report.project);
+    if !caps_ec_only && report.workflow_lock_count > 0 {
         let reason = report
             .blockers
             .iter()
@@ -1255,6 +1268,29 @@ fn project_standardize_parent_step(
             "blocked"
         };
         return ("capability", status, false, command, reason);
+    }
+    if caps_ec_only {
+        if !report.ec.check_clean {
+            let reason = report
+                .ec
+                .note
+                .clone()
+                .unwrap_or_else(|| "EC inventory/check is blocked".to_string());
+            return (
+                "ec",
+                "blocked",
+                false,
+                Some(format!("aw health --project {} ec", report.project)),
+                reason,
+            );
+        }
+        return (
+            "health",
+            "continue",
+            false,
+            Some(format!("aw health --project {}", report.project)),
+            "self standardization is gated by capability and EC only".to_string(),
+        );
     }
     if !report.managed_ready {
         return (
@@ -6366,7 +6402,7 @@ pub(crate) fn render_project_llms_txt(project_root: &Path, project: &str) -> Res
         .cap_path
         .clone()
         .unwrap_or_else(|| format!("{}/README.md", project_rel.trim_end_matches('/')));
-    let spec_ref = project_llms_semantic_spec_ref(&project, &project_rel, &td_path);
+    let spec_ref = project_llms_semantic_spec_ref(project_root, &project, &project_rel, &td_path);
     let title = project_agent_context_title(&project);
     let required_artifacts =
         required_project_root_artifact_names(project_root, &project, &project_rel)?;
@@ -6439,13 +6475,34 @@ pub(crate) fn render_project_llms_txt(project_root: &Path, project: &str) -> Res
     Ok(out)
 }
 
-fn project_llms_semantic_spec_ref(project: &str, project_rel: &str, td_path: &str) -> String {
-    format!(
+fn project_llms_semantic_spec_ref(
+    project_root: &Path,
+    project: &str,
+    project_rel: &str,
+    td_path: &str,
+) -> String {
+    let configured = format!(
         "{}/semantic/{}-{}.md",
         td_path.trim_end_matches('/'),
         slug_for_path(project),
         slug_for_path(project_rel)
-    )
+    );
+    if project_root.join(&configured).is_file() {
+        return configured;
+    }
+    let default_td_path = crate::services::project_registry::default_project_td_path(project_rel)
+        .to_string_lossy()
+        .into_owned();
+    let fallback = format!(
+        "{}/semantic/{}-{}.md",
+        default_td_path.trim_end_matches('/'),
+        slug_for_path(project),
+        slug_for_path(project_rel)
+    );
+    if fallback != configured && project_root.join(&fallback).is_file() {
+        return fallback;
+    }
+    configured
 }
 
 fn project_agent_context_title(project: &str) -> String {
@@ -6640,7 +6697,12 @@ fn language_for_path(path: &Path) -> Option<&'static str> {
 }
 
 fn is_dockerfile_path(path: &Path) -> bool {
-    path.file_name().and_then(|name| name.to_str()) == Some("Dockerfile")
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name == "Dockerfile"
+        || file_name.starts_with("Dockerfile.")
+        || file_name.ends_with(".dockerfile")
 }
 
 fn is_dockerignore_path(path: &Path) -> bool {
@@ -7580,7 +7642,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::RegenDrift,
             &finding.target,
             "mainthread",
-            "mainthread: regenerate affected CODEGEN block and rerun aw cb check",
+            "mainthread: regenerate affected CODEGEN block and rerun aw td code-check",
             &finding.reason,
             true,
         );
@@ -7698,7 +7760,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::GeneratorPrimitiveGap,
             &file.rel,
             "mainthread",
-            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw cb gen --force-regen --project <project> --verify",
+            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw td gen --force-regen --project <project> --verify",
             &format!(
                 "{} is CODEGEN-marked but its language/workspace is not replay-verifiable by current generators",
                 file.language
@@ -7715,7 +7777,7 @@ fn choose_regenerable_action_with_project(
                         StandardizeActionKind::RegenDrift,
                         file,
                         "mainthread",
-                        "mainthread: repair CODEGEN replay drift, then rerun aw cb gen --force-regen --project <project> --verify",
+                        "mainthread: repair CODEGEN replay drift, then rerun aw td gen --force-regen --project <project> --verify",
                         "CODEGEN-owned file is not audit/replay clean",
                         true,
                     );
@@ -7798,7 +7860,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::PromoteHandwrite,
             &file.rel,
             "mainthread",
-            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw cb check",
+            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw td code-check",
             "managed HANDWRITE remains; full regenerability requires CODEGEN ownership",
             true,
         );
@@ -9437,7 +9499,12 @@ fn codegen_replay_supported(file: &SourceFile) -> bool {
     ) || path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".dockerignore" | "Dockerfile" | "llms.txt"))
+        .is_some_and(|name| {
+            matches!(name, ".dockerignore" | "llms.txt")
+                || name == "Dockerfile"
+                || name.starts_with("Dockerfile.")
+                || name.ends_with(".dockerfile")
+        })
 }
 
 fn render_codegen_owned_source(path: &Path, content: &str, spec_ref: &str) -> String {
@@ -11220,6 +11287,31 @@ test_cmd = "cargo test -p tool"
     }
 
     #[test]
+    fn codegen_replay_supports_dockerfile_variants() {
+        for rel in [
+            "projects/lumen/Dockerfile",
+            "projects/lumen/Dockerfile.release",
+            "projects/lumen/Dockerfile.bench",
+            "projects/lumen/service.dockerfile",
+        ] {
+            let file = SourceFile {
+                rel: rel.into(),
+                abs: PathBuf::from(rel),
+                language: "dockerfile".into(),
+                markers: FileMarkers {
+                    codegen: true,
+                    handwrite: false,
+                },
+                handwrite_gaps: vec![],
+            };
+            assert!(
+                codegen_replay_supported(&file),
+                "codegen replay should accept {rel}"
+            );
+        }
+    }
+
+    #[test]
     fn project_root_llms_action_generates_missing_artifact() {
         let tmp = TempDir::new().unwrap();
         write(
@@ -11322,6 +11414,38 @@ test_cmd = "true"
         assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn project_root_llms_spec_ref_uses_existing_project_local_semantic_td() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+td_path = ".aw/tech-design/projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "python"
+test_cmd = "true"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/tech-design/semantic/tool-projects-tool.md",
+            "---\nid: semantic-tool-projects-tool\ncapability_refs:\n  - id: tool\n    role: primary\n---\n",
+        );
+
+        let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        assert!(generated.contains(
+            "<!-- SPEC-MANAGED: projects/tool/tech-design/semantic/tool-projects-tool.md#schema -->"
+        ));
     }
 
     #[test]
@@ -12726,8 +12850,8 @@ command_refs:
             "aw wi draft init",
             "aw td",
             "aw td check",
-            "aw cb",
-            "aw cb gen",
+            "aw td gen",
+            "aw td code-check",
             "aw standardize",
             "aw standardize traceability",
             "aw standardize traceability report",
@@ -15076,7 +15200,6 @@ target = "python"
     }
 }
 // CODEGEN-END
-
 `````
 
 ## Changes

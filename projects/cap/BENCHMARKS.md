@@ -36,6 +36,13 @@ written under the cap crate target directory:
 - `projects/cap/target/cap-command-resource-bench.json`
 - `projects/cap/target/cap-command-resource-bench.md`
 
+Native command promotion is workload-sensitive. Small rows for `ls`, `sort`,
+`grep`, `find`, and `sed -n` are candidate rows: they verify that cap can
+measure the real public surface while preserving the original-command path for
+workloads where fixed wrapper overhead would dominate. Large rows remain the
+promotion gate and must pass `dual-win` or an explicitly documented
+`rss-fallback` policy.
+
 ## Gated Replacement Baseline
 
 | Command | Gate | Scenario | Cap CPU ms | Original CPU ms | CPU Ratio | Cap RSS MiB | Original RSS MiB | RSS Ratio |

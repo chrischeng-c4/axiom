@@ -132,6 +132,28 @@ requirementDiagram
     test_missing_last_after - verifies -> R1
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Expose the sort missing-value policy in SortSpec."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Materialize missing-inclusive sort ordering and exact totals for first/last policies."
+  - path: projects/lumen/tests/api_e2e.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Verify missing:first, missing:last, and default exclude behavior through the search API."
+```
+
 # Reviews
 
 ### Review 1

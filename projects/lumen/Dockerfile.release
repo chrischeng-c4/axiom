@@ -1,11 +1,13 @@
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-runtime-image.md#runtime-image
+# CODEGEN-BEGIN
 # syntax=docker/dockerfile:1
 # Production image for lumen — downloads a PUBLISHED release binary (no source
 # tree, no Rust toolchain) into a distroless runtime. Tiny + minimal attack
 # surface (no shell/apt/curl in the final image). The sibling `Dockerfile` is
 # the from-source build for dev / CI.
 #
-#   docker build -f projects/lumen/Dockerfile.release -t lumen:0.3.62 \
-#     --build-arg LUMEN_VERSION=lumen@0.3.62 .
+#   docker build -f projects/lumen/Dockerfile.release -t lumen:0.4.5 \
+#     --build-arg LUMEN_VERSION=lumen@0.4.5 .
 #
 # The image arch (BuildKit TARGETARCH) selects the matching linux tarball:
 #   --platform linux/amd64 → x86_64-unknown-linux-gnu
@@ -13,7 +15,7 @@
 
 # ---- stage 1: fetch + verify the release binary (needs shell + curl) --------
 FROM debian:bookworm-slim AS fetch
-ARG LUMEN_VERSION=lumen@0.3.62
+ARG LUMEN_VERSION=lumen@0.4.5
 ARG LUMEN_REPO=chrischeng-c4/axiom
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -42,3 +44,4 @@ COPY --from=fetch /tmp/lumen /usr/local/bin/lumen
 EXPOSE 7373
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]
+# CODEGEN-END

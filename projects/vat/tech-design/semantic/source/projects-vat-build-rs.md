@@ -24,7 +24,7 @@ Rust source-unit TD for `projects/vat/build.rs`, captured during #39 vat migrati
 ````rust
 //! Build script: stamp provenance (`VAT_TARGET` / `VAT_GIT_SHA` /
 //! `VAT_BUILT_AT`) so `vat upgrade` can pick the matching release asset and
-//! `vat report-issue` can attach build diagnostics; then compile the vendored
+//! `vat issue create` can attach build diagnostics; then compile the vendored
 //! google.pubsub.v1 proto for the built-in Pub/Sub emulator. The proto step is a
 //! no-op for a lean build (no `emulator` feature) or before the proto is
 //! vendored, so the build never depends on a system protoc.

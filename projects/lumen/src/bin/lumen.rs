@@ -17,7 +17,7 @@
 //! lumen serve --host 0.0.0.0 --port 7373 --log-format json
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -60,9 +60,12 @@ enum Command {
     /// are task → ready-to-POST query bodies. Markdown by default; `--format
     /// json` for a machine-readable form.
     Llm(LlmArgs),
-    /// Kubernetes operator + CRD generation. `operator` runs the Lumen reconcile
-    /// controller (requires a build with `--features operator`); `gen-crd` prints
-    /// the Lumen CustomResourceDefinition YAML for `kubectl apply`.
+    /// Print runtime image Dockerfiles. Image construction is owned here, not
+    /// by `k8s`, because the same artifact feeds compose, kind, and real
+    /// registries.
+    Dockerfile(DockerfileArgs),
+    /// Kubernetes artifacts split by layer: cluster-scoped CRD, operator
+    /// control plane, and app-namespace Lumen instances.
     K8s(K8sArgs),
     /// Self-update this binary from a published GitHub release. Resolves the
     /// running target + version, downloads the matching `lumen-<target>.tar.gz`,
@@ -70,12 +73,45 @@ enum Command {
     /// `--check` reports the available version without changing anything.
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
     Upgrade(UpgradeArgs),
-    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
-    /// git sha and OS/arch (and an optional running node's status via `--url`)
-    /// with your description, then opens an issue via `GITHUB_TOKEN` — or prints
-    /// a pre-filled `issues/new` URL when no token is set. `--dry-run` previews.
-    // @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
-    ReportIssue(ReportIssueArgs),
+    /// Search, view, and file Lumen issues on the axiom tracker.
+    /// `search` and `view` read existing `project:lumen` issues; `create`
+    /// files a diagnostics-rich issue tagged `project:lumen`.
+    // @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
+    Issue(IssueArgs),
+}
+
+#[derive(clap::Args)]
+struct DockerfileArgs {
+    #[command(subcommand)]
+    cmd: DockerfileCmd,
+}
+
+#[derive(Subcommand)]
+enum DockerfileCmd {
+    /// Render a Dockerfile to stdout or `--out`.
+    Render(DockerfileRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct DockerfileRenderArgs {
+    /// Which runtime image contract to render.
+    #[arg(long, value_enum, default_value_t = DockerfileVariant::Release)]
+    variant: DockerfileVariant,
+    /// Release tag used by `--variant release`; accepts `0.4.5` or `lumen@0.4.5`.
+    #[arg(long)]
+    version: Option<String>,
+    /// Write to this path instead of stdout. A directory receives
+    /// `Dockerfile` or `Dockerfile.release`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum DockerfileVariant {
+    /// Build from the workspace source tree.
+    Source,
+    /// Fetch and verify a published `lumen@<version>` release binary.
+    Release,
 }
 
 #[derive(clap::Args)]
@@ -86,10 +122,105 @@ struct K8sArgs {
 
 #[derive(Subcommand)]
 enum K8sCmd {
-    /// Run the Lumen CRD reconcile controller (container CMD; needs `--features operator`).
-    Operator,
-    /// Print the Lumen CustomResourceDefinition as YAML and exit.
-    GenCrd,
+    /// Cluster-scoped API layer: render the Lumen CRD.
+    Crd(K8sCrdArgs),
+    /// Operator control-plane layer: render/install assets or run the controller.
+    Operator(K8sOperatorArgs),
+    /// App namespace data-plane declaration: render a Lumen custom resource.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    cmd: K8sCrdCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sCrdCmd {
+    /// Render the Lumen CustomResourceDefinition YAML.
+    Render(K8sFileOutputArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    cmd: Option<K8sOperatorCmd>,
+}
+
+#[derive(Subcommand)]
+enum K8sOperatorCmd {
+    /// Container entrypoint: run the reconcile controller.
+    Run,
+    /// Render operator namespace/RBAC/deployment YAML.
+    Render(K8sOperatorRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorRenderArgs {
+    /// Namespace that owns the operator control plane.
+    #[arg(long, default_value = "lumen-system")]
+    namespace: String,
+    /// Write to this path instead of stdout. A directory receives
+    /// `operator.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    cmd: K8sInstanceCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sInstanceCmd {
+    /// Render a namespaced `kind: Lumen` custom resource.
+    Render(K8sInstanceRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sInstanceRenderArgs {
+    /// Built-in instance profile.
+    #[arg(long, value_enum, default_value_t = K8sInstanceProfile::Dev)]
+    profile: K8sInstanceProfile,
+    /// Lumen CR name.
+    #[arg(long)]
+    name: Option<String>,
+    /// Namespace where the app-facing Lumen instance lives.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Serving image. Defaults are profile-specific.
+    #[arg(long)]
+    image: Option<String>,
+    /// Managed Relay image for dev/staging/template profiles.
+    #[arg(long)]
+    relay_image: Option<String>,
+    /// External Relay URL. When set, the operator skips the managed broker.
+    #[arg(long)]
+    relay_url: Option<String>,
+    /// Write to this path instead of stdout. A directory receives `lumen.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum K8sInstanceProfile {
+    /// Small local/kind CR: one serving pod, managed Relay, auth disabled.
+    Dev,
+    /// Pre-prod CR: json logs, modest floor, observability enabled.
+    Staging,
+    /// Production-shape CR: auth required, json logs, external Relay by default.
+    Prod,
+    /// Fill-in-the-blanks CR skeleton for app teams.
+    Template,
+}
+
+#[derive(clap::Args)]
+struct K8sFileOutputArgs {
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 /// `lumen upgrade` flags.
@@ -110,13 +241,48 @@ struct UpgradeArgs {
     yes: bool,
 }
 
-/// `lumen report-issue` flags.
-/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
+/// `lumen issue <search|view|create>` flags.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
 #[derive(clap::Args)]
-struct ReportIssueArgs {
+struct IssueArgs {
+    #[command(subcommand)]
+    command: IssueCommand,
+}
+
+#[derive(Subcommand)]
+enum IssueCommand {
+    /// Search Lumen issues (project:lumen); omit the query to list recent.
+    Search(IssueSearchArgs),
+    /// Print one issue by number.
+    View(IssueViewArgs),
+    /// File a diagnostics-rich Lumen issue.
+    Create(IssueCreateArgs),
+}
+
+#[derive(clap::Args)]
+struct IssueSearchArgs {
+    /// Search text. Omit to list recent issues.
+    #[arg(value_name = "QUERY", num_args = 0..)]
+    query: Vec<String>,
+    /// Issue state: open, closed, or all.
+    #[arg(long, default_value = "open", value_parser = ["open", "closed", "all"])]
+    state: String,
+    /// Max results.
+    #[arg(long, default_value_t = 20)]
+    limit: u32,
+}
+
+#[derive(clap::Args)]
+struct IssueViewArgs {
+    /// Issue number.
+    number: u64,
+}
+
+#[derive(clap::Args)]
+struct IssueCreateArgs {
     /// Issue title.
     #[arg(short = 't', long)]
-    title: String,
+    title: Option<String>,
     /// Free-text description of the problem (trailing words; placed above the
     /// diagnostics block). The only positional — parameters are flags.
     #[arg(value_name = "MSG", num_args = 0..)]
@@ -432,6 +598,7 @@ async fn main() -> Result<()> {
             println!("{out}");
             Ok(())
         }
+        Command::Dockerfile(args) => dockerfile(args),
         Command::K8s(args) => k8s(args).await,
         Command::Upgrade(args) => {
             cli_std::upgrade::run(
@@ -445,12 +612,59 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Command::ReportIssue(args) => {
-            cli_std::report_issue::run(
+        Command::Issue(args) => issue(args).await,
+    }
+}
+
+/// This binary's identity + build provenance for the standard CLI ops
+/// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
+    project: "lumen",
+    repo: "chrischeng-c4/axiom",
+    target: env!("LUMEN_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("LUMEN_GIT_SHA"),
+    built_at: env!("LUMEN_BUILT_AT"),
+};
+
+async fn issue(args: IssueArgs) -> Result<()> {
+    match args.command {
+        IssueCommand::Search(args) => {
+            let query = (!args.query.is_empty()).then(|| args.query.join(" "));
+            cli_std::issue::search(
                 &TOOL,
-                cli_std::report_issue::Options {
-                    title: args.title,
-                    message: (!args.message.is_empty()).then(|| args.message.join(" ")),
+                cli_std::issue::SearchOptions {
+                    query,
+                    state: args.state,
+                    limit: args.limit,
+                },
+            )
+            .await
+        }
+        IssueCommand::View(args) => cli_std::issue::view(&TOOL, args.number).await,
+        IssueCommand::Create(args) => {
+            let message = (!args.message.is_empty()).then(|| args.message.join(" "));
+            let title = args.title.unwrap_or_else(|| {
+                if let Some(message) = message.as_deref() {
+                    let head: String = message
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(72)
+                        .collect();
+                    format!("lumen: {head}")
+                } else {
+                    "lumen: issue report".to_string()
+                }
+            });
+            cli_std::issue::create(
+                &TOOL,
+                cli_std::issue::CreateOptions {
+                    title,
+                    message,
                     url: args.url,
                     repo: args.repo,
                     // Always tag with the project label so reports route
@@ -466,19 +680,6 @@ async fn main() -> Result<()> {
         }
     }
 }
-
-/// This binary's identity + build provenance for the standard CLI ops
-/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
-/// @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
-/// @spec projects/lumen/tech-design/interfaces/cli/lumen-report-issue-file-a-diagnostics-rich-github-issue-from-the.md
-const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
-    project: "lumen",
-    repo: "chrischeng-c4/axiom",
-    target: env!("LUMEN_TARGET"),
-    version: env!("CARGO_PKG_VERSION"),
-    git_sha: env!("LUMEN_GIT_SHA"),
-    built_at: env!("LUMEN_BUILT_AT"),
-};
 
 /// `lumen spec gen` — generate a typed client from lumen's own OpenAPI document
 /// (offline; no engine or server) and write it into `--out`.
@@ -514,34 +715,260 @@ fn spec_gen(args: GenArgs) -> Result<()> {
     Ok(())
 }
 
-/// `lumen k8s` — operator control plane. Same binary/image as `serve`; the
-/// kube-rs dependency tree is gated behind the `operator` feature so a default
-/// build stays kube-free. The subcommand is always present in `--help`; without
-/// the feature it errors clearly instead of silently missing.
-#[cfg(feature = "operator")]
-async fn k8s(args: K8sArgs) -> Result<()> {
+/// `lumen dockerfile` — render runtime image artifacts. The checked-in
+/// Dockerfiles remain the repo fixtures; CLI output strips ownership markers so
+/// the result is the Dockerfile users build.
+fn dockerfile(args: DockerfileArgs) -> Result<()> {
     match args.cmd {
-        K8sCmd::GenCrd => {
-            print!("{}", lumen::operator::crd_yaml());
-            Ok(())
-        }
-        K8sCmd::Operator => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-                )
-                .init();
-            lumen::operator::run().await
+        DockerfileCmd::Render(args) => {
+            let (file_name, body) = match args.variant {
+                DockerfileVariant::Source => ("Dockerfile", render_source_dockerfile()),
+                DockerfileVariant::Release => (
+                    "Dockerfile.release",
+                    render_release_dockerfile(args.version.as_deref()),
+                ),
+            };
+            write_or_print(args.out.as_deref(), file_name, &body)
         }
     }
 }
 
+/// `lumen k8s` — cluster artifacts split by lifecycle layer. Only
+/// `operator run` needs kube-rs at runtime; the render paths are offline and
+/// work from the static manifests/CR templates embedded in the binary.
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.cmd {
+        K8sCmd::Crd(args) => match args.cmd {
+            K8sCrdCmd::Render(args) => write_or_print(args.out.as_deref(), "crd.yaml", &crd_yaml()),
+        },
+        K8sCmd::Operator(args) => match args.cmd.unwrap_or(K8sOperatorCmd::Run) {
+            K8sOperatorCmd::Run => run_operator().await,
+            K8sOperatorCmd::Render(args) => {
+                let yaml = render_operator_yaml(&args.namespace);
+                write_or_print(args.out.as_deref(), "operator.yaml", &yaml)
+            }
+        },
+        K8sCmd::Instance(args) => match args.cmd {
+            K8sInstanceCmd::Render(args) => {
+                let yaml = render_instance_yaml(&args);
+                write_or_print(args.out.as_deref(), "lumen.yaml", &yaml)
+            }
+        },
+    }
+}
+
+#[cfg(feature = "operator")]
+async fn run_operator() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
+    lumen::operator::run().await
+}
+
 #[cfg(not(feature = "operator"))]
-async fn k8s(_args: K8sArgs) -> Result<()> {
+async fn run_operator() -> Result<()> {
     anyhow::bail!(
         "this lumen build was compiled without operator support; rebuild with \
          `--features operator` (the published image includes it)"
     )
+}
+
+#[cfg(feature = "operator")]
+fn crd_yaml() -> String {
+    lumen::operator::crd_yaml()
+}
+
+#[cfg(not(feature = "operator"))]
+fn crd_yaml() -> String {
+    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+}
+
+fn render_source_dockerfile() -> String {
+    strip_ownership_markers(include_str!("../../Dockerfile"))
+}
+
+fn render_release_dockerfile(version: Option<&str>) -> String {
+    let tag = normalize_lumen_tag(version);
+    let version = tag.trim_start_matches("lumen@");
+    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let mut out = String::new();
+    for line in template.lines() {
+        if line.starts_with("#   docker build -f projects/lumen/Dockerfile.release -t lumen:") {
+            out.push_str(&format!(
+                "#   docker build -f projects/lumen/Dockerfile.release -t lumen:{version} \\"
+            ));
+        } else if line.starts_with("#     --build-arg LUMEN_VERSION=") {
+            out.push_str(&format!("#     --build-arg LUMEN_VERSION={tag} ."));
+        } else if line.starts_with("ARG LUMEN_VERSION=") {
+            out.push_str(&format!("ARG LUMEN_VERSION={tag}"));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn normalize_lumen_tag(version: Option<&str>) -> String {
+    let raw = version
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .trim();
+    if raw.starts_with("lumen@") {
+        raw.to_string()
+    } else {
+        format!("lumen@{raw}")
+    }
+}
+
+fn render_operator_yaml(namespace: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&replace_operator_namespace(
+        &strip_ownership_markers(include_str!("../../k8s/operator/rbac.yaml")),
+        namespace,
+    ));
+    out.push_str("\n---\n");
+    out.push_str(&replace_operator_namespace(
+        &strip_ownership_markers(include_str!("../../k8s/operator/deployment.yaml")),
+        namespace,
+    ));
+    ensure_trailing_newline(&out)
+}
+
+fn replace_operator_namespace(input: &str, namespace: &str) -> String {
+    input
+        .replace("name: lumen-system", &format!("name: {namespace}"))
+        .replace(
+            "namespace: lumen-system",
+            &format!("namespace: {namespace}"),
+        )
+}
+
+fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
+    let default_version = env!("CARGO_PKG_VERSION");
+    let (default_name, default_namespace, default_image, body) = match args.profile {
+        K8sInstanceProfile::Dev => (
+            "search",
+            "default",
+            "lumen:latest".to_string(),
+            InstanceBody::Dev,
+        ),
+        K8sInstanceProfile::Staging => (
+            "lumen",
+            "staging",
+            format!("lumen:{default_version}"),
+            InstanceBody::Staging,
+        ),
+        K8sInstanceProfile::Prod => (
+            "lumen",
+            "production",
+            format!("registry.example.com/lumen:{default_version}"),
+            InstanceBody::Prod,
+        ),
+        K8sInstanceProfile::Template => (
+            "REPLACE_ME__LUMEN_NAME",
+            "REPLACE_ME__APP_NAMESPACE",
+            "REPLACE_ME__REGISTRY/lumen:REPLACE_ME__IMAGE_TAG".to_string(),
+            InstanceBody::Template,
+        ),
+    };
+    let name = args.name.as_deref().unwrap_or(default_name);
+    let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
+    let image = args.image.as_deref().unwrap_or(&default_image);
+    let relay_image = args.relay_image.as_deref().unwrap_or("relay:latest");
+
+    let mut yaml = format!(
+        "apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
+    );
+    match body {
+        InstanceBody::Dev => {
+            yaml.push_str("  shardCount: 1\n  logFormat: pretty\n  serving:\n    autoscaling:\n      minReplicas: 1\n      maxReplicas: 3\n      targetCpuUtilization: 70\n  broker:\n");
+            if let Some(url) = args.relay_url.as_deref() {
+                yaml.push_str(&format!("    externalUrl: {url}\n"));
+            } else {
+                yaml.push_str(&format!("    image: {relay_image}\n    storage: 10Gi\n"));
+            }
+        }
+        InstanceBody::Staging => {
+            yaml.push_str("  shardCount: 3\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 3\n      maxReplicas: 6\n      targetCpuUtilization: 70\n  broker:\n");
+            if let Some(url) = args.relay_url.as_deref() {
+                yaml.push_str(&format!("    externalUrl: {url}\n"));
+            } else {
+                yaml.push_str(&format!("    image: {relay_image}\n    storage: 20Gi\n"));
+            }
+            yaml.push_str("  observability: true\n");
+        }
+        InstanceBody::Prod => {
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    autoscaling:\n      minReplicas: 6\n      maxReplicas: 12\n      targetCpuUtilization: 65\n    cpu: \"4\"\n    memory: 16Gi\n    graceSecs: 45\n  broker:\n");
+            let url = args
+                .relay_url
+                .as_deref()
+                .unwrap_or("http://relay.infra.svc:7000");
+            yaml.push_str(&format!(
+                "    externalUrl: {url}\n    subject: lumen-wal\n  observability: true\n"
+            ));
+        }
+        InstanceBody::Template => {
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 2\n      maxReplicas: 8\n      targetCpuUtilization: 70\n  broker:\n");
+            if let Some(url) = args.relay_url.as_deref() {
+                yaml.push_str(&format!("    externalUrl: {url}\n"));
+            } else {
+                yaml.push_str("    image: REPLACE_ME__REGISTRY/relay:REPLACE_ME__RELAY_IMAGE_TAG\n    storage: 20Gi\n");
+            }
+        }
+    }
+    ensure_trailing_newline(&yaml)
+}
+
+enum InstanceBody {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+fn strip_ownership_markers(input: &str) -> String {
+    let mut out = String::new();
+    for line in input.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("# SPEC-MANAGED:")
+            || trimmed == "# CODEGEN-BEGIN"
+            || trimmed == "# CODEGEN-END"
+        {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
+    if let Some(path) = out {
+        let target = if path.extension().is_some() {
+            path.to_path_buf()
+        } else {
+            path.join(default_file)
+        };
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, body)?;
+        println!("wrote {}", target.display());
+    } else {
+        print!("{body}");
+    }
+    Ok(())
+}
+
+fn ensure_trailing_newline(input: &str) -> String {
+    if input.ends_with('\n') {
+        input.to_string()
+    } else {
+        format!("{input}\n")
+    }
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
@@ -896,10 +1323,15 @@ async fn serve(args: ServeArgs) -> Result<()> {
     tracing::info!(addr = %bind, shard_count = args.shard_count, "lumen serve listening");
 
     let grace = Duration::from_secs(args.grace_secs);
-    // Serve HTTP/1.1 + h2c on one port via the shared h2c transport (hyper
-    // auto-builder), not `axum::serve` (HTTP/1-only). Matches the service
-    // archetype and lets in-cluster h2c clients connect.
-    h2c::serve(listener, app, shutdown_signal(engine.clone(), grace)).await;
+    // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,
+    // with the standard SIGTERM drain sequence flipping `/readyz` to 503
+    // before the listener closes.
+    service_http::serve(
+        listener,
+        app,
+        service_http::shutdown_with_drain(move || engine.start_drain(), grace),
+    )
+    .await;
     // Flush any batched spans before exit (no-op when OTLP was never enabled).
     #[cfg(feature = "otel")]
     opentelemetry::global::shutdown_tracer_provider();
@@ -997,30 +1429,6 @@ async fn connect_nats_with_retry(url: &str, timeout_secs: u64) -> Result<NatsWal
             }
         }
     }
-}
-
-async fn shutdown_signal(engine: Arc<Engine>, grace: Duration) {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let sigterm = async {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut s) = signal(SignalKind::terminate()) {
-            s.recv().await;
-        }
-    };
-    #[cfg(not(unix))]
-    let sigterm = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c  => tracing::info!("received SIGINT"),
-        _ = sigterm => tracing::info!("received SIGTERM"),
-    }
-    engine.start_drain();
-    tracing::info!(grace_secs = grace.as_secs(), "draining — readyz=503");
-    tokio::time::sleep(grace).await;
-    tracing::info!("grace expired — shutting down");
 }
 
 fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) {

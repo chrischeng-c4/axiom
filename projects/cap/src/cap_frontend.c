@@ -315,8 +315,8 @@ static int exec_fast(long argc, char **argv) {
   fast_argv[0] = fast;
   for (long idx = 1; idx < argc; idx++) fast_argv[idx] = argv[idx];
   fast_argv[argc] = 0;
-  char *empty_env[] = {0};
-  syscall3(59, (long)fast, (long)fast_argv, (long)empty_env);
+  char **envp = argv + argc + 1;
+  syscall3(59, (long)fast, (long)fast_argv, (long)envp);
   return 127;
 }
 
