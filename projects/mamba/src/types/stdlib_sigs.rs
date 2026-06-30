@@ -1818,6 +1818,83 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("validate", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: dataclasses generated rows collapse dataclass-instance,
+    // type-object, TypeVar, and overload-only contracts to Unknown. The mamba
+    // strict wall rejects the inert `_W()` fixture shape while the checker
+    // keeps real `@dataclass` instances out of the bare-instance reject path.
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "",
+        name: "asdict",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "",
+        name: "astuple",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "",
+        name: "dataclass",
+        kind: SigKind::ModuleFn,
+        params: &[p("cls", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "",
+        name: "replace",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "Field",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("default", CoreTy::Typed),
+            p("default_factory", CoreTy::Unknown),
+            p("init", CoreTy::Typed),
+            p("repr", CoreTy::Typed),
+            p("hash", CoreTy::Typed),
+            p("compare", CoreTy::Typed),
+            p("metadata", CoreTy::Unknown),
+            p("kw_only", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "Field",
+        name: "__set_name__",
+        kind: SigKind::Method,
+        params: &[p("owner", CoreTy::Type), p("name", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "InitVar",
+        name: "__class_getitem__",
+        kind: SigKind::Method,
+        params: &[p("type", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dataclasses",
+        qualifier: "InitVar",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("type", CoreTy::Type)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -3956,6 +4033,46 @@ mod tests {
         assert_eq!(edit.kind, SigKind::Method);
         assert_eq!(edit.params[0].name, "validate");
         assert_eq!(edit.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_dataclasses_walls_override_unknown_rows() {
+        for name in ["asdict", "astuple", "replace"] {
+            let sig = get("dataclasses", "", name).expect("dataclasses helper present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].name, "obj");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        let dataclass = get("dataclasses", "", "dataclass").expect("dataclass present");
+        assert!(dataclass.enforceable);
+        assert_eq!(dataclass.kind, SigKind::ModuleFn);
+        assert_eq!(dataclass.params[0].name, "cls");
+        assert_eq!(dataclass.params[0].ty, CoreTy::Type);
+
+        let field_init = get("dataclasses", "Field", "__init__").expect("Field init present");
+        assert!(field_init.enforceable);
+        assert_eq!(field_init.kind, SigKind::Method);
+        assert_eq!(field_init.params[0].name, "default");
+        assert_eq!(field_init.params[0].ty, CoreTy::Typed);
+        assert_eq!(field_init.params[2].name, "init");
+        assert_eq!(field_init.params[2].ty, CoreTy::Typed);
+
+        let set_name = get("dataclasses", "Field", "__set_name__").expect("Field set_name");
+        assert!(set_name.enforceable);
+        assert_eq!(set_name.params[0].name, "owner");
+        assert_eq!(set_name.params[0].ty, CoreTy::Type);
+        assert_eq!(set_name.params[1].name, "name");
+        assert_eq!(set_name.params[1].ty, CoreTy::Str);
+
+        for name in ["__class_getitem__", "__init__"] {
+            let sig = get("dataclasses", "InitVar", name).expect("InitVar method");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "type");
+            assert_eq!(sig.params[0].ty, CoreTy::Type);
+        }
     }
 
     #[test]
