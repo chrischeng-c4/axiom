@@ -9,12 +9,11 @@
 # case = "FileList__include_pattern__pattern_as_typed_wrong"
 # subject = "distutils.filelist.FileList.include_pattern(pattern: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/filelist.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pattern
 # mamba-strict-type: TypeError
 """Type wall: distutils.filelist.FileList.include_pattern(pattern: typed); call it with the wrong type.
 

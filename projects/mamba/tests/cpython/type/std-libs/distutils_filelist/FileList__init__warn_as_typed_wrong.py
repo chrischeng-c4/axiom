@@ -9,12 +9,11 @@
 # case = "FileList__init__warn_as_typed_wrong"
 # subject = "distutils.filelist.FileList.__init__(warn: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed warn"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/filelist.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed warn
 # mamba-strict-type: TypeError
 """Type wall: distutils.filelist.FileList.__init__(warn: typed); call it with the wrong type.
 
