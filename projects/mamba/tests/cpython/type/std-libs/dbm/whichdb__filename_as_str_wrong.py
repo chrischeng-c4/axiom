@@ -9,12 +9,11 @@
 # case = "whichdb__filename_as_str_wrong"
 # subject = "dbm.whichdb(filename: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/dbm.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename
 # mamba-strict-type: TypeError
 """Type wall: dbm.whichdb(filename: str); call it with the wrong type.
 
