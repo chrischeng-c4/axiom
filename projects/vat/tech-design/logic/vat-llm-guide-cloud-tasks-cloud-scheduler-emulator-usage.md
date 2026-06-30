@@ -169,6 +169,31 @@ e2e_tests:
 changes:
   - path: projects/vat/src/commands/llm.rs
     action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: `vat llm --topic guide` exposes the Cloud Tasks/Scheduler emulator usage contract."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: document required vat.toml service and runner wiring for the emulators."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: render guide text that teaches env wiring and local target usage."
+  - path: projects/vat/README.md
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: document the exported env vars and URL shapes consumed by clients."
+  - path: projects/vat/tests/vat_toml_runner.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: runner tests validate the documented Cloud Tasks/Scheduler wiring."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
     section: source
     impl_mode: hand-written
     reason: "Add the cloud-tasks / cloud-scheduler client-wiring note to the hand-written `vat llm` guide string."

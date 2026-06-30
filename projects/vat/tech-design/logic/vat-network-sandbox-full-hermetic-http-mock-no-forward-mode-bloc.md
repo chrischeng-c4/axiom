@@ -147,6 +147,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: expose full-hermetic http-mock no-forward mode through emulator/run options."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: no-forward mode is represented in vat service configuration."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: unmatched outbound requests return a blocked response while registered stubs still serve."
+  - path: projects/vat/src/emulator/httpmock/stub.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: stub matching remains the allowed request shape in full-hermetic mode."
+  - path: projects/vat/tests/vat_emulator_httpmock_hermetic.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: hermetic proxy tests prove no-forward blocking and stub serving."
   - path: projects/vat/src/emulator/httpmock/mod.rs
     action: modify
     section: source

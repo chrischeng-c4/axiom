@@ -237,22 +237,27 @@ regression_commands:
 ```yaml
 changes:
   - area: "config"
+    section: config
     impl_mode: "codegen"
     files: ["projects/vat/src/config.rs"]
     summary: "Add ScenarioConfig, ScenarioNetworkMode, scenario lookup, and scenario validation."
   - area: "cli"
+    section: cli
     impl_mode: "codegen"
     files: ["projects/vat/src/cli.rs"]
     summary: "Add --scenario to vat run and dispatch Target::Scenario."
   - area: "runner-orchestration"
+    section: logic
     impl_mode: "codegen"
     files: ["projects/vat/src/commands/run.rs"]
     summary: "Resolve scenario service union, enforce hermetic proxy participation, run one selected runner, and persist scenario evidence."
   - area: "state"
+    section: schema
     impl_mode: "codegen"
     files: ["projects/vat/src/state.rs"]
     summary: "Add ScenarioRunRecord and RouteRecord under TestRunEvidence."
   - area: "tests"
+    section: e2e-test
     impl_mode: "codegen"
     files: ["projects/vat/tests/vat_toml_runner.rs", "projects/vat/tests/vat_concurrent_runners.rs"]
     summary: "Add scenario e2e tests and preserve runner/concurrency regressions."

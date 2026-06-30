@@ -147,6 +147,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: runner-mode commands accept sandbox configuration through the existing vat run surface."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: parse sandbox egress policy from vat.toml runner/service configuration."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: apply the selected sandbox profile around runner command execution."
+  - path: projects/vat/src/sandbox/seatbelt.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: encode the localhost-only seatbelt profile and denied egress contract."
+  - path: projects/vat/tests/vat_runner_sandbox.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: runner sandbox tests verify localhost allow and external egress denial."
   - path: projects/vat/src/commands/run.rs
     action: modify
     section: source

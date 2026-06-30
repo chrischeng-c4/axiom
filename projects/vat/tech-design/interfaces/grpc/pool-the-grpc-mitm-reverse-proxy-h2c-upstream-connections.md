@@ -146,6 +146,31 @@ e2e_tests:
 changes:
   - path: projects/vat/src/emulator/httpmock/mod.rs
     action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: existing http-mock runner service flags continue to expose gRPC MITM routing."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: pool behavior is internal to http-mock proxy configuration and keeps existing TOML shape."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: reuse per-upstream h2c SendRequest handles and evict dead pool entries."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: the proxy pool maps upstream authority keys to healthy h2c senders."
+  - path: projects/vat/tests/vat_emulator_grpc_mitm_routing.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: sequential gRPC routing test proves connection reuse behavior."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
     section: source
     impl_mode: hand-written
     reason: "Add a per-upstream h2c SendRequest pool on Proxy (Mutex<HashMap<String, SendRequest>>); grpc_reverse_proxy gets-or-dials a healthy multiplexed sender from it, evicting+re-dialing a dead entry, instead of handshaking per request."

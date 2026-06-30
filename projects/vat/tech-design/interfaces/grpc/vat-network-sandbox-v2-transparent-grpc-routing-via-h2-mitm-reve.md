@@ -159,6 +159,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: http-mock emulator command exposes transparent gRPC routing through the MITM proxy."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: enable TLS and h2 dependencies required by the gRPC MITM path."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: route gRPC h2c traffic through the reverse proxy to a local emulator."
+  - path: projects/vat/src/emulator/httpmock/ca.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: generate CA/certificate material consumed by TLS MITM routing."
+  - path: projects/vat/tests/vat_emulator_grpc_mitm_routing.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: generated gRPC client reaches the emulator through the MITM route."
   - path: projects/vat/src/emulator/httpmock/ca.rs
     action: modify
     section: source

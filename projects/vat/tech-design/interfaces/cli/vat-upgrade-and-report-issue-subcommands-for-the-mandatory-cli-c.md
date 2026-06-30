@@ -236,6 +236,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: expose the mandatory llm, upgrade, and issue subcommands in vat's top-level parser."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: feature-gate online upgrade/issue behavior while keeping lean builds parseable."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: select upgrade versions, assemble issue diagnostics, and dispatch the standard verbs."
+  - path: projects/vat/build.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: stamp VAT_TARGET, VAT_GIT_SHA, and VAT_BUILT_AT used by upgrade and issue diagnostics."
+  - path: projects/vat/tests/vat_cli_convention.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: standard CLI smoke tests cover help, upgrade check, and issue dry-run contracts."
   - path: projects/vat/src/commands/upgrade.rs
     action: create
     section: source

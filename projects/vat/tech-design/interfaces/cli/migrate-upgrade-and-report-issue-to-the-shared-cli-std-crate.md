@@ -149,6 +149,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: parse llm/upgrade/issue flags and route them through the shared cli-std contract."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: wire cli-std dependency and online features into vat's Cargo configuration."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: build vat ToolInfo and dispatch standard verbs to cli_std::{llm,upgrade,issue}."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: define the vat ToolInfo fields consumed by cli-std."
+  - path: projects/vat/tests/vat_cli_convention.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: CLI convention smoke tests cover ToolInfo and standard verb parsing."
   - path: projects/vat/Cargo.toml
     action: modify
     section: source

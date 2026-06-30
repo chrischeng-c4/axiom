@@ -176,6 +176,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: http-mock emulator command exposes transparent host routing controls."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: parse transparent route definitions from service configuration."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: route known hosts to local sinks while preserving fallback proxy behavior."
+  - path: projects/vat/src/emulator/httpmock/stub.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: route records describe host-to-local target mapping."
+  - path: projects/vat/tests/vat_emulator_httpmock_routing.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: routing tests prove known host redirection and runtime route registration."
   - path: projects/vat/src/emulator/httpmock/mod.rs
     action: modify
     section: source

@@ -196,6 +196,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/emulator/mod.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: service preset startup exposes the dual REST/gRPC emulator endpoint to vat runners."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: ensure tonic/protobuf and multiplexing dependencies are enabled for emulator builds."
+  - path: projects/vat/src/emulator/grpc_mux.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: multiplex REST and gRPC traffic on one listener by content type."
+  - path: projects/vat/src/emulator/tasks.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: implement generated Cloud Tasks request/response mapping over the shared task store."
+  - path: projects/vat/tests/vat_emulator_tasks_grpc.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: gRPC task/scheduler smoke tests verify generated-client contracts."
   - path: projects/vat/src/emulator/grpc_mux.rs
     action: create
     section: source
