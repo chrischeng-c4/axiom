@@ -9,12 +9,10 @@
 # case = "deque____ge____value_as_deque_wrong"
 # subject = "collections.deque.__ge__(value: deque)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: collections.deque.__ge__(value: deque); call it with the wrong type.
 

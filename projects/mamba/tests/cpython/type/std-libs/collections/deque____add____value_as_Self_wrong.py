@@ -9,12 +9,10 @@
 # case = "deque____add____value_as_Self_wrong"
 # subject = "collections.deque.__add__(value: Self)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: collections.deque.__add__(value: Self); call it with the wrong type.
 

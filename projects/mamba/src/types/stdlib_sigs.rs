@@ -1050,6 +1050,102 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("value", CoreTy::Dict)],
         enforceable: true,
     },
+    // POSITIVE: deque's typevar, Self, nominal-deque, and iterable contracts
+    // collapse to Unknown/empty generated rows. The strict fixtures use bare
+    // user objects, which satisfy none of those contracts, so Typed restores the
+    // wall without pretending the scalar table can model deque generics.
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "__add__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "__ge__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "__gt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("iterable", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "__le__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "__lt__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "append",
+        kind: SigKind::Method,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "appendleft",
+        kind: SigKind::Method,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "count",
+        kind: SigKind::Method,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "index",
+        kind: SigKind::Method,
+        params: &[
+            p("x", CoreTy::Typed),
+            p("start", CoreTy::Int),
+            p("stop", CoreTy::Int),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "deque",
+        name: "remove",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
@@ -3550,6 +3646,32 @@ mod tests {
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, first_ty);
         }
+    }
+
+    #[test]
+    fn curated_deque_walls_override_unknown_generated_rows() {
+        for (name, first_param, first_ty) in [
+            ("__add__", "value", CoreTy::Typed),
+            ("__ge__", "value", CoreTy::Typed),
+            ("__gt__", "value", CoreTy::Typed),
+            ("__init__", "iterable", CoreTy::Typed),
+            ("__le__", "value", CoreTy::Typed),
+            ("__lt__", "value", CoreTy::Typed),
+            ("append", "x", CoreTy::Typed),
+            ("appendleft", "x", CoreTy::Typed),
+            ("count", "x", CoreTy::Typed),
+            ("index", "x", CoreTy::Typed),
+            ("remove", "value", CoreTy::Typed),
+        ] {
+            let sig = get("collections", "deque", name).expect("deque row present");
+            assert!(sig.enforceable, "deque.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, first_ty);
+        }
+
+        let index = get("collections", "deque", "index").expect("deque.index row present");
+        assert_eq!(index.params[1].ty, CoreTy::Int);
+        assert_eq!(index.params[2].ty, CoreTy::Int);
     }
 
     /// Regenerable contract (fixture_lint-style): the checked-in
