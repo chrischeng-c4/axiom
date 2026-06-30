@@ -2096,6 +2096,48 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: distutils.command submodules are Py312-deprecated but still
+    // importable, and typeshed preserves strict argument walls for command
+    // helpers. Generated rows lose the target params to Unknown; curate only
+    // the probed walls so valid dynamic command state stays skip-safe.
+    StdlibSig {
+        module: "distutils.command.build_py",
+        qualifier: "build_py",
+        name: "get_outputs",
+        kind: SigKind::Method,
+        params: &[p("include_bytecode", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.command.check",
+        qualifier: "SilentReporter",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("source", CoreTy::Typed),
+            p("report_level", CoreTy::Typed),
+            p("halt_level", CoreTy::Typed),
+            p("stream", CoreTy::Typed),
+            p("debug", CoreTy::Typed),
+            p("encoding", CoreTy::Str),
+            p("error_handler", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.command.config",
+        qualifier: "config",
+        name: "search_cpp",
+        kind: SigKind::Method,
+        params: &[
+            p("pattern", CoreTy::Typed),
+            p("body", CoreTy::Typed),
+            p("headers", CoreTy::Typed),
+            p("include_dirs", CoreTy::Typed),
+            p("lang", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4378,6 +4420,34 @@ mod tests {
         assert_eq!(init.kind, SigKind::Method);
         assert_eq!(init.params[0].name, "verbose");
         assert_eq!(init.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_distutils_command_walls_override_unknown_rows() {
+        let get_outputs = get(
+            "distutils.command.build_py",
+            "build_py",
+            "get_outputs",
+        )
+        .expect("build_py.get_outputs present");
+        assert!(get_outputs.enforceable);
+        assert_eq!(get_outputs.kind, SigKind::Method);
+        assert_eq!(get_outputs.params[0].name, "include_bytecode");
+        assert_eq!(get_outputs.params[0].ty, CoreTy::Typed);
+
+        let init = get("distutils.command.check", "SilentReporter", "__init__")
+            .expect("SilentReporter.__init__ present");
+        assert!(init.enforceable);
+        assert_eq!(init.kind, SigKind::Method);
+        assert_eq!(init.params[3].name, "stream");
+        assert_eq!(init.params[3].ty, CoreTy::Typed);
+
+        let search_cpp = get("distutils.command.config", "config", "search_cpp")
+            .expect("config.search_cpp present");
+        assert!(search_cpp.enforceable);
+        assert_eq!(search_cpp.kind, SigKind::Method);
+        assert_eq!(search_cpp.params[0].name, "pattern");
+        assert_eq!(search_cpp.params[0].ty, CoreTy::Typed);
     }
 
     #[test]

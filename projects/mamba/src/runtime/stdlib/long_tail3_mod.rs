@@ -362,6 +362,27 @@ fn register_distutils() {
     register_with("distutils.cmd", &["Command"], &[], &[], &[]);
     register_with("distutils.command", &[], &[], &[], &[]);
     register_with(
+        "distutils.command.build_py",
+        &["build_py", "build_py_2to3"],
+        &[],
+        &[],
+        &[],
+    );
+    register_with(
+        "distutils.command.check",
+        &["SilentReporter", "check"],
+        &[],
+        &[],
+        &[],
+    );
+    register_with(
+        "distutils.command.config",
+        &["config"],
+        &[],
+        &[],
+        &[],
+    );
+    register_with(
         "distutils.errors",
         &[
             "DistutilsError",

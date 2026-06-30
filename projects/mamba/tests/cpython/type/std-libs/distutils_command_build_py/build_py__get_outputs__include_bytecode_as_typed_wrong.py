@@ -9,12 +9,11 @@
 # case = "build_py__get_outputs__include_bytecode_as_typed_wrong"
 # subject = "distutils.command.build_py.build_py.get_outputs(include_bytecode: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed include_bytecode"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/command/build_py.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed include_bytecode
 # mamba-strict-type: TypeError
 """Type wall: distutils.command.build_py.build_py.get_outputs(include_bytecode: typed); call it with the wrong type.
 
