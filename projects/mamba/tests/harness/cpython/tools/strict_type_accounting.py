@@ -51,6 +51,9 @@ VERSION_REMOVED_TYPE_LIBS = {
 VERSION_SPECIFIC_TYPE_FIXTURES = {
     "std-libs/ast/TemplateStr__init__values_as_list_wrong.py": (3, 14),
 }
+VERSION_REMOVED_TYPE_FIXTURES = {
+    "std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py": (3, 12),
+}
 
 SOUND_FAMILIES = [
     "float_return_inference",
@@ -147,6 +150,9 @@ def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
     required = VERSION_SPECIFIC_TYPE_FIXTURES.get(rel)
     if required is not None:
         return sys.version_info[:2] < required
+    removed = VERSION_REMOVED_TYPE_FIXTURES.get(rel)
+    if removed is not None:
+        return sys.version_info[:2] >= removed
     lib = type_fixture_lib(path)
     if lib is None:
         return False
@@ -421,6 +427,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "version_specific_type_libs": VERSION_SPECIFIC_TYPE_LIBS,
             "version_removed_type_libs": VERSION_REMOVED_TYPE_LIBS,
             "version_specific_type_fixture_cases": VERSION_SPECIFIC_TYPE_FIXTURES,
+            "version_removed_type_fixture_cases": VERSION_REMOVED_TYPE_FIXTURES,
             "host_python_version": list(sys.version_info[:2]),
         },
         "enforcement": {
