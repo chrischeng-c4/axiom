@@ -303,6 +303,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("coro", CoreTy::Typed), p("loop", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "asyncio.threads",
+        qualifier: "",
+        name: "to_thread",
+        kind: SigKind::ModuleFn,
+        params: &[p("func", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact
