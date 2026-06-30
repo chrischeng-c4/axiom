@@ -4,9 +4,10 @@
 //! SIGTERM-aware graceful drain so k8s can roll pods without dropping requests.
 //!
 //! Bare `keep` (no subcommand) runs the server with the flags below; the
-//! standard agent-facing commands — `keep llm`, `keep upgrade`, `keep
-//! report-issue` (the CONTRIBUTING.md CLI convention, via the shared `cli-std`
-//! lib) — sit alongside it. Agents start at `keep llm outline`.
+//! standard agent-facing commands — `keep llm`, `keep upgrade`, `keep issue`
+//! (`search`/`view`/`create`) (the CONTRIBUTING.md CLI convention, via the
+//! shared `cli-std` lib) — sit alongside it. Agents start at `keep llm
+//! outline`.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -49,11 +50,10 @@ enum Command {
     /// verifies its sha256, and atomically replaces the executable. `--check`
     /// reports the available version without changing anything.
     Upgrade(UpgradeArgs),
-    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
-    /// git sha and OS/arch with your description, then opens an issue via
-    /// `GITHUB_TOKEN` — or prints a pre-filled `issues/new` URL when no token is
-    /// set. `--dry-run` previews without submitting.
-    ReportIssue(ReportIssueArgs),
+    /// Search, view, and file keep issues on the axiom tracker
+    /// (`search`/`view`/`create`). `create` bundles a diagnostics block and
+    /// auto-tags `project:keep`; `search` is filtered to keep's own issues.
+    Issue(IssueArgs),
 }
 
 /// `keep llm` flags.
@@ -84,30 +84,58 @@ struct UpgradeArgs {
     yes: bool,
 }
 
-/// `keep report-issue` flags.
+/// `keep issue <search|view|create>` — search, read, and file keep issues.
+/// Positional slots are reserved for the verb + its primary object, so the rest
+/// are flags (the CLI convention).
 #[derive(clap::Args, Debug)]
-struct ReportIssueArgs {
-    /// Issue title.
-    #[arg(short = 't', long)]
-    title: String,
-    /// Free-text description of the problem (placed above the diagnostics block).
-    #[arg(short = 'm', long)]
-    message: Option<String>,
-    /// Include a running node's `/version`+`/healthz` (e.g. http://localhost:7117).
+struct IssueArgs {
+    #[command(subcommand)]
+    cmd: IssueCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum IssueCommand {
+    /// Search keep's issues (`project:keep`); omit the query to list recent.
+    Search(IssueSearchArgs),
+    /// Print a single issue by number.
+    View(IssueViewArgs),
+    /// File a structured issue (auto-tagged `project:keep`).
+    Create(IssueCreateArgs),
+}
+
+/// `keep issue search [query] [--state] [--limit]` flags.
+#[derive(clap::Args, Debug)]
+struct IssueSearchArgs {
+    /// Search text (omit to list recent issues).
+    #[arg(num_args = 0..)]
+    query: Vec<String>,
+    /// Issue state filter.
+    #[arg(long, value_parser = ["open", "closed", "all"], default_value = "open")]
+    state: String,
+    /// Max results.
+    #[arg(long, default_value_t = 20)]
+    limit: u32,
+}
+
+/// `keep issue view <number>` flags.
+#[derive(clap::Args, Debug)]
+struct IssueViewArgs {
+    /// Issue number.
+    number: u64,
+}
+
+/// `keep issue create [--title <t>] [message...]` flags.
+#[derive(clap::Args, Debug)]
+struct IssueCreateArgs {
+    /// Issue title (default: derived from the message).
     #[arg(long)]
-    url: Option<String>,
-    /// Target repository (`owner/name`); defaults to keep's release repo.
-    #[arg(long)]
-    repo: Option<String>,
-    /// Add a label (repeatable).
-    #[arg(long)]
-    label: Vec<String>,
-    /// Assemble and print the report without submitting anything.
+    title: Option<String>,
+    /// Print the issue that would be filed (and its URL) without creating it.
     #[arg(long)]
     dry_run: bool,
-    /// Skip the confirmation prompt.
-    #[arg(short = 'y', long)]
-    yes: bool,
+    /// Free-text description of the problem.
+    #[arg(num_args = 0..)]
+    message: Vec<String>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -160,7 +188,7 @@ struct ServeArgs {
 }
 
 /// This binary's identity + build provenance for the standard CLI ops
-/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
+/// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention.
 const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "keep",
     repo: "chrischeng-c4/axiom",
@@ -254,17 +282,49 @@ async fn dispatch(cmd: Command) -> Result<()> {
             )
             .await
         }
-        Command::ReportIssue(args) => {
-            cli_std::report_issue::run(
+        Command::Issue(args) => dispatch_issue(args).await,
+    }
+}
+
+/// `keep issue <verb>` — dispatch search/view/create to cli-std. `create` always
+/// tags `project:keep`; `search` is filtered to keep's own issues.
+async fn dispatch_issue(args: IssueArgs) -> Result<()> {
+    match args.cmd {
+        IssueCommand::Search(m) => {
+            let joined = m.query.join(" ");
+            let query = (!joined.trim().is_empty()).then_some(joined);
+            cli_std::issue::search(
                 &TOOL,
-                cli_std::report_issue::Options {
-                    title: args.title,
-                    message: args.message,
-                    url: args.url,
-                    repo: args.repo,
-                    label: args.label,
-                    dry_run: args.dry_run,
-                    yes: args.yes,
+                cli_std::issue::SearchOptions {
+                    query,
+                    state: m.state,
+                    limit: m.limit,
+                },
+            )
+            .await
+        }
+        IssueCommand::View(m) => cli_std::issue::view(&TOOL, m.number).await,
+        IssueCommand::Create(m) => {
+            let msg = m.message.join(" ");
+            let title = m.title.unwrap_or_else(|| {
+                if msg.trim().is_empty() {
+                    "keep: issue report".to_string()
+                } else {
+                    let head: String = msg.lines().next().unwrap_or("").chars().take(72).collect();
+                    format!("keep: {head}")
+                }
+            });
+            let message = (!msg.trim().is_empty()).then_some(msg);
+            cli_std::issue::create(
+                &TOOL,
+                cli_std::issue::CreateOptions {
+                    title,
+                    message,
+                    url: None,
+                    repo: None,
+                    label: vec!["project:keep".to_string()],
+                    dry_run: m.dry_run,
+                    yes: true,
                 },
             )
             .await
@@ -358,4 +418,73 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     }
     info!("shutdown complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// The clap derive surface is internally consistent (catches conflicting
+    /// args / bad value parsers at test time, not at runtime).
+    #[test]
+    fn clap_command_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    /// `keep issue search/view/create` parse with their convention flags (#540).
+    #[test]
+    fn issue_group_parses_search_view_create() {
+        let cli = Cli::try_parse_from([
+            "keep", "issue", "search", "drain", "--state", "all", "--limit", "5",
+        ])
+        .expect("issue search should parse");
+        match cli.cmd {
+            Some(Command::Issue(IssueArgs {
+                cmd: IssueCommand::Search(a),
+            })) => {
+                assert_eq!(a.query, vec!["drain".to_string()]);
+                assert_eq!(a.state, "all");
+                assert_eq!(a.limit, 5);
+            }
+            other => panic!("expected issue search, got {other:?}"),
+        }
+
+        let cli =
+            Cli::try_parse_from(["keep", "issue", "view", "540"]).expect("issue view should parse");
+        match cli.cmd {
+            Some(Command::Issue(IssueArgs {
+                cmd: IssueCommand::View(a),
+            })) => assert_eq!(a.number, 540),
+            other => panic!("expected issue view, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "keep",
+            "issue",
+            "create",
+            "--title",
+            "boom",
+            "--dry-run",
+            "it",
+            "broke",
+        ])
+        .expect("issue create should parse");
+        match cli.cmd {
+            Some(Command::Issue(IssueArgs {
+                cmd: IssueCommand::Create(a),
+            })) => {
+                assert_eq!(a.title.as_deref(), Some("boom"));
+                assert!(a.dry_run);
+                assert_eq!(a.message, vec!["it".to_string(), "broke".to_string()]);
+            }
+            other => panic!("expected issue create, got {other:?}"),
+        }
+    }
+
+    /// The migrated-away `keep report-issue` command no longer parses (#540).
+    #[test]
+    fn report_issue_command_is_gone() {
+        assert!(Cli::try_parse_from(["keep", "report-issue", "--title", "x"]).is_err());
+    }
 }

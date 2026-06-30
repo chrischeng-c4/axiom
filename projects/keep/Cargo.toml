@@ -53,7 +53,7 @@ service-http = { path = "../../libs/service-http" }
 reqwest = { workspace = true, optional = true }
 # Shared h2c client construction + ln(concurrency) pool sizing (#467).
 h2c = { path = "../../libs/h2c", optional = true }
-# Standard agent-facing CLI ops — llm/upgrade/report-issue (#471). Offline paths
+# Standard agent-facing CLI ops — llm/upgrade/issue (#471). Offline paths
 # always build; the network paths are gated behind keep's online features below.
 cli-std = { path = "../../libs/cli-std", default-features = false }
 # Error glue for the binary dispatch + the raft module.
@@ -72,10 +72,14 @@ client = ["dep:reqwest", "dep:h2c"]
 # raft — raft-core-backed consensus (HA phase C; see HA.md).
 raft = ["dep:raft-core"]
 # Online (HTTPS) paths of the standard CLI ops (#471): `upgrade` self-install +
-# `report-issue` submit. Offline paths (llm, `upgrade --check`, `report-issue
-# --dry-run`) always build; release builds enable these.
+# `issue` search/view/create. Offline paths (llm, `upgrade --check`, `issue
+# create --dry-run`) always build; release builds enable these.
 self-update = ["cli-std/online"]
-report-issue = ["cli-std/online"]
+issue = ["cli-std/online"]
+# Deprecated build-feature alias kept for release scripts that have not yet
+# renamed their feature set. The CLI command itself is `keep issue`, not
+# `keep report-issue` (#540).
+report-issue = ["issue"]
 
 [dev-dependencies]
 tokio-test = "0.4"
