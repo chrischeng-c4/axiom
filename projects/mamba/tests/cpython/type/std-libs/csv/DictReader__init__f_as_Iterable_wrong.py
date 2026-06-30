@@ -9,12 +9,10 @@
 # case = "DictReader__init__f_as_Iterable_wrong"
 # subject = "csv.DictReader.__init__(f: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed f"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/csv.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed f
 # mamba-strict-type: TypeError
 """Type wall: csv.DictReader.__init__(f: Iterable); call it with the wrong type.
 
