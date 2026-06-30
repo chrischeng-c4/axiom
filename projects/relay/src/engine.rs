@@ -136,6 +136,7 @@ impl Relay {
             shard,
             self.config.work_queue.lease_ttl_ms,
             max_attempts,
+            self.config.work_queue.redeliver_backoff_ms,
         );
         let watermark = log.load_commit();
         if let Some(wm) = watermark {

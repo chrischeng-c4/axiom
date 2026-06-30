@@ -11,7 +11,9 @@ use chrono::{Duration, Utc};
 use relay::{Relay, RelayCoreConfig};
 
 fn relay() -> Relay {
-    Relay::new(RelayCoreConfig::in_memory())
+    let mut c = RelayCoreConfig::in_memory();
+    c.work_queue.redeliver_backoff_ms = 0; // pin immediate redelivery for throughput ordering
+    Relay::new(c)
 }
 
 fn publish(r: &Relay, subject: &str, n: usize) {

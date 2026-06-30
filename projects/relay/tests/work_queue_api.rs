@@ -11,7 +11,9 @@ use chrono::{Duration, Utc};
 use relay::{Relay, RelayCoreConfig};
 
 fn relay() -> Relay {
-    Relay::new(RelayCoreConfig::in_memory())
+    let mut c = RelayCoreConfig::in_memory();
+    c.work_queue.redeliver_backoff_ms = 0; // pin immediate redelivery; backoff is covered separately
+    Relay::new(c)
 }
 
 fn publish(r: &mut Relay, subject: &str, id: &str) {
@@ -147,6 +149,7 @@ fn heartbeat_is_fenced() {
 fn exhausted_entry_is_dead_lettered() {
     let mut core = RelayCoreConfig::in_memory();
     core.work_queue.max_attempts = 2; // 2 deliveries, then DLQ on the 3rd pick
+    core.work_queue.redeliver_backoff_ms = 0; // immediate redelivery for the loop
     let mut r = Relay::new(core);
     let now = Utc::now();
     publish(&mut r, "q", "m0");
@@ -188,6 +191,7 @@ fn exhausted_entry_is_dead_lettered() {
 fn max_attempts_zero_disables_dead_letter() {
     let mut core = RelayCoreConfig::in_memory();
     core.work_queue.max_attempts = 0;
+    core.work_queue.redeliver_backoff_ms = 0; // immediate redelivery for the loop
     let mut r = Relay::new(core);
     let now = Utc::now();
     publish(&mut r, "q", "m0");

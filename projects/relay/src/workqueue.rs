@@ -26,6 +26,9 @@ pub struct WorkQueue {
     shard: ShardId,
     lease_ttl_ms: u64,
     max_attempts: u32,
+    /// Base delay between redeliveries; `0` = immediate. Grows exponentially per
+    /// attempt (`* 2^(attempt-1)`).
+    redeliver_backoff_ms: u64,
     leases: HashMap<Seq, Lease>,
     lease_index: HashMap<String, Seq>,
     acked: HashSet<Seq>,
@@ -66,12 +69,19 @@ pub enum LeaseOrDead {
 }
 
 impl WorkQueue {
-    pub fn new(subject: &str, shard: ShardId, lease_ttl_ms: u64, max_attempts: u32) -> Self {
+    pub fn new(
+        subject: &str,
+        shard: ShardId,
+        lease_ttl_ms: u64,
+        max_attempts: u32,
+        redeliver_backoff_ms: u64,
+    ) -> Self {
         WorkQueue {
             subject: subject.to_string(),
             shard,
             lease_ttl_ms,
             max_attempts,
+            redeliver_backoff_ms,
             leases: HashMap::new(),
             lease_index: HashMap::new(),
             acked: HashSet::new(),
@@ -355,10 +365,29 @@ impl WorkQueue {
         for seq in &expired {
             if let Some(lease) = self.leases.remove(seq) {
                 self.lease_index.remove(&lease.lease_id);
-                self.redeliver.push(Reverse(*seq));
+                // An exhausted entry re-offers at once so the next lease
+                // dead-letters it promptly (no pointless backoff); otherwise apply
+                // exponential redelivery backoff via the delay index.
+                if self.redeliver_backoff_ms == 0 || self.is_dead(*seq) {
+                    self.redeliver.push(Reverse(*seq));
+                } else {
+                    let attempt = self.attempts.get(seq).copied().unwrap_or(1);
+                    self.register_delayed(*seq, now + self.backoff_for(attempt));
+                }
             }
         }
         expired
+    }
+
+    /// Exponential redelivery backoff for the Nth delivery attempt:
+    /// `redeliver_backoff_ms * 2^(attempt-1)`, with the exponent capped to avoid
+    /// overflow. Explicit Nack (`release`) is unaffected — it re-offers at once.
+    ///
+    /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#logic
+    fn backoff_for(&self, attempt: u32) -> Duration {
+        let shift = attempt.saturating_sub(1).min(16);
+        let ms = self.redeliver_backoff_ms.saturating_mul(1u64 << shift);
+        Duration::milliseconds(ms as i64)
     }
 
     /// Highest seq such that every entry `0..=committed_seq` has been acked, or

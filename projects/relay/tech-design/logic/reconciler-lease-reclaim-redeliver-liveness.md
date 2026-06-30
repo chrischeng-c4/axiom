@@ -32,7 +32,7 @@ nodes:
     label: "Lease expires_at <= now?"
   reclaim:
     kind: process
-    label: "Delete the expired lease -> its entry becomes redelivery-eligible"
+    label: "Delete the expired lease -> the entry becomes redelivery-eligible after an exponential backoff (redeliver_backoff_ms * 2^(attempt-1), via the delay index); an exhausted entry (>= max_attempts) re-offers at once so the next lease dead-letters it. Explicit Nack (release) is always immediate."
   keep:
     kind: terminal
     label: "Still within lease -> leave it (worker alive / heartbeating)"
@@ -112,6 +112,12 @@ nodes:
   a_delay:
     kind: terminal
     label: "assert the delayed entry is withheld until due (immediate sibling leases at once), promote_due / next lease releases it, and the delay survives a restart"
+  t_backoff:
+    kind: process
+    label: "redeliver_backoff_ms > 0: lease, expire + reconcile across two attempts"
+  a_backoff:
+    kind: terminal
+    label: "assert a reclaimed lease is withheld for the backoff window and re-leases only after it, and the backoff doubles per attempt"
 edges:
   - { from: suite, to: t_dead, label: "case: dead worker redeliver" }
   - { from: t_dead, to: a_dead }
@@ -125,6 +131,8 @@ edges:
   - { from: t_bg, to: a_bg }
   - { from: suite, to: t_delay, label: "case: delayed / ETA delivery" }
   - { from: t_delay, to: a_delay }
+  - { from: suite, to: t_backoff, label: "case: exponential redelivery backoff" }
+  - { from: t_backoff, to: a_backoff }
 ---
 flowchart TD
     suite([reconciler suite]) --> t_dead[c1 dies, advance ttl, reconcile]
@@ -139,6 +147,8 @@ flowchart TD
     t_bg --> a_bg([auto re-leasable])
     suite --> t_delay[publish not_before future, restart]
     t_delay --> a_delay([withheld until due; survives restart])
+    suite --> t_backoff[expire across attempts]
+    t_backoff --> a_backoff([backoff window; doubles per attempt])
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -154,7 +164,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    reason: "Delay index: delayed min-heap (by visible-at millis) + delayed_set; register_delayed(seq, visible_at) holds an entry back; promote_due(now) releases due entries onto the redeliver heap (returns count); pick skips delayed seqs; lease/lease_or_dead call promote_due(now) first."
+    reason: "Delay index: delayed min-heap (by visible-at millis) + delayed_set; register_delayed(seq, visible_at) holds an entry back; promote_due(now) releases due entries onto the redeliver heap (returns count); pick skips delayed seqs; lease/lease_or_dead call promote_due(now) first. reclaim_expired re-offers via register_delayed with exponential backoff (redeliver_backoff_ms * 2^(attempt-1), capped) unless backoff=0 or the entry is exhausted (then immediate); WorkQueue::new gains redeliver_backoff_ms."
   - path: projects/relay/src/types.rs
     action: modify
     section: schema
@@ -170,6 +180,11 @@ changes:
     section: unit-test
     impl_mode: hand-written
     reason: "Tests: delayed entry withheld until due (immediate sibling leases at once), reconcile promotes a due entry, and the delay survives a restart."
+  - path: projects/relay/tests/reconciler.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Add redelivery_backoff_is_exponential: a reclaimed lease is withheld for the backoff window and re-leases only after it, doubling per attempt. Existing redeliver tests pin redeliver_backoff_ms=0."
   - path: projects/relay/src/reconciler.rs
     action: create
     section: logic
