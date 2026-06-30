@@ -9,12 +9,11 @@
 # case = "gather__coro_or_future1_as__FutureLike_wrong"
 # subject = "asyncio.tasks.gather(coro_or_future1: _FutureLike)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro_or_future1"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/tasks.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro_or_future1
 # mamba-strict-type: TypeError
 """Type wall: asyncio.tasks.gather(coro_or_future1: _FutureLike); call it with the wrong type.
 
