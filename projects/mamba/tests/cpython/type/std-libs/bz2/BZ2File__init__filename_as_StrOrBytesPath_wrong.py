@@ -9,12 +9,11 @@
 # case = "BZ2File__init__filename_as_StrOrBytesPath_wrong"
 # subject = "bz2.BZ2File.__init__(filename: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bz2.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename
 # mamba-strict-type: TypeError
 """Type wall: bz2.BZ2File.__init__(filename: StrOrBytesPath); call it with the wrong type.
 
