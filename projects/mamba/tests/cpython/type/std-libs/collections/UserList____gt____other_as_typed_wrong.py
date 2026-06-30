@@ -9,12 +9,10 @@
 # case = "UserList____gt____other_as_typed_wrong"
 # subject = "collections.UserList.__gt__(other: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other
 # mamba-strict-type: TypeError
 """Type wall: collections.UserList.__gt__(other: typed); call it with the wrong type.
 

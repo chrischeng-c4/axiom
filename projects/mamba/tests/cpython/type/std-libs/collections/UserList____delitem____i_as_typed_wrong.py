@@ -9,12 +9,10 @@
 # case = "UserList____delitem____i_as_typed_wrong"
 # subject = "collections.UserList.__delitem__(i: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed i"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed i
 # mamba-strict-type: TypeError
 """Type wall: collections.UserList.__delitem__(i: typed); call it with the wrong type.
 
