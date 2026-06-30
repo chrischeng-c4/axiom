@@ -9,12 +9,11 @@
 # case = "wraps__wrapped_as_Callable_wrong"
 # subject = "functools.wraps(wrapped: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed wrapped"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/functools.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed wrapped
 # mamba-strict-type: TypeError
 """Type wall: functools.wraps(wrapped: Callable); call it with the wrong type.
 

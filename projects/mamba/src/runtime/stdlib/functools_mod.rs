@@ -64,6 +64,14 @@ fn is_callable_value(v: MbValue) -> bool {
     super::super::builtins::mb_callable(v).as_bool() == Some(true)
 }
 
+fn reject_non_callable(v: MbValue, msg: &str) -> Option<MbValue> {
+    if is_callable_value(v) {
+        None
+    } else {
+        Some(raise_exc("TypeError", msg))
+    }
+}
+
 unsafe extern "C" fn dispatch_partial(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // Trailing dict (if present) carries the construction-time keyword args.
@@ -186,6 +194,9 @@ unsafe extern "C" fn dispatch_cache(args_ptr: *const MbValue, nargs: usize) -> M
     // the callable with unbounded caching.
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let func = args.first().copied().unwrap_or_else(MbValue::none);
+    if let Some(err) = reject_non_callable(func, "the first argument must be callable") {
+        return err;
+    }
     mb_functools_lru_cache_wrap(func, MbValue::none(), MbValue::from_bool(false))
 }
 
@@ -334,7 +345,7 @@ unsafe extern "C" fn dispatch_total_ordering(args_ptr: *const MbValue, nargs: us
     });
     match name {
         Some(name) => install_total_ordering(&name, cls),
-        None => cls,
+        None => raise_exc("TypeError", "total_ordering() argument must be a type"),
     }
 }
 
@@ -510,6 +521,9 @@ pub fn is_total_ordering_instance(v: MbValue) -> bool {
 unsafe extern "C" fn dispatch_wraps(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let wrapped = args.get(0).copied().unwrap_or_else(MbValue::none);
+    if let Some(err) = reject_non_callable(wrapped, "the first argument must be callable") {
+        return err;
+    }
     // wraps(f) returns a `functools.wraps` Instance carrying the wrapped
     // function. When this Instance is used as a decorator (called via
     // mb_call1_val), it copies __name__ from the wrapped function to the
@@ -532,13 +546,21 @@ unsafe extern "C" fn dispatch_wraps(args_ptr: *const MbValue, nargs: usize) -> M
 // REQ: R6
 unsafe extern "C" fn dispatch_cached_property(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_functools_cached_property(args.get(0).copied().unwrap_or_else(MbValue::none))
+    let func = args.get(0).copied().unwrap_or_else(MbValue::none);
+    if let Some(err) = reject_non_callable(func, "the first argument must be callable") {
+        return err;
+    }
+    mb_functools_cached_property(func)
 }
 
 // REQ: R7
 unsafe extern "C" fn dispatch_cmp_to_key(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_functools_cmp_to_key(args.get(0).copied().unwrap_or_else(MbValue::none))
+    let mycmp = args.get(0).copied().unwrap_or_else(MbValue::none);
+    if let Some(err) = reject_non_callable(mycmp, "the first argument must be callable") {
+        return err;
+    }
+    mb_functools_cmp_to_key(mycmp)
 }
 
 // REQ: R8
@@ -546,6 +568,12 @@ unsafe extern "C" fn dispatch_update_wrapper(args_ptr: *const MbValue, nargs: us
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let wrapper = args.get(0).copied().unwrap_or_else(MbValue::none);
     let wrapped = args.get(1).copied().unwrap_or_else(MbValue::none);
+    if let Some(err) = reject_non_callable(wrapper, "the first argument must be callable") {
+        return err;
+    }
+    if let Some(err) = reject_non_callable(wrapped, "the second argument must be callable") {
+        return err;
+    }
     // updated=("name",...) entries must exist on the wrapper — CPython does
     // getattr(wrapper, attr).update(...) and lets the AttributeError out.
     let (_, kwargs) = split_kwargs(args);
@@ -592,7 +620,11 @@ unsafe extern "C" fn dispatch_update_wrapper(args_ptr: *const MbValue, nargs: us
 // REQ: R9
 unsafe extern "C" fn dispatch_singledispatch(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_functools_singledispatch(args.get(0).copied().unwrap_or_else(MbValue::none))
+    let func = args.get(0).copied().unwrap_or_else(MbValue::none);
+    if let Some(err) = reject_non_callable(func, "the first argument must be callable") {
+        return err;
+    }
+    mb_functools_singledispatch(func)
 }
 
 // REQ: R10
@@ -601,7 +633,11 @@ unsafe extern "C" fn dispatch_singledispatchmethod(
     nargs: usize,
 ) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_functools_singledispatchmethod(args.get(0).copied().unwrap_or_else(MbValue::none))
+    let func = args.get(0).copied().unwrap_or_else(MbValue::none);
+    if let Some(err) = reject_non_callable(func, "the first argument must be callable") {
+        return err;
+    }
+    mb_functools_singledispatchmethod(func)
 }
 
 // partialmethod is the descriptor-bound sibling of `partial`. Hot path
@@ -2507,11 +2543,22 @@ mod tests {
 
     // REQ: R6
     #[test]
-    fn test_cached_property_passthrough() {
-        // cached_property is an identity passthrough at MVP.
+    fn test_cached_property_creates_descriptor() {
         let func = MbValue::from_int(42);
         let result = mb_functools_cached_property(func);
-        assert_eq!(result.as_int(), Some(42));
+        unsafe {
+            let ptr = result
+                .as_ptr()
+                .expect("expected cached_property descriptor");
+            if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+                assert_eq!(class_name, "__cached_property__");
+                let f = fields.read().unwrap();
+                assert_eq!(f.get("fget").and_then(|v| v.as_int()), Some(42));
+                assert!(f.contains_key("__name__"));
+            } else {
+                panic!("expected cached_property descriptor Instance");
+            }
+        }
     }
 
     // REQ: R7

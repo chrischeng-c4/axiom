@@ -9,12 +9,11 @@
 # case = "total_ordering__cls_as_type_wrong"
 # subject = "functools.total_ordering(cls: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/functools.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls
 # mamba-strict-type: TypeError
 """Type wall: functools.total_ordering(cls: type); call it with the wrong type.
 
