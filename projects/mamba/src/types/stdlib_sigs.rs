@@ -383,6 +383,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("process_id", CoreTy::Int)],
         enforceable: true,
     },
+    // POSITIVE: atexit register/unregister require a callable target. The
+    // generated Callable rows collapse to Unknown, but a bare user instance
+    // cannot satisfy Callable and must be rejected by force typing.
+    StdlibSig {
+        module: "atexit",
+        qualifier: "",
+        name: "register",
+        kind: SigKind::ModuleFn,
+        params: &[p("func", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "atexit",
+        qualifier: "",
+        name: "unregister",
+        kind: SigKind::ModuleFn,
+        params: &[p("func", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact
