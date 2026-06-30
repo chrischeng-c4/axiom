@@ -2474,6 +2474,33 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("verbose", CoreTy::Bool)],
         enforceable: true,
     },
+    // POSITIVE: email top-level parser helpers take IO/bytes-like protocol
+    // values. Generated rows collapse these to Unknown; Typed rejects the bare
+    // user object probes while staying skip-safe for real file/bytes-like values.
+    StdlibSig {
+        module: "email",
+        qualifier: "",
+        name: "message_from_binary_file",
+        kind: SigKind::ModuleFn,
+        params: &[p("fp", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email",
+        qualifier: "",
+        name: "message_from_bytes",
+        kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email",
+        qualifier: "",
+        name: "message_from_file",
+        kind: SigKind::ModuleFn,
+        params: &[p("fp", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -4972,6 +4999,21 @@ mod tests {
         assert_eq!(finder.kind, SigKind::Method);
         assert_eq!(finder.params[0].name, "verbose");
         assert_eq!(finder.params[0].ty, CoreTy::Bool);
+    }
+
+    #[test]
+    fn curated_email_message_factory_walls_override_unknown_rows() {
+        for (name, first_param) in [
+            ("message_from_binary_file", "fp"),
+            ("message_from_bytes", "s"),
+            ("message_from_file", "fp"),
+        ] {
+            let sig = get("email", "", name).expect("email message factory row present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
     }
 
     #[test]
