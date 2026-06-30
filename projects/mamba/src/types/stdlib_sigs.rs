@@ -2168,6 +2168,33 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("src", CoreTy::Typed), p("dst", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
+    // lists. Generated rows collapse the key parameters to Unknown; curate the
+    // strict walls that prove bare objects/scalars cannot cross this boundary.
+    StdlibSig {
+        module: "distutils.fancy_getopt",
+        qualifier: "",
+        name: "fancy_getopt",
+        kind: SigKind::ModuleFn,
+        params: &[p("options", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.fancy_getopt",
+        qualifier: "FancyGetopt",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("option_table", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.fancy_getopt",
+        qualifier: "FancyGetopt",
+        name: "getopt",
+        kind: SigKind::Method,
+        params: &[p("args", CoreTy::Typed), p("object", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4501,6 +4528,30 @@ mod tests {
             assert_eq!(sig.params[1].name, "dst");
             assert_eq!(sig.params[1].ty, CoreTy::Typed);
         }
+    }
+
+    #[test]
+    fn curated_distutils_fancy_getopt_walls() {
+        let func = get("distutils.fancy_getopt", "", "fancy_getopt")
+            .expect("fancy_getopt row present");
+        assert!(func.enforceable);
+        assert_eq!(func.kind, SigKind::ModuleFn);
+        assert_eq!(func.params[0].name, "options");
+        assert_eq!(func.params[0].ty, CoreTy::List);
+
+        let init = get("distutils.fancy_getopt", "FancyGetopt", "__init__")
+            .expect("FancyGetopt.__init__ present");
+        assert!(init.enforceable);
+        assert_eq!(init.kind, SigKind::Method);
+        assert_eq!(init.params[0].name, "option_table");
+        assert_eq!(init.params[0].ty, CoreTy::Typed);
+
+        let getopt = get("distutils.fancy_getopt", "FancyGetopt", "getopt")
+            .expect("FancyGetopt.getopt present");
+        assert!(getopt.enforceable);
+        assert_eq!(getopt.kind, SigKind::Method);
+        assert_eq!(getopt.params[0].name, "args");
+        assert_eq!(getopt.params[0].ty, CoreTy::Typed);
     }
 
     #[test]

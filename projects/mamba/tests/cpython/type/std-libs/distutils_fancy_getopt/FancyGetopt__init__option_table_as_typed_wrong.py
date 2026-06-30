@@ -9,12 +9,11 @@
 # case = "FancyGetopt__init__option_table_as_typed_wrong"
 # subject = "distutils.fancy_getopt.FancyGetopt.__init__(option_table: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed option_table"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/fancy_getopt.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed option_table
 # mamba-strict-type: TypeError
 """Type wall: distutils.fancy_getopt.FancyGetopt.__init__(option_table: typed); call it with the wrong type.
 
