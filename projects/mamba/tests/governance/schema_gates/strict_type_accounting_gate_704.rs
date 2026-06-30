@@ -239,6 +239,10 @@ strict_concurrent_queues_fixture = strict_module.TYPE_DIR / "std-libs/concurrent
 strict_templatestr_fixture = strict_module.TYPE_DIR / "std-libs/ast/TemplateStr__init__values_as_list_wrong.py"
 strict_z85decode_fixture = strict_module.TYPE_DIR / "std-libs/base64/z85decode__s_as_typed_wrong.py"
 strict_z85encode_fixture = strict_module.TYPE_DIR / "std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py"
+strict_date_strptime_date_string_fixture = strict_module.TYPE_DIR / "std-libs/datetime/date__strptime__date_string_as_str_wrong.py"
+strict_date_strptime_string_fixture = strict_module.TYPE_DIR / "std-libs/datetime/date__strptime__string_as_str_wrong.py"
+strict_time_strptime_date_string_fixture = strict_module.TYPE_DIR / "std-libs/datetime/time__strptime__date_string_as_str_wrong.py"
+strict_time_strptime_string_fixture = strict_module.TYPE_DIR / "std-libs/datetime/time__strptime__string_as_str_wrong.py"
 strict_asynchat_fixture = strict_module.TYPE_DIR / "std-libs/asynchat/async_chat__push__data_as_bytes_wrong.py"
 strict_asyncio_coroutine_fixture = strict_module.TYPE_DIR / "std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py"
 oracle_zstd_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/_zstd/finalize_dict__custom_dict_bytes_as_bytes_wrong.py"
@@ -251,6 +255,10 @@ oracle_concurrent_queues_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/
 oracle_templatestr_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/ast/TemplateStr__init__values_as_list_wrong.py"
 oracle_z85decode_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/base64/z85decode__s_as_typed_wrong.py"
 oracle_z85encode_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py"
+oracle_date_strptime_date_string_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/datetime/date__strptime__date_string_as_str_wrong.py"
+oracle_date_strptime_string_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/datetime/date__strptime__string_as_str_wrong.py"
+oracle_time_strptime_date_string_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/datetime/time__strptime__date_string_as_str_wrong.py"
+oracle_time_strptime_string_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/datetime/time__strptime__string_as_str_wrong.py"
 oracle_asynchat_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/asynchat/async_chat__push__data_as_bytes_wrong.py"
 oracle_asyncio_coroutine_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py"
 tkinter_fixture = strict_module.TYPE_DIR / "std-libs/_tkinter/TkappType__wantobjects__wantobjects_as_typed_wrong.py"
@@ -273,6 +281,10 @@ assert strict_module.VERSION_REMOVED_TYPE_LIBS["smtpd"] == (3, 12)
 assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/ast/TemplateStr__init__values_as_list_wrong.py"] == (3, 14)
 assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/base64/z85decode__s_as_typed_wrong.py"] == (3, 13)
 assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py"] == (3, 13)
+assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/date__strptime__date_string_as_str_wrong.py"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/date__strptime__string_as_str_wrong.py"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/time__strptime__date_string_as_str_wrong.py"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/time__strptime__string_as_str_wrong.py"] == (3, 14)
 assert strict_module.VERSION_REMOVED_TYPE_FIXTURES["std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py"] == (3, 12)
 assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["annotationlib"] == (3, 14)
 assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["_zstd"] == (3, 14)
@@ -287,6 +299,10 @@ assert oracle_module.VERSION_REMOVED_TYPE_LIBS["smtpd"] == (3, 12)
 assert oracle_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/ast/TemplateStr__init__values_as_list_wrong.py"] == (3, 14)
 assert oracle_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/base64/z85decode__s_as_typed_wrong.py"] == (3, 13)
 assert oracle_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py"] == (3, 13)
+assert oracle_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/date__strptime__date_string_as_str_wrong.py"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/date__strptime__string_as_str_wrong.py"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/time__strptime__date_string_as_str_wrong.py"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/datetime/time__strptime__string_as_str_wrong.py"] == (3, 14)
 assert oracle_module.VERSION_REMOVED_TYPE_FIXTURES["std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py"] == (3, 12)
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_annotationlib_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_zstd_fixture) == expected
@@ -299,6 +315,10 @@ assert strict_module.is_version_specific_unavailable_type_fixture(strict_concurr
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_templatestr_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_z85decode_fixture) == expected_z85
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_z85encode_fixture) == expected_z85
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_date_strptime_date_string_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_date_strptime_string_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_time_strptime_date_string_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_time_strptime_string_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_asynchat_fixture) == expected_removed
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_asyncio_coroutine_fixture) == expected_removed
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_annotationlib_fixture) == expected
@@ -311,6 +331,10 @@ assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_concurr
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_templatestr_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_z85decode_fixture) == expected_z85
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_z85encode_fixture) == expected_z85
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_date_strptime_date_string_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_date_strptime_string_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_time_strptime_date_string_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_time_strptime_string_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_asynchat_fixture) == expected_removed
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_asyncio_coroutine_fixture) == expected_removed
 assert not strict_module.is_version_specific_unavailable_type_fixture(tkinter_fixture)
@@ -323,6 +347,10 @@ if expected:
     assert strict_concurrent_crossinterp_fixture not in strict_module.executable_type_fixtures([strict_concurrent_crossinterp_fixture])
     assert strict_concurrent_queues_fixture not in strict_module.executable_type_fixtures([strict_concurrent_queues_fixture])
     assert strict_templatestr_fixture not in strict_module.executable_type_fixtures([strict_templatestr_fixture])
+    assert strict_date_strptime_date_string_fixture not in strict_module.executable_type_fixtures([strict_date_strptime_date_string_fixture])
+    assert strict_date_strptime_string_fixture not in strict_module.executable_type_fixtures([strict_date_strptime_string_fixture])
+    assert strict_time_strptime_date_string_fixture not in strict_module.executable_type_fixtures([strict_time_strptime_date_string_fixture])
+    assert strict_time_strptime_string_fixture not in strict_module.executable_type_fixtures([strict_time_strptime_string_fixture])
 if expected_z85:
     assert strict_z85decode_fixture not in strict_module.executable_type_fixtures([strict_z85decode_fixture])
     assert strict_z85encode_fixture not in strict_module.executable_type_fixtures([strict_z85encode_fixture])
