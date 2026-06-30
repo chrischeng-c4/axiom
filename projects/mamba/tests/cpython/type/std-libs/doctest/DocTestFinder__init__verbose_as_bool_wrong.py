@@ -9,12 +9,11 @@
 # case = "DocTestFinder__init__verbose_as_bool_wrong"
 # subject = "doctest.DocTestFinder.__init__(verbose: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed verbose"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed verbose
 # mamba-strict-type: TypeError
 """Type wall: doctest.DocTestFinder.__init__(verbose: bool); call it with the wrong type.
 
