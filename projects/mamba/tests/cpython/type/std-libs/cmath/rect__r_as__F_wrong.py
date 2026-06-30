@@ -9,12 +9,11 @@
 # case = "rect__r_as__F_wrong"
 # subject = "cmath.rect(r: _F)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed r"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cmath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed r
 # mamba-strict-type: TypeError
 """Type wall: cmath.rect(r: _F); call it with the wrong type.
 
