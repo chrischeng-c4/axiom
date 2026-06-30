@@ -2674,6 +2674,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "email.policy",
+        qualifier: "EmailPolicy",
+        name: "header_source_parse",
+        kind: SigKind::Method,
+        params: &[p("sourcelines", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "email.parser",
         qualifier: "BytesParser",
         name: "__init__",
@@ -5348,6 +5356,16 @@ mod tests {
             assert_eq!(sig.params[0].name, "_class", "{qualifier}.__init__");
             assert_eq!(sig.params[0].ty, CoreTy::Typed, "{qualifier}.__init__");
         }
+    }
+
+    #[test]
+    fn curated_email_policy_header_source_parse_list_wall_overrides_unknown_row() {
+        let sig = get("email.policy", "EmailPolicy", "header_source_parse")
+            .expect("email.policy EmailPolicy.header_source_parse row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "sourcelines");
+        assert_eq!(sig.params[0].ty, CoreTy::List);
     }
 
     #[test]
