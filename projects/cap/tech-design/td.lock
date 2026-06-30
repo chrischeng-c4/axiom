@@ -1,8 +1,8 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-30T04:03:16.504509+00:00"
-digest = "sha256:e4ca8d3c3f0abfb422abb7593104a0d755e851a35c153731c7fe83b26aeec17f"
+generated_at = "2026-06-30T04:47:04.039369+00:00"
+digest = "sha256:19b72517d0a9e0e8ef0937c08b23be6e9bb3fd613b1128d8eccd6936ff568c76"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
@@ -38,7 +38,7 @@ digest = "sha256:4e4177698b62759b4992eb00975845389a6b1d5ca5faf4da98a969ac515e581
 
 [[files]]
 path = "semantic/cap-build-script.md"
-digest = "sha256:4f43a7edbcbdf724ab7344ce2521b11a03aa7059a57a3ec18ca01ac7e8c27a52"
+digest = "sha256:08bde24eefa37179308f9d3226da76a0335440b602d262ae48878bb8dae295d5"
 
 [[files]]
 path = "semantic/cap-install-script.md"
