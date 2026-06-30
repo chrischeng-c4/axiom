@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: sandbox-applied-to-runner-mode-commands
+    claim: sandbox-applied-to-runner-mode-commands
     coverage: partial
     rationale: "The sandbox is enforced only for direct mode today; applying it to runner mode makes seatbelt isolation + egress confinement protect the common `vat run <runner>` workflow, completing the network sandbox."
 ---
@@ -126,6 +126,7 @@ e2e_tests:
   - id: vat-runner-sandbox-egress-smoke
     name: "runner-mode seatbelt egress confines the runner, not services"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: sandbox-applied-to-runner-mode-commands
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_runner_sandbox -- --nocapture"
@@ -134,6 +135,7 @@ e2e_tests:
   - id: vat-runner-sandbox-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: sandbox-applied-to-runner-mode-commands
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"
@@ -145,6 +147,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: runner-mode commands accept sandbox configuration through the existing vat run surface."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: parse sandbox egress policy from vat.toml runner/service configuration."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: apply the selected sandbox profile around runner command execution."
+  - path: projects/vat/src/sandbox/seatbelt.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: encode the localhost-only seatbelt profile and denied egress contract."
+  - path: projects/vat/tests/vat_runner_sandbox.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: runner sandbox tests verify localhost allow and external egress denial."
   - path: projects/vat/src/commands/run.rs
     action: modify
     section: source

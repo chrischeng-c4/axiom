@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: network-sandbox-v3-seatbelt-egress-policy
+    claim: network-sandbox-v3-seatbelt-egress-policy
     coverage: partial
     rationale: "vat can route traffic but cannot DENY egress. Extending the existing seatbelt profile with a network egress policy (Apple Seatbelt deny-by-default, like codex) confines a run's outbound network on macOS with no VM — the foundation of a hermetic sandbox that composes with v1/v2 routing."
 ---
@@ -143,6 +143,7 @@ e2e_tests:
   - id: vat-seatbelt-egress-smoke
     name: "seatbelt localhost-only denies external egress, allows localhost"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v3-seatbelt-egress-policy
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_sandbox_egress -- --nocapture"
@@ -151,6 +152,7 @@ e2e_tests:
   - id: vat-seatbelt-egress-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v3-seatbelt-egress-policy
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"
@@ -162,6 +164,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: vat run applies seatbelt egress policy while preserving runner command semantics."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: runner/service configuration selects the localhost-only egress policy."
+  - path: projects/vat/src/sandbox/seatbelt.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: generate and apply the seatbelt policy that denies outbound network except localhost."
+  - path: projects/vat/src/sandbox/mod.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: sandbox profile records the localhost allowlist and default deny contract."
+  - path: projects/vat/tests/vat_sandbox_egress.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: egress tests verify localhost succeeds and external TCP is blocked."
   - path: projects/vat/src/sandbox/seatbelt.rs
     action: modify
     section: source

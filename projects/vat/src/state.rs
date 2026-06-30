@@ -109,7 +109,11 @@ pub struct ServiceRunRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by_vat: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepare_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

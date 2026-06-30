@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: grpc-reverse-proxy-h2c-connection-pool
+    claim: grpc-reverse-proxy-h2c-connection-pool
     coverage: partial
     rationale: "The #509 gRPC reverse-proxy reconnects per request; reusing a multiplexed h2c connection per upstream removes redundant handshakes and socket churn under load while keeping behaviour identical."
 ---
@@ -123,6 +123,7 @@ e2e_tests:
   - id: vat-grpc-pool-reuse-smoke
     name: "pooled gRPC reverse-proxy reuses one upstream connection"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: grpc-reverse-proxy-h2c-connection-pool
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture"
@@ -131,6 +132,7 @@ e2e_tests:
   - id: vat-grpc-pool-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: grpc-reverse-proxy-h2c-connection-pool
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"
@@ -142,6 +144,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: existing http-mock runner service flags continue to expose gRPC MITM routing."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: pool behavior is internal to http-mock proxy configuration and keeps existing TOML shape."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: reuse per-upstream h2c SendRequest handles and evict dead pool entries."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: the proxy pool maps upstream authority keys to healthy h2c senders."
+  - path: projects/vat/tests/vat_emulator_grpc_mitm_routing.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: sequential gRPC routing test proves connection reuse behavior."
   - path: projects/vat/src/emulator/httpmock/mod.rs
     action: modify
     section: source

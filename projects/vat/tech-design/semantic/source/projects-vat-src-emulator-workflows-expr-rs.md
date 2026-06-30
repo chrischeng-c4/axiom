@@ -16,8 +16,16 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/workflows/expr.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/workflows/expr.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Scope` | projects/vat/src/emulator/workflows/expr.rs | type | pub | 18 |  |
+| `eval_expr` | projects/vat/src/emulator/workflows/expr.rs | function | pub | 109 | eval_expr(src: &str, scope: &Scope) -> Result<Value, String> |
+| `eval_value` | projects/vat/src/emulator/workflows/expr.rs | function | pub | 24 | eval_value(v: &Value, scope: &Scope) -> Result<Value, String> |
+| `to_text` | projects/vat/src/emulator/workflows/expr.rs | function | pub | 555 | to_text(v: &Value) -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

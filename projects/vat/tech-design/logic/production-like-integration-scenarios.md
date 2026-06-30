@@ -5,8 +5,8 @@ fill_sections: [logic, config, schema, cli, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: production-like-integration-scenarios
+    claim: production-like-integration-scenarios
     coverage: partial
     rationale: "This TD extends the local agent test runner protocol with app-under-test scenarios without introducing VM or Docker runner semantics."
 ---
@@ -194,6 +194,10 @@ unchanged:
 e2e_tests:
   - id: scenario-run-starts-app-dependency-and-runner
     name: "Scenario run starts app dependency and runner"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: production-like-integration-scenarios
+    contract_id: production-like-integration-scenarios
+    category: behavior
     command: "cargo test -p vat scenario_run_starts_app_dependency_and_runner -- --nocapture"
     assertions:
       - "vat run --scenario prod-like succeeds"
@@ -202,6 +206,10 @@ e2e_tests:
       - "result JSONL includes scenario and app"
   - id: scenario-failure-keeps-topology-and-logs
     name: "Scenario failure keeps topology and logs"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: production-like-integration-scenarios
+    contract_id: production-like-integration-scenarios
+    category: behavior
     command: "cargo test -p vat scenario_failure_keeps_topology_and_logs -- --nocapture"
     assertions:
       - "failing runner forwards its exit code"
@@ -210,6 +218,10 @@ e2e_tests:
       - "vat state exposes scenario topology"
   - id: scenario-hermetic-requires-http-mock-service
     name: "Scenario hermetic requires http mock service"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: production-like-integration-scenarios
+    contract_id: production-like-integration-scenarios
+    category: behavior
     command: "cargo test -p vat scenario_hermetic_requires_http_mock_service -- --nocapture"
     assertions:
       - "hermetic scenario without http-mock exits non-zero"
@@ -225,22 +237,27 @@ regression_commands:
 ```yaml
 changes:
   - area: "config"
+    section: config
     impl_mode: "codegen"
     files: ["projects/vat/src/config.rs"]
     summary: "Add ScenarioConfig, ScenarioNetworkMode, scenario lookup, and scenario validation."
   - area: "cli"
+    section: cli
     impl_mode: "codegen"
     files: ["projects/vat/src/cli.rs"]
     summary: "Add --scenario to vat run and dispatch Target::Scenario."
   - area: "runner-orchestration"
+    section: logic
     impl_mode: "codegen"
     files: ["projects/vat/src/commands/run.rs"]
     summary: "Resolve scenario service union, enforce hermetic proxy participation, run one selected runner, and persist scenario evidence."
   - area: "state"
+    section: schema
     impl_mode: "codegen"
     files: ["projects/vat/src/state.rs"]
     summary: "Add ScenarioRunRecord and RouteRecord under TestRunEvidence."
   - area: "tests"
+    section: e2e-test
     impl_mode: "codegen"
     files: ["projects/vat/tests/vat_toml_runner.rs", "projects/vat/tests/vat_concurrent_runners.rs"]
     summary: "Add scenario e2e tests and preserve runner/concurrency regressions."

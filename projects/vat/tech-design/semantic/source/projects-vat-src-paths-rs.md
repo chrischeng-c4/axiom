@@ -16,12 +16,24 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/paths.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/paths.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `cluster_dir` | projects/vat/src/paths.rs | function | pub | 68 | cluster_dir(name: &str) -> Result<PathBuf> |
+| `clusters_dir` | projects/vat/src/paths.rs | function | pub | 62 | clusters_dir() -> Result<PathBuf> |
+| `file` | projects/vat/src/paths.rs | module | pub | 74 |  |
+| `root` | projects/vat/src/paths.rs | function | pub | 26 | root() -> Result<PathBuf> |
+| `vat_dir` | projects/vat/src/paths.rs | function | pub | 54 | vat_dir(id: &str) -> Result<PathBuf> |
+| `vats_dir` | projects/vat/src/paths.rs | function | pub | 48 | vats_dir() -> Result<PathBuf> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-paths-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! On-disk layout for vat state.
 //!
 //! Everything lives under a single root (default `<repo>/.vat`, override with
@@ -100,6 +112,7 @@ pub mod file {
     pub const ROOTFS: &str = "rootfs";
     pub const LOGS: &str = "logs";
 }
+// CODEGEN-END
 ````
 
 ## Changes

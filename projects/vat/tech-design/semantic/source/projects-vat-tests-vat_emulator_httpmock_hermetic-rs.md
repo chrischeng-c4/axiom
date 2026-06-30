@@ -1,3 +1,31 @@
+---
+id: projects-vat-tests-vat_emulator_httpmock_hermetic-rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/tests/vat_emulator_httpmock_hermetic.rs.
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat e2e test source behavior for the local agent test runner protocol."
+---
+
+# Standardized projects/vat/tests/vat_emulator_httpmock_hermetic.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/vat/tests/vat_emulator_httpmock_hermetic.rs` generated from AST during Score force-regeneration standardization.
+
+### Symbols
+
+No public AST symbols.
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 // SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_httpmock_hermetic-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // HANDWRITE-BEGIN gap="missing-generator:e2e-test:7761ba2f" tracker="pending-tracker" reason="--no-forward proxy: unmatched → 502 hermetic (no upstream), stub still served; default proxy still forwards."
@@ -175,3 +203,17 @@ async fn default_proxy_forwards_unmatched() {
 }
 // HANDWRITE-END
 // CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tests/vat_emulator_httpmock_hermetic.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/vat/tests/vat_emulator_httpmock_hermetic.rs` captured during vat standardization.
+```

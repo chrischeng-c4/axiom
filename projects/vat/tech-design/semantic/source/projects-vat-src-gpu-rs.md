@@ -16,12 +16,20 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/gpu.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/gpu.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `GpuInfo` | projects/vat/src/gpu.rs | struct | pub | 36 |  |
+| `detect` | projects/vat/src/gpu.rs | function | pub | 53 | detect() -> GpuInfo |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-gpu-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! GPU visibility — the reason vat exists for ML agents.
 //!
 //! ## The problem vat solves
@@ -151,6 +159,7 @@ fn sysctl(key: &str) -> Option<String> {
         Some(s)
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

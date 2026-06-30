@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
+    claim: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     coverage: partial
     rationale: "An app using the stock gRPC Cloud Tasks / Cloud Scheduler client cannot reach a REST-only emulator without code-level transport surgery; adding a gRPC front-end over the same store makes the emulator behave like the real service over either protocol."
 ---
@@ -165,6 +165,7 @@ e2e_tests:
   - id: vat-cloud-tasks-grpc-dispatch-smoke
     name: "Cloud Tasks gRPC client dispatches a task"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_tasks_grpc -- --nocapture"
@@ -174,6 +175,7 @@ e2e_tests:
   - id: vat-cloud-scheduler-grpc-dispatch-smoke
     name: "Cloud Scheduler gRPC client fires a job on RunJob"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_scheduler_grpc -- --nocapture"
@@ -182,6 +184,7 @@ e2e_tests:
   - id: vat-cloud-grpc-rest-coexist
     name: "REST tests still pass against the dual-protocol port"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_tasks --test vat_emulator_scheduler -- --nocapture"
@@ -193,6 +196,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/emulator/mod.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: service preset startup exposes the dual REST/gRPC emulator endpoint to vat runners."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: ensure tonic/protobuf and multiplexing dependencies are enabled for emulator builds."
+  - path: projects/vat/src/emulator/grpc_mux.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: multiplex REST and gRPC traffic on one listener by content type."
+  - path: projects/vat/src/emulator/tasks.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: implement generated Cloud Tasks request/response mapping over the shared task store."
+  - path: projects/vat/tests/vat_emulator_tasks_grpc.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: gRPC task/scheduler smoke tests verify generated-client contracts."
   - path: projects/vat/src/emulator/grpc_mux.rs
     action: create
     section: source

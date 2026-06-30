@@ -16,12 +16,21 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/sandbox/mod.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/sandbox/mod.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `pick` | projects/vat/src/sandbox/mod.rs | function | pub | 46 | pick(spec: &EnvSpec) -> Box<dyn Sandbox> |
+| `process` | projects/vat/src/sandbox/mod.rs | module | pub | 20 |  |
+| `seatbelt` | projects/vat/src/sandbox/mod.rs | module | pub | 21 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Pluggable isolation backends.
 //!
 //! The differentiator of vat is the state layer, not the isolation mechanism —
@@ -97,6 +106,7 @@ pub fn pick(spec: &EnvSpec) -> Box<dyn Sandbox> {
         }
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

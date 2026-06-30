@@ -16,12 +16,20 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/sandbox/seatbelt.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/sandbox/seatbelt.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `SeatbeltBackend` | projects/vat/src/sandbox/seatbelt.rs | struct | pub | 21 |  |
+| `available` | projects/vat/src/sandbox/seatbelt.rs | function | pub | 28 | available() -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-sandbox-seatbelt-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! macOS seatbelt backend.
 //!
 //! Wraps the command in `sandbox-exec` with a generated profile that allows
@@ -147,6 +155,7 @@ fn which(bin: &str) -> Option<std::path::PathBuf> {
         .map(|dir| dir.join(bin))
         .find(|candidate| candidate.is_file())
 }
+// CODEGEN-END
 ````
 
 ## Changes

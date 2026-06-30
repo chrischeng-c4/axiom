@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
+    claim: built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
     coverage: partial
     rationale: "Extends the local agent test runner protocol with vat's own in-process Rust emulators (Pub/Sub, Firebase Auth) so cloud-targeting agents get instant, dependency-free local emulation, preferred over the external gcloud/docker paths."
 ---
@@ -208,6 +208,7 @@ e2e_tests:
   - id: vat-emulator-auth-rest-smoke
     name: "Firebase Auth emulator serves signUp/signIn/lookup"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_auth -- --nocapture"
@@ -217,6 +218,7 @@ e2e_tests:
   - id: vat-emulator-pubsub-grpc-smoke
     name: "Pub/Sub emulator serves publish/pull over gRPC"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_pubsub -- --nocapture"
@@ -226,6 +228,7 @@ e2e_tests:
   - id: vat-builtin-preset-run-smoke
     name: "builtin preset exports the host var to the runner"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored"
@@ -234,6 +237,7 @@ e2e_tests:
   - id: vat-emulator-lean-build
     name: "lean build compiles and emulator verb errors cleanly"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

@@ -15,24 +15,17 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/tests/vat_cli_convention.rs`, captured as a rust-source-unit (td_ast) item-tree
-during vat standardization onto the codegen ladder.
+Public API manifest for `projects/vat/tests/vat_cli_convention.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `cli_convention_help_lists_all_three` | projects/vat/tests/vat_cli_convention.rs | function | private | 15 |  |
-| `cli_convention_llm_flags` | projects/vat/tests/vat_cli_convention.rs | function | private | 36 |  |
-| `cli_convention_issue_create_dry_run` | projects/vat/tests/vat_cli_convention.rs | function | private | 60 |  |
-| `cli_convention_issue_help_lists_verbs` | projects/vat/tests/vat_cli_convention.rs | function | private | 83 |  |
-| `cli_convention_upgrade_check_exits_cleanly` | projects/vat/tests/vat_cli_convention.rs | function | private | 99 |  |
-| `vat` | projects/vat/tests/vat_cli_convention.rs | function | private | 10 | vat() -> &'static str |
-
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_cli_convention-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Binary smoke test for the mandatory CLI convention: every CLI ships
 //! `llm`, `upgrade`, and `issue` (CONTRIBUTING.md).
 //!
@@ -75,12 +68,12 @@ fn cli_convention_help_lists_all_three() {
 
 #[test]
 fn cli_convention_llm_flags() {
-    let out = Command::new(vat())
+    let outline = Command::new(vat())
         .args(["llm", "--topic", "outline", "--format", "json"])
         .output()
         .unwrap();
-    assert!(out.status.success(), "llm outline json should exit 0");
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(outline.status.success(), "llm outline json should exit 0");
+    let stdout = String::from_utf8_lossy(&outline.stdout);
     assert!(
         stdout.contains("\"project\"") && stdout.contains("\"topics\""),
         "llm --format json should print the cli-std JSON shape:\n{stdout}"
@@ -121,7 +114,10 @@ fn cli_convention_issue_create_dry_run() {
 
 #[test]
 fn cli_convention_issue_help_lists_verbs() {
-    let out = Command::new(vat()).args(["issue", "--help"]).output().unwrap();
+    let out = Command::new(vat())
+        .args(["issue", "--help"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "issue --help should exit 0");
     let stdout = String::from_utf8_lossy(&out.stdout);
     for verb in ["search", "view", "create"] {
@@ -149,6 +145,7 @@ fn cli_convention_upgrade_check_exits_cleanly() {
         out.status
     );
 }
+// CODEGEN-END
 ````
 
 ## Changes

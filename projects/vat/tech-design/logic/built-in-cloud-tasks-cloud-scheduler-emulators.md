@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: built-in-rust-emulators-cloud-tasks-cloud-scheduler
+    claim: built-in-rust-emulators-cloud-tasks-cloud-scheduler
     coverage: partial
     rationale: "Extends vat's built-in emulator framework with Cloud Tasks and Cloud Scheduler — services that have no official emulator — so task-queue and cron-job code can run locally through vat's run and evidence surface."
 ---
@@ -219,6 +219,7 @@ e2e_tests:
   - id: vat-cloud-tasks-dispatch-smoke
     name: "Cloud Tasks emulator dispatches a task to its target"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-cloud-tasks-cloud-scheduler
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_tasks -- --nocapture"
@@ -228,6 +229,7 @@ e2e_tests:
   - id: vat-cloud-scheduler-dispatch-smoke
     name: "Cloud Scheduler emulator fires a job on :run"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-cloud-tasks-cloud-scheduler
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_scheduler -- --nocapture"
@@ -237,6 +239,7 @@ e2e_tests:
   - id: vat-cloud-builtin-preset-run-smoke
     name: "builtin cloud preset exports the host var to the runner"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-cloud-tasks-cloud-scheduler
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_tasks -- --nocapture --include-ignored"
@@ -245,6 +248,7 @@ e2e_tests:
   - id: vat-cloud-emulator-lean-build
     name: "lean build still compiles"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-cloud-tasks-cloud-scheduler
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

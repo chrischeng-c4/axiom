@@ -16,12 +16,24 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/event.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/event.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Event` | projects/vat/src/event.rs | struct | pub | 21 |  |
+| `EventKind` | projects/vat/src/event.rs | enum | pub | 35 |  |
+| `append` | projects/vat/src/event.rs | function | pub | 64 | append(events_path: &Path, event: &Event) -> Result<()> |
+| `new` | projects/vat/src/event.rs | function | pub | 47 | new(kind: EventKind, message: impl Into<String>) -> Self |
+| `tail` | projects/vat/src/event.rs | function | pub | 79 | tail(events_path: &Path, n: usize) -> Result<Vec<Event>> |
+| `with_data` | projects/vat/src/event.rs | function | pub | 56 | with_data(mut self, data: serde_json::Value) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-event-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Append-only structured event log.
 //!
 //! Every state transition writes one JSON line to `events.jsonl`. This is the
@@ -117,6 +129,7 @@ pub fn tail(events_path: &Path, n: usize) -> Result<Vec<Event>> {
     let start = all.len().saturating_sub(n);
     Ok(all.split_off(start))
 }
+// CODEGEN-END
 ````
 
 ## Changes

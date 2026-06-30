@@ -15,7 +15,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands;
-use crate::config::ClusterBackend;
+use crate::config::{ClusterBackend, RetentionPolicy};
 use crate::spec::{GpuRequest, Isolation};
 
 #[derive(Parser)]
@@ -59,6 +59,9 @@ enum Cmd {
         /// Agent runner mode already emits compact JSONL. Direct mode uses this for full VatState JSON.
         #[arg(long)]
         json: bool,
+        /// Override vat.toml [workspace].keep for this configured run.
+        #[arg(long, value_enum)]
+        keep: Option<RetentionPolicy>,
         /// Direct command mode, e.g. `vat run -- python train.py`.
         #[arg(last = true, allow_hyphen_values = true, value_name = "COMMAND")]
         cmd: Vec<String>,
@@ -170,6 +173,7 @@ enum LlmFormat {
     Json,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cli-rs.md#source
 impl From<LlmFormat> for cli_std::llm::Format {
     fn from(format: LlmFormat) -> Self {
         match format {
@@ -283,6 +287,7 @@ pub fn run() -> Result<ExitCode> {
             isolation,
             gpu,
             json,
+            keep,
             mut cmd,
         } => {
             if let Some(scenario_id) = scenario {
@@ -301,6 +306,7 @@ pub fn run() -> Result<ExitCode> {
                     isolation,
                     gpu,
                     json,
+                    keep,
                 });
             }
             let target = if !cmd.is_empty() {
@@ -322,6 +328,7 @@ pub fn run() -> Result<ExitCode> {
                 isolation,
                 gpu,
                 json,
+                keep,
             })
         }
         Cmd::Ls { json } => commands::ls::exec(json),

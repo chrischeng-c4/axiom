@@ -325,6 +325,99 @@ artifacts = ["runner-artifact.txt"]
 }
 
 #[test]
+fn external_service_attaches_to_ci_sidecar() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let _accept_thread = std::thread::spawn(move || while listener.accept().is_ok() {});
+
+    std::fs::write(
+        project.path().join("vat.toml"),
+        format!(
+            r#"
+version = 1
+name = "external-service-smoke"
+default_runner = "e2e"
+
+[workspace]
+base = "."
+workdir = "."
+keep = "always"
+
+[[services]]
+id = "postgres"
+external = {{ host = "127.0.0.1", port = {port} }}
+export = {{ DATABASE_URL = "postgres://postgres@{{host}}:{{port}}/app" }}
+timeout_s = 5
+
+[[runners]]
+id = "e2e"
+requires = ["postgres"]
+cmd = ["sh", "-c", "test \"$DATABASE_URL\" = \"postgres://postgres@127.0.0.1:{port}/app\" && test \"$VAT_SERVICE_POSTGRES_HOST\" = \"127.0.0.1\" && test \"$VAT_SERVICE_POSTGRES_PORT\" = \"{port}\" && echo external-ok > external.txt"]
+artifacts = ["external.txt"]
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .arg("run")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = jsonl(&output.stdout);
+    assert!(events.iter().any(|event| {
+        event["type"] == "prepare"
+            && event["service"] == "postgres"
+            && event["runtime"] == "external"
+            && event["owned_by_vat"] == false
+    }));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "ready" && event["service"] == "postgres"));
+    let result = result_event(&events);
+    assert_eq!(result["ok"], true);
+    let id = result["id"].as_str().unwrap();
+
+    let state_output = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["state", id, "--compact"])
+        .output()
+        .unwrap();
+    assert!(state_output.status.success());
+    let json: Value = serde_json::from_slice(&state_output.stdout).unwrap();
+    let service = &json["test_run"]["services"][0];
+    assert_eq!(service["id"], "postgres");
+    assert_eq!(service["command"].as_array().unwrap().len(), 0);
+    assert_eq!(service["status"], "ready");
+    assert_eq!(service["prepare_mode"], "external_attach");
+    assert_eq!(service["host"], "127.0.0.1");
+    assert_eq!(service["port"].as_u64(), Some(u64::from(port)));
+    assert_eq!(service["owned_by_vat"], false);
+    assert!(service.get("pid").is_none());
+    let exported = service["exported_env"].as_array().unwrap();
+    for expected in [
+        "DATABASE_URL",
+        "VAT_SERVICE_POSTGRES_HOST",
+        "VAT_SERVICE_POSTGRES_PORT",
+    ] {
+        assert!(
+            exported.iter().any(|value| value == expected),
+            "missing exported env {expected}"
+        );
+    }
+}
+
+#[test]
 fn failed_vat_toml_runner_keeps_logs_for_inspection() {
     let project = tempfile::tempdir().unwrap();
     let vat_home = tempfile::tempdir().unwrap();
@@ -366,6 +459,53 @@ cmd = ["sh", "-c", "echo before-fail; exit 7"]
         .unwrap();
     assert!(logs.status.success());
     assert!(String::from_utf8_lossy(&logs.stdout).contains("before-fail"));
+}
+
+#[test]
+fn keep_override_retains_successful_run_logs() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[workspace]
+keep = "failed"
+
+[[runners]]
+id = "pass"
+cmd = ["sh", "-c", "echo kept-success"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--keep", "always", "pass"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = jsonl(&output.stdout);
+    let result = result_event(&events);
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["state"], "kept");
+    let id = result["id"].as_str().unwrap();
+
+    let logs = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["logs", id, "runner"])
+        .output()
+        .unwrap();
+    assert!(logs.status.success());
+    assert!(String::from_utf8_lossy(&logs.stdout).contains("kept-success"));
 }
 
 #[test]
@@ -522,6 +662,13 @@ fn llm_guide_mentions_core_agent_contract() {
         // Native-or-Docker service contract is discoverable.
         "native or Docker",
         "runtime = \"docker\"",
+        "external = { host",
+        "owned_by_vat = false",
+        "Env export contract",
+        "VAT_WORKSPACE_BASE",
+        "STORAGE_EMULATOR_HOST` includes `http://",
+        "vat run --keep always",
+        "kern.ipc.somaxconn",
         // Cloud Tasks / Cloud Scheduler clients need an explicit REST/factory
         // override (the SDKs don't auto-read the host var and default to gRPC).
         "Pointing a client at",

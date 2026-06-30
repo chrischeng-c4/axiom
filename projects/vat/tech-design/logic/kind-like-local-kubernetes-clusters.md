@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: local-kubernetes-cluster-service-and-vat-cluster
+    claim: local-kubernetes-cluster-service-and-vat-cluster
     coverage: partial
     rationale: "Extends the local agent test runner protocol with a fourth service kind (cluster) and a standalone vat cluster lifecycle so agents can provision local Kubernetes clusters as run-scoped dependencies."
 ---
@@ -318,6 +318,7 @@ e2e_tests:
   - id: vat-cluster-backend-unavailable-smoke
     name: "cluster service reports structured backend-unavailable error"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: local-kubernetes-cluster-service-and-vat-cluster
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_cluster -- --nocapture"
@@ -327,6 +328,7 @@ e2e_tests:
   - id: vat-cluster-runscoped-smoke
     name: "run-scoped cluster service exports KUBECONFIG and tears down"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: local-kubernetes-cluster-service-and-vat-cluster
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"
@@ -336,6 +338,7 @@ e2e_tests:
   - id: vat-cluster-standalone-smoke
     name: "standalone vat cluster lifecycle"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: local-kubernetes-cluster-service-and-vat-cluster
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"

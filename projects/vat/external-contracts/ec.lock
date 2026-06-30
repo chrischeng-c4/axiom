@@ -1,28 +1,108 @@
-[project]
-name = "vat"
-cap_path = "README.md"
-label = "project:vat"
-
-[[workspaces]]
-name = "vat"
-paths = ["**"]
-target = "rust"
-test_cmd = "cargo test -p vat"
-codegen.profile = "rust/score-crate"
-
-# AW-EC-BEGIN
-[aw.ec.generated]
 version = 1
 project = "vat"
-generated_from_td_digest = "sha256:218c60e46ba2dd71d8025446f9f1d71b252e325c7e32969751b39b0324566d43"
+ir_kind = "ec"
+ec_path = "projects/vat/external-contracts"
+inventory_path = "projects/vat/aw.toml"
+generated_at = "2026-06-30T05:45:21.071176+00:00"
+ir_digest = "sha256:0debeedb3ebf718933692116b67315e762d4f59858a7b87efa3390b04b0e97cd"
+source_digest = "sha256:569e9fabc26416db0ff9dae5f138d396c7d2916f7aa1ad26309b57f9df8e6c38"
+tool_contracts = []
 
-[[aw.ec.generated.cases]]
+[[sources]]
+path = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
+digest = "sha256:d2ccf8602bfcbfe96717495aa8adc9f96152cbc92e00e61da96083a6ecb9d01e"
+
+[[sources]]
+path = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md"
+digest = "sha256:9f8175be4df2659c83f0ab82e6f192415df1061227466c85f939efc71704ea5d"
+
+[[sources]]
+path = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md"
+digest = "sha256:59574a3d7cf74aef691c91462e9bf821d681fb5b03b5b35871ebcdbc4dc6a835"
+
+[[sources]]
+path = "projects/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md"
+digest = "sha256:68c5dc6cc9715e5759291b160825506b9110d2d8633720e4621932db2b935ce3"
+
+[[sources]]
+path = "projects/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md"
+digest = "sha256:226172215e4cc2a3d2a21e9a0e5402987b9f93275fe22ce7b16875466567c547"
+
+[[sources]]
+path = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md"
+digest = "sha256:de98abb30e423ec41d19bec039da51bd6bd1c03144981fd733fd56f1c573b116"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md"
+digest = "sha256:c27b01aafc03cb1cb60c81ccd1c6098fc57f8a279a14f705b1a2a683d96d0735"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md"
+digest = "sha256:9ee6d6982ab5cbcfa58e42c50776da4e0eb35c49574cc1debe69547d60c12a46"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md"
+digest = "sha256:a8c4c2d69f7c59ab2add0259eb2e964b3814acc7e57298d7477c72129675d8e6"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md"
+digest = "sha256:f16d4e344b689e3291574c9ad1f25c0819194fb59d3c7511d30d0f8bd6093593"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md"
+digest = "sha256:f944f242f308734b90066fe3b5de170e5ce146633dbaa17111aa3cc58cf5ea4f"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md"
+digest = "sha256:6d11a10fc8d2141be3fd540c8cca8185135a7188a3deed99a19ef2b27f88fe33"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/external-contracts.md"
+digest = "sha256:49a0f8a0b52801a77450b0cb63d50b44a474deaee590454eb2587fa40a3b7127"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md"
+digest = "sha256:95dc6e58fd4911c3d4485e1dceb03ee02aa261d7187e2b0f82db42878fec745e"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md"
+digest = "sha256:f2d9e2aa05017d5d83868a15a37ed396167e1e28b3ab2c86a949938bdfbfa6f6"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/llm-agent-usage-guide.md"
+digest = "sha256:be58475732c685c807348c7592213c26b6790334d693bd1cca1ec9d2516dd205"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/local-agent-test-runner-protocol.md"
+digest = "sha256:fca71d48799920b24c4f8f1ce80050a45db34e71707acfbd506e315fae26b522"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/production-like-integration-scenarios.md"
+digest = "sha256:13c7d2da43a060bda34af3c6eb8b87ad6937a5432ec1914a6393e4a829b99c85"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md"
+digest = "sha256:654ce268a2c85cc04f11399c7eaad428e149999a572867d50698137c008abdff"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md"
+digest = "sha256:73afe8162c74104d662fd523a7cc66b9561a892a71b67e4c5eb20a3c035bd398"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md"
+digest = "sha256:4899da7c029dff142a28765663dd9f5a2a9998e211f486e79a30e2ae58ab94b9"
+
+[[sources]]
+path = "projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md"
+digest = "sha256:86d3cb7c3a795e7d1128057d950d0e37c12d7003a307ecef9d1e7303aadd4573"
+
+[[cases]]
 id = "scenario-failure-keeps-topology-and-logs"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "production-like-integration-scenarios"
 contract_id = "production-like-integration-scenarios"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs"
 test_path = "projects/vat/tests/behavior_scenario_failure_keeps_topology_and_logs.rs"
 command = "cargo test -p vat --lib scenario_failure_keeps_topology_and_logs -- --nocapture"
 required_for_production = true
@@ -32,14 +112,17 @@ assertions = [
     "vat logs exposes runner output",
     "vat state exposes scenario topology",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:007d26e7067018bfa9c71c7821e67b828ef96a29c49d9b37268d7e923429a928"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "scenario-hermetic-requires-http-mock-service"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "production-like-integration-scenarios"
 contract_id = "production-like-integration-scenarios"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service"
 test_path = "projects/vat/tests/behavior_scenario_hermetic_requires_http_mock_service.rs"
 command = "cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture"
 required_for_production = true
@@ -48,14 +131,17 @@ assertions = [
     "stdout JSONL contains scenario_hermetic_proxy_required",
     "runner command is not executed",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:375af9856dc8c69c8ad28f88eee1bd276bf5c4882e591120e7987deb56f85c01"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "scenario-run-starts-app-dependency-and-runner"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "production-like-integration-scenarios"
 contract_id = "production-like-integration-scenarios"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner"
 test_path = "projects/vat/tests/behavior_scenario_run_starts_app_dependency_and_runner.rs"
 command = "cargo test -p vat --lib scenario_run_starts_app_dependency_and_runner -- --nocapture"
 required_for_production = true
@@ -65,14 +151,17 @@ assertions = [
     "vat state includes test_run.scenario id/app/runner/services",
     "result JSONL includes scenario and app",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a69a80999366d4194ce3cde4e5b706d82cad6ec0849a083fb64471252768e578"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-agent-state-and-diff-surface"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "agent-legible-state-and-diff-surface"
 contract_id = "agent-legible-state-and-diff-surface"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-agent-state-and-diff-surface"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-agent-state-and-diff-surface"
 test_path = "projects/vat/tests/behavior_vat_agent_state_and_diff_surface.rs"
 command = "rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md"
 required_for_production = true
@@ -80,26 +169,32 @@ assertions = [
     "README exposes vat state and vat diff",
     "structured JSON output remains part of the agent-facing contract",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d6c239925c4642963aa4a9282c62b44e89edff9373f7a54a9962c1e6a68a893e"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-builtin-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-builtin-preset-run-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-builtin-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_builtin_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ['a `preset = "firebase-auth"` or `preset = "pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fc9e1d3a1809f3eec83811d74b4c77cd92dfde3d72a1122163958212945f100b"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cli-convention-help-lists-all-three"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-help-lists-all-three"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-help-lists-all-three"
 test_path = "projects/vat/tests/behavior_vat_cli_convention_help_lists_all_three.rs"
 command = "cargo test -p vat --test vat_cli_convention -- --nocapture"
 required_for_production = true
@@ -108,38 +203,47 @@ assertions = [
     "`vat upgrade --check` exits 0 and reports current vs latest without writing the binary (network-permitting; offline it errors cleanly, never panics).",
     "`vat issue create --title X --dry-run` prints a body containing the vat version and OS/arch and submits nothing.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:786e9cb6451a78726a02102ebd80f0b1e06f07d241d4ecbbe53816046fcdf261"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cli-convention-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-lean-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-lean-build"
 test_path = "projects/vat/tests/behavior_vat_cli_convention_lean_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles without default features; the self-update HTTPS path is absent but the verbs still parse and the pure helpers remain testable."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c57cb31bee6b0a6ee9b4bc9dbf765dd1848704603a1ad554ec85adfa385fb75f"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cli-std-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "adopt-the-shared-cli-std-crate"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-build"
 test_path = "projects/vat/tests/behavior_vat_cli_std_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles with and without default features; the hand-rolled modules are gone."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:60bf4ecbfa4c08f0658a90c541ef8762239457f975e4d69cdc7ad30617b9d9d8"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cli-std-parity"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "adopt-the-shared-cli-std-crate"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-parity"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-parity"
 test_path = "projects/vat/tests/behavior_vat_cli_std_parity.rs"
 command = "cargo test -p vat --test vat_cli_convention -- --nocapture"
 required_for_production = true
@@ -149,50 +253,62 @@ assertions = [
     "vat issue create --title X --dry-run prints the diagnostics body incl. the vat version and OS.",
     "vat upgrade --check exits cleanly.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:53a030a17c9a5f4613e4b5447369ab63462a23c4eff8cb0264c8d763ed9468f6"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-builtin-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-builtin-preset-run-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-builtin-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_builtin_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_tasks -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ['a `preset = "cloud-tasks"` / `preset = "cloud-scheduler"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3a039fcbdd2faada7307ee0015d216efe75e91cfdee04dc8fe12213fd4e999ac"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-emulator-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-emulator-lean-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-emulator-lean-build"
 test_path = "projects/vat/tests/behavior_vat_cloud_emulator_lean_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles without the emulator feature; the cloud-tasks/cloud-scheduler emulator verbs then error cleanly, never a panic."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5012a06a1bd3a3a6e6f2189906f8913d35f9b4d17a83074c71821743e73e79db"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-grpc-rest-coexist"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-grpc-rest-coexist"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-grpc-rest-coexist"
 test_path = "projects/vat/tests/behavior_vat_cloud_grpc_rest_coexist.rs"
 command = "cargo test -p vat --test vat_emulator_tasks --test vat_emulator_scheduler -- --nocapture"
 required_for_production = true
 assertions = ["the existing REST e2e tests pass unchanged (REST + gRPC coexist on one port)."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:273734031439e8f1b6379f77a25928759bc69fd37069013306dfee7fb5a630f2"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-scheduler-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-scheduler-dispatch-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-scheduler-dispatch-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_scheduler_dispatch_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_scheduler -- --nocapture"
 required_for_production = true
@@ -200,50 +316,62 @@ assertions = [
     "creating an httpTarget job and calling jobs/{j}:run results in the emulator POSTing to the sink.",
     "no gcloud / Java required.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e3495715cea17d4c94c958626e380ba4f772883af2e75c86703b56f667174b8b"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-scheduler-grpc-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-scheduler-grpc-dispatch-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-scheduler-grpc-dispatch-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_scheduler_grpc_dispatch_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_scheduler_grpc -- --nocapture"
 required_for_production = true
 assertions = ["a generated google.cloud.scheduler.v1 gRPC client CreateJob + RunJob, and the emulator POSTs the job httpTarget to a local sink."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:efb38991f8d7565200deef81814ed54b3016807003d4fddb1fe7c4565cd61fea"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-storage-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulator-cloud-storage-gcs"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-lean-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-lean-build"
 test_path = "projects/vat/tests/behavior_vat_cloud_storage_lean_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles without the emulator feature; the cloud-storage emulator verb then errors cleanly, never a panic."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d87cc20922b938b7072080e80d472fc3488e07103906d67980aa7b901ebb11c4"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-storage-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulator-cloud-storage-gcs"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-preset-run-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_storage_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_storage -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a preset = cloud-storage vat.toml run exports STORAGE_EMULATOR_HOST and the runner uploads then downloads an object byte-identical; nothing remains after teardown."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:37d9b7c1c4f2c38faef20a3cf06ff96396963917512c0b50299b3cefcd5e113d"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-storage-roundtrip-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulator-cloud-storage-gcs"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-roundtrip-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-roundtrip-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_storage_roundtrip_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_storage -- --nocapture"
 required_for_production = true
@@ -251,14 +379,17 @@ assertions = [
     "a media upload then download (alt=media) returns the same bytes; a multipart upload round-trips; list with a prefix finds the object; delete removes it (404 after).",
     "object names with slashes work; no gcloud / Java / Docker required; the emulator starts in well under a second.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e7827a4142371dcd0b29ef4b0471bf48eedc7f6632edf7136e982d1c16ba7244"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-tasks-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-tasks-dispatch-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-tasks-dispatch-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_tasks_dispatch_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_tasks -- --nocapture"
 required_for_production = true
@@ -266,14 +397,17 @@ assertions = [
     "spawning `vat emulator cloud-tasks`, creating a queue and a task targeting a local sink, results in the emulator POSTing the task body to the sink.",
     "no gcloud / Java required; the emulator starts in well under a second.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:45fcfbbd33f236a8cc6559ae3f858be89d2d9d674739e6bd634192a557e33855"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-tasks-grpc-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-tasks-grpc-dispatch-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-tasks-grpc-dispatch-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_tasks_grpc_dispatch_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_tasks_grpc -- --nocapture"
 required_for_production = true
@@ -281,14 +415,17 @@ assertions = [
     "a generated google.cloud.tasks.v2 gRPC client (insecure channel to the emulator host:port) CreateQueue + CreateTask, and the emulator POSTs the task body to a local sink.",
     "the REST surface on the same port still works.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:283b4f145b0c759ce485871c0db707caa61e39aeb1e815b027d050af88496152"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-workflows-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulator-cloud-workflows-subset-interpreter"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-dispatch-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-dispatch-smoke"
 test_path = "projects/vat/tests/behavior_vat_cloud_workflows_dispatch_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_workflows -- --nocapture"
 required_for_production = true
@@ -297,38 +434,47 @@ assertions = [
     "a try block calling a dead URL falls through to except (no panic); a named subworkflow call returns its value.",
     "no gcloud / Java / Docker required; the emulator starts in well under a second.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:36d9d3435ac5c1591f66764aade21d10ac7a9f8456f8bd54f39da0eb77963a6b"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-workflows-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulator-cloud-workflows-subset-interpreter"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-lean-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-lean-build"
 test_path = "projects/vat/tests/behavior_vat_cloud_workflows_lean_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles without the emulator feature; the cloud-workflows emulator verb then errors cleanly, never a panic."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9c2b69d672445ed7b4acdd4d00d182b629f5ba104ada86956cc8a40593f6d4b7"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cloud-workflows-orchestrates-sibling"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulator-cloud-workflows-subset-interpreter"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-orchestrates-sibling"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-orchestrates-sibling"
 test_path = "projects/vat/tests/behavior_vat_cloud_workflows_orchestrates_sibling.rs"
 command = "cargo test -p vat --test vat_emulator_workflows -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a vat.toml with preset = cloud-workflows alongside another emulator preset runs a workflow whose http step targets that sibling emulator's exported host, end to end."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:df15b516ab1b1792bfe648c65df2d5a9f640f91b44615264fd273892bf9f950f"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cluster-backend-unavailable-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-backend-unavailable-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-backend-unavailable-smoke"
 test_path = "projects/vat/tests/behavior_vat_cluster_backend_unavailable_smoke.rs"
 command = "cargo test -p vat --test vat_cluster -- --nocapture"
 required_for_production = true
@@ -336,14 +482,17 @@ assertions = [
     "a cluster service with no backend on PATH emits a cluster_backend_unavailable JSONL error and a non-zero exit.",
     "vat never panics on the unavailable path.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:58882822743bd5f748d9d54f7bd0ec2487ea3c448bdb821d7b7544c17c602c62"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cluster-runscoped-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-runscoped-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-runscoped-smoke"
 test_path = "projects/vat/tests/behavior_vat_cluster_runscoped_smoke.rs"
 command = "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"
 required_for_production = true
@@ -351,14 +500,17 @@ assertions = [
     "with a real backend and Docker available, vat creates the cluster, the runner reaches the cluster via KUBECONFIG, and vat state shows services[].cluster.backend.",
     "the cluster is deleted at teardown under keep=never; the test skips gracefully when no backend/docker is present.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:30b79f1f6da748554bc68e521803a0097dc546b88aa20e2a6bea664b2f090638"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-cluster-standalone-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-standalone-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-standalone-smoke"
 test_path = "projects/vat/tests/behavior_vat_cluster_standalone_smoke.rs"
 command = "cargo test -p vat --test vat_cluster -- --nocapture --include-ignored"
 required_for_production = true
@@ -366,14 +518,17 @@ assertions = [
     "vat cluster create then ls --json lists the cluster, kubeconfig prints a usable path, and delete removes it from the registry and the backend.",
     "the test skips gracefully when no backend/docker is present.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c6698b51bae3fe8a995afc5b5b1512d44bced2039b9e84e2f638edca73eb2efd"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-copy-on-write-lifecycle"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "copy-on-write-fork-and-snapshot-lifecycle"
 contract_id = "copy-on-write-fork-and-snapshot-lifecycle"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-copy-on-write-lifecycle"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-copy-on-write-lifecycle"
 test_path = "projects/vat/tests/behavior_vat_copy_on_write_lifecycle.rs"
 command = "rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md"
 required_for_production = true
@@ -381,14 +536,17 @@ assertions = [
     "README preserves copy-on-write lifecycle language",
     "fork, snapshot, clonefile, and APFS remain visible contract terms",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e0d6c65d95d66a1537cc66919a3e11a5b06aa05e1af7e594d5b14b3cfe67c7b5"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-emulator-auth-rest-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-auth-rest-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-auth-rest-smoke"
 test_path = "projects/vat/tests/behavior_vat_emulator_auth_rest_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_auth -- --nocapture"
 required_for_production = true
@@ -396,26 +554,32 @@ assertions = [
     "spawning `vat emulator firebase-auth` and driving signUp -> signInWithPassword -> lookup over HTTP returns a JWT idToken and the created user.",
     "no Java / firebase-tools required; the emulator starts in well under a second.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fc282d22b68acc600f7a42833144c6c1b9e58746a50bc57efb53dc58cae8ca3c"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-emulator-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-lean-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-lean-build"
 test_path = "projects/vat/tests/behavior_vat_emulator_lean_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles without the emulator feature; `vat emulator ...` then exits non-zero with a clear 'built without emulator feature' message, never a panic."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:68d21c3bf2508d09fef1016d42485667c05cea854f49598d54924bb0a509cdd1"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-emulator-pubsub-grpc-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-pubsub-grpc-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-pubsub-grpc-smoke"
 test_path = "projects/vat/tests/behavior_vat_emulator_pubsub_grpc_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_pubsub -- --nocapture"
 required_for_production = true
@@ -423,14 +587,17 @@ assertions = [
     "a tonic client generated from the same proto can CreateTopic -> CreateSubscription -> Publish -> Pull -> Acknowledge against `vat emulator pubsub`.",
     "no gcloud / Java required.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f99d383222c2b3aee74580445199e6662b87b107961b23826745983166916355"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-emulator-unavailable-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-emulator-unavailable-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-emulator-unavailable-smoke"
 test_path = "projects/vat/tests/behavior_vat_emulator_unavailable_smoke.rs"
 command = "cargo test -p vat --test vat_emulators -- --nocapture"
 required_for_production = true
@@ -438,14 +605,17 @@ assertions = [
     "a firestore preset with an empty PATH (no gcloud, no docker) emits a structured service_runtime_unavailable JSONL error and a non-zero exit.",
     "vat never panics on the unavailable path.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d47ace1a239731a8060418097715834181aa2222d449c882e535cbd525852b6d"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-firebase-bundle-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firebase-bundle-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firebase-bundle-smoke"
 test_path = "projects/vat/tests/behavior_vat_firebase_bundle_smoke.rs"
 command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
 required_for_production = true
@@ -453,14 +623,17 @@ assertions = [
     "a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars.",
     "the test skips gracefully when firebase-tools and docker are both unavailable.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:426b505cc46faa116bc231a690b43fc04b326998fbd27d60e00e6776802c756b"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-firestore-native-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firestore-native-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firestore-native-smoke"
 test_path = "projects/vat/tests/behavior_vat_firestore_native_smoke.rs"
 command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
 required_for_production = true
@@ -468,26 +641,32 @@ assertions = [
     "with gcloud + Java + the firestore component, vat starts the emulator, the runner sees FIRESTORE_EMULATOR_HOST, and vat state shows the service ready with the var in exported_env.",
     "the test skips gracefully when the native firestore emulator is unavailable.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b5750da8ef6450afa9e0f77147db7c06c47d38dbe21b6fb546835559bef4800c"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-grpc-mitm-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "network-sandbox-v2-transparent-grpc-routing-h2-mitm"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md#vat-grpc-mitm-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md#vat-grpc-mitm-build"
 test_path = "projects/vat/tests/behavior_vat_grpc_mitm_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles with and without default features; hyper has the http2 feature explicitly."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3b9370486d7df5514e2856e768c5e17f9cdcbc42fd45e3b2fb5aa6f0609f6ab5"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-grpc-mitm-routing-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "network-sandbox-v2-transparent-grpc-routing-h2-mitm"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md#vat-grpc-mitm-routing-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md#vat-grpc-mitm-routing-smoke"
 test_path = "projects/vat/tests/behavior_vat_grpc_mitm_routing_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture"
 required_for_production = true
@@ -495,62 +674,77 @@ assertions = [
     "a generated google.cloud.tasks.v2 gRPC client over TLS to cloudtasks.googleapis.com (trusting vat's CA), routed through the proxy, CreateQueue + CreateTask succeeds and the task is dispatched to a local sink.",
     "HTTP routing (#503) and unmatched-host forwarding still work (no regression).",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fe2e97c6c1abfb75ba50560bf43b908b56d2d2d32b6c02769b8f9b3d10cd5ace"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-grpc-pool-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "grpc-reverse-proxy-h2c-connection-pool"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md#vat-grpc-pool-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md#vat-grpc-pool-build"
 test_path = "projects/vat/tests/behavior_vat_grpc_pool_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles with and without default features."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6ac6387d765db24ea154e73c477991732c0e70a2db819f39efcd49db35aa1079"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-grpc-pool-reuse-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "grpc-reverse-proxy-h2c-connection-pool"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md#vat-grpc-pool-reuse-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md#vat-grpc-pool-reuse-smoke"
 test_path = "projects/vat/tests/behavior_vat_grpc_pool_reuse_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture"
 required_for_production = true
 assertions = ["two sequential gRPC calls through the MITM to the same emulator both succeed (reuse path), and the #509 single-call e2e still passes."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:03cd5f02051a090b454a5e9274af33562fbb4cf50aa0631ce05109baa9f95235"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-hermetic-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "full-hermetic-http-mock-no-forward-mode"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-build"
 test_path = "projects/vat/tests/behavior_vat_hermetic_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles with and without default features."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c6f2793a5ee16dae48e3b2fac32c500e9114b43e626e91b9983ee38d9ae8d2b3"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-hermetic-no-forward-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "full-hermetic-http-mock-no-forward-mode"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-no-forward-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-no-forward-smoke"
 test_path = "projects/vat/tests/behavior_vat_hermetic_no_forward_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_httpmock_hermetic -- --nocapture"
 required_for_production = true
 assertions = ["a proxy started with --no-forward returns 502 hermetic for an unmatched host (no upstream reached) while a registered stub on the same proxy returns 200; an unmatched request on a default (forwarding) proxy still forwards."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4df6693ea1c4171141542f8e9714f3befe7c5de2a9df77a24aee7191b00d4f4e"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-host-process-gpu-visibility"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "host-process-execution-and-gpu-visibility"
 contract_id = "host-process-execution-and-gpu-visibility"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-host-process-gpu-visibility"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-host-process-gpu-visibility"
 test_path = "projects/vat/tests/behavior_vat_host_process_gpu_visibility.rs"
 command = "rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs"
 required_for_production = true
@@ -558,14 +752,17 @@ assertions = [
     "README/source names Apple GPU access as a host-process property",
     "Metal, MPS, MLX, and tensorflow-metal are present in the GPU contract",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f2b254a2c98e1915a37b9c40addfd1dff6046c1c37ba7ff7a4cc2d04cefffbdf"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-http-mock-host-routing-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "network-sandbox-v1-transparent-http-host-routing"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#vat-http-mock-host-routing-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#vat-http-mock-host-routing-smoke"
 test_path = "projects/vat/tests/behavior_vat_http_mock_host_routing_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_httpmock_routing -- --nocapture"
 required_for_production = true
@@ -573,50 +770,62 @@ assertions = [
     "with a route example.test -> http://127.0.0.1:<sink>, a request through the proxy to http://example.test/p (and https://example.test/p via CONNECT MITM) is answered by the local sink, not forwarded upstream.",
     "an unmatched host still forwards/records exactly as before (no regression).",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a9af6c674615eface7085976727130739f389ceb3685c04970487009b952ec07"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-http-mock-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-http-mock-record-replay-proxy-https-mitm"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-lean-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-lean-build"
 test_path = "projects/vat/tests/behavior_vat_http_mock_lean_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles without the emulator feature; the http-mock emulator verb then errors cleanly, never a panic."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:759fbdc345f0ab3d285a7602b734d86d8813deb87dab98d455f4080c5d6f928c"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-http-mock-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-http-mock-record-replay-proxy-https-mitm"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-preset-run-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_http_mock_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_httpmock -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a preset = http-mock vat.toml run exports HTTP(S)_PROXY + NO_PROXY + the CA-trust vars; the runner curls a stubbed https URL with no code change and gets the stub."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:8450fe7134749327f16fde586ebb99d597371d8b1fd566ca0168e358de43251c"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-http-mock-routing-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "network-sandbox-v1-transparent-http-host-routing"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#vat-http-mock-routing-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#vat-http-mock-routing-build"
 test_path = "projects/vat/tests/behavior_vat_http_mock_routing_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles with and without default features."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9b5b09ed1d37af479f48f04e15f245209b675beda41bc64a1c7e80d3155b76be"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-http-mock-stub-and-mitm-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-http-mock-record-replay-proxy-https-mitm"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-stub-and-mitm-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-stub-and-mitm-smoke"
 test_path = "projects/vat/tests/behavior_vat_http_mock_stub_and_mitm_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_httpmock -- --nocapture"
 required_for_production = true
@@ -625,14 +834,17 @@ assertions = [
     "a client trusting the minted CA and using the proxy GETs a stubbed https://api.test/v1/y via CONNECT+MITM and receives the stub (no real upstream).",
     "with no stub, a first GET to a local upstream records+forwards and a second GET replays from the cassette with the upstream down.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:63bef4010e4fbf8be948fa367abadca64df1ea269f2e8427643f68dd76fe88cc"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-llm-agent-usage-guide"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "agent-legible-state-and-diff-surface"
 contract_id = "agent-legible-state-and-diff-surface"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/llm-agent-usage-guide.md#vat-llm-agent-usage-guide"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/llm-agent-usage-guide.md#vat-llm-agent-usage-guide"
 test_path = "projects/vat/tests/behavior_vat_llm_agent_usage_guide.rs"
 command = "cargo test -p vat --test vat_toml_runner -- --nocapture"
 required_for_production = true
@@ -642,14 +854,17 @@ assertions = [
     "The guide mentions state, diff, and logs evidence commands.",
     "The guide preserves non-Docker and non-daemon boundaries.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:637b36f9cfd43b292c34b607894a42d5f6e43d192b722c1122e7474828336939"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md#vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md#vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke"
 test_path = "projects/vat/tests/behavior_vat_llm_guide_cloud_tasks_scheduler_client_wiring_smoke.rs"
 command = "cargo test -p vat --test vat_toml_runner -- --nocapture"
 required_for_production = true
@@ -657,38 +872,47 @@ assertions = [
     "`vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.",
     "the guide mentions the cloud-tasks / cloud-scheduler client-wiring factory (REST transport + http endpoint + anonymous credentials) and the direct-REST alternative.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:50c8264a3bda98314ccb2cea0a2440b7b1e63a4839298a5991cacc9a8b9c9204"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-openapi-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "openapi-driven-mock-http-service-spec-responses"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-lean-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-lean-build"
 test_path = "projects/vat/tests/behavior_vat_openapi_lean_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles without the emulator feature; the openapi emulator verb then errors cleanly, never a panic."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:983395ed59a8e44eb0075035bdc962a209d908a54043aea3892c1efa1ad0dd64"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-openapi-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "openapi-driven-mock-http-service-spec-responses"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-preset-run-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-preset-run-smoke"
 test_path = "projects/vat/tests/behavior_vat_openapi_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_openapi -- --nocapture --include-ignored"
 required_for_production = true
 assertions = ["a preset = openapi vat.toml run exports OPENAPI_MOCK_HOST and the runner curls a documented operation, getting the spec-derived response with no app code change."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7ee283e17bd98164ab2bc6337d75a6bcc556c3aca37863d5c6fc759f0a1e4c1e"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-openapi-standalone-and-proxy-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "openapi-driven-mock-http-service-spec-responses"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-standalone-and-proxy-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-standalone-and-proxy-smoke"
 test_path = "projects/vat/tests/behavior_vat_openapi_standalone_and_proxy_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_openapi -- --nocapture"
 required_for_production = true
@@ -696,14 +920,17 @@ assertions = [
     "spawning vat emulator openapi --spec <tmp spec> and GETting a documented path returns the spec's example; an undocumented path returns 404.",
     "registering a spec for a host on the http-mock proxy answers a proxied HTTPS-MITM GET to that host from the spec (no stub, no upstream).",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fe05f3096ed1a9bbc24c2145c513762ea5bf86f8b75b02b86d9c5c9489cf3aa3"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-pubsub-docker-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-pubsub-docker-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-pubsub-docker-smoke"
 test_path = "projects/vat/tests/behavior_vat_pubsub_docker_smoke.rs"
 command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
 required_for_production = true
@@ -711,14 +938,17 @@ assertions = [
     "without the pubsub gcloud component, runtime=auto resolves to docker, exports PUBSUB_EMULATOR_HOST, and removes the container at teardown.",
     "the test skips gracefully when docker is unavailable.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:8c034d2f45d2af11616310a9173b6be4f2a298a24da1978684b785d25f12029e"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-resource-isolation-boundary"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "resource-isolation-boundary"
 contract_id = "resource-isolation-boundary"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/external-contracts.md#vat-resource-isolation-boundary"
 test_path = "projects/vat/tests/behavior_vat_resource_isolation_boundary.rs"
 command = "rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox"
 required_for_production = true
@@ -726,62 +956,77 @@ assertions = [
     "vat documents resource isolation as its responsibility",
     "sandbox and seatbelt isolation remain visible implementation surfaces",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9bc5392d5e0c5018bf41d8c16a4601aae19c9b9cb8ece9f13886553a5c40556b"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-runner-sandbox-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "sandbox-applied-to-runner-mode-commands"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-build"
 test_path = "projects/vat/tests/behavior_vat_runner_sandbox_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles with and without default features."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4a9f3b138a0fe83b992e45f078ecefcc540deb4330fd4765d36ecf13491b929d"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-runner-sandbox-egress-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "sandbox-applied-to-runner-mode-commands"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-egress-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-egress-smoke"
 test_path = "projects/vat/tests/behavior_vat_runner_sandbox_egress_smoke.rs"
 command = "cargo test -p vat --test vat_runner_sandbox -- --nocapture"
 required_for_production = true
 assertions = ["a `vat run <runner>` with isolation=seatbelt + egress=localhost-only runs the runner under sandbox-exec; the runner can reach a localhost listener but a connect to a non-loopback host is denied; an emulator service still reaches the network. Skips off-macOS / no sandbox-exec."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6c2004ce4c3b7a8c0ab2655bf910b77ce9a51f486d0bf0e2fc985c77cb7c6415"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-seatbelt-egress-build"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "network-sandbox-v3-seatbelt-egress-policy"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#vat-seatbelt-egress-build"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#vat-seatbelt-egress-build"
 test_path = "projects/vat/tests/behavior_vat_seatbelt_egress_build.rs"
 command = "cargo build -p vat --no-default-features"
 required_for_production = true
 assertions = ["vat compiles with and without default features; egress policy is independent of the emulator feature."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cba6503c2a7073505b671b5d98dbd6bc37bef805811cdedaa8c86f852aa0b5d1"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-seatbelt-egress-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "network-sandbox-v3-seatbelt-egress-policy"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#vat-seatbelt-egress-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#vat-seatbelt-egress-smoke"
 test_path = "projects/vat/tests/behavior_vat_seatbelt_egress_smoke.rs"
 command = "cargo test -p vat --test vat_sandbox_egress -- --nocapture"
 required_for_production = true
 assertions = ["under sandbox-exec with the localhost-only profile, a process connecting to a localhost listener succeeds while a connect to a non-loopback address is denied. Skips cleanly if sandbox-exec is absent or not macOS."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d058e5a6b6bba8b04c9ace577cc95b87a897db0c9447157063180e42f4758b51"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "vat-toml-runner-local-service-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "local-agent-test-runner-protocol"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
-td_ref = "projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#vat-toml-runner-local-service-smoke"
+dimension = "behavior"
+source_ref = "projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#vat-toml-runner-local-service-smoke"
 test_path = "projects/vat/tests/behavior_vat_toml_runner_local_service_smoke.rs"
 command = "cargo test -p vat --test vat_toml_runner -- --nocapture"
 required_for_production = true
@@ -790,4 +1035,6 @@ assertions = [
     "failed runner evidence remains inspectable.",
     "direct vat run -- <cmd> compatibility is preserved.",
 ]
-# AW-EC-END
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:62ae43f4f45f41652349b2b1db8d72ce8ef4a417304afa0aa3f7a0b974b32edd"

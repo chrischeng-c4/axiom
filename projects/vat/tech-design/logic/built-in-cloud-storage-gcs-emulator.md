@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: built-in-rust-emulator-cloud-storage-gcs
+    claim: built-in-rust-emulator-cloud-storage-gcs
     coverage: partial
     rationale: "Adds a built-in Cloud Storage emulator (GCS JSON API v1, in-memory) so object-storage code runs locally through vat's run and evidence surface, driven by the standard STORAGE_EMULATOR_HOST with no gcloud/Docker."
 ---
@@ -224,6 +224,7 @@ e2e_tests:
   - id: vat-cloud-storage-roundtrip-smoke
     name: "Cloud Storage emulator uploads, downloads, lists, and deletes"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulator-cloud-storage-gcs
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_storage -- --nocapture"
@@ -233,6 +234,7 @@ e2e_tests:
   - id: vat-cloud-storage-preset-run-smoke
     name: "cloud-storage preset exports STORAGE_EMULATOR_HOST"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulator-cloud-storage-gcs
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_storage -- --nocapture --include-ignored"
@@ -241,6 +243,7 @@ e2e_tests:
   - id: vat-cloud-storage-lean-build
     name: "lean build still compiles"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulator-cloud-storage-gcs
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

@@ -16,12 +16,17 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/main.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/main.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-main-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -35,6 +40,7 @@ fn main() -> ExitCode {
         }
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

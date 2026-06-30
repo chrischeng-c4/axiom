@@ -50,6 +50,8 @@ pub struct Args {
     pub gpu: GpuRequest,
     /// Direct mode prints full VatState JSON instead of a human summary.
     pub json: bool,
+    /// Per-invocation retention override for configured vat.toml runs.
+    pub keep: Option<RetentionPolicy>,
 }
 
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#cli
@@ -78,6 +80,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
         isolation,
         gpu,
         json,
+        keep,
     } = args;
     match target {
         Target::Direct {
@@ -100,6 +103,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             runner_ids,
+            keep,
         }),
         Target::Scenario { scenario_id } => exec_scenario(ScenarioArgs {
             base,
@@ -108,6 +112,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             scenario_id,
+            keep,
         }),
     }
 }
@@ -119,6 +124,7 @@ struct RunnerArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     runner_ids: Vec<String>,
+    keep: Option<RetentionPolicy>,
 }
 
 struct DirectArgs {
@@ -139,6 +145,7 @@ struct ScenarioArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     scenario_id: String,
+    keep: Option<RetentionPolicy>,
 }
 
 fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
@@ -260,6 +267,7 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
 fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("get current directory")?;
     let cfg = config::load_nearest(&cwd)?;
+    let retention = args.keep.unwrap_or(cfg.workspace.keep);
     if args.base.is_some() || args.from.is_some() {
         bail!(
             "vat run [runner-id] uses vat.toml workspace.base; --base/--from are direct mode only"
@@ -358,7 +366,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
             digest: cfg.digest.clone(),
         },
         runner_id: joined_ids.clone(),
-        retention: cfg.workspace.keep,
+        retention,
         services: Vec::new(),
         scenario: None,
         runner: None,
@@ -371,7 +379,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         format!("runner: {joined_ids}"),
     ))?;
 
-    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false);
+    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false, retention);
     let code = match result {
         Ok(code) => code,
         Err(err) => {
@@ -388,7 +396,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match cfg.workspace.keep {
+    let should_remove = match retention {
         RetentionPolicy::Always => false,
         RetentionPolicy::Never => true,
         RetentionPolicy::Failed => code == 0,
@@ -441,6 +449,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
 fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
     let cwd = std::env::current_dir().context("get current directory")?;
     let cfg = config::load_nearest(&cwd)?;
+    let retention = args.keep.unwrap_or(cfg.workspace.keep);
     if args.base.is_some() || args.from.is_some() {
         bail!(
             "vat run --scenario uses vat.toml workspace.base; --base/--from are direct mode only"
@@ -543,7 +552,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
             digest: cfg.digest.clone(),
         },
         runner_id: runner.id.clone(),
-        retention: cfg.workspace.keep,
+        retention,
         services: Vec::new(),
         scenario: Some(ScenarioRunRecord {
             id: scenario.id.clone(),
@@ -572,6 +581,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         &logs_dir,
         &extra_service_ids,
         scenario.network == ScenarioNetworkMode::Hermetic,
+        retention,
     );
     let code = match result {
         Ok(code) => code,
@@ -589,7 +599,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match cfg.workspace.keep {
+    let should_remove = match retention {
         RetentionPolicy::Always => false,
         RetentionPolicy::Never => true,
         RetentionPolicy::Failed => code == 0,
@@ -636,6 +646,7 @@ fn run_configured(
     logs_dir: &Path,
     extra_service_ids: &[String],
     force_hermetic_proxy: bool,
+    retention: RetentionPolicy,
 ) -> Result<i32> {
     let rootfs = vat.rootfs();
     let cwd = rootfs.join(&vat.meta.spec.workdir);
@@ -714,10 +725,7 @@ fn run_configured(
         ) {
             Ok(handle) => handle,
             Err(err) => {
-                stop_services(
-                    &mut services,
-                    should_delete_clusters(&cfg.workspace.keep, -1),
-                );
+                stop_services(&mut services, should_delete_clusters(&retention, -1));
                 persist_services(vat, &services)?;
                 return Err(err);
             }
@@ -725,10 +733,7 @@ fn run_configured(
         services.push(handle);
         let last = services.len() - 1;
         if let Err(err) = wait_for_services(vat, &mut services[last..]) {
-            stop_services(
-                &mut services,
-                should_delete_clusters(&cfg.workspace.keep, -1),
-            );
+            stop_services(&mut services, should_delete_clusters(&retention, -1));
             persist_services(vat, &services)?;
             return Err(err);
         }
@@ -758,10 +763,7 @@ fn run_configured(
             Ok(proc) => procs.push(proc),
             Err(err) => {
                 kill_runner_processes(&mut procs);
-                stop_services(
-                    &mut services,
-                    should_delete_clusters(&cfg.workspace.keep, -1),
-                );
+                stop_services(&mut services, should_delete_clusters(&retention, -1));
                 persist_services(vat, &services)?;
                 return Err(err);
             }
@@ -792,10 +794,7 @@ fn run_configured(
         test_run.artifacts = artifacts;
     }
     vat.save()?;
-    stop_services(
-        &mut services,
-        should_delete_clusters(&cfg.workspace.keep, code),
-    );
+    stop_services(&mut services, should_delete_clusters(&retention, code));
     persist_services(vat, &services)?;
     let summary = records
         .iter()
@@ -1070,6 +1069,7 @@ fn run_setup_step(
 struct ServicePlan {
     id: String,
     command: Vec<String>,
+    host: Option<String>,
     ready_http: Option<String>,
     ready_probe: ReadyProbe,
     timeout_s: u64,
@@ -1088,6 +1088,9 @@ struct ServicePlan {
     /// Set when the service is a local Kubernetes cluster; carries the cluster
     /// evidence so teardown can delete it and `vat state` can surface it.
     cluster: Option<ClusterRunRecord>,
+    /// False when the service is provided by CI/local infrastructure and vat is
+    /// attaching to it instead of starting/stopping a process.
+    owned_by_vat: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1100,7 +1103,7 @@ enum ReadyProbe {
 
 struct ServiceHandle {
     record: ServiceRunRecord,
-    child: Child,
+    child: Option<Child>,
     timeout_s: u64,
     ready_probe: ReadyProbe,
     /// `docker --name` when the service is a container; force-removed on stop.
@@ -1125,6 +1128,8 @@ fn prepare_service(
         // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
         // equivalent. Always a container.
         prepare_image_service(vat, service, image)?
+    } else if service.external.is_some() {
+        prepare_external_service(service)?
     } else if service.preset == Some(ServicePreset::Firebase) {
         // Firebase: a multi-emulator bundle driven by firebase.json — its own
         // prepare path because it is one process exposing many ports.
@@ -1167,6 +1172,7 @@ fn prepare_service(
         ServicePlan {
             id: service.id.clone(),
             command,
+            host: Some("127.0.0.1".to_string()).filter(|_| port.is_some()),
             ready_http,
             ready_probe: resolve_ready_probe(&service_for_probe, None),
             timeout_s: service.timeout_s,
@@ -1180,6 +1186,7 @@ fn prepare_service(
             docker_name: None,
             image: None,
             cluster: None,
+            owned_by_vat: true,
         }
     };
     let mut plan = plan;
@@ -1188,7 +1195,16 @@ fn prepare_service(
     // `prepare_cluster_service`; the container/preset note below does not apply.
     if plan.prepare_mode != "direct_start" && plan.cluster.is_none() {
         let is_docker = plan.docker_name.is_some();
-        let note = if is_docker {
+        let runtime = if !plan.owned_by_vat {
+            "external"
+        } else if is_docker {
+            "docker"
+        } else {
+            "native"
+        };
+        let note = if !plan.owned_by_vat {
+            "using external service endpoint (not started or stopped by vat)"
+        } else if is_docker {
             "running service via `docker run` (ephemeral, --rm)"
         } else if plan.prepare_mode == "cold_build" {
             "first run slower; cached for future runs"
@@ -1199,8 +1215,11 @@ fn prepare_service(
             "type": "prepare",
             "service": plan.id.as_str(),
             "preset": plan.preset.map(service_preset_name),
-            "runtime": if is_docker { "docker" } else { "native" },
+            "runtime": runtime,
             "image": plan.image.as_deref(),
+            "host": plan.host.as_deref(),
+            "port": plan.port,
+            "owned_by_vat": plan.owned_by_vat,
             "mode": plan.prepare_mode.as_str(),
             "cache_key": plan.cache_key.as_deref(),
             "note": note,
@@ -1309,6 +1328,7 @@ fn prepare_cluster_service(
             "-c".to_string(),
             "while :; do sleep 3600; done".to_string(),
         ],
+        host: None,
         ready_http: None,
         ready_probe: ReadyProbe::Cmd(resolved.ready_argv(&info.kubeconfig)),
         timeout_s: service.timeout_s,
@@ -1322,6 +1342,7 @@ fn prepare_cluster_service(
         docker_name: None,
         image: None,
         cluster: Some(record),
+        owned_by_vat: true,
     })
 }
 
@@ -1336,21 +1357,33 @@ fn start_service(
 ) -> Result<ServiceHandle> {
     let stdout = logs_dir.join(format!("{}.stdout.log", plan.id));
     let stderr = logs_dir.join(format!("{}.stderr.log", plan.id));
-    let command = service_start_command(plan, service_sandbox, rootfs);
-    let child = command_with_logs(&command, cwd, env, &stdout, &stderr)
-        .with_context(|| format!("spawn service `{}`", plan.id))?;
+    let command = if plan.owned_by_vat {
+        service_start_command(plan, service_sandbox, rootfs)
+    } else {
+        Vec::new()
+    };
+    let child = if plan.owned_by_vat {
+        Some(
+            command_with_logs(&command, cwd, env, &stdout, &stderr)
+                .with_context(|| format!("spawn service `{}`", plan.id))?,
+        )
+    } else {
+        None
+    };
     let record = ServiceRunRecord {
         id: plan.id.clone(),
         command,
         status: ProcessStatus::Running,
         preset: plan.preset.map(service_preset_name).map(str::to_string),
+        host: plan.host.clone(),
         port: plan.port,
+        owned_by_vat: Some(plan.owned_by_vat),
         prepare_mode: Some(plan.prepare_mode.clone()),
         cache_key: plan.cache_key.clone(),
         prepare_duration_ms: Some(plan.prepare_duration_ms),
         ready_duration_ms: None,
         exported_env: plan.exported_env.clone(),
-        pid: Some(child.id()),
+        pid: child.as_ref().map(Child::id),
         exit_code: None,
         ready_http: plan.ready_http.clone(),
         cluster: plan.cluster.clone(),
@@ -1359,7 +1392,11 @@ fn start_service(
     };
     vat.log(Event::new(
         EventKind::RunStarted,
-        format!("service {}", plan.id),
+        if plan.owned_by_vat {
+            format!("service {}", plan.id)
+        } else {
+            format!("service {} external", plan.id)
+        },
     ))?;
     Ok(ServiceHandle {
         record,
@@ -1383,6 +1420,51 @@ fn service_start_command(
     } else {
         plan.command.clone()
     }
+}
+
+fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
+    let endpoint = service
+        .external
+        .as_ref()
+        .context("external service missing endpoint (validated earlier)")?;
+    let host = endpoint.host.clone();
+    let port = endpoint.port;
+    let ready_http = service
+        .ready_http
+        .as_ref()
+        .map(|value| substitute_endpoint(value, &host, port));
+    let ready_cmd = substitute_endpoint_values(&service.ready_cmd, &host, port);
+    let mut service_for_probe = service.clone();
+    service_for_probe.ready_http = ready_http.clone();
+    service_for_probe.ready_cmd = ready_cmd;
+    let ready_probe = resolve_ready_probe(
+        &service_for_probe,
+        Some(ReadyProbe::Tcp {
+            host: host.clone(),
+            port,
+        }),
+    );
+    let env = external_exports(service, &host, port);
+
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command: Vec::new(),
+        host: Some(host),
+        ready_http,
+        ready_probe,
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: Some(port),
+        prepare_mode: "external_attach".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        image: None,
+        cluster: None,
+        owned_by_vat: false,
+    })
 }
 
 fn prepare_preset_service(
@@ -1454,6 +1536,7 @@ fn prepare_preset_service(
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe,
         timeout_s: service.timeout_s,
@@ -1467,6 +1550,7 @@ fn prepare_preset_service(
         docker_name: None,
         image: None,
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1562,6 +1646,7 @@ fn prepare_preset_docker_service(
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: docker_ready_probe(service, host_port),
         timeout_s: service.timeout_s,
@@ -1575,6 +1660,7 @@ fn prepare_preset_docker_service(
         docker_name: Some(name),
         image: Some(image),
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1641,6 +1727,7 @@ fn prepare_firebase_service(
         "FIREBASE_EMULATOR_HUB".to_string(),
         format!("127.0.0.1:{hub_port}"),
     );
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", hub_port);
 
     let ready_port = first_port.unwrap_or(hub_port);
     Ok(ServicePlan {
@@ -1651,6 +1738,7 @@ fn prepare_firebase_service(
             "--project".to_string(),
             "demo-vat".to_string(),
         ],
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
@@ -1667,6 +1755,7 @@ fn prepare_firebase_service(
         docker_name: None,
         image: None,
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1697,6 +1786,13 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
         ServicePreset::Openapi => ("openapi", "OPENAPI_MOCK_HOST"),
         // Non-built-in presets never reach this path.
         _ => ("", ""),
+    }
+}
+
+fn builtin_emulator_export_value(preset: ServicePreset, host_port: &str) -> String {
+    match preset {
+        ServicePreset::CloudStorage => format!("http://{host_port}"),
+        _ => host_port.to_string(),
     }
 }
 
@@ -1796,7 +1892,7 @@ fn prepare_builtin_service(
         host_port.clone(),
     ];
 
-    let env = if preset == ServicePreset::HttpMock {
+    let mut env = if preset == ServicePreset::HttpMock {
         // The HTTP mock proxy exports a SET of env: proxy + CA trust. Paths live
         // under the stable store root, keyed by port for this run.
         let base = crate::paths::root()?.join("http-mock");
@@ -1831,19 +1927,26 @@ fn prepare_builtin_service(
             command.push(spec_path.to_string_lossy().into_owned());
         }
         let mut env = BTreeMap::new();
+        let default_value = builtin_emulator_export_value(preset, &host_port);
         if service.export.is_empty() {
-            env.insert(default_var.to_string(), host_port.clone());
+            env.insert(default_var.to_string(), default_value);
         } else {
-            for target in service.export.values() {
-                env.insert(target.clone(), host_port.clone());
+            for (key, template) in &service.export {
+                if template.contains("{host}") || template.contains("{port}") {
+                    env.insert(key.clone(), substitute_port(template, Some(port)));
+                } else {
+                    env.insert(template.clone(), default_value.clone());
+                }
             }
         }
         env
     };
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", port);
 
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
@@ -1860,6 +1963,7 @@ fn prepare_builtin_service(
         docker_name: None,
         image: None,
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1915,6 +2019,7 @@ fn prepare_image_service(
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: docker_ready_probe(service, host_port),
         timeout_s: service.timeout_s,
@@ -1928,6 +2033,7 @@ fn prepare_image_service(
         docker_name: Some(name),
         image: Some(image.to_string()),
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -2123,9 +2229,7 @@ fn image_exports(service: &ServiceConfig, host_port: u16) -> BTreeMap<String, St
             .replace("{port}", &host_port.to_string());
         env.insert(key.clone(), value);
     }
-    let upper = service.id.to_uppercase().replace(['-', '.'], "_");
-    env.insert(format!("VAT_SERVICE_{upper}_HOST"), "127.0.0.1".to_string());
-    env.insert(format!("VAT_SERVICE_{upper}_PORT"), host_port.to_string());
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", host_port);
     env
 }
 
@@ -2811,6 +2915,7 @@ fn preset_exports(
             }
         }
     }
+    add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", port);
     env
 }
 
@@ -2843,6 +2948,13 @@ fn substitute_service_port(values: &[String], port: Option<u16>) -> Vec<String> 
         .collect()
 }
 
+fn substitute_endpoint_values(values: &[String], host: &str, port: u16) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| substitute_endpoint(value, host, port))
+        .collect()
+}
+
 fn substitute_port(value: &str, port: Option<u16>) -> String {
     match port {
         Some(port) => value
@@ -2850,6 +2962,32 @@ fn substitute_port(value: &str, port: Option<u16>) -> String {
             .replace("{port}", &port.to_string()),
         None => value.to_string(),
     }
+}
+
+fn substitute_endpoint(value: &str, host: &str, port: u16) -> String {
+    value
+        .replace("{host}", host)
+        .replace("{port}", &port.to_string())
+}
+
+fn external_exports(service: &ServiceConfig, host: &str, port: u16) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for (key, template) in &service.export {
+        env.insert(key.clone(), substitute_endpoint(template, host, port));
+    }
+    add_service_endpoint_env(&mut env, &service.id, host, port);
+    env
+}
+
+fn add_service_endpoint_env(
+    env: &mut BTreeMap<String, String>,
+    service_id: &str,
+    host: &str,
+    port: u16,
+) {
+    let upper = service_id.to_uppercase().replace(['-', '.'], "_");
+    env.insert(format!("VAT_SERVICE_{upper}_HOST"), host.to_string());
+    env.insert(format!("VAT_SERVICE_{upper}_PORT"), port.to_string());
 }
 
 fn export_command_service_env(
@@ -2872,9 +3010,7 @@ fn export_command_service_env(
         }
     }
     if let Some(port) = port {
-        let upper = service.id.to_uppercase().replace(['-', '.'], "_");
-        env.insert(format!("VAT_SERVICE_{upper}_HOST"), "127.0.0.1".to_string());
-        env.insert(format!("VAT_SERVICE_{upper}_PORT"), port.to_string());
+        add_service_endpoint_env(&mut env, &service.id, "127.0.0.1", port);
     }
     env
 }
@@ -3017,10 +3153,12 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
                 }
                 break;
             }
-            if let Some(status) = service.child.try_wait()? {
-                service.record.status = ProcessStatus::Failed;
-                service.record.exit_code = status.code();
-                bail!("service `{}` exited before readiness", service.record.id);
+            if let Some(child) = service.child.as_mut() {
+                if let Some(status) = child.try_wait()? {
+                    service.record.status = ProcessStatus::Failed;
+                    service.record.exit_code = status.code();
+                    bail!("service `{}` exited before readiness", service.record.id);
+                }
             }
             if Instant::now() >= deadline {
                 service.record.status = ProcessStatus::Timeout;
@@ -3037,8 +3175,33 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
             "service": service.record.id.as_str(),
             "ms": service.record.ready_duration_ms,
         }))?;
+        emit_service_runtime_hints(service)?;
     }
     Ok(())
+}
+
+fn emit_service_runtime_hints(service: &ServiceHandle) -> Result<()> {
+    let stdout = std::fs::read_to_string(&service.record.stdout_log).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&service.record.stderr_log).unwrap_or_default();
+    let logs = format!("{stdout}\n{stderr}");
+    for hint in service_log_hints(&service.record.id, &logs) {
+        emit_jsonl(hint)?;
+    }
+    Ok(())
+}
+
+fn service_log_hints(service_id: &str, logs: &str) -> Vec<serde_json::Value> {
+    let mut hints = Vec::new();
+    if logs.contains("TCP backlog setting") && logs.contains("somaxconn") {
+        hints.push(serde_json::json!({
+            "type": "hint",
+            "code": "macos_tcp_backlog_limited",
+            "service": service_id,
+            "message": "native TCP service reports the macOS accept backlog is capped by kern.ipc.somaxconn; connection-heavy runners may see ECONNREFUSED even while the service is up",
+            "suggestion": "reuse client connection pools or raise the host limit, for example `sudo sysctl -w kern.ipc.somaxconn=1024`, then rerun vat",
+        }));
+    }
+    hints
 }
 
 fn record_runner_failure(
@@ -3077,13 +3240,15 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
 
 fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
     for service in services.iter_mut().rev() {
-        if service.child.try_wait().ok().flatten().is_none() {
-            kill_child(&mut service.child);
-            let _ = service.child.wait();
-            if service.record.status == ProcessStatus::Running
-                || service.record.status == ProcessStatus::Ready
-            {
-                service.record.status = ProcessStatus::Exited;
+        if let Some(child) = service.child.as_mut() {
+            if child.try_wait().ok().flatten().is_none() {
+                kill_child(child);
+                let _ = child.wait();
+                if service.record.status == ProcessStatus::Running
+                    || service.record.status == ProcessStatus::Ready
+                {
+                    service.record.status = ProcessStatus::Exited;
+                }
             }
         }
         // Force-remove the container regardless of how the `docker run` child
@@ -3122,6 +3287,8 @@ fn should_delete_clusters(keep: &RetentionPolicy, code: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::config::ExternalServiceConfig;
 
     #[test]
     fn sandbox_wrap_wraps_runner_under_seatbelt_passthrough_under_none() {
@@ -3288,6 +3455,7 @@ mod tests {
         let plan = ServicePlan {
             id: "api".to_string(),
             command: vec!["python3".to_string(), "-m".to_string(), "app".to_string()],
+            host: None,
             ready_http: None,
             ready_probe: ReadyProbe::None,
             timeout_s: 1,
@@ -3301,6 +3469,7 @@ mod tests {
             docker_name: None,
             image: None,
             cluster: None,
+            owned_by_vat: true,
         };
 
         let wrapped = service_start_command(&plan, Some(&TestSandbox), Path::new("/vat/root"));
@@ -3358,6 +3527,77 @@ mod tests {
             resolve_ready_probe(&service, None),
             ReadyProbe::None
         ));
+    }
+
+    #[test]
+    fn prepare_external_service_attaches_endpoint_without_child_command() {
+        let mut service = test_service("pg-ci", &[]);
+        service.cmd.clear();
+        service.external = Some(ExternalServiceConfig {
+            host: "postgres".to_string(),
+            port: 5432,
+        });
+        service.export.insert(
+            "DATABASE_URL".to_string(),
+            "postgres://postgres@{host}:{port}/app".to_string(),
+        );
+
+        let plan = prepare_external_service(&service).expect("external plan");
+
+        assert!(!plan.owned_by_vat);
+        assert!(plan.command.is_empty());
+        assert_eq!(plan.host.as_deref(), Some("postgres"));
+        assert_eq!(plan.port, Some(5432));
+        assert_eq!(plan.prepare_mode, "external_attach");
+        assert_eq!(
+            plan.env.get("DATABASE_URL").map(String::as_str),
+            Some("postgres://postgres@postgres:5432/app")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_PG_CI_HOST").map(String::as_str),
+            Some("postgres")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_PG_CI_PORT").map(String::as_str),
+            Some("5432")
+        );
+        assert_eq!(
+            plan.exported_env,
+            vec![
+                "DATABASE_URL".to_string(),
+                "VAT_SERVICE_PG_CI_HOST".to_string(),
+                "VAT_SERVICE_PG_CI_PORT".to_string()
+            ]
+        );
+        match plan.ready_probe {
+            ReadyProbe::Tcp { host, port } => {
+                assert_eq!(host, "postgres");
+                assert_eq!(port, 5432);
+            }
+            other => panic!("expected default TCP probe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn prepare_external_service_substitutes_readiness_templates() {
+        let mut service = test_service("api-ci", &[]);
+        service.cmd.clear();
+        service.external = Some(ExternalServiceConfig {
+            host: "api".to_string(),
+            port: 8080,
+        });
+        service.ready_http = Some("http://{host}:{port}/ready".to_string());
+        service.ready_cmd = vec!["probe".to_string(), "{host}:{port}".to_string()];
+
+        let plan = prepare_external_service(&service).expect("external plan");
+
+        assert_eq!(plan.ready_http.as_deref(), Some("http://api:8080/ready"));
+        match plan.ready_probe {
+            ReadyProbe::Cmd(cmd) => {
+                assert_eq!(cmd, vec!["probe".to_string(), "api:8080".to_string()]);
+            }
+            other => panic!("expected substituted ready_cmd, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3537,6 +3777,7 @@ mod tests {
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
             cluster: None,
+            external: None,
             k8s_version: None,
             nodes: None,
             spec: None,
@@ -3561,6 +3802,7 @@ mod tests {
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
             cluster: None,
+            external: None,
             k8s_version: None,
             nodes: None,
             spec: None,
@@ -3681,6 +3923,35 @@ mod tests {
     }
 
     #[test]
+    fn cloud_storage_builtin_export_includes_http_scheme() {
+        let svc = test_service("gcs", &[]);
+        let plan = prepare_builtin_service(
+            &svc,
+            ServicePreset::CloudStorage,
+            Path::new("."),
+            &[],
+            false,
+        )
+        .unwrap();
+        let port = plan.port.unwrap();
+        let expected_host = format!("http://127.0.0.1:{port}");
+        let expected_port = port.to_string();
+
+        assert_eq!(
+            plan.env.get("STORAGE_EMULATOR_HOST").map(String::as_str),
+            Some(expected_host.as_str())
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_GCS_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_GCS_PORT").map(String::as_str),
+            Some(expected_port.as_str())
+        );
+    }
+
+    #[test]
     fn preset_exports_substitute_template_with_declared_env_key() {
         let mut svc = test_service("mongo", &[]);
         svc.export.insert(
@@ -3691,6 +3962,14 @@ mod tests {
         assert_eq!(
             env.get("MONGODB_URL").map(String::as_str),
             Some("mongodb://127.0.0.1:60736/tech-platform-e2e")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_MONGO_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_MONGO_PORT").map(String::as_str),
+            Some("60736")
         );
         assert!(
             !env.contains_key("mongodb://{host}:{port}/tech-platform-e2e"),
@@ -3708,6 +3987,45 @@ mod tests {
             env.get("CACHE_URL").map(String::as_str),
             Some("redis://127.0.0.1:60738/")
         );
+    }
+
+    #[test]
+    fn builtin_exports_support_templates_and_raw_endpoint_vars() {
+        let mut svc = test_service("tasks", &[]);
+        svc.export.insert(
+            "TASKS_URL".to_string(),
+            "http://{host}:{port}/v2/projects/demo".to_string(),
+        );
+        let plan =
+            prepare_builtin_service(&svc, ServicePreset::CloudTasks, Path::new("."), &[], false)
+                .unwrap();
+
+        let port = plan.port.unwrap();
+        let expected_url = format!("http://127.0.0.1:{port}/v2/projects/demo");
+        let expected_port = port.to_string();
+        assert_eq!(
+            plan.env.get("TASKS_URL").map(String::as_str),
+            Some(expected_url.as_str())
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_TASKS_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_TASKS_PORT").map(String::as_str),
+            Some(expected_port.as_str())
+        );
+    }
+
+    #[test]
+    fn service_stderr_hints_detect_macos_somaxconn_warning() {
+        let stderr = "WARNING: The TCP backlog setting of 511 cannot be enforced because kern.ipc.somaxconn is set to the lower value of 128.";
+        let hints = service_log_hints("redis", stderr);
+
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0]["type"], "hint");
+        assert_eq!(hints[0]["code"], "macos_tcp_backlog_limited");
+        assert_eq!(hints[0]["service"], "redis");
     }
 
     #[test]
@@ -3905,7 +4223,9 @@ mod tests {
                 command,
                 status: ProcessStatus::Ready,
                 preset: None,
+                host: None,
                 port: None,
+                owned_by_vat: Some(true),
                 prepare_mode: Some("direct_start".to_string()),
                 cache_key: None,
                 prepare_duration_ms: Some(0),
@@ -3918,7 +4238,7 @@ mod tests {
                 stdout_log: stdout.to_string_lossy().into_owned(),
                 stderr_log: stderr.to_string_lossy().into_owned(),
             },
-            child,
+            child: Some(child),
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
             docker_name: None,

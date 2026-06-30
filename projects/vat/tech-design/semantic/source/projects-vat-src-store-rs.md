@@ -16,12 +16,32 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/store.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/store.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Vat` | projects/vat/src/store.rs | struct | pub | 26 |  |
+| `base_manifest` | projects/vat/src/store.rs | function | pub | 64 | base_manifest(&self) -> Result<Manifest> |
+| `base_manifest_path` | projects/vat/src/store.rs | function | pub | 44 | base_manifest_path(&self) -> PathBuf |
+| `changes` | projects/vat/src/store.rs | function | pub | 71 | changes(&self) -> Result<ChangeSet> |
+| `create` | projects/vat/src/store.rs | function | pub | 115 | create(     id: &str,     name: Option<String>,     spec: EnvSpec,     rootfs_source: Option<&std::path::Path>,     lineage: Vec<String>, ) -> Result<Vat> |
+| `events_path` | projects/vat/src/store.rs | function | pub | 41 | events_path(&self) -> PathBuf |
+| `list` | projects/vat/src/store.rs | function | pub | 175 | list() -> Result<Vec<Vat>> |
+| `load` | projects/vat/src/store.rs | function | pub | 161 | load(id: &str) -> Result<Vat> |
+| `log` | projects/vat/src/store.rs | function | pub | 60 | log(&self, ev: Event) -> Result<()> |
+| `meta_path` | projects/vat/src/store.rs | function | pub | 38 | meta_path(&self) -> PathBuf |
+| `project` | projects/vat/src/store.rs | function | pub | 78 | project(&self) -> Result<VatState> |
+| `remove` | projects/vat/src/store.rs | function | pub | 198 | remove(id: &str) -> Result<()> |
+| `rootfs` | projects/vat/src/store.rs | function | pub | 35 | rootfs(&self) -> PathBuf |
+| `save` | projects/vat/src/store.rs | function | pub | 51 | save(&mut self) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-store-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The vat store: create, load, list, and remove vats on disk, and project a
 //! [`VatState`] from persisted [`VatMeta`] plus live computation.
 
@@ -225,6 +245,7 @@ pub fn remove(id: &str) -> Result<()> {
     std::fs::remove_dir_all(&dir).with_context(|| format!("remove {}", dir.display()))?;
     Ok(())
 }
+// CODEGEN-END
 ````
 
 ## Changes

@@ -16,12 +16,20 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/commands/emulator.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/commands/emulator.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `exec` | projects/vat/src/commands/emulator.rs | function | pub | 19 | exec(     kind: EmulatorKind,     host_port: String,     ca_path: Option<String>,     cassette_dir: Option<String>,     spec: Option<String>,     route: Vec<String>,     no_forward: bool, ) -> Result<ExitCode> |
+| `exec` | projects/vat/src/commands/emulator.rs | function | pub | 69 | exec(     _kind: EmulatorKind,     _host_port: String,     _ca_path: Option<String>,     _cassette_dir: Option<String>,     _spec: Option<String>,     _route: Vec<String>,     _no_forward: bool, ) -> Result<ExitCode> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-emulator-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `vat emulator` — run one of vat's built-in Rust emulators.
 //!
 //! Internal: vat spawns *itself* as the service process for a built-in emulator
@@ -45,6 +53,7 @@ pub fn exec(
     cassette_dir: Option<String>,
     spec: Option<String>,
     route: Vec<String>,
+    no_forward: bool,
 ) -> Result<ExitCode> {
     let kind = match kind {
         EmulatorKind::Pubsub => crate::emulator::Kind::Pubsub,
@@ -57,6 +66,7 @@ pub fn exec(
             ca_path: ca_path.unwrap_or_else(|| "vat-http-mock-ca.pem".to_string()),
             cassette_dir: cassette_dir.unwrap_or_else(|| "vat-http-mock-cassettes".to_string()),
             routes: parse_routes(&route),
+            forward: !no_forward,
         },
         EmulatorKind::Openapi => crate::emulator::Kind::Openapi {
             spec: spec.unwrap_or_else(|| "openapi.yaml".to_string()),
@@ -93,6 +103,7 @@ pub fn exec(
     _cassette_dir: Option<String>,
     _spec: Option<String>,
     _route: Vec<String>,
+    _no_forward: bool,
 ) -> Result<ExitCode> {
     anyhow::bail!(
         "this vat was built without the `emulator` feature; rebuild with default features to use `vat emulator`"
@@ -127,6 +138,7 @@ mod tests {
         );
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

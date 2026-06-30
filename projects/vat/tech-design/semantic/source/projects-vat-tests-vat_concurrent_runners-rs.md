@@ -15,9 +15,11 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/tests/vat_concurrent_runners.rs`, captured as a rust-source-unit (td_ast) item-tree
-during vat standardization onto the codegen ladder.
+Public API manifest for `projects/vat/tests/vat_concurrent_runners.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

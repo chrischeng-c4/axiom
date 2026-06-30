@@ -16,8 +16,14 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/commands/snapshot.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/commands/snapshot.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `fork` | projects/vat/src/commands/snapshot.rs | function | pub | 61 | fork(id: String, name: Option<String>) -> Result<ExitCode> |
+| `snapshot` | projects/vat/src/commands/snapshot.rs | function | pub | 54 | snapshot(id: String, name: Option<String>) -> Result<ExitCode> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
