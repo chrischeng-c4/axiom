@@ -95,6 +95,21 @@ NOT_WRONGABLE_SIGNATURE_PARAMS = {
     ("argparse", "ArgumentParser", "parse_known_args", "args"),
     ("argparse", "ArgumentParser", "parse_known_intermixed_args", "args"),
     ("argparse", "BooleanOptionalAction", "__init__", "option_strings"),
+    ("array", "array", "__add__", "value"),
+    ("array", "array", "__delitem__", "key"),
+    ("array", "array", "__ge__", "value"),
+    ("array", "array", "__getitem__", "key"),
+    ("array", "array", "__gt__", "value"),
+    ("array", "array", "__iadd__", "value"),
+    ("array", "array", "__le__", "value"),
+    ("array", "array", "__lt__", "value"),
+    ("array", "array", "__new__", "typecode"),
+    ("array", "array", "__setitem__", "key"),
+    ("array", "array", "append", "v"),
+    ("array", "array", "count", "v"),
+    ("array", "array", "fromlist", "list"),
+    ("array", "array", "index", "v"),
+    ("array", "array", "remove", "v"),
 }
 BUILTINS = "builtins"
 NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
