@@ -40,6 +40,10 @@ pub enum CoreTy {
     /// class with a base or a method, and every non-class value, is skipped — so
     /// it stays false-positive-clean.
     Typed,
+    /// A type/class object contract. Reject bare user instances and concrete
+    /// scalar values; keep real class-like expressions skip-safe until the type
+    /// model can distinguish class objects from instances everywhere.
+    Type,
     /// Not a concrete scalar — never enforce against this. Catch-all for every
     /// non-scalar typeshed annotation (unions, subscripts, typevars, buffers,
     /// object/Any, etc.).
@@ -1755,6 +1759,74 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("restval", CoreTy::Unknown),
             p("dialect", CoreTy::Unknown),
         ],
+        enforceable: true,
+    },
+    // POSITIVE: ctypes public factory helpers take ctypes type/class-like
+    // values that generated rows collapse to Unknown or mark unenforceable. A
+    // bare user instance and impossible concrete scalar cannot satisfy those
+    // contracts, while real ctypes classes and `None` sentinels stay skip-safe.
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "",
+        name: "ARRAY",
+        kind: SigKind::ModuleFn,
+        params: &[p("typ", CoreTy::Type), p("len", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "",
+        name: "CFUNCTYPE",
+        kind: SigKind::ModuleFn,
+        params: &[p("restype", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "LibraryLoader",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("dlltype", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "",
+        name: "POINTER",
+        kind: SigKind::ModuleFn,
+        params: &[p("cls", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "",
+        name: "PYFUNCTYPE",
+        kind: SigKind::ModuleFn,
+        params: &[p("restype", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "",
+        name: "SetPointerType",
+        kind: SigKind::ModuleFn,
+        params: &[p("pointer", CoreTy::Type), p("cls", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "",
+        name: "WINFUNCTYPE",
+        kind: SigKind::ModuleFn,
+        params: &[p("restype", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ctypes",
+        qualifier: "",
+        name: "pointer",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
     },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
@@ -3769,6 +3841,35 @@ mod tests {
         assert!(read_dict.enforceable);
         assert_eq!(read_dict.params[0].name, "dictionary");
         assert_eq!(read_dict.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_ctypes_factory_walls_override_unknown_rows() {
+        for name in ["ARRAY", "CFUNCTYPE", "POINTER", "PYFUNCTYPE", "WINFUNCTYPE"] {
+            let sig = get("ctypes", "", name).expect("ctypes factory present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].ty, CoreTy::Type);
+        }
+
+        let set_pointer =
+            get("ctypes", "", "SetPointerType").expect("ctypes.SetPointerType present");
+        assert!(set_pointer.enforceable);
+        assert_eq!(set_pointer.kind, SigKind::ModuleFn);
+        assert_eq!(set_pointer.params[0].name, "pointer");
+        assert_eq!(set_pointer.params[0].ty, CoreTy::Type);
+
+        let pointer = get("ctypes", "", "pointer").expect("ctypes.pointer present");
+        assert!(pointer.enforceable);
+        assert_eq!(pointer.params[0].name, "obj");
+        assert_eq!(pointer.params[0].ty, CoreTy::Typed);
+
+        let loader =
+            get("ctypes", "LibraryLoader", "__init__").expect("ctypes.LibraryLoader.__init__");
+        assert!(loader.enforceable);
+        assert_eq!(loader.kind, SigKind::Method);
+        assert_eq!(loader.params[0].name, "dlltype");
+        assert_eq!(loader.params[0].ty, CoreTy::Type);
     }
 
     #[test]
