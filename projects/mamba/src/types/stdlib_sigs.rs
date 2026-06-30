@@ -2053,6 +2053,26 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: typeshed exposes distutils.archive_util.make_archive through a
+    // path-like alias that the generator collapses to Unknown. Use a str wall
+    // for scalar rejection; non-scalar path-like objects stay skip-safe.
+    StdlibSig {
+        module: "distutils.archive_util",
+        qualifier: "",
+        name: "make_archive",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("base_name", CoreTy::Str),
+            p("format", CoreTy::Str),
+            p("root_dir", CoreTy::Typed),
+            p("base_dir", CoreTy::Typed),
+            p("verbose", CoreTy::Typed),
+            p("dry_run", CoreTy::Typed),
+            p("owner", CoreTy::Typed),
+            p("group", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4307,6 +4327,17 @@ mod tests {
         assert_eq!(bytecode.kind, SigKind::Method);
         assert_eq!(bytecode.params[0].name, "x");
         assert_eq!(bytecode.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_distutils_archive_make_archive_base_name_wall() {
+        let sig = get("distutils.archive_util", "", "make_archive").expect("make_archive present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::ModuleFn);
+        assert_eq!(sig.params[0].name, "base_name");
+        assert_eq!(sig.params[0].ty, CoreTy::Str);
+        assert_eq!(sig.params[1].name, "format");
+        assert_eq!(sig.params[1].ty, CoreTy::Str);
     }
 
     #[test]
