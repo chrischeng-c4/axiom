@@ -1541,6 +1541,80 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
         enforceable: true,
     },
+    // POSITIVE: the RawConfigParser generated rows keep several protocol-ish
+    // arguments Unknown. For force typing, a bare user object cannot satisfy the
+    // public section-name, mapping, iterable, or path-like contracts; reject it
+    // before the runtime falls through to NoSectionError/AttributeError.
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("defaults", CoreTy::Typed),
+            p("dict_type", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "get",
+        kind: SigKind::Method,
+        params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "getboolean",
+        kind: SigKind::Method,
+        params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "getfloat",
+        kind: SigKind::Method,
+        params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "getint",
+        kind: SigKind::Method,
+        params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "items",
+        kind: SigKind::Method,
+        params: &[p("section", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "read",
+        kind: SigKind::Method,
+        params: &[
+            p("filenames", CoreTy::Typed),
+            p("encoding", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "configparser",
+        qualifier: "RawConfigParser",
+        name: "read_dict",
+        kind: SigKind::Method,
+        params: &[p("dictionary", CoreTy::Typed), p("source", CoreTy::Str)],
+        enforceable: true,
+    },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
     // but the typeshed-derived strict wall must still reject a bare user object
     // before import-time behavior is observed.
@@ -3525,6 +3599,34 @@ mod tests {
         assert_eq!(sig.params[0].ty, CoreTy::Str);
         assert_eq!(sig.params[1].name, "option");
         assert_eq!(sig.params[1].ty, CoreTy::Str);
+    }
+
+    #[test]
+    fn curated_raw_configparser_walls_override_unknown_rows() {
+        for name in ["get", "getboolean", "getfloat", "getint", "items"] {
+            let sig = get("configparser", "RawConfigParser", name).expect("RawConfigParser method");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "section");
+            assert_eq!(sig.params[0].ty, CoreTy::Str);
+        }
+
+        let init =
+            get("configparser", "RawConfigParser", "__init__").expect("RawConfigParser init");
+        assert!(init.enforceable);
+        assert_eq!(init.params[0].name, "defaults");
+        assert_eq!(init.params[0].ty, CoreTy::Typed);
+
+        let read = get("configparser", "RawConfigParser", "read").expect("RawConfigParser read");
+        assert!(read.enforceable);
+        assert_eq!(read.params[0].name, "filenames");
+        assert_eq!(read.params[0].ty, CoreTy::Typed);
+
+        let read_dict =
+            get("configparser", "RawConfigParser", "read_dict").expect("RawConfigParser read_dict");
+        assert!(read_dict.enforceable);
+        assert_eq!(read_dict.params[0].name, "dictionary");
+        assert_eq!(read_dict.params[0].ty, CoreTy::Typed);
     }
 
     #[test]

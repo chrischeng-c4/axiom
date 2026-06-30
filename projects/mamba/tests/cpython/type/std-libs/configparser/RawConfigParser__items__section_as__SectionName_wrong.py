@@ -9,12 +9,11 @@
 # case = "RawConfigParser__items__section_as__SectionName_wrong"
 # subject = "configparser.RawConfigParser.items(section: _SectionName)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed section"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed section
 # mamba-strict-type: TypeError
 """Type wall: configparser.RawConfigParser.items(section: _SectionName); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from configparser import RawConfigParser
-obj = object.__new__(RawConfigParser)
+obj = RawConfigParser()
 try:
     obj.items(_W())  # section: _SectionName <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
