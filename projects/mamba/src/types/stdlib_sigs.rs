@@ -2701,6 +2701,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "email.utils",
+        qualifier: "",
+        name: "parsedate",
+        kind: SigKind::ModuleFn,
+        params: &[p("data", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.utils",
+        qualifier: "",
+        name: "parsedate_tz",
+        kind: SigKind::ModuleFn,
+        params: &[p("data", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "email.parser",
         qualifier: "BytesParser",
         name: "__init__",
@@ -5406,6 +5422,17 @@ mod tests {
         assert_eq!(sig.params[0].ty, CoreTy::Tuple);
         assert_eq!(sig.params[1].name, "charset");
         assert_eq!(sig.params[1].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_email_utils_parsedate_string_walls_override_unknown_rows() {
+        for name in ["parsedate", "parsedate_tz"] {
+            let sig = get("email.utils", "", name).expect("email.utils date parser row present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn, "{name}");
+            assert_eq!(sig.params[0].name, "data", "{name}");
+            assert_eq!(sig.params[0].ty, CoreTy::Str, "{name}");
+        }
     }
 
     #[test]

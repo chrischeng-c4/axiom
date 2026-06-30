@@ -9,12 +9,11 @@
 # case = "parsedate__data_as_typed_wrong"
 # subject = "email.utils.parsedate(data: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/utils.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: email.utils.parsedate(data: typed); call it with the wrong type.
 
