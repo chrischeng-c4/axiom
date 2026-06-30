@@ -9,12 +9,10 @@
 # case = "UserDict____delitem____key_as__KT_wrong"
 # subject = "collections.UserDict.__delitem__(key: _KT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key
 # mamba-strict-type: TypeError
 """Type wall: collections.UserDict.__delitem__(key: _KT); call it with the wrong type.
 
