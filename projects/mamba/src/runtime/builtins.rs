@@ -9517,6 +9517,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
             // to mb_instance_new_with_init, but the indirect value path lands
             // here; without this it returns None and __init__ never fires.
             if let ObjData::Str(ref s) = (*ptr).data {
+                if let Some(result) = super::stdlib::ast_mod::mb_ast_construct_marker(s, &items) {
+                    return result;
+                }
                 if super::class::class_is_registered(s) {
                     let args_val = MbValue::from_ptr(MbObject::new_list(items));
                     return super::class::mb_instance_new_with_init(func, args_val);

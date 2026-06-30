@@ -9,12 +9,11 @@
 # case = "ExceptHandler__init__type_as_typed_wrong"
 # subject = "ast.ExceptHandler.__init__(type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
 """Type wall: ast.ExceptHandler.__init__(type: typed); call it with the wrong type.
 

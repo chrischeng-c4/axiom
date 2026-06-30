@@ -9,12 +9,11 @@
 # case = "JoinedStr__init__values_as_list_wrong"
 # subject = "ast.JoinedStr.__init__(values: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed values"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed values
 # mamba-strict-type: TypeError
 """Type wall: ast.JoinedStr.__init__(values: list); call it with the wrong type.
 
