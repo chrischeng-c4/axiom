@@ -2,15 +2,21 @@ version = 2
 project = "keep"
 ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-06-30T16:53:31.596614+00:00"
-digest = "sha256:006091cc09df48c8716df6ee7b72a0fdd041e866199d02ea46014a8c6f918509"
-source_digest = "sha256:006091cc09df48c8716df6ee7b72a0fdd041e866199d02ea46014a8c6f918509"
-ir_digest = "sha256:f5532967b8b572c3ff739fe3fcfd5d66a76854ea16de8cb9179caf2e9a0e5468"
+generated_at = "2026-06-30T17:11:41.318812+00:00"
+digest = "sha256:3ba159daf3854fe175fff2d59424312b6b8f21710d70a63f00671909a5fb82c2"
+source_digest = "sha256:3ba159daf3854fe175fff2d59424312b6b8f21710d70a63f00671909a5fb82c2"
+ir_digest = "sha256:a60dfdf3045c7a9b00799cbeca1dbd80f618d7590711d21e09c00e37c19f8b63"
 
 [[files]]
 path = "interfaces/cli/migrate-keep-cli-from-report-issue-to-the-issue-group-cli-std-is.md"
 digest = "sha256:a36e9cbc3a2c500db4d02a408b395968a2d60d5018571062c8ca69c85cfe3776"
 ir_digest = "sha256:a66b22845f9153755420bf11970a2084c0e48ebad3a5fb7f2d78280224428ac6"
+section_count = 3
+
+[[files]]
+path = "logic/adopt-libs-raft-host-per-shard-hosts-h2c-peer-transport.md"
+digest = "sha256:bbb1252ee1dfae65bb9e9d11359ce233c3ba96900d8f3f67a2491b2380de2da7"
+ir_digest = "sha256:ce3b445018ddfdfb54505006c986a8b3503be1850b4e4d5cb4ddd7067a27d433"
 section_count = 3
 
 [[files]]
