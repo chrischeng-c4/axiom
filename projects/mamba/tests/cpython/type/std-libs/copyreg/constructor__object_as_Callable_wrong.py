@@ -9,12 +9,10 @@
 # case = "constructor__object_as_Callable_wrong"
 # subject = "copyreg.constructor(object: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copyreg.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object
 # mamba-strict-type: TypeError
 """Type wall: copyreg.constructor(object: Callable); call it with the wrong type.
 
