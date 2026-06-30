@@ -9,12 +9,11 @@
 # case = "Num____new____n_as_complex_wrong"
 # subject = "ast.Num.__new__(n: complex)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed n"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed n
 # mamba-strict-type: TypeError
 """Type wall: ast.Num.__new__(n: complex); call it with the wrong type.
 

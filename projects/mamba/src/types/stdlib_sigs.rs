@@ -211,6 +211,42 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
+    // constructor/property contracts in typeshed. Generated rows either collapse
+    // them to `Typed` or lose the parameter entirely; keep the strict wall exact
+    // for the force-typed probes while leaving runtime AST construction separate.
+    StdlibSig {
+        module: "ast",
+        qualifier: "Bytes",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[p("s", CoreTy::Bytes)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ast",
+        qualifier: "Constant",
+        name: "n",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ast",
+        qualifier: "Constant",
+        name: "s",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ast",
+        qualifier: "Num",
+        name: "__new__",
+        kind: SigKind::Method,
+        params: &[p("n", CoreTy::Complex)],
+        enforceable: true,
+    },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
     // but the typeshed-derived strict wall must still reject a bare user object
     // before import-time behavior is observed.

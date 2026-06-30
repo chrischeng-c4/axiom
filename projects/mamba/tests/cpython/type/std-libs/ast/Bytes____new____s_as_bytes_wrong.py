@@ -9,12 +9,11 @@
 # case = "Bytes____new____s_as_bytes_wrong"
 # subject = "ast.Bytes.__new__(s: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s
 # mamba-strict-type: TypeError
 """Type wall: ast.Bytes.__new__(s: bytes); call it with the wrong type.
 
