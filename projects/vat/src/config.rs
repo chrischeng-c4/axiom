@@ -158,6 +158,11 @@ pub struct ServiceConfig {
     /// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<ClusterBackend>,
+    /// Attach to a service already provisioned by the surrounding environment,
+    /// such as a GitLab CI `services:` sidecar. vat waits for readiness,
+    /// exports env, and records evidence, but never starts or stops it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalServiceConfig>,
     /// Optional Kubernetes version for the cluster node image (e.g. "1.30").
     /// Only meaningful with `cluster`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -188,6 +193,14 @@ pub struct ServiceConfig {
     pub ready_cmd: Vec<String>,
     #[serde(default = "default_service_timeout")]
     pub timeout_s: u64,
+}
+
+/// Endpoint for an externally managed service.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalServiceConfig {
+    pub host: String,
+    pub port: u16,
 }
 
 /// Built-in local service presets.
@@ -463,13 +476,14 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
         let has_preset = service.preset.is_some();
         let has_image = service.image.is_some();
         let has_cluster = service.cluster.is_some();
-        let backing = [has_cmd, has_preset, has_image, has_cluster]
+        let has_external = service.external.is_some();
+        let backing = [has_cmd, has_preset, has_image, has_cluster, has_external]
             .into_iter()
             .filter(|b| *b)
             .count();
         match backing {
             0 => bail!(
-                "service `{}` must define exactly one of cmd, preset, image, or cluster",
+                "service `{}` must define exactly one of cmd, preset, image, cluster, or external",
                 service.id
             ),
             1 => {
@@ -479,6 +493,8 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                     validate_image_service(service)?;
                 } else if has_cluster {
                     validate_cluster_service(service)?;
+                } else if has_external {
+                    validate_external_service(service)?;
                 } else if service.preset == Some(ServicePreset::Firebase) {
                     validate_firebase_service(cfg, service)?;
                 } else if service.preset == Some(ServicePreset::Openapi) {
@@ -487,7 +503,7 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                 // other presets: no extra checks here.
             }
             _ => bail!(
-                "service `{}` must define only one of cmd, preset, image, or cluster",
+                "service `{}` must define only one of cmd, preset, image, cluster, or external",
                 service.id
             ),
         }
@@ -621,6 +637,36 @@ fn validate_service_dependency_cycle(
 fn validate_id(kind: &str, id: &str) -> Result<()> {
     if id.trim().is_empty() {
         bail!("{kind} id must not be empty");
+    }
+    Ok(())
+}
+
+/// An `external` service is owned by CI/local infrastructure. vat only attaches
+/// to the endpoint, so Docker/cluster/service-start knobs do not apply.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+fn validate_external_service(service: &ServiceConfig) -> Result<()> {
+    let endpoint = service
+        .external
+        .as_ref()
+        .context("external service missing endpoint")?;
+    if endpoint.host.trim().is_empty() {
+        bail!("service `{}` external host must not be empty", service.id);
+    }
+    if endpoint.port == 0 {
+        bail!(
+            "service `{}` external port must be greater than 0",
+            service.id
+        );
+    }
+    if service.container_port.is_some()
+        || !service.image_env.is_empty()
+        || !service.seed.is_empty()
+        || matches!(service.port, PortSpec::Fixed(_))
+    {
+        bail!(
+            "service `{}` external does not accept port, container_port, image_env, or seed",
+            service.id
+        );
     }
     Ok(())
 }
@@ -1005,6 +1051,7 @@ network = "hermetic"
                 image_env: BTreeMap::new(),
                 runtime: ServiceRuntime::default(),
                 cluster: None,
+                external: None,
                 k8s_version: None,
                 nodes: None,
                 spec: None,
@@ -1052,6 +1099,7 @@ network = "hermetic"
                     image_env: BTreeMap::new(),
                     runtime: ServiceRuntime::default(),
                     cluster: None,
+                    external: None,
                     k8s_version: None,
                     nodes: None,
                     spec: None,
@@ -1073,6 +1121,7 @@ network = "hermetic"
                     image_env: BTreeMap::new(),
                     runtime: ServiceRuntime::default(),
                     cluster: None,
+                    external: None,
                     k8s_version: None,
                     nodes: None,
                     spec: None,
@@ -1135,6 +1184,7 @@ network = "hermetic"
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
             cluster: None,
+            external: None,
             k8s_version: None,
             nodes: None,
             spec: None,
@@ -1210,6 +1260,71 @@ network = "hermetic"
         let mut svc = bare_service("svc");
         svc.cluster = Some(ClusterBackend::Auto);
         assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn accepts_external_service() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 5432,
+        });
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_external_and_cmd_together() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 5432,
+        });
+        svc.cmd = vec!["true".into()];
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_external_empty_host() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: " ".into(),
+            port: 5432,
+        });
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_external_zero_port() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 0,
+        });
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_external_with_service_start_knobs() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 5432,
+        });
+        svc.port = PortSpec::Fixed(15432);
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        svc.port = PortSpec::default();
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        svc.container_port = None;
+        svc.image_env
+            .insert("POSTGRES_PASSWORD".into(), "pw".into());
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        svc.image_env.clear();
+        svc.seed = vec![PathBuf::from("schema.sql")];
+        assert!(validate(&cfg_with_service(svc)).is_err());
     }
 
     #[test]

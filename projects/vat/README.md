@@ -243,6 +243,11 @@ image_env = { POSTGRES_PASSWORD = "pw" }
 export = { ALLOY_URL = "postgres://postgres:pw@{host}:{port}/postgres" }
 
 [[services]]
+id = "ci-pg"               # already started by GitLab CI services / Docker Compose
+external = { host = "postgres", port = 5432 }
+export = { DATABASE_URL = "postgres://postgres@{host}:{port}/app" }
+
+[[services]]
 id = "k8s"                 # ephemeral local Kubernetes cluster
 cluster = "auto"           # auto (kind→k3d→minikube) | kind | k3d | minikube
 # k8s_version = "1.30"
@@ -285,7 +290,7 @@ that sandbox, and starts the proxy in no-forward mode. Docker/image, cluster, an
 native preset service backends remain external local services; the app and runner
 are still host processes, not containers or VMs.
 
-A service is provided in one of four ways, and **native (Homebrew) is
+A service is provided in one of five ways, and **native (Homebrew) is
 preferred**:
 
 - `preset` — a built-in service. With the default `runtime = "auto"` vat uses
@@ -357,6 +362,12 @@ preferred**:
   AlloyDB). Requires `container_port`; `image_env` is passed into the container;
   in `export`, `{host}`/`{port}` resolve to the mapped host endpoint and
   `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+- `external` — an already provisioned endpoint, such as a GitLab CI `services:`
+  sidecar, GitHub Actions service container, local Docker Compose service, or
+  host daemon. vat does not start or stop it; it waits for readiness, substitutes
+  `{host}`/`{port}` in `ready_http`, `ready_cmd`, and `export`, injects
+  `VAT_SERVICE_<ID>_{HOST,PORT}`, and records `owned_by_vat = false` in
+  `vat state`.
 - `cluster` — an ephemeral local Kubernetes cluster, for testing K8s-native
   targets. `auto` picks the first installed of kind → k3d → minikube (all need
   Docker on Apple Silicon); `kind`/`k3d`/`minikube` force one. Optional
@@ -371,9 +382,11 @@ preferred**:
 For the native path vat checks for required binaries, cold-prepares cached
 service data when needed, and clones it on later runs. For the Docker path it
 runs an ephemeral `docker run --rm` container bound to loopback, removed at
-teardown — the **runner itself is never containerized**, so the host GPU is
-untouched. Either way vat auto-allocates ports, exports runner env vars, and
-reports only a few JSONL checkpoints unless the agent asks for logs/state/diff.
+teardown. For the `external` path vat treats the surrounding environment as the
+lifecycle owner and only records/probes the endpoint. The **runner itself is
+never containerized**, so the host GPU is untouched. Managed paths auto-allocate
+ports, every path exports runner env vars, and vat reports only a few JSONL
+checkpoints unless the agent asks for logs/state/diff.
 A Docker-backed service with no reachable daemon fails with a structured
 `docker_unavailable` error rather than a panic.
 

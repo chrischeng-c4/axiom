@@ -1070,6 +1070,7 @@ fn run_setup_step(
 struct ServicePlan {
     id: String,
     command: Vec<String>,
+    host: Option<String>,
     ready_http: Option<String>,
     ready_probe: ReadyProbe,
     timeout_s: u64,
@@ -1088,6 +1089,9 @@ struct ServicePlan {
     /// Set when the service is a local Kubernetes cluster; carries the cluster
     /// evidence so teardown can delete it and `vat state` can surface it.
     cluster: Option<ClusterRunRecord>,
+    /// False when the service is provided by CI/local infrastructure and vat is
+    /// attaching to it instead of starting/stopping a process.
+    owned_by_vat: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1100,7 +1104,7 @@ enum ReadyProbe {
 
 struct ServiceHandle {
     record: ServiceRunRecord,
-    child: Child,
+    child: Option<Child>,
     timeout_s: u64,
     ready_probe: ReadyProbe,
     /// `docker --name` when the service is a container; force-removed on stop.
@@ -1125,6 +1129,8 @@ fn prepare_service(
         // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
         // equivalent. Always a container.
         prepare_image_service(vat, service, image)?
+    } else if service.external.is_some() {
+        prepare_external_service(service)?
     } else if service.preset == Some(ServicePreset::Firebase) {
         // Firebase: a multi-emulator bundle driven by firebase.json — its own
         // prepare path because it is one process exposing many ports.
@@ -1167,6 +1173,7 @@ fn prepare_service(
         ServicePlan {
             id: service.id.clone(),
             command,
+            host: Some("127.0.0.1".to_string()).filter(|_| port.is_some()),
             ready_http,
             ready_probe: resolve_ready_probe(&service_for_probe, None),
             timeout_s: service.timeout_s,
@@ -1180,6 +1187,7 @@ fn prepare_service(
             docker_name: None,
             image: None,
             cluster: None,
+            owned_by_vat: true,
         }
     };
     let mut plan = plan;
@@ -1188,7 +1196,16 @@ fn prepare_service(
     // `prepare_cluster_service`; the container/preset note below does not apply.
     if plan.prepare_mode != "direct_start" && plan.cluster.is_none() {
         let is_docker = plan.docker_name.is_some();
-        let note = if is_docker {
+        let runtime = if !plan.owned_by_vat {
+            "external"
+        } else if is_docker {
+            "docker"
+        } else {
+            "native"
+        };
+        let note = if !plan.owned_by_vat {
+            "using external service endpoint (not started or stopped by vat)"
+        } else if is_docker {
             "running service via `docker run` (ephemeral, --rm)"
         } else if plan.prepare_mode == "cold_build" {
             "first run slower; cached for future runs"
@@ -1199,8 +1216,11 @@ fn prepare_service(
             "type": "prepare",
             "service": plan.id.as_str(),
             "preset": plan.preset.map(service_preset_name),
-            "runtime": if is_docker { "docker" } else { "native" },
+            "runtime": runtime,
             "image": plan.image.as_deref(),
+            "host": plan.host.as_deref(),
+            "port": plan.port,
+            "owned_by_vat": plan.owned_by_vat,
             "mode": plan.prepare_mode.as_str(),
             "cache_key": plan.cache_key.as_deref(),
             "note": note,
@@ -1309,6 +1329,7 @@ fn prepare_cluster_service(
             "-c".to_string(),
             "while :; do sleep 3600; done".to_string(),
         ],
+        host: None,
         ready_http: None,
         ready_probe: ReadyProbe::Cmd(resolved.ready_argv(&info.kubeconfig)),
         timeout_s: service.timeout_s,
@@ -1322,6 +1343,7 @@ fn prepare_cluster_service(
         docker_name: None,
         image: None,
         cluster: Some(record),
+        owned_by_vat: true,
     })
 }
 
@@ -1336,21 +1358,33 @@ fn start_service(
 ) -> Result<ServiceHandle> {
     let stdout = logs_dir.join(format!("{}.stdout.log", plan.id));
     let stderr = logs_dir.join(format!("{}.stderr.log", plan.id));
-    let command = service_start_command(plan, service_sandbox, rootfs);
-    let child = command_with_logs(&command, cwd, env, &stdout, &stderr)
-        .with_context(|| format!("spawn service `{}`", plan.id))?;
+    let command = if plan.owned_by_vat {
+        service_start_command(plan, service_sandbox, rootfs)
+    } else {
+        Vec::new()
+    };
+    let child = if plan.owned_by_vat {
+        Some(
+            command_with_logs(&command, cwd, env, &stdout, &stderr)
+                .with_context(|| format!("spawn service `{}`", plan.id))?,
+        )
+    } else {
+        None
+    };
     let record = ServiceRunRecord {
         id: plan.id.clone(),
         command,
         status: ProcessStatus::Running,
         preset: plan.preset.map(service_preset_name).map(str::to_string),
+        host: plan.host.clone(),
         port: plan.port,
+        owned_by_vat: Some(plan.owned_by_vat),
         prepare_mode: Some(plan.prepare_mode.clone()),
         cache_key: plan.cache_key.clone(),
         prepare_duration_ms: Some(plan.prepare_duration_ms),
         ready_duration_ms: None,
         exported_env: plan.exported_env.clone(),
-        pid: Some(child.id()),
+        pid: child.as_ref().map(Child::id),
         exit_code: None,
         ready_http: plan.ready_http.clone(),
         cluster: plan.cluster.clone(),
@@ -1359,7 +1393,11 @@ fn start_service(
     };
     vat.log(Event::new(
         EventKind::RunStarted,
-        format!("service {}", plan.id),
+        if plan.owned_by_vat {
+            format!("service {}", plan.id)
+        } else {
+            format!("service {} external", plan.id)
+        },
     ))?;
     Ok(ServiceHandle {
         record,
@@ -1383,6 +1421,51 @@ fn service_start_command(
     } else {
         plan.command.clone()
     }
+}
+
+fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
+    let endpoint = service
+        .external
+        .as_ref()
+        .context("external service missing endpoint (validated earlier)")?;
+    let host = endpoint.host.clone();
+    let port = endpoint.port;
+    let ready_http = service
+        .ready_http
+        .as_ref()
+        .map(|value| substitute_endpoint(value, &host, port));
+    let ready_cmd = substitute_endpoint_values(&service.ready_cmd, &host, port);
+    let mut service_for_probe = service.clone();
+    service_for_probe.ready_http = ready_http.clone();
+    service_for_probe.ready_cmd = ready_cmd;
+    let ready_probe = resolve_ready_probe(
+        &service_for_probe,
+        Some(ReadyProbe::Tcp {
+            host: host.clone(),
+            port,
+        }),
+    );
+    let env = external_exports(service, &host, port);
+
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command: Vec::new(),
+        host: Some(host),
+        ready_http,
+        ready_probe,
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: Some(port),
+        prepare_mode: "external_attach".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        image: None,
+        cluster: None,
+        owned_by_vat: false,
+    })
 }
 
 fn prepare_preset_service(
@@ -1454,6 +1537,7 @@ fn prepare_preset_service(
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe,
         timeout_s: service.timeout_s,
@@ -1467,6 +1551,7 @@ fn prepare_preset_service(
         docker_name: None,
         image: None,
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1562,6 +1647,7 @@ fn prepare_preset_docker_service(
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: docker_ready_probe(service, host_port),
         timeout_s: service.timeout_s,
@@ -1575,6 +1661,7 @@ fn prepare_preset_docker_service(
         docker_name: Some(name),
         image: Some(image),
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1651,6 +1738,7 @@ fn prepare_firebase_service(
             "--project".to_string(),
             "demo-vat".to_string(),
         ],
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
@@ -1667,6 +1755,7 @@ fn prepare_firebase_service(
         docker_name: None,
         image: None,
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1844,6 +1933,7 @@ fn prepare_builtin_service(
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
@@ -1860,6 +1950,7 @@ fn prepare_builtin_service(
         docker_name: None,
         image: None,
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -1915,6 +2006,7 @@ fn prepare_image_service(
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
+        host: Some("127.0.0.1".to_string()),
         ready_http: service.ready_http.clone(),
         ready_probe: docker_ready_probe(service, host_port),
         timeout_s: service.timeout_s,
@@ -1928,6 +2020,7 @@ fn prepare_image_service(
         docker_name: Some(name),
         image: Some(image.to_string()),
         cluster: None,
+        owned_by_vat: true,
     })
 }
 
@@ -2843,6 +2936,13 @@ fn substitute_service_port(values: &[String], port: Option<u16>) -> Vec<String> 
         .collect()
 }
 
+fn substitute_endpoint_values(values: &[String], host: &str, port: u16) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| substitute_endpoint(value, host, port))
+        .collect()
+}
+
 fn substitute_port(value: &str, port: Option<u16>) -> String {
     match port {
         Some(port) => value
@@ -2850,6 +2950,23 @@ fn substitute_port(value: &str, port: Option<u16>) -> String {
             .replace("{port}", &port.to_string()),
         None => value.to_string(),
     }
+}
+
+fn substitute_endpoint(value: &str, host: &str, port: u16) -> String {
+    value
+        .replace("{host}", host)
+        .replace("{port}", &port.to_string())
+}
+
+fn external_exports(service: &ServiceConfig, host: &str, port: u16) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for (key, template) in &service.export {
+        env.insert(key.clone(), substitute_endpoint(template, host, port));
+    }
+    let upper = service.id.to_uppercase().replace(['-', '.'], "_");
+    env.insert(format!("VAT_SERVICE_{upper}_HOST"), host.to_string());
+    env.insert(format!("VAT_SERVICE_{upper}_PORT"), port.to_string());
+    env
 }
 
 fn export_command_service_env(
@@ -3017,10 +3134,12 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
                 }
                 break;
             }
-            if let Some(status) = service.child.try_wait()? {
-                service.record.status = ProcessStatus::Failed;
-                service.record.exit_code = status.code();
-                bail!("service `{}` exited before readiness", service.record.id);
+            if let Some(child) = service.child.as_mut() {
+                if let Some(status) = child.try_wait()? {
+                    service.record.status = ProcessStatus::Failed;
+                    service.record.exit_code = status.code();
+                    bail!("service `{}` exited before readiness", service.record.id);
+                }
             }
             if Instant::now() >= deadline {
                 service.record.status = ProcessStatus::Timeout;
@@ -3077,13 +3196,15 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
 
 fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
     for service in services.iter_mut().rev() {
-        if service.child.try_wait().ok().flatten().is_none() {
-            kill_child(&mut service.child);
-            let _ = service.child.wait();
-            if service.record.status == ProcessStatus::Running
-                || service.record.status == ProcessStatus::Ready
-            {
-                service.record.status = ProcessStatus::Exited;
+        if let Some(child) = service.child.as_mut() {
+            if child.try_wait().ok().flatten().is_none() {
+                kill_child(child);
+                let _ = child.wait();
+                if service.record.status == ProcessStatus::Running
+                    || service.record.status == ProcessStatus::Ready
+                {
+                    service.record.status = ProcessStatus::Exited;
+                }
             }
         }
         // Force-remove the container regardless of how the `docker run` child
@@ -3122,6 +3243,8 @@ fn should_delete_clusters(keep: &RetentionPolicy, code: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::config::ExternalServiceConfig;
 
     #[test]
     fn sandbox_wrap_wraps_runner_under_seatbelt_passthrough_under_none() {
@@ -3288,6 +3411,7 @@ mod tests {
         let plan = ServicePlan {
             id: "api".to_string(),
             command: vec!["python3".to_string(), "-m".to_string(), "app".to_string()],
+            host: None,
             ready_http: None,
             ready_probe: ReadyProbe::None,
             timeout_s: 1,
@@ -3301,6 +3425,7 @@ mod tests {
             docker_name: None,
             image: None,
             cluster: None,
+            owned_by_vat: true,
         };
 
         let wrapped = service_start_command(&plan, Some(&TestSandbox), Path::new("/vat/root"));
@@ -3358,6 +3483,77 @@ mod tests {
             resolve_ready_probe(&service, None),
             ReadyProbe::None
         ));
+    }
+
+    #[test]
+    fn prepare_external_service_attaches_endpoint_without_child_command() {
+        let mut service = test_service("pg-ci", &[]);
+        service.cmd.clear();
+        service.external = Some(ExternalServiceConfig {
+            host: "postgres".to_string(),
+            port: 5432,
+        });
+        service.export.insert(
+            "DATABASE_URL".to_string(),
+            "postgres://postgres@{host}:{port}/app".to_string(),
+        );
+
+        let plan = prepare_external_service(&service).expect("external plan");
+
+        assert!(!plan.owned_by_vat);
+        assert!(plan.command.is_empty());
+        assert_eq!(plan.host.as_deref(), Some("postgres"));
+        assert_eq!(plan.port, Some(5432));
+        assert_eq!(plan.prepare_mode, "external_attach");
+        assert_eq!(
+            plan.env.get("DATABASE_URL").map(String::as_str),
+            Some("postgres://postgres@postgres:5432/app")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_PG_CI_HOST").map(String::as_str),
+            Some("postgres")
+        );
+        assert_eq!(
+            plan.env.get("VAT_SERVICE_PG_CI_PORT").map(String::as_str),
+            Some("5432")
+        );
+        assert_eq!(
+            plan.exported_env,
+            vec![
+                "DATABASE_URL".to_string(),
+                "VAT_SERVICE_PG_CI_HOST".to_string(),
+                "VAT_SERVICE_PG_CI_PORT".to_string()
+            ]
+        );
+        match plan.ready_probe {
+            ReadyProbe::Tcp { host, port } => {
+                assert_eq!(host, "postgres");
+                assert_eq!(port, 5432);
+            }
+            other => panic!("expected default TCP probe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn prepare_external_service_substitutes_readiness_templates() {
+        let mut service = test_service("api-ci", &[]);
+        service.cmd.clear();
+        service.external = Some(ExternalServiceConfig {
+            host: "api".to_string(),
+            port: 8080,
+        });
+        service.ready_http = Some("http://{host}:{port}/ready".to_string());
+        service.ready_cmd = vec!["probe".to_string(), "{host}:{port}".to_string()];
+
+        let plan = prepare_external_service(&service).expect("external plan");
+
+        assert_eq!(plan.ready_http.as_deref(), Some("http://api:8080/ready"));
+        match plan.ready_probe {
+            ReadyProbe::Cmd(cmd) => {
+                assert_eq!(cmd, vec!["probe".to_string(), "api:8080".to_string()]);
+            }
+            other => panic!("expected substituted ready_cmd, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3537,6 +3733,7 @@ mod tests {
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
             cluster: None,
+            external: None,
             k8s_version: None,
             nodes: None,
             spec: None,
@@ -3561,6 +3758,7 @@ mod tests {
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
             cluster: None,
+            external: None,
             k8s_version: None,
             nodes: None,
             spec: None,
@@ -3905,7 +4103,9 @@ mod tests {
                 command,
                 status: ProcessStatus::Ready,
                 preset: None,
+                host: None,
                 port: None,
+                owned_by_vat: Some(true),
                 prepare_mode: Some("direct_start".to_string()),
                 cache_key: None,
                 prepare_duration_ms: Some(0),
@@ -3918,7 +4118,7 @@ mod tests {
                 stdout_log: stdout.to_string_lossy().into_owned(),
                 stderr_log: stderr.to_string_lossy().into_owned(),
             },
-            child,
+            child: Some(child),
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
             docker_name: None,

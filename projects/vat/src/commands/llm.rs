@@ -53,6 +53,11 @@ image_env = { POSTGRES_PASSWORD = "pw" }
 export = { ALLOY_URL = "postgres://postgres:pw@{host}:{port}/postgres" }
 
 [[services]]
+id = "ci-pg"               # already started by GitLab CI services / Compose
+external = { host = "postgres", port = 5432 }
+export = { DATABASE_URL = "postgres://postgres@{host}:{port}/app" }
+
+[[services]]
 id = "k8s"                 # ephemeral local Kubernetes cluster
 cluster = "auto"           # auto (kind→k3d→minikube) | kind | k3d | minikube
 # k8s_version = "1.30"
@@ -87,7 +92,7 @@ runner = "e2e"
 network = "hermetic"       # open | hermetic
 ```
 
-## Services: native or Docker
+## Services: native or Docker, plus external sidecars
 
 - A `preset` service prefers the native Homebrew binary and falls back to the
   preset's official Docker image when the binary is missing. Force it with
@@ -110,6 +115,12 @@ network = "hermetic"       # open | hermetic
   no native binary (e.g. AlloyDB). It requires `container_port`; `image_env` is
   passed into the container; in `export`, `{host}`/`{port}` resolve to the mapped
   host endpoint, and `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+- An `external` service is an already provisioned endpoint, such as a GitLab CI
+  `services:` sidecar, GitHub Actions service container, local Docker Compose
+  service, or host daemon. vat does not start or stop it; it waits for readiness,
+  substitutes `{host}`/`{port}` in `ready_http`, `ready_cmd`, and `export`,
+  injects `VAT_SERVICE_<ID>_{HOST,PORT}`, and records `owned_by_vat = false` in
+  `vat state`.
 - Built-in emulators: `preset = "pubsub"`, `"firebase-auth"`, `"cloud-tasks"`,
   `"cloud-scheduler"`, `"cloud-workflows"`, and `"cloud-storage"` run vat's OWN
   in-process Rust emulator under `runtime = auto` — no gcloud, Java,
@@ -202,7 +213,8 @@ emitting JSON, while failed runs keep workspace state and logs for inspection.
 - The runner is always a host process (never containerized) — the GPU story.
   Docker is only an option for run-scoped dependency *services*.
 - Services in `vat.toml` are run-scoped dependencies of one runner invocation;
-  containers are ephemeral (`docker run --rm`) and removed at teardown.
+  containers are ephemeral (`docker run --rm`) and removed at teardown; external
+  services are attached and probed but not lifecycle-managed by vat.
 - vat does not schedule production work or manage restart policy.
 - Standalone `vat cluster` clusters outlive a run as a convenience, but vat does
   not supervise them (no daemon, no restart, no health monitoring) — it only
