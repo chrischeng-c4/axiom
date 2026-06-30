@@ -9,12 +9,11 @@
 # case = "array____release_buffer____buffer_as_memoryview_wrong"
 # subject = "array.array.__release_buffer__(buffer: memoryview)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/array.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer
 # mamba-strict-type: TypeError
 """Type wall: array.array.__release_buffer__(buffer: memoryview); call it with the wrong type.
 
@@ -22,7 +21,7 @@ typeshed contract: buffer is memoryview. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from array import array
-obj = object.__new__(array)
+obj = array("i")
 try:
     obj.__release_buffer__(12345)  # buffer: memoryview <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
