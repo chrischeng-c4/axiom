@@ -9,12 +9,11 @@
 # case = "Message__init__policy_as_Policy_wrong"
 # subject = "email.message.Message.__init__(policy: Policy)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed policy"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed policy
 # mamba-strict-type: TypeError
 """Type wall: email.message.Message.__init__(policy: Policy); call it with the wrong type.
 
