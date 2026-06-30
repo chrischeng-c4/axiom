@@ -575,6 +575,99 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: generated `_thread` rows lose Callable/bool/context-manager
+    // precision, and some CPython-private aliases are not runtime importable on
+    // every platform. Enforce only the fixed first parameter for these strict
+    // type-wall probes; variadic args, timeout, and traceback slots stay out of
+    // scope.
+    StdlibSig {
+        module: "_thread",
+        qualifier: "",
+        name: "start_joinable_thread",
+        kind: SigKind::ModuleFn,
+        params: &[p("function", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "",
+        name: "start_new",
+        kind: SigKind::ModuleFn,
+        params: &[p("function", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "",
+        name: "start_new_thread",
+        kind: SigKind::ModuleFn,
+        params: &[p("function", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "LockType",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[p("type", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "LockType",
+        name: "acquire",
+        kind: SigKind::Method,
+        params: &[p("blocking", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "LockType",
+        name: "acquire_lock",
+        kind: SigKind::Method,
+        params: &[p("blocking", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "RLock",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[p("t", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "RLock",
+        name: "acquire",
+        kind: SigKind::Method,
+        params: &[p("blocking", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "lock",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[p("type", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "lock",
+        name: "acquire",
+        kind: SigKind::Method,
+        params: &[p("blocking", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_thread",
+        qualifier: "lock",
+        name: "acquire_lock",
+        kind: SigKind::Method,
+        params: &[p("blocking", CoreTy::Bool)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
