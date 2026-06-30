@@ -9,12 +9,11 @@
 # case = "timegm__tuple_as_typed_wrong"
 # subject = "calendar.timegm(tuple: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed tuple"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed tuple
 # mamba-strict-type: TypeError
 """Type wall: calendar.timegm(tuple: typed); call it with the wrong type.
 
