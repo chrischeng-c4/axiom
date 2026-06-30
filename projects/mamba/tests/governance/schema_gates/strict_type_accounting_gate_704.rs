@@ -158,6 +158,26 @@ assert "_typeshed" in gen_module.NON_RUNTIME_STUB_MODULE_PREFIXES
 }
 
 #[test]
+fn warnings_strict_type_wall_is_curated() {
+    let text =
+        fs::read_to_string(mamba_root().join("src/types/stdlib_sigs.rs")).expect("read sig table");
+    for name in ["warn", "warn_explicit"] {
+        let needle =
+            format!("module: \"_warnings\",\n        qualifier: \"\",\n        name: \"{name}\"");
+        let row_start = text
+            .find(&needle)
+            .unwrap_or_else(|| panic!("missing curated _warnings.{name} row"));
+        let rest = &text[row_start..];
+        let row_end = rest.find("\n    StdlibSig {").unwrap_or(rest.len());
+        let row = &rest[..row_end];
+        assert!(
+            row.contains("p(\"message\", CoreTy::Str)"),
+            "_warnings.{name} must keep a strict scalar wall for message"
+        );
+    }
+}
+
+#[test]
 fn declared_type_divergences_have_machine_owner_refs() {
     let path = mamba_root().join("tests/harness/cpython/config/type_divergences.txt");
     let text = fs::read_to_string(path).expect("read type_divergences.txt");
