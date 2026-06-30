@@ -2,9 +2,9 @@
 id: semantic-lumen-benches
 summary: Semantic coverage for "projects/lumen/benches"
 capability_refs:
-  - id: "long-running-stability"
+  - id: "competitor-performance"
     role: primary
-    claim: "stateless-serving-rebuild-from-log-no-pvc"
+    claim: "depth-invariant-filter-sort-pagination"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/benches`."
 fill_sections: [schema, unit-test, changes]

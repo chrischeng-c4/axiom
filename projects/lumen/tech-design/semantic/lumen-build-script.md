@@ -2,9 +2,9 @@
 id: semantic-lumen-build-script
 summary: Lossless source-unit coverage for the lumen project build script.
 capability_refs:
-  - id: "long-running-stability"
+  - id: "cli-interface"
     role: primary
-    claim: "stateless-serving-rebuild-from-log-no-pvc"
+    claim: "service-process-interface"
     coverage: partial
     rationale: "The project build script is part of the operability/release workflow for installing and verifying the lumen binary."
 fill_sections: [text-source-unit, changes]

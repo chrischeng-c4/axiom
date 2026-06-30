@@ -178,13 +178,19 @@ fn should_copy_entry(src: &Path, dst: &Path, path: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(src) else {
         return true;
     };
-    if rel
-        .components()
-        .any(|component| component.as_os_str() == ".vat")
-    {
+    if has_ignored_workspace_component(rel) {
         return false;
     }
     !(path.starts_with(dst) || dst.starts_with(path))
+}
+
+fn has_ignored_workspace_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(".vat" | ".git" | "target")
+        )
+    })
 }
 
 /// Walk `root` and record a stat manifest of every regular file. Symlinks are
@@ -193,7 +199,18 @@ fn should_copy_entry(src: &Path, dst: &Path, path: &Path) -> bool {
 /// @spec projects/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub fn manifest_of(root: &Path) -> Result<Manifest> {
     let mut m = Manifest::new();
-    for entry in WalkDir::new(root).min_depth(1).follow_links(false) {
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry
+                .path()
+                .strip_prefix(root)
+                .map(|rel| !has_ignored_workspace_component(rel))
+                .unwrap_or(true)
+        })
+    {
         let entry = entry.with_context(|| format!("walk {}", root.display()))?;
         if !entry.file_type().is_file() {
             continue;
@@ -279,6 +296,37 @@ mod tests {
         assert!(
             !dst.join(".vat").exists(),
             "repo-local vat state must never be copied into a vat rootfs"
+        );
+        assert!(
+            !dst.join(".git").exists(),
+            "repo-local git metadata must never be copied into a vat rootfs"
+        );
+    }
+
+    #[test]
+    fn workspace_build_cache_is_not_copied_or_manifested() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join("target/debug")).expect("target dir");
+        std::fs::write(repo.join("target/debug/tool"), "binary").expect("target file");
+        std::fs::write(repo.join("source.txt"), "kept").expect("source file");
+
+        let dst = repo.join(".vat/vats/new/rootfs");
+        clone_tree(&repo, &dst).expect("clone tree");
+
+        assert!(dst.join("source.txt").exists());
+        assert!(
+            !dst.join("target").exists(),
+            "Rust build cache must not be recursively copied into vat rootfs"
+        );
+
+        std::fs::create_dir_all(dst.join("target/debug")).expect("rootfs target dir");
+        std::fs::write(dst.join("target/debug/generated"), "cache").expect("rootfs target file");
+        let manifest = manifest_of(&dst).expect("manifest");
+        assert!(manifest.contains_key("source.txt"));
+        assert!(
+            !manifest.keys().any(|path| path.starts_with("target/")),
+            "Rust build cache must not enter vat diff manifests"
         );
     }
 

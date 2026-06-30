@@ -191,6 +191,16 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Introduce LumenVerifier, implement service_auth::Verifier<Principal = AuthContext>, use service_auth::bearer_token/shared AuthError for authentication failures, retain AuthContext::ensure for per-collection RBAC and audit logging, and expose an auth_middleware wrapper backed by service_auth::auth_middleware."
+  - path: projects/lumen/src/auth.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Cover open-mode, known-token, unknown-token, and RBAC precedence behavior for the Lumen verifier and AuthContext."
+  - path: libs/service-auth/src/lib.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Keep the shared verifier middleware contract covered by generic service-auth unit tests."
   - path: projects/lumen/src/api.rs
     action: modify
     section: logic

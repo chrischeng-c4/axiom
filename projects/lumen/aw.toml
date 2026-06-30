@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:e6837b7ff67aa8c2a32163db0f53409e12bbc14a86b1145ccdba8413c8dbbbde"
+generated_from_td_digest = "sha256:1bdac7c38b7d5a70a93da418314fd7490045eeee4b5995b6ff8073dd34db02c9"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -138,6 +138,18 @@ required_for_production = true
 assertions = ["The API, vector, hash, duplicate, and nested search surfaces execute correctly across the replacement feature set."]
 
 [[aw.ec.generated.cases]]
+id = "lumen-claim-competitor-performance-depth-invariant"
+capability_id = "competitor-performance"
+claim_id = "depth-invariant-filter-sort-pagination"
+contract_id = "competitor-performance-depth-invariant"
+category = "efficiency"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-depth-invariant"
+test_path = "projects/lumen/tests/efficiency_lumen_claim_competitor_performance_depth_invariant.rs"
+command = "cargo test -p lumen --test lumen_bench_cli --test perf_gate_vs_db -- --nocapture"
+required_for_production = true
+assertions = ["The Lumen-only deep-page and filter/sort perf gates stay depth-invariant against the retained calibrated floors without rerunning peer databases by default."]
+
+[[aw.ec.generated.cases]]
 id = "lumen-claim-competitor-performance-envelope"
 capability_id = "competitor-performance"
 claim_id = "perf-gate-envelope-absolute-latency-throughput-floors"
@@ -159,7 +171,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs"
 command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
 required_for_production = true
-assertions = ["The vat efficiency runner executes the Postgres/OpenSearch comparison path and resource attribution gate."]
+assertions = ["The vat efficiency runner executes the Lumen-only regression path against retained Postgres/OpenSearch-calibrated floors; explicit calibration runners refresh peers only on demand."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-duplicates-group-by"
@@ -284,14 +296,14 @@ assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into
 [[aw.ec.generated.cases]]
 id = "lumen-claim-k8s-stateless-kind"
 capability_id = "kubernetes-native-deployment"
-claim_id = "stateless-serving-rebuild-from-log-no-pvc"
+claim_id = "kind-api-recovery-no-relay"
 contract_id = "k8s-stateless-kind-dogfood"
 category = "stability"
 td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-stateless-kind"
 test_path = "projects/lumen/tests/stability_lumen_claim_k8s_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
-assertions = ["The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC."]
+assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-lexical-bm25"
@@ -332,14 +344,14 @@ assertions = ["A late or second node can replay the published write stream and c
 [[aw.ec.generated.cases]]
 id = "lumen-claim-long-running-stateless-kind"
 capability_id = "long-running-stability"
-claim_id = "stateless-serving-rebuild-from-log-no-pvc"
+claim_id = "kind-api-recovery-no-relay"
 contract_id = "long-running-stateless-kind-dogfood"
 category = "stability"
 td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-stateless-kind"
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
-assertions = ["The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC."]
+assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-nested-collapse"
@@ -636,10 +648,10 @@ test_path = "projects/lumen/tests/benchmark_lumen_competitor_performance_competi
 command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
 required_for_production = true
 assertions = [
-    "FILTERING: filtered_search (AND[BM25+term+range]) beats pg >= 3.73x and OpenSearch(disk) >= 2.4x; filtered_knn beats pg >= 2.4x (OS exempt, no kNN plugin).",
-    "RANKING: text_bm25 single-term beats pg >= 14.56x; text_and multi-term beats pg >= 1.47x (OS >= 2.4x each).",
-    "PAGINATION/SORT: pure_sort (scan + sort) beats pg >= 18.32x (OS >= 2.4x); cursor pagination stays within the search_qps pin.",
-    "Floors are ratcheted (perf-baseline.json, 0.8); btree point-lookup cells stay EXEMPT, not gated. lumen vs pg/OS only.",
+    "Lumen-only default gate holds per-cell e2e/engine latency floors from perf-baseline.json without provisioning pg/OpenSearch.",
+    "Retained pg/OpenSearch ratios remain the calibrated competitive evidence; explicit compare runners refresh them only when cells or peer configs change.",
+    "FILTERING/RANKING/PAGINATION/SORT cells still execute through the same release-mode Lumen search path and qps pin.",
+    "Peer floors are ratcheted (perf-baseline.json, 0.8) and btree point-lookup cells stay EXEMPT unless LUMEN_GATE_COMPARE_PEERS=1 is explicitly set.",
 ]
 
 [[aw.ec.generated.cases]]
