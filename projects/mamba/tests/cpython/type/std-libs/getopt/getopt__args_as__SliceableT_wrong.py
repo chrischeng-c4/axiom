@@ -9,12 +9,11 @@
 # case = "getopt__args_as__SliceableT_wrong"
 # subject = "getopt.getopt(args: _SliceableT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/getopt.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args
 # mamba-strict-type: TypeError
 """Type wall: getopt.getopt(args: _SliceableT); call it with the wrong type.
 
