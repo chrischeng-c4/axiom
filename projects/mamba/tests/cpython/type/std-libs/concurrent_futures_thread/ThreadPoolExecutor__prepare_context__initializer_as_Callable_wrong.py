@@ -9,6 +9,7 @@
 # case = "ThreadPoolExecutor__prepare_context__initializer_as_Callable_wrong"
 # subject = "concurrent.futures.thread.ThreadPoolExecutor.prepare_context(initializer: Callable)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/concurrent/futures/thread.pyi"
 # status = "filled"

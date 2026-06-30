@@ -9,6 +9,7 @@
 # case = "UserString__endswith__suffix_as_typed_wrong"
 # subject = "collections.UserString.endswith(suffix: typed)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

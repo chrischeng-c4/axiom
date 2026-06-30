@@ -9,6 +9,7 @@
 # case = "InterpreterPoolExecutor__init__max_workers_as_typed_wrong"
 # subject = "concurrent.futures.interpreter.InterpreterPoolExecutor.__init__(max_workers: typed)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/concurrent/futures/interpreter.pyi"
 # status = "filled"

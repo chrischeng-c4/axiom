@@ -9,6 +9,7 @@
 # case = "UserDict__init__dict_as_SupportsKeysAndGetItem_wrong"
 # subject = "collections.UserDict.__init__(dict: SupportsKeysAndGetItem)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

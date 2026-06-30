@@ -9,6 +9,7 @@
 # case = "deque__index__x_as__T_wrong"
 # subject = "collections.deque.index(x: _T)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
