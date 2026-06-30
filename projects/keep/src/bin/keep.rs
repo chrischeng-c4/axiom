@@ -15,12 +15,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto;
-use hyper_util::server::graceful::GracefulShutdown;
 use tokio::net::TcpListener;
-use tower::ServiceExt;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -338,8 +333,16 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening (HTTP/1.1 + HTTP/2 cleartext)");
 
+    // Serve HTTP/1.1 + h2c on one port and drain on SIGTERM through the shared
+    // service shell (#751): `start_drain` flips `/readyz` to 503 for the grace
+    // window before the listener closes.
     let grace = Duration::from_secs(args.grace_secs);
-    serve(listener, app, shutdown_signal(state.clone(), grace)).await;
+    service_http::serve(
+        listener,
+        app,
+        service_http::shutdown_with_drain(move || state.start_drain(), grace),
+    )
+    .await;
 
     // Post-drain: flush WAL/snapshot to disk so the result store is durable.
     if let Some(p) = persistence {
@@ -355,88 +358,4 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     }
     info!("shutdown complete");
     Ok(())
-}
-
-/// Accept loop serving HTTP/1.1 and HTTP/2 cleartext (h2c prior-knowledge) on
-/// one socket via hyper-util's auto builder, with connection-level graceful
-/// shutdown. `shutdown` resolves after SIGTERM + the drain window.
-async fn serve(
-    listener: TcpListener,
-    app: axum::Router,
-    shutdown: impl std::future::Future<Output = ()>,
-) {
-    let mut builder = auto::Builder::new(TokioExecutor::new());
-    // Clients open ~CPU-core connections and multiplex thousands of streams
-    // over each (that's the HTTP/2 best practice — see examples/bench_compare).
-    // Lift the concurrent-stream ceiling so a high-concurrency client isn't
-    // throttled/starved per connection (the default ~200 caused stream
-    // starvation + hangs at few-connections/high-concurrency). Flow-control
-    // windows are left at hyper defaults: on a low-RTT link the workload is
-    // CPU-bound (frame + JSON), not window-bound, so enlarging them is a WAN-only
-    // tuning with no local benefit.
-    builder.http2().max_concurrent_streams(4096);
-    let graceful = GracefulShutdown::new();
-    let mut shutdown = std::pin::pin!(shutdown);
-
-    loop {
-        tokio::select! {
-            accept = listener.accept() => {
-                let (stream, _peer) = match accept {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!(error = %e, "accept failed");
-                        continue;
-                    }
-                };
-                let io = TokioIo::new(stream);
-                let app = app.clone();
-                // axum's Router is Service<Request<Incoming>>; oneshot drives one request.
-                let svc = service_fn(move |req| app.clone().oneshot(req));
-                let conn = builder.serve_connection_with_upgrades(io, svc);
-                let conn = graceful.watch(conn.into_owned());
-                tokio::spawn(async move {
-                    if let Err(e) = conn.await {
-                        tracing::debug!(error = %e, "connection closed with error");
-                    }
-                });
-            }
-            _ = &mut shutdown => {
-                info!("no longer accepting connections");
-                break;
-            }
-        }
-    }
-    drop(listener);
-
-    // Bound the in-flight wait so a stuck client can't block process exit.
-    tokio::select! {
-        _ = graceful.shutdown() => info!("all connections drained"),
-        _ = tokio::time::sleep(Duration::from_secs(5)) => warn!("drain timeout — forcing shutdown"),
-    }
-}
-
-/// Resolve when SIGINT or SIGTERM arrives, flip `/readyz` to 503, then hold the
-/// grace window so k8s stops routing before the listener closes.
-async fn shutdown_signal(state: AppState, grace: Duration) {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let sigterm = async {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut s) = signal(SignalKind::terminate()) {
-            s.recv().await;
-        }
-    };
-    #[cfg(not(unix))]
-    let sigterm = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => info!("received SIGINT"),
-        _ = sigterm => info!("received SIGTERM"),
-    }
-    state.start_drain();
-    info!(grace_secs = grace.as_secs(), "draining — readyz=503");
-    tokio::time::sleep(grace).await;
-    info!("grace expired");
 }

@@ -45,10 +45,10 @@ axum.workspace = true
 tower = { workspace = true, features = ["util"] }
 tower-http.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
-# Explicit hyper auto-server so we serve HTTP/2 cleartext (h2c) + HTTP/1.1 on
-# one port — axum::serve alone is HTTP/1-only.
-hyper = { version = "1", features = ["server", "http1", "http2"] }
-hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio"] }
+# Shared k8s-native HTTP service shell (#751) — standard probes, request
+# tracing, h2c serve, and graceful drain. Composes libs/h2c for HTTP/2 cleartext
+# + HTTP/1.1 on one port, so keep no longer hand-rolls the hyper-util auto-server.
+service-http = { path = "../../libs/service-http" }
 # HTTP client for in-tree Rust consumers (behind the `client` feature).
 reqwest = { workspace = true, optional = true }
 # Shared h2c client construction + ln(concurrency) pool sizing (#467).

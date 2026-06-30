@@ -83,5 +83,36 @@ impl AppState {
     }
 }
 
+/// Readiness source for the shared probe router (`service_http`): `/readyz`
+/// reports 503 once SIGTERM flips `start_drain`.
+impl service_http::ReadinessHook for AppState {
+    fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+}
+
+/// Prometheus exposition for the shared `/metrics` route: engine gauges plus the
+/// per-route HTTP request metrics. This is the body the local `handlers::metrics`
+/// produced before keep adopted the shared probe router.
+impl service_http::MetricsProvider for AppState {
+    fn render_metrics(&self) -> String {
+        let keys = self.engine.len();
+        let shards = self.engine.num_shards();
+        let mem = self.engine.estimate_memory();
+        format!(
+            "# HELP keep_keys_total Number of keys across all shards.\n\
+             # TYPE keep_keys_total gauge\n\
+             keep_keys_total {keys}\n\
+             # HELP keep_shards Number of engine shards.\n\
+             # TYPE keep_shards gauge\n\
+             keep_shards {shards}\n\
+             # HELP keep_memory_bytes Estimated resident bytes of stored data.\n\
+             # TYPE keep_memory_bytes gauge\n\
+             keep_memory_bytes {mem}\n{}",
+            self.metrics.render()
+        )
+    }
+}
+
 pub use openapi::ApiDoc;
 pub use routes::router;

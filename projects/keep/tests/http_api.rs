@@ -264,14 +264,16 @@ async fn probes_and_drain() {
     let (st, _) = send(&app, req).await;
     assert_eq!(st, StatusCode::OK);
 
-    // Once draining, readyz flips to 503 so k8s stops routing.
+    // Once draining, readyz flips to 503 so k8s stops routing. The shared
+    // service-http probe shell (#751) preserves keep's `draining` body.
     state.start_drain();
     let req = Request::builder()
         .uri("/readyz")
         .body(Body::empty())
         .unwrap();
-    let (st, _) = send(&app, req).await;
+    let (st, body) = send(&app, req).await;
     assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body, b"draining");
 }
 
 #[tokio::test]
