@@ -66,3 +66,56 @@ flowchart TD
     llm --> boundary[Topics name Beam/Lumen boundary explicitly]
     parse --> nogpu[No GPU runtime dependency in this slice]
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: beam-cli-shell-verification
+requirements:
+  workspace_member:
+    id: R1
+    text: "`projects/beam` is a workspace member with both library and binary targets."
+    kind: functional
+    risk: high
+    verify: test
+  standard_cli_help:
+    id: R2
+    text: "`beam --help` lists `llm`, `upgrade`, and `issue`."
+    kind: functional
+    risk: high
+    verify: test
+  placeholder_verbs_help:
+    id: R3
+    text: "`beam --help` lists placeholder service verbs: `serve`, `collections`, `index`, `query`, `dockerfile`, and `k8s`."
+    kind: functional
+    risk: medium
+    verify: test
+  llm_boundary:
+    id: R4
+    text: "`beam llm --topic outline` names Beam as GPU-native vector DB and states that Lumen owns mixed search/ranking/dedup."
+    kind: functional
+    risk: high
+    verify: test
+  issue_scope:
+    id: R5
+    text: "`beam issue` delegates to cli_std issue handling with tool project `beam`, so tracker operations carry the project:beam scope."
+    kind: functional
+    risk: medium
+    verify: test
+  no_gpu_dependency:
+    id: R6
+    text: "The first slice builds and tests without CUDA, Metal, or GPU runtime/linker dependencies."
+    kind: functional
+    risk: high
+    verify: test
+---
+flowchart TD
+    r1[R1 workspace crate] --> v1{cargo test -p beam?}
+    r2[R2 standard CLI help] --> v2{llm/upgrade/issue present?}
+    r3[R3 placeholder verbs] --> v3{serve/collections/index/query/dockerfile/k8s present?}
+    r4[R4 llm boundary] --> v4{Beam owns vector DB; Lumen owns mixed search?}
+    r5[R5 issue scope] --> v5{ToolInfo/project = beam?}
+    r6[R6 no GPU dependency] --> v6{plain host build succeeds?}
+```
