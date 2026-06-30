@@ -9,12 +9,11 @@
 # case = "Parser__init___class_as_typed_wrong"
 # subject = "email.parser.Parser.__init__(_class: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _class"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/parser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _class
 # mamba-strict-type: TypeError
 """Type wall: email.parser.Parser.__init__(_class: typed); call it with the wrong type.
 
