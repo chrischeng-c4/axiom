@@ -9,12 +9,10 @@
 # case = "WorkerContext__init__initializer_as_Callable_wrong"
 # subject = "concurrent.futures.thread.WorkerContext.__init__(initializer: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed initializer"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/concurrent/futures/thread.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed initializer
 # mamba-strict-type: TypeError
 """Type wall: concurrent.futures.thread.WorkerContext.__init__(initializer: Callable); call it with the wrong type.
 
