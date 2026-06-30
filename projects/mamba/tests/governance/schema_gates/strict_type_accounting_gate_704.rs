@@ -231,11 +231,13 @@ oracle_spec.loader.exec_module(oracle_module)
 strict_zstd_fixture = strict_module.TYPE_DIR / "std-libs/_zstd/finalize_dict__custom_dict_bytes_as_bytes_wrong.py"
 strict_compression_fixture = strict_module.TYPE_DIR / "std-libs/compression_zstd/compress__data_as_ReadableBuffer_wrong.py"
 strict_annotationlib_fixture = strict_module.TYPE_DIR / "std-libs/annotationlib/ForwardRef__init__arg_as_str_wrong.py"
+strict_asyncio_graph_fixture = strict_module.TYPE_DIR / "std-libs/asyncio_graph/capture_call_graph__future_as_Future_wrong.py"
 strict_templatestr_fixture = strict_module.TYPE_DIR / "std-libs/ast/TemplateStr__init__values_as_list_wrong.py"
 strict_asynchat_fixture = strict_module.TYPE_DIR / "std-libs/asynchat/async_chat__push__data_as_bytes_wrong.py"
 strict_asyncio_coroutine_fixture = strict_module.TYPE_DIR / "std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py"
 oracle_zstd_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/_zstd/finalize_dict__custom_dict_bytes_as_bytes_wrong.py"
 oracle_annotationlib_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/annotationlib/ForwardRef__init__arg_as_str_wrong.py"
+oracle_asyncio_graph_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/asyncio_graph/capture_call_graph__future_as_Future_wrong.py"
 oracle_templatestr_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/ast/TemplateStr__init__values_as_list_wrong.py"
 oracle_asynchat_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/asynchat/async_chat__push__data_as_bytes_wrong.py"
 oracle_asyncio_coroutine_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py"
@@ -245,6 +247,7 @@ expected = sys.version_info[:2] < (3, 14)
 expected_removed = sys.version_info[:2] >= (3, 12)
 assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["annotationlib"] == (3, 14)
 assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["_zstd"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["asyncio_graph"] == (3, 14)
 assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["compression_zstd"] == (3, 14)
 assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["compression_zstd__zstdfile"] == (3, 14)
 assert strict_module.VERSION_REMOVED_TYPE_LIBS["asynchat"] == (3, 12)
@@ -254,6 +257,7 @@ assert strict_module.VERSION_SPECIFIC_TYPE_FIXTURES["std-libs/ast/TemplateStr__i
 assert strict_module.VERSION_REMOVED_TYPE_FIXTURES["std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py"] == (3, 12)
 assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["annotationlib"] == (3, 14)
 assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["_zstd"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["asyncio_graph"] == (3, 14)
 assert oracle_module.VERSION_REMOVED_TYPE_LIBS["asynchat"] == (3, 12)
 assert oracle_module.VERSION_REMOVED_TYPE_LIBS["asyncore"] == (3, 12)
 assert oracle_module.VERSION_REMOVED_TYPE_LIBS["smtpd"] == (3, 12)
@@ -262,11 +266,13 @@ assert oracle_module.VERSION_REMOVED_TYPE_FIXTURES["std-libs/asyncio_coroutines/
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_annotationlib_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_zstd_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_compression_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_asyncio_graph_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_templatestr_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_asynchat_fixture) == expected_removed
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_asyncio_coroutine_fixture) == expected_removed
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_annotationlib_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_zstd_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_asyncio_graph_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_templatestr_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_asynchat_fixture) == expected_removed
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_asyncio_coroutine_fixture) == expected_removed
@@ -274,6 +280,7 @@ assert not strict_module.is_version_specific_unavailable_type_fixture(tkinter_fi
 if expected:
     assert strict_annotationlib_fixture not in strict_module.executable_type_fixtures([strict_annotationlib_fixture])
     assert strict_zstd_fixture not in strict_module.executable_type_fixtures([strict_zstd_fixture])
+    assert strict_asyncio_graph_fixture not in strict_module.executable_type_fixtures([strict_asyncio_graph_fixture])
     assert strict_templatestr_fixture not in strict_module.executable_type_fixtures([strict_templatestr_fixture])
 if expected_removed:
     assert strict_asynchat_fixture not in strict_module.executable_type_fixtures([strict_asynchat_fixture])
