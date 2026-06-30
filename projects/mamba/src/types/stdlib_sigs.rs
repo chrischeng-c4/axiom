@@ -2561,6 +2561,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    StdlibSig {
+        module: "email.iterators",
+        qualifier: "",
+        name: "typed_subpart_iterator",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("msg", CoreTy::Typed),
+            p("maintype", CoreTy::Str),
+            p("subtype", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -5121,6 +5133,20 @@ mod tests {
         assert_eq!(sig.params[1].name, "default_class");
         assert_eq!(sig.params[1].ty, CoreTy::Unknown);
         assert_eq!(sig.params[2].name, "use_default_map");
+        assert_eq!(sig.params[2].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_email_iterators_typed_subpart_msg_wall_overrides_unknown_row() {
+        let sig = get("email.iterators", "", "typed_subpart_iterator")
+            .expect("typed_subpart_iterator row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::ModuleFn);
+        assert_eq!(sig.params[0].name, "msg");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        assert_eq!(sig.params[1].name, "maintype");
+        assert_eq!(sig.params[1].ty, CoreTy::Str);
+        assert_eq!(sig.params[2].name, "subtype");
         assert_eq!(sig.params[2].ty, CoreTy::Typed);
     }
 
