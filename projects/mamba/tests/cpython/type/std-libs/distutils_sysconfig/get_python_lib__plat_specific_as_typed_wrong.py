@@ -9,12 +9,11 @@
 # case = "get_python_lib__plat_specific_as_typed_wrong"
 # subject = "distutils.sysconfig.get_python_lib(plat_specific: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed plat_specific"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/sysconfig.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed plat_specific
 # mamba-strict-type: TypeError
 """Type wall: distutils.sysconfig.get_python_lib(plat_specific: typed); call it with the wrong type.
 

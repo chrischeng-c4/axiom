@@ -9,12 +9,11 @@
 # case = "get_config_vars__arg_as_str_wrong"
 # subject = "distutils.sysconfig.get_config_vars(arg: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/sysconfig.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg
 # mamba-strict-type: TypeError
 """Type wall: distutils.sysconfig.get_config_vars(arg: str); call it with the wrong type.
 
