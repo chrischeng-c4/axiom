@@ -72,6 +72,11 @@ VERSION_SPECIFIC_TYPE_FIXTURES = {
 }
 VERSION_REMOVED_TYPE_FIXTURES = {
     "std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py": (3, 12),
+    "std-libs/importlib_metadata/Deprecated____getitem____name_as__KT_wrong.py": (3, 12),
+    "std-libs/importlib_metadata/Deprecated__get__name_as__KT_wrong.py": (3, 12),
+    "std-libs/importlib_metadata/SelectableGroups__load__eps_as_Iterable_wrong.py": (3, 12),
+    "std-libs/importlib_readers/remove_duplicates__items_as_Iterable_wrong.py": (3, 12),
+    "std-libs/importlib_resources__common/get_package__package_as_Package_wrong.py": (3, 12),
 }
 
 SOUND_FAMILIES = [
