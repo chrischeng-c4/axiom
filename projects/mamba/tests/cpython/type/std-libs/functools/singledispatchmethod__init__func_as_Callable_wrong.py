@@ -9,12 +9,11 @@
 # case = "singledispatchmethod__init__func_as_Callable_wrong"
 # subject = "functools.singledispatchmethod.__init__(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/functools.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: functools.singledispatchmethod.__init__(func: Callable); call it with the wrong type.
 
