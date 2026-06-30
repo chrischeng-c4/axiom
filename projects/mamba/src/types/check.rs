@@ -50,6 +50,15 @@ fn is_typing_overload_decorator(expr: &Expr) -> bool {
     }
 }
 
+fn is_dataclass_decorator(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(n) => n == "dataclass",
+        Expr::Attr { attr, .. } => attr == "dataclass",
+        Expr::Call { func, .. } => is_dataclass_decorator(&func.node),
+        _ => false,
+    }
+}
+
 fn is_exception_class_name(name: &str) -> bool {
     matches!(
         name,
@@ -415,6 +424,7 @@ impl TypeChecker {
                     self.unregister_type_params(type_params);
                 }
                 Stmt::ClassDef {
+                    decorators,
                     name,
                     type_params,
                     bases,
@@ -455,7 +465,9 @@ impl TypeChecker {
                     let has_method = body
                         .iter()
                         .any(|s| matches!(&s.node, Stmt::FnDef { .. } | Stmt::AsyncFnDef { .. }));
-                    if only_object_base && !has_method {
+                    let dataclass_decorated =
+                        decorators.iter().any(|d| is_dataclass_decorator(&d.node));
+                    if only_object_base && !has_method && !dataclass_decorated {
                         self.user_bare_classes.insert(name.clone());
                     }
 
