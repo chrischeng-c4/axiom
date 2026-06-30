@@ -34,6 +34,11 @@ pub struct WorkQueue {
     next_offer: Seq,
     /// Reclaimed seqs to re-offer first (smallest-first); preserves prefer-redeliver.
     redeliver: BinaryHeap<Reverse<Seq>>,
+    /// Not-yet-visible entries (delayed / ETA / backoff), min-heap by visible-at
+    /// millis. `promote_due` moves due ones onto `redeliver`.
+    delayed: BinaryHeap<Reverse<(i64, Seq)>>,
+    /// Seqs currently held back in `delayed` — `pick` skips these.
+    delayed_set: HashSet<Seq>,
     /// Contiguous-acked watermark: every seq `< committed` has been acked.
     committed: Seq,
 }
@@ -73,6 +78,8 @@ impl WorkQueue {
             attempts: HashMap::new(),
             next_offer: 0,
             redeliver: BinaryHeap::new(),
+            delayed: BinaryHeap::new(),
+            delayed_set: HashSet::new(),
             committed: 0,
         }
     }
@@ -90,17 +97,59 @@ impl WorkQueue {
     fn pick(&mut self, log_len: Seq) -> Option<Seq> {
         while let Some(&Reverse(seq)) = self.redeliver.peek() {
             self.redeliver.pop();
-            // Skip a stale heap entry that was meanwhile acked or re-leased.
-            if !self.acked.contains(&seq) && !self.leases.contains_key(&seq) {
+            // Skip a stale heap entry that was meanwhile acked, re-leased, or
+            // (re)deferred into the delay index.
+            if !self.acked.contains(&seq)
+                && !self.leases.contains_key(&seq)
+                && !self.delayed_set.contains(&seq)
+            {
                 return Some(seq);
             }
         }
-        if self.next_offer < log_len {
+        // Hand out fresh seqs in order, skipping any held back as not-yet-visible
+        // (a skipped delayed seq returns only via `promote_due` -> `redeliver`).
+        while self.next_offer < log_len {
             let seq = self.next_offer;
             self.next_offer += 1;
-            return Some(seq);
+            if !self.delayed_set.contains(&seq) {
+                return Some(seq);
+            }
         }
         None
+    }
+
+    /// Hold `seq` back until `visible_at` (delayed / ETA / countdown / backoff).
+    /// `pick` skips it until [`WorkQueue::promote_due`] releases it.
+    ///
+    /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#logic
+    pub fn register_delayed(&mut self, seq: Seq, visible_at: DateTime<Utc>) {
+        if self.acked.contains(&seq) {
+            return;
+        }
+        if self.delayed_set.insert(seq) {
+            self.delayed.push(Reverse((visible_at.timestamp_millis(), seq)));
+        }
+    }
+
+    /// Release every delayed entry whose visible-at is at or before `now` onto the
+    /// redeliver heap (prefer-redeliver). Returns how many were promoted, so the
+    /// caller can wake idle consumers.
+    ///
+    /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#logic
+    pub fn promote_due(&mut self, now: DateTime<Utc>) -> usize {
+        let cutoff = now.timestamp_millis();
+        let mut promoted = 0;
+        while let Some(&Reverse((at, seq))) = self.delayed.peek() {
+            if at > cutoff {
+                break;
+            }
+            self.delayed.pop();
+            if self.delayed_set.remove(&seq) && !self.acked.contains(&seq) {
+                self.redeliver.push(Reverse(seq));
+                promoted += 1;
+            }
+        }
+        promoted
     }
 
     /// True when `seq` has exhausted its delivery budget and must be
@@ -152,6 +201,7 @@ impl WorkQueue {
     ///
     /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
     pub fn lease(&mut self, consumer_id: &str, log_len: Seq, now: DateTime<Utc>) -> Option<Lease> {
+        self.promote_due(now);
         let seq = self.pick(log_len)?;
         Some(self.grant(seq, consumer_id, now))
     }
@@ -169,6 +219,7 @@ impl WorkQueue {
         log_len: Seq,
         now: DateTime<Utc>,
     ) -> LeaseOrDead {
+        self.promote_due(now);
         match self.pick_classified(log_len) {
             Pick::Ready(seq) => LeaseOrDead::Leased(self.grant(seq, consumer_id, now)),
             Pick::Dead(seq) => LeaseOrDead::Dead {

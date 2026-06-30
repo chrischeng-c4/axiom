@@ -208,6 +208,10 @@ definitions:
         type: string
         format: date-time
         description: "Server time the entry was durably appended."
+      not_before:
+        type: ["string", "null"]
+        format: date-time
+        description: "Work-queue visibility gate (delayed / ETA / countdown): durably appended at once but not leasable until this time. Null = leasable immediately. Does not affect broadcast replay."
 
   AppendOutcome:
     type: object

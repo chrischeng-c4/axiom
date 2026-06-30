@@ -23,6 +23,14 @@ pub struct PublishRequest {
     pub payload: Payload,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// Optional work-queue visibility gate: the entry is not leasable until this
+    /// absolute time (delayed / ETA delivery). Ignored by broadcast.
+    #[serde(default)]
+    pub not_before: Option<DateTime<Utc>>,
+    /// Convenience countdown: deliver `delay_ms` from now. Resolved server-side to
+    /// `now + delay_ms`; if both are set, `not_before` wins.
+    #[serde(default)]
+    pub delay_ms: Option<u64>,
 }
 
 /// Lease the next eligible entry to a competing consumer.

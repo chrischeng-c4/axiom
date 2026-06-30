@@ -208,9 +208,19 @@ pub async fn publish(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
     let now = Utc::now();
-    let result = st
-        .relay
-        .publish(&subject, &req.message_id, req.payload, req.headers, now);
+    // Resolve the optional visibility gate: explicit not_before wins, else
+    // delay_ms is a countdown from now (delayed / ETA / countdown delivery).
+    let not_before = req
+        .not_before
+        .or_else(|| req.delay_ms.map(|ms| now + chrono::Duration::milliseconds(ms as i64)));
+    let result = st.relay.publish_at(
+        &subject,
+        &req.message_id,
+        req.payload,
+        req.headers,
+        not_before,
+        now,
+    );
     match result {
         Ok(outcome) => encode_body(cbor, StatusCode::OK, &outcome),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

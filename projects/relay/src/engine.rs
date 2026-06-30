@@ -137,8 +137,21 @@ impl Relay {
             self.config.work_queue.lease_ttl_ms,
             max_attempts,
         );
-        if let Some(watermark) = log.load_commit() {
-            workqueue.recover(watermark);
+        let watermark = log.load_commit();
+        if let Some(wm) = watermark {
+            workqueue.recover(wm);
+        }
+        // Rebuild the in-memory delay index from the un-acked tail so a delayed /
+        // ETA entry survives restarts. Done regardless of `load_commit` — a queue
+        // that has never been acked has no `.commit` file but can still hold
+        // future-dated entries. The scan starts at the recovered watermark (or 0)
+        // and only does work on recovery (a fresh log has len 0); delete-on-ack
+        // keeps the un-acked tail small for task subjects. A past-due `not_before`
+        // is harmless — promote_due releases it on the first lease/reconcile.
+        for entry in log.range(watermark.unwrap_or(0))? {
+            if let Some(t) = entry.not_before {
+                workqueue.register_delayed(entry.seq, t);
+            }
         }
         let ss = Arc::new(Mutex::new(SubjectState {
             log,
@@ -205,11 +218,39 @@ impl Relay {
         headers: BTreeMap<String, String>,
         now: DateTime<Utc>,
     ) -> io::Result<AppendOutcome> {
+        self.publish_at(subject, message_id, payload, headers, None, now)
+    }
+
+    /// Publish with an optional `not_before` work-queue visibility gate (delayed /
+    /// ETA / countdown delivery). The entry is durably appended immediately (and
+    /// is visible to broadcast subscribers at once), but is not leasable by a
+    /// work-queue consumer until `not_before`. Idempotent per id.
+    ///
+    /// @spec projects/relay/tech-design/logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md#logic
+    pub fn publish_at(
+        &self,
+        subject: &str,
+        message_id: &str,
+        payload: Payload,
+        headers: BTreeMap<String, String>,
+        not_before: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> io::Result<AppendOutcome> {
         let shard = self.route(message_id);
         let ss = self.shard_state(subject, shard)?;
         let outcome = {
             let mut g = ss.lock().expect("subject mutex");
-            g.log.append(message_id, payload, headers, now)?
+            let outcome = g.log.append_at(message_id, payload, headers, not_before, now)?;
+            // Hold a future-dated entry out of the work-queue until it is due
+            // (broadcast still sees it immediately — it is in the log).
+            if !outcome.deduped {
+                if let Some(t) = not_before {
+                    if t > now {
+                        g.workqueue.register_delayed(outcome.seq, t);
+                    }
+                }
+            }
+            outcome
         };
         if !outcome.deduped {
             self.wake_subscribers(subject);
@@ -573,14 +614,14 @@ impl Relay {
         // entry is re-leased immediately (matches `release`; #465 wake-based push).
         let mut woken: HashSet<String> = HashSet::new();
         for (subject, s) in &states {
-            let n = s
-                .lock()
-                .expect("subject mutex")
-                .workqueue
-                .reclaim_expired(now)
-                .len();
+            let mut g = s.lock().expect("subject mutex");
+            let n = g.workqueue.reclaim_expired(now).len();
+            // Release any delayed/ETA/backoff entries that have come due.
+            let promoted = g.workqueue.promote_due(now);
             if n > 0 {
                 total += n;
+            }
+            if n > 0 || promoted > 0 {
                 woken.insert(subject.clone());
             }
         }

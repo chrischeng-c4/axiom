@@ -117,6 +117,13 @@ definitions:
       headers:
         type: object
         additionalProperties: { type: string }
+      not_before:
+        type: ["string", "null"]
+        format: date-time
+        description: "Optional work-queue visibility gate: not leasable until this absolute time (delayed / ETA). Ignored by broadcast."
+      delay_ms:
+        type: ["integer", "null"]
+        description: "Convenience countdown: deliver delay_ms from now (resolved server-side to now + delay_ms). If both set, not_before wins."
 
   PublishResponse:
     type: object
