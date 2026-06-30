@@ -9,12 +9,11 @@
 # case = "create_subprocess_exec__program_as_StrOrBytesPath_wrong"
 # subject = "asyncio.subprocess.create_subprocess_exec(program: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed program"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/subprocess.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed program
 # mamba-strict-type: TypeError
 """Type wall: asyncio.subprocess.create_subprocess_exec(program: StrOrBytesPath); call it with the wrong type.
 
