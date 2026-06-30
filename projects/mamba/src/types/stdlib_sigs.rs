@@ -1761,6 +1761,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: curses.wrapper(func: Callable, *args) collapses to an
+    // unenforceable generated row because Callable is non-scalar and the row is
+    // variadic. The strict fixture probes only a bare user instance for `func`;
+    // reject that impossible Callable while keeping `*args` skip-safe.
+    StdlibSig {
+        module: "curses",
+        qualifier: "",
+        name: "wrapper",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("func", CoreTy::Typed),
+            ParamSig {
+                name: "args",
+                ty: CoreTy::Unknown,
+                star: true,
+            },
+        ],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -3870,6 +3889,18 @@ mod tests {
         assert_eq!(loader.kind, SigKind::Method);
         assert_eq!(loader.params[0].name, "dlltype");
         assert_eq!(loader.params[0].ty, CoreTy::Type);
+    }
+
+    #[test]
+    fn curated_curses_wrapper_overrides_variadic_callable_row() {
+        let sig = get("curses", "", "wrapper").expect("curses.wrapper present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::ModuleFn);
+        assert_eq!(sig.params[0].name, "func");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        assert_eq!(sig.params[1].name, "args");
+        assert_eq!(sig.params[1].ty, CoreTy::Unknown);
+        assert!(sig.params[1].star);
     }
 
     #[test]
