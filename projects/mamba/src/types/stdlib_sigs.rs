@@ -2549,6 +2549,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("outfp", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "email.headerregistry",
+        qualifier: "HeaderRegistry",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("base_class", CoreTy::Type),
+            p("default_class", CoreTy::Unknown),
+            p("use_default_map", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -5096,6 +5108,20 @@ mod tests {
             assert_eq!(sig.params[0].name, "outfp");
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
+    }
+
+    #[test]
+    fn curated_email_headerregistry_base_class_wall_overrides_unknown_row() {
+        let sig = get("email.headerregistry", "HeaderRegistry", "__init__")
+            .expect("HeaderRegistry.__init__ row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "base_class");
+        assert_eq!(sig.params[0].ty, CoreTy::Type);
+        assert_eq!(sig.params[1].name, "default_class");
+        assert_eq!(sig.params[1].ty, CoreTy::Unknown);
+        assert_eq!(sig.params[2].name, "use_default_map");
+        assert_eq!(sig.params[2].ty, CoreTy::Typed);
     }
 
     #[test]

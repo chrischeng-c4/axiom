@@ -9,12 +9,11 @@
 # case = "HeaderRegistry__init__base_class_as_type_wrong"
 # subject = "email.headerregistry.HeaderRegistry.__init__(base_class: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed base_class"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/headerregistry.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed base_class
 # mamba-strict-type: TypeError
 """Type wall: email.headerregistry.HeaderRegistry.__init__(base_class: type); call it with the wrong type.
 
