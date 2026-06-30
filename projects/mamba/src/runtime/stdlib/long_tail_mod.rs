@@ -388,6 +388,7 @@ fn register_cgitb() {
             ("reset", dispatch_empty_str as *const () as usize),
             ("html", dispatch_empty_str as *const () as usize),
             ("text", dispatch_empty_str as *const () as usize),
+            ("scanvars", dispatch_empty_list as *const () as usize),
             ("handler", dispatch_noop as *const () as usize),
         ],
         &[],

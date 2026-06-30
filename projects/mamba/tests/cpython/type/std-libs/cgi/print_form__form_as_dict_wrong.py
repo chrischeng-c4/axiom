@@ -9,12 +9,11 @@
 # case = "print_form__form_as_dict_wrong"
 # subject = "cgi.print_form(form: dict)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed form"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cgi.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed form
 # mamba-strict-type: TypeError
 """Type wall: cgi.print_form(form: dict); call it with the wrong type.
 

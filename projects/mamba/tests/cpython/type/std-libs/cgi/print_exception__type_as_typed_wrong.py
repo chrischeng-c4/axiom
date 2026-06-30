@@ -9,12 +9,11 @@
 # case = "print_exception__type_as_typed_wrong"
 # subject = "cgi.print_exception(type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cgi.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
 """Type wall: cgi.print_exception(type: typed); call it with the wrong type.
 
