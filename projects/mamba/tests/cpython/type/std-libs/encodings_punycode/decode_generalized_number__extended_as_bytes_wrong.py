@@ -9,12 +9,11 @@
 # case = "decode_generalized_number__extended_as_bytes_wrong"
 # subject = "encodings.punycode.decode_generalized_number(extended: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed extended"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/encodings/punycode.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed extended
 # mamba-strict-type: TypeError
 """Type wall: encodings.punycode.decode_generalized_number(extended: bytes); call it with the wrong type.
 
