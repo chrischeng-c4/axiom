@@ -223,6 +223,38 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: asyncio event/future helper signatures lose important strict
+    // walls when Callable/Future-like types collapse to Unknown or too-broad
+    // Typed rows in the generated table.
+    StdlibSig {
+        module: "asyncio.events",
+        qualifier: "Handle",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("callback", CoreTy::Typed),
+            p("args", CoreTy::Unknown),
+            p("loop", CoreTy::Typed),
+            p("context", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.exceptions",
+        qualifier: "IncompleteReadError",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("partial", CoreTy::Bytes), p("expected", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "asyncio.futures",
+        qualifier: "",
+        name: "wrap_future",
+        kind: SigKind::ModuleFn,
+        params: &[p("future", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact
