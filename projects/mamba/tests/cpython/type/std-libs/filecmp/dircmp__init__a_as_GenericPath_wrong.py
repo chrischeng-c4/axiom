@@ -9,12 +9,11 @@
 # case = "dircmp__init__a_as_GenericPath_wrong"
 # subject = "filecmp.dircmp.__init__(a: GenericPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/filecmp.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: filecmp.dircmp.__init__(a: GenericPath); call it with the wrong type.
 
