@@ -482,6 +482,106 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("locals", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: collections.ChainMap methods are mostly typevar/protocol
+    // shaped in typeshed, so generated rows conservatively collapse them to
+    // Unknown. A bare user object satisfies none of these contracts; keep real
+    // mappings/iterables/dynamic values skip-safe through `Typed`.
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "__delitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "__ior__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "__missing__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "__ror__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "__setitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "fromkeys",
+        kind: SigKind::Method,
+        params: &[p("iterable", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "get",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "new_child",
+        kind: SigKind::Method,
+        params: &[p("m", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "pop",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "ChainMap",
+        name: "setdefault",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
@@ -2839,6 +2939,29 @@ mod tests {
         assert!(sig.enforceable);
         assert_eq!(sig.params[0].name, "data");
         assert_eq!(sig.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_chainmap_walls_override_unknown_generated_rows() {
+        for (name, first_param) in [
+            ("__delitem__", "key"),
+            ("__getitem__", "key"),
+            ("__ior__", "other"),
+            ("__missing__", "key"),
+            ("__or__", "other"),
+            ("__ror__", "other"),
+            ("__setitem__", "key"),
+            ("fromkeys", "iterable"),
+            ("get", "key"),
+            ("new_child", "m"),
+            ("pop", "key"),
+            ("setdefault", "key"),
+        ] {
+            let sig = get("collections", "ChainMap", name).expect("ChainMap row present");
+            assert!(sig.enforceable, "ChainMap.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
     }
 
     /// Regenerable contract (fixture_lint-style): the checked-in
