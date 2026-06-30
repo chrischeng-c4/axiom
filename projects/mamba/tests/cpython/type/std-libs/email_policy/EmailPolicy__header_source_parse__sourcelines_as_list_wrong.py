@@ -9,12 +9,11 @@
 # case = "EmailPolicy__header_source_parse__sourcelines_as_list_wrong"
 # subject = "email.policy.EmailPolicy.header_source_parse(sourcelines: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sourcelines"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/policy.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sourcelines
 # mamba-strict-type: TypeError
 """Type wall: email.policy.EmailPolicy.header_source_parse(sourcelines: list); call it with the wrong type.
 
