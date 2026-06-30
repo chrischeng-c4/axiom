@@ -37,6 +37,7 @@ TYPE_DIVERGENCES = TOOLS_DIR.parent / "config" / "type_divergences.txt"
 
 EXIT_NOT_READY = 70
 NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
+NON_STDLIB_BACKPORT_TYPE_LIBS = {"typing_extensions"}
 PLATFORM_SPECIFIC_TYPE_LIBS = {
     "_winapi": "win32",
     "msilib": "win32",
@@ -165,6 +166,11 @@ def is_non_runtime_stub_type_fixture(path: Path) -> bool:
     )
 
 
+def is_non_stdlib_backport_type_fixture(path: Path) -> bool:
+    lib = type_fixture_lib(path)
+    return lib in NON_STDLIB_BACKPORT_TYPE_LIBS
+
+
 def type_fixture_lib(path: Path) -> str | None:
     try:
         rel = path.relative_to(TYPE_DIR).parts
@@ -221,6 +227,7 @@ def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
 def is_excluded_type_fixture(path: Path) -> bool:
     return (
         is_non_runtime_stub_type_fixture(path)
+        or is_non_stdlib_backport_type_fixture(path)
         or is_platform_specific_unavailable_type_fixture(path)
         or is_optional_stdlib_extension_unavailable_type_fixture(path)
         or is_version_specific_unavailable_type_fixture(path)
@@ -367,6 +374,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     excluded_non_runtime_stubs = [
         path for path in type_fixture_candidates if is_non_runtime_stub_type_fixture(path)
     ]
+    excluded_non_stdlib_backports = [
+        path
+        for path in type_fixture_candidates
+        if is_non_stdlib_backport_type_fixture(path)
+    ]
     excluded_platform_specific = [
         path
         for path in type_fixture_candidates
@@ -481,6 +493,10 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "measured_type_fixtures": len(type_fixtures),
             "excluded_non_runtime_stub_fixtures": len(excluded_non_runtime_stubs),
             "excluded_non_runtime_stub_lib_prefixes": list(NON_RUNTIME_STUB_TYPE_LIB_PREFIXES),
+            "excluded_non_stdlib_backport_type_fixtures": len(
+                excluded_non_stdlib_backports
+            ),
+            "non_stdlib_backport_type_libs": sorted(NON_STDLIB_BACKPORT_TYPE_LIBS),
             "excluded_platform_specific_type_fixtures": len(excluded_platform_specific),
             "platform_specific_type_libs": PLATFORM_SPECIFIC_TYPE_LIBS,
             "host_platform": sys.platform,
