@@ -835,6 +835,110 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: UserList has several typevar/protocol/slice overloads that
+    // generated rows collapse to Unknown. The strict fixtures probe those with
+    // a bare user object, which cannot satisfy an item typevar, SupportsIndex,
+    // slice, Iterable, or comparable-list contract.
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__delitem__",
+        kind: SigKind::Method,
+        params: &[p("i", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__ge__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("i", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__gt__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("initlist", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__le__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__lt__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "__setitem__",
+        kind: SigKind::Method,
+        params: &[p("i", CoreTy::Typed), p("item", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "append",
+        kind: SigKind::Method,
+        params: &[p("item", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "count",
+        kind: SigKind::Method,
+        params: &[p("item", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "index",
+        kind: SigKind::Method,
+        params: &[
+            p("item", CoreTy::Typed),
+            p("start", CoreTy::Unknown),
+            p("stop", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "UserList",
+        name: "remove",
+        kind: SigKind::Method,
+        params: &[p("item", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
@@ -3275,6 +3379,29 @@ mod tests {
         ] {
             let sig = get("collections", "UserDict", name).expect("UserDict row present");
             assert!(sig.enforceable, "UserDict.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+    }
+
+    #[test]
+    fn curated_userlist_walls_override_unknown_generated_rows() {
+        for (name, first_param) in [
+            ("__delitem__", "i"),
+            ("__ge__", "other"),
+            ("__getitem__", "i"),
+            ("__gt__", "other"),
+            ("__init__", "initlist"),
+            ("__le__", "other"),
+            ("__lt__", "other"),
+            ("__setitem__", "i"),
+            ("append", "item"),
+            ("count", "item"),
+            ("index", "item"),
+            ("remove", "item"),
+        ] {
+            let sig = get("collections", "UserList", name).expect("UserList row present");
+            assert!(sig.enforceable, "UserList.{name} must stay enforceable");
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }

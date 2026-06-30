@@ -9,12 +9,10 @@
 # case = "UserList__remove__item_as__T_wrong"
 # subject = "collections.UserList.remove(item: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item
 # mamba-strict-type: TypeError
 """Type wall: collections.UserList.remove(item: _T); call it with the wrong type.
 

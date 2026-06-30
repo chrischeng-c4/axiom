@@ -9,12 +9,10 @@
 # case = "UserList__init__initlist_as_typed_wrong"
 # subject = "collections.UserList.__init__(initlist: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed initlist"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed initlist
 # mamba-strict-type: TypeError
 """Type wall: collections.UserList.__init__(initlist: typed); call it with the wrong type.
 
