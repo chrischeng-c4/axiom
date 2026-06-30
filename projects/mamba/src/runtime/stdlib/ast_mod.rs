@@ -391,6 +391,74 @@ const FUNCTION_TYPE_FIELDS: &[AstFieldSpec] = &[
         kind: AstFieldKind::AstNodeOrNone,
     },
 ];
+const IMPORT_FROM_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "module",
+        kind: AstFieldKind::StrOrNone,
+    },
+    AstFieldSpec {
+        name: "names",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "level",
+        kind: AstFieldKind::Int,
+    },
+];
+const ARGUMENTS_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "posonlyargs",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "args",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "vararg",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "kwonlyargs",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "kw_defaults",
+        kind: AstFieldKind::List,
+    },
+    AstFieldSpec {
+        name: "kwarg",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "defaults",
+        kind: AstFieldKind::List,
+    },
+];
+const KEYWORD_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "arg",
+        kind: AstFieldKind::StrOrNone,
+    },
+    AstFieldSpec {
+        name: "value",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+];
+const MATCH_CASE_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "pattern",
+        kind: AstFieldKind::AstNode,
+    },
+    AstFieldSpec {
+        name: "guard",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "body",
+        kind: AstFieldKind::List,
+    },
+];
 const LIST_FIELDS: &[AstFieldSpec] = &[
     AstFieldSpec {
         name: "elts",
@@ -420,6 +488,7 @@ fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
         "Dict" => DICT_FIELDS,
         "ExceptHandler" => EXCEPT_HANDLER_FIELDS,
         "FunctionType" => FUNCTION_TYPE_FIELDS,
+        "ImportFrom" => IMPORT_FROM_FIELDS,
         "Global" | "Import" | "Nonlocal" => NAMES_FIELDS,
         "Interactive" | "Module" => &[
             AstFieldSpec {
@@ -451,6 +520,9 @@ fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
             name: "patterns",
             kind: AstFieldKind::List,
         }],
+        "arguments" => ARGUMENTS_FIELDS,
+        "keyword" => KEYWORD_FIELDS,
+        "match_case" => MATCH_CASE_FIELDS,
         "Try" | "TryStar" => &[
             AstFieldSpec {
                 name: "body",
@@ -662,6 +734,13 @@ fn ast_type_error(node_type: &str, field: &AstFieldSpec) -> MbValue {
     MbValue::none()
 }
 
+fn ast_arg_type_error(function_name: &str, arg_name: &str) -> MbValue {
+    super::super::builtins::raise_type_error(format!(
+        "ast.{function_name} argument '{arg_name}' received wrong type"
+    ));
+    MbValue::none()
+}
+
 pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue> {
     let node_type = ast_node_type_from_marker(marker)?;
     let specs = ast_constructor_fields(node_type);
@@ -837,16 +916,31 @@ pub fn mb_ast_get_docstring(_node: MbValue) -> MbValue {
 
 /// ast.fix_missing_locations(node) -> node
 pub fn mb_ast_fix_missing_locations(node: MbValue) -> MbValue {
+    if !is_ast_node_value(node) {
+        return ast_arg_type_error("fix_missing_locations", "node");
+    }
     node
 }
 
 /// ast.increment_lineno(node, n=1) -> node
-pub fn mb_ast_increment_lineno(node: MbValue, _n: MbValue) -> MbValue {
+pub fn mb_ast_increment_lineno(node: MbValue, n: MbValue) -> MbValue {
+    if !is_ast_node_value(node) {
+        return ast_arg_type_error("increment_lineno", "node");
+    }
+    if !n.is_none() && n.as_int().is_none() {
+        return ast_arg_type_error("increment_lineno", "n");
+    }
     node
 }
 
 /// ast.copy_location(new_node, old_node) -> new_node
-pub fn mb_ast_copy_location(new_node: MbValue, _old_node: MbValue) -> MbValue {
+pub fn mb_ast_copy_location(new_node: MbValue, old_node: MbValue) -> MbValue {
+    if !is_ast_node_value(new_node) {
+        return ast_arg_type_error("copy_location", "new_node");
+    }
+    if !is_ast_node_value(old_node) {
+        return ast_arg_type_error("copy_location", "old_node");
+    }
     new_node
 }
 
