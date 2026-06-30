@@ -2138,6 +2138,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: Distribution(attrs) accepts a mapping-shaped attrs object in
+    // CPython's distutils contract. A bare user instance is not a mapping and
+    // must not leak through the force-typed strict fixture.
+    StdlibSig {
+        module: "distutils.dist",
+        qualifier: "Distribution",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("attrs", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4448,6 +4459,16 @@ mod tests {
         assert_eq!(search_cpp.kind, SigKind::Method);
         assert_eq!(search_cpp.params[0].name, "pattern");
         assert_eq!(search_cpp.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_distutils_dist_distribution_attrs_wall() {
+        let sig = get("distutils.dist", "Distribution", "__init__")
+            .expect("Distribution.__init__ present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "attrs");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
     }
 
     #[test]
