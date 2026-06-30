@@ -77,7 +77,14 @@ SAMPLE_VALUE = {
     "list": "[]", "tuple": "()", "set": "set()", "frozenset": "frozenset()", "dict": "{}",
 }
 SENTINEL = "_W()"
-NOT_WRONGABLE = {"object", "Any", "_typeshed.Incomplete", "Incomplete"}
+NOT_WRONGABLE = {
+    "object",
+    "Any",
+    "_typeshed.Incomplete",
+    "Incomplete",
+    "type",
+    "Callable",
+}
 BUILTINS = "builtins"
 NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
 
@@ -93,7 +100,7 @@ def annotation_label(node: ast.expr | None) -> str:
 
 
 def is_not_wrongable(node: ast.expr | None) -> bool:
-    """object/Any/typevars/untyped cannot anchor a wrong-typed runtime case."""
+    """Broad/abstract annotations cannot anchor a wrong-typed runtime case."""
     if node is None:
         return True
     label = annotation_label(node)
