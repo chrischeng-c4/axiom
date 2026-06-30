@@ -31,6 +31,9 @@ pub struct PublishRequest {
     /// `now + delay_ms`; if both are set, `not_before` wins.
     #[serde(default)]
     pub delay_ms: Option<u64>,
+    /// Work-queue priority band (0 = lowest / default; higher leases first).
+    #[serde(default)]
+    pub priority: u8,
 }
 
 /// Lease the next eligible entry to a competing consumer.

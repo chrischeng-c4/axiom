@@ -81,6 +81,7 @@ async fn publish_cbor_fast_path_over_h2c() {
         headers: Default::default(),
         not_before: None,
         delay_ms: None,
+        priority: 0,
     });
     let bytes = client
         .post(url(addr, "/v1/s/publish"))

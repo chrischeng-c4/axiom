@@ -142,16 +142,17 @@ impl Relay {
         if let Some(wm) = watermark {
             workqueue.recover(wm);
         }
-        // Rebuild the in-memory delay index from the un-acked tail so a delayed /
-        // ETA entry survives restarts. Done regardless of `load_commit` — a queue
-        // that has never been acked has no `.commit` file but can still hold
-        // future-dated entries. The scan starts at the recovered watermark (or 0)
-        // and only does work on recovery (a fresh log has len 0); delete-on-ack
-        // keeps the un-acked tail small for task subjects. A past-due `not_before`
-        // is harmless — promote_due releases it on the first lease/reconcile.
+        // Rebuild the work-queue ready set from the un-acked tail so the backlog
+        // (and any delayed / ETA entry + its priority) survives restarts. Done
+        // regardless of `load_commit` — a never-acked queue has no `.commit` file.
+        // The scan starts at the recovered watermark (or 0) and only does work on
+        // recovery (a fresh log has len 0); delete-on-ack keeps the un-acked tail
+        // small for task subjects. A past-due `not_before` is harmless —
+        // promote_due releases it on the first lease/reconcile.
         for entry in log.range(watermark.unwrap_or(0))? {
-            if let Some(t) = entry.not_before {
-                workqueue.register_delayed(entry.seq, t);
+            match entry.not_before {
+                Some(t) => workqueue.register_delayed(entry.seq, t, entry.priority),
+                None => workqueue.offer_fresh(entry.seq, entry.priority),
             }
         }
         let ss = Arc::new(Mutex::new(SubjectState {
@@ -219,7 +220,7 @@ impl Relay {
         headers: BTreeMap<String, String>,
         now: DateTime<Utc>,
     ) -> io::Result<AppendOutcome> {
-        self.publish_at(subject, message_id, payload, headers, None, now)
+        self.publish_at(subject, message_id, payload, headers, None, 0, now)
     }
 
     /// Publish with an optional `not_before` work-queue visibility gate (delayed /
@@ -235,20 +236,22 @@ impl Relay {
         payload: Payload,
         headers: BTreeMap<String, String>,
         not_before: Option<DateTime<Utc>>,
+        priority: u8,
         now: DateTime<Utc>,
     ) -> io::Result<AppendOutcome> {
         let shard = self.route(message_id);
         let ss = self.shard_state(subject, shard)?;
         let outcome = {
             let mut g = ss.lock().expect("subject mutex");
-            let outcome = g.log.append_at(message_id, payload, headers, not_before, now)?;
-            // Hold a future-dated entry out of the work-queue until it is due
-            // (broadcast still sees it immediately — it is in the log).
+            let outcome = g
+                .log
+                .append_at(message_id, payload, headers, not_before, priority, now)?;
+            // Offer the entry into its priority band — held in the delay index if
+            // future-dated (broadcast still sees it immediately — it is in the log).
             if !outcome.deduped {
-                if let Some(t) = not_before {
-                    if t > now {
-                        g.workqueue.register_delayed(outcome.seq, t);
-                    }
+                match not_before {
+                    Some(t) if t > now => g.workqueue.register_delayed(outcome.seq, t, priority),
+                    _ => g.workqueue.offer_fresh(outcome.seq, priority),
                 }
             }
             outcome
@@ -286,7 +289,15 @@ impl Relay {
             let ss = self.shard_state(subject, shard)?;
             let outcomes = {
                 let mut g = ss.lock().expect("subject mutex");
-                g.log.append_many(msgs, now)?
+                let outcomes = g.log.append_many(msgs, now)?;
+                // Offer each new entry into the work-queue (batch = priority 0,
+                // immediate). Without this the entries would never be leasable.
+                for oc in &outcomes {
+                    if !oc.deduped {
+                        g.workqueue.offer_fresh(oc.seq, 0);
+                    }
+                }
+                outcomes
             };
             for (idx, oc) in idxs.into_iter().zip(outcomes) {
                 out[idx] = Some(oc);
@@ -405,8 +416,7 @@ impl Relay {
             let (dead_seq, dead_entry, attempts) = {
                 let ss = self.shard_state(subject, shard)?;
                 let mut g = ss.lock().expect("subject mutex");
-                let len = g.log.len();
-                match g.workqueue.lease_or_dead(consumer_id, len, now) {
+                match g.workqueue.lease_or_dead(consumer_id, now) {
                     LeaseOrDead::Leased(l) => return Ok(Some(l)),
                     LeaseOrDead::Empty => return Ok(None),
                     LeaseOrDead::Dead { seq, attempts } => (seq, g.log.entry(seq)?, attempts),
