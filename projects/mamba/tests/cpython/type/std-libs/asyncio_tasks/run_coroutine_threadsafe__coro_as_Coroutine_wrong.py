@@ -9,12 +9,11 @@
 # case = "run_coroutine_threadsafe__coro_as_Coroutine_wrong"
 # subject = "asyncio.tasks.run_coroutine_threadsafe(coro: Coroutine)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/tasks.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coro
 # mamba-strict-type: TypeError
 """Type wall: asyncio.tasks.run_coroutine_threadsafe(coro: Coroutine); call it with the wrong type.
 
