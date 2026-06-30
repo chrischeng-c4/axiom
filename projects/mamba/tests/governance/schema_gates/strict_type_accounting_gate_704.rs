@@ -345,6 +345,22 @@ fn abc_unknown_contracts_are_not_strict_type_walls() {
 }
 
 #[test]
+fn aifc_open_unknown_contract_is_not_a_strict_type_wall() {
+    let root = mamba_root();
+    assert!(
+        !root
+            .join("tests/cpython/type/std-libs/aifc/open__f_as__File_wrong.py")
+            .exists(),
+        "aifc.open(f: _File) emits Unknown/non-enforceable and must not be a strict wall"
+    );
+    assert!(
+        root.join("tests/cpython/type/std-libs/aifc/Aifc_read__getmark__id_as_int_wrong.py")
+            .exists(),
+        "aifc scalar method walls must remain enforced while module open(f) is skipped"
+    );
+}
+
+#[test]
 fn type_wall_generator_skips_typevar_fixture_params() {
     let script = r#"
 import ast
@@ -364,6 +380,8 @@ assert gen_module.is_not_wrongable(ast.Name(id="_C"))
 assert gen_module.is_not_wrongable(ast.Name(id="type"))
 assert gen_module.is_not_wrongable(ast.Name(id="Callable"))
 assert not gen_module.is_not_wrongable(ast.Name(id="str"))
+assert gen_module.is_signature_param_not_wrongable("aifc", None, "open", "f")
+assert not gen_module.is_signature_param_not_wrongable("aifc", "Aifc_read", "getmark", "id")
 "#;
     let output = Command::new("python3.12")
         .arg("-c")
