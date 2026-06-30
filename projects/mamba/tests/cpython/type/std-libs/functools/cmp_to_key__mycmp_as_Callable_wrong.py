@@ -9,12 +9,11 @@
 # case = "cmp_to_key__mycmp_as_Callable_wrong"
 # subject = "functools.cmp_to_key(mycmp: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mycmp"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/functools.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mycmp
 # mamba-strict-type: TypeError
 """Type wall: functools.cmp_to_key(mycmp: Callable); call it with the wrong type.
 
