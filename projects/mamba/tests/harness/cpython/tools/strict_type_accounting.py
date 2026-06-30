@@ -44,6 +44,9 @@ VERSION_SPECIFIC_TYPE_LIBS = {
     "asyncio_tools": (3, 14),
     "compression_zstd": (3, 14),
     "compression_zstd__zstdfile": (3, 14),
+    "concurrent_interpreters": (3, 14),
+    "concurrent_interpreters__crossinterp": (3, 14),
+    "concurrent_interpreters__queues": (3, 14),
 }
 VERSION_REMOVED_TYPE_LIBS = {
     "asyncore": (3, 12),
