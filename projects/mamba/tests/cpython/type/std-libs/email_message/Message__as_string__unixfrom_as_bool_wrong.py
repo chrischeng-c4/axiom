@@ -9,12 +9,11 @@
 # case = "Message__as_string__unixfrom_as_bool_wrong"
 # subject = "email.message.Message.as_string(unixfrom: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed unixfrom"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed unixfrom
 # mamba-strict-type: TypeError
 """Type wall: email.message.Message.as_string(unixfrom: bool); call it with the wrong type.
 
