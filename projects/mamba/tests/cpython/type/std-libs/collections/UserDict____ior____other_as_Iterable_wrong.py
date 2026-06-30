@@ -9,12 +9,10 @@
 # case = "UserDict____ior____other_as_Iterable_wrong"
 # subject = "collections.UserDict.__ior__(other: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other
 # mamba-strict-type: TypeError
 """Type wall: collections.UserDict.__ior__(other: Iterable); call it with the wrong type.
 

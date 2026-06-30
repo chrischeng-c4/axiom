@@ -9,12 +9,10 @@
 # case = "OrderedDict__popitem__last_as_bool_wrong"
 # subject = "collections.OrderedDict.popitem(last: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed last"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed last
 # mamba-strict-type: TypeError
 """Type wall: collections.OrderedDict.popitem(last: bool); call it with the wrong type.
 
