@@ -9,12 +9,10 @@
 # case = "chdir__init__path_as__T_fd_or_any_path_wrong"
 # subject = "contextlib.chdir.__init__(path: _T_fd_or_any_path)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: contextlib.chdir.__init__(path: _T_fd_or_any_path); call it with the wrong type.
 
