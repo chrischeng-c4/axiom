@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use cclab_surface::{Callback, Component, Element, Props, SurfaceSnapshot};
 
@@ -75,6 +75,8 @@ pub struct RepoViewSnapshot {
     pub schema_version: u32,
     pub layout: ViewLayout,
     pub repo: RepoViewRepo,
+    pub repo_catalog: Vec<RepoCatalogItem>,
+    pub selected_repo: Option<String>,
     pub terminal: TerminalSnapshot,
     pub catalog: Vec<ProjectCatalogItem>,
     pub selected: Option<String>,
@@ -90,6 +92,28 @@ pub struct RepoViewRepo {
     pub item_count: usize,
     pub project_count: usize,
     pub library_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoCatalogItem {
+    pub name: String,
+    pub path: String,
+    pub current: bool,
+    pub item_count: usize,
+    pub project_count: usize,
+    pub library_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct UserRepoRegistry {
+    #[serde(default)]
+    repos: Vec<UserRepoRegistryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UserRepoRegistryEntry {
+    name: String,
+    path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -232,6 +256,15 @@ pub fn build_repo_view_snapshot(
     focus: Option<&str>,
     layout: ViewLayout,
 ) -> Result<RepoViewSnapshot> {
+    build_repo_view_snapshot_with_repo_registry_path(root, focus, layout, user_repo_registry_path())
+}
+
+fn build_repo_view_snapshot_with_repo_registry_path(
+    root: &Path,
+    focus: Option<&str>,
+    layout: ViewLayout,
+    repo_registry_path: Option<PathBuf>,
+) -> Result<RepoViewSnapshot> {
     let rows = load_project_config_rows(root)?;
     let catalog = project_catalog(rows.clone());
     let mut warnings = Vec::new();
@@ -252,20 +285,25 @@ pub fn build_repo_view_snapshot(
             .cmp(&right.project.kind)
             .then_with(|| left.project.name.cmp(&right.project.name))
     });
+    let repo_root = canonical_repo_path(root);
     let repo = RepoViewRepo {
         name: root
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("repo")
             .to_string(),
-        root: root.display().to_string(),
+        root: repo_root.display().to_string(),
         item_count: catalog.len(),
         project_count: catalog.iter().filter(|item| item.kind == "project").count(),
         library_count: catalog.iter().filter(|item| item.kind == "library").count(),
     };
+    let repo_catalog = load_or_update_repo_catalog(root, &repo, repo_registry_path, &mut warnings);
+    let selected_repo = Some(repo.root.clone());
     let terminal = build_terminal_snapshot(&root, &repo, selected.as_deref(), &items, layout);
     let surface = build_surface_snapshot(
         &repo,
+        &repo_catalog,
+        selected_repo.as_deref(),
         &terminal,
         &catalog,
         selected.as_deref(),
@@ -277,6 +315,8 @@ pub fn build_repo_view_snapshot(
         schema_version: 1,
         layout,
         repo,
+        repo_catalog,
+        selected_repo,
         terminal,
         catalog,
         selected,
@@ -292,12 +332,25 @@ fn build_repo_view_item_snapshot(
 ) -> Result<RepoViewItemSnapshot> {
     let project = project_view_project(row);
     let cap_path = root.join(&project.cap_path);
-    let readme_body = std::fs::read_to_string(&cap_path)
-        .with_context(|| format!("failed to read README {}", cap_path.display()))?;
-    let document = parse_capability_document(&readme_body, &cap_path)
-        .with_context(|| format!("failed to parse capability README {}", cap_path.display()))?;
+    let cap_body = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
+    let document = parse_capability_document(&cap_body, &cap_path)
+        .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
 
     let mut warnings = document.findings.clone();
+    let readme_rel = format!("{}/README.md", project.path);
+    let readme_path = root.join(&readme_rel);
+    let (readme_body, readme_snapshot_path) = if readme_path == cap_path {
+        (cap_body.clone(), project.cap_path.clone())
+    } else {
+        match std::fs::read_to_string(&readme_path) {
+            Ok(body) => (body, readme_rel),
+            Err(err) => {
+                warnings.push(format!("README unavailable: {err}"));
+                (cap_body.clone(), project.cap_path.clone())
+            }
+        }
+    };
     let td_refs = match collect_td_capability_refs(root, &row.name, &document) {
         Ok(refs) => refs,
         Err(err) => {
@@ -308,7 +361,7 @@ fn build_repo_view_item_snapshot(
     let ec = load_ec_snapshot(root, &row)?;
     let td = td_snapshot(root, &project.td_path, td_refs.len())?;
     let readme = ReadmeSnapshot {
-        path: project.cap_path.clone(),
+        path: readme_snapshot_path,
         title: extract_h1(&readme_body).unwrap_or_else(|| row.name.clone()),
         brief: extract_brief(&readme_body).unwrap_or_default(),
         format_version: document.format_version(),
@@ -412,6 +465,147 @@ fn project_kind(path: &str) -> &'static str {
     } else {
         "project"
     }
+}
+
+fn user_repo_registry_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".aw").join("repos.toml"))
+}
+
+fn load_or_update_repo_catalog(
+    root: &Path,
+    repo: &RepoViewRepo,
+    registry_path: Option<PathBuf>,
+    warnings: &mut Vec<String>,
+) -> Vec<RepoCatalogItem> {
+    let current_path = canonical_repo_path(root);
+    let current_entry = UserRepoRegistryEntry {
+        name: repo.name.clone(),
+        path: current_path.display().to_string(),
+    };
+    let Some(registry_path) = registry_path else {
+        return vec![repo_catalog_item_from_entry(
+            &current_entry,
+            true,
+            Some(repo),
+        )];
+    };
+
+    let mut registry = match read_user_repo_registry(&registry_path) {
+        Ok(registry) => registry,
+        Err(err) => {
+            warnings.push(format!(
+                "repo registry unavailable at {}: {err}",
+                registry_path.display()
+            ));
+            return vec![repo_catalog_item_from_entry(
+                &current_entry,
+                true,
+                Some(repo),
+            )];
+        }
+    };
+    upsert_user_repo_entry(&mut registry, current_entry.clone());
+    if let Err(err) = write_user_repo_registry(&registry_path, &registry) {
+        warnings.push(format!(
+            "repo registry write failed at {}: {err}",
+            registry_path.display()
+        ));
+    }
+
+    let current_path_string = current_entry.path.clone();
+    let mut catalog = registry
+        .repos
+        .iter()
+        .map(|entry| {
+            let current = entry.path == current_path_string;
+            repo_catalog_item_from_entry(entry, current, current.then_some(repo))
+        })
+        .collect::<Vec<_>>();
+    if !catalog.iter().any(|item| item.current) {
+        catalog.push(repo_catalog_item_from_entry(
+            &current_entry,
+            true,
+            Some(repo),
+        ));
+    }
+    catalog.sort_by(|left, right| {
+        (!left.current)
+            .cmp(&(!right.current))
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    catalog
+}
+
+fn read_user_repo_registry(path: &Path) -> Result<UserRepoRegistry> {
+    match std::fs::read_to_string(path) {
+        Ok(body) => toml::from_str(&body)
+            .with_context(|| format!("failed to parse repo registry {}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(UserRepoRegistry::default()),
+        Err(err) => Err(err).with_context(|| format!("failed to read {}", path.display())),
+    }
+}
+
+fn write_user_repo_registry(path: &Path, registry: &UserRepoRegistry) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let body = toml::to_string_pretty(registry).context("failed to serialize repo registry")?;
+    std::fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn upsert_user_repo_entry(registry: &mut UserRepoRegistry, entry: UserRepoRegistryEntry) {
+    registry
+        .repos
+        .retain(|existing| existing.path != entry.path);
+    registry.repos.push(entry);
+}
+
+fn repo_catalog_item_from_entry(
+    entry: &UserRepoRegistryEntry,
+    current: bool,
+    current_repo: Option<&RepoViewRepo>,
+) -> RepoCatalogItem {
+    if let Some(repo) = current_repo {
+        return RepoCatalogItem {
+            name: repo.name.clone(),
+            path: entry.path.clone(),
+            current,
+            item_count: repo.item_count,
+            project_count: repo.project_count,
+            library_count: repo.library_count,
+        };
+    }
+    let (item_count, project_count, library_count) = repo_counts_for_path(Path::new(&entry.path));
+    RepoCatalogItem {
+        name: entry.name.clone(),
+        path: entry.path.clone(),
+        current,
+        item_count,
+        project_count,
+        library_count,
+    }
+}
+
+fn repo_counts_for_path(path: &Path) -> (usize, usize, usize) {
+    let Ok(rows) = load_project_config_rows(path) else {
+        return (0, 0, 0);
+    };
+    let item_count = rows.len();
+    let project_count = rows
+        .iter()
+        .filter(|row| project_kind(&row.path) == "project")
+        .count();
+    let library_count = rows
+        .iter()
+        .filter(|row| project_kind(&row.path) == "library")
+        .count();
+    (item_count, project_count, library_count)
+}
+
+fn canonical_repo_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn load_ec_snapshot(root: &Path, row: &ProjectConfigRow) -> Result<EcSnapshot> {
@@ -588,7 +782,7 @@ fn build_terminal_snapshot(
     lines.push(String::new());
     lines.push("$ aw view --check".to_string());
     lines.push(
-        "surface repo-layout-toggle repo-terminal repo-readme-detail repo-capability-table repo-ec-detail repo-td-detail"
+        "surface repo-layout-toggle repo-terminal repo-catalog repo-project-selector repo-readme-detail repo-capability-table repo-ec-detail repo-td-detail"
             .to_string(),
     );
     if let Some(item) = selected_item {
@@ -617,6 +811,8 @@ fn build_terminal_snapshot(
 
 fn build_surface_snapshot(
     repo: &RepoViewRepo,
+    repo_catalog: &[RepoCatalogItem],
+    selected_repo: Option<&str>,
     terminal: &TerminalSnapshot,
     catalog: &[ProjectCatalogItem],
     selected: Option<&str>,
@@ -625,6 +821,8 @@ fn build_surface_snapshot(
 ) -> SurfaceSnapshot {
     let props = RepoSurfaceProps {
         repo: repo.clone(),
+        repo_catalog: repo_catalog.to_vec(),
+        selected_repo: selected_repo.map(str::to_string),
         terminal: terminal.clone(),
         catalog: catalog.to_vec(),
         selected: selected.map(str::to_string),
@@ -644,6 +842,8 @@ fn build_surface_snapshot(
 #[derive(Clone)]
 struct RepoSurfaceProps {
     repo: RepoViewRepo,
+    repo_catalog: Vec<RepoCatalogItem>,
+    selected_repo: Option<String>,
     terminal: TerminalSnapshot,
     catalog: Vec<ProjectCatalogItem>,
     selected: Option<String>,
@@ -657,6 +857,8 @@ fn render_repo_surface(props: &Rc<dyn std::any::Any>) -> Element {
         .expect("AwRepoView props type mismatch");
     build_surface_element(
         &props.repo,
+        &props.repo_catalog,
+        props.selected_repo.as_deref(),
         &props.terminal,
         &props.catalog,
         props.selected.as_deref(),
@@ -667,23 +869,33 @@ fn render_repo_surface(props: &Rc<dyn std::any::Any>) -> Element {
 
 fn build_surface_element(
     repo: &RepoViewRepo,
+    repo_catalog: &[RepoCatalogItem],
+    selected_repo: Option<&str>,
     terminal: &TerminalSnapshot,
     catalog: &[ProjectCatalogItem],
     selected: Option<&str>,
     items: &[RepoViewItemSnapshot],
     layout: ViewLayout,
 ) -> Element {
-    let nav_items = catalog
+    let nav_items = repo_catalog
         .iter()
         .map(|item| {
             Element::intrinsic(
                 "button",
                 Props {
                     id: Some(format!("repo-item-{}", item.name)),
-                    aria_label: Some(format!("{} {}", item.kind, item.name)),
+                    aria_label: Some(format!("repo {} {}", item.name, item.path)),
                     ..Default::default()
                 },
-                vec![Element::text(&item.name)],
+                vec![Element::text(format!(
+                    "{} {}",
+                    if selected_repo == Some(item.path.as_str()) {
+                        "current"
+                    } else {
+                        "repo"
+                    },
+                    item.name
+                ))],
             )
         })
         .collect::<Vec<_>>();
@@ -729,6 +941,20 @@ fn build_surface_element(
         .map(|item| format!("{} TD markdown files", item.td.markdown_file_count))
         .unwrap_or_else(|| "0 TD markdown files".to_string());
     let terminal_text = terminal.lines.join("\n");
+    let project_selector_items = catalog
+        .iter()
+        .map(|item| {
+            Element::intrinsic(
+                "option",
+                Props {
+                    id: Some(format!("repo-project-option-{}", item.name)),
+                    aria_label: Some(format!("{} {}", item.kind, item.name)),
+                    ..Default::default()
+                },
+                vec![Element::text(format!("{} [{}]", item.name, item.kind))],
+            )
+        })
+        .collect::<Vec<_>>();
     Element::intrinsic(
         "main",
         Props {
@@ -760,16 +986,25 @@ fn build_surface_element(
                 "nav",
                 Props {
                     id: Some("repo-catalog".to_string()),
-                    aria_label: Some("Projects and libraries".to_string()),
+                    aria_label: Some("Repos".to_string()),
                     ..Default::default()
                 },
                 nav_items,
             ),
             Element::intrinsic(
+                "select",
+                Props {
+                    id: Some("repo-project-selector".to_string()),
+                    aria_label: Some("Project or library selector".to_string()),
+                    ..Default::default()
+                },
+                project_selector_items,
+            ),
+            Element::intrinsic(
                 "section",
                 Props {
                     id: Some("repo-readme-detail".to_string()),
-                    aria_label: Some("README detail".to_string()),
+                    aria_label: Some("Project brief".to_string()),
                     ..Default::default()
                 },
                 vec![Element::text(readme_text)],
@@ -808,8 +1043,9 @@ fn build_surface_element(
 pub fn headless_contract_check(snapshot: &RepoViewSnapshot) -> Result<String> {
     let selected = selected_item(snapshot);
     Ok(format!(
-        "view check: repo={} items={} layout={} selected={} terminal_lines={} capabilities={} ec_cases={} td_files={} surface_ids=repo-layout-toggle,repo-terminal,repo-catalog,repo-readme-detail,repo-capability-table,repo-ec-detail,repo-td-detail",
+        "view check: repo={} repos={} items={} layout={} selected={} terminal_lines={} capabilities={} ec_cases={} td_files={} surface_ids=repo-layout-toggle,repo-terminal,repo-catalog,repo-project-selector,repo-readme-detail,repo-capability-table,repo-ec-detail,repo-td-detail",
         snapshot.repo.name,
+        snapshot.repo_catalog.len(),
         snapshot.repo.item_count,
         snapshot.layout,
         selected
@@ -889,23 +1125,91 @@ const APP_SCREENSHOT_FONT_CANDIDATES: &[&str] = &[
 ];
 
 pub fn render_app_screenshot_image(snapshot: &RepoViewSnapshot) -> Result<image::RgbaImage> {
+    render_app_screenshot_image_at_scale(snapshot, 1.0)
+}
+
+pub fn render_app_screenshot_image_at_scale(
+    snapshot: &RepoViewSnapshot,
+    scale: f32,
+) -> Result<image::RgbaImage> {
+    render_app_screenshot_image_at_scale_with_options(
+        snapshot,
+        scale,
+        AppScreenshotPaintOptions::full(),
+    )
+}
+
+fn render_app_screenshot_image_at_scale_with_options(
+    snapshot: &RepoViewSnapshot,
+    scale: f32,
+    options: AppScreenshotPaintOptions,
+) -> Result<image::RgbaImage> {
+    let scale = normalized_screenshot_scale(scale);
+    let pixel_width = scaled_screenshot_dimension(APP_SCREENSHOT_WIDTH, scale);
+    let pixel_height = scaled_screenshot_dimension(APP_SCREENSHOT_HEIGHT, scale);
+
     #[cfg(target_os = "macos")]
     {
-        let mut painter = macos_screenshot::CoreTextScreenshotPainter::new(
-            APP_SCREENSHOT_WIDTH,
-            APP_SCREENSHOT_HEIGHT,
-        )?;
-        paint_repo_view_screenshot(snapshot, &mut painter);
+        let mut painter =
+            macos_screenshot::CoreTextScreenshotPainter::new(pixel_width, pixel_height)?;
+        paint_repo_view_screenshot(
+            snapshot,
+            &mut ScaledScreenshotPainter::new(&mut painter, scale),
+            options,
+        );
         return painter.into_image();
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let mut painter =
-            FontdueScreenshotPainter::new(APP_SCREENSHOT_WIDTH, APP_SCREENSHOT_HEIGHT)?;
-        paint_repo_view_screenshot(snapshot, &mut painter);
+        let mut painter = FontdueScreenshotPainter::new(pixel_width, pixel_height)?;
+        paint_repo_view_screenshot(
+            snapshot,
+            &mut ScaledScreenshotPainter::new(&mut painter, scale),
+            options,
+        );
         return Ok(painter.into_image());
     }
+}
+
+#[derive(Clone, Copy)]
+struct AppScreenshotPaintOptions {
+    layout_toggle: bool,
+    catalog_content: bool,
+    terminal_content: bool,
+    detail_content: bool,
+}
+
+impl AppScreenshotPaintOptions {
+    fn full() -> Self {
+        Self {
+            layout_toggle: true,
+            catalog_content: true,
+            terminal_content: true,
+            detail_content: true,
+        }
+    }
+
+    fn native_backdrop() -> Self {
+        Self {
+            layout_toggle: false,
+            catalog_content: false,
+            terminal_content: false,
+            detail_content: false,
+        }
+    }
+}
+
+fn normalized_screenshot_scale(scale: f32) -> f32 {
+    if scale.is_finite() && scale >= 1.0 {
+        scale.min(4.0)
+    } else {
+        1.0
+    }
+}
+
+fn scaled_screenshot_dimension(dimension: u32, scale: f32) -> u32 {
+    ((dimension as f32) * scale).round().max(1.0) as u32
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -940,6 +1244,42 @@ trait ScreenshotPainter {
         self.fill_rect(x, y + height - 1, width, 1, color);
         self.fill_rect(x, y, 1, height, color);
         self.fill_rect(x + width - 1, y, 1, height, color);
+    }
+}
+
+struct ScaledScreenshotPainter<'a> {
+    inner: &'a mut dyn ScreenshotPainter,
+    scale: f32,
+}
+
+impl<'a> ScaledScreenshotPainter<'a> {
+    fn new(inner: &'a mut dyn ScreenshotPainter, scale: f32) -> Self {
+        Self { inner, scale }
+    }
+
+    fn px(&self, value: i32) -> i32 {
+        (value as f32 * self.scale).round() as i32
+    }
+}
+
+impl ScreenshotPainter for ScaledScreenshotPainter<'_> {
+    fn fill_rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: image::Rgba<u8>) {
+        self.inner.fill_rect(
+            self.px(x),
+            self.px(y),
+            self.px(width).max(1),
+            self.px(height).max(1),
+            color,
+        );
+    }
+
+    fn draw_text_line(&mut self, x: i32, y: i32, size: f32, color: image::Rgba<u8>, text: &str) {
+        self.inner
+            .draw_text_line(self.px(x), self.px(y), size * self.scale, color, text);
+    }
+
+    fn measure_text_width(&mut self, text: &str, size: f32) -> f32 {
+        self.inner.measure_text_width(text, size * self.scale) / self.scale
     }
 }
 
@@ -1409,11 +1749,34 @@ mod macos_screenshot {
 }
 
 pub fn render_app_screenshot_png(snapshot: &RepoViewSnapshot) -> Result<Vec<u8>> {
-    let image = render_app_screenshot_image(snapshot)?;
+    render_app_screenshot_png_at_scale(snapshot, 1.0)
+}
+
+pub fn render_app_screenshot_png_at_scale(
+    snapshot: &RepoViewSnapshot,
+    scale: f32,
+) -> Result<Vec<u8>> {
+    let image = render_app_screenshot_image_at_scale(snapshot, scale)?;
     let mut cursor = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgba8(image)
         .write_to(&mut cursor, image::ImageFormat::Png)
         .context("failed to encode app screenshot PNG")?;
+    Ok(cursor.into_inner())
+}
+
+pub fn render_native_app_backdrop_png_at_scale(
+    snapshot: &RepoViewSnapshot,
+    scale: f32,
+) -> Result<Vec<u8>> {
+    let image = render_app_screenshot_image_at_scale_with_options(
+        snapshot,
+        scale,
+        AppScreenshotPaintOptions::native_backdrop(),
+    )?;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .context("failed to encode native app backdrop PNG")?;
     Ok(cursor.into_inner())
 }
 
@@ -1537,6 +1900,8 @@ fn macos_app_info_plist(app_path: &Path) -> String {
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
 </dict>
 </plist>
 "#
@@ -1548,7 +1913,11 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn paint_repo_view_screenshot(snapshot: &RepoViewSnapshot, painter: &mut dyn ScreenshotPainter) {
+fn paint_repo_view_screenshot(
+    snapshot: &RepoViewSnapshot,
+    painter: &mut dyn ScreenshotPainter,
+    options: AppScreenshotPaintOptions,
+) {
     let selected = selected_item(snapshot);
     painter.fill_rect(0, 0, APP_SCREENSHOT_WIDTH as i32, 58, rgba(31, 42, 55, 255));
     painter.fill_rect(
@@ -1565,21 +1934,29 @@ fn paint_repo_view_screenshot(snapshot: &RepoViewSnapshot, painter: &mut dyn Scr
         14.0,
         rgba(203, 213, 225, 255),
         &format!(
-            "{} - {} items / {} projects / {} libs",
+            "{} - {} repos / {} projects / {} libs",
             snapshot.repo.name,
-            snapshot.repo.item_count,
+            snapshot.repo_catalog.len(),
             snapshot.repo.project_count,
             snapshot.repo.library_count
         ),
     );
-    paint_layout_toggle_button(snapshot, painter);
+    if options.layout_toggle {
+        paint_layout_toggle_button(snapshot, painter);
+    }
 
     let catalog_x = 24;
     let catalog_y = 82;
     let catalog_w = 250;
     let catalog_h = 708;
     paint_catalog(
-        snapshot, painter, catalog_x, catalog_y, catalog_w, catalog_h,
+        snapshot,
+        painter,
+        catalog_x,
+        catalog_y,
+        catalog_w,
+        catalog_h,
+        options.catalog_content,
     );
 
     match snapshot.layout {
@@ -1593,7 +1970,13 @@ fn paint_repo_view_screenshot(snapshot: &RepoViewSnapshot, painter: &mut dyn Scr
             let detail_w = 574;
             let detail_h = 708;
             paint_terminal(
-                snapshot, painter, terminal_x, terminal_y, terminal_w, terminal_h,
+                snapshot,
+                painter,
+                terminal_x,
+                terminal_y,
+                terminal_w,
+                terminal_h,
+                options.terminal_content,
             );
             paint_detail_panel(
                 snapshot,
@@ -1604,6 +1987,7 @@ fn paint_repo_view_screenshot(snapshot: &RepoViewSnapshot, painter: &mut dyn Scr
                 detail_w,
                 detail_h,
                 DetailPaintDensity::standard(),
+                options.detail_content,
             );
         }
         ViewLayout::TopBottom => {
@@ -1614,7 +1998,15 @@ fn paint_repo_view_screenshot(snapshot: &RepoViewSnapshot, painter: &mut dyn Scr
             let gap = 16;
             let detail_y = right_y + terminal_h + gap;
             let detail_h = 708 - terminal_h - gap;
-            paint_terminal(snapshot, painter, right_x, right_y, right_w, terminal_h);
+            paint_terminal(
+                snapshot,
+                painter,
+                right_x,
+                right_y,
+                right_w,
+                terminal_h,
+                options.terminal_content,
+            );
             paint_detail_panel(
                 snapshot,
                 selected,
@@ -1624,6 +2016,7 @@ fn paint_repo_view_screenshot(snapshot: &RepoViewSnapshot, painter: &mut dyn Scr
                 right_w,
                 detail_h,
                 DetailPaintDensity::compact(),
+                options.detail_content,
             );
         }
     }
@@ -1679,22 +2072,21 @@ fn paint_detail_panel(
     width: i32,
     height: i32,
     density: DetailPaintDensity,
+    paint_content: bool,
 ) {
     painter.fill_rect(x, y, width, height, rgba(255, 255, 255, 255));
     painter.stroke_rect(x, y, width, height, rgba(203, 213, 225, 255));
-    painter.draw_text_line(
-        x + 24,
-        y + 18,
-        13.0,
-        rgba(100, 116, 139, 255),
-        "Current repo view",
-    );
+    painter.draw_text_line(x + 24, y + 18, 13.0, rgba(100, 116, 139, 255), "Caps / EC");
+    paint_project_selector(snapshot, selected, painter, x + 220, y + 12, width - 244);
+    if !paint_content {
+        return;
+    }
     paint_detail(
         snapshot,
         selected,
         painter,
         x + 24,
-        y + 48,
+        y + 84,
         width - 48,
         density,
     );
@@ -1707,33 +2099,31 @@ fn paint_catalog(
     y: i32,
     width: i32,
     height: i32,
+    paint_content: bool,
 ) {
     painter.fill_rect(x, y, width, height, rgba(255, 255, 255, 255));
     painter.stroke_rect(x, y, width, height, rgba(203, 213, 225, 255));
     painter.fill_rect(x, y, width, 42, rgba(248, 250, 252, 255));
-    painter.draw_text_line(
-        x + 14,
-        y + 13,
-        13.5,
-        rgba(15, 23, 42, 255),
-        "Projects / libs",
-    );
+    painter.draw_text_line(x + 14, y + 13, 13.5, rgba(15, 23, 42, 255), "Repos");
     painter.draw_text_line(
         x + width - 72,
         y + 15,
         10.5,
         rgba(100, 116, 139, 255),
-        &format!("{} total", snapshot.repo.item_count),
+        &format!("{} total", snapshot.repo_catalog.len()),
     );
+    if !paint_content {
+        return;
+    }
 
-    let selected = snapshot.selected.as_deref().unwrap_or_default();
+    let selected = snapshot.selected_repo.as_deref().unwrap_or_default();
     let mut cursor_y = y + 56;
     let row_h = 22;
-    for item in snapshot.catalog.iter() {
+    for item in snapshot.repo_catalog.iter() {
         if cursor_y > y + height - 22 {
             break;
         }
-        let is_selected = item.name == selected;
+        let is_selected = item.path == selected;
         if is_selected {
             painter.fill_rect(
                 x + 8,
@@ -1744,10 +2134,13 @@ fn paint_catalog(
             );
             painter.fill_rect(x + 8, cursor_y - 4, 3, row_h, rgba(37, 99, 235, 255));
         }
-        let marker = if item.kind == "library" { "lib" } else { "prj" };
         let label = truncate_for_width(
             painter,
-            &format!("{marker} {}", item.name),
+            &format!(
+                "{} {}",
+                if item.current { "cur" } else { "repo" },
+                item.name
+            ),
             width - 34,
             10.5,
         );
@@ -1766,6 +2159,32 @@ fn paint_catalog(
     }
 }
 
+fn paint_project_selector(
+    snapshot: &RepoViewSnapshot,
+    selected: Option<&RepoViewItemSnapshot>,
+    painter: &mut dyn ScreenshotPainter,
+    x: i32,
+    y: i32,
+    width: i32,
+) {
+    let label = selected
+        .map(|item| format!("{} [{}]", item.project.name, item.project.kind))
+        .unwrap_or_else(|| "No project selected".to_string());
+    painter.draw_text_line(x, y - 2, 10.5, rgba(100, 116, 139, 255), "Project / lib");
+    painter.fill_rect(x, y + 14, width, 28, rgba(248, 250, 252, 255));
+    painter.stroke_rect(x, y + 14, width, 28, rgba(148, 163, 184, 255));
+    let text = truncate_for_width(painter, &label, width - 34, 12.0);
+    painter.draw_text_line(x + 10, y + 23, 12.0, rgba(15, 23, 42, 255), &text);
+    painter.draw_text_line(x + width - 20, y + 23, 12.0, rgba(71, 85, 105, 255), "v");
+    painter.draw_text_line(
+        x,
+        y + 55,
+        10.5,
+        rgba(100, 116, 139, 255),
+        &format!("{} projects/libs", snapshot.catalog.len()),
+    );
+}
+
 fn paint_terminal(
     snapshot: &RepoViewSnapshot,
     painter: &mut dyn ScreenshotPainter,
@@ -1773,6 +2192,7 @@ fn paint_terminal(
     y: i32,
     width: i32,
     height: i32,
+    paint_content: bool,
 ) {
     painter.fill_rect(x, y, width, height, rgba(15, 23, 42, 255));
     painter.stroke_rect(x, y, width, height, rgba(51, 65, 85, 255));
@@ -1791,6 +2211,9 @@ fn paint_terminal(
         rgba(125, 211, 252, 255),
         "agent + repo",
     );
+    if !paint_content {
+        return;
+    }
 
     let mut cursor_y = y + 58;
     for line in &snapshot.terminal.lines {
@@ -2175,7 +2598,7 @@ name = "demo"
 aliases = ["d"]
 path = "projects/demo"
 td_path = "projects/demo/tech-design"
-cap_path = "projects/demo/README.md"
+cap_path = "projects/demo/CAPABILITIES.md"
 label = "project:demo"
 "#,
         )
@@ -2189,6 +2612,12 @@ label = "project:demo"
 ## Brief
 
 Demo project for the visual reader.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project_dir.join("CAPABILITIES.md"),
+            r#"# Demo Capabilities
 
 ## Capabilities
 
@@ -2250,11 +2679,26 @@ assertions = ["snapshot includes demo"]
         )
         .unwrap();
 
-        let snapshot = build_repo_view_snapshot(root, Some("d"), ViewLayout::LeftRight).unwrap();
+        let repo_registry_path = root.join(".aw-user/repos.toml");
+        let snapshot = build_repo_view_snapshot_with_repo_registry_path(
+            root,
+            Some("d"),
+            ViewLayout::LeftRight,
+            Some(repo_registry_path.clone()),
+        )
+        .unwrap();
         assert_eq!(
             snapshot.repo.name,
             root.file_name().unwrap().to_string_lossy()
         );
+        assert_eq!(snapshot.repo_catalog.len(), 1);
+        let canonical_root = canonical_repo_path(root).display().to_string();
+        assert_eq!(snapshot.repo_catalog[0].path, canonical_root);
+        assert_eq!(
+            snapshot.selected_repo.as_deref(),
+            Some(canonical_root.as_str())
+        );
+        assert!(repo_registry_path.exists());
         assert_eq!(snapshot.selected.as_deref(), Some("demo"));
         assert_eq!(snapshot.catalog.len(), 1);
         let item = snapshot
@@ -2263,6 +2707,8 @@ assertions = ["snapshot includes demo"]
             .find(|item| item.project.name == "demo")
             .unwrap();
         assert_eq!(item.project.kind, "project");
+        assert_eq!(item.project.cap_path, "projects/demo/CAPABILITIES.md");
+        assert_eq!(item.readme.path, "projects/demo/README.md");
         assert_eq!(item.readme.title, "Demo");
         assert_eq!(item.capabilities.count, 1);
         assert_eq!(item.capabilities.items[0].ec_case_count, 1);
@@ -2271,6 +2717,10 @@ assertions = ["snapshot includes demo"]
         assert!(snapshot
             .surface
             .find_by_semantic_id("repo-catalog")
+            .is_some());
+        assert!(snapshot
+            .surface
+            .find_by_semantic_id("repo-project-selector")
             .is_some());
         let toggle = snapshot
             .surface
@@ -2304,6 +2754,10 @@ assertions = ["snapshot includes demo"]
         let screenshot = std::fs::read(&screenshot_path).unwrap();
         assert!(screenshot.len() > 1024);
         assert_eq!(&screenshot[..8], b"\x89PNG\r\n\x1a\n");
+
+        let retina_image = render_app_screenshot_image_at_scale(&snapshot, 2.0).unwrap();
+        assert_eq!(retina_image.width(), APP_SCREENSHOT_WIDTH * 2);
+        assert_eq!(retina_image.height(), APP_SCREENSHOT_HEIGHT * 2);
     }
 }
 // HANDWRITE-END

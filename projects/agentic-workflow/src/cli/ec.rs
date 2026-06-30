@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 const EC_MANIFEST_VERSION: u8 = 1;
 const EC_DOC_REL: &str = "docs/aw-ec-manual.md";
 const EC_SOURCE_REL: &str = "external-contracts";
+const EC_LOCK_FILE: &str = "ec.lock";
 const PROJECT_AW_REL: &str = "aw.toml";
 const LEGACY_EC_MANIFEST_FILE: &str = "aw-ec.toml";
 const EC_AW_BEGIN_MARKER: &str = "AW-EC-BEGIN";
@@ -55,6 +56,8 @@ pub enum EcCommand {
     Gen(EcGenArgs),
     /// Check aw.toml EC inventory/list drift and generated test-file presence.
     Check(EcCheckArgs),
+    /// Write or verify the canonical EC IR lock.
+    Lock(EcLockArgs),
     /// Review whether each capability's EC covers every dimension its type requires (#188 E6).
     Review(EcReviewArgs),
     /// Record a verifier (EC) result onto a LOCAL lifecycle work-item's loop-state block (#188 E1/E4).
@@ -133,6 +136,20 @@ pub struct EcGenArgs {
 #[derive(Debug, Args)]
 pub struct EcCheckArgs {
     /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcLockArgs {
+    /// Check the lock without rewriting it. Exits non-zero when missing or stale.
+    #[arg(long)]
+    pub check: bool,
+    /// Show current lock status without rewriting it.
+    #[arg(long)]
+    pub show: bool,
+    /// Emit JSON status.
     #[arg(long)]
     pub json: bool,
 }
@@ -326,6 +343,97 @@ pub struct EcCheckSummary {
     pub orphan_test_paths: Vec<String>,
     pub missing_tool_manifest_paths: Vec<String>,
     pub findings: Vec<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EcLockStatus {
+    pub project: String,
+    pub ir_kind: String,
+    pub ec_path: String,
+    pub inventory_path: String,
+    pub lock_path: String,
+    pub status: EcLockState,
+    pub clean: bool,
+    pub ir_digest: String,
+    pub locked_ir_digest: Option<String>,
+    pub source_digest: String,
+    pub locked_source_digest: Option<String>,
+    pub source_count: usize,
+    pub case_count: usize,
+    pub tool_contract_count: usize,
+    pub changed: Vec<String>,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub message: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EcLockState {
+    Locked,
+    Missing,
+    Stale,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EcLockFile {
+    version: u8,
+    project: String,
+    ir_kind: String,
+    ec_path: String,
+    inventory_path: String,
+    generated_at: String,
+    ir_digest: String,
+    source_digest: String,
+    sources: Vec<EcLockSource>,
+    cases: Vec<EcLockCase>,
+    tool_contracts: Vec<EcLockToolContract>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcLockSource {
+    path: String,
+    digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcLockCase {
+    id: String,
+    capability_id: String,
+    claim_id: String,
+    contract_id: String,
+    dimension: String,
+    source_ref: String,
+    test_path: String,
+    command: String,
+    required_for_production: bool,
+    assertions: Vec<String>,
+    evidence_digest: String,
+    evaluator_digest: String,
+    digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcLockToolContract {
+    id: String,
+    tool: String,
+    dimension: String,
+    source_ref: String,
+    manifest_path: String,
+    command: String,
+    content_digest: String,
+    digest: String,
+}
+
+#[derive(Debug, Clone)]
+struct EcIrSnapshot {
+    ir_digest: String,
+    source_digest: String,
+    sources: Vec<EcLockSource>,
+    cases: Vec<EcLockCase>,
+    tool_contracts: Vec<EcLockToolContract>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -558,6 +666,7 @@ pub fn run(args: EcArgs) -> Result<()> {
         EcCommand::Fill(args) => run_fill(&project, args),
         EcCommand::Gen(args) => run_gen(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
+        EcCommand::Lock(args) => run_lock(&project, args),
         EcCommand::Review(args) => run_review(&project, args),
         EcCommand::Record(args) => run_record(args),
         EcCommand::Verify(args) => run_verify(&project, args),
@@ -570,6 +679,13 @@ pub fn project_ec_check_summary(project: &str) -> Result<EcCheckSummary> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     check_ec_context(&ctx)
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub fn project_ec_lock_status(project: &str) -> Result<EcLockStatus> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    check_ec_lock_context(&ctx)
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -848,6 +964,7 @@ fn parse_ec_annotation(line: &str) -> Option<EcSectionAnnotation> {
 fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    ensure_ec_lock_clean_for_gen(&ctx)?;
     let manifest = build_expected_manifest(&ctx)?;
     let generated_files = generated_ec_test_files(&ctx, &manifest);
 
@@ -957,6 +1074,51 @@ fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
     }
     if !summary.clean {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn ensure_ec_lock_clean_for_gen(ctx: &EcProjectContext) -> Result<()> {
+    let status = check_ec_lock_context(ctx)?;
+    if status.clean {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "ec gen requires a clean EC IR lock before generation: {}",
+        status.message
+    )
+}
+
+fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    if args.check || args.show {
+        let status = check_ec_lock_context(&ctx)?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        } else {
+            print_ec_lock_status(&status);
+        }
+        if args.check && !status.clean {
+            bail!("{}", status.message);
+        }
+        return Ok(());
+    }
+
+    let (status, wrote) = write_ec_lock_context(&ctx)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+    } else {
+        println!(
+            "ec lock {}: {} {} ({} source(s), {} case(s), {} tool contract(s), {})",
+            status.project,
+            if wrote { "wrote" } else { "already clean" },
+            status.lock_path,
+            status.source_count,
+            status.case_count,
+            status.tool_contract_count,
+            status.ir_digest
+        );
     }
     Ok(())
 }
@@ -1240,6 +1402,303 @@ fn print_ec_doc_findings(summary: &EcDocCheckSummary) {
     for finding in &summary.findings {
         println!("  - {finding}");
     }
+}
+
+fn check_ec_lock_context(ctx: &EcProjectContext) -> Result<EcLockStatus> {
+    let lock_path = ec_lock_path(ctx);
+    let snapshot = snapshot_ec_ir(ctx)?;
+    if !lock_path.is_file() {
+        return Ok(ec_lock_status_from_parts(
+            ctx,
+            EcLockState::Missing,
+            false,
+            &snapshot,
+            None,
+            None,
+            Vec::new(),
+            snapshot_entry_keys(&snapshot),
+            Vec::new(),
+            format!(
+                "ec lock missing; run `aw ec lock --project {}`",
+                ctx.project
+            ),
+        ));
+    }
+
+    let lock_content =
+        fs::read_to_string(&lock_path).with_context(|| format!("read {}", lock_path.display()))?;
+    let lock: EcLockFile =
+        toml::from_str(&lock_content).with_context(|| format!("parse {}", lock_path.display()))?;
+    let metadata_changed = lock.version != EC_MANIFEST_VERSION
+        || lock.project != ctx.project
+        || lock.ir_kind != "ec"
+        || lock.ec_path != relative_to(&ctx.project_root, &ctx.ec_root)
+        || lock.inventory_path != relative_to(&ctx.project_root, &ctx.inventory_path);
+    let locked_entries = lock_entries(&lock);
+    let current_entries = snapshot_entries(&snapshot);
+    let (changed, added, removed) = diff_lock_entries(&locked_entries, &current_entries);
+    let clean = !metadata_changed
+        && changed.is_empty()
+        && added.is_empty()
+        && removed.is_empty()
+        && lock.ir_digest == snapshot.ir_digest
+        && lock.source_digest == snapshot.source_digest;
+    if clean {
+        return Ok(ec_lock_status_from_parts(
+            ctx,
+            EcLockState::Locked,
+            true,
+            &snapshot,
+            Some(lock.ir_digest),
+            Some(lock.source_digest),
+            changed,
+            added,
+            removed,
+            "ec lock clean".to_string(),
+        ));
+    }
+
+    let message = ec_lock_stale_message(&ctx.project, metadata_changed, &changed, &added, &removed);
+    Ok(ec_lock_status_from_parts(
+        ctx,
+        EcLockState::Stale,
+        false,
+        &snapshot,
+        Some(lock.ir_digest),
+        Some(lock.source_digest),
+        changed,
+        added,
+        removed,
+        message,
+    ))
+}
+
+fn write_ec_lock_context(ctx: &EcProjectContext) -> Result<(EcLockStatus, bool)> {
+    let lock_path = ec_lock_path(ctx);
+    if lock_path.is_file() {
+        let status = check_ec_lock_context(ctx)?;
+        if status.clean {
+            return Ok((status, false));
+        }
+    }
+    let snapshot = snapshot_ec_ir(ctx)?;
+    let lock = EcLockFile {
+        version: EC_MANIFEST_VERSION,
+        project: ctx.project.clone(),
+        ir_kind: "ec".to_string(),
+        ec_path: relative_to(&ctx.project_root, &ctx.ec_root),
+        inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        ir_digest: snapshot.ir_digest.clone(),
+        source_digest: snapshot.source_digest.clone(),
+        sources: snapshot.sources.clone(),
+        cases: snapshot.cases.clone(),
+        tool_contracts: snapshot.tool_contracts.clone(),
+    };
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let encoded = toml::to_string_pretty(&lock).context("serialize ec lock")?;
+    fs::write(&lock_path, encoded).with_context(|| format!("write {}", lock_path.display()))?;
+    Ok((
+        ec_lock_status_from_parts(
+            ctx,
+            EcLockState::Locked,
+            true,
+            &snapshot,
+            Some(snapshot.ir_digest.clone()),
+            Some(snapshot.source_digest.clone()),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            "ec lock clean".to_string(),
+        ),
+        true,
+    ))
+}
+
+fn snapshot_ec_ir(ctx: &EcProjectContext) -> Result<EcIrSnapshot> {
+    let manifest = build_expected_manifest(ctx)?;
+    let mut cases = manifest
+        .cases
+        .iter()
+        .map(ec_lock_case_from_manifest)
+        .collect::<Vec<_>>();
+    cases.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut tool_contracts = manifest
+        .tool_manifests
+        .iter()
+        .map(ec_lock_tool_from_manifest)
+        .collect::<Vec<_>>();
+    tool_contracts.sort_by(|left, right| left.id.cmp(&right.id));
+    let sources = collect_ec_ir_sources(ctx, &manifest)?;
+    let source_digest = digest_sources(&sources);
+    let ir_digest = digest_ec_lock_ir(&cases, &tool_contracts);
+    Ok(EcIrSnapshot {
+        ir_digest,
+        source_digest,
+        sources,
+        cases,
+        tool_contracts,
+    })
+}
+
+fn collect_ec_ir_sources(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+) -> Result<Vec<EcLockSource>> {
+    let mut paths = BTreeSet::new();
+    if ctx.ec_root.is_dir() {
+        for entry in WalkDir::new(&ctx.ec_root)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_file())
+        {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+                paths.insert(relative_to(&ctx.project_root, path));
+            }
+        }
+    }
+    for source_ref in manifest
+        .cases
+        .iter()
+        .map(|case| case.td_ref.as_str())
+        .chain(
+            manifest
+                .tool_manifests
+                .iter()
+                .map(|tool| tool.td_ref.as_str()),
+        )
+    {
+        if let Some((path, _anchor)) = source_ref.split_once('#') {
+            paths.insert(path.to_string());
+        }
+    }
+
+    let mut sources = Vec::new();
+    for path in paths {
+        let abs = ctx.project_root.join(&path);
+        let bytes = fs::read(&abs).with_context(|| format!("read EC source {}", abs.display()))?;
+        sources.push(EcLockSource {
+            path,
+            digest: digest_bytes(&bytes),
+        });
+    }
+    Ok(sources)
+}
+
+fn ec_lock_case_from_manifest(case: &EcManifestCase) -> EcLockCase {
+    let evidence_digest = digest_evidence_artifacts(&case.evidence);
+    let evaluator_digest = digest_evaluators(&case.evaluators);
+    let mut lock_case = EcLockCase {
+        id: case.id.clone(),
+        capability_id: case.capability_id.clone(),
+        claim_id: case.claim_id.clone(),
+        contract_id: case.contract_id.clone(),
+        dimension: case.category.clone(),
+        source_ref: case.td_ref.clone(),
+        test_path: case.test_path.clone(),
+        command: case.command.clone(),
+        required_for_production: case.required_for_production,
+        assertions: case.assertions.clone(),
+        evidence_digest,
+        evaluator_digest,
+        digest: String::new(),
+    };
+    lock_case.digest = digest_ec_lock_case(&lock_case);
+    lock_case
+}
+
+fn ec_lock_tool_from_manifest(manifest: &EcToolManifest) -> EcLockToolContract {
+    let mut lock_tool = EcLockToolContract {
+        id: manifest.id.clone(),
+        tool: manifest.tool.clone(),
+        dimension: manifest.category.clone(),
+        source_ref: manifest.td_ref.clone(),
+        manifest_path: manifest.path.clone(),
+        command: manifest.command.clone(),
+        content_digest: manifest.content_digest.clone(),
+        digest: String::new(),
+    };
+    lock_tool.digest = digest_ec_lock_tool(&lock_tool);
+    lock_tool
+}
+
+fn ec_lock_path(ctx: &EcProjectContext) -> PathBuf {
+    ctx.ec_root.join(EC_LOCK_FILE)
+}
+
+fn ec_lock_status_from_parts(
+    ctx: &EcProjectContext,
+    status: EcLockState,
+    clean: bool,
+    snapshot: &EcIrSnapshot,
+    locked_ir_digest: Option<String>,
+    locked_source_digest: Option<String>,
+    changed: Vec<String>,
+    added: Vec<String>,
+    removed: Vec<String>,
+    message: String,
+) -> EcLockStatus {
+    EcLockStatus {
+        project: ctx.project.clone(),
+        ir_kind: "ec".to_string(),
+        ec_path: relative_to(&ctx.project_root, &ctx.ec_root),
+        inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
+        lock_path: relative_to(&ctx.project_root, &ec_lock_path(ctx)),
+        status,
+        clean,
+        ir_digest: snapshot.ir_digest.clone(),
+        locked_ir_digest,
+        source_digest: snapshot.source_digest.clone(),
+        locked_source_digest,
+        source_count: snapshot.sources.len(),
+        case_count: snapshot.cases.len(),
+        tool_contract_count: snapshot.tool_contracts.len(),
+        changed,
+        added,
+        removed,
+        message,
+    }
+}
+
+fn print_ec_lock_status(status: &EcLockStatus) {
+    println!("ec lock {}: {:?}", status.project, status.status);
+    println!("ec_path: {}", status.ec_path);
+    println!("inventory_path: {}", status.inventory_path);
+    println!("lock_path: {}", status.lock_path);
+    println!("ir_digest: {}", status.ir_digest);
+    if let Some(locked_ir_digest) = &status.locked_ir_digest {
+        println!("locked_ir_digest: {locked_ir_digest}");
+    }
+    println!("source_digest: {}", status.source_digest);
+    if let Some(locked_source_digest) = &status.locked_source_digest {
+        println!("locked_source_digest: {locked_source_digest}");
+    }
+    println!(
+        "sources: {}, cases: {}, tool_contracts: {}",
+        status.source_count, status.case_count, status.tool_contract_count
+    );
+    if !status.changed.is_empty() {
+        println!("changed:");
+        for item in &status.changed {
+            println!("  {item}");
+        }
+    }
+    if !status.added.is_empty() {
+        println!("added:");
+        for item in &status.added {
+            println!("  {item}");
+        }
+    }
+    if !status.removed.is_empty() {
+        println!("removed:");
+        for item in &status.removed {
+            println!("  {item}");
+        }
+    }
+    println!("{}", status.message);
 }
 
 fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<EcProjectContext> {
@@ -2362,6 +2821,207 @@ fn digest_string(value: &str) -> String {
 fn hash_field(hasher: &mut Sha256, value: &str) {
     hasher.update(value.as_bytes());
     hasher.update([0]);
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_sources(sources: &[EcLockSource]) -> String {
+    let mut sorted = sources.to_vec();
+    sorted.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut hasher = Sha256::new();
+    for source in sorted {
+        hash_field(&mut hasher, &source.path);
+        hash_field(&mut hasher, &source.digest);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_ec_lock_ir(cases: &[EcLockCase], tool_contracts: &[EcLockToolContract]) -> String {
+    let mut hasher = Sha256::new();
+    let mut sorted_cases = cases.to_vec();
+    sorted_cases.sort_by(|left, right| left.id.cmp(&right.id));
+    for case in sorted_cases {
+        hash_field(&mut hasher, "case");
+        hash_field(&mut hasher, &case.id);
+        hash_field(&mut hasher, &case.digest);
+    }
+    let mut sorted_tools = tool_contracts.to_vec();
+    sorted_tools.sort_by(|left, right| left.id.cmp(&right.id));
+    for tool in sorted_tools {
+        hash_field(&mut hasher, "tool");
+        hash_field(&mut hasher, &tool.id);
+        hash_field(&mut hasher, &tool.digest);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_ec_lock_case(case: &EcLockCase) -> String {
+    let mut hasher = Sha256::new();
+    hash_field(&mut hasher, &case.id);
+    hash_field(&mut hasher, &case.capability_id);
+    hash_field(&mut hasher, &case.claim_id);
+    hash_field(&mut hasher, &case.contract_id);
+    hash_field(&mut hasher, &case.dimension);
+    hash_field(&mut hasher, &case.source_ref);
+    hash_field(&mut hasher, &case.test_path);
+    hash_field(&mut hasher, &case.command);
+    hash_field(
+        &mut hasher,
+        if case.required_for_production {
+            "true"
+        } else {
+            "false"
+        },
+    );
+    for assertion in &case.assertions {
+        hash_field(&mut hasher, assertion);
+    }
+    hash_field(&mut hasher, &case.evidence_digest);
+    hash_field(&mut hasher, &case.evaluator_digest);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_ec_lock_tool(tool: &EcLockToolContract) -> String {
+    let mut hasher = Sha256::new();
+    hash_field(&mut hasher, &tool.id);
+    hash_field(&mut hasher, &tool.tool);
+    hash_field(&mut hasher, &tool.dimension);
+    hash_field(&mut hasher, &tool.source_ref);
+    hash_field(&mut hasher, &tool.manifest_path);
+    hash_field(&mut hasher, &tool.command);
+    hash_field(&mut hasher, &tool.content_digest);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_evidence_artifacts(artifacts: &[EcEvidenceArtifact]) -> String {
+    let mut hasher = Sha256::new();
+    for artifact in artifacts {
+        hash_field(&mut hasher, &artifact.kind);
+        hash_field(&mut hasher, &artifact.path);
+        hash_field(&mut hasher, &artifact.label);
+        hash_field(&mut hasher, &artifact.locator);
+        hash_field(&mut hasher, &artifact.format);
+        hash_field(&mut hasher, &artifact.command);
+        for screenshot in &artifact.screenshots {
+            hash_field(&mut hasher, screenshot);
+        }
+        for highlight in &artifact.highlights {
+            hash_field(&mut hasher, highlight);
+        }
+        for step in &artifact.steps {
+            hash_field(&mut hasher, step);
+        }
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_evaluators(evaluators: &[EcEvaluator]) -> String {
+    let mut hasher = Sha256::new();
+    for evaluator in evaluators {
+        hash_field(&mut hasher, &evaluator.id);
+        hash_field(&mut hasher, &evaluator.tool);
+        hash_field(&mut hasher, &evaluator.command);
+        hash_field(&mut hasher, &evaluator.report_path);
+        hash_field(&mut hasher, &evaluator.prompt);
+        for rubric in &evaluator.rubric {
+            hash_field(&mut hasher, rubric);
+        }
+        for criterion in &evaluator.pass_criteria {
+            hash_field(&mut hasher, criterion);
+        }
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn lock_entries(lock: &EcLockFile) -> BTreeMap<String, String> {
+    let mut entries = BTreeMap::new();
+    for source in &lock.sources {
+        entries.insert(format!("source:{}", source.path), source.digest.clone());
+    }
+    for case in &lock.cases {
+        entries.insert(format!("case:{}", case.id), case.digest.clone());
+    }
+    for tool in &lock.tool_contracts {
+        entries.insert(format!("tool:{}", tool.id), tool.digest.clone());
+    }
+    entries
+}
+
+fn snapshot_entries(snapshot: &EcIrSnapshot) -> BTreeMap<String, String> {
+    let mut entries = BTreeMap::new();
+    for source in &snapshot.sources {
+        entries.insert(format!("source:{}", source.path), source.digest.clone());
+    }
+    for case in &snapshot.cases {
+        entries.insert(format!("case:{}", case.id), case.digest.clone());
+    }
+    for tool in &snapshot.tool_contracts {
+        entries.insert(format!("tool:{}", tool.id), tool.digest.clone());
+    }
+    entries
+}
+
+fn snapshot_entry_keys(snapshot: &EcIrSnapshot) -> Vec<String> {
+    snapshot_entries(snapshot).into_keys().collect()
+}
+
+fn diff_lock_entries(
+    locked: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let changed = current
+        .iter()
+        .filter_map(|(key, digest)| {
+            locked
+                .get(key)
+                .filter(|locked_digest| *locked_digest != digest)
+                .map(|_| key.clone())
+        })
+        .collect();
+    let added = current
+        .keys()
+        .filter(|key| !locked.contains_key(*key))
+        .cloned()
+        .collect();
+    let removed = locked
+        .keys()
+        .filter(|key| !current.contains_key(*key))
+        .cloned()
+        .collect();
+    (changed, added, removed)
+}
+
+fn ec_lock_stale_message(
+    project: &str,
+    metadata_changed: bool,
+    changed: &[String],
+    added: &[String],
+    removed: &[String],
+) -> String {
+    let mut parts = Vec::new();
+    if metadata_changed {
+        parts.push("metadata changed".to_string());
+    }
+    if !changed.is_empty() {
+        parts.push(format!("{} changed", changed.len()));
+    }
+    if !added.is_empty() {
+        parts.push(format!("{} added", added.len()));
+    }
+    if !removed.is_empty() {
+        parts.push(format!("{} removed", removed.len()));
+    }
+    if parts.is_empty() {
+        parts.push("digest changed".to_string());
+    }
+    format!(
+        "ec lock stale ({}); review EC IR changes, then run `aw ec lock --project {project}`",
+        parts.join(", ")
+    )
 }
 
 fn ensure_trailing_newline(value: &str) -> String {
@@ -4618,6 +5278,85 @@ tool_contracts:
         assert!(summary.configured);
         assert_eq!(summary.case_count, 1);
         assert!(!summary.stale);
+    }
+
+    #[test]
+    fn ec_lock_writes_canonical_ir_and_checks_clean() {
+        let (_tmp, ctx) = write_demo_repo();
+
+        let (status, wrote) = write_ec_lock_context(&ctx).unwrap();
+
+        assert!(wrote);
+        assert!(status.clean, "{status:?}");
+        assert_eq!(status.status, EcLockState::Locked);
+        assert_eq!(status.case_count, 1);
+        assert_eq!(status.tool_contract_count, 0);
+        assert_eq!(status.source_count, 1);
+        assert_eq!(status.lock_path, "projects/demo/external-contracts/ec.lock");
+        assert!(status.ir_digest.starts_with("sha256:"));
+        assert!(ctx.ec_root.join("ec.lock").is_file());
+
+        let content = fs::read_to_string(ctx.ec_root.join("ec.lock")).unwrap();
+        assert!(content.contains("ir_kind = \"ec\""));
+        assert!(content.contains("id = \"demo-happy-path\""));
+        assert!(content.contains("path = \".aw/tech-design/projects/demo/specs/contract.md\""));
+
+        let checked = check_ec_lock_context(&ctx).unwrap();
+        assert!(checked.clean, "{checked:?}");
+    }
+
+    #[test]
+    fn ec_gen_preflight_requires_clean_lock() {
+        let (_tmp, ctx) = write_demo_repo();
+
+        let missing = ensure_ec_lock_clean_for_gen(&ctx).unwrap_err();
+        assert!(format!("{missing:#}").contains("ec gen requires a clean EC IR lock"));
+
+        write_ec_lock_context(&ctx).unwrap();
+        ensure_ec_lock_clean_for_gen(&ctx).unwrap();
+    }
+
+    #[test]
+    fn ec_lock_detects_raw_source_drift_even_when_ir_is_stable() {
+        let (tmp, ctx) = write_demo_repo();
+        write_ec_lock_context(&ctx).unwrap();
+        let source = tmp
+            .path()
+            .join(".aw/tech-design/projects/demo/specs/contract.md");
+        let mut content = fs::read_to_string(&source).unwrap();
+        content.push_str("\nPlain prose outside the EC YAML.\n");
+        fs::write(&source, content).unwrap();
+
+        let status = check_ec_lock_context(&ctx).unwrap();
+
+        assert_eq!(status.status, EcLockState::Stale);
+        assert!(!status.clean);
+        assert_eq!(status.ir_digest, status.locked_ir_digest.unwrap());
+        assert_ne!(status.source_digest, status.locked_source_digest.unwrap());
+        assert!(status
+            .changed
+            .contains(&"source:.aw/tech-design/projects/demo/specs/contract.md".to_string()));
+    }
+
+    #[test]
+    fn ec_lock_detects_ec_ir_case_drift() {
+        let (tmp, ctx) = write_demo_repo();
+        write_ec_lock_context(&ctx).unwrap();
+        let source = tmp
+            .path()
+            .join(".aw/tech-design/projects/demo/specs/contract.md");
+        let content = fs::read_to_string(&source).unwrap().replace(
+            "cargo test -p demo-crate demo_happy_path",
+            "cargo test -p demo-crate demo_changed_path",
+        );
+        fs::write(&source, content).unwrap();
+
+        let status = check_ec_lock_context(&ctx).unwrap();
+
+        assert_eq!(status.status, EcLockState::Stale);
+        assert!(!status.clean);
+        assert_ne!(status.ir_digest, status.locked_ir_digest.unwrap());
+        assert!(status.changed.contains(&"case:demo-happy-path".to_string()));
     }
 
     #[test]

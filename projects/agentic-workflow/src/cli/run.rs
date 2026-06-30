@@ -3829,7 +3829,7 @@ review_status: pending
     #[test]
     fn artifact_quality_gate_injects_frontend_profile_and_prompt() {
         let mut envelope = test_envelope(
-            "aw td gen --project cue frontend/src/App.tsx",
+            "aw td gen --project jet frontend/src/App.tsx",
             "generate frontend page component under frontend/src/App.tsx",
         );
 
