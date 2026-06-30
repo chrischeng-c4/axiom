@@ -9,12 +9,11 @@
 # case = "gen_preprocess_options__macros_as_list_wrong"
 # subject = "distutils.ccompiler.gen_preprocess_options(macros: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed macros"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed macros
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.gen_preprocess_options(macros: list); call it with the wrong type.
 
