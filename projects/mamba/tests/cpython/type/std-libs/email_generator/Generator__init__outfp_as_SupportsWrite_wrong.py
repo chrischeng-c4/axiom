@@ -9,12 +9,11 @@
 # case = "Generator__init__outfp_as_SupportsWrite_wrong"
 # subject = "email.generator.Generator.__init__(outfp: SupportsWrite)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed outfp"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/generator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed outfp
 # mamba-strict-type: TypeError
 """Type wall: email.generator.Generator.__init__(outfp: SupportsWrite); call it with the wrong type.
 
