@@ -9,6 +9,7 @@
 # case = "UserDict__fromkeys__iterable_as_Iterable_wrong"
 # subject = "collections.UserDict.fromkeys(iterable: Iterable)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

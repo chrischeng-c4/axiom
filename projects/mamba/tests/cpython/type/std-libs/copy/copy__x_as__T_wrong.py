@@ -9,6 +9,7 @@
 # case = "copy__x_as__T_wrong"
 # subject = "copy.copy(x: _T)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copy.pyi"
 # status = "filled"

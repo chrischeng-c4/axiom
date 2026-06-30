@@ -9,6 +9,7 @@
 # case = "UserDict____ior____other_as_SupportsKeysAndGetItem_wrong"
 # subject = "collections.UserDict.__ior__(other: SupportsKeysAndGetItem)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

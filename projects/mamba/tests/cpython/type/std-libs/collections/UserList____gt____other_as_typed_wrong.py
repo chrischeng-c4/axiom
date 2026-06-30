@@ -9,6 +9,7 @@
 # case = "UserList____gt____other_as_typed_wrong"
 # subject = "collections.UserList.__gt__(other: typed)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

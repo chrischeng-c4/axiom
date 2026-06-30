@@ -9,6 +9,7 @@
 # case = "UserList____getitem____i_as_slice_wrong"
 # subject = "collections.UserList.__getitem__(i: slice)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

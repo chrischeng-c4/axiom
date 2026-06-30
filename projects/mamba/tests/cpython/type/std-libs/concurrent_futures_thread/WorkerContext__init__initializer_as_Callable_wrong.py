@@ -9,6 +9,7 @@
 # case = "WorkerContext__init__initializer_as_Callable_wrong"
 # subject = "concurrent.futures.thread.WorkerContext.__init__(initializer: Callable)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/concurrent/futures/thread.pyi"
 # status = "filled"

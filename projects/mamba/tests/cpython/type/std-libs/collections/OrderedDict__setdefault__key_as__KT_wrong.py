@@ -9,6 +9,7 @@
 # case = "OrderedDict__setdefault__key_as__KT_wrong"
 # subject = "collections.OrderedDict.setdefault(key: _KT)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

@@ -9,6 +9,7 @@
 # case = "InterpreterPoolExecutor__prepare_context__initializer_as_Callable_wrong"
 # subject = "concurrent.futures.interpreter.InterpreterPoolExecutor.prepare_context(initializer: Callable)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/concurrent/futures/interpreter.pyi"
 # status = "filled"
