@@ -9,12 +9,11 @@
 # case = "Counter____xor____other_as_Counter_wrong"
 # subject = "collections.Counter.__xor__(other: Counter)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other
 # mamba-strict-type: TypeError
 """Type wall: collections.Counter.__xor__(other: Counter); call it with the wrong type.
 
