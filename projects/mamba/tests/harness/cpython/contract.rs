@@ -451,6 +451,32 @@ fn platform_specific_type_libs_are_excluded_consistently() {
 }
 
 #[test]
+fn removed_importlib_type_fixtures_are_excluded_consistently() {
+    for rel in [
+        "tools/verify_cpython_oracle.py",
+        "tools/strict_type_accounting.py",
+    ] {
+        let path = cpython_harness_dir().join(rel);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+        for required in [
+            "std-libs/importlib_metadata/Deprecated____getitem____name_as__KT_wrong.py",
+            "std-libs/importlib_metadata/Deprecated__get__name_as__KT_wrong.py",
+            "std-libs/importlib_metadata/SelectableGroups__load__eps_as_Iterable_wrong.py",
+            "std-libs/importlib_readers/remove_duplicates__items_as_Iterable_wrong.py",
+            "std-libs/importlib_resources__common/get_package__package_as_Package_wrong.py",
+            "(3, 12)",
+        ] {
+            assert!(
+                raw.contains(required),
+                "{} missing removed importlib type fixture exclusion marker `{required}`",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn safety_contract_has_adversarial_fixtures_and_sandboxed_runner() {
     let security = fixture_files()
         .into_iter()
