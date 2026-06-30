@@ -9,12 +9,11 @@
 # case = "RawConfigParser__init__defaults_as_typed_wrong"
 # subject = "configparser.RawConfigParser.__init__(defaults: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed defaults"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed defaults
 # mamba-strict-type: TypeError
 """Type wall: configparser.RawConfigParser.__init__(defaults: typed); call it with the wrong type.
 
