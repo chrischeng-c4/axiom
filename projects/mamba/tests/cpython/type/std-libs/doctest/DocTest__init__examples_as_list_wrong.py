@@ -9,12 +9,11 @@
 # case = "DocTest__init__examples_as_list_wrong"
 # subject = "doctest.DocTest.__init__(examples: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed examples"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed examples
 # mamba-strict-type: TypeError
 """Type wall: doctest.DocTest.__init__(examples: list); call it with the wrong type.
 
