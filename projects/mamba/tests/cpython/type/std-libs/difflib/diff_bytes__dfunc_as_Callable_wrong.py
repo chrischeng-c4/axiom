@@ -9,12 +9,11 @@
 # case = "diff_bytes__dfunc_as_Callable_wrong"
 # subject = "difflib.diff_bytes(dfunc: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dfunc"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/difflib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dfunc
 # mamba-strict-type: TypeError
 """Type wall: difflib.diff_bytes(dfunc: Callable); call it with the wrong type.
 
