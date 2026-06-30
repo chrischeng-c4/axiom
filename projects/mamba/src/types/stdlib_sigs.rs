@@ -1895,6 +1895,26 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("type", CoreTy::Type)],
         enforceable: true,
     },
+    // POSITIVE: datetime date/datetime subtraction accepts only compatible
+    // date/datetime/timedelta operands. The generated overload union collapses
+    // to Unknown; reject inert strict-wall objects while keeping real stdlib
+    // operands skip-safe.
+    StdlibSig {
+        module: "datetime",
+        qualifier: "date",
+        name: "__sub__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "datetime",
+        qualifier: "datetime",
+        name: "__sub__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4072,6 +4092,17 @@ mod tests {
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, "type");
             assert_eq!(sig.params[0].ty, CoreTy::Type);
+        }
+    }
+
+    #[test]
+    fn curated_datetime_sub_walls_override_unknown_rows() {
+        for qualifier in ["date", "datetime"] {
+            let sig = get("datetime", qualifier, "__sub__").expect("datetime sub present");
+            assert!(sig.enforceable, "{qualifier}.__sub__");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "value");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
     }
 

@@ -9,12 +9,11 @@
 # case = "date____sub____value_as_datetime_wrong"
 # subject = "datetime.date.__sub__(value: datetime)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: datetime.date.__sub__(value: datetime); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from datetime import date
-obj = object.__new__(date)
+obj = date(2000, 1, 2)
 try:
     obj.__sub__(_W())  # value: datetime <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

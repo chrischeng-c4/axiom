@@ -57,6 +57,10 @@ VERSION_SPECIFIC_TYPE_FIXTURES = {
     "std-libs/ast/TemplateStr__init__values_as_list_wrong.py": (3, 14),
     "std-libs/base64/z85decode__s_as_typed_wrong.py": (3, 13),
     "std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py": (3, 13),
+    "std-libs/datetime/date__strptime__date_string_as_str_wrong.py": (3, 14),
+    "std-libs/datetime/date__strptime__string_as_str_wrong.py": (3, 14),
+    "std-libs/datetime/time__strptime__date_string_as_str_wrong.py": (3, 14),
+    "std-libs/datetime/time__strptime__string_as_str_wrong.py": (3, 14),
 }
 VERSION_REMOVED_TYPE_FIXTURES = {
     "std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py": (3, 12),
