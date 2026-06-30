@@ -145,6 +145,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("s", CoreTy::Unknown), p("altchars", CoreTy::Unknown)],
         enforceable: false,
     },
+    // POSITIVE: generated bdb rows lose tuple/callable precision for these
+    // strict wall probes. Tighten only the first argument so valid optional
+    // suffix/varargs remain skip-safe.
+    StdlibSig {
+        module: "bdb",
+        qualifier: "Bdb",
+        name: "format_stack_entry",
+        kind: SigKind::Method,
+        params: &[p("frame_lineno", CoreTy::Tuple), p("lprefix", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "bdb",
+        qualifier: "Bdb",
+        name: "runcall",
+        kind: SigKind::Method,
+        params: &[p("func", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: math.factorial(x: SupportsIndex) — protocol -> Unknown, NOT
     // enforceable. Kept as a regression guard that `factorial(obj)` and
     // `factorial(3.0)` are never rejected by this table.
