@@ -403,6 +403,57 @@ fn argparse_unknown_contracts_are_not_strict_type_walls() {
 }
 
 #[test]
+fn array_unknown_contracts_are_not_strict_type_walls() {
+    let root = mamba_root();
+    for rel in [
+        "array____add____value_as_array_wrong.py",
+        "array____delitem____key_as_typed_wrong.py",
+        "array____ge____value_as_array_wrong.py",
+        "array____getitem____key_as_SupportsIndex_wrong.py",
+        "array____getitem____key_as_slice_wrong.py",
+        "array____gt____value_as_array_wrong.py",
+        "array____iadd____value_as_array_wrong.py",
+        "array____le____value_as_array_wrong.py",
+        "array____lt____value_as_array_wrong.py",
+        "array____new____typecode_as_Literal_wrong.py",
+        "array____new____typecode_as__FloatTypeCode_wrong.py",
+        "array____new____typecode_as__IntTypeCode_wrong.py",
+        "array____new____typecode_as_str_wrong.py",
+        "array____setitem____key_as_SupportsIndex_wrong.py",
+        "array____setitem____key_as_slice_wrong.py",
+        "array__append__v_as__T_wrong.py",
+        "array__count__v_as__T_wrong.py",
+        "array__fromlist__list_as_list_wrong.py",
+        "array__index__v_as__T_wrong.py",
+        "array__remove__v_as__T_wrong.py",
+    ] {
+        assert!(
+            !root
+                .join("tests/cpython/type/std-libs/array")
+                .join(rel)
+                .exists(),
+            "array Unknown/non-enforceable param must not be an executable strict wall: {rel}"
+        );
+    }
+    for rel in [
+        "array____buffer____flags_as_int_wrong.py",
+        "array____imul____value_as_int_wrong.py",
+        "array____mul____value_as_int_wrong.py",
+        "array____rmul____value_as_int_wrong.py",
+        "array__fromunicode__ustr_as_str_wrong.py",
+        "array__insert__i_as_int_wrong.py",
+        "array__pop__i_as_int_wrong.py",
+    ] {
+        assert!(
+            root.join("tests/cpython/type/std-libs/array")
+                .join(rel)
+                .exists(),
+            "array scalar strict wall must remain enforced: {rel}"
+        );
+    }
+}
+
+#[test]
 fn type_wall_generator_skips_typevar_fixture_params() {
     let script = r#"
 import ast
@@ -426,8 +477,13 @@ assert gen_module.is_signature_param_not_wrongable("aifc", None, "open", "f")
 assert gen_module.is_signature_param_not_wrongable("argparse", "Action", "__init__", "option_strings")
 assert gen_module.is_signature_param_not_wrongable("argparse", "ArgumentParser", "parse_args", "args")
 assert gen_module.is_signature_param_not_wrongable("argparse", "BooleanOptionalAction", "__init__", "option_strings")
+assert gen_module.is_signature_param_not_wrongable("array", "array", "__add__", "value")
+assert gen_module.is_signature_param_not_wrongable("array", "array", "__getitem__", "key")
+assert gen_module.is_signature_param_not_wrongable("array", "array", "__new__", "typecode")
+assert gen_module.is_signature_param_not_wrongable("array", "array", "append", "v")
 assert not gen_module.is_signature_param_not_wrongable("aifc", "Aifc_read", "getmark", "id")
 assert not gen_module.is_signature_param_not_wrongable("argparse", "ArgumentParser", "error", "message")
+assert not gen_module.is_signature_param_not_wrongable("array", "array", "__mul__", "value")
 "#;
     let output = Command::new("python3.12")
         .arg("-c")
