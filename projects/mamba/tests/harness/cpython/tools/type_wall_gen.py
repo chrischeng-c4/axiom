@@ -85,6 +85,9 @@ NOT_WRONGABLE = {
     "type",
     "Callable",
 }
+NOT_WRONGABLE_SIGNATURE_PARAMS = {
+    ("aifc", "", "open", "f"),
+}
 BUILTINS = "builtins"
 NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
 
@@ -105,6 +108,11 @@ def is_not_wrongable(node: ast.expr | None) -> bool:
         return True
     label = annotation_label(node)
     return label in NOT_WRONGABLE or _typevar_convention(label)
+
+
+def is_signature_param_not_wrongable(mod: str, cls: str | None, func: str, param: str) -> bool:
+    """Specific typeshed rows whose emitted CoreTy row is Unknown/non-enforceable."""
+    return (mod, cls or "", func, param) in NOT_WRONGABLE_SIGNATURE_PARAMS
 
 
 def sample_annotation(node: ast.expr | None) -> str | None:
@@ -185,7 +193,7 @@ def _walk_class(body, mod, cls, kinds, v312=True):
                 kind = "method"
             if kind in kinds:
                 got = synth_call(m, drop_first=not is_static)
-                if got:
+                if got and not is_signature_param_not_wrongable(mod, cls, m.name, got[0]):
                     yield _mk(mod, kind, cls, m.name, got)
         elif isinstance(m, ast.ClassDef):
             if not m.name.startswith("_"):
@@ -203,7 +211,7 @@ def _walk_module(body, mod, kinds, v312=True):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if "module" in kinds and not node.name.startswith("_"):
                 got = synth_call(node, drop_first=False)
-                if got:
+                if got and not is_signature_param_not_wrongable(mod, None, node.name, got[0]):
                     yield _mk(mod, "module", None, node.name, got)
         elif isinstance(node, ast.ClassDef):
             if not node.name.startswith("_"):
