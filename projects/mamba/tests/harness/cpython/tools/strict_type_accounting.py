@@ -41,6 +41,7 @@ VERSION_SPECIFIC_TYPE_LIBS = {
     "_zstd": (3, 14),
     "annotationlib": (3, 14),
     "asyncio_graph": (3, 14),
+    "asyncio_tools": (3, 14),
     "compression_zstd": (3, 14),
     "compression_zstd__zstdfile": (3, 14),
 }
