@@ -317,6 +317,34 @@ fn weakref_proxy_typevars_are_surface_not_strict_walls() {
 }
 
 #[test]
+fn abc_unknown_contracts_are_not_strict_type_walls() {
+    let root = mamba_root();
+    for path in [
+        "tests/cpython/type/std-libs/abc/ABCMeta____subclasscheck____subclass_as_type_wrong.py",
+        "tests/cpython/type/std-libs/abc/ABCMeta__register__subclass_as_type_wrong.py",
+        "tests/cpython/type/std-libs/abc/abstractclassmethod__init__callable_as_Callable_wrong.py",
+        "tests/cpython/type/std-libs/abc/abstractmethod__funcobj_as__FuncT_wrong.py",
+        "tests/cpython/type/std-libs/abc/abstractstaticmethod__init__callable_as_Callable_wrong.py",
+        "tests/cpython/type/std-libs/abc/update_abstractmethods__cls_as_type_wrong.py",
+    ] {
+        assert!(
+            !root.join(path).exists(),
+            "abc Unknown/Callable/TypeVar params must not be executable strict walls: {path}"
+        );
+    }
+    assert!(
+        root.join("tests/cpython/type/std-libs/abc/ABCMeta____new____name_as_str_wrong.py")
+            .exists(),
+        "abc.ABCMeta.__new__(name: str) must remain as the enforceable abc strict wall"
+    );
+    assert!(
+        root.join("tests/cpython/surface/std-libs/abc/abcmeta_has_register.py")
+            .exists(),
+        "abc register behavior still needs executable surface coverage"
+    );
+}
+
+#[test]
 fn type_wall_generator_skips_typevar_fixture_params() {
     let script = r#"
 import ast
@@ -333,6 +361,8 @@ sys.modules[gen_spec.name] = gen_module
 gen_spec.loader.exec_module(gen_module)
 assert gen_module.is_not_wrongable(ast.Name(id="_T"))
 assert gen_module.is_not_wrongable(ast.Name(id="_C"))
+assert gen_module.is_not_wrongable(ast.Name(id="type"))
+assert gen_module.is_not_wrongable(ast.Name(id="Callable"))
 assert not gen_module.is_not_wrongable(ast.Name(id="str"))
 "#;
     let output = Command::new("python3.12")

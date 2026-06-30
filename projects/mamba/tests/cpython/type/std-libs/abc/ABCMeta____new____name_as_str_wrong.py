@@ -21,9 +21,8 @@ typeshed contract: name is str. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from abc import ABCMeta
-obj = object.__new__(ABCMeta)
 try:
-    obj.__new__(12345, None, None)  # name: str <- wrong-typed
+    ABCMeta(12345, (), {})  # name: str <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)

@@ -51,14 +51,41 @@ macro_rules! dispatch_nullary {
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let a = unsafe { native_args(args_ptr, nargs) };
             $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
         }
     };
 }
 
 dispatch_nullary!(dispatch_abc_cls, mb_abc_ABC);
-dispatch_nullary!(dispatch_abcmeta, mb_abc_ABCMeta);
+
+unsafe fn native_args<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
+    if nargs == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    }
+}
+
+fn raise_type_error(message: impl Into<String>) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(message.into())),
+    );
+    MbValue::none()
+}
+
+unsafe extern "C" fn dispatch_abcmeta(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { native_args(args_ptr, nargs) };
+    match a {
+        [] => mb_abc_ABCMeta(),
+        [name, bases, namespace] => super::super::builtins::mb_type3(*name, *bases, *namespace),
+        _ => raise_type_error(format!(
+            "type.__new__() takes exactly 3 arguments ({} given)",
+            a.len()
+        )),
+    }
+}
 
 /// Stub dispatcher for ABCMeta metaclass methods (`register`, `mro`, and the
 /// `_abc_*` registry-debug helpers). Surface fixtures only assert
@@ -68,7 +95,7 @@ dispatch_nullary!(dispatch_abcmeta, mb_abc_ABCMeta);
 /// (via NATIVE_TYPE_NAMES + CLASS_REGISTRY) just returns its first argument so
 /// `ABCMeta.register(cls, subcls)`-shaped calls are no-ops returning `subcls`.
 unsafe extern "C" fn dispatch_abcmeta_method(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let a = unsafe { native_args(args_ptr, nargs) };
     // CPython's ABCMeta.register returns the registered subclass (its 2nd arg
     // after the bound metaclass/self); fall back to the first available arg.
     a.get(1)
