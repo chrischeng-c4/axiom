@@ -1007,6 +1007,7 @@ impl TypeChecker {
                     | super::stdlib_sigs::CoreTy::Dict
                     | super::stdlib_sigs::CoreTy::Bool
                     | super::stdlib_sigs::CoreTy::Typed
+                    | super::stdlib_sigs::CoreTy::Type
             );
             let bare_arg = self.classinfo_bare_instance_name(a);
             if let (true, Some(name)) = (concrete_param, &bare_arg) {
@@ -1059,6 +1060,7 @@ impl TypeChecker {
                         | super::stdlib_sigs::CoreTy::List
                         | super::stdlib_sigs::CoreTy::Tuple
                         | super::stdlib_sigs::CoreTy::Dict
+                        | super::stdlib_sigs::CoreTy::Type
                 ) && !actual_is_none
                     && self.is_concrete_scalar(actual)
                 {
@@ -1068,6 +1070,7 @@ impl TypeChecker {
                         super::stdlib_sigs::CoreTy::List => "list",
                         super::stdlib_sigs::CoreTy::Tuple => "tuple",
                         super::stdlib_sigs::CoreTy::Dict => "dict",
+                        super::stdlib_sigs::CoreTy::Type => "type",
                         _ => unreachable!(),
                     };
                     self.error(
