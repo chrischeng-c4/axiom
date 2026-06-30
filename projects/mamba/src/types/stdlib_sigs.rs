@@ -482,6 +482,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("locals", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: typeshed models compile_path(skip_curdir) as bool, but the
+    // generated row collapses it to Typed and therefore skips a wrong concrete
+    // string. Keep the remaining generated scalar walls intact.
+    StdlibSig {
+        module: "compileall",
+        qualifier: "",
+        name: "compile_path",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("skip_curdir", CoreTy::Bool),
+            p("maxlevels", CoreTy::Int),
+            p("force", CoreTy::Typed),
+            p("quiet", CoreTy::Int),
+            p("legacy", CoreTy::Typed),
+            p("optimize", CoreTy::Int),
+            p("invalidation_mode", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: collections.ChainMap methods are mostly typevar/protocol
     // shaped in typeshed, so generated rows conservatively collapse them to
     // Unknown. A bare user object satisfies none of these contracts; keep real
@@ -3377,6 +3396,18 @@ mod tests {
         let s = get("html.parser", "HTMLParser", "handle_entityref").expect("method present");
         assert_eq!(s.kind, SigKind::Method);
         assert_eq!(s.params[0].ty, CoreTy::Str);
+    }
+
+    #[test]
+    fn curated_compile_path_skip_curdir_uses_bool_wall() {
+        let sig = get("compileall", "", "compile_path").expect("compile_path present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::ModuleFn);
+        assert_eq!(sig.params[0].name, "skip_curdir");
+        assert_eq!(sig.params[0].ty, CoreTy::Bool);
+        assert_eq!(sig.params[1].ty, CoreTy::Int);
+        assert_eq!(sig.params[3].ty, CoreTy::Int);
+        assert_eq!(sig.params[5].ty, CoreTy::Int);
     }
 
     #[test]
