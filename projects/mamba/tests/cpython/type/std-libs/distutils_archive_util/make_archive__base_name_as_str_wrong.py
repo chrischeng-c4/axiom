@@ -9,12 +9,11 @@
 # case = "make_archive__base_name_as_str_wrong"
 # subject = "distutils.archive_util.make_archive(base_name: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed base_name"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/archive_util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed base_name
 # mamba-strict-type: TypeError
 """Type wall: distutils.archive_util.make_archive(base_name: str); call it with the wrong type.
 
