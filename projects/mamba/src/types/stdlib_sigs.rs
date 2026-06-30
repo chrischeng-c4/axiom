@@ -1676,6 +1676,70 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("enter_result", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: copy/copyreg expose TypeVar, Hashable, Callable, and type
+    // contracts that are not scalar rows in the generated table. A bare user
+    // object cannot satisfy those contracts in strict mode; valid callables,
+    // types, hashable builtins, and richer protocol objects remain skip-safe.
+    StdlibSig {
+        module: "copy",
+        qualifier: "",
+        name: "copy",
+        kind: SigKind::ModuleFn,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "copy",
+        qualifier: "",
+        name: "deepcopy",
+        kind: SigKind::ModuleFn,
+        params: &[p("x", CoreTy::Typed), p("memo", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "copyreg",
+        qualifier: "",
+        name: "add_extension",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("module", CoreTy::Typed),
+            p("name", CoreTy::Unknown),
+            p("code", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "copyreg",
+        qualifier: "",
+        name: "constructor",
+        kind: SigKind::ModuleFn,
+        params: &[p("object", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "copyreg",
+        qualifier: "",
+        name: "pickle",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("ob_type", CoreTy::Typed),
+            p("pickle_function", CoreTy::Unknown),
+            p("constructor_ob", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "copyreg",
+        qualifier: "",
+        name: "remove_extension",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("module", CoreTy::Typed),
+            p("name", CoreTy::Unknown),
+            p("code", CoreTy::Int),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
     // but the typeshed-derived strict wall must still reject a bare user object
     // before import-time behavior is observed.
@@ -3712,6 +3776,29 @@ mod tests {
             assert_eq!(sig.params[0].name, param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
+    }
+
+    #[test]
+    fn curated_copy_copyreg_walls_override_unknown_rows() {
+        for (module, name, param) in [
+            ("copy", "copy", "x"),
+            ("copy", "deepcopy", "x"),
+            ("copyreg", "add_extension", "module"),
+            ("copyreg", "constructor", "object"),
+            ("copyreg", "pickle", "ob_type"),
+            ("copyreg", "remove_extension", "module"),
+        ] {
+            let sig = get(module, "", name).expect("copy/copyreg function present");
+            assert!(sig.enforceable, "{module}.{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].name, param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        let remove_extension =
+            get("copyreg", "", "remove_extension").expect("copyreg.remove_extension present");
+        assert_eq!(remove_extension.params[2].name, "code");
+        assert_eq!(remove_extension.params[2].ty, CoreTy::Int);
     }
 
     #[test]
