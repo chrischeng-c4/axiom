@@ -9,12 +9,11 @@
 # case = "BytesParser__init___class_as_Callable_wrong"
 # subject = "email.parser.BytesParser.__init__(_class: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _class"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/parser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _class
 # mamba-strict-type: TypeError
 """Type wall: email.parser.BytesParser.__init__(_class: Callable); call it with the wrong type.
 
