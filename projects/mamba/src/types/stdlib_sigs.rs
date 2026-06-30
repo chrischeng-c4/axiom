@@ -501,6 +501,45 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: concurrent.futures executor `max_workers` is `int | None`.
+    // The generated rows either collapse it to Unknown or mark the row
+    // unenforceable; a bare user instance cannot satisfy the integer branch,
+    // while checker policy keeps `None` skip-safe for optional sentinels.
+    StdlibSig {
+        module: "concurrent.futures.interpreter",
+        qualifier: "InterpreterPoolExecutor",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("max_workers", CoreTy::Int),
+            p("thread_name_prefix", CoreTy::Str),
+            p("initializer", CoreTy::Unknown),
+            p("initargs", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "concurrent.futures.process",
+        qualifier: "ProcessPoolExecutor",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("max_workers", CoreTy::Int),
+            p("mp_context", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "concurrent.futures.thread",
+        qualifier: "ThreadPoolExecutor",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("max_workers", CoreTy::Int),
+            p("thread_name_prefix", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: collections.ChainMap methods are mostly typevar/protocol
     // shaped in typeshed, so generated rows conservatively collapse them to
     // Unknown. A bare user object satisfies none of these contracts; keep real
@@ -3408,6 +3447,21 @@ mod tests {
         assert_eq!(sig.params[1].ty, CoreTy::Int);
         assert_eq!(sig.params[3].ty, CoreTy::Int);
         assert_eq!(sig.params[5].ty, CoreTy::Int);
+    }
+
+    #[test]
+    fn curated_concurrent_executor_max_workers_uses_int_wall() {
+        for (module, qualifier) in [
+            ("concurrent.futures.interpreter", "InterpreterPoolExecutor"),
+            ("concurrent.futures.process", "ProcessPoolExecutor"),
+            ("concurrent.futures.thread", "ThreadPoolExecutor"),
+        ] {
+            let sig = get(module, qualifier, "__init__").expect("executor init present");
+            assert!(sig.enforceable, "{module}.{qualifier}.__init__");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "max_workers");
+            assert_eq!(sig.params[0].ty, CoreTy::Int);
+        }
     }
 
     #[test]
