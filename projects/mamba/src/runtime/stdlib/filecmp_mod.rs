@@ -58,6 +58,14 @@ unsafe fn as_str(val: MbValue) -> Option<String> {
     }
 }
 
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 fn arg_bool(val: Option<MbValue>, default: bool) -> bool {
     let Some(v) = val else {
         return default;
@@ -190,8 +198,11 @@ unsafe extern "C" fn dispatch_cmpfiles(args_ptr: *const MbValue, nargs: usize) -
     ) else {
         return empty();
     };
-    let (Some(da), Some(db)) = (as_str(a), as_str(b)) else {
-        return empty();
+    let Some(da) = (unsafe { as_str(a) }) else {
+        return raise_type_error("cmpfiles() argument 1 must be path-like");
+    };
+    let Some(db) = (unsafe { as_str(b) }) else {
+        return raise_type_error("cmpfiles() argument 2 must be path-like");
     };
     let common = collect_strings(c);
     let shallow = arg_bool(args.get(3).copied(), true);
@@ -221,10 +232,21 @@ unsafe extern "C" fn dispatch_clear_cache(_a: *const MbValue, _n: usize) -> MbVa
     MbValue::none()
 }
 
-unsafe extern "C" fn dispatch_dircmp_shell(_a: *const MbValue, _n: usize) -> MbValue {
+unsafe extern "C" fn dispatch_dircmp_shell(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     // CPython's dircmp is a complex recursive class. Hand back an empty
     // dict so `filecmp.dircmp(a, b)` doesn't crash; callers that probe
     // for real attributes will get None/false rather than wrong data.
+    let args = unsafe { args_slice(args_ptr, nargs) };
+    if let Some(a) = args.first().copied() {
+        if unsafe { as_str(a) }.is_none() {
+            return raise_type_error("dircmp() argument 1 must be path-like");
+        }
+    }
+    if let Some(b) = args.get(1).copied() {
+        if unsafe { as_str(b) }.is_none() {
+            return raise_type_error("dircmp() argument 2 must be path-like");
+        }
+    }
     MbValue::from_ptr(MbObject::new_dict())
 }
 
