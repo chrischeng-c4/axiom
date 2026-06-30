@@ -62,6 +62,9 @@ VERSION_SPECIFIC_TYPE_FIXTURES = {
     "std-libs/datetime/date__strptime__string_as_str_wrong.py": (3, 14),
     "std-libs/datetime/time__strptime__date_string_as_str_wrong.py": (3, 14),
     "std-libs/datetime/time__strptime__string_as_str_wrong.py": (3, 14),
+    "std-libs/imaplib/Idler____exit____exc_val_as_Unused_wrong.py": (3, 14),
+    "std-libs/imaplib/Idler__burst__interval_as_float_wrong.py": (3, 14),
+    "std-libs/imaplib/Idler__init__imap_as_IMAP4_wrong.py": (3, 14),
 }
 VERSION_REMOVED_TYPE_FIXTURES = {
     "std-libs/asyncio_coroutines/coroutine__func_as__FunctionT_wrong.py": (3, 12),
