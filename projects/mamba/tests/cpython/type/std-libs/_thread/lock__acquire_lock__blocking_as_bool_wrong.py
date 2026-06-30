@@ -9,12 +9,11 @@
 # case = "lock__acquire_lock__blocking_as_bool_wrong"
 # subject = "_thread.lock.acquire_lock(blocking: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed blocking"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_thread.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed blocking
 # mamba-strict-type: TypeError
 """Type wall: _thread.lock.acquire_lock(blocking: bool); call it with the wrong type.
 

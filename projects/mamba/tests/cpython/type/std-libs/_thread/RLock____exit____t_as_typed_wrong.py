@@ -9,12 +9,11 @@
 # case = "RLock____exit____t_as_typed_wrong"
 # subject = "_thread.RLock.__exit__(t: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed t"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_thread.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed t
 # mamba-strict-type: TypeError
 """Type wall: _thread.RLock.__exit__(t: typed); call it with the wrong type.
 
