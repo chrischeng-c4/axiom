@@ -9,12 +9,11 @@
 # case = "FileInput____exit____type_as_typed_wrong"
 # subject = "fileinput.FileInput.__exit__(type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fileinput.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
 """Type wall: fileinput.FileInput.__exit__(type: typed); call it with the wrong type.
 
