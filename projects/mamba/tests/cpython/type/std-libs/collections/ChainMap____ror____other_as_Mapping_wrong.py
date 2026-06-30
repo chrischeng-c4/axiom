@@ -9,12 +9,11 @@
 # case = "ChainMap____ror____other_as_Mapping_wrong"
 # subject = "collections.ChainMap.__ror__(other: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other
 # mamba-strict-type: TypeError
 """Type wall: collections.ChainMap.__ror__(other: Mapping); call it with the wrong type.
 
