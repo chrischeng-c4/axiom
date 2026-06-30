@@ -36,7 +36,9 @@ fn strict_type_tools_are_python_parseable() {
         root.join("tests/harness/cpython/tools/strict_type_accounting.py"),
         root.join("tests/harness/cpython/tools/replacement_readiness.py"),
         root.join("tests/harness/cpython/tools/fixture_lint.py"),
+        root.join("tests/harness/cpython/tools/type_wall_gen.py"),
         root.join("tests/harness/cpython/tools/type_enforce_matrix.py"),
+        root.join("tests/harness/cpython/tools/verify_cpython_oracle.py"),
     ]);
 }
 
@@ -106,6 +108,52 @@ fn replacement_readiness_uses_strict_type_accounting_tool() {
             "strict-type denominator and verified divergence accounting are not yet integrated"
         ),
         "strict-type readiness must not regress to a blocked placeholder"
+    );
+}
+
+#[test]
+fn non_runtime_typeshed_stubs_are_not_executable_type_fixtures() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+strict_tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(strict_tool.parent))
+strict_spec = importlib.util.spec_from_file_location("strict_type_accounting", strict_tool)
+strict_module = importlib.util.module_from_spec(strict_spec)
+assert strict_spec.loader is not None
+sys.modules[strict_spec.name] = strict_module
+strict_spec.loader.exec_module(strict_module)
+
+typeshed_fixture = strict_module.TYPE_DIR / "std-libs/_typeshed/IdentityFunction____call____x_as__T_wrong.py"
+typeshed_internal_fixture = strict_module.TYPE_DIR / "std-libs/_typeshed__type_checker_internals/TypedDictFallback__pop__k_as_Never_wrong.py"
+typeshed_dbapi_fixture = strict_module.TYPE_DIR / "std-libs/_typeshed_dbapi/DBAPICursor__fetchmany__size_as_int_wrong.py"
+tkinter_fixture = strict_module.TYPE_DIR / "std-libs/_tkinter/TkappType__wantobjects__wantobjects_as_typed_wrong.py"
+assert strict_module.is_non_runtime_stub_type_fixture(typeshed_fixture)
+assert strict_module.is_non_runtime_stub_type_fixture(typeshed_internal_fixture)
+assert strict_module.is_non_runtime_stub_type_fixture(typeshed_dbapi_fixture)
+assert not strict_module.is_non_runtime_stub_type_fixture(tkinter_fixture)
+
+gen_tool = pathlib.Path("tests/harness/cpython/tools/type_wall_gen.py")
+gen_spec = importlib.util.spec_from_file_location("type_wall_gen", gen_tool)
+gen_module = importlib.util.module_from_spec(gen_spec)
+assert gen_spec.loader is not None
+sys.modules[gen_spec.name] = gen_module
+gen_spec.loader.exec_module(gen_module)
+assert "_typeshed" in gen_module.NON_RUNTIME_STUB_MODULE_PREFIXES
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run non-runtime stub fixture smoke");
+    assert!(
+        output.status.success(),
+        "non-runtime stub fixture smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

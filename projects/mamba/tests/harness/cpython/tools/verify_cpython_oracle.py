@@ -32,6 +32,7 @@ TOOLS_DIR = Path(__file__).resolve().parent
 CPYTHON_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython (fixtures + .cache)
 MAMBA_DIR = CPYTHON_DIR.parent.parent
 FIXTURES_ROOT = CPYTHON_DIR
+NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,20 @@ class CaseResult:
 
 def is_type_strict(path: Path, text: str) -> bool:
     return "type-strict" in path.parts or "# mamba-strict-type:" in text
+
+
+def is_non_runtime_stub_type_fixture(path: Path) -> bool:
+    try:
+        rel = path.relative_to(FIXTURES_ROOT).parts
+    except ValueError:
+        return False
+    if len(rel) < 4 or rel[0] != "type" or rel[1] != "std-libs":
+        return False
+    lib = rel[2]
+    return any(
+        lib == prefix or lib.startswith(f"{prefix}_")
+        for prefix in NON_RUNTIME_STUB_TYPE_LIB_PREFIXES
+    )
 
 
 def has_pipeline_run_directive(text: str) -> bool:
@@ -156,6 +171,8 @@ def run_one(
     missing_prereqs: set[str],
 ) -> CaseResult:
     text = path.read_text(encoding="utf-8", errors="replace")
+    if is_non_runtime_stub_type_fixture(path):
+        return CaseResult(path, "skip", "non-runtime-stub-type-helper")
     if is_bench(path):
         return CaseResult(path, "skip", "bench/perf-baseline-owned")
     if has_pipeline_run_directive(text):
