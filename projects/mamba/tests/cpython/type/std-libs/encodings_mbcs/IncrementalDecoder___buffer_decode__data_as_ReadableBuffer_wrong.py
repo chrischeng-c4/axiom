@@ -9,12 +9,11 @@
 # case = "IncrementalDecoder___buffer_decode__data_as_ReadableBuffer_wrong"
 # subject = "encodings.mbcs.IncrementalDecoder._buffer_decode(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/encodings/mbcs.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: encodings.mbcs.IncrementalDecoder._buffer_decode(data: ReadableBuffer); call it with the wrong type.
 
