@@ -740,6 +740,13 @@ fn build_implementation() -> MbValue {
     )
 }
 
+fn cpython_platform_name() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    }
+}
+
 /// Build sys.hash_info — the CPython 9-field struct sequence. The modulus
 /// (2^61 - 1) exceeds the NaN-boxed int payload, so it is a BigInt.
 fn build_hash_info() -> MbValue {
@@ -980,7 +987,7 @@ pub fn register() {
     // sys.platform
     attrs.insert(
         "platform".into(),
-        MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string())),
+        MbValue::from_ptr(MbObject::new_str(cpython_platform_name().to_string())),
     );
 
     // sys.maxsize — the platform 64-bit signed max. Exceeds the NaN-boxed
