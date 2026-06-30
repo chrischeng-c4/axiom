@@ -311,6 +311,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "asyncio.transports",
+        qualifier: "BaseTransport",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("extra", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact

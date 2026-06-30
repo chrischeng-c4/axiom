@@ -9,12 +9,11 @@
 # case = "BaseTransport__init__extra_as_typed_wrong"
 # subject = "asyncio.transports.BaseTransport.__init__(extra: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed extra"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/transports.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed extra
 # mamba-strict-type: TypeError
 """Type wall: asyncio.transports.BaseTransport.__init__(extra: typed); call it with the wrong type.
 
