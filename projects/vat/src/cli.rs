@@ -173,6 +173,7 @@ enum LlmFormat {
     Json,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cli-rs.md#source
 impl From<LlmFormat> for cli_std::llm::Format {
     fn from(format: LlmFormat) -> Self {
         match format {
