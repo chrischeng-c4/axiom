@@ -9,12 +9,11 @@
 # case = "show_code__co_as__HaveCodeType_wrong"
 # subject = "dis.show_code(co: _HaveCodeType)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed co"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/dis.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed co
 # mamba-strict-type: TypeError
 """Type wall: dis.show_code(co: _HaveCodeType); call it with the wrong type.
 

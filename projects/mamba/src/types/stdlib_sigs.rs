@@ -1986,6 +1986,73 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: dis accepts code/function/code-like inputs represented by
+    // private protocols in typeshed. Generated rows collapse those to Unknown,
+    // so bare `_W()` values currently leak through strict fixtures.
+    StdlibSig {
+        module: "dis",
+        qualifier: "",
+        name: "code_info",
+        kind: SigKind::ModuleFn,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dis",
+        qualifier: "",
+        name: "dis",
+        kind: SigKind::ModuleFn,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dis",
+        qualifier: "",
+        name: "disassemble",
+        kind: SigKind::ModuleFn,
+        params: &[p("co", CoreTy::Typed), p("lasti", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dis",
+        qualifier: "",
+        name: "findlabels",
+        kind: SigKind::ModuleFn,
+        params: &[p("code", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dis",
+        qualifier: "",
+        name: "findlinestarts",
+        kind: SigKind::ModuleFn,
+        params: &[p("code", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dis",
+        qualifier: "",
+        name: "get_instructions",
+        kind: SigKind::ModuleFn,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dis",
+        qualifier: "",
+        name: "show_code",
+        kind: SigKind::ModuleFn,
+        params: &[p("co", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "dis",
+        qualifier: "Bytecode",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("x", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4209,6 +4276,37 @@ mod tests {
         assert!(ndiff.enforceable);
         assert_eq!(ndiff.params[0].name, "a");
         assert_eq!(ndiff.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_dis_code_object_walls_override_unknown_rows() {
+        for (name, param) in [
+            ("code_info", "x"),
+            ("dis", "x"),
+            ("findlabels", "code"),
+            ("findlinestarts", "code"),
+            ("get_instructions", "x"),
+            ("show_code", "co"),
+        ] {
+            let sig = get("dis", "", name).expect("dis module row present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].name, param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        let disassemble = get("dis", "", "disassemble").expect("disassemble present");
+        assert!(disassemble.enforceable);
+        assert_eq!(disassemble.params[0].name, "co");
+        assert_eq!(disassemble.params[0].ty, CoreTy::Typed);
+        assert_eq!(disassemble.params[1].name, "lasti");
+        assert_eq!(disassemble.params[1].ty, CoreTy::Int);
+
+        let bytecode = get("dis", "Bytecode", "__init__").expect("Bytecode.__init__ present");
+        assert!(bytecode.enforceable);
+        assert_eq!(bytecode.kind, SigKind::Method);
+        assert_eq!(bytecode.params[0].name, "x");
+        assert_eq!(bytecode.params[0].ty, CoreTy::Typed);
     }
 
     #[test]

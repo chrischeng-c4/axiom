@@ -9,12 +9,11 @@
 # case = "get_instructions__x_as__HaveCodeType_wrong"
 # subject = "dis.get_instructions(x: _HaveCodeType)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/dis.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x
 # mamba-strict-type: TypeError
 """Type wall: dis.get_instructions(x: _HaveCodeType); call it with the wrong type.
 
