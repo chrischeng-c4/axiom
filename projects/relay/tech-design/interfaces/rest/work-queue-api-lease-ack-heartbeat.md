@@ -29,10 +29,13 @@ nodes:
     label: "Which verb?"
   lease_pick:
     kind: process
-    label: "lease(consumer): pick a ready entry, PREFER a redeliver-eligible (previously attempted) seq over a fresh one"
+    label: "lease(consumer): pick a ready entry, PREFER a redeliver-eligible (previously attempted) seq over a fresh one; classify it as ready vs exhausted (delivered >= max_attempts, when max_attempts > 0)"
   lease_grant:
     kind: process
     label: "Grant Lease(epoch = ++attempt for that seq, expires_at = now + ttl); record by lease_id"
+  lease_dead:
+    kind: process
+    label: "Exhausted: durably publish the entry to {subject}{dlq_suffix} (DLQ-before-discard, hazard H2) with x-relay-dlq-* headers, discard from source (advance committed; ack-mode truncate), then re-pick. DLQ subjects open with max_attempts=0 (no recursion)."
   lease_none:
     kind: terminal
     label: "Nothing ready -> return null (worker backs off)"
@@ -60,6 +63,8 @@ edges:
   - { from: which, to: ack_check, label: "ack" }
   - { from: which, to: hb_check, label: "heartbeat" }
   - { from: lease_pick, to: lease_grant, label: "an entry is ready" }
+  - { from: lease_pick, to: lease_dead, label: "exhausted (>= max_attempts)" }
+  - { from: lease_dead, to: lease_pick, label: "re-pick" }
   - { from: lease_pick, to: lease_none, label: "nothing ready" }
   - { from: ack_check, to: ack_ok, label: "match" }
   - { from: ack_check, to: ack_noop, label: "mismatch / unknown" }
@@ -68,8 +73,10 @@ edges:
 ---
 flowchart TD
     req([lease / ack / heartbeat]) --> which{verb?}
-    which -->|lease| lease_pick[pick ready, prefer redeliver]
+    which -->|lease| lease_pick[pick ready, prefer redeliver; classify ready vs exhausted]
     lease_pick -->|ready| lease_grant[grant Lease epoch=++attempt]
+    lease_pick -->|exhausted| lease_dead[DLQ-publish then discard; re-pick]
+    lease_dead --> lease_pick
     lease_pick -->|none| lease_none([null])
     which -->|ack| ack_check{lease_id + epoch match?}
     ack_check -->|yes| ack_ok([delete lease, advance committed])
@@ -296,6 +303,18 @@ nodes:
   a_hb_fenced:
     kind: terminal
     label: "assert extended=false (fenced)"
+  t_dlq:
+    kind: process
+    label: "max_attempts=2: lease + expire twice, then lease again"
+  a_dlq:
+    kind: terminal
+    label: "assert the 3rd pick is not re-offered (None), source committed advances, and the entry is durably on {subject}.dlq with x-relay-dlq-* headers"
+  t_dlq_off:
+    kind: process
+    label: "max_attempts=0: lease + expire many times"
+  a_dlq_off:
+    kind: terminal
+    label: "assert the entry redelivers indefinitely and nothing lands on the DLQ"
 edges:
   - { from: suite, to: t_pick, label: "case: prefer redeliver" }
   - { from: t_pick, to: a_pick }
@@ -307,6 +326,10 @@ edges:
   - { from: t_heartbeat, to: a_heartbeat }
   - { from: suite, to: t_hb_fenced, label: "case: heartbeat fenced" }
   - { from: t_hb_fenced, to: a_hb_fenced }
+  - { from: suite, to: t_dlq, label: "case: dead-letter on exhaustion" }
+  - { from: t_dlq, to: a_dlq }
+  - { from: suite, to: t_dlq_off, label: "case: max_attempts=0 disables DLQ" }
+  - { from: t_dlq_off, to: a_dlq_off }
 ---
 flowchart TD
     suite([work-queue API suite]) --> t_pick[lease, expire one, re-lease]
@@ -319,6 +342,10 @@ flowchart TD
     t_heartbeat --> a_heartbeat([extended, not reclaimed])
     suite --> t_hb_fenced[heartbeat after reclaim]
     t_hb_fenced --> a_hb_fenced([extended=false])
+    suite --> t_dlq[exhaust max_attempts]
+    t_dlq --> a_dlq([not re-offered; durably on subject.dlq])
+    suite --> t_dlq_off[max_attempts=0]
+    t_dlq_off --> a_dlq_off([redelivers forever; DLQ empty])
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -334,12 +361,17 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    reason: "Prefer redeliver-eligible seqs on lease; carry epoch; epoch-checked ack (idempotent / fenced); heartbeat to extend a lease."
+    reason: "Prefer redeliver-eligible seqs on lease; carry epoch; epoch-checked ack (idempotent / fenced); heartbeat to extend a lease. Dead-letter cap: pick_classified/is_dead flag a seq whose delivered count >= max_attempts (0 disables); lease_or_dead returns Leased | Dead{seq,attempts} | Empty; discard(seq) advances the committed watermark for a dead-lettered entry."
   - path: projects/relay/src/engine.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    reason: "Expose heartbeat and epoch-checked ack through the Relay facade."
+    reason: "Expose heartbeat and epoch-checked ack through the Relay facade. lease/lease_batch route through lease_one, which dead-letters exhausted entries: durably publish to {subject}{dlq_suffix} WITHOUT the source lock (H2: DLQ-before-discard) with x-relay-dlq-* headers, then discard + persist + (ack-mode) truncate. DLQ subjects open with max_attempts=0 (no recursion)."
+  - path: projects/relay/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "WorkQueueConfig.dlq_suffix (default .dlq) names the dead-letter sibling subject; max_attempts now enforced (0 disables)."
   - path: projects/relay/src/wire.rs
     action: modify
     section: schema
@@ -359,7 +391,7 @@ changes:
     action: create
     section: unit-test
     impl_mode: hand-written
-    reason: "Tests for prefer-redeliver lease pick, epoch-fenced + idempotent ack, and heartbeat extend / fence."
+    reason: "Tests for prefer-redeliver lease pick, epoch-fenced + idempotent ack, heartbeat extend / fence, dead-letter on max_attempts exhaustion (durable {subject}.dlq + headers), and max_attempts=0 disabling dead-lettering."
 ```
 
 # Reviews

@@ -314,8 +314,9 @@ dedupe:
 # Work-queue / competing-consumer delivery (standard at-least-once lease / retry semantics).
 work_queue:
   lease_ttl_ms: 30000           # lease duration before an unacked entry is redelivery-eligible
-  max_attempts: 5               # redelivery attempts before revocation / dead-letter
+  max_attempts: 5               # deliveries before an entry is dead-lettered; 0 = disabled (redeliver forever)
   redeliver_backoff_ms: 1000    # base backoff between delivery attempts
+  dlq_suffix: ".dlq"            # exhausted entries route to {subject}{dlq_suffix}; such subjects open with max_attempts=0
 
 # Broadcast / fan-out delivery (replayable from any retained seq).
 broadcast:
