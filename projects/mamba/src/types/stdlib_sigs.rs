@@ -211,6 +211,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: asyncio.coroutines.iscoroutinefunction(func: Callable) - the
+    // generated Callable row collapses to Unknown. A bare user instance cannot
+    // satisfy Callable, so strict fixtures should fail before the runtime helper
+    // returns False like CPython.
+    StdlibSig {
+        module: "asyncio.coroutines",
+        qualifier: "",
+        name: "iscoroutinefunction",
+        kind: SigKind::ModuleFn,
+        params: &[p("func", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact
