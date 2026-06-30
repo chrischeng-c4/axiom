@@ -70,6 +70,126 @@ fn raise_type_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn extract_str(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn single_char_code(s: &str) -> Result<i64, MbValue> {
+    let mut chars = s.chars();
+    let Some(ch) = chars.next() else {
+        return Err(raise_type_error(
+            "ord() expected a character, but string of length 0 found",
+        ));
+    };
+    if chars.next().is_some() {
+        return Err(raise_type_error(&format!(
+            "ord() expected a character, but string of length {} found",
+            s.chars().count()
+        )));
+    }
+    Ok(ch as i64)
+}
+
+fn curses_ascii_arg(value: MbValue, op: &str) -> Result<(i64, bool), MbValue> {
+    if let Some(s) = extract_str(value) {
+        return single_char_code(&s).map(|code| (code, true));
+    }
+    if let Some(i) = value.as_int_pyint() {
+        return Ok((i, false));
+    }
+    Err(raise_type_error(&format!(
+        "unsupported operand type(s) for {op}: object and int"
+    )))
+}
+
+fn codepoint_str(code: i64) -> MbValue {
+    let ch = char::from_u32(code as u32).unwrap_or('\u{fffd}');
+    MbValue::from_ptr(MbObject::new_str(ch.to_string()))
+}
+
+unsafe extern "C" fn curses_ascii_ascii(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error("ascii() takes exactly one argument");
+    }
+    let arg = unsafe { *args_ptr };
+    let Ok((code, was_str)) = curses_ascii_arg(arg, "&") else {
+        return MbValue::none();
+    };
+    let out = code & 0x7f;
+    if was_str {
+        codepoint_str(out)
+    } else {
+        MbValue::from_int(out)
+    }
+}
+
+unsafe extern "C" fn curses_ascii_alt(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error("alt() takes exactly one argument");
+    }
+    let arg = unsafe { *args_ptr };
+    let Ok((code, was_str)) = curses_ascii_arg(arg, "|") else {
+        return MbValue::none();
+    };
+    let out = code | 0x80;
+    if was_str {
+        codepoint_str(out)
+    } else {
+        MbValue::from_int(out)
+    }
+}
+
+unsafe extern "C" fn curses_ascii_ctrl(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error("ctrl() takes exactly one argument");
+    }
+    let arg = unsafe { *args_ptr };
+    let Ok((code, was_str)) = curses_ascii_arg(arg, "&") else {
+        return MbValue::none();
+    };
+    let out = code & 0x1f;
+    if was_str {
+        codepoint_str(out)
+    } else {
+        MbValue::from_int(out)
+    }
+}
+
+fn curses_ascii_unctrl_text(code: i64) -> String {
+    let mut c = code & 0xff;
+    let mut out = String::new();
+    if (c & 0x80) != 0 {
+        out.push('!');
+        c &= 0x7f;
+    }
+    if c == 0x7f {
+        out.push_str("^?");
+    } else if c < 0x20 {
+        out.push('^');
+        out.push(char::from_u32((c + 0x40) as u32).unwrap_or('\u{fffd}'));
+    } else {
+        out.push(char::from_u32(c as u32).unwrap_or('\u{fffd}'));
+    }
+    out
+}
+
+unsafe extern "C" fn curses_ascii_unctrl(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if nargs != 1 {
+        return raise_type_error("unctrl() takes exactly one argument");
+    }
+    let arg = unsafe { *args_ptr };
+    let Ok((code, _was_str)) = curses_ascii_arg(arg, "&") else {
+        return MbValue::none();
+    };
+    new_str(&curses_ascii_unctrl_text(code))
+}
+
 unsafe extern "C" fn write_transport_write(_self_v: MbValue, args: MbValue) -> MbValue {
     let items = extract_args(args);
     let data = items.first().copied().unwrap_or_else(MbValue::none);
@@ -201,6 +321,84 @@ fn build_attrs(
     }
     register_addrs(&addrs);
     attrs
+}
+
+fn register_curses_ascii() {
+    let mut attrs = build_attrs(
+        &[],
+        &[
+            ("ascii", curses_ascii_ascii as *const () as usize),
+            ("alt", curses_ascii_alt as *const () as usize),
+            ("ctrl", curses_ascii_ctrl as *const () as usize),
+            ("unctrl", curses_ascii_unctrl as *const () as usize),
+            ("isalnum", dispatch_false as *const () as usize),
+            ("isalpha", dispatch_false as *const () as usize),
+            ("isascii", dispatch_false as *const () as usize),
+            ("isblank", dispatch_false as *const () as usize),
+            ("iscntrl", dispatch_false as *const () as usize),
+            ("isctrl", dispatch_false as *const () as usize),
+            ("isdigit", dispatch_false as *const () as usize),
+            ("isgraph", dispatch_false as *const () as usize),
+            ("islower", dispatch_false as *const () as usize),
+            ("ismeta", dispatch_false as *const () as usize),
+            ("isprint", dispatch_false as *const () as usize),
+            ("ispunct", dispatch_false as *const () as usize),
+            ("isspace", dispatch_false as *const () as usize),
+            ("isupper", dispatch_false as *const () as usize),
+            ("isxdigit", dispatch_false as *const () as usize),
+        ],
+        &[
+            ("NUL", 0),
+            ("SOH", 1),
+            ("STX", 2),
+            ("ETX", 3),
+            ("EOT", 4),
+            ("ENQ", 5),
+            ("ACK", 6),
+            ("BEL", 7),
+            ("BS", 8),
+            ("TAB", 9),
+            ("HT", 9),
+            ("LF", 10),
+            ("NL", 10),
+            ("VT", 11),
+            ("FF", 12),
+            ("CR", 13),
+            ("SO", 14),
+            ("SI", 15),
+            ("DLE", 16),
+            ("DC1", 17),
+            ("DC2", 18),
+            ("DC3", 19),
+            ("DC4", 20),
+            ("NAK", 21),
+            ("SYN", 22),
+            ("ETB", 23),
+            ("CAN", 24),
+            ("EM", 25),
+            ("SUB", 26),
+            ("ESC", 27),
+            ("FS", 28),
+            ("GS", 29),
+            ("RS", 30),
+            ("US", 31),
+            ("SP", 32),
+            ("DEL", 127),
+        ],
+        &[],
+    );
+    let controlnames = [
+        "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS", "HT", "LF", "VT", "FF", "CR",
+        "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN", "EM", "SUB",
+        "ESC", "FS", "GS", "RS", "US", "SP",
+    ];
+    attrs.insert(
+        "controlnames".to_string(),
+        MbValue::from_ptr(MbObject::new_list(
+            controlnames.iter().map(|name| new_str(name)).collect(),
+        )),
+    );
+    super::register_module("curses.ascii", attrs);
 }
 
 fn register_asyncio_transports() {
@@ -965,41 +1163,12 @@ pub fn register() {
         &[],
         &[],
     );
+    register_curses_ascii();
     register_with(
-        "curses.ascii",
+        "curses.textpad",
+        &["Textbox"],
+        &[("rectangle", dispatch_noop as *const () as usize)],
         &[],
-        &[
-            ("isalpha", dispatch_false as *const () as usize),
-            ("isdigit", dispatch_false as *const () as usize),
-            ("isspace", dispatch_false as *const () as usize),
-            ("isupper", dispatch_false as *const () as usize),
-            ("islower", dispatch_false as *const () as usize),
-            ("isalnum", dispatch_false as *const () as usize),
-            ("isprint", dispatch_false as *const () as usize),
-            ("ispunct", dispatch_false as *const () as usize),
-            ("isctrl", dispatch_false as *const () as usize),
-        ],
-        &[
-            ("NUL", 0),
-            ("SOH", 1),
-            ("STX", 2),
-            ("ETX", 3),
-            ("EOT", 4),
-            ("ENQ", 5),
-            ("ACK", 6),
-            ("BEL", 7),
-            ("BS", 8),
-            ("TAB", 9),
-            ("LF", 10),
-            ("VT", 11),
-            ("FF", 12),
-            ("CR", 13),
-            ("SO", 14),
-            ("SI", 15),
-            ("ESC", 27),
-            ("SP", 32),
-            ("DEL", 127),
-        ],
         &[],
     );
     register_with(
