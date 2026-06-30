@@ -66,7 +66,14 @@ fn extract_c_int(value: MbValue, what: &str) -> Result<c_int, MbValue> {
 }
 
 fn extract_fd(value: MbValue) -> Result<c_int, MbValue> {
-    let fd = extract_c_int(value, "file descriptor")?;
+    let fd = if value.as_int_pyint().is_some() {
+        extract_c_int(value, "file descriptor")?
+    } else {
+        let method = MbValue::from_ptr(MbObject::new_str("fileno".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+        let result = super::super::class::mb_call_method(value, method, args);
+        extract_c_int(result, "file descriptor")?
+    };
     if fd < 0 {
         return Err(raise_value_error(format!(
             "file descriptor cannot be a negative integer ({fd})"
