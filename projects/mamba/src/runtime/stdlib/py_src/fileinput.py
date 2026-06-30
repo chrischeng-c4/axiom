@@ -18,7 +18,8 @@ exercising this code, but the implementation itself mirrors CPython 3.12.
 """
 
 import io
-import sys, os
+import sys
+import os
 
 __all__ = ["input", "close", "nextfile", "filename", "lineno", "filelineno",
            "fileno", "isfirstline", "isstdin", "FileInput", "hook_compressed",
@@ -125,6 +126,15 @@ def _is_pathlike(obj):
     return hasattr(obj, "__fspath__")
 
 
+def _is_exception_type_or_none(obj):
+    if obj is None:
+        return True
+    try:
+        return issubclass(obj, BaseException)
+    except TypeError:
+        return False
+
+
 class FileInput:
     """FileInput([files[, inplace[, backup]]], *, mode=None, openhook=None)
 
@@ -140,6 +150,14 @@ class FileInput:
 
     def __init__(self, files=None, inplace=False, backup="", *,
                  mode="r", openhook=None, encoding=None, errors=None):
+        # Validate explicit string modes before normalizing paths so
+        # invalid-mode callers get the same primary error even when path-like
+        # probing would fail. Imported-class keyword/default binding can hand
+        # us a non-str sentinel for the omitted default; treat that as "r".
+        if isinstance(mode, str) and mode not in ('r', 'rb'):
+            raise ValueError("FileInput opening mode must be 'r' or 'rb'")
+        if not isinstance(mode, str):
+            mode = "r"
         if isinstance(files, str):
             files = (files,)
         elif _is_pathlike(files):
@@ -168,9 +186,6 @@ class FileInput:
         # self._file.readline" method-shadowing trick.
         self._readline_hook = None
 
-        # restrict mode argument to reading modes
-        if mode not in ('r', 'rb'):
-            raise ValueError("FileInput opening mode must be 'r' or 'rb'")
         self._mode = mode
         self._write_mode = mode.replace('r', 'w')
         if openhook:
@@ -181,7 +196,10 @@ class FileInput:
         self._openhook = openhook
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def close(self):
         try:
@@ -193,6 +211,8 @@ class FileInput:
         return self
 
     def __exit__(self, type, value, traceback):
+        if not _is_exception_type_or_none(type):
+            raise TypeError("FileInput.__exit__ type must be an exception type or None")
         self.close()
 
     def __iter__(self):
