@@ -44,6 +44,7 @@ pub mod bisect_mod;
 pub mod bz2_mod;
 pub mod calendar_mod;
 pub mod cmath_mod;
+pub mod cmd_mod;
 pub mod colorsys_mod;
 pub mod compressed_file;
 pub mod configparser_mod;
@@ -266,6 +267,7 @@ pub fn register_stdlib() {
     html_parser_mod::register();
     array_mod::register();
     cmath_mod::register();
+    cmd_mod::register();
     colorsys_mod::register();
     // New stdlib modules
     abc_mod::register();

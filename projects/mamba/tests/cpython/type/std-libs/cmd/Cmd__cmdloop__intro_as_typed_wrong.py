@@ -9,12 +9,11 @@
 # case = "Cmd__cmdloop__intro_as_typed_wrong"
 # subject = "cmd.Cmd.cmdloop(intro: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed intro"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cmd.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed intro
 # mamba-strict-type: TypeError
 """Type wall: cmd.Cmd.cmdloop(intro: typed); call it with the wrong type.
 
