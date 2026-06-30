@@ -679,6 +679,42 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("wantobjects", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: typeshed exposes `_warnings.warn` / `warn_explicit` overloads
+    // for `str` and `Warning` messages, while CPython accepts arbitrary runtime
+    // objects and stringifies them. Use a scalar `str` wall for strict-type
+    // fixture probes: it rejects obviously wrong scalars and bare user objects,
+    // while warning instances stay skip-when-unsure instead of becoming false
+    // positives.
+    StdlibSig {
+        module: "_warnings",
+        qualifier: "",
+        name: "warn",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("message", CoreTy::Str),
+            p("category", CoreTy::Unknown),
+            p("stacklevel", CoreTy::Int),
+            p("source", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "_warnings",
+        qualifier: "",
+        name: "warn_explicit",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("message", CoreTy::Str),
+            p("category", CoreTy::Unknown),
+            p("filename", CoreTy::Str),
+            p("lineno", CoreTy::Int),
+            p("module", CoreTy::Unknown),
+            p("registry", CoreTy::Unknown),
+            p("module_globals", CoreTy::Unknown),
+            p("source", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
@@ -2232,6 +2268,16 @@ mod tests {
                 .any(|s| s.module == "os" && s.qualifier.is_empty()),
             "generated table should contain os module fns",
         );
+    }
+
+    #[test]
+    fn curated_warnings_message_wall_overrides_unknown_generated_rows() {
+        for name in ["warn", "warn_explicit"] {
+            let sig = get("_warnings", "", name).expect("_warnings row present");
+            assert!(sig.enforceable);
+            assert_eq!(sig.params[0].name, "message");
+            assert_eq!(sig.params[0].ty, CoreTy::Str);
+        }
     }
 
     /// Regenerable contract (fixture_lint-style): the checked-in
