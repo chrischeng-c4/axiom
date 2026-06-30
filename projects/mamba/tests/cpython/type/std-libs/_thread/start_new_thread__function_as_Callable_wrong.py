@@ -9,12 +9,11 @@
 # case = "start_new_thread__function_as_Callable_wrong"
 # subject = "_thread.start_new_thread(function: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed function"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_thread.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed function
 # mamba-strict-type: TypeError
 """Type wall: _thread.start_new_thread(function: Callable); call it with the wrong type.
 
