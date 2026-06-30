@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[4]          # projects/mamba
 TYPE_DIR = ROOT / "tests/cpython/type"
 SOUND_DIR = ROOT / "tests/cpython/behavior/core"
 README = ROOT / "README.md"
+NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
 SOUND_FAMILIES = [
     "float_return_inference", "builtin_numeric_inference",
     "comprehension_float_inference", "generator_float_inference",
@@ -51,6 +52,20 @@ def _default_mamba() -> str:
 
 
 MAMBA = _default_mamba()
+
+
+def _is_non_runtime_stub_type_fixture(path: Path) -> bool:
+    try:
+        rel = path.relative_to(TYPE_DIR).parts
+    except ValueError:
+        return False
+    if len(rel) < 3 or rel[0] != "std-libs":
+        return False
+    lib = rel[1]
+    return any(
+        lib == prefix or lib.startswith(f"{prefix}_")
+        for prefix in NON_RUNTIME_STUB_TYPE_LIB_PREFIXES
+    )
 
 
 def _run(argv, timeout):
@@ -107,7 +122,8 @@ def main(argv=None):
                     help="write leaked fixture paths (one per line) and print top leak clusters by lib")
     args = ap.parse_args(argv)
 
-    type_fx = sorted(str(p) for p in TYPE_DIR.rglob("*.py"))
+    type_fx = sorted(str(p) for p in TYPE_DIR.rglob("*.py")
+                     if not _is_non_runtime_stub_type_fixture(p))
     if args.limit:
         type_fx = type_fx[:: max(1, len(type_fx) // args.limit)][: args.limit]
     print(f"grading {len(type_fx)} enforcement fixtures with {args.jobs} jobs…",

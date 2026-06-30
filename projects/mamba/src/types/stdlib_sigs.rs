@@ -668,6 +668,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("blocking", CoreTy::Bool)],
         enforceable: true,
     },
+    // POSITIVE: generated `_tkinter.TkappType.wantobjects` loses the optional
+    // setter argument, and local CPython builds may omit `_tkinter` entirely.
+    // Enforce only the strict-type wall for the explicit setter probe.
+    StdlibSig {
+        module: "_tkinter",
+        qualifier: "TkappType",
+        name: "wantobjects",
+        kind: SigKind::Method,
+        params: &[p("wantobjects", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
     // overload candidates skip-safe.
