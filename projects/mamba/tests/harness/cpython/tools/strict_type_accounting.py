@@ -37,6 +37,11 @@ TYPE_DIVERGENCES = TOOLS_DIR.parent / "config" / "type_divergences.txt"
 EXIT_NOT_READY = 70
 NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
 PLATFORM_SPECIFIC_TYPE_LIBS = {"_winapi": "win32"}
+VERSION_SPECIFIC_TYPE_LIBS = {
+    "_zstd": (3, 14),
+    "compression_zstd": (3, 14),
+    "compression_zstd__zstdfile": (3, 14),
+}
 
 SOUND_FAMILIES = [
     "float_return_inference",
@@ -125,10 +130,19 @@ def is_platform_specific_unavailable_type_fixture(path: Path) -> bool:
     return required is not None and sys.platform != required
 
 
+def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
+    lib = type_fixture_lib(path)
+    if lib is None:
+        return False
+    required = VERSION_SPECIFIC_TYPE_LIBS.get(lib)
+    return required is not None and sys.version_info[:2] < required
+
+
 def is_excluded_type_fixture(path: Path) -> bool:
     return (
         is_non_runtime_stub_type_fixture(path)
         or is_platform_specific_unavailable_type_fixture(path)
+        or is_version_specific_unavailable_type_fixture(path)
     )
 
 
@@ -277,6 +291,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         for path in type_fixture_candidates
         if is_platform_specific_unavailable_type_fixture(path)
     ]
+    excluded_version_specific = [
+        path
+        for path in type_fixture_candidates
+        if is_version_specific_unavailable_type_fixture(path)
+    ]
     type_fixtures_all = executable_type_fixtures(type_fixture_candidates)
     type_fixtures, enforcement_sampled = selected(type_fixtures_all, args.limit)
     sound_fixtures_all = sorted(
@@ -379,6 +398,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "excluded_platform_specific_type_fixtures": len(excluded_platform_specific),
             "platform_specific_type_libs": PLATFORM_SPECIFIC_TYPE_LIBS,
             "host_platform": sys.platform,
+            "excluded_version_specific_type_fixtures": len(excluded_version_specific),
+            "version_specific_type_libs": VERSION_SPECIFIC_TYPE_LIBS,
+            "host_python_version": list(sys.version_info[:2]),
         },
         "enforcement": {
             "fixtures": len(type_fixtures_all),

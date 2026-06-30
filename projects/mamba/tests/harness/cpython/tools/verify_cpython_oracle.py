@@ -34,6 +34,11 @@ MAMBA_DIR = CPYTHON_DIR.parent.parent
 FIXTURES_ROOT = CPYTHON_DIR
 NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
 PLATFORM_SPECIFIC_TYPE_LIBS = {"_winapi": "win32"}
+VERSION_SPECIFIC_TYPE_LIBS = {
+    "_zstd": (3, 14),
+    "compression_zstd": (3, 14),
+    "compression_zstd__zstdfile": (3, 14),
+}
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,14 @@ def is_platform_specific_unavailable_type_fixture(path: Path) -> bool:
         return False
     required = PLATFORM_SPECIFIC_TYPE_LIBS.get(lib)
     return required is not None and sys.platform != required
+
+
+def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
+    lib = type_fixture_lib(path)
+    if lib is None:
+        return False
+    required = VERSION_SPECIFIC_TYPE_LIBS.get(lib)
+    return required is not None and sys.version_info[:2] < required
 
 
 def has_pipeline_run_directive(text: str) -> bool:
@@ -190,6 +203,8 @@ def run_one(
         return CaseResult(path, "skip", "non-runtime-stub-type-helper")
     if is_platform_specific_unavailable_type_fixture(path):
         return CaseResult(path, "skip", "platform-specific-type-helper")
+    if is_version_specific_unavailable_type_fixture(path):
+        return CaseResult(path, "skip", "version-specific-type-helper")
     if is_bench(path):
         return CaseResult(path, "skip", "bench/perf-baseline-owned")
     if has_pipeline_run_directive(text):

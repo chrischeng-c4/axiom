@@ -207,6 +207,59 @@ if expected:
 }
 
 #[test]
+fn version_specific_type_fixtures_are_not_py312_oracles() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+strict_tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(strict_tool.parent))
+strict_spec = importlib.util.spec_from_file_location("strict_type_accounting", strict_tool)
+strict_module = importlib.util.module_from_spec(strict_spec)
+assert strict_spec.loader is not None
+sys.modules[strict_spec.name] = strict_module
+strict_spec.loader.exec_module(strict_module)
+
+oracle_tool = pathlib.Path("tests/harness/cpython/tools/verify_cpython_oracle.py")
+oracle_spec = importlib.util.spec_from_file_location("verify_cpython_oracle", oracle_tool)
+oracle_module = importlib.util.module_from_spec(oracle_spec)
+assert oracle_spec.loader is not None
+sys.modules[oracle_spec.name] = oracle_module
+oracle_spec.loader.exec_module(oracle_module)
+
+strict_zstd_fixture = strict_module.TYPE_DIR / "std-libs/_zstd/finalize_dict__custom_dict_bytes_as_bytes_wrong.py"
+strict_compression_fixture = strict_module.TYPE_DIR / "std-libs/compression_zstd/compress__data_as_ReadableBuffer_wrong.py"
+oracle_zstd_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/_zstd/finalize_dict__custom_dict_bytes_as_bytes_wrong.py"
+tkinter_fixture = strict_module.TYPE_DIR / "std-libs/_tkinter/TkappType__wantobjects__wantobjects_as_typed_wrong.py"
+
+expected = sys.version_info[:2] < (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["_zstd"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["compression_zstd"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["compression_zstd__zstdfile"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["_zstd"] == (3, 14)
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_zstd_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_compression_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_zstd_fixture) == expected
+assert not strict_module.is_version_specific_unavailable_type_fixture(tkinter_fixture)
+if expected:
+    assert strict_zstd_fixture not in strict_module.executable_type_fixtures([strict_zstd_fixture])
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run version-specific type fixture smoke");
+    assert!(
+        output.status.success(),
+        "version-specific type fixture smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn warnings_strict_type_wall_is_curated() {
     let text =
         fs::read_to_string(mamba_root().join("src/types/stdlib_sigs.rs")).expect("read sig table");
