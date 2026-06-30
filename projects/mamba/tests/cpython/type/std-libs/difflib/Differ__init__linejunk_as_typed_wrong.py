@@ -9,12 +9,11 @@
 # case = "Differ__init__linejunk_as_typed_wrong"
 # subject = "difflib.Differ.__init__(linejunk: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed linejunk"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/difflib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed linejunk
 # mamba-strict-type: TypeError
 """Type wall: difflib.Differ.__init__(linejunk: typed); call it with the wrong type.
 
