@@ -9,12 +9,11 @@
 # case = "gnu_getopt__args_as_Sequence_wrong"
 # subject = "getopt.gnu_getopt(args: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/getopt.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args
 # mamba-strict-type: TypeError
 """Type wall: getopt.gnu_getopt(args: Sequence); call it with the wrong type.
 
