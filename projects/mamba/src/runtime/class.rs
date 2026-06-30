@@ -2918,6 +2918,15 @@ fn memoryview_field(view: MbValue, name: &str) -> Option<MbValue> {
     None
 }
 
+fn is_memoryview_instance(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. } if class_name == "memoryview"
+        )
+    })
+}
+
 fn memoryview_tuple(values: &[i64]) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(
         values.iter().map(|v| MbValue::from_int(*v)).collect(),
@@ -6322,6 +6331,7 @@ fn is_array_unbound_method(name: &str) -> bool {
             | "insert"
             | "pop"
             | "remove"
+            | "__release_buffer__"
             | "reverse"
     )
 }
@@ -7052,6 +7062,9 @@ fn mb_getattr_impl(
                 "typecode" => return super::stdlib::array_mod::mb_array_typecode_attr(obj),
                 "itemsize" => return super::stdlib::array_mod::mb_array_itemsize_attr(obj),
                 _ => {}
+            }
+            if is_array_unbound_method(&attr_name) {
+                return make_bound_native_method(obj, &attr_name);
             }
         }
     }
@@ -17861,6 +17874,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 "remove" => {
                     let t = arg_items.first().copied().unwrap_or(MbValue::none());
                     return super::stdlib::array_mod::mb_array_remove(receiver, t);
+                }
+                "__release_buffer__" => {
+                    let buffer = arg_items.first().copied().unwrap_or(MbValue::none());
+                    if !is_memoryview_instance(buffer) {
+                        super::builtins::raise_type_error(
+                            "expected a memoryview object".to_string(),
+                        );
+                    }
+                    return MbValue::none();
                 }
                 "reverse" => return super::stdlib::array_mod::mb_array_reverse(receiver),
                 _ => {}
