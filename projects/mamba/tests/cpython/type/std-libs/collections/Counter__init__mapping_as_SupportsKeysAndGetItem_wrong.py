@@ -9,12 +9,11 @@
 # case = "Counter__init__mapping_as_SupportsKeysAndGetItem_wrong"
 # subject = "collections.Counter.__init__(mapping: SupportsKeysAndGetItem)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mapping"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mapping
 # mamba-strict-type: TypeError
 """Type wall: collections.Counter.__init__(mapping: SupportsKeysAndGetItem); call it with the wrong type.
 
