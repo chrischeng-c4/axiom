@@ -174,6 +174,16 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Preserve Lumen's readyz body contract while serving readiness from the shared probe router."
+  - path: libs/service-http/src/probes.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Cover shared health, readiness, draining readiness, metrics, docs, and OpenAPI probe behavior."
+  - path: projects/lumen/tests/api_e2e.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Exercise Lumen's shared probe adapters for readyz, metrics, and OpenAPI route inventory."
   - path: projects/lumen/Cargo.toml
     action: modify
     section: logic

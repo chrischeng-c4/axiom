@@ -20,16 +20,16 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 111 |  |
-| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 169 |  |
-| `BrokerSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 193 |  |
-| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 88 |  |
+| `AuthMode` | projects/lumen/src/operator/crd.rs | enum | pub | 122 |  |
+| `Autoscaling` | projects/lumen/src/operator/crd.rs | struct | pub | 180 |  |
+| `BrokerSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 204 |  |
+| `LogFormat` | projects/lumen/src/operator/crd.rs | enum | pub | 99 |  |
 | `LumenSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 36 |  |
-| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 253 |  |
-| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 137 |  |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 99 | as_env(self) -> &'static str |
-| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 125 | as_env(self) -> &'static str |
-| `is_managed` | projects/lumen/src/operator/crd.rs | function | pub | 228 | is_managed(&self) -> bool |
+| `LumenStatus` | projects/lumen/src/operator/crd.rs | struct | pub | 264 |  |
+| `ServingSpec` | projects/lumen/src/operator/crd.rs | struct | pub | 148 |  |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 110 | as_env(self) -> &'static str |
+| `as_env` | projects/lumen/src/operator/crd.rs | function | pub | 136 | as_env(self) -> &'static str |
+| `is_managed` | projects/lumen/src/operator/crd.rs | function | pub | 239 | is_managed(&self) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

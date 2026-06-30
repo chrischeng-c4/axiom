@@ -10,7 +10,7 @@
 // @command cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter
 // AW-EC-END
 
-// Contract: The vat efficiency runner executes the Postgres/OpenSearch comparison path and resource attribution gate.
+// Contract: The vat efficiency runner executes the Lumen-only regression path against retained Postgres/OpenSearch-calibrated floors; explicit calibration runners refresh peers only on demand.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_competitor_performance_external_comparison() {

@@ -1,6 +1,19 @@
 {
   "_doc": "Competitive perf gate baselines for tests/perf_gate_vs_db.rs. ratio = peer_min / lumen_min (>1 = lumen faster). Write ratio = lumen_docs_s / peer_docs_s (>1 = lumen faster) and is enforced only by write_qps.rs strict mode. BOTH vs OpenSearch and vs Postgres are gated on end-to-end client latency where the transport class is comparable: lumen + OpenSearch share the HTTP/JSON protocol class, while pg's binary protocol wins cheap HTTP predicate cells on loopback; those HTTP cells stay EXEMPT, but pg_native gates the same cheap predicates through lumen's prepared compact native wire over Unix socket/TCP fallback. Gate types: WIN = must hold max(1.0, 0.8*baseline) (ratchet — improving a cell should bump its baseline up here); TARGET = should win but currently does not (reported RED, drives the work, NOT yet a hard failure until promoted to win); EXEMPT = opponent home-turf; reported with a reason, never fails. Only a WIN-cell dropping below its threshold fails the build. Baselines below are conservative regression FLOORS (kept below the measured ratios so the gate does not flap on sub-ms jitter; bump one only when a real, stable improvement should be locked in). GREEN at release + N=1M for serial read/search and disk tier (2026-06-08). lumen beats pg on EVERY WIN serial search cell (text_bm25 815x, text_and 97x, filtered_search 61x, filter_sort 44x, pure_sort 84x); pg btree cheap predicates remain HTTP EXEMPT but have pg_native WIN floors (kw_term 6.16x, range 2.92x, bool_filter 39.57x at N=1M). vs OpenSearch: every in-memory and disk search cell clears >=3x, so every OS search baseline remains ratcheted to 3.0 (2.4x failure floor after ratchet). The qps ladder is paced fixed-rate load, so qps1000 means 1000 req/s instead of a 1000-concurrent-worker storm; qps100 has every OS row >=2.63x after one harness-bound text_bm25 retry, qps1000 has every OS row >=2.62x with no TARGET rows, and the retained dedicated qps10 strict rerun cleared every OS row with min filtered_search 2.66x after guarded retries for range/bool_filter. pg_native qps10/qps100/qps1000 hard-gates pg cheap predicates over lumen's prepared native wire; latest qps10 min is 6.53x and qps1000 min is 6.50x. Keep baselines conservative because sub-ms HTTP/JVM variance still exists.",
   "ratchet": 0.8,
+  "lumen_cells": {
+    "text_bm25": { "max_e2e_min_ms": 5.0, "max_e2e_p50_ms": 8.0, "max_engine_min_ms": 3.0 },
+    "text_and": { "max_e2e_min_ms": 5.0, "max_e2e_p50_ms": 8.0, "max_engine_min_ms": 3.0 },
+    "filtered_search": { "max_e2e_min_ms": 5.0, "max_e2e_p50_ms": 8.0, "max_engine_min_ms": 3.0 },
+    "kw_term": { "max_e2e_min_ms": 2.0, "max_e2e_p50_ms": 4.0, "max_engine_min_ms": 1.0 },
+    "range": { "max_e2e_min_ms": 2.0, "max_e2e_p50_ms": 4.0, "max_engine_min_ms": 1.0 },
+    "bool_filter": { "max_e2e_min_ms": 2.0, "max_e2e_p50_ms": 4.0, "max_engine_min_ms": 1.0 },
+    "filter_sort": { "max_e2e_min_ms": 5.0, "max_e2e_p50_ms": 8.0, "max_engine_min_ms": 3.0 },
+    "sorted_page_deep": { "max_e2e_min_ms": 30.0, "max_e2e_p50_ms": 50.0, "max_engine_min_ms": 20.0 },
+    "pure_sort": { "max_e2e_min_ms": 5.0, "max_e2e_p50_ms": 8.0, "max_engine_min_ms": 3.0 },
+    "exists": { "max_e2e_min_ms": 3.0, "max_e2e_p50_ms": 5.0, "max_engine_min_ms": 2.0 },
+    "duplicated": { "max_e2e_min_ms": 5.0, "max_e2e_p50_ms": 8.0, "max_engine_min_ms": 3.0 }
+  },
   "cells": {
     "text_bm25": {
       "pg": { "gate": "win", "baseline": 18.2 },

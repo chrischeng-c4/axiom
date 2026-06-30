@@ -2,18 +2,18 @@
 id: semantic-lumen-install-script
 summary: Lossless source-unit coverage for the lumen project install script.
 capability_refs:
-  - id: "long-running-stability"
+  - id: "cli-interface"
     role: primary
-    gap: "stateless-serving-rebuild-from-log-no-pvc"
-    claim: "stateless-serving-rebuild-from-log-no-pvc"
+    gap: "service-process-interface"
+    claim: "service-process-interface"
     coverage: partial
     rationale: "The installer is part of the user-facing operability workflow for acquiring and verifying the lumen binary."
   - id: "kubernetes-native-deployment"
     role: primary
-    gap: "stateless-serving-rebuild-from-log-no-pvc"
-    claim: "stateless-serving-rebuild-from-log-no-pvc"
+    gap: "kind-api-recovery-no-relay"
+    claim: "kind-api-recovery-no-relay"
     coverage: partial
-    rationale: "The installer participates in the stateless serving dogfood path by acquiring the binary used in deployment workflows."
+    rationale: "The installer participates in deployment dogfood by acquiring the binary used in Lumen-only kind workflows."
 fill_sections: [text-source-unit, changes]
 ---
 
