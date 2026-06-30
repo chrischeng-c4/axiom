@@ -479,6 +479,21 @@ impl Log {
         headers: BTreeMap<String, String>,
         now: DateTime<Utc>,
     ) -> io::Result<AppendOutcome> {
+        self.append_at(message_id, payload, headers, None, now)
+    }
+
+    /// Append with an optional `not_before` work-queue visibility gate (delayed /
+    /// ETA delivery). Idempotent on `message_id`.
+    ///
+    /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
+    pub fn append_at(
+        &mut self,
+        message_id: &str,
+        payload: Payload,
+        headers: BTreeMap<String, String>,
+        not_before: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> io::Result<AppendOutcome> {
         if let Some(&seq) = self.dedupe.get(message_id) {
             return Ok(AppendOutcome { seq, deduped: true });
         }
@@ -492,6 +507,7 @@ impl Log {
             payload,
             headers,
             appended_at: now,
+            not_before,
         };
         self.write_line(&entry)?;
         match self.fsync {
@@ -540,6 +556,7 @@ impl Log {
                 payload,
                 headers,
                 appended_at: now,
+                not_before: None,
             };
             self.write_line(&entry)?;
             self.dedupe_insert(message_id, seq);

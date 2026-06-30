@@ -73,6 +73,11 @@ pub struct LogEntry {
     pub headers: BTreeMap<String, String>,
     /// Server time the entry was durably appended.
     pub appended_at: DateTime<Utc>,
+    /// Work-queue visibility gate (delayed / ETA / countdown delivery): the entry
+    /// is durably appended immediately but is not leasable until this time.
+    /// `None` = leasable at once. Does not affect broadcast replay.
+    #[serde(default)]
+    pub not_before: Option<DateTime<Utc>>,
 }
 
 /// Result of a publish/append; idempotent on `MessageId`.

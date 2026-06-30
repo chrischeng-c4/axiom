@@ -26,7 +26,7 @@ nodes:
     label: "Reconciler wakes every reconcile_interval_ms"
   per_subject:
     kind: process
-    label: "For each (subject, shard): sweep ONLY the in-flight leases (the frontier), never a full log scan"
+    label: "For each (subject, shard): sweep ONLY the in-flight leases (the frontier), never a full log scan; also promote_due — release delayed/ETA/backoff entries whose not_before <= now onto the redeliver heap, waking the subject"
   expired:
     kind: decision
     label: "Lease expires_at <= now?"
@@ -106,6 +106,12 @@ nodes:
   a_bg:
     kind: terminal
     label: "assert the entry becomes re-leasable without any manual reclaim call"
+  t_delay:
+    kind: process
+    label: "publish with not_before in the future (+ an immediate sibling), then lease before / after due; restart between"
+  a_delay:
+    kind: terminal
+    label: "assert the delayed entry is withheld until due (immediate sibling leases at once), promote_due / next lease releases it, and the delay survives a restart"
 edges:
   - { from: suite, to: t_dead, label: "case: dead worker redeliver" }
   - { from: t_dead, to: a_dead }
@@ -117,6 +123,8 @@ edges:
   - { from: t_frontier, to: a_frontier }
   - { from: suite, to: t_bg, label: "case: background task" }
   - { from: t_bg, to: a_bg }
+  - { from: suite, to: t_delay, label: "case: delayed / ETA delivery" }
+  - { from: t_delay, to: a_delay }
 ---
 flowchart TD
     suite([reconciler suite]) --> t_dead[c1 dies, advance ttl, reconcile]
@@ -129,6 +137,8 @@ flowchart TD
     t_frontier --> a_frontier([only in-flight swept])
     suite --> t_bg[spawn reconciler, wait]
     t_bg --> a_bg([auto re-leasable])
+    suite --> t_delay[publish not_before future, restart]
+    t_delay --> a_delay([withheld until due; survives restart])
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -139,7 +149,27 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    reason: "Add Relay::reconcile(now): sweep every subject/shard's expired leases (frontier-only) and return the count reclaimed."
+    reason: "Add Relay::reconcile(now): sweep every subject/shard's expired leases (frontier-only) and return the count reclaimed; also promote_due per shard (release delayed/ETA entries that came due) and wake those subjects. Add publish_at(.., not_before, ..) that durably appends then register_delayed for a future-dated entry; publish delegates with None. Recovery (shard_state) rebuilds the in-memory delay index by scanning the un-acked tail for not_before."
+  - path: projects/relay/src/workqueue.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Delay index: delayed min-heap (by visible-at millis) + delayed_set; register_delayed(seq, visible_at) holds an entry back; promote_due(now) releases due entries onto the redeliver heap (returns count); pick skips delayed seqs; lease/lease_or_dead call promote_due(now) first."
+  - path: projects/relay/src/types.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "LogEntry gains optional not_before (work-queue visibility gate; serde default = back-compatible with existing segments)."
+  - path: projects/relay/src/wire.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "PublishRequest gains optional not_before + delay_ms (countdown)."
+  - path: projects/relay/tests/delayed_delivery.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Tests: delayed entry withheld until due (immediate sibling leases at once), reconcile promotes a due entry, and the delay survives a restart."
   - path: projects/relay/src/reconciler.rs
     action: create
     section: logic
