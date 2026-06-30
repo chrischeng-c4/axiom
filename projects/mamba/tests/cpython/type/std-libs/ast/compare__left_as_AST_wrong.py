@@ -24,8 +24,9 @@ class _W:
     pass
 
 
-from ast import compare
 try:
+    from ast import compare
+
     compare(_W(), None)  # left: AST <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:

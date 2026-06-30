@@ -25,8 +25,8 @@ class _W:
 
 
 from ast import ExtSlice
-obj = object.__new__(ExtSlice)
 try:
+    obj = object.__new__(ExtSlice)
     obj.__new__(_W())  # dims: Iterable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
