@@ -9,12 +9,11 @@
 # case = "message_from_file__fp_as_IO_wrong"
 # subject = "email.message_from_file(fp: IO)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fp"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fp
 # mamba-strict-type: TypeError
 """Type wall: email.message_from_file(fp: IO); call it with the wrong type.
 
