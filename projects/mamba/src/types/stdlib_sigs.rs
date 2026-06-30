@@ -1529,6 +1529,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("n", CoreTy::Complex)],
         enforceable: true,
     },
+    // POSITIVE: configparser's `_SectionName` alias is a string-shaped section
+    // key in CPython's public API. The generated row keeps it Unknown, which
+    // lets a bare user object fall through to runtime NoSectionError instead
+    // of the force-typed TypeError required by the strict fixture.
+    StdlibSig {
+        module: "configparser",
+        qualifier: "ConfigParser",
+        name: "get",
+        kind: SigKind::Method,
+        params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
+        enforceable: true,
+    },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
     // but the typeshed-derived strict wall must still reject a bare user object
     // before import-time behavior is observed.
@@ -3502,6 +3514,17 @@ mod tests {
         assert_eq!(sig.params[1].ty, CoreTy::Int);
         assert_eq!(sig.params[3].ty, CoreTy::Int);
         assert_eq!(sig.params[5].ty, CoreTy::Int);
+    }
+
+    #[test]
+    fn curated_configparser_get_section_uses_str_wall() {
+        let sig = get("configparser", "ConfigParser", "get").expect("ConfigParser.get present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "section");
+        assert_eq!(sig.params[0].ty, CoreTy::Str);
+        assert_eq!(sig.params[1].name, "option");
+        assert_eq!(sig.params[1].ty, CoreTy::Str);
     }
 
     #[test]
