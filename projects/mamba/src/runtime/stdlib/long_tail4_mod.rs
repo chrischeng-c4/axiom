@@ -34,6 +34,23 @@ unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
 
+unsafe extern "C" fn dispatch_incremental_decoder_buffer_decode(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let Some(input) = args.first().copied() else {
+        return raise_type_error("_buffer_decode() missing required data argument");
+    };
+    if !is_bytes_like(input) {
+        return raise_type_error("_buffer_decode() argument 1 must be bytes-like");
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+        MbValue::from_int(0),
+    ]))
+}
+
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -64,6 +81,13 @@ fn make_type_obj(name: &str, module: &str) -> MbValue {
             map.insert("__name__".to_string(), new_str(name));
             map.insert("__qualname__".to_string(), new_str(name));
             map.insert("__module__".to_string(), new_str(module));
+            if name == "IncrementalDecoder" {
+                let addr = dispatch_incremental_decoder_buffer_decode as *const () as usize;
+                map.insert("_buffer_decode".to_string(), MbValue::from_func(addr));
+                super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                    s.borrow_mut().insert(addr as u64);
+                });
+            }
         }
     }
     MbValue::from_ptr(obj)
@@ -840,10 +864,17 @@ fn register_codec_shims() {
         "encodings.mac_romanian",
         "encodings.mac_turkish",
         "encodings.mbcs",
+        "encodings.oem",
         "encodings.palmos",
         "encodings.ptcp154",
         "encodings.tis_620",
         "encodings.utf_16",
+        "encodings.utf_16_be",
+        "encodings.utf_16_le",
+        "encodings.utf_32_be",
+        "encodings.utf_32_le",
+        "encodings.utf_7",
+        "encodings.utf_8",
     ] {
         register_codec_module(name);
     }
