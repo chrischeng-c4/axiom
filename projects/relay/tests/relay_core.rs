@@ -16,7 +16,9 @@ fn msg(name: &str) -> Payload {
 }
 
 fn ram() -> Relay {
-    Relay::new(RelayCoreConfig::in_memory())
+    let mut c = RelayCoreConfig::in_memory();
+    c.work_queue.redeliver_backoff_ms = 0; // pin immediate redelivery
+    Relay::new(c)
 }
 
 // #166: a leased entry's stored body is retrievable by (subject, shard, seq) so
