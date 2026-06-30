@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ TYPE_DIVERGENCES = TOOLS_DIR.parent / "config" / "type_divergences.txt"
 
 EXIT_NOT_READY = 70
 NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
+PLATFORM_SPECIFIC_TYPE_LIBS = {"_winapi": "win32"}
 
 SOUND_FAMILIES = [
     "float_return_inference",
@@ -96,21 +98,42 @@ def repo_rel(path: Path) -> str:
 
 
 def is_non_runtime_stub_type_fixture(path: Path) -> bool:
-    try:
-        rel = path.relative_to(TYPE_DIR).parts
-    except ValueError:
+    lib = type_fixture_lib(path)
+    if lib is None:
         return False
-    if len(rel) < 3 or rel[0] != "std-libs":
-        return False
-    lib = rel[1]
     return any(
         lib == prefix or lib.startswith(f"{prefix}_")
         for prefix in NON_RUNTIME_STUB_TYPE_LIB_PREFIXES
     )
 
 
+def type_fixture_lib(path: Path) -> str | None:
+    try:
+        rel = path.relative_to(TYPE_DIR).parts
+    except ValueError:
+        return None
+    if len(rel) < 3 or rel[0] != "std-libs":
+        return None
+    return rel[1]
+
+
+def is_platform_specific_unavailable_type_fixture(path: Path) -> bool:
+    lib = type_fixture_lib(path)
+    if lib is None:
+        return False
+    required = PLATFORM_SPECIFIC_TYPE_LIBS.get(lib)
+    return required is not None and sys.platform != required
+
+
+def is_excluded_type_fixture(path: Path) -> bool:
+    return (
+        is_non_runtime_stub_type_fixture(path)
+        or is_platform_specific_unavailable_type_fixture(path)
+    )
+
+
 def executable_type_fixtures(paths: list[Path]) -> list[Path]:
-    return [path for path in paths if not is_non_runtime_stub_type_fixture(path)]
+    return [path for path in paths if not is_excluded_type_fixture(path)]
 
 
 def run_mamba(mamba_bin: str, fixture: Path, timeout: int) -> tuple[int | None, str, str]:
@@ -249,6 +272,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     excluded_non_runtime_stubs = [
         path for path in type_fixture_candidates if is_non_runtime_stub_type_fixture(path)
     ]
+    excluded_platform_specific = [
+        path
+        for path in type_fixture_candidates
+        if is_platform_specific_unavailable_type_fixture(path)
+    ]
     type_fixtures_all = executable_type_fixtures(type_fixture_candidates)
     type_fixtures, enforcement_sampled = selected(type_fixtures_all, args.limit)
     sound_fixtures_all = sorted(
@@ -348,6 +376,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "measured_type_fixtures": len(type_fixtures),
             "excluded_non_runtime_stub_fixtures": len(excluded_non_runtime_stubs),
             "excluded_non_runtime_stub_lib_prefixes": list(NON_RUNTIME_STUB_TYPE_LIB_PREFIXES),
+            "excluded_platform_specific_type_fixtures": len(excluded_platform_specific),
+            "platform_specific_type_libs": PLATFORM_SPECIFIC_TYPE_LIBS,
+            "host_platform": sys.platform,
         },
         "enforcement": {
             "fixtures": len(type_fixtures_all),

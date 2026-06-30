@@ -158,6 +158,55 @@ assert "_typeshed" in gen_module.NON_RUNTIME_STUB_MODULE_PREFIXES
 }
 
 #[test]
+fn platform_specific_type_fixtures_are_not_current_platform_oracles() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+strict_tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(strict_tool.parent))
+strict_spec = importlib.util.spec_from_file_location("strict_type_accounting", strict_tool)
+strict_module = importlib.util.module_from_spec(strict_spec)
+assert strict_spec.loader is not None
+sys.modules[strict_spec.name] = strict_module
+strict_spec.loader.exec_module(strict_module)
+
+oracle_tool = pathlib.Path("tests/harness/cpython/tools/verify_cpython_oracle.py")
+oracle_spec = importlib.util.spec_from_file_location("verify_cpython_oracle", oracle_tool)
+oracle_module = importlib.util.module_from_spec(oracle_spec)
+assert oracle_spec.loader is not None
+sys.modules[oracle_spec.name] = oracle_module
+oracle_spec.loader.exec_module(oracle_module)
+
+strict_winapi_fixture = strict_module.TYPE_DIR / "std-libs/_winapi/WaitForMultipleObjects__handle_seq_as_Sequence_wrong.py"
+oracle_winapi_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/_winapi/WaitForMultipleObjects__handle_seq_as_Sequence_wrong.py"
+tkinter_fixture = strict_module.TYPE_DIR / "std-libs/_tkinter/TkappType__wantobjects__wantobjects_as_typed_wrong.py"
+
+expected = sys.platform != "win32"
+assert strict_module.PLATFORM_SPECIFIC_TYPE_LIBS["_winapi"] == "win32"
+assert oracle_module.PLATFORM_SPECIFIC_TYPE_LIBS["_winapi"] == "win32"
+assert strict_module.is_platform_specific_unavailable_type_fixture(strict_winapi_fixture) == expected
+assert oracle_module.is_platform_specific_unavailable_type_fixture(oracle_winapi_fixture) == expected
+assert not strict_module.is_platform_specific_unavailable_type_fixture(tkinter_fixture)
+if expected:
+    assert strict_winapi_fixture not in strict_module.executable_type_fixtures([strict_winapi_fixture])
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run platform-specific type fixture smoke");
+    assert!(
+        output.status.success(),
+        "platform-specific type fixture smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn warnings_strict_type_wall_is_curated() {
     let text =
         fs::read_to_string(mamba_root().join("src/types/stdlib_sigs.rs")).expect("read sig table");
