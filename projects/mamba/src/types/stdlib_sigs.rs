@@ -2682,6 +2682,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "email.utils",
+        qualifier: "",
+        name: "decode_params",
+        kind: SigKind::ModuleFn,
+        params: &[p("params", CoreTy::List)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "email.parser",
         qualifier: "BytesParser",
         name: "__init__",
@@ -5365,6 +5373,16 @@ mod tests {
         assert!(sig.enforceable);
         assert_eq!(sig.kind, SigKind::Method);
         assert_eq!(sig.params[0].name, "sourcelines");
+        assert_eq!(sig.params[0].ty, CoreTy::List);
+    }
+
+    #[test]
+    fn curated_email_utils_decode_params_list_wall_overrides_unknown_row() {
+        let sig =
+            get("email.utils", "", "decode_params").expect("email.utils.decode_params row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::ModuleFn);
+        assert_eq!(sig.params[0].name, "params");
         assert_eq!(sig.params[0].ty, CoreTy::List);
     }
 
