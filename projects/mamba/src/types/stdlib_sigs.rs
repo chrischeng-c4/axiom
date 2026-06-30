@@ -2073,6 +2073,29 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: distutils.ccompiler has long-tail aliases and optional flags
+    // that generated rows collapse to Unknown. Curate the first strict walls
+    // needed by the corpus while preserving skip-safe Typed params elsewhere.
+    StdlibSig {
+        module: "distutils.ccompiler",
+        qualifier: "",
+        name: "gen_preprocess_options",
+        kind: SigKind::ModuleFn,
+        params: &[p("macros", CoreTy::List), p("include_dirs", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.ccompiler",
+        qualifier: "CCompiler",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("verbose", CoreTy::Typed),
+            p("dry_run", CoreTy::Typed),
+            p("force", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4338,6 +4361,23 @@ mod tests {
         assert_eq!(sig.params[0].ty, CoreTy::Str);
         assert_eq!(sig.params[1].name, "format");
         assert_eq!(sig.params[1].ty, CoreTy::Str);
+    }
+
+    #[test]
+    fn curated_distutils_ccompiler_walls_override_unknown_rows() {
+        let preprocess = get("distutils.ccompiler", "", "gen_preprocess_options")
+            .expect("gen_preprocess_options present");
+        assert!(preprocess.enforceable);
+        assert_eq!(preprocess.kind, SigKind::ModuleFn);
+        assert_eq!(preprocess.params[0].name, "macros");
+        assert_eq!(preprocess.params[0].ty, CoreTy::List);
+
+        let init = get("distutils.ccompiler", "CCompiler", "__init__")
+            .expect("CCompiler.__init__ present");
+        assert!(init.enforceable);
+        assert_eq!(init.kind, SigKind::Method);
+        assert_eq!(init.params[0].name, "verbose");
+        assert_eq!(init.params[0].ty, CoreTy::Typed);
     }
 
     #[test]

@@ -9,12 +9,11 @@
 # case = "CCompiler__init__verbose_as_typed_wrong"
 # subject = "distutils.ccompiler.CCompiler.__init__(verbose: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed verbose"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed verbose
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.CCompiler.__init__(verbose: typed); call it with the wrong type.
 
