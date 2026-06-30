@@ -40,6 +40,9 @@ VERSION_SPECIFIC_TYPE_LIBS = {
     "compression_zstd": (3, 14),
     "compression_zstd__zstdfile": (3, 14),
 }
+VERSION_SPECIFIC_TYPE_FIXTURES = {
+    "std-libs/ast/TemplateStr__init__values_as_list_wrong.py": (3, 14),
+}
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,13 @@ def is_platform_specific_unavailable_type_fixture(path: Path) -> bool:
 
 
 def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
+    try:
+        rel = "/".join(path.relative_to(FIXTURES_ROOT / "type").parts)
+    except ValueError:
+        rel = ""
+    required = VERSION_SPECIFIC_TYPE_FIXTURES.get(rel)
+    if required is not None:
+        return sys.version_info[:2] < required
     lib = type_fixture_lib(path)
     if lib is None:
         return False
