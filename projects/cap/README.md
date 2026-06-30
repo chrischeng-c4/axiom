@@ -229,6 +229,7 @@ Active same-name replacements are workload-sensitive fast paths:
 | `sort` | one regular file of at least 1 MiB | dual-win | Large single-file sorting. |
 | `sed` | `sed -n <start>,<end>p <file>` | dual-win | Files at least 1 MiB or requested spans of at least 1,024 lines. |
 | `grep` | recursive literal `grep -R <pattern> <root>` subset | dual-win | Roots with at least 64 files or 1 MiB estimated text bytes; no-match and missing-root behavior are parity-tested. |
+| `wc` | `wc -l <many regular files>` | dual-win | At least 64 file operands or 1 MiB total regular-file bytes; unsupported options and small sets stay original. |
 
 Promotion requires both resource evidence and behavior parity. The installed
 binary shape is tested against system commands for successful stdout, nonzero
@@ -295,7 +296,7 @@ deliberately **on hold**:
   shell pipeline pays N process floors (~1.3 MiB each) plus OS pipe overhead and
   N fork/execs; one fused process pays one floor and none of the pipe cost.
   Rough envelope: `A | B` ≈ 0.54x RSS, `A | B | C` ≈ 0.36x — a 2–3x win, not a
-  0.99x near-tie. cap already has in-process `grep`/`find`/`sort`/`sed`/`uniq`;
+  0.99x near-tie. cap already has in-process `grep`/`find`/`sort`/`sed`/`uniq`/`wc`;
   fusion refactors them into pull-based stream stages (a `head -n N` sink that
   stops pulling makes the upstream stop, matching shell SIGPIPE early-exit) and
   composes them, with a `bash -c` fallback for any unfusable stage and the same

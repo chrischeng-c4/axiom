@@ -625,6 +625,14 @@ impl Fixture {
                 "ordinary searchable text\nNEEDLE once\n",
             )?;
         }
+        let wc_root = root.join("wc-many");
+        fs::create_dir(&wc_root)?;
+        for idx in 0..2_000 {
+            fs::write(
+                wc_root.join(format!("count-{idx:04}.txt")),
+                "one\ntwo\nthree\nfour\n",
+            )?;
+        }
 
         let xargs_input = root.join("xargs-input.txt");
         let mut xargs = fs::File::create(&xargs_input)?;
@@ -650,6 +658,16 @@ impl Fixture {
         let small_find_root = self.root.join("find-small");
         let grep_root = self.root.join("grep-tree");
         let small_grep_root = self.root.join("grep-small");
+        let wc_files = (0..2_000)
+            .map(|idx| {
+                path_string(
+                    &self
+                        .root
+                        .join("wc-many")
+                        .join(format!("count-{idx:04}.txt")),
+                )
+            })
+            .collect::<Vec<_>>();
         let xargs_input = self.root.join("xargs-input.txt");
         let long_basename_suffix = "suffix".repeat(78);
         let long_basename_path = format!(
@@ -675,6 +693,10 @@ impl Fixture {
         let run_sort = format!("sort {}", path_string(&sort_file));
         let run_sed = format!("sed -n 2500,7500p {}", path_string(&sed_file));
         let run_grep = format!("grep -R NEEDLE {}", path_string(&grep_root));
+        let mut wc_cap_args = strings(["wc", "-l"]);
+        wc_cap_args.extend(wc_files.iter().cloned());
+        let mut wc_original_args = strings(["-l"]);
+        wc_original_args.extend(wc_files.iter().cloned());
 
         vec![
             Scenario {
@@ -807,6 +829,17 @@ impl Fixture {
                 cap_args: strings(["run", &run_cat]),
                 original_program: "/bin/cat".to_string(),
                 original_args: strings([&path_string(&cat_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "wc_lines_many_files",
+                command: "wc",
+                description: "2,000 regular files, wc -l aggregate",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: wc_cap_args,
+                original_program: "/usr/bin/wc".to_string(),
+                original_args: wc_original_args,
                 stdin_file: None,
             },
             Scenario {

@@ -24,6 +24,9 @@ const SED_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
 const SED_NATIVE_MIN_SPAN_LINES: usize = 1024;
 const GREP_NATIVE_MIN_FILES: usize = 64;
 const GREP_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+const WC_NATIVE_MIN_FILES: usize = 64;
+const WC_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
 
 /// @spec projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +71,7 @@ pub enum NativeCommand {
     Cat(CatPlan),
     Find(FindPlan),
     SedPrint(SedPrintPlan),
+    WcLines(WcLinesPlan),
 }
 
 /// @spec projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
@@ -112,6 +116,12 @@ pub struct SedPrintPlan {
     pub end_line: usize,
 }
 
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WcLinesPlan {
+    pub files: Vec<String>,
+}
+
 /// @spec projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
 impl CommandPlan {
     pub fn explain(&self) -> String {
@@ -139,6 +149,7 @@ impl CommandPlan {
                     NativeCommand::Cat(_) => "cap-native cat",
                     NativeCommand::Find(_) => "cap-native find",
                     NativeCommand::SedPrint(_) => "cap-native sed -n",
+                    NativeCommand::WcLines(_) => "cap-native wc -l",
                 };
                 [
                     format!("original: {}", plan.original),
@@ -219,6 +230,7 @@ fn plan_native(command: &[String], label: Option<String>, original: &str) -> Opt
         "find" => plan_find(&command[1..], label, original),
         "sort" => plan_sort(&command[1..], label, original),
         "sed" => plan_sed(&command[1..], label, original),
+        "wc" => plan_wc(&command[1..], label, original),
         _ => None,
     }
 }
@@ -375,6 +387,38 @@ fn plan_sed(args: &[String], label: Option<String>, original: &str) -> Option<Na
         label,
         original: original.to_string(),
         reason: "large sed -n line print can be served as an in-process ranged read".to_string(),
+    })
+}
+
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+fn plan_wc(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    if args.len() < 2 || args[0] != "-l" {
+        return None;
+    }
+
+    let files = args[1..].to_vec();
+    if files.iter().any(|path| path.starts_with('-')) {
+        return None;
+    }
+
+    let mut total_bytes = 0u64;
+    for file in &files {
+        let meta = fs::metadata(file).ok()?;
+        if !meta.is_file() {
+            return None;
+        }
+        total_bytes = total_bytes.saturating_add(meta.len());
+    }
+
+    if files.len() < WC_NATIVE_MIN_FILES && total_bytes < WC_NATIVE_MIN_BYTES {
+        return None;
+    }
+
+    Some(NativePlan {
+        command: NativeCommand::WcLines(WcLinesPlan { files }),
+        label,
+        original: original.to_string(),
+        reason: "large wc -l file aggregate can count lines in-process".to_string(),
     })
 }
 
@@ -560,6 +604,7 @@ pub(crate) fn run_native_to(
         NativeCommand::Cat(cat) => run_cat(cat, stdout, stderr),
         NativeCommand::Find(find) => run_find(find, stdout, stderr),
         NativeCommand::SedPrint(sed) => run_sed_print(sed, stdout, stderr),
+        NativeCommand::WcLines(wc) => run_wc_lines(wc, stdout, stderr),
     }
 }
 
@@ -742,6 +787,42 @@ fn run_sed_print(
         }
     }
     Ok(0)
+}
+
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+fn run_wc_lines(plan: &WcLinesPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let mut total = 0u64;
+    let mut exit = 0;
+    for file in &plan.files {
+        match count_newlines(file) {
+            Ok(lines) => {
+                total = total.saturating_add(lines);
+                writeln!(stdout, "{lines:8} {file}")?;
+            }
+            Err(e) => {
+                writeln!(stderr, "wc: {file}: {e}")?;
+                exit = 1;
+            }
+        }
+    }
+    if plan.files.len() > 1 {
+        writeln!(stdout, "{total:8} total")?;
+    }
+    Ok(exit)
+}
+
+fn count_newlines(file: &str) -> Result<u64> {
+    let mut reader = BufReader::new(fs::File::open(file)?);
+    let mut buf = [0u8; 8192];
+    let mut lines = 0u64;
+    loop {
+        let read = std::io::Read::read(&mut reader, &mut buf)?;
+        if read == 0 {
+            break;
+        }
+        lines += buf[..read].iter().filter(|byte| **byte == b'\n').count() as u64;
+    }
+    Ok(lines)
 }
 
 fn parse_sed_print_script(script: &str) -> Option<(usize, usize)> {
@@ -1071,6 +1152,14 @@ mod tests {
         .unwrap();
         let sed_file = tmp.path().join("sed-large.txt");
         fs::write(&sed_file, "line\n".repeat(SED_NATIVE_MIN_SPAN_LINES + 1)).unwrap();
+        let wc_dir = tmp.path().join("wc-large");
+        fs::create_dir(&wc_dir).unwrap();
+        let mut wc_files = Vec::new();
+        for idx in 0..WC_NATIVE_MIN_FILES {
+            let file = wc_dir.join(format!("wc-{idx:04}.txt"));
+            fs::write(&file, "one\ntwo\n").unwrap();
+            wc_files.push(file);
+        }
 
         assert!(matches!(
             plan_without_tools(&["ls", list_dir.to_str().unwrap()]),
@@ -1114,6 +1203,19 @@ mod tests {
                 ..
             })
         ));
+        let mut wc_args = vec!["wc".to_string(), "-l".to_string()];
+        wc_args.extend(
+            wc_files
+                .iter()
+                .map(|file| file.to_string_lossy().to_string()),
+        );
+        assert!(matches!(
+            plan(&wc_args, None),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::WcLines(_),
+                ..
+            })
+        ));
 
         let CommandPlan::External(plan) = plan_without_tools(&["sort", file.to_str().unwrap()])
         else {
@@ -1130,11 +1232,15 @@ mod tests {
         fs::write(list_dir.join("one"), "").unwrap();
         let sed_file = tmp.path().join("sed-small.txt");
         fs::write(&sed_file, "one\ntwo\nthree\n").unwrap();
+        let wc_file = tmp.path().join("wc-small.txt");
+        fs::write(&wc_file, "one\ntwo\n").unwrap();
 
         for args in [
             vec!["ls", list_dir.to_str().unwrap()],
             vec!["find", tmp.path().to_str().unwrap(), "-type", "f"],
             vec!["sed", "-n", "1,2p", sed_file.to_str().unwrap()],
+            vec!["wc", "-l", wc_file.to_str().unwrap()],
+            vec!["wc", "-w", wc_file.to_str().unwrap()],
         ] {
             let CommandPlan::External(plan) = plan_without_tools(&args) else {
                 panic!("expected original fallback for {args:?}");
