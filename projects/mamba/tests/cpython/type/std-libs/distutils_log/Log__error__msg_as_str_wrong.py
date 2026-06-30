@@ -9,12 +9,11 @@
 # case = "Log__error__msg_as_str_wrong"
 # subject = "distutils.log.Log.error(msg: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/log.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg
 # mamba-strict-type: TypeError
 """Type wall: distutils.log.Log.error(msg: str); call it with the wrong type.
 
