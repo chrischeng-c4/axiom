@@ -9,12 +9,11 @@
 # case = "formataddr__pair_as_tuple_wrong"
 # subject = "email.utils.formataddr(pair: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pair"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/utils.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pair
 # mamba-strict-type: TypeError
 """Type wall: email.utils.formataddr(pair: tuple); call it with the wrong type.
 
