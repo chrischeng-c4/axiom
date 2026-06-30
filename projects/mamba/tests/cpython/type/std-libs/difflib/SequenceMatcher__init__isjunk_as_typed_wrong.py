@@ -9,12 +9,11 @@
 # case = "SequenceMatcher__init__isjunk_as_typed_wrong"
 # subject = "difflib.SequenceMatcher.__init__(isjunk: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed isjunk"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/difflib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed isjunk
 # mamba-strict-type: TypeError
 """Type wall: difflib.SequenceMatcher.__init__(isjunk: typed); call it with the wrong type.
 
