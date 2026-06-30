@@ -9,6 +9,7 @@
 # case = "UserList__remove__item_as__T_wrong"
 # subject = "collections.UserList.remove(item: _T)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

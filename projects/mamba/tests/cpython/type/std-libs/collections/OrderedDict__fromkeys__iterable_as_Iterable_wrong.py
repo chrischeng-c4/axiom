@@ -9,6 +9,7 @@
 # case = "OrderedDict__fromkeys__iterable_as_Iterable_wrong"
 # subject = "collections.OrderedDict.fromkeys(iterable: Iterable)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

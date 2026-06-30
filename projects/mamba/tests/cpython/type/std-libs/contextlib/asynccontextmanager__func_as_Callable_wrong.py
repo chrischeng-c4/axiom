@@ -9,6 +9,7 @@
 # case = "asynccontextmanager__func_as_Callable_wrong"
 # subject = "contextlib.asynccontextmanager(func: Callable)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"

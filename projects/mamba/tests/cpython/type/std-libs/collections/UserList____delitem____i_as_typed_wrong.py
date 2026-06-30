@@ -9,6 +9,7 @@
 # case = "UserList____delitem____i_as_typed_wrong"
 # subject = "collections.UserList.__delitem__(i: typed)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

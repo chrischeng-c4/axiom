@@ -9,6 +9,7 @@
 # case = "compile_path__skip_curdir_as_bool_wrong"
 # subject = "compileall.compile_path(skip_curdir: bool)"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/compileall.pyi"
 # status = "filled"
