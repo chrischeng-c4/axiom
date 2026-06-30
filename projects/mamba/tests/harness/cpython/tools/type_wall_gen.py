@@ -113,6 +113,10 @@ NOT_WRONGABLE_SIGNATURE_PARAMS = {
     # CPython 3.12 exposes no callable ParsingError.filename(value) API. A
     # stale generated fixture here fails the CPython oracle before mamba runs.
     ("configparser", "ParsingError", "filename", "value"),
+    # dataclasses.is_dataclass(obj) is a query helper: CPython 3.12 accepts
+    # arbitrary objects and returns False for non-dataclasses, and the current
+    # generated Rust signature is Unknown/non-enforceable.
+    ("dataclasses", "", "is_dataclass", "obj"),
 }
 BUILTINS = "builtins"
 NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
