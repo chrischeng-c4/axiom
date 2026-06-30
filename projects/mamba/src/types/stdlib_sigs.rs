@@ -1780,6 +1780,44 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: curses.ascii's `_CharT` helpers are int-or-1-char-string
+    // contracts. A bare user instance can satisfy neither branch, while real
+    // scalar and dynamic values remain handled by the runtime behavior path.
+    StdlibSig {
+        module: "curses.ascii",
+        qualifier: "",
+        name: "alt",
+        kind: SigKind::ModuleFn,
+        params: &[p("c", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "curses.ascii",
+        qualifier: "",
+        name: "ascii",
+        kind: SigKind::ModuleFn,
+        params: &[p("c", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "curses.ascii",
+        qualifier: "",
+        name: "ctrl",
+        kind: SigKind::ModuleFn,
+        params: &[p("c", CoreTy::Typed)],
+        enforceable: true,
+    },
+    // POSITIVE: Textbox.edit(validate: Callable | None) loses its callable
+    // contract in the generated row. A bare `_W()` is neither callable nor the
+    // `None` sentinel, so reject it without changing runtime Textbox behavior.
+    StdlibSig {
+        module: "curses.textpad",
+        qualifier: "Textbox",
+        name: "edit",
+        kind: SigKind::Method,
+        params: &[p("validate", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -3901,6 +3939,23 @@ mod tests {
         assert_eq!(sig.params[1].name, "args");
         assert_eq!(sig.params[1].ty, CoreTy::Unknown);
         assert!(sig.params[1].star);
+    }
+
+    #[test]
+    fn curated_curses_ascii_and_textpad_walls_override_unknown_rows() {
+        for name in ["alt", "ascii", "ctrl"] {
+            let sig = get("curses.ascii", "", name).expect("curses.ascii helper present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].name, "c");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        let edit = get("curses.textpad", "Textbox", "edit").expect("Textbox.edit present");
+        assert!(edit.enforceable);
+        assert_eq!(edit.kind, SigKind::Method);
+        assert_eq!(edit.params[0].name, "validate");
+        assert_eq!(edit.params[0].ty, CoreTy::Typed);
     }
 
     #[test]
