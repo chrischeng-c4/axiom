@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cloud-storage-preset-run-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cloud-storage-preset-run-smoke
+// @claim built-in-rust-emulator-cloud-storage-gcs
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

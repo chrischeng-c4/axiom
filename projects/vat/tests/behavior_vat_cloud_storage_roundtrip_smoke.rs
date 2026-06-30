@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cloud-storage-roundtrip-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cloud-storage-roundtrip-smoke
+// @claim built-in-rust-emulator-cloud-storage-gcs
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

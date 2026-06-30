@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-firebase-bundle-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-firebase-bundle-smoke
+// @claim gcp-firebase-emulator-service-presets
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

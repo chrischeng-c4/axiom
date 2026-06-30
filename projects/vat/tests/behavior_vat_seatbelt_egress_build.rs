@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-seatbelt-egress-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-seatbelt-egress-build
+// @claim network-sandbox-v3-seatbelt-egress-policy
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

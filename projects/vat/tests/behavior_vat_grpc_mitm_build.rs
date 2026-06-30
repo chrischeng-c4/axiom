@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-grpc-mitm-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-grpc-mitm-build
+// @claim network-sandbox-v2-transparent-grpc-routing-h2-mitm
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

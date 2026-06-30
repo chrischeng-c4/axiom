@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-http-mock-routing-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-http-mock-routing-build
+// @claim network-sandbox-v1-transparent-http-host-routing
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

@@ -3,14 +3,14 @@
 // AW-EC-BEGIN
 // @ec vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke
+// @claim built-in-rust-emulators-cloud-tasks-cloud-scheduler
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
 // @command cargo test -p vat --test vat_toml_runner -- --nocapture
 // AW-EC-END
 
-// Contract: `vat llm --topic guide` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.
+// Contract: `vat llm` exits successfully and still mentions vat.toml runner mode, direct command mode, and state/diff/logs evidence commands.
 // Contract: the guide mentions the cloud-tasks / cloud-scheduler client-wiring factory (REST transport + http endpoint + anonymous credentials) and the direct-REST alternative.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

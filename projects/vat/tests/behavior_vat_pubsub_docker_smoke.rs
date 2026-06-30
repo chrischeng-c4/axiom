@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-pubsub-docker-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-pubsub-docker-smoke
+// @claim gcp-firebase-emulator-service-presets
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

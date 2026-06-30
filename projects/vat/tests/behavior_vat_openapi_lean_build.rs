@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-openapi-lean-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-openapi-lean-build
+// @claim openapi-driven-mock-http-service-spec-responses
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

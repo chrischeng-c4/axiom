@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cli-std-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cli-std-build
+// @claim adopt-the-shared-cli-std-crate
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

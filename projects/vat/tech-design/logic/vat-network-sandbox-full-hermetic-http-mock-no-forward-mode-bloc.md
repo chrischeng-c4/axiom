@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: full-hermetic-http-mock-no-forward-mode
+    claim: full-hermetic-http-mock-no-forward-mode
     coverage: partial
     rationale: "Egress confinement (#518/#527) confines the runner but the un-sandboxed http-mock proxy still forwards unmatched requests to the internet; a no-forward mode closes that escape hatch, completing the hermetic sandbox."
 ---
@@ -126,6 +126,7 @@ e2e_tests:
   - id: vat-hermetic-no-forward-smoke
     name: "http-mock --no-forward blocks unmatched, serves stub"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: full-hermetic-http-mock-no-forward-mode
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_httpmock_hermetic -- --nocapture"
@@ -134,6 +135,7 @@ e2e_tests:
   - id: vat-hermetic-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: full-hermetic-http-mock-no-forward-mode
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

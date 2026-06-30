@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cloud-storage-lean-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cloud-storage-lean-build
+// @claim built-in-rust-emulator-cloud-storage-gcs
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

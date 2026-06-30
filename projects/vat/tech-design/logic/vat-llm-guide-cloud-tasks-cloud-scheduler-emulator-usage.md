@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: built-in-rust-emulators-cloud-tasks-cloud-scheduler
+    claim: built-in-rust-emulators-cloud-tasks-cloud-scheduler
     coverage: partial
     rationale: "Closes a usability gap in vat's agent-facing usage contract: a consuming agent could not reliably connect a Cloud Tasks / Cloud Scheduler client to vat's built-in REST emulator because, unlike pubsub/firebase-auth/firestore/GCS, those SDKs do not auto-read the emulator host var and default to gRPC."
 ---
@@ -154,6 +154,7 @@ e2e_tests:
   - id: vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke
     name: "vat llm guide documents cloud-tasks client wiring"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulators-cloud-tasks-cloud-scheduler
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_toml_runner -- --nocapture"

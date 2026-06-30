@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-emulator-auth-rest-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-emulator-auth-rest-smoke
+// @claim built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

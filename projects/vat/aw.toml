@@ -14,7 +14,57 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "vat"
-generated_from_td_digest = "sha256:f9bfa738673232211d47ad554c35087c22b36a0a5ab3c53c4c44f8e1c0033e2c"
+generated_from_td_digest = "sha256:71d8cb0c55664057d24c9c4942abd7238c7d910d443fcf09de8582cc2df0a949"
+
+[[aw.ec.generated.cases]]
+id = "scenario-failure-keeps-topology-and-logs"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "production-like-integration-scenarios"
+contract_id = "production-like-integration-scenarios"
+category = "behavior"
+td_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs"
+test_path = "projects/vat/tests/behavior_scenario_failure_keeps_topology_and_logs.rs"
+command = "cargo test -p vat scenario_failure_keeps_topology_and_logs -- --nocapture"
+required_for_production = true
+assertions = [
+    "failing runner forwards its exit code",
+    "keep=failed retains the vat directory",
+    "vat logs exposes runner output",
+    "vat state exposes scenario topology",
+]
+
+[[aw.ec.generated.cases]]
+id = "scenario-hermetic-requires-http-mock-service"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "production-like-integration-scenarios"
+contract_id = "production-like-integration-scenarios"
+category = "behavior"
+td_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service"
+test_path = "projects/vat/tests/behavior_scenario_hermetic_requires_http_mock_service.rs"
+command = "cargo test -p vat scenario_hermetic_requires_http_mock_service -- --nocapture"
+required_for_production = true
+assertions = [
+    "hermetic scenario without http-mock exits non-zero",
+    "stdout JSONL contains scenario_hermetic_proxy_required",
+    "runner command is not executed",
+]
+
+[[aw.ec.generated.cases]]
+id = "scenario-run-starts-app-dependency-and-runner"
+capability_id = "agent-native-gpu-native-dev-containers"
+claim_id = "production-like-integration-scenarios"
+contract_id = "production-like-integration-scenarios"
+category = "behavior"
+td_ref = "projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner"
+test_path = "projects/vat/tests/behavior_scenario_run_starts_app_dependency_and_runner.rs"
+command = "cargo test -p vat scenario_run_starts_app_dependency_and_runner -- --nocapture"
+required_for_production = true
+assertions = [
+    "vat run --scenario prod-like succeeds",
+    "app readiness marker exists before runner marker",
+    "vat state includes test_run.scenario id/app/runner/services",
+    "result JSONL includes scenario and app",
+]
 
 [[aw.ec.generated.cases]]
 id = "vat-agent-state-and-diff-surface"
@@ -34,7 +84,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-builtin-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-builtin-preset-run-smoke"
+claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-builtin-preset-run-smoke"
@@ -46,7 +96,7 @@ assertions = ['a `preset = "firebase-auth"` or `preset = "pubsub"` vat.toml run 
 [[aw.ec.generated.cases]]
 id = "vat-cli-convention-help-lists-all-three"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cli-convention-help-lists-all-three"
+claim_id = "vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-help-lists-all-three"
@@ -62,7 +112,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cli-convention-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cli-convention-lean-build"
+claim_id = "vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md#vat-cli-convention-lean-build"
@@ -74,7 +124,7 @@ assertions = ["vat compiles without default features; the self-update HTTPS path
 [[aw.ec.generated.cases]]
 id = "vat-cli-std-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cli-std-build"
+claim_id = "adopt-the-shared-cli-std-crate"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-build"
@@ -86,7 +136,7 @@ assertions = ["vat compiles with and without default features; the hand-rolled m
 [[aw.ec.generated.cases]]
 id = "vat-cli-std-parity"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cli-std-parity"
+claim_id = "adopt-the-shared-cli-std-crate"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#vat-cli-std-parity"
@@ -95,6 +145,7 @@ command = "cargo test -p vat --test vat_cli_convention -- --nocapture"
 required_for_production = true
 assertions = [
     "vat --help lists llm, upgrade, issue.",
+    "vat llm --topic outline --format json prints the cli-std JSON shape.",
     "vat issue create --title X --dry-run prints the diagnostics body incl. the vat version and OS.",
     "vat upgrade --check exits cleanly.",
 ]
@@ -102,7 +153,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cloud-builtin-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-builtin-preset-run-smoke"
+claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-builtin-preset-run-smoke"
@@ -114,7 +165,7 @@ assertions = ['a `preset = "cloud-tasks"` / `preset = "cloud-scheduler"` vat.tom
 [[aw.ec.generated.cases]]
 id = "vat-cloud-emulator-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-emulator-lean-build"
+claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-emulator-lean-build"
@@ -126,7 +177,7 @@ assertions = ["vat compiles without the emulator feature; the cloud-tasks/cloud-
 [[aw.ec.generated.cases]]
 id = "vat-cloud-grpc-rest-coexist"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-grpc-rest-coexist"
+claim_id = "dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-grpc-rest-coexist"
@@ -138,7 +189,7 @@ assertions = ["the existing REST e2e tests pass unchanged (REST + gRPC coexist o
 [[aw.ec.generated.cases]]
 id = "vat-cloud-scheduler-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-scheduler-dispatch-smoke"
+claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-scheduler-dispatch-smoke"
@@ -153,7 +204,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cloud-scheduler-grpc-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-scheduler-grpc-dispatch-smoke"
+claim_id = "dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-scheduler-grpc-dispatch-smoke"
@@ -165,7 +216,7 @@ assertions = ["a generated google.cloud.scheduler.v1 gRPC client CreateJob + Run
 [[aw.ec.generated.cases]]
 id = "vat-cloud-storage-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-storage-lean-build"
+claim_id = "built-in-rust-emulator-cloud-storage-gcs"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-lean-build"
@@ -177,7 +228,7 @@ assertions = ["vat compiles without the emulator feature; the cloud-storage emul
 [[aw.ec.generated.cases]]
 id = "vat-cloud-storage-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-storage-preset-run-smoke"
+claim_id = "built-in-rust-emulator-cloud-storage-gcs"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-preset-run-smoke"
@@ -189,7 +240,7 @@ assertions = ["a preset = cloud-storage vat.toml run exports STORAGE_EMULATOR_HO
 [[aw.ec.generated.cases]]
 id = "vat-cloud-storage-roundtrip-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-storage-roundtrip-smoke"
+claim_id = "built-in-rust-emulator-cloud-storage-gcs"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#vat-cloud-storage-roundtrip-smoke"
@@ -204,7 +255,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cloud-tasks-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-tasks-dispatch-smoke"
+claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#vat-cloud-tasks-dispatch-smoke"
@@ -219,7 +270,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cloud-tasks-grpc-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-tasks-grpc-dispatch-smoke"
+claim_id = "dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md#vat-cloud-tasks-grpc-dispatch-smoke"
@@ -234,7 +285,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cloud-workflows-dispatch-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-workflows-dispatch-smoke"
+claim_id = "built-in-rust-emulator-cloud-workflows-subset-interpreter"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-dispatch-smoke"
@@ -250,7 +301,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cloud-workflows-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-workflows-lean-build"
+claim_id = "built-in-rust-emulator-cloud-workflows-subset-interpreter"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-lean-build"
@@ -262,7 +313,7 @@ assertions = ["vat compiles without the emulator feature; the cloud-workflows em
 [[aw.ec.generated.cases]]
 id = "vat-cloud-workflows-orchestrates-sibling"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cloud-workflows-orchestrates-sibling"
+claim_id = "built-in-rust-emulator-cloud-workflows-subset-interpreter"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#vat-cloud-workflows-orchestrates-sibling"
@@ -274,7 +325,7 @@ assertions = ["a vat.toml with preset = cloud-workflows alongside another emulat
 [[aw.ec.generated.cases]]
 id = "vat-cluster-backend-unavailable-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cluster-backend-unavailable-smoke"
+claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-backend-unavailable-smoke"
@@ -289,7 +340,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cluster-runscoped-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cluster-runscoped-smoke"
+claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-runscoped-smoke"
@@ -304,7 +355,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-cluster-standalone-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-cluster-standalone-smoke"
+claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#vat-cluster-standalone-smoke"
@@ -334,7 +385,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-emulator-auth-rest-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-emulator-auth-rest-smoke"
+claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-auth-rest-smoke"
@@ -349,7 +400,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-emulator-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-emulator-lean-build"
+claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-lean-build"
@@ -361,7 +412,7 @@ assertions = ["vat compiles without the emulator feature; `vat emulator ...` the
 [[aw.ec.generated.cases]]
 id = "vat-emulator-pubsub-grpc-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-emulator-pubsub-grpc-smoke"
+claim_id = "built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#vat-emulator-pubsub-grpc-smoke"
@@ -376,7 +427,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-emulator-unavailable-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-emulator-unavailable-smoke"
+claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-emulator-unavailable-smoke"
@@ -391,7 +442,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-firebase-bundle-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-firebase-bundle-smoke"
+claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firebase-bundle-smoke"
@@ -406,7 +457,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-firestore-native-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-firestore-native-smoke"
+claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firestore-native-smoke"
@@ -421,7 +472,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-grpc-mitm-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-grpc-mitm-build"
+claim_id = "network-sandbox-v2-transparent-grpc-routing-h2-mitm"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md#vat-grpc-mitm-build"
@@ -433,7 +484,7 @@ assertions = ["vat compiles with and without default features; hyper has the htt
 [[aw.ec.generated.cases]]
 id = "vat-grpc-mitm-routing-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-grpc-mitm-routing-smoke"
+claim_id = "network-sandbox-v2-transparent-grpc-routing-h2-mitm"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md#vat-grpc-mitm-routing-smoke"
@@ -448,7 +499,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-grpc-pool-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-grpc-pool-build"
+claim_id = "grpc-reverse-proxy-h2c-connection-pool"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md#vat-grpc-pool-build"
@@ -460,7 +511,7 @@ assertions = ["vat compiles with and without default features."]
 [[aw.ec.generated.cases]]
 id = "vat-grpc-pool-reuse-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-grpc-pool-reuse-smoke"
+claim_id = "grpc-reverse-proxy-h2c-connection-pool"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md#vat-grpc-pool-reuse-smoke"
@@ -472,7 +523,7 @@ assertions = ["two sequential gRPC calls through the MITM to the same emulator b
 [[aw.ec.generated.cases]]
 id = "vat-hermetic-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-hermetic-build"
+claim_id = "full-hermetic-http-mock-no-forward-mode"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-build"
@@ -484,7 +535,7 @@ assertions = ["vat compiles with and without default features."]
 [[aw.ec.generated.cases]]
 id = "vat-hermetic-no-forward-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-hermetic-no-forward-smoke"
+claim_id = "full-hermetic-http-mock-no-forward-mode"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md#vat-hermetic-no-forward-smoke"
@@ -511,7 +562,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-http-mock-host-routing-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-http-mock-host-routing-smoke"
+claim_id = "network-sandbox-v1-transparent-http-host-routing"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#vat-http-mock-host-routing-smoke"
@@ -526,7 +577,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-http-mock-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-http-mock-lean-build"
+claim_id = "built-in-http-mock-record-replay-proxy-https-mitm"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-lean-build"
@@ -538,7 +589,7 @@ assertions = ["vat compiles without the emulator feature; the http-mock emulator
 [[aw.ec.generated.cases]]
 id = "vat-http-mock-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-http-mock-preset-run-smoke"
+claim_id = "built-in-http-mock-record-replay-proxy-https-mitm"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-preset-run-smoke"
@@ -550,7 +601,7 @@ assertions = ["a preset = http-mock vat.toml run exports HTTP(S)_PROXY + NO_PROX
 [[aw.ec.generated.cases]]
 id = "vat-http-mock-routing-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-http-mock-routing-build"
+claim_id = "network-sandbox-v1-transparent-http-host-routing"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md#vat-http-mock-routing-build"
@@ -562,7 +613,7 @@ assertions = ["vat compiles with and without default features."]
 [[aw.ec.generated.cases]]
 id = "vat-http-mock-stub-and-mitm-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-http-mock-stub-and-mitm-smoke"
+claim_id = "built-in-http-mock-record-replay-proxy-https-mitm"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#vat-http-mock-stub-and-mitm-smoke"
@@ -586,7 +637,7 @@ test_path = "projects/vat/tests/behavior_vat_llm_agent_usage_guide.rs"
 command = "cargo test -p vat --test vat_toml_runner -- --nocapture"
 required_for_production = true
 assertions = [
-    "`vat llm` exits successfully.",
+    "`vat llm --topic guide` exits successfully.",
     "The guide mentions vat.toml runner mode and direct command mode.",
     "The guide mentions state, diff, and logs evidence commands.",
     "The guide preserves non-Docker and non-daemon boundaries.",
@@ -595,7 +646,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke"
+claim_id = "built-in-rust-emulators-cloud-tasks-cloud-scheduler"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md#vat-llm-guide-cloud-tasks-scheduler-client-wiring-smoke"
@@ -610,7 +661,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-openapi-lean-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-openapi-lean-build"
+claim_id = "openapi-driven-mock-http-service-spec-responses"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-lean-build"
@@ -622,7 +673,7 @@ assertions = ["vat compiles without the emulator feature; the openapi emulator v
 [[aw.ec.generated.cases]]
 id = "vat-openapi-preset-run-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-openapi-preset-run-smoke"
+claim_id = "openapi-driven-mock-http-service-spec-responses"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-preset-run-smoke"
@@ -634,7 +685,7 @@ assertions = ["a preset = openapi vat.toml run exports OPENAPI_MOCK_HOST and the
 [[aw.ec.generated.cases]]
 id = "vat-openapi-standalone-and-proxy-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-openapi-standalone-and-proxy-smoke"
+claim_id = "openapi-driven-mock-http-service-spec-responses"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#vat-openapi-standalone-and-proxy-smoke"
@@ -649,7 +700,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-pubsub-docker-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-pubsub-docker-smoke"
+claim_id = "gcp-firebase-emulator-service-presets"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-pubsub-docker-smoke"
@@ -679,7 +730,7 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "vat-runner-sandbox-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-runner-sandbox-build"
+claim_id = "sandbox-applied-to-runner-mode-commands"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-build"
@@ -691,7 +742,7 @@ assertions = ["vat compiles with and without default features."]
 [[aw.ec.generated.cases]]
 id = "vat-runner-sandbox-egress-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-runner-sandbox-egress-smoke"
+claim_id = "sandbox-applied-to-runner-mode-commands"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-egress-smoke"
@@ -703,7 +754,7 @@ assertions = ["a `vat run <runner>` with isolation=seatbelt + egress=localhost-o
 [[aw.ec.generated.cases]]
 id = "vat-seatbelt-egress-build"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-seatbelt-egress-build"
+claim_id = "network-sandbox-v3-seatbelt-egress-policy"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#vat-seatbelt-egress-build"
@@ -715,7 +766,7 @@ assertions = ["vat compiles with and without default features; egress policy is 
 [[aw.ec.generated.cases]]
 id = "vat-seatbelt-egress-smoke"
 capability_id = "agent-native-gpu-native-dev-containers"
-claim_id = "vat-seatbelt-egress-smoke"
+claim_id = "network-sandbox-v3-seatbelt-egress-policy"
 contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#vat-seatbelt-egress-smoke"

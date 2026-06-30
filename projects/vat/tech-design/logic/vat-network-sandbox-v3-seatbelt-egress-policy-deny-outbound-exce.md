@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: network-sandbox-v3-seatbelt-egress-policy
+    claim: network-sandbox-v3-seatbelt-egress-policy
     coverage: partial
     rationale: "vat can route traffic but cannot DENY egress. Extending the existing seatbelt profile with a network egress policy (Apple Seatbelt deny-by-default, like codex) confines a run's outbound network on macOS with no VM — the foundation of a hermetic sandbox that composes with v1/v2 routing."
 ---
@@ -143,6 +143,7 @@ e2e_tests:
   - id: vat-seatbelt-egress-smoke
     name: "seatbelt localhost-only denies external egress, allows localhost"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v3-seatbelt-egress-policy
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_sandbox_egress -- --nocapture"
@@ -151,6 +152,7 @@ e2e_tests:
   - id: vat-seatbelt-egress-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v3-seatbelt-egress-policy
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

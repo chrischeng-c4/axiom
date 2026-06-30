@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-runner-sandbox-egress-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-runner-sandbox-egress-smoke
+// @claim sandbox-applied-to-runner-mode-commands
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

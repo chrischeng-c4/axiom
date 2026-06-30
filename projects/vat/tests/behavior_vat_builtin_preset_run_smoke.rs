@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-builtin-preset-run-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-builtin-preset-run-smoke
+// @claim built-in-rust-emulators-pub-sub-grpc-firebase-auth-rest
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

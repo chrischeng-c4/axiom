@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-grpc-pool-reuse-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-grpc-pool-reuse-smoke
+// @claim grpc-reverse-proxy-h2c-connection-pool
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

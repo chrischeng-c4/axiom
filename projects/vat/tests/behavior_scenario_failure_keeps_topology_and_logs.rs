@@ -1,21 +1,24 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-build
+// SPEC-MANAGED: projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-runner-sandbox-build
+// @ec scenario-failure-keeps-topology-and-logs
 // @capability agent-native-gpu-native-dev-containers
-// @claim sandbox-applied-to-runner-mode-commands
-// @contract local-agent-test-runner-protocol
+// @claim production-like-integration-scenarios
+// @contract production-like-integration-scenarios
 // @category behavior
 // @required_for_production true
-// @command cargo build -p vat --no-default-features
+// @command cargo test -p vat scenario_failure_keeps_topology_and_logs -- --nocapture
 // AW-EC-END
 
-// Contract: vat compiles with and without default features.
+// Contract: failing runner forwards its exit code
+// Contract: keep=failed retains the vat directory
+// Contract: vat logs exposes runner output
+// Contract: vat state exposes scenario topology
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_runner_sandbox_build() {
-    let command = "cargo build -p vat --no-default-features";
-    let id = "vat-runner-sandbox-build";
+fn scenario_failure_keeps_topology_and_logs() {
+    let command = "cargo test -p vat scenario_failure_keeps_topology_and_logs -- --nocapture";
+    let id = "scenario-failure-keeps-topology-and-logs";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

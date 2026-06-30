@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-hermetic-no-forward-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-hermetic-no-forward-smoke
+// @claim full-hermetic-http-mock-no-forward-mode
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

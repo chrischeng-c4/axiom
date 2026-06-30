@@ -1,21 +1,24 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md#vat-runner-sandbox-build
+// SPEC-MANAGED: projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-runner-sandbox-build
+// @ec scenario-run-starts-app-dependency-and-runner
 // @capability agent-native-gpu-native-dev-containers
-// @claim sandbox-applied-to-runner-mode-commands
-// @contract local-agent-test-runner-protocol
+// @claim production-like-integration-scenarios
+// @contract production-like-integration-scenarios
 // @category behavior
 // @required_for_production true
-// @command cargo build -p vat --no-default-features
+// @command cargo test -p vat scenario_run_starts_app_dependency_and_runner -- --nocapture
 // AW-EC-END
 
-// Contract: vat compiles with and without default features.
+// Contract: vat run --scenario prod-like succeeds
+// Contract: app readiness marker exists before runner marker
+// Contract: vat state includes test_run.scenario id/app/runner/services
+// Contract: result JSONL includes scenario and app
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_runner_sandbox_build() {
-    let command = "cargo build -p vat --no-default-features";
-    let id = "vat-runner-sandbox-build";
+fn scenario_run_starts_app_dependency_and_runner() {
+    let command = "cargo test -p vat scenario_run_starts_app_dependency_and_runner -- --nocapture";
+    let id = "scenario-run-starts-app-dependency-and-runner";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-emulator-unavailable-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-emulator-unavailable-smoke
+// @claim gcp-firebase-emulator-service-presets
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

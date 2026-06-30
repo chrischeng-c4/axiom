@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: grpc-reverse-proxy-h2c-connection-pool
+    claim: grpc-reverse-proxy-h2c-connection-pool
     coverage: partial
     rationale: "The #509 gRPC reverse-proxy reconnects per request; reusing a multiplexed h2c connection per upstream removes redundant handshakes and socket churn under load while keeping behaviour identical."
 ---
@@ -123,6 +123,7 @@ e2e_tests:
   - id: vat-grpc-pool-reuse-smoke
     name: "pooled gRPC reverse-proxy reuses one upstream connection"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: grpc-reverse-proxy-h2c-connection-pool
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture"
@@ -131,6 +132,7 @@ e2e_tests:
   - id: vat-grpc-pool-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: grpc-reverse-proxy-h2c-connection-pool
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

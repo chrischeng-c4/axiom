@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cli-convention-help-lists-all-three
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cli-convention-help-lists-all-three
+// @claim vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

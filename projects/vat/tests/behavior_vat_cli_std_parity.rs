@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cli-std-parity
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cli-std-parity
+// @claim adopt-the-shared-cli-std-crate
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
@@ -11,6 +11,7 @@
 // AW-EC-END
 
 // Contract: vat --help lists llm, upgrade, issue.
+// Contract: vat llm --topic outline --format json prints the cli-std JSON shape.
 // Contract: vat issue create --title X --dry-run prints the diagnostics body incl. the vat version and OS.
 // Contract: vat upgrade --check exits cleanly.
 #[test]

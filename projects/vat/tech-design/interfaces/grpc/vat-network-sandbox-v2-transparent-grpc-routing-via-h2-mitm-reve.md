@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: network-sandbox-v2-transparent-grpc-routing-h2-mitm
+    claim: network-sandbox-v2-transparent-grpc-routing-h2-mitm
     coverage: partial
     rationale: "v1 routes HTTP but the MITM is HTTP/1-only, so a stock gRPC client to a real GCP host escapes; teaching the MITM h2 + a trailer-preserving reverse-proxy to the emulator's h2c port makes gRPC transparently land locally — the second half of the network sandbox's transparent service routing."
 ---
@@ -137,6 +137,7 @@ e2e_tests:
   - id: vat-grpc-mitm-routing-smoke
     name: "gRPC client routed through the MITM reaches the local emulator"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v2-transparent-grpc-routing-h2-mitm
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture"
@@ -146,6 +147,7 @@ e2e_tests:
   - id: vat-grpc-mitm-build
     name: "default + lean build compile with hyper http2"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v2-transparent-grpc-routing-h2-mitm
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

@@ -1,56 +1,56 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-29T04:33:46.432869+00:00"
-digest = "sha256:5b795be7feb143da542233d12adfd1c90e8e6669469dd0c21ce7358fd468aee4"
+generated_at = "2026-06-30T04:57:21.694514+00:00"
+digest = "sha256:0e80e89559c04848bb6dec9873432f3a59d9566cf9ba94a7f1a442c07dd32edd"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
-digest = "sha256:a541df6346d4e9af86f636eb5b249aa60c780fed16cd1d269120e6f3f281edef"
+digest = "sha256:291f4c28ef1fdb55f25042cfed9d6ffa6e7a16cddee8de623b01dfb19398be62"
 
 [[files]]
 path = "interfaces/cli/vat-upgrade-and-report-issue-subcommands-for-the-mandatory-cli-c.md"
-digest = "sha256:137a842b0ac4ecfef61f13b06df178a2c88b0d0ce89789fd4ed0ae061957385c"
+digest = "sha256:c58e329201656c87a309c082ee2d8e7d5dbf1e372f68ce8b3d03de45df7cadc9"
 
 [[files]]
 path = "interfaces/grpc/cloud-tasks-and-cloud-scheduler-emulator-grpc-front-end-alongsid.md"
-digest = "sha256:f8cabf5e5ae067d959bd5b13bff4d49419fcb4a4abdb47fe14270c6207849966"
+digest = "sha256:bd72a104caa788122c5e248f47249bb4260c0219183c7a0f78492daf38ff786f"
 
 [[files]]
 path = "interfaces/grpc/pool-the-grpc-mitm-reverse-proxy-h2c-upstream-connections.md"
-digest = "sha256:eaac006dc69b8d03ff9a37f0047f66e5ed6d2068b391b317849785a78436b166"
+digest = "sha256:e4ac4492169cb9bebe223413521664bd1e6e24fc366808ccd1f12a02c67bb64d"
 
 [[files]]
 path = "interfaces/grpc/vat-network-sandbox-v2-transparent-grpc-routing-via-h2-mitm-reve.md"
-digest = "sha256:a965209b37117245a4b51d0b2295028a85fef47af0afd83b4f43072acc5d0547"
+digest = "sha256:b2edbe367b93c12ba48e4d66751808b686ed7f381ac874159dc8a805a1a764b2"
 
 [[files]]
 path = "interfaces/rest/openapi-driven-mock-http-service.md"
-digest = "sha256:dd4884f2d29332294a335422e0faca48c7f2e22f60b1a0b93403f40466a1b1ab"
+digest = "sha256:de98abb30e423ec41d19bec039da51bd6bd1c03144981fd733fd56f1c573b116"
 
 [[files]]
 path = "logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md"
-digest = "sha256:c7c4e3c55c2d1f1028328ae0931775d6b37c1cd7aca88b211eee934c1d9b157e"
+digest = "sha256:f227a9a9d3d94c2c3eabf33eabe6583dba17395cc03ea45851b12a9b9a3d44d2"
 
 [[files]]
 path = "logic/built-in-cloud-storage-gcs-emulator.md"
-digest = "sha256:cc040805b0824ea4b2935c55fa14426fa151f6babff50ca011b172e30969b406"
+digest = "sha256:9ee6d6982ab5cbcfa58e42c50776da4e0eb35c49574cc1debe69547d60c12a46"
 
 [[files]]
 path = "logic/built-in-cloud-tasks-cloud-scheduler-emulators.md"
-digest = "sha256:756456c8b47bebb199ae0ab7c8537869f7ce0fa624d9358bdbebc6638d8a3f92"
+digest = "sha256:a8c4c2d69f7c59ab2add0259eb2e964b3814acc7e57298d7477c72129675d8e6"
 
 [[files]]
 path = "logic/built-in-cloud-workflows-emulator.md"
-digest = "sha256:310d5483df96597f2d72629de4b451e21b6142b0733d4b4bd6445e5cdb0edc35"
+digest = "sha256:f16d4e344b689e3291574c9ad1f25c0819194fb59d3c7511d30d0f8bd6093593"
 
 [[files]]
 path = "logic/built-in-http-mock-record-replay-proxy.md"
-digest = "sha256:aa739dce95a633e82064485a546956721ac2076f754c1909e52e9e0543995ed2"
+digest = "sha256:f944f242f308734b90066fe3b5de170e5ce146633dbaa17111aa3cc58cf5ea4f"
 
 [[files]]
 path = "logic/built-in-rust-emulators-pub-sub-firebase-auth.md"
-digest = "sha256:67cbe880d0c2d8e469d05147bb234a3066fe7e23e9c247557e630489c8514c5c"
+digest = "sha256:6d11a10fc8d2141be3fd540c8cca8185135a7188a3deed99a19ef2b27f88fe33"
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -58,15 +58,15 @@ digest = "sha256:49a0f8a0b52801a77450b0cb63d50b44a474deaee590454eb2587fa40a3b712
 
 [[files]]
 path = "logic/gcp-firebase-emulator-service-presets.md"
-digest = "sha256:201d59a57eef0fd6980ecad76afe24f5719bdceb7083a9c3efa70b1dad6a0a0e"
+digest = "sha256:95dc6e58fd4911c3d4485e1dceb03ee02aa261d7187e2b0f82db42878fec745e"
 
 [[files]]
 path = "logic/kind-like-local-kubernetes-clusters.md"
-digest = "sha256:fc797bae03ac8747097cd42993de83f326b23a5a495d514ca09579b77363fbd4"
+digest = "sha256:f2d9e2aa05017d5d83868a15a37ed396167e1e28b3ab2c86a949938bdfbfa6f6"
 
 [[files]]
 path = "logic/llm-agent-usage-guide.md"
-digest = "sha256:2860986a019818207bd9efab6b7500049c3d446a221f2fdf2df8fe8af7eab3b3"
+digest = "sha256:be58475732c685c807348c7592213c26b6790334d693bd1cca1ec9d2516dd205"
 
 [[files]]
 path = "logic/local-agent-test-runner-protocol.md"
@@ -74,23 +74,23 @@ digest = "sha256:fca71d48799920b24c4f8f1ce80050a45db34e71707acfbd506e315fae26b52
 
 [[files]]
 path = "logic/production-like-integration-scenarios.md"
-digest = "sha256:674414c13706bebf6e659f8a5f947fbc88f993bbd77442430bf0de8add4af5af"
+digest = "sha256:8a5a75c2c9879536f999bcc074220b608acf7f6b259a6744090d2bc72e93173a"
 
 [[files]]
 path = "logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md"
-digest = "sha256:be9e0611a40e93da539c5c79a0821f9a9cb055e732eb96be54214e7397930d4a"
+digest = "sha256:5751ec7922df9b9fa9ce85fce4c48b9252d0b8d5989cbf713cc046e1b4f2e9a2"
 
 [[files]]
 path = "logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md"
-digest = "sha256:910eb2c2dedcbc7af9283987a49d594d864e0e1393de322d3cd686d99f407239"
+digest = "sha256:4f295dc8a4be8206e6e739b3c8feda23f85a090d9dbe611e148f3e7e9128680f"
 
 [[files]]
 path = "logic/vat-network-sandbox-v1-transparent-http-service-routing-to-local.md"
-digest = "sha256:b8ae0cc8d3efe9b408c193522789908667deee2941b5437a9e66024d57e05cda"
+digest = "sha256:df5bb90f055dcd89414a4d768231f56b0e28b02ff9ea8cb0d59c578659911921"
 
 [[files]]
 path = "logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md"
-digest = "sha256:32d471e70d68063d9d1d7a53cfc929e259f6e28e05f674ce5291290898ba152b"
+digest = "sha256:a4dee612b6f5e08950960e853c989efd17d17b89104a6ffd7cbec1e7dc5625ac"
 
 [[files]]
 path = "logic/vat-td-ast-promote-remaining-grouped-source-units.md"
@@ -98,11 +98,11 @@ digest = "sha256:19d0c3217fb0cb22c7c6b5f962ab63136804e8c87f996af3aad525d56ffdeb3
 
 [[files]]
 path = "semantic/source/projects-vat-build-rs.md"
-digest = "sha256:933ce0c16ebb41497de0c09b227064cf19af848c87f8a5fb3d75badc869ce7a5"
+digest = "sha256:7dfbf15d122f7035b2fd632be3bd46ba5ed27d1106448b79216ea92e9d8e38ca"
 
 [[files]]
 path = "semantic/source/projects-vat-src-cli-rs.md"
-digest = "sha256:80c875b017705942db4d1d311bbe250d3e05e254662b0054ab58e75144f3b24a"
+digest = "sha256:3fd803efbac2412883225f81bdb9dac2c4d7e02def76f0b3b8c8a4a5a6a24ec2"
 
 [[files]]
 path = "semantic/source/projects-vat-src-cluster-rs.md"
@@ -126,7 +126,7 @@ digest = "sha256:1f1133dc778cc21ac7ff74050e916b57b034bac4b8f53deb77332a7bba7d871
 
 [[files]]
 path = "semantic/source/projects-vat-src-commands-llm-rs.md"
-digest = "sha256:f02ac7b926f4174cba99bb537d7b2ca093b34f947b5639f283635633ba30f169"
+digest = "sha256:4baef2db564570ddacd9e89733351d0de26503d2f7c4d4058a79735a208f5f51"
 
 [[files]]
 path = "semantic/source/projects-vat-src-commands-logs-rs.md"
@@ -146,7 +146,7 @@ digest = "sha256:cf191ee6a6ccda892a0f946fed23177d1d46d6ff1b1c55ece8ea0938052c49e
 
 [[files]]
 path = "semantic/source/projects-vat-src-commands-run-rs.md"
-digest = "sha256:8bc07b4cedf03fe16e11f367f5c8fed1510533b0cdc508ed8af527fb2fab3063"
+digest = "sha256:c5c7ec46746f115e238ffa5ae26ad498a4791b26622f39f749779743a64f3da5"
 
 [[files]]
 path = "semantic/source/projects-vat-src-commands-snapshot-rs.md"
@@ -158,7 +158,7 @@ digest = "sha256:97c507fd45f3f8d01c4560dbd943a9c594d5c4f11d1e865fd7acae369840e1e
 
 [[files]]
 path = "semantic/source/projects-vat-src-config-rs.md"
-digest = "sha256:ff68acb879e5402faff5baf1b16b5ddd37718fc0b9a77597019e25fd9fce0080"
+digest = "sha256:5ea651a3ccfc1a2fbda5d268109814516ca2c216985e3f1b09ce29a493fcf524"
 
 [[files]]
 path = "semantic/source/projects-vat-src-emulator-auth-rs.md"
@@ -246,7 +246,7 @@ digest = "sha256:f72d0144d911130ae8dd4deb907df4ba254a46e16fdd395fbbb68b6adaa5493
 
 [[files]]
 path = "semantic/source/projects-vat-src-overlay-rs.md"
-digest = "sha256:b0220c22e6930bfe385a2304ccdab2912a25bc0060ff7c139facf5624f03348c"
+digest = "sha256:153665f1611aa024b38d93646b857b1763d2122b5e03beaba440afbac01678e5"
 
 [[files]]
 path = "semantic/source/projects-vat-src-paths-rs.md"
@@ -270,7 +270,7 @@ digest = "sha256:cb6c369c3ba0f61cff68e005e2c8f8f06e2af62e1304fac1062db56e95de7e9
 
 [[files]]
 path = "semantic/source/projects-vat-src-state-rs.md"
-digest = "sha256:ad0046b912dd98ecdefeb0cfae7e96afe0daa8dea02681943b6efea1a6dcf96f"
+digest = "sha256:1653757cc925a678ebb11ce90a7e0df74a7786ec8e96ed5d04a851a6a67f9cc8"
 
 [[files]]
 path = "semantic/source/projects-vat-src-store-rs.md"
@@ -278,7 +278,7 @@ digest = "sha256:dc7b3130ea71a2d6bde2d7b147f666359902125c39f13feb9c7f968374ba8d5
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_cli_convention-rs.md"
-digest = "sha256:7605009ac1f25f9b544f1cec9e8961dab805194c61fefc1555bf9385440bd233"
+digest = "sha256:46f6705371356375a51327f4fa129f6a869164d3ba8d0edb606c2edbeba714f2"
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_cluster-rs.md"
@@ -299,6 +299,10 @@ digest = "sha256:16df611c2dc5b3a0c0ea90216e65bce80ee0cfe993c112836359eef16fc5a19
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_emulator_httpmock-rs.md"
 digest = "sha256:27ab67d319b8007e9c7d8fb99de0e642343ac361a9ddb69836ad125b3729f612"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_emulator_httpmock_hermetic-rs.md"
+digest = "sha256:4a7eecc93e81dca48e9c1bcae2ca30835bf5c8c5ab35ab21fb928ebc37a67796"
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_emulator_httpmock_routing-rs.md"
@@ -350,11 +354,11 @@ digest = "sha256:7606d371dc6f007d01548f5afa7a5ff30c3b9ff5cb71b83b1cf9e68f223da75
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_toml_runner-rs.md"
-digest = "sha256:31ddf619740a4466d26bad0d8a1e5e93e9e9587a47708b362f1a966a14320762"
+digest = "sha256:a280da940a1bfd94f222c71289e75caf3ac2cdd0f093f80be06a552409c2579d"
 
 [[files]]
 path = "semantic/vat-build-script.md"
-digest = "sha256:63bd3560ae5b3837a11dad7d911604b7866f2e4e045b54bf3a77d162e94f6fd1"
+digest = "sha256:92f018452b6ccb0f56cb58a4c3c17c358c93c0400748194cb5bd65f0a02dc904"
 
 [[files]]
 path = "semantic/vat-commands.md"

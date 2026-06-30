@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cluster-standalone-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cluster-standalone-smoke
+// @claim local-kubernetes-cluster-service-and-vat-cluster
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

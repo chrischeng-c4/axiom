@@ -2556,20 +2556,7 @@ fn opensearch_brew_config_dir() -> Option<PathBuf> {
 
 /// Single-quote a string for safe inclusion in a `-o` shell-parsed option.
 fn shell_single_quote(s: &str) -> String {
-    format!("'{}'", s.replace('
-## Changes
-<!-- type: changes lang: yaml -->
-
-```yaml
-changes:
-  - path: projects/vat/src/commands/run.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: codegen
-    description: |
-      rust-source-unit (td_ast) source for `projects/vat/src/commands/run.rs` captured during #39 vat standardization.
-```
-', "'\''"))
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn ensure_preset_binaries(service: &ServiceConfig, preset: ServicePreset) -> Result<()> {
@@ -4242,7 +4229,7 @@ mod tests {
         let command = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
-            "trap 'printf \"%s\n\" \"$VAT_STOP_ID\" >> \"$VAT_STOP_ORDER\"; exit 0' TERM; while :; do sleep 1; done".to_string(),
+            "trap 'printf \"%s\\n\" \"$VAT_STOP_ID\" >> \"$VAT_STOP_ORDER\"; exit 0' TERM; while :; do sleep 1; done".to_string(),
         ];
         let mut env = BTreeMap::new();
         env.insert("VAT_STOP_ID".to_string(), id.to_string());

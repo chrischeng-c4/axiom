@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: network-sandbox-v1-transparent-http-host-routing
+    claim: network-sandbox-v1-transparent-http-host-routing
     coverage: partial
     rationale: "vat can intercept outbound HTTP(S) (http-mock proxy + CA MITM) but cannot route a known host to a local emulator; host-routing makes a run's traffic to real GCP hosts land on the local emulators with zero app config — the foundation of the network sandbox."
 ---
@@ -154,6 +154,7 @@ e2e_tests:
   - id: vat-http-mock-host-routing-smoke
     name: "http-mock routes a known host to a local sink"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v1-transparent-http-host-routing
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_httpmock_routing -- --nocapture"
@@ -163,6 +164,7 @@ e2e_tests:
   - id: vat-http-mock-routing-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v1-transparent-http-host-routing
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

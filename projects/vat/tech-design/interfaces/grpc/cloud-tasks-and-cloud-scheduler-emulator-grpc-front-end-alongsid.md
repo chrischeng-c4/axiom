@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
+    claim: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     coverage: partial
     rationale: "An app using the stock gRPC Cloud Tasks / Cloud Scheduler client cannot reach a REST-only emulator without code-level transport surgery; adding a gRPC front-end over the same store makes the emulator behave like the real service over either protocol."
 ---
@@ -165,6 +165,7 @@ e2e_tests:
   - id: vat-cloud-tasks-grpc-dispatch-smoke
     name: "Cloud Tasks gRPC client dispatches a task"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_tasks_grpc -- --nocapture"
@@ -174,6 +175,7 @@ e2e_tests:
   - id: vat-cloud-scheduler-grpc-dispatch-smoke
     name: "Cloud Scheduler gRPC client fires a job on RunJob"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_scheduler_grpc -- --nocapture"
@@ -182,6 +184,7 @@ e2e_tests:
   - id: vat-cloud-grpc-rest-coexist
     name: "REST tests still pass against the dual-protocol port"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_tasks --test vat_emulator_scheduler -- --nocapture"

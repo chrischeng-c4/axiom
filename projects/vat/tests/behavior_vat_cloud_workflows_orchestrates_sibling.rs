@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cloud-workflows-orchestrates-sibling
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cloud-workflows-orchestrates-sibling
+// @claim built-in-rust-emulator-cloud-workflows-subset-interpreter
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

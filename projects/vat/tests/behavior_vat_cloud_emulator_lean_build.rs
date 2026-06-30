@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cloud-emulator-lean-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cloud-emulator-lean-build
+// @claim built-in-rust-emulators-cloud-tasks-cloud-scheduler
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

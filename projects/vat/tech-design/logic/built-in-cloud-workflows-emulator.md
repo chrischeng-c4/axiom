@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: built-in-rust-emulator-cloud-workflows-subset-interpreter
+    claim: built-in-rust-emulator-cloud-workflows-subset-interpreter
     coverage: partial
     rationale: "Adds a built-in Cloud Workflows emulator that orchestrates vat's other local emulators (and any HTTP endpoint), turning the individual emulator presets into end-to-end local orchestration through vat's run and evidence surface."
 ---
@@ -240,6 +240,7 @@ e2e_tests:
   - id: vat-cloud-workflows-dispatch-smoke
     name: "Cloud Workflows emulator runs a workflow that calls a target"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulator-cloud-workflows-subset-interpreter
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_workflows -- --nocapture"
@@ -250,6 +251,7 @@ e2e_tests:
   - id: vat-cloud-workflows-orchestrates-sibling
     name: "a workflow orchestrates a sibling vat emulator"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulator-cloud-workflows-subset-interpreter
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_workflows -- --nocapture --include-ignored"
@@ -258,6 +260,7 @@ e2e_tests:
   - id: vat-cloud-workflows-lean-build
     name: "lean build still compiles"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-rust-emulator-cloud-workflows-subset-interpreter
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: sandbox-applied-to-runner-mode-commands
+    claim: sandbox-applied-to-runner-mode-commands
     coverage: partial
     rationale: "The sandbox is enforced only for direct mode today; applying it to runner mode makes seatbelt isolation + egress confinement protect the common `vat run <runner>` workflow, completing the network sandbox."
 ---
@@ -126,6 +126,7 @@ e2e_tests:
   - id: vat-runner-sandbox-egress-smoke
     name: "runner-mode seatbelt egress confines the runner, not services"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: sandbox-applied-to-runner-mode-commands
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_runner_sandbox -- --nocapture"
@@ -134,6 +135,7 @@ e2e_tests:
   - id: vat-runner-sandbox-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: sandbox-applied-to-runner-mode-commands
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-http-mock-preset-run-smoke
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-http-mock-preset-run-smoke
+// @claim built-in-http-mock-record-replay-proxy-https-mitm
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

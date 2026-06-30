@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-http-mock-lean-build
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-http-mock-lean-build
+// @claim built-in-http-mock-record-replay-proxy-https-mitm
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true

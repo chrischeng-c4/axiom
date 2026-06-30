@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec vat-cloud-grpc-rest-coexist
 // @capability agent-native-gpu-native-dev-containers
-// @claim vat-cloud-grpc-rest-coexist
+// @claim dual-protocol-emulators-cloud-tasks-scheduler-grpc-alongside-rest
 // @contract local-agent-test-runner-protocol
 // @category behavior
 // @required_for_production true
