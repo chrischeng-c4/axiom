@@ -1,14 +1,13 @@
 ---
 id: semantic-jet-wasm-tests
 summary: Semantic coverage for "projects/jet/wasm/tests"
-fill_sections: [schema, e2e-test, changes]
 capability_refs:
-  - id: rust-native-frontend-toolchain
+  - id: "rust-native-frontend-toolchain"
     role: primary
-    gap: production-replacement-readiness
-    claim: full-toolchain-dogfood-flow
+    claim: "production-replacement-readiness"
     coverage: partial
-    rationale: "Traceability repair: this existing Jet TD/source edge supports the aggregate production replacement capability."
+    rationale: "Semantic takeover coverage for existing source group `projects/jet/wasm/tests`."
+fill_sections: [schema, unit-test, changes]
 ---
 
 # Semantic TD: jet/wasm/tests
@@ -41,13 +40,16 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/text_shaping_s1.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
+          - name: "common"
+            kind: "module"
+            public: false
           - name: "s1_invalid_font_bytes_rejected"
             kind: "function"
             public: false
@@ -58,24 +60,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
-          domain: "projects/jet/wasm/tests"
-      - path: "projects/jet/wasm/tests/common/mod.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["test_fixture", "helper_function"]
-        symbols:
-          - name: "TUFFY_REGULAR"
-            kind: "constant"
-            public: true
-          - name: "tuffy_regular"
-            kind: "function"
-            public: true
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/line_bidi_s5.rs"
         language: "rust"
@@ -92,7 +77,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/line_bidi_s4.rs"
         language: "rust"
@@ -109,7 +94,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/layout_block.rs"
         language: "rust"
@@ -132,7 +117,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/counter_integration.rs"
         language: "rust"
@@ -167,7 +152,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/reducer_ref_memo.rs"
         language: "rust"
@@ -217,13 +202,16 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/text_shaping_s4.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
+          - name: "common"
+            kind: "module"
+            public: false
           - name: "s4_empty_run_constructor_has_metrics"
             kind: "function"
             public: false
@@ -234,7 +222,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/layout_flex.rs"
         language: "rust"
@@ -254,7 +242,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/renderer_layout.rs"
         language: "rust"
@@ -262,6 +250,12 @@ semantic_domain:
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "button_vp"
+            kind: "function"
+            public: false
+          - name: "scroll_td"
+            kind: "function"
+            public: false
+          - name: "scroll_table_fixture"
             kind: "function"
             public: false
           - name: "empty_element_produces_empty_tree"
@@ -273,10 +267,10 @@ semantic_domain:
           - name: "button_uses_button_default_height"
             kind: "function"
             public: false
-          - name: "vertical_stack_positions_children_sequentially"
+          - name: "inline_flow_positions_children_horizontally"
             kind: "function"
             public: false
-          - name: "empty_child_contributes_zero_height"
+          - name: "empty_child_contributes_zero_inline_width"
             kind: "function"
             public: false
           - name: "button_with_text_child_reports_button_height"
@@ -285,20 +279,52 @@ semantic_domain:
           - name: "unrendered_component_panics"
             kind: "function"
             public: false
-          - name: "viewport_width_propagates_to_root"
+          - name: "block_container_width_propagates_to_root"
+            kind: "function"
+            public: false
+          - name: "styled_table_rows_stack_vertically_and_cells_keep_fixed_size"
+            kind: "function"
+            public: false
+          - name: "overflow_auto_container_scroll_offset_brings_later_rows_into_view"
+            kind: "function"
+            public: false
+          - name: "overflow_auto_scroll_bounds_clamp_offsets_to_content_extent"
+            kind: "function"
+            public: false
+          - name: "overflow_auto_scrollbar_paint_ops_include_vertical_thumb"
+            kind: "function"
+            public: false
+          - name: "rect_tuple"
             kind: "function"
             public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
+          domain: "projects/jet/wasm/tests"
+      - path: "projects/jet/wasm/tests/surface_snapshot.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "jet_wasm_reexports_surface_snapshot_core"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/text_shaping_s3.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
+          - name: "common"
+            kind: "module"
+            public: false
           - name: "s3_glyph_missing_carries_codepoint"
             kind: "function"
             public: false
@@ -312,7 +338,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/line_bidi_s7.rs"
         language: "rust"
@@ -329,7 +355,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/renderer_paint.rs"
         language: "rust"
@@ -360,11 +386,17 @@ semantic_domain:
           - name: "font_spec_defaults_stable_under_theme_default"
             kind: "function"
             public: false
+          - name: "styled_table_cell_paints_background_and_border"
+            kind: "function"
+            public: false
+          - name: "styled_table_cell_text_uses_cell_font_size_and_color"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/layout_dirty.rs"
         language: "rust"
@@ -396,7 +428,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/line_bidi_s3.rs"
         language: "rust"
@@ -413,7 +445,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/line_bidi_s2.rs"
         language: "rust"
@@ -430,7 +462,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/renderer_integration_counter.rs"
         language: "rust"
@@ -462,13 +494,16 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/text_shaping_s2.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
+          - name: "common"
+            kind: "module"
+            public: false
           - name: "synth_run"
             kind: "function"
             public: false
@@ -485,7 +520,7 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/line_bidi_s6.rs"
         language: "rust"
@@ -505,39 +540,46 @@ semantic_domain:
           layer: "backend"
           ecosystem: "rust"
           role: "test"
-          section_type: "tests"
+          section_type: "unit-test"
           domain: "projects/jet/wasm/tests"
 ```
 
-## E2E Test
-<!-- type: e2e-test lang: yaml -->
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
 
-```yaml
-tests:
-  coverage_kind: semantic
-  strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-  evidence:
-    source_tests:
-      - path: "projects/jet/wasm/tests/line_bidi_s1.rs"
-      - path: "projects/jet/wasm/tests/text_shaping_s1.rs"
-      - path: "projects/jet/wasm/tests/common/mod.rs"
-      - path: "projects/jet/wasm/tests/line_bidi_s5.rs"
-      - path: "projects/jet/wasm/tests/line_bidi_s4.rs"
-      - path: "projects/jet/wasm/tests/layout_block.rs"
-      - path: "projects/jet/wasm/tests/counter_integration.rs"
-      - path: "projects/jet/wasm/tests/reducer_ref_memo.rs"
-      - path: "projects/jet/wasm/tests/text_shaping_s4.rs"
-      - path: "projects/jet/wasm/tests/layout_flex.rs"
-      - path: "projects/jet/wasm/tests/renderer_layout.rs"
-      - path: "projects/jet/wasm/tests/text_shaping_s3.rs"
-      - path: "projects/jet/wasm/tests/line_bidi_s7.rs"
-      - path: "projects/jet/wasm/tests/renderer_paint.rs"
-      - path: "projects/jet/wasm/tests/layout_dirty.rs"
-      - path: "projects/jet/wasm/tests/line_bidi_s3.rs"
-      - path: "projects/jet/wasm/tests/line_bidi_s2.rs"
-      - path: "projects/jet/wasm/tests/renderer_integration_counter.rs"
-      - path: "projects/jet/wasm/tests/text_shaping_s2.rs"
-      - path: "projects/jet/wasm/tests/line_bidi_s6.rs"
+```mermaid
+---
+id: unit-test
+coverage_kind: semantic
+strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
+evidence:
+  source_tests:
+    - path: "projects/jet/wasm/tests/line_bidi_s1.rs"
+    - path: "projects/jet/wasm/tests/text_shaping_s1.rs"
+    - path: "projects/jet/wasm/tests/line_bidi_s5.rs"
+    - path: "projects/jet/wasm/tests/line_bidi_s4.rs"
+    - path: "projects/jet/wasm/tests/layout_block.rs"
+    - path: "projects/jet/wasm/tests/counter_integration.rs"
+    - path: "projects/jet/wasm/tests/reducer_ref_memo.rs"
+    - path: "projects/jet/wasm/tests/text_shaping_s4.rs"
+    - path: "projects/jet/wasm/tests/layout_flex.rs"
+    - path: "projects/jet/wasm/tests/renderer_layout.rs"
+    - path: "projects/jet/wasm/tests/surface_snapshot.rs"
+    - path: "projects/jet/wasm/tests/text_shaping_s3.rs"
+    - path: "projects/jet/wasm/tests/line_bidi_s7.rs"
+    - path: "projects/jet/wasm/tests/renderer_paint.rs"
+    - path: "projects/jet/wasm/tests/layout_dirty.rs"
+    - path: "projects/jet/wasm/tests/line_bidi_s3.rs"
+    - path: "projects/jet/wasm/tests/line_bidi_s2.rs"
+    - path: "projects/jet/wasm/tests/renderer_integration_counter.rs"
+    - path: "projects/jet/wasm/tests/text_shaping_s2.rs"
+    - path: "projects/jet/wasm/tests/line_bidi_s6.rs"
+---
+requirementDiagram
+
+element UT_SOURCE_TESTS {
+  type: "TestEvidence"
+}
 ```
 
 ## Changes
@@ -553,12 +595,6 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "projects/jet/wasm/tests/text_shaping_s1.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - path: "projects/jet/wasm/tests/common/mod.rs"
     action: modify
     section: schema
     description: |
@@ -612,6 +648,14 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/jet/wasm/tests/surface_snapshot.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:standardize-gap-projects-jet-wasm-tests-surface-snapshot-rs>"
   - path: "projects/jet/wasm/tests/text_shaping_s3.rs"
     action: modify
     section: schema
@@ -666,11 +710,4 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: ".aw/tech-design/projects/jet/semantic/jet-wasm-tests.md"
-    action: verify
-    section: e2e-test
-    impl_mode: hand-written
-    description: |
-      Traceability repair: hand-written TD section retained as the implementation edge during AW standardization.
-
 ```
