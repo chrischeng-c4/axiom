@@ -452,6 +452,17 @@ fn register_distutils() {
         &[],
     );
     register_with(
+        "distutils.fancy_getopt",
+        &["FancyGetopt", "OptionDummy"],
+        &[
+            ("fancy_getopt", dispatch_empty_dict as *const () as usize),
+            ("translate_longopt", dispatch_empty_str as *const () as usize),
+            ("wrap_text", dispatch_empty_list as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "distutils.archive_util",
         &[],
         &[
