@@ -9,12 +9,11 @@
 # case = "ConfigParser__get__section_as__SectionName_wrong"
 # subject = "configparser.ConfigParser.get(section: _SectionName)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed section"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed section
 # mamba-strict-type: TypeError
 """Type wall: configparser.ConfigParser.get(section: _SectionName); call it with the wrong type.
 
