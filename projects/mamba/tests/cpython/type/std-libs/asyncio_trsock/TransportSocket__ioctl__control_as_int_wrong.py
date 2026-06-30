@@ -9,12 +9,11 @@
 # case = "TransportSocket__ioctl__control_as_int_wrong"
 # subject = "asyncio.trsock.TransportSocket.ioctl(control: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed control"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/trsock.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed control
 # mamba-strict-type: TypeError
 """Type wall: asyncio.trsock.TransportSocket.ioctl(control: int); call it with the wrong type.
 
