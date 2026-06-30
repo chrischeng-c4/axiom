@@ -1,9 +1,26 @@
-version = 1
+version = 2
 project = "keep"
+ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-06-20T14:26:51.387792+00:00"
-digest = "sha256:6976bb0d1a90491192284f0cd2eb2dacb739f3682fb700ef5b61ffab06366b9c"
+generated_at = "2026-06-30T16:28:15.715126+00:00"
+digest = "sha256:0d11667c70ad0511dc4c470ed8f10e0a748df2df61508f8adfd039c78328df36"
+source_digest = "sha256:0d11667c70ad0511dc4c470ed8f10e0a748df2df61508f8adfd039c78328df36"
+ir_digest = "sha256:c43de2f1a729d5e4f6d21c2b29ec896a973abe08a5264079f17f60c92de88bd6"
+
+[[files]]
+path = "logic/keep-service-http-adoption-compose-shared-probes-trace-and-drain.md"
+digest = "sha256:a25b16977d01b9a5fffb94331dd8e8ccc20dd03a135c208ca86b9abb6075484b"
+ir_digest = "sha256:e0c20db47540c86981126786621fa38ce012056a34232cae0ce320697d3d286e"
+section_count = 3
+
+[[files]]
+path = "logic/per-namespace-key-isolation-x-keep-namespace-applied-after-token.md"
+digest = "sha256:5d75c139e0b758d1d448678a2e88f89dde673fb55c932723932a78b357de0d0d"
+ir_digest = "sha256:9615d7a04a89f5516706e37888c1d5a99a2c741b24d878c03b7b9033837a284e"
+section_count = 2
 
 [[files]]
 path = "semantic/keep-runtime.md"
 digest = "sha256:ec19bd2568250d06ad1a9b1388b4c1d2ca124681221268b16c1ed5495e7ae92e"
+ir_digest = "sha256:9048e50a62448b246d6c74b739fcea30e6cde8e371a1aab8535b4b37f710e008"
+section_count = 3
