@@ -9,12 +9,11 @@
 # case = "Import__init__names_as_list_wrong"
 # subject = "ast.Import.__init__(names: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed names"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed names
 # mamba-strict-type: TypeError
 """Type wall: ast.Import.__init__(names: list); call it with the wrong type.
 

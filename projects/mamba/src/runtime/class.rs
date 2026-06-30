@@ -15503,6 +15503,9 @@ pub fn mb_call0(func: MbValue) -> MbValue {
             // Bare class-name string naming a registered class → zero-arg
             // construction (`from M import C; C()`).
             if let ObjData::Str(ref s) = (*ptr).data {
+                if let Some(result) = super::stdlib::ast_mod::mb_ast_construct_marker(s, &[]) {
+                    return result;
+                }
                 if class_is_registered(s) {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
                     return mb_instance_new_with_init(func, args_list);
@@ -15754,6 +15757,9 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
     if let Some(ptr) = func.as_ptr() {
         unsafe {
             if let ObjData::Str(ref s) = (*ptr).data {
+                if let Some(result) = super::stdlib::ast_mod::mb_ast_construct_marker(s, &[arg]) {
+                    return result;
+                }
                 if class_is_registered(s) {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
