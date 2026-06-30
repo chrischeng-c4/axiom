@@ -25,8 +25,8 @@ class _W:
 
 
 from ast import Constant
-obj = object.__new__(Constant)
 try:
+    obj = object.__new__(Constant)
     obj.n(_W())  # value: _ConstantValue <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:

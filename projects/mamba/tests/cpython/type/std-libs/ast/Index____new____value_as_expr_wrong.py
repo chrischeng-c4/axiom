@@ -25,8 +25,8 @@ class _W:
 
 
 from ast import Index
-obj = object.__new__(Index)
 try:
+    obj = object.__new__(Index)
     obj.__new__(_W())  # value: expr <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:

@@ -54,6 +54,7 @@ VERSION_REMOVED_TYPE_LIBS = {
     "smtpd": (3, 12),
 }
 VERSION_SPECIFIC_TYPE_FIXTURES = {
+    "std-libs/ast/Interpolation__init__value_as_expr_wrong.py": (3, 14),
     "std-libs/ast/TemplateStr__init__values_as_list_wrong.py": (3, 14),
     "std-libs/base64/z85decode__s_as_typed_wrong.py": (3, 13),
     "std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py": (3, 13),

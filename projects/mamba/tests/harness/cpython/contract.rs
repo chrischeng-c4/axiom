@@ -380,6 +380,29 @@ fn cpython_oracle_authoring_gate_is_present() {
 }
 
 #[test]
+fn py314_ast_type_fixtures_are_version_excluded_consistently() {
+    for rel in [
+        "tools/verify_cpython_oracle.py",
+        "tools/strict_type_accounting.py",
+    ] {
+        let path = cpython_harness_dir().join(rel);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+        for required in [
+            "std-libs/ast/Interpolation__init__value_as_expr_wrong.py",
+            "std-libs/ast/TemplateStr__init__values_as_list_wrong.py",
+            "(3, 14)",
+        ] {
+            assert!(
+                raw.contains(required),
+                "{} missing Py3.14-only AST type fixture exclusion marker `{required}`",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn safety_contract_has_adversarial_fixtures_and_sandboxed_runner() {
     let security = fixture_files()
         .into_iter()

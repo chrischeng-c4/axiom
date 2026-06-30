@@ -21,8 +21,8 @@ typeshed contract: s is bytes. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from ast import Bytes
-obj = object.__new__(Bytes)
 try:
+    obj = object.__new__(Bytes)
     obj.__new__(12345)  # s: bytes <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:

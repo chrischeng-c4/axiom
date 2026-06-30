@@ -21,8 +21,8 @@ typeshed contract: n is complex. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from ast import Num
-obj = object.__new__(Num)
 try:
+    obj = object.__new__(Num)
     obj.__new__("not_a_complex")  # n: complex <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
