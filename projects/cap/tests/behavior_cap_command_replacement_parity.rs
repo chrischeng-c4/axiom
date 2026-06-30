@@ -71,6 +71,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
     for case in success_cases {
         assert_success_parity(&cap, &case)?;
     }
+    let mut wc_cap_args = vec!["wc", "-l"];
+    wc_cap_args.extend(fixture.wc_files().iter().map(String::as_str));
+    let mut wc_original_args = vec!["-l"];
+    wc_original_args.extend(fixture.wc_files().iter().map(String::as_str));
+    let wc_case = Case::new("wc", wc_cap_args, "/usr/bin/wc", wc_original_args);
+    assert_success_parity(&cap, &wc_case)?;
 
     let run_success_cases = [
         (
@@ -120,6 +126,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             format!("grep -R NEEDLE {}", fixture.grep_root()),
             "/usr/bin/grep",
             vec!["-R", "NEEDLE", fixture.grep_root()],
+        ),
+        (
+            "run wc",
+            format!("wc -l {}", fixture.wc_files().join(" ")),
+            "/usr/bin/wc",
+            wc_case.original_args.clone(),
         ),
     ];
 
@@ -177,6 +189,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             "/usr/bin/grep",
             vec!["-R", "NEEDLE", missing.as_str()],
         ),
+        Case::new(
+            "wc",
+            vec!["wc", "-l", missing.as_str()],
+            "/usr/bin/wc",
+            vec!["-l", missing.as_str()],
+        ),
     ];
 
     for case in error_cases {
@@ -231,6 +249,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             format!("grep -R NEEDLE {}", missing),
             "/usr/bin/grep",
             vec!["-R", "NEEDLE", missing.as_str()],
+        ),
+        (
+            "run wc",
+            format!("wc -l {}", missing),
+            "/usr/bin/wc",
+            vec!["-l", missing.as_str()],
         ),
     ];
 
@@ -581,6 +605,7 @@ struct Fixture {
     sort_file: String,
     sed_file: String,
     grep_root: String,
+    wc_files: Vec<String>,
 }
 
 /// @spec projects/cap/tech-design/semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md#source
@@ -631,6 +656,14 @@ impl Fixture {
                 b"plain\nNEEDLE here\n",
             )?;
         }
+        let wc_root = data.join("wc");
+        fs::create_dir(&wc_root)?;
+        let mut wc_files = Vec::new();
+        for idx in 0..64 {
+            let file = wc_root.join(format!("count-{idx:04}.txt"));
+            fs::write(&file, b"one\ntwo\n")?;
+            wc_files.push(path_string(&file));
+        }
 
         Ok(Self {
             list_dir: path_string(&list_dir),
@@ -641,6 +674,7 @@ impl Fixture {
             sort_file: path_string(&sort_file),
             sed_file: path_string(&sed_file),
             grep_root: path_string(&grep_root),
+            wc_files,
         })
     }
 
@@ -667,6 +701,9 @@ impl Fixture {
     }
     fn grep_root(&self) -> &str {
         &self.grep_root
+    }
+    fn wc_files(&self) -> &[String] {
+        &self.wc_files
     }
 }
 

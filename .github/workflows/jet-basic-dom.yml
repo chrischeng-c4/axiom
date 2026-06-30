@@ -1,23 +1,10 @@
 name: jet-basic-dom
 
+# Manual-only: this replacement gate compares Jet against local package-manager,
+# browser, and DOM build baselines, and should be controlled deliberately rather
+# than used as a repo-wide PR/push gate for shared workspace changes.
 on:
-  pull_request:
-    paths:
-      - "projects/jet/**"
-      - "examples/react-bench/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/jet-basic-dom.yml"
-  push:
-    branches:
-      - main
-      - project-jet
-    paths:
-      - "projects/jet/**"
-      - "examples/react-bench/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/jet-basic-dom.yml"
+  workflow_dispatch:
 
 jobs:
   package-management:

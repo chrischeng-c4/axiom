@@ -1,8 +1,8 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-29T09:14:31.252295+00:00"
-digest = "sha256:e9f85e024a9afa859386b3e8a7d0d8d985ad105d4140d9979cfe0967d851b49e"
+generated_at = "2026-06-30T04:47:04.039369+00:00"
+digest = "sha256:19b72517d0a9e0e8ef0937c08b23be6e9bb3fd613b1128d8eccd6936ff568c76"
 
 [[files]]
 path = "interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md"
@@ -25,6 +25,10 @@ path = "logic/design-resident-light-shell-with-dynamic-bash-fallback.md"
 digest = "sha256:5b6173a8fc1ea980604535d3a772a93ae642a11c60e7e0cdbf8ef46d2a839968"
 
 [[files]]
+path = "logic/expand-high-volume-native-command-coverage.md"
+digest = "sha256:b4bacb8c71bd3484c2b048b1062e59cb32713a269312e3118e05b1cd31f0ac3d"
+
+[[files]]
 path = "logic/external-contracts.md"
 digest = "sha256:7e84cbcd94237ba65f037c0fa1dfcb131c9f7ddac9ac6becd23ebac6790e7aec"
 
@@ -34,7 +38,7 @@ digest = "sha256:4e4177698b62759b4992eb00975845389a6b1d5ca5faf4da98a969ac515e581
 
 [[files]]
 path = "semantic/cap-build-script.md"
-digest = "sha256:4f43a7edbcbdf724ab7344ce2521b11a03aa7059a57a3ec18ca01ac7e8c27a52"
+digest = "sha256:08bde24eefa37179308f9d3226da76a0335440b602d262ae48878bb8dae295d5"
 
 [[files]]
 path = "semantic/cap-install-script.md"
@@ -90,11 +94,11 @@ digest = "sha256:b8b4a989151eb2c5464f1095fa478a9e96b6d10a8dad7e225954658d9056fb5
 
 [[files]]
 path = "semantic/source/projects-cap-benches-command_resources-rs.md"
-digest = "sha256:5b03035f946ec2290d725188b7850a7849d5cb716157312cc0ffcb664d3ec9dd"
+digest = "sha256:5abb69dbe1c3cd0ec54a9b43220456499be3d9993696630f2db7726f9f8b27ca"
 
 [[files]]
 path = "semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md"
-digest = "sha256:da125f75a3e24d6d5a55ded2f660c69b417070e8b400620ba0276e0aacf6650e"
+digest = "sha256:d5b5c53f92907bd02a5cd41535e6e2123fa3b75edd8179b047dd000a2fd7ec33"
 
 [[files]]
 path = "semantic/source/reap.md"
