@@ -34,6 +34,7 @@ TYPESHED_STDLIB = MAMBA_DIR / "vendor" / "typeshed" / "stdlib"
 TYPE_DIVERGENCES = TOOLS_DIR.parent / "config" / "type_divergences.txt"
 
 EXIT_NOT_READY = 70
+NON_RUNTIME_STUB_TYPE_LIB_PREFIXES = ("_typeshed",)
 
 SOUND_FAMILIES = [
     "float_return_inference",
@@ -92,6 +93,24 @@ def repo_rel(path: Path) -> str:
         return str(path.resolve().relative_to(REPO_ROOT))
     except ValueError:
         return str(path)
+
+
+def is_non_runtime_stub_type_fixture(path: Path) -> bool:
+    try:
+        rel = path.relative_to(TYPE_DIR).parts
+    except ValueError:
+        return False
+    if len(rel) < 3 or rel[0] != "std-libs":
+        return False
+    lib = rel[1]
+    return any(
+        lib == prefix or lib.startswith(f"{prefix}_")
+        for prefix in NON_RUNTIME_STUB_TYPE_LIB_PREFIXES
+    )
+
+
+def executable_type_fixtures(paths: list[Path]) -> list[Path]:
+    return [path for path in paths if not is_non_runtime_stub_type_fixture(path)]
 
 
 def run_mamba(mamba_bin: str, fixture: Path, timeout: int) -> tuple[int | None, str, str]:
@@ -226,7 +245,11 @@ def validate_divergence(
 
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     mamba_bin = args.mamba_bin or default_mamba_bin()
-    type_fixtures_all = sorted(TYPE_DIR.rglob("*.py")) if TYPE_DIR.exists() else []
+    type_fixture_candidates = sorted(TYPE_DIR.rglob("*.py")) if TYPE_DIR.exists() else []
+    excluded_non_runtime_stubs = [
+        path for path in type_fixture_candidates if is_non_runtime_stub_type_fixture(path)
+    ]
+    type_fixtures_all = executable_type_fixtures(type_fixture_candidates)
     type_fixtures, enforcement_sampled = selected(type_fixtures_all, args.limit)
     sound_fixtures_all = sorted(
         path for family in SOUND_FAMILIES for path in (SOUND_DIR / family).glob("*.py")
@@ -323,6 +346,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             **typeshed,
             "type_fixture_wall": len(type_fixtures_all),
             "measured_type_fixtures": len(type_fixtures),
+            "excluded_non_runtime_stub_fixtures": len(excluded_non_runtime_stubs),
+            "excluded_non_runtime_stub_lib_prefixes": list(NON_RUNTIME_STUB_TYPE_LIB_PREFIXES),
         },
         "enforcement": {
             "fixtures": len(type_fixtures_all),

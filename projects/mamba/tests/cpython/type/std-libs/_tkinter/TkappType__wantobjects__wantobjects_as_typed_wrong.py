@@ -9,12 +9,11 @@
 # case = "TkappType__wantobjects__wantobjects_as_typed_wrong"
 # subject = "_tkinter.TkappType.wantobjects(wantobjects: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed wantobjects"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_tkinter.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed wantobjects
 # mamba-strict-type: TypeError
 """Type wall: _tkinter.TkappType.wantobjects(wantobjects: typed); call it with the wrong type.
 
