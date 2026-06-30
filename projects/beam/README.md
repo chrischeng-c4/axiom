@@ -31,7 +31,7 @@ indexes and GPU memory tiers.
 | HTTP/2 API List | #769 | planned | planned | none | not_ready | h2c/OpenAPI endpoint inventory |
 | Kubernetes-Native Deployment | #769 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape with GPU scheduling |
 | Primary Replicas | #769 | planned | planned | none | not_ready | raft-backed metadata and index lifecycle ownership |
-| CLI Interface | #769 | planned | planned | none | not_ready | `beam` CLI for vector ingest/query/admin and agent docs |
+| CLI Interface | #772 | planned | planned | none | not_ready | `beam` CLI for vector ingest/query/admin and agent docs |
 | Long-Running Stability | #769 | planned | planned | none | not_ready | GPU index soak, rebuild, failover, and recovery gates |
 | Security Hardening | #769 | planned | planned | none | not_ready | collection authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #769 | planned | planned | none | not_ready | Milvus/Qdrant/Faiss-style GPU vector feature matrix |
@@ -41,7 +41,7 @@ indexes and GPU memory tiers.
 
 ID: cli-interface
 Type: RuntimeTool
-Root WI: #769
+Root WI: #772
 Status: confirmed
 Surfaces: CLI: `beam llm`, `beam upgrade`, `beam issue`, vector ingest/query/index, and admin/debug verbs.
 EC Dimensions: behavior: pending CLI convention gate - required standard verbs, vector workflow ergonomics, and offline agent docs
@@ -54,7 +54,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| beam-cli-convention-and-vector-verbs | epic | #769 | planned | planned | none | pending CLI convention gate |
+| beam-cli-convention-and-vector-verbs | change | #772 | planned | planned | none | pending CLI convention gate |
 
 ### Long-Running Stability
 
