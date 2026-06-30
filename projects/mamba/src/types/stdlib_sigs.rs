@@ -1740,6 +1740,23 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: csv.DictReader consumes an iterable row source. The generated
+    // row collapses the iterable protocol to Unknown; a bare user object has no
+    // iterator protocol and should be rejected by the strict wall.
+    StdlibSig {
+        module: "csv",
+        qualifier: "DictReader",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("f", CoreTy::Typed),
+            p("fieldnames", CoreTy::Unknown),
+            p("restkey", CoreTy::Unknown),
+            p("restval", CoreTy::Unknown),
+            p("dialect", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
     // but the typeshed-derived strict wall must still reject a bare user object
     // before import-time behavior is observed.
@@ -3799,6 +3816,15 @@ mod tests {
             get("copyreg", "", "remove_extension").expect("copyreg.remove_extension present");
         assert_eq!(remove_extension.params[2].name, "code");
         assert_eq!(remove_extension.params[2].ty, CoreTy::Int);
+    }
+
+    #[test]
+    fn curated_csv_dictreader_f_wall_overrides_unknown_row() {
+        let sig = get("csv", "DictReader", "__init__").expect("csv.DictReader.__init__ present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "f");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
     }
 
     #[test]
