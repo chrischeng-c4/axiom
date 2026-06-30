@@ -219,6 +219,7 @@ pub async fn publish(
         req.payload,
         req.headers,
         not_before,
+        req.priority,
         now,
     );
     match result {

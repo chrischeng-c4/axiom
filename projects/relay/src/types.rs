@@ -78,6 +78,10 @@ pub struct LogEntry {
     /// `None` = leasable at once. Does not affect broadcast replay.
     #[serde(default)]
     pub not_before: Option<DateTime<Utc>>,
+    /// Work-queue priority band (0 = lowest / default; higher leases first).
+    /// Does not affect broadcast.
+    #[serde(default)]
+    pub priority: u8,
 }
 
 /// Result of a publish/append; idempotent on `MessageId`.

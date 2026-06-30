@@ -12,11 +12,28 @@
 //! seqs first. The committed watermark advances incrementally on ack.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Duration, Utc};
 
 use crate::types::{CommittedOffset, Lease, Seq, ShardId};
+
+/// Number of priority bands (0 = lowest / default, `PRIORITY_BANDS-1` = highest).
+/// Small + bounded so `pick` stays O(bands) ≈ O(1). A `priority` is clamped into
+/// `0..PRIORITY_BANDS`.
+const PRIORITY_BANDS: usize = 8;
+
+/// One priority band's ready set: never-offered entries in publish (seq) order,
+/// and reclaimed/promoted entries re-offered smallest-seq-first.
+#[derive(Default)]
+struct Band {
+    fresh: VecDeque<Seq>,
+    redeliver: BinaryHeap<Reverse<Seq>>,
+}
+
+fn band_idx(priority: u8) -> usize {
+    (priority as usize).min(PRIORITY_BANDS - 1)
+}
 
 /// Per-`(subject, shard)` competing-consumer delivery state.
 ///
@@ -33,12 +50,15 @@ pub struct WorkQueue {
     lease_index: HashMap<String, Seq>,
     acked: HashSet<Seq>,
     attempts: HashMap<Seq, u32>,
-    /// Next never-offered seq (O(1) fresh pick).
-    next_offer: Seq,
-    /// Reclaimed seqs to re-offer first (smallest-first); preserves prefer-redeliver.
-    redeliver: BinaryHeap<Reverse<Seq>>,
+    /// Per-priority ready sets; `pick` scans high band → low. Entries are fed in
+    /// explicitly (`offer_fresh`) rather than via a monotonic cursor, so a
+    /// higher-priority entry published later still leases first.
+    bands: Vec<Band>,
+    /// seq → its band index, so reclaim / promote / release re-offer into the
+    /// right band. Cleared on ack / discard.
+    priority_of: HashMap<Seq, u8>,
     /// Not-yet-visible entries (delayed / ETA / backoff), min-heap by visible-at
-    /// millis. `promote_due` moves due ones onto `redeliver`.
+    /// millis. `promote_due` moves due ones onto their band's redeliver heap.
     delayed: BinaryHeap<Reverse<(i64, Seq)>>,
     /// Seqs currently held back in `delayed` — `pick` skips these.
     delayed_set: HashSet<Seq>,
@@ -86,12 +106,30 @@ impl WorkQueue {
             lease_index: HashMap::new(),
             acked: HashSet::new(),
             attempts: HashMap::new(),
-            next_offer: 0,
-            redeliver: BinaryHeap::new(),
+            bands: (0..PRIORITY_BANDS).map(|_| Band::default()).collect(),
+            priority_of: HashMap::new(),
             delayed: BinaryHeap::new(),
             delayed_set: HashSet::new(),
             committed: 0,
         }
+    }
+
+    /// Record `seq`'s priority band so reclaim / promote / release route it back
+    /// to the right band.
+    fn note_priority(&mut self, seq: Seq, priority: u8) {
+        self.priority_of.insert(seq, band_idx(priority) as u8);
+    }
+
+    /// The band index `seq` was offered into (0 if unknown).
+    fn band_of(&self, seq: Seq) -> usize {
+        self.priority_of.get(&seq).copied().unwrap_or(0) as usize
+    }
+
+    /// Offer a freshly-published (immediately-visible) entry into its priority
+    /// band, in publish order.
+    pub fn offer_fresh(&mut self, seq: Seq, priority: u8) {
+        self.note_priority(seq, priority);
+        self.bands[band_idx(priority)].fresh.push_back(seq);
     }
 
     /// The configured cap on delivery attempts before an entry is considered
@@ -100,29 +138,29 @@ impl WorkQueue {
         self.max_attempts
     }
 
-    /// O(1) next entry to offer: pop the redeliver min-heap first (prefer
-    /// redeliver), otherwise take `next_offer` if the log has it.
+    /// Pick the next entry to offer: scan bands high → low; within a band prefer
+    /// reclaimed/promoted (redeliver, smallest seq) over fresh (publish order).
+    /// O(bands) ≈ O(1). Skips seqs that were meanwhile acked, leased, or deferred.
     ///
     /// @spec projects/relay/tech-design/logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md#logic
-    fn pick(&mut self, log_len: Seq) -> Option<Seq> {
-        while let Some(&Reverse(seq)) = self.redeliver.peek() {
-            self.redeliver.pop();
-            // Skip a stale heap entry that was meanwhile acked, re-leased, or
-            // (re)deferred into the delay index.
-            if !self.acked.contains(&seq)
-                && !self.leases.contains_key(&seq)
-                && !self.delayed_set.contains(&seq)
-            {
-                return Some(seq);
+    fn pick(&mut self) -> Option<Seq> {
+        for b in (0..PRIORITY_BANDS).rev() {
+            while let Some(&Reverse(seq)) = self.bands[b].redeliver.peek() {
+                self.bands[b].redeliver.pop();
+                if !self.acked.contains(&seq)
+                    && !self.leases.contains_key(&seq)
+                    && !self.delayed_set.contains(&seq)
+                {
+                    return Some(seq);
+                }
             }
-        }
-        // Hand out fresh seqs in order, skipping any held back as not-yet-visible
-        // (a skipped delayed seq returns only via `promote_due` -> `redeliver`).
-        while self.next_offer < log_len {
-            let seq = self.next_offer;
-            self.next_offer += 1;
-            if !self.delayed_set.contains(&seq) {
-                return Some(seq);
+            while let Some(seq) = self.bands[b].fresh.pop_front() {
+                if !self.acked.contains(&seq)
+                    && !self.leases.contains_key(&seq)
+                    && !self.delayed_set.contains(&seq)
+                {
+                    return Some(seq);
+                }
             }
         }
         None
@@ -132,10 +170,11 @@ impl WorkQueue {
     /// `pick` skips it until [`WorkQueue::promote_due`] releases it.
     ///
     /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#logic
-    pub fn register_delayed(&mut self, seq: Seq, visible_at: DateTime<Utc>) {
+    pub fn register_delayed(&mut self, seq: Seq, visible_at: DateTime<Utc>, priority: u8) {
         if self.acked.contains(&seq) {
             return;
         }
+        self.note_priority(seq, priority);
         if self.delayed_set.insert(seq) {
             self.delayed.push(Reverse((visible_at.timestamp_millis(), seq)));
         }
@@ -155,7 +194,8 @@ impl WorkQueue {
             }
             self.delayed.pop();
             if self.delayed_set.remove(&seq) && !self.acked.contains(&seq) {
-                self.redeliver.push(Reverse(seq));
+                let b = self.band_of(seq);
+                self.bands[b].redeliver.push(Reverse(seq));
                 promoted += 1;
             }
         }
@@ -172,8 +212,8 @@ impl WorkQueue {
     }
 
     /// Pick the next seq and classify it as ready-to-lease vs dead (exhausted).
-    fn pick_classified(&mut self, log_len: Seq) -> Pick {
-        match self.pick(log_len) {
+    fn pick_classified(&mut self) -> Pick {
+        match self.pick() {
             Some(seq) if self.is_dead(seq) => Pick::Dead(seq),
             Some(seq) => Pick::Ready(seq),
             None => Pick::Empty,
@@ -210,9 +250,9 @@ impl WorkQueue {
     /// are dead-lettered rather than re-offered forever.
     ///
     /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
-    pub fn lease(&mut self, consumer_id: &str, log_len: Seq, now: DateTime<Utc>) -> Option<Lease> {
+    pub fn lease(&mut self, consumer_id: &str, now: DateTime<Utc>) -> Option<Lease> {
         self.promote_due(now);
-        let seq = self.pick(log_len)?;
+        let seq = self.pick()?;
         Some(self.grant(seq, consumer_id, now))
     }
 
@@ -223,14 +263,9 @@ impl WorkQueue {
     /// [`WorkQueue::discard`].
     ///
     /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
-    pub fn lease_or_dead(
-        &mut self,
-        consumer_id: &str,
-        log_len: Seq,
-        now: DateTime<Utc>,
-    ) -> LeaseOrDead {
+    pub fn lease_or_dead(&mut self, consumer_id: &str, now: DateTime<Utc>) -> LeaseOrDead {
         self.promote_due(now);
-        match self.pick_classified(log_len) {
+        match self.pick_classified() {
             Pick::Ready(seq) => LeaseOrDead::Leased(self.grant(seq, consumer_id, now)),
             Pick::Dead(seq) => LeaseOrDead::Dead {
                 seq,
@@ -250,6 +285,7 @@ impl WorkQueue {
         self.leases.remove(&seq);
         self.lease_index.retain(|_, s| *s != seq);
         self.attempts.remove(&seq);
+        self.priority_of.remove(&seq);
         self.acked.insert(seq);
         while self.acked.contains(&self.committed) {
             self.committed += 1;
@@ -266,9 +302,10 @@ impl WorkQueue {
         max: usize,
         now: DateTime<Utc>,
     ) -> Vec<Lease> {
+        let _ = log_len;
         let mut out = Vec::with_capacity(max.min(64));
         for _ in 0..max {
-            match self.lease(consumer_id, log_len, now) {
+            match self.lease(consumer_id, now) {
                 Some(l) => out.push(l),
                 None => break,
             }
@@ -293,6 +330,7 @@ impl WorkQueue {
         }
         self.lease_index.remove(lease_id);
         self.leases.remove(&seq);
+        self.priority_of.remove(&seq);
         self.acked.insert(seq);
         // Advance the contiguous-acked watermark (amortized O(1)).
         while self.acked.contains(&self.committed) {
@@ -313,7 +351,8 @@ impl WorkQueue {
         };
         self.lease_index.remove(lease_id);
         self.leases.remove(&seq);
-        self.redeliver.push(Reverse(seq));
+        let b = self.band_of(seq);
+        self.bands[b].redeliver.push(Reverse(seq));
         true
     }
 
@@ -369,10 +408,12 @@ impl WorkQueue {
                 // dead-letters it promptly (no pointless backoff); otherwise apply
                 // exponential redelivery backoff via the delay index.
                 if self.redeliver_backoff_ms == 0 || self.is_dead(*seq) {
-                    self.redeliver.push(Reverse(*seq));
+                    let b = self.band_of(*seq);
+                    self.bands[b].redeliver.push(Reverse(*seq));
                 } else {
                     let attempt = self.attempts.get(seq).copied().unwrap_or(1);
-                    self.register_delayed(*seq, now + self.backoff_for(attempt));
+                    let priority = self.band_of(*seq) as u8;
+                    self.register_delayed(*seq, now + self.backoff_for(attempt), priority);
                 }
             }
         }
@@ -421,7 +462,6 @@ impl WorkQueue {
     /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
     pub fn recover(&mut self, watermark: Seq) {
         self.committed = watermark;
-        self.next_offer = watermark;
     }
 }
 // HANDWRITE-END

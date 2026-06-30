@@ -212,6 +212,9 @@ definitions:
         type: ["string", "null"]
         format: date-time
         description: "Work-queue visibility gate (delayed / ETA / countdown): durably appended at once but not leasable until this time. Null = leasable immediately. Does not affect broadcast replay."
+      priority:
+        type: integer
+        description: "Work-queue priority band (0 = lowest / default; higher leases first, clamped to the band count). Does not affect broadcast."
 
   AppendOutcome:
     type: object

@@ -124,6 +124,9 @@ definitions:
       delay_ms:
         type: ["integer", "null"]
         description: "Convenience countdown: deliver delay_ms from now (resolved server-side to now + delay_ms). If both set, not_before wins."
+      priority:
+        type: integer
+        description: "Work-queue priority band (0 = lowest / default; higher leases first)."
 
   PublishResponse:
     type: object

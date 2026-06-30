@@ -31,6 +31,7 @@ fn delayed_entry_not_leasable_until_due() {
         serde_json::json!({ "t": "later" }),
         BTreeMap::new(),
         Some(due),
+        0,
         now,
     )
     .unwrap();
@@ -69,7 +70,7 @@ fn reconcile_promotes_due_entry() {
     let r = Relay::new(RelayCoreConfig::in_memory());
     let now = Utc::now();
     let due = now + Duration::seconds(10);
-    r.publish_at("q", "d", serde_json::json!({}), BTreeMap::new(), Some(due), now)
+    r.publish_at("q", "d", serde_json::json!({}), BTreeMap::new(), Some(due), 0, now)
         .unwrap();
 
     // Not due yet.
@@ -91,7 +92,7 @@ fn delay_survives_restart() {
     let due = now + Duration::seconds(60);
     {
         let r = Relay::new(disk_cfg(dir.path()));
-        r.publish_at("q", "d", serde_json::json!({}), BTreeMap::new(), Some(due), now)
+        r.publish_at("q", "d", serde_json::json!({}), BTreeMap::new(), Some(due), 0, now)
             .unwrap();
     }
     // Reopen: the delayed entry must still be held until due.
