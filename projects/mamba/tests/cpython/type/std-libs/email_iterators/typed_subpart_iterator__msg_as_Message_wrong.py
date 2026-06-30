@@ -9,12 +9,11 @@
 # case = "typed_subpart_iterator__msg_as_Message_wrong"
 # subject = "email.iterators.typed_subpart_iterator(msg: Message)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/iterators.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg
 # mamba-strict-type: TypeError
 """Type wall: email.iterators.typed_subpart_iterator(msg: Message); call it with the wrong type.
 
