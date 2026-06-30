@@ -47,6 +47,57 @@ fn extract_list_of_strings(val: MbValue) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn extract_sequence_of_strings(val: MbValue) -> Result<Vec<String>, MbValue> {
+    let Some(ptr) = val.as_ptr() else {
+        return Err(raise_type_error(
+            "getopt() argument 1 must be a sequence of strings",
+        ));
+    };
+    unsafe {
+        use super::super::rc::ObjData;
+        match &(*ptr).data {
+            ObjData::List(rw) => rw
+                .read()
+                .map(|guard| {
+                    guard
+                        .iter()
+                        .map(|v| {
+                            extract_str(*v).ok_or_else(|| {
+                                raise_type_error(
+                                    "getopt() argument 1 must be a sequence of strings",
+                                )
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|_| {
+                    Err(raise_type_error(
+                        "getopt() argument 1 must be a sequence of strings",
+                    ))
+                }),
+            ObjData::Tuple(items) => items
+                .iter()
+                .map(|v| {
+                    extract_str(*v).ok_or_else(|| {
+                        raise_type_error("getopt() argument 1 must be a sequence of strings")
+                    })
+                })
+                .collect(),
+            _ => Err(raise_type_error(
+                "getopt() argument 1 must be a sequence of strings",
+            )),
+        }
+    }
+}
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 /// Raise a GetoptError with the given message and return MbValue::none().
 fn raise_getopt_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
@@ -307,7 +358,10 @@ pub fn register() {
 /// Returns a tuple (opts_list, remaining_args) where opts_list is a list of
 /// (option, value) tuples. Raises GetoptError on unknown options or missing args.
 pub fn mb_getopt_getopt(args: MbValue, shortopts: MbValue, longopts: MbValue) -> MbValue {
-    let args_vec = extract_list_of_strings(args);
+    let args_vec = match extract_sequence_of_strings(args) {
+        Ok(args) => args,
+        Err(err) => return err,
+    };
     let shortopts_str = extract_str(shortopts).unwrap_or_default();
     let longopts_vec = extract_list_of_strings(longopts);
 
@@ -325,7 +379,10 @@ pub fn mb_getopt_getopt(args: MbValue, shortopts: MbValue, longopts: MbValue) ->
 /// Parse command line options GNU-style: permutes non-option arguments so
 /// processing continues past them. Otherwise identical to getopt().
 pub fn mb_getopt_gnu_getopt(args: MbValue, shortopts: MbValue, longopts: MbValue) -> MbValue {
-    let args_vec = extract_list_of_strings(args);
+    let args_vec = match extract_sequence_of_strings(args) {
+        Ok(args) => args,
+        Err(err) => return err,
+    };
     let shortopts_str = extract_str(shortopts).unwrap_or_default();
     let longopts_vec = extract_list_of_strings(longopts);
 
