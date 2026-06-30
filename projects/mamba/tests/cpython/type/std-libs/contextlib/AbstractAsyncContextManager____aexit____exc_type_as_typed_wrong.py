@@ -9,12 +9,10 @@
 # case = "AbstractAsyncContextManager____aexit____exc_type_as_typed_wrong"
 # subject = "contextlib.AbstractAsyncContextManager.__aexit__(exc_type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type
 # mamba-strict-type: TypeError
 """Type wall: contextlib.AbstractAsyncContextManager.__aexit__(exc_type: typed); call it with the wrong type.
 
