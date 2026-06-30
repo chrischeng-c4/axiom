@@ -899,44 +899,354 @@ pub fn mb_ast_literal_eval(expr: MbValue) -> MbValue {
         Some(s) => s,
         None => return MbValue::none(),
     };
-    let trimmed = s.trim();
-    // f-strings are dynamic expressions, never literals: CPython raises
-    // ValueError("malformed node or string ...").
-    let lower = trimmed.to_ascii_lowercase();
-    for pfx in ["f'", "f\"", "rf'", "rf\"", "fr'", "fr\""] {
-        if lower.starts_with(pfx) {
-            super::super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "malformed node or string: f-string".to_string(),
-                )),
-            );
-            return MbValue::none();
+    match LiteralEvalParser::new(&s).parse_complete() {
+        Ok(value) => value,
+        Err(_) => ast_literal_eval_value_error(),
+    }
+}
+
+fn ast_literal_eval_value_error() -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str("malformed node or string".to_string())),
+    );
+    MbValue::none()
+}
+
+struct LiteralEvalParser<'a> {
+    src: &'a str,
+    pos: usize,
+}
+
+impl<'a> LiteralEvalParser<'a> {
+    fn new(src: &'a str) -> Self {
+        Self { src, pos: 0 }
+    }
+
+    fn parse_complete(mut self) -> Result<MbValue, ()> {
+        self.skip_ws();
+        let value = self.parse_value()?;
+        self.skip_ws();
+        if self.is_eof() {
+            Ok(value)
+        } else {
+            Err(())
         }
     }
-    // Try integer
-    if let Ok(n) = trimmed.parse::<i64>() {
-        return MbValue::from_int(n);
+
+    fn parse_value(&mut self) -> Result<MbValue, ()> {
+        self.skip_ws();
+        if self.consume_keyword("True") {
+            return Ok(MbValue::from_bool(true));
+        }
+        if self.consume_keyword("False") {
+            return Ok(MbValue::from_bool(false));
+        }
+        if self.consume_keyword("None") {
+            return Ok(MbValue::none());
+        }
+        if self.consume_exact("set") {
+            self.skip_ws();
+            self.expect_char('(')?;
+            self.skip_ws();
+            self.expect_char(')')?;
+            return Ok(MbValue::from_ptr(MbObject::new_set(vec![])));
+        }
+        match self.peek_char() {
+            Some('[') => self.parse_list(),
+            Some('(') => self.parse_tuple_or_group(),
+            Some('{') => self.parse_dict_or_set(),
+            Some('b') | Some('B') => {
+                if self.peek_next_quote_prefixed(1) {
+                    self.parse_bytes()
+                } else {
+                    Err(())
+                }
+            }
+            Some('"') | Some('\'') => self.parse_string(),
+            Some('+') | Some('-') | Some('.') | Some('0'..='9') => self.parse_number(),
+            _ => Err(()),
+        }
     }
-    // Try float
-    if let Ok(f) = trimmed.parse::<f64>() {
-        return MbValue::from_float(f);
+
+    fn parse_list(&mut self) -> Result<MbValue, ()> {
+        self.expect_char('[')?;
+        let items = self.parse_comma_values(']')?;
+        Ok(MbValue::from_ptr(MbObject::new_list(items)))
     }
-    // True/False/None
-    match trimmed {
-        "True" => return MbValue::from_bool(true),
-        "False" => return MbValue::from_bool(false),
-        "None" => return MbValue::none(),
-        _ => {}
+
+    fn parse_tuple_or_group(&mut self) -> Result<MbValue, ()> {
+        self.expect_char('(')?;
+        self.skip_ws();
+        if self.consume_char(')') {
+            return Ok(MbValue::from_ptr(MbObject::new_tuple(vec![])));
+        }
+        let first = self.parse_value()?;
+        self.skip_ws();
+        if self.consume_char(')') {
+            return Ok(first);
+        }
+        self.expect_char(',')?;
+        let mut items = vec![first];
+        loop {
+            self.skip_ws();
+            if self.consume_char(')') {
+                break;
+            }
+            items.push(self.parse_value()?);
+            self.skip_ws();
+            if self.consume_char(')') {
+                break;
+            }
+            self.expect_char(',')?;
+        }
+        Ok(MbValue::from_ptr(MbObject::new_tuple(items)))
     }
-    // String literal (simple: strip quotes)
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        let inner = &trimmed[1..trimmed.len() - 1];
-        return MbValue::from_ptr(MbObject::new_str(inner.to_string()));
+
+    fn parse_dict_or_set(&mut self) -> Result<MbValue, ()> {
+        self.expect_char('{')?;
+        self.skip_ws();
+        if self.consume_char('}') {
+            return Ok(MbValue::from_ptr(MbObject::new_dict()));
+        }
+        let first = self.parse_value()?;
+        self.skip_ws();
+        if self.consume_char(':') {
+            self.parse_dict_after_first_key(first)
+        } else {
+            self.parse_set_after_first_value(first)
+        }
     }
-    MbValue::none()
+
+    fn parse_dict_after_first_key(&mut self, first_key: MbValue) -> Result<MbValue, ()> {
+        let mut pairs = vec![(first_key, self.parse_value()?)];
+        loop {
+            self.skip_ws();
+            if self.consume_char('}') {
+                break;
+            }
+            self.expect_char(',')?;
+            self.skip_ws();
+            if self.consume_char('}') {
+                break;
+            }
+            let key = self.parse_value()?;
+            self.skip_ws();
+            self.expect_char(':')?;
+            let value = self.parse_value()?;
+            pairs.push((key, value));
+        }
+
+        let dict = MbValue::from_ptr(MbObject::new_dict_with_capacity(pairs.len()));
+        unsafe {
+            use super::super::rc::ObjData;
+            let ptr = dict.as_ptr().ok_or(())?;
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let mut map = lock.write().unwrap();
+                for (key, value) in pairs {
+                    map.insert(super::super::dict_ops::to_dict_key(key), value);
+                }
+            }
+        }
+        Ok(dict)
+    }
+
+    fn parse_set_after_first_value(&mut self, first: MbValue) -> Result<MbValue, ()> {
+        let mut items = vec![first];
+        loop {
+            self.skip_ws();
+            if self.consume_char('}') {
+                break;
+            }
+            self.expect_char(',')?;
+            self.skip_ws();
+            if self.consume_char('}') {
+                break;
+            }
+            items.push(self.parse_value()?);
+        }
+        Ok(MbValue::from_ptr(MbObject::new_set(items)))
+    }
+
+    fn parse_comma_values(&mut self, terminator: char) -> Result<Vec<MbValue>, ()> {
+        let mut items = Vec::new();
+        self.skip_ws();
+        if self.consume_char(terminator) {
+            return Ok(items);
+        }
+        loop {
+            items.push(self.parse_value()?);
+            self.skip_ws();
+            if self.consume_char(terminator) {
+                return Ok(items);
+            }
+            self.expect_char(',')?;
+            self.skip_ws();
+            if self.consume_char(terminator) {
+                return Ok(items);
+            }
+        }
+    }
+
+    fn parse_number(&mut self) -> Result<MbValue, ()> {
+        let start = self.pos;
+        if matches!(self.peek_char(), Some('+') | Some('-')) {
+            self.bump_char();
+        }
+        let digits_start = self.pos;
+        while matches!(self.peek_char(), Some('0'..='9')) {
+            self.bump_char();
+        }
+        let whole_digits = self.pos.saturating_sub(digits_start);
+        let mut is_float = false;
+        let mut frac_digits = 0;
+        if self.consume_char('.') {
+            is_float = true;
+            let frac_start = self.pos;
+            while matches!(self.peek_char(), Some('0'..='9')) {
+                self.bump_char();
+            }
+            frac_digits = self.pos.saturating_sub(frac_start);
+        }
+        if matches!(self.peek_char(), Some('e') | Some('E')) {
+            is_float = true;
+            self.bump_char();
+            if matches!(self.peek_char(), Some('+') | Some('-')) {
+                self.bump_char();
+            }
+            let exp_start = self.pos;
+            while matches!(self.peek_char(), Some('0'..='9')) {
+                self.bump_char();
+            }
+            if exp_start == self.pos {
+                return Err(());
+            }
+        }
+        if whole_digits == 0 && frac_digits == 0 {
+            return Err(());
+        }
+        let text = &self.src[start..self.pos];
+        if is_float {
+            text.parse::<f64>().map(MbValue::from_float).map_err(|_| ())
+        } else {
+            text.parse::<i64>().map(MbValue::from_int).map_err(|_| ())
+        }
+    }
+
+    fn parse_string(&mut self) -> Result<MbValue, ()> {
+        let text = self.parse_quoted_text()?;
+        Ok(MbValue::from_ptr(MbObject::new_str(text)))
+    }
+
+    fn parse_bytes(&mut self) -> Result<MbValue, ()> {
+        self.bump_char();
+        let text = self.parse_quoted_text()?;
+        Ok(MbValue::from_ptr(MbObject::new_bytes(text.into_bytes())))
+    }
+
+    fn parse_quoted_text(&mut self) -> Result<String, ()> {
+        let quote = self.bump_char().ok_or(())?;
+        if quote != '\'' && quote != '"' {
+            return Err(());
+        }
+        let mut out = String::new();
+        while let Some(ch) = self.bump_char() {
+            if ch == quote {
+                return Ok(out);
+            }
+            if ch == '\\' {
+                let escaped = self.bump_char().ok_or(())?;
+                out.push(match escaped {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    '\\' => '\\',
+                    '\'' => '\'',
+                    '"' => '"',
+                    other => other,
+                });
+            } else {
+                out.push(ch);
+            }
+        }
+        Err(())
+    }
+
+    fn consume_keyword(&mut self, keyword: &str) -> bool {
+        let Some(rest) = self.src.get(self.pos..) else {
+            return false;
+        };
+        if !rest.starts_with(keyword) {
+            return false;
+        }
+        let next = self.pos + keyword.len();
+        if self
+            .src
+            .get(next..)
+            .and_then(|s| s.chars().next())
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return false;
+        }
+        self.pos = next;
+        true
+    }
+
+    fn consume_exact(&mut self, text: &str) -> bool {
+        let Some(rest) = self.src.get(self.pos..) else {
+            return false;
+        };
+        if rest.starts_with(text) {
+            self.pos += text.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_char(&mut self, expected: char) -> Result<(), ()> {
+        if self.consume_char(expected) {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    fn consume_char(&mut self, expected: char) -> bool {
+        if self.peek_char() == Some(expected) {
+            self.bump_char();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn bump_char(&mut self) -> Option<char> {
+        let ch = self.peek_char()?;
+        self.pos += ch.len_utf8();
+        Some(ch)
+    }
+
+    fn peek_char(&self) -> Option<char> {
+        self.src.get(self.pos..)?.chars().next()
+    }
+
+    fn peek_next_quote_prefixed(&self, prefix_len: usize) -> bool {
+        self.src
+            .get(self.pos + prefix_len..)
+            .and_then(|s| s.chars().next())
+            .is_some_and(|ch| ch == '\'' || ch == '"')
+    }
+
+    fn skip_ws(&mut self) {
+        while self.peek_char().is_some_and(|ch| ch.is_whitespace()) {
+            self.bump_char();
+        }
+    }
+
+    fn is_eof(&self) -> bool {
+        self.pos >= self.src.len()
+    }
 }
 
 /// ast.get_docstring(node, clean=True) -> str | None
@@ -1197,6 +1507,107 @@ mod tests {
     fn test_literal_eval_none() {
         let n = MbValue::from_ptr(MbObject::new_str("None".to_string()));
         assert!(mb_ast_literal_eval(n).is_none());
+    }
+
+    #[test]
+    fn test_literal_eval_containers() {
+        use super::super::super::rc::ObjData;
+
+        let list = mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str(
+            "[1, 2, 3]".to_string(),
+        )));
+        let list_ptr = list.as_ptr().expect("list literal");
+        unsafe {
+            if let ObjData::List(ref lock) = (*list_ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 3);
+                assert_eq!(items[0].as_int(), Some(1));
+                assert_eq!(items[2].as_int(), Some(3));
+            } else {
+                panic!("expected list");
+            }
+        }
+
+        let tuple = mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str(
+            "(True, False, None)".to_string(),
+        )));
+        let tuple_ptr = tuple.as_ptr().expect("tuple literal");
+        unsafe {
+            if let ObjData::Tuple(ref items) = (*tuple_ptr).data {
+                assert_eq!(items.len(), 3);
+                assert_eq!(items[0].as_bool(), Some(true));
+                assert_eq!(items[1].as_bool(), Some(false));
+                assert!(items[2].is_none());
+            } else {
+                panic!("expected tuple");
+            }
+        }
+
+        let dict = mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str(
+            "{\"foo\": 42}".to_string(),
+        )));
+        let dict_ptr = dict.as_ptr().expect("dict literal");
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*dict_ptr).data {
+                let map = lock.read().unwrap();
+                assert_eq!(map.len(), 1);
+            } else {
+                panic!("expected dict");
+            }
+        }
+
+        let set = mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str(
+            "{1, 2, 3}".to_string(),
+        )));
+        let set_ptr = set.as_ptr().expect("set literal");
+        unsafe {
+            if let ObjData::Set(ref lock) = (*set_ptr).data {
+                assert_eq!(lock.read().unwrap().len(), 3);
+            } else {
+                panic!("expected set");
+            }
+        }
+    }
+
+    #[test]
+    fn test_literal_eval_signed_numbers_and_bytes() {
+        let pos_int = mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str("+6".to_string())));
+        assert_eq!(pos_int.as_int(), Some(6));
+        let neg_int = mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str("-6".to_string())));
+        assert_eq!(neg_int.as_int(), Some(-6));
+        let pos_float =
+            mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str("+3.25".to_string())));
+        assert_eq!(pos_float.as_float(), Some(3.25));
+        let trailing_dot =
+            mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str("1.".to_string())));
+        assert_eq!(trailing_dot.as_float(), Some(1.0));
+        let leading_dot =
+            mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str(".5".to_string())));
+        assert_eq!(leading_dot.as_float(), Some(0.5));
+        let neg_zero =
+            mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str("-0.0".to_string())));
+        assert_eq!(neg_zero.as_float().unwrap().to_bits(), (-0.0f64).to_bits());
+
+        let bytes =
+            mb_ast_literal_eval(MbValue::from_ptr(MbObject::new_str("b\"hi\"".to_string())));
+        let ptr = bytes.as_ptr().expect("bytes literal");
+        unsafe {
+            if let super::super::super::rc::ObjData::Bytes(ref data) = (*ptr).data {
+                assert_eq!(data.as_slice(), b"hi");
+            } else {
+                panic!("expected bytes");
+            }
+        }
+    }
+
+    #[test]
+    fn test_literal_eval_rejects_non_literals() {
+        let bad_call = MbValue::from_ptr(MbObject::new_str("foo()".to_string()));
+        assert!(mb_ast_literal_eval(bad_call).is_none());
+        let bad_expr = MbValue::from_ptr(MbObject::new_str("2+3".to_string()));
+        assert!(mb_ast_literal_eval(bad_expr).is_none());
+        let bad_sign = MbValue::from_ptr(MbObject::new_str("++6".to_string()));
+        assert!(mb_ast_literal_eval(bad_sign).is_none());
     }
 
     #[test]
