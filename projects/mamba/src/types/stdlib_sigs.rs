@@ -164,6 +164,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: bz2 filename arguments are overload/protocol unions
+    // (path-like or file-object). A bare user instance cannot satisfy either,
+    // while real strings/bytes/path/file-like objects stay skip-safe.
+    StdlibSig {
+        module: "bz2",
+        qualifier: "",
+        name: "open",
+        kind: SigKind::ModuleFn,
+        params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "bz2",
+        qualifier: "BZ2File",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // NEGATIVE: math.factorial(x: SupportsIndex) — protocol -> Unknown, NOT
     // enforceable. Kept as a regression guard that `factorial(obj)` and
     // `factorial(3.0)` are never rejected by this table.
