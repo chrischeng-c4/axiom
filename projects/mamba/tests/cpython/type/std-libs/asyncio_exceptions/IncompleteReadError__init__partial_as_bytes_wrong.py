@@ -9,12 +9,11 @@
 # case = "IncompleteReadError__init__partial_as_bytes_wrong"
 # subject = "asyncio.exceptions.IncompleteReadError.__init__(partial: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed partial"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/exceptions.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed partial
 # mamba-strict-type: TypeError
 """Type wall: asyncio.exceptions.IncompleteReadError.__init__(partial: bytes); call it with the wrong type.
 
