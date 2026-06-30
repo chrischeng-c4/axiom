@@ -9,12 +9,10 @@
 # case = "UserString__rjust__width_as_int_wrong"
 # subject = "collections.UserString.rjust(width: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed width"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed width
 # mamba-strict-type: TypeError
 """Type wall: collections.UserString.rjust(width: int); call it with the wrong type.
 
