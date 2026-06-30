@@ -9,12 +9,11 @@
 # case = "scanvars__reader_as_Callable_wrong"
 # subject = "cgitb.scanvars(reader: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed reader"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cgitb.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed reader
 # mamba-strict-type: TypeError
 """Type wall: cgitb.scanvars(reader: Callable); call it with the wrong type.
 
