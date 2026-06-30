@@ -206,6 +206,16 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("firstweekday", CoreTy::Unknown)],
         enforceable: false,
     },
+    // POSITIVE: calendar.timegm(tuple) consumes a typed time tuple. A bare
+    // user object is not a tuple/time tuple and must be rejected in strict mode.
+    StdlibSig {
+        module: "calendar",
+        qualifier: "",
+        name: "timegm",
+        kind: SigKind::ModuleFn,
+        params: &[p("tuple", CoreTy::Typed)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
