@@ -14,8 +14,16 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/lumen/src/wal_relay.rs`, captured during #39 lumen migration onto td_ast lossless source generation.
+Public API manifest for `projects/lumen/src/wal_relay.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `RelayWal` | projects/lumen/src/wal_relay.rs | struct | pub | 32 |  |
+| `new` | projects/lumen/src/wal_relay.rs | function | pub | 111 | new(base_url: impl Into<String>, subject: impl Into<String>) -> Result<Self> |
+| `new_with_ids` | projects/lumen/src/wal_relay.rs | function | pub | 131 | new_with_ids(         base_url: impl Into<String>,         subject: impl Into<String>,         subscriber_id: impl Into<String>,         publisher_id: impl Into<String>,     ) -> Result<Self> |
+| `new_with_subscriber_id` | projects/lumen/src/wal_relay.rs | function | pub | 118 | new_with_subscriber_id(         base_url: impl Into<String>,         subject: impl Into<String>,         subscriber_id: impl Into<String>,     ) -> Result<Self> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -25,7 +33,7 @@ Rust source-unit TD for `projects/lumen/src/wal_relay.rs`, captured during #39 l
 //!
 //! lumen is a log-tailing derived index (see HA.md): a write is published to the
 //! broker and every pod folds the ordered log into its own index. This backend
-//! makes that broker `relay` (itself HA via `libs/raftcore`): `publish` POSTs to
+//! makes that broker `relay` (itself HA via `libs/raft-core`): `publish` POSTs to
 //! relay, `subscribe` tails relay's broadcast — the loop `relay::spawn_follower`
 //! proved, mapped onto [`WalRecord`].
 //!

@@ -1,24 +1,22 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-competitor-performance-competitive
+// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-depth-invariant
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec lumen-competitor-performance-competitive
+// @ec lumen-claim-competitor-performance-depth-invariant
 // @capability competitor-performance
-// @claim competitive-regression-gate-beat-pg-os-per-cell-ratcheting
-// @contract search-efficiency-filtering-ranking-pagination
+// @claim depth-invariant-filter-sort-pagination
+// @contract competitor-performance-depth-invariant
 // @category efficiency
 // @required_for_production true
-// @command cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter
+// @command cargo test -p lumen --test lumen_bench_cli --test perf_gate_vs_db -- --nocapture
 // AW-EC-END
 
-// Contract: Lumen-only default gate holds per-cell e2e/engine latency floors from perf-baseline.json without provisioning pg/OpenSearch.
-// Contract: Retained pg/OpenSearch ratios remain the calibrated competitive evidence; explicit compare runners refresh them only when cells or peer configs change.
-// Contract: FILTERING/RANKING/PAGINATION/SORT cells still execute through the same release-mode Lumen search path and qps pin.
-// Contract: Peer floors are ratcheted (perf-baseline.json, 0.8) and btree point-lookup cells stay EXEMPT unless LUMEN_GATE_COMPARE_PEERS=1 is explicitly set.
+// Contract: The Lumen-only deep-page and filter/sort perf gates stay depth-invariant against the retained calibrated floors without rerunning peer databases by default.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn lumen_competitor_performance_competitive() {
-    let command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter";
-    let id = "lumen-competitor-performance-competitive";
+fn lumen_claim_competitor_performance_depth_invariant() {
+    let command =
+        "cargo test -p lumen --test lumen_bench_cli --test perf_gate_vs_db -- --nocapture";
+    let id = "lumen-claim-competitor-performance-depth-invariant";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

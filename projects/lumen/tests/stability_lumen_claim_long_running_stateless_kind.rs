@@ -3,14 +3,14 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-long-running-stateless-kind
 // @capability long-running-stability
-// @claim stateless-serving-rebuild-from-log-no-pvc
+// @claim kind-api-recovery-no-relay
 // @contract long-running-stateless-kind-dogfood
 // @category stability
 // @required_for_production true
 // @command projects/lumen/scripts/kind-e2e.sh
 // AW-EC-END
 
-// Contract: The live kind dogfood path proves stateless serving rebuilds from log without a serving PVC.
+// Contract: The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_long_running_stateless_kind() {

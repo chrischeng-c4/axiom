@@ -10,9 +10,9 @@
 #   - x86_64-unknown-linux-gnu  (most Linux servers, ubuntu-latest native)
 #   - aarch64-unknown-linux-gnu (Linux on ARM,       ubuntu-latest cross)
 #
-# lumen's serving binary speaks REST/OpenAPI and links no HTTP client (reqwest
-# is dev-only), so there is no openssl in the build graph — the aarch64 Linux
-# cross leg needs only the gcc cross-linker, same as cap/vat/meter.
+# lumen's serving binary speaks REST/OpenAPI and uses rustls-backed HTTP clients
+# for raft/CLI online paths, so there is no openssl in the build graph — the
+# aarch64 Linux cross leg needs only the gcc cross-linker, same as cap/vat/meter.
 name: lumen-release
 
 on:
@@ -67,7 +67,7 @@ jobs:
       - name: Build lumen binary
         # --bin lumen: only the serving binary (skip lumen-consumer / -bench /
         # -openapi-dump; lumen-operator is feature-gated off by default anyway).
-        run: cargo build --release --locked -p lumen --bin lumen --features "otel operator relay-wal self-update issue" --target ${{ matrix.target }}
+        run: cargo build --release --locked -p lumen --bin lumen --features "otel operator raft-wal self-update issue" --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package

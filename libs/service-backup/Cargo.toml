@@ -1,0 +1,17 @@
+[package]
+name = "service-backup"
+version = "0.1.0"
+edition = "2021"
+description = "Shared backup contract for axiom services: destination/policy schema, sink trait, local sink, and runner primitive. Services produce consistent snapshots; backup runners upload them."
+
+[lib]
+name = "service_backup"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+schemars = "0.8"
+
+[dev-dependencies]
+serde_json = { workspace = true }

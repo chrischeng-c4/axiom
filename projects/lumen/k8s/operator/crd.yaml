@@ -41,54 +41,8 @@ spec:
                 - disabled
                 - required
                 type: string
-              broker:
-                default:
-                  externalUrl: null
-                  image: relay:latest
-                  subject: lumen-wal
-                  replicas: 1
-                  storage: 20Gi
-                  storageClass: null
-                  cpu: '1'
-                  memory: 1Gi
-                description: Relay write-log broker. Managed by default; set `externalUrl` to point at an existing broker and skip provisioning one.
-                properties:
-                  cpu:
-                    default: '1'
-                    description: Per-broker CPU, applied as request==limit.
-                    type: string
-                  externalUrl:
-                    description: Point serving pods at an existing broker. When set, the operator renders NO broker objects (StatefulSet/Services/PDB) and wires `LUMEN_RELAY_URL` straight to this value.
-                    nullable: true
-                    type: string
-                  image:
-                    default: relay:latest
-                    description: Managed Relay image. The image should contain the `relay-server` binary.
-                    type: string
-                  memory:
-                    default: 1Gi
-                    description: Per-broker memory, applied as request==limit.
-                    type: string
-                  replicas:
-                    default: 1
-                    description: Managed-broker replica count. `1` is the current managed mode; use `externalUrl` for production Relay HA until relay-raft exposes the full broadcast subscribe API.
-                    format: int32
-                    type: integer
-                  storage:
-                    default: 20Gi
-                    description: Per-broker PVC size. e.g. `"20Gi"`, `"100Gi"`.
-                    type: string
-                  storageClass:
-                    description: PVC StorageClass. Unset → cluster default (portable; kind → local-path `standard`). Set to e.g. `"ssd"` in cloud.
-                    nullable: true
-                    type: string
-                  subject:
-                    default: lumen-wal
-                    description: Relay subject carrying the Lumen WAL.
-                    type: string
-                type: object
               image:
-                description: Serving + (managed) broker-sidecar-free container image, e.g. `lumen:latest`. Required.
+                description: Serving container image, e.g. `lumen:latest`. Required.
                 type: string
               imagePullPolicy:
                 description: Image pull policy. Defaults to `IfNotPresent`.
@@ -109,6 +63,11 @@ spec:
                 default: false
                 description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
                 type: boolean
+              replicasPerShard:
+                default: 1
+                description: Raft replicas per shard. `1` (default) = stateless serving (a Deployment + HPA). `> 1` switches the serving fleet to a raft-HA **StatefulSet** whose pods inject the downward-API env `raft_host::cluster` reads.
+                type: integer
+                minimum: 0.0
               serving:
                 default:
                   autoscaling:
@@ -118,6 +77,8 @@ spec:
                   cpu: '2'
                   memory: 4Gi
                   graceSecs: 30
+                  raftStorage: 20Gi
+                  raftStorageClass: null
                 description: Stateless serving-fleet shape.
                 properties:
                   autoscaling:
@@ -151,24 +112,35 @@ spec:
                   graceSecs:
                     default: 30
                     description: Graceful drain window on SIGTERM (seconds); tracks `terminationGracePeriodSeconds`.
-                    format: uint64
-                    minimum: 0.0
                     type: integer
+                    minimum: 0.0
                   memory:
                     default: 4Gi
                     description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
+                    type: string
+                  raftStorage:
+                    default: 20Gi
+                    description: Per-pod raft hard-state PVC size. Used only when `replicasPerShard > 1`.
+                    type: string
+                  raftStorageClass:
+                    description: PVC StorageClass for raft hard state. Unset means cluster default.
+                    nullable: true
                     type: string
                 type: object
               shardCount:
                 default: 1
                 description: Install-time shard fan-out for client-side `crc32(collection) % N` routing. The operator surfaces it but never reshards a live cluster (clients own the routing); treat as immutable after first apply.
-                format: uint32
-                minimum: 0.0
                 type: integer
+                minimum: 0.0
               tokensSecret:
                 description: 'Name of a Secret (key `LUMEN_TOKENS`) wired into serving pods when `auth: required`. Ignored when `auth: off`.'
                 nullable: true
                 type: string
+              voterCount:
+                default: 1
+                description: Voting members per shard (the rest are learners). Only meaningful when `replicasPerShard > 1`.
+                type: integer
+                minimum: 0.0
             required:
             - image
             type: object
@@ -176,10 +148,6 @@ spec:
             description: Status subresource, written back by the reconcile loop. @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
             nullable: true
             properties:
-              brokerReady:
-                default: false
-                description: Whether the Relay broker is Ready (managed) or assumed up (external).
-                type: boolean
               desiredReplicas:
                 default: 0
                 description: Desired serving replicas (HPA floor at apply, or the live count).
@@ -206,9 +174,8 @@ spec:
               shardCount:
                 default: 0
                 description: Effective shard count.
-                format: uint32
-                minimum: 0.0
                 type: integer
+                minimum: 0.0
             type: object
         required:
         - spec

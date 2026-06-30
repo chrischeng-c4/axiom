@@ -18,11 +18,7 @@ Public API manifest for `projects/lumen/src/operator/lease.rs` generated from AS
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `Election` | projects/lumen/src/operator/lease.rs | struct | pub | 31 |  |
-| `new` | projects/lumen/src/operator/lease.rs | function | pub | 38 | new(identity: String) -> Arc<Self> |
-| `spawn` | projects/lumen/src/operator/lease.rs | function | pub | 117 | spawn(client: Client, namespace: String, election: Arc<Election>) |
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

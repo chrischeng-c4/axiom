@@ -1,5 +1,28 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-bench-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-lumen-src-bin-lumen-bench-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: competitor-performance
+    role: primary
+    claim: "depth-invariant-filter-sort-pagination"
+    coverage: partial
+    rationale: "The lumen-bench sorted_page_deep cell is the local benchmark executable for the depth-invariant filter/sort pagination claim."
+---
+
+# Standardized projects/lumen/src/bin/lumen-bench.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/lumen/src/bin/lumen-bench.rs` generated from AST during Score force-regeneration standardization.
+
+### Symbols
+
+No public AST symbols.
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 // @spec projects/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#logic
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -294,4 +317,17 @@ fn spec(field_type: FieldType) -> FieldSpec {
         quantize: None,
     }
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/bin/lumen-bench.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/lumen/src/bin/lumen-bench.rs` captured for the sorted_page_deep benchmark cell.
+```

@@ -20,15 +20,15 @@ Public API manifest for `projects/lumen/src/wal.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `MemWal` | projects/lumen/src/wal.rs | struct | pub | 360 |  |
-| `SharedWal` | projects/lumen/src/wal.rs | type | pub | 339 |  |
+| `MemWal` | projects/lumen/src/wal.rs | struct | pub | 361 |  |
+| `SharedWal` | projects/lumen/src/wal.rs | type | pub | 340 |  |
 | `WAL_FORMAT_VERSION` | projects/lumen/src/wal.rs | constant | pub | 45 |  |
 | `WalRecord` | projects/lumen/src/wal.rs | struct | pub | 59 |  |
-| `WalStream` | projects/lumen/src/wal.rs | type | pub | 319 |  |
+| `WalStream` | projects/lumen/src/wal.rs | type | pub | 320 |  |
 | `decode` | projects/lumen/src/wal.rs | function | pub | 84 | decode(bytes: &[u8]) -> Result<Self> |
 | `encode` | projects/lumen/src/wal.rs | function | pub | 74 | encode(&self) -> Result<Vec<u8>> |
 | `new` | projects/lumen/src/wal.rs | function | pub | 66 | new(entry: RaftLogEntry) -> Self |
-| `new` | projects/lumen/src/wal.rs | function | pub | 415 | new() -> Self |
+| `new` | projects/lumen/src/wal.rs | function | pub | 416 | new() -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

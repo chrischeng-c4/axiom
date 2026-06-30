@@ -1,5 +1,28 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-tests-lumen_bench_cli-rs.md#rust-source-unit
-// CODEGEN-BEGIN
+---
+id: projects-lumen-tests-lumen_bench_cli-rs
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: competitor-performance
+    role: primary
+    claim: "depth-invariant-filter-sort-pagination"
+    coverage: partial
+    rationale: "The lumen-bench CLI smoke test proves the sorted_page_deep benchmark emits the latency fields required by the depth-invariant pagination gate."
+---
+
+# Standardized projects/lumen/tests/lumen_bench_cli.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/lumen/tests/lumen_bench_cli.rs` generated from AST during Score force-regeneration standardization.
+
+### Symbols
+
+No public AST symbols.
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 // @spec projects/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#unit-test
 use std::process::Command;
 
@@ -33,4 +56,17 @@ fn sorted_page_deep_bench_cli_reports_latency_fields() {
     assert!(stdout.contains("p99_us="), "{stdout}");
     assert!(stdout.contains("status=pass"), "{stdout}");
 }
-// CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/tests/lumen_bench_cli.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `projects/lumen/tests/lumen_bench_cli.rs` captured for the sorted_page_deep benchmark CLI smoke test.
+```

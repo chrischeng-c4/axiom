@@ -16,11 +16,11 @@ and the exact gates that prove a build is release-ready.
 | Path | Use | Runtime base |
 |------|-----|--------------|
 | **`Dockerfile.release`** | **Production-like.** Fetches the published release binary — no Rust toolchain, smallest attack surface. | `gcr.io/distroless/cc-debian12:nonroot` |
-| `Dockerfile` | Dev/CI build from source (`cargo build --release -p lumen --features "otel operator relay-wal jieba"`). | `gcr.io/distroless/cc-debian12:nonroot` |
+| `Dockerfile` | Dev/CI build from source (`cargo build --release -p lumen --features "otel operator raft-wal jieba"`). | `gcr.io/distroless/cc-debian12:nonroot` |
 
 - Runtime is **distroless, nonroot (uid 65532)**, binary at `/usr/local/bin/lumen`.
 - Exposes **`7373`** (HTTP API). `ENTRYPOINT ["/usr/local/bin/lumen"]`, `CMD ["serve"]`.
-- Raft peer traffic (HA) uses **`7374`**; relay broker uses **`7000`**.
+- Raft peer RPCs share the same h2c HTTP port as the serving API.
 
 ```bash
 lumen dockerfile render --variant release --version 0.4.5 --out /tmp/lumen-image
@@ -63,22 +63,21 @@ docker run --rm -p 7373:7373 \
   lumen:0.4.5 serve --host 0.0.0.0
 ```
 
-### 3c. With a relay broadcast WAL (multi-node fan-out)
+### 3c. Local multi-node raft
 
 ```bash
-# relay broker on :7000 (see projects/relay), then:
-lumen serve --host 0.0.0.0 --wal relay --relay-url http://relay:7000 --relay-subject lumen-wal
+projects/lumen/scripts/dev-cluster.sh
 ```
 
 ### 3d. Kubernetes (kustomize overlays)
 
 ```bash
-kubectl apply -k projects/lumen/k8s/overlays/dev      # 1 serving + 1 relay, pretty logs, auth off
+kubectl apply -k projects/lumen/k8s/overlays/dev      # 1 serving, pretty logs, auth off
 kubectl apply -k projects/lumen/k8s/overlays/staging  # 3 serving, json logs, ServiceMonitor
 kubectl apply -k projects/lumen/k8s/overlays/prod     # 6 serving (HPA 6–12), auth required
 ```
 
-Structure: `k8s/base` (Deployment, Service, HPA, PDB, ConfigMap, relay StatefulSet),
+Structure: `k8s/base` (Deployment, Service, HPA, PDB, ConfigMap),
 `k8s/components/observability` (ServiceMonitor + PrometheusRule, staging/prod),
 `k8s/overlays/{dev,staging,prod}`, `k8s/operator` (CRD + controller).
 
@@ -109,10 +108,9 @@ kubectl apply -f /tmp/lumen-k8s/lumen.yaml
 |------|--------------|---------|
 | Bind | `LUMEN_HOST` (`--host`) / `LUMEN_PORT` (`--port`) | `127.0.0.1` / `7373` |
 | Logging | `LUMEN_LOG_LEVEL` (`--log-level`) / `LUMEN_LOG_FORMAT` (`--log-format` pretty\|json) | `info` / `pretty` |
-| **WAL backend** | `LUMEN_WAL` (`--wal`) — `auto\|embedded\|nats\|relay\|raft` | `auto` (raft if `replicas>1`, else embedded) |
+| **WAL backend** | `LUMEN_WAL` (`--wal`) — `auto\|embedded\|nats\|raft` | `auto` (raft if `replicasPerShard > 1`, else embedded) |
 | NATS | `LUMEN_NATS_URL`, `LUMEN_NATS_CONNECT_TIMEOUT_SECS` | `nats://localhost:4222`, `120` |
-| Relay | `LUMEN_RELAY_URL`, `LUMEN_RELAY_SUBJECT`, `LUMEN_RELAY_SUBSCRIBER_ID` | `http://localhost:7000`, `lumen-wal`, pod/host name |
-| Raft HA | `LUMEN_RAFT_DATA_DIR`, `LUMEN_RAFT_PORT`, `LUMEN_HEADLESS_SERVICE` | `/var/lib/lumen/raft`, `7374`, `lumen-headless` |
+| Raft HA | `LUMEN_RAFT_DATA_DIR`, `LUMEN_HEADLESS_SERVICE`, `LUMEN_PEERS`, `POD_NAME`, `SHARD_COUNT`, `REPLICAS_PER_SHARD`, `VOTER_COUNT` | `/var/lib/lumen/raft`, `lumen-headless`, unset, k8s downward API |
 | Sharding/storage | `SHARD_COUNT`, `LUMEN_DATA_DIR`, `LUMEN_PERSISTENCE` (cbor\|segment), `LUMEN_SNAPSHOT_SECS` | `1`, unset, `cbor`, `300` |
 | Shutdown | `LUMEN_GRACE_SECS` | `30` |
 | Tracing | `LUMEN_OTLP_ENDPOINT` (OTLP/gRPC; traces off when unset) | unset |

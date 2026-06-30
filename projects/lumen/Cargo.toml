@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.5"
+version = "0.4.6"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -38,15 +38,11 @@ chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 crc32fast = "1.4"
 futures.workspace = true
-# Broker log-tailing on relay (#124, behind the `relay-wal` feature). Off by
-# default so the serving binary stays HTTP-client-free; relay is h2c so reqwest
-# uses rustls (no openssl) when enabled.
-relay = { path = "../relay", optional = true }
+# Shared h2c client for the Lumen-owned raft WAL and online CLI ops. The serving
+# binary links it only when a feature that needs outbound HTTP is enabled.
 reqwest = { workspace = true, optional = true }
 # Shared h2c transport: `server` powers `serve` (HTTP/1.1 + h2c on one port via
-# hyper auto-builder, replacing the HTTP/1-only `axum::serve`); the default
-# client surface backs the relay-WAL client (#469). reqwest here is rustls (no
-# openssl), so the serving binary still cross-compiles cleanly.
+# hyper auto-builder, replacing the HTTP/1-only `axum::serve`).
 h2c = { path = "../../libs/h2c", features = ["server"] }
 # `lumen upgrade` / `lumen issue` — the standard agent-facing CLI ops,
 # shared across the ecosystem (CONTRIBUTING.md "CLI convention"). Offline paths
@@ -59,6 +55,9 @@ service-auth = { path = "../../libs/service-auth" }
 # Shared k8s-native HTTP service shell: standard probe routes, request tracing,
 # h2c serve wrapper, and SIGTERM drain sequencing.
 service-http = { path = "../../libs/service-http" }
+# Shared backup destination/policy/sink/runner contract. Lumen still owns
+# producing a consistent engine snapshot; this lib owns where/how bytes are kept.
+service-backup = { path = "../../libs/service-backup" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }
@@ -108,8 +107,6 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 [features]
 default = []
 jieba = ["dep:jieba-rs"]
-# relay-wal — tail relay's broadcast as the WAL backend (#124), instead of NATS.
-relay-wal = ["dep:relay", "dep:reqwest"]
 # raft-wal — lumen owns write ordering + replication via libs/raft-core (HA),
 # instead of an external broker. Peer RPCs use the h2c client. (#515)
 raft-wal = ["dep:raft-core", "dep:raft-host", "dep:reqwest"]

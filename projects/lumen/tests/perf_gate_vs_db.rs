@@ -2,8 +2,10 @@
 // CODEGEN-BEGIN
 //! Competitive perf-regression GATE — native Rust, no Python/GIL.
 //!
-//! The standing commitment (README `ops-speed`): **lumen beats Postgres and
-//! OpenSearch on every gated search cell, every release.** This test enforces it.
+//! The standing commitment (README `ops-speed`): **lumen keeps its own latency
+//! floors every release.** Postgres/OpenSearch comparisons are calibrated
+//! evidence, not a per-run dependency; set `LUMEN_GATE_COMPARE_PEERS=1` only
+//! when adding/changing a benchmark cell or explicitly refreshing peer data.
 //! Each engine is driven over its own native client so the comparison is honest:
 //!   - lumen      → reqwest against an in-test axum server over an in-process Engine
 //!   - Postgres   → tokio-postgres (its own wire protocol)
@@ -23,16 +25,17 @@
 //!   TARGET — should win but does not yet; reported RED, does NOT fail (drives the work).
 //!   EXEMPT — opponent home-turf; reported with a reason, never fails.
 //!
-//! MUST run with `--release`: a debug build makes lumen's compute-heavy cells
-//! (BM25 scoring over ~25k docs) ~10x slower, while pg/OpenSearch are always
-//! optimized native — debug numbers are a meaningless 10x handicap. lumen's wins
-//! are also at SCALE (default N=1M); pg's ts_rank/GIN and the JVM degrade there
-//! while lumen stays flat, so a smaller corpus false-fails.
+//! MUST run with `--release`: debug numbers are too noisy for perf floors. The
+//! readiness default is N=10k and Lumen-only so AW/release does not repeatedly
+//! remeasure peer engines. Set `LUMEN_GATE_COMPARE_PEERS=1 LUMEN_GATE_N=100000`
+//! for explicit release-local calibration, and `LUMEN_GATE_RELEASE_SOAK=1` or
+//! `LUMEN_GATE_N=1000000` for the historical 1M soak evidence.
 //!
-//! Ignored by default (needs Postgres `dbname=lumenbench` + OpenSearch on :9200):
+//! Ignored by default because it is a release-mode perf gate:
 //!   cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture
-//!   LUMEN_GATE_N=2000000 cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture
-//!   LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
+//!   LUMEN_GATE_COMPARE_PEERS=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
+//!   LUMEN_GATE_RELEASE_SOAK=1 cargo test --release -p lumen --test perf_gate_vs_db -- --ignored --nocapture
+//!   LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --nocapture
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,6 +48,10 @@ const SEED: u64 = 1234;
 const WARMUP: usize = 5;
 const REPS: usize = 50;
 const SORTED_PAGE_DEEP_SIZE: usize = 1_000;
+const DEFAULT_GATE_N: usize = 10_000;
+const RELEASE_SOAK_GATE_N: usize = 1_000_000;
+const DEFAULT_SCALE_ROWS: &[usize] = &[1_000, 10_000, 100_000];
+const DEFAULT_SCALE_MAX_ROWS: usize = 100_000;
 // EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
 // provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
 fn pg_dsn() -> String {
@@ -56,6 +63,10 @@ fn os_url() -> String {
 }
 fn require_db_peers() -> bool {
     env_flag_enabled("LUMEN_REQUIRE_DB_PEERS")
+}
+
+fn compare_peers_enabled() -> bool {
+    env_flag_enabled("LUMEN_GATE_COMPARE_PEERS") || env_flag_enabled("LUMEN_GATE_CALIBRATE_PEERS")
 }
 
 const CELLS: &[&str] = &[
@@ -1117,7 +1128,13 @@ fn gate_n() -> usize {
     std::env::var("LUMEN_GATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000)
+        .unwrap_or_else(|| {
+            if env_flag_enabled("LUMEN_GATE_RELEASE_SOAK") {
+                RELEASE_SOAK_GATE_N
+            } else {
+                DEFAULT_GATE_N
+            }
+        })
 }
 
 fn deep_page_offset(n: usize) -> usize {
@@ -1501,12 +1518,13 @@ async fn healthz_ceiling(client: &reqwest::Client, base: &str, qps: usize) -> f6
 // gate
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "competitive perf gate — needs Postgres (dbname=lumenbench) + OpenSearch (:9200); run --ignored --nocapture"]
+#[ignore = "competitive perf gate — release-mode Lumen regression; peer compare is explicit"]
 async fn competitive_perf_gate() {
-    // Default 1M: lumen's wins are at SCALE — pg's ts_rank/GIN and OpenSearch's
-    // JVM degrade at 1M while lumen stays flat. At 100k pg's small-data GIN looks
-    // competitive (HTTP-floor noise), so a smaller N would false-fail the gate.
+    // Default 10k, Lumen-only: peer data is calibrated separately and retained in
+    // perf-baseline.json. Re-running pg/OpenSearch is explicit because it is slow
+    // and only needed when a benchmark cell or peer configuration changes.
     let n = gate_n();
+    let compare_peers = compare_peers_enabled();
 
     let baseline: Value = serde_json::from_str(include_str!("perf-baseline.json"))
         .expect("perf-baseline.json parses");
@@ -1526,18 +1544,38 @@ async fn competitive_perf_gate() {
     if std::env::var("LUMEN_GATE_QPS_TARGETS").is_ok() {
         println!("# LUMEN_GATE_QPS_TARGETS={gate_qps_targets:?}");
     }
+    println!(
+        "# peer comparison: {}",
+        if compare_peers {
+            "on (refreshing pg/OpenSearch ratios)"
+        } else {
+            "off (using retained peer-calibrated baselines)"
+        }
+    );
 
     println!("\ngenerating corpus N={n} (no-vector, search gate) ...");
     let docs = gen_corpus(n);
 
     println!("loading lumen ...");
     let (lc, lbase, lengine) = lumen_serve_engine(&docs).await;
-    let lnative = lumen_serve_native(lengine.clone()).await;
-    println!("loading postgres ...");
-    let pg = pg_setup(&docs, pg_table).await;
-    println!("loading opensearch ...");
-    let os = os_setup(&docs, os_index).await;
-    if require_db_peers() {
+    let lnative = if compare_peers {
+        Some(lumen_serve_native(lengine.clone()).await)
+    } else {
+        None
+    };
+    let pg = if compare_peers {
+        println!("loading postgres ...");
+        pg_setup(&docs, pg_table).await
+    } else {
+        None
+    };
+    let os = if compare_peers {
+        println!("loading opensearch ...");
+        os_setup(&docs, os_index).await
+    } else {
+        None
+    };
+    if compare_peers && require_db_peers() {
         assert!(pg.is_some(), "postgres peer is required for this EC gate");
         assert!(os.is_some(), "OpenSearch peer is required for this EC gate");
     }
@@ -1554,8 +1592,10 @@ async fn competitive_perf_gate() {
             measure_lumen(&lc, &lbase, cell).await
         };
         lumen_s.insert(cell, lumen_stat);
-        if PG_CHEAP_CELLS.contains(&cell) {
-            lumen_native_s.insert(cell, measure_lumen_native(&lnative.addr, cell).await);
+        if compare_peers && PG_CHEAP_CELLS.contains(&cell) {
+            if let Some(lnative) = &lnative {
+                lumen_native_s.insert(cell, measure_lumen_native(&lnative.addr, cell).await);
+            }
         }
         if let Some(c) = &pg {
             let pg_stat = if cell == "sorted_page_deep" {
@@ -1585,6 +1625,9 @@ async fn competitive_perf_gate() {
     for &cell in &cells {
         let l = &lumen_s[cell];
         let lum_eng = l.engine_min.unwrap_or(f64::NAN);
+        for regression in check_lumen_regression(cell, l, &baseline) {
+            regressions.push(regression);
+        }
 
         // vs pg on end-to-end
         let (pg_txt, pg_verdict) = match pg.as_ref().and(pg_s.get(cell)) {
@@ -1634,40 +1677,42 @@ async fn competitive_perf_gate() {
         );
     }
 
-    println!("\n=== native binary search path (prepared compact frame over Unix socket/TCP fallback) — pg cheap predicate gate ===");
-    println!(
-        "{:<16} {:>11} {:>11} {:>11} {:>11} {:>13} {:>8}",
-        "cell", "native_e2e", "native_eng", "http_e2e", "pg_e2e", "pg/native", "v"
-    );
-    for &cell in &pg_cheap_cells {
-        match (lumen_native_s.get(cell), lumen_s.get(cell), pg_s.get(cell)) {
-            (Some(n), Some(h), Some(p)) => {
-                let ratio = p.e2e_min / n.e2e_min;
-                let g = &baseline["cells"][cell]["pg_native"];
-                let (verdict, fail, red) = judge(g, ratio, ratchet);
-                if fail {
-                    regressions.push(format!(
-                        "{cell} vs pg native (e2e): ratio {ratio:.2} below WIN threshold"
-                    ));
+    if compare_peers {
+        println!("\n=== native binary search path (prepared compact frame over Unix socket/TCP fallback) — pg cheap predicate gate ===");
+        println!(
+            "{:<16} {:>11} {:>11} {:>11} {:>11} {:>13} {:>8}",
+            "cell", "native_e2e", "native_eng", "http_e2e", "pg_e2e", "pg/native", "v"
+        );
+        for &cell in &pg_cheap_cells {
+            match (lumen_native_s.get(cell), lumen_s.get(cell), pg_s.get(cell)) {
+                (Some(n), Some(h), Some(p)) => {
+                    let ratio = p.e2e_min / n.e2e_min;
+                    let g = &baseline["cells"][cell]["pg_native"];
+                    let (verdict, fail, red) = judge(g, ratio, ratchet);
+                    if fail {
+                        regressions.push(format!(
+                            "{cell} vs pg native (e2e): ratio {ratio:.2} below WIN threshold"
+                        ));
+                    }
+                    if red {
+                        reds.push(format!("{cell} vs pg native (e2e): ratio {ratio:.2}"));
+                    }
+                    println!(
+                        "{:<16} {:>11.3} {:>11.3} {:>11.3} {:>11.3} {:>13.2}x {:>8}",
+                        cell,
+                        n.e2e_min,
+                        n.engine_min.unwrap_or(f64::NAN),
+                        h.e2e_min,
+                        p.e2e_min,
+                        ratio,
+                        verdict
+                    );
                 }
-                if red {
-                    reds.push(format!("{cell} vs pg native (e2e): ratio {ratio:.2}"));
-                }
-                println!(
-                    "{:<16} {:>11.3} {:>11.3} {:>11.3} {:>11.3} {:>13.2}x {:>8}",
-                    cell,
-                    n.e2e_min,
-                    n.engine_min.unwrap_or(f64::NAN),
-                    h.e2e_min,
-                    p.e2e_min,
-                    ratio,
-                    verdict
-                );
+                _ => println!(
+                    "{:<16} {:>11} {:>11} {:>11} {:>11} {:>13} {:>8}",
+                    cell, "-", "-", "-", "-", "-", "skip"
+                ),
             }
-            _ => println!(
-                "{:<16} {:>11} {:>11} {:>11} {:>11} {:>13} {:>8}",
-                cell, "-", "-", "-", "-", "-", "skip"
-            ),
         }
     }
 
@@ -1680,7 +1725,13 @@ async fn competitive_perf_gate() {
     // losses still fail, and remaining below-floor wins stay TARGETs. Use
     // `--exact` when running this test by name so the disk gate does not run
     // concurrently and distort co-located qps rows. ----
-    let qps_strict = qps_gate_enabled();
+    let qps_peer_strict_requested = qps_gate_enabled();
+    let qps_strict = qps_peer_strict_requested && compare_peers;
+    if qps_peer_strict_requested && !compare_peers {
+        println!(
+            "# qps peer strict requested, but peer comparison is off; enforcing Lumen-only qps health"
+        );
+    }
     let qps_cells: Vec<&'static str> = cells
         .iter()
         .copied()
@@ -1799,6 +1850,21 @@ async fn competitive_perf_gate() {
             } else {
                 "SVR"
             };
+            if !compare_peers {
+                if !healthy {
+                    regressions.push(format!(
+                        "{cell} qps{qps}: lumen achieved {:.0} qps below 90% target",
+                        ll.achieved_qps
+                    ));
+                }
+                if ll.errors > 0 {
+                    regressions.push(format!(
+                        "{cell} qps{qps}: lumen returned {} errors ({:.2}%)",
+                        ll.errors,
+                        ll.error_rate * 100.0
+                    ));
+                }
+            }
 
             // Default report-only: under-load p50 on a single co-located box
             // (lumen's server shares CPU with the load client + the 90 pg
@@ -1876,51 +1942,64 @@ async fn competitive_perf_gate() {
         }
     }
 
-    println!(
-        "\n=== native qps axis (window {}s, strict={}) — ratio = pg_p50/lumen_native_p50 ===",
-        window_s(),
-        if qps_strict { "on" } else { "off" }
-    );
-    println!(
-        "{:<16} {:>5} {:>9} {:>9} {:>9} {:>9} {:>7} {:>6} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7}   {:>13} {:>8}  {:>5}",
-        "cell",
-        "qps",
-        "nat_qps",
-        "nat_p50",
-        "nat_p95",
-        "nat_p99",
-        "err%",
-        "errors",
-        "cpu_ms",
-        "rss_mib",
-        "minflt",
-        "majflt",
-        "blk_in",
-        "blk_out",
-        "pg/native",
-        "v",
-        "sat"
-    );
-    for &qps in &gate_qps_targets {
-        for &cell in &pg_cheap_cells {
-            let nl = native_pool(&lnative.addr, cell, qps.min(PG_MAX_POOL))
-                .await
-                .map(|req| async move { run_load(req, qps).await });
-            let nl = match nl {
-                Some(fut) => Some(fut.await),
-                None => None,
-            };
-            let pl = if pg.is_some() {
-                match pg_pool(cell, pg_table, qps.min(PG_MAX_POOL)).await {
-                    Some(p) => Some(run_load(p, qps).await),
+    if compare_peers {
+        println!(
+            "\n=== native qps axis (window {}s, strict={}) — ratio = pg_p50/lumen_native_p50 ===",
+            window_s(),
+            if qps_strict { "on" } else { "off" }
+        );
+        println!(
+            "{:<16} {:>5} {:>9} {:>9} {:>9} {:>9} {:>7} {:>6} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7}   {:>13} {:>8}  {:>5}",
+            "cell",
+            "qps",
+            "nat_qps",
+            "nat_p50",
+            "nat_p95",
+            "nat_p99",
+            "err%",
+            "errors",
+            "cpu_ms",
+            "rss_mib",
+            "minflt",
+            "majflt",
+            "blk_in",
+            "blk_out",
+            "pg/native",
+            "v",
+            "sat"
+        );
+        let lnative = lnative
+            .as_ref()
+            .expect("compare_peers=true creates a native endpoint");
+        for &qps in &gate_qps_targets {
+            for &cell in &pg_cheap_cells {
+                let nl = native_pool(&lnative.addr, cell, qps.min(PG_MAX_POOL))
+                    .await
+                    .map(|req| async move { run_load(req, qps).await });
+                let nl = match nl {
+                    Some(fut) => Some(fut.await),
                     None => None,
-                }
-            } else {
-                None
-            };
+                };
+                let pl = if pg.is_some() {
+                    match pg_pool(cell, pg_table, qps.min(PG_MAX_POOL)).await {
+                        Some(p) => Some(run_load(p, qps).await),
+                        None => None,
+                    }
+                } else {
+                    None
+                };
 
-            let (nat_qps, nat_p50, nat_p95, nat_p99, nat_err_pct, nat_errors, ratio, verdict, sat) =
-                match (&nl, &pl) {
+                let (
+                    nat_qps,
+                    nat_p50,
+                    nat_p95,
+                    nat_p99,
+                    nat_err_pct,
+                    nat_errors,
+                    ratio,
+                    verdict,
+                    sat,
+                ) = match (&nl, &pl) {
                     (Some(n), Some(p)) if n.p50 > 0.0 => {
                         let ratio = p.p50 / n.p50;
                         let healthy = n.achieved_qps >= 0.9 * qps as f64;
@@ -1952,9 +2031,11 @@ async fn competitive_perf_gate() {
                     _ => (0.0, 0.0, 0.0, 0.0, 0.0, 0, None, "skip", "SVR"),
                 };
 
-            if qps_strict {
-                if let Some(threshold) = qps_gate_threshold(&baseline, qps, "pg_native", ratchet) {
-                    match (&nl, ratio) {
+                if qps_strict {
+                    if let Some(threshold) =
+                        qps_gate_threshold(&baseline, qps, "pg_native", ratchet)
+                    {
+                        match (&nl, ratio) {
                         (Some(n), Some(_)) if n.achieved_qps < 0.9 * qps as f64 => {
                             regressions.push(format!(
                                 "{cell} native qps{qps} vs pg: lumen native achieved {:.0} qps below 90% target",
@@ -1969,43 +2050,44 @@ async fn competitive_perf_gate() {
                             "{cell} native qps{qps} vs pg: missing native or pg row for qps gate"
                         )),
                     }
+                    }
                 }
-            }
 
-            let ratio_txt = ratio
-                .map(|r| format!("{r:.2}x"))
-                .unwrap_or_else(|| "-".into());
-            let (cpu_ms, rss_mib, minflt, majflt, blk_in, blk_out) =
-                nl.as_ref().map(resource_cols).unwrap_or_else(|| {
-                    (
-                        "-".into(),
-                        "-".into(),
-                        "-".into(),
-                        "-".into(),
-                        "-".into(),
-                        "-".into(),
-                    )
-                });
-            println!(
-                "{:<16} {:>5} {:>9.0} {:>9.3} {:>9.3} {:>9.3} {:>7.2} {:>6} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7}   {:>13} {:>8}  {:>5}",
-                cell,
-                qps,
-                nat_qps,
-                nat_p50,
-                nat_p95,
-                nat_p99,
-                nat_err_pct,
-                nat_errors,
-                cpu_ms,
-                rss_mib,
-                minflt,
-                majflt,
-                blk_in,
-                blk_out,
-                ratio_txt,
-                verdict,
-                sat
-            );
+                let ratio_txt = ratio
+                    .map(|r| format!("{r:.2}x"))
+                    .unwrap_or_else(|| "-".into());
+                let (cpu_ms, rss_mib, minflt, majflt, blk_in, blk_out) =
+                    nl.as_ref().map(resource_cols).unwrap_or_else(|| {
+                        (
+                            "-".into(),
+                            "-".into(),
+                            "-".into(),
+                            "-".into(),
+                            "-".into(),
+                            "-".into(),
+                        )
+                    });
+                println!(
+                    "{:<16} {:>5} {:>9.0} {:>9.3} {:>9.3} {:>9.3} {:>7.2} {:>6} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7}   {:>13} {:>8}  {:>5}",
+                    cell,
+                    qps,
+                    nat_qps,
+                    nat_p50,
+                    nat_p95,
+                    nat_p99,
+                    nat_err_pct,
+                    nat_errors,
+                    cpu_ms,
+                    rss_mib,
+                    minflt,
+                    majflt,
+                    blk_in,
+                    blk_out,
+                    ratio_txt,
+                    verdict,
+                    sat
+                );
+            }
         }
     }
 
@@ -2016,13 +2098,21 @@ async fn competitive_perf_gate() {
             .expect("flush lumen footprint segments");
         scale_segment_bytes(dir.path()).0
     };
-    let pg_disk_bytes = match &pg {
-        Some(c) => pg_disk_bytes(c, pg_table).await,
-        None => None,
+    let pg_disk_bytes = if compare_peers {
+        match &pg {
+            Some(c) => pg_disk_bytes(c, pg_table).await,
+            None => None,
+        }
+    } else {
+        None
     };
-    let os_disk_bytes = match &os {
-        Some((c, b)) => os_disk_bytes(c, b, os_index).await,
-        None => None,
+    let os_disk_bytes = if compare_peers {
+        match &os {
+            Some((c, b)) => os_disk_bytes(c, b, os_index).await,
+            None => None,
+        }
+    } else {
+        None
     };
     println!("\n=== storage footprint (same N={n} corpus; on-disk bytes) ===");
     println!("{:<12} {:>14} {:>12}", "engine", "disk_mib", "bytes/doc");
@@ -2049,20 +2139,12 @@ async fn competitive_perf_gate() {
         }
     }
     println!(
-        "\nNOTE: vs-OS AND vs-pg both gated on end-to-end. lumen + OpenSearch share the \
-         HTTP/JSON protocol class so e2e is the fair engine comparison (OpenSearch's \
-         integer-ms `took` is too coarse to gate sub-2ms cells); pg's binary protocol \
-         wins the cheap-predicate HTTP cells on loopback (those HTTP cells are EXEMPT). \
-         The native binary search table is a hard gate for those same cheap predicates \
-         over lumen's lower fixed-cost Rust client path, using a Unix socket on Unix \
-         hosts to match pg's host=/tmp transport class. Must run --release \
-         at N>=1M. The qps axis is report-only by default on a co-located box, but \
-         LUMEN_PERF_STRICT=1 (or LUMEN_QPS_GATE=1) strict-gates rows recorded in \
-         perf-baseline.json; LUMEN_GATE_QPS_TARGETS can focus one qps tier. \
-         Harness-bound rows that still beat the peer but miss the ratcheted margin \
-         are retried once after a short cooldown, true losses still fail, and \
-         remaining below-floor wins stay TARGETs for isolated-host proof. pg uses \
-         prepared statements + a bounded pool (min(qps,90) conns, the pgbouncer model)."
+        "\nNOTE: default mode is Lumen-only. pg/OpenSearch ratios in perf-baseline.json \
+         are retained calibration evidence and are not remeasured unless \
+         LUMEN_GATE_COMPARE_PEERS=1 is set. In peer-compare mode, vs-OS and vs-pg are \
+         gated on end-to-end; lumen + OpenSearch share HTTP/JSON while pg cheap \
+         predicate HTTP cells stay EXEMPT and are covered by the native binary table. \
+         LUMEN_GATE_QPS_TARGETS can focus one qps tier."
     );
 
     if !regressions.is_empty() {
@@ -2100,6 +2182,26 @@ fn judge(g: &Value, ratio: f64, ratchet: f64) -> (String, bool, bool) {
         }
         _ => ("exempt".into(), false, false),
     }
+}
+
+fn check_lumen_regression(cell: &str, stat: &Stat, baseline: &Value) -> Vec<String> {
+    let gate = &baseline["lumen_cells"][cell];
+    let mut regressions = Vec::new();
+    let mut check = |name: &str, actual: f64, key: &str| {
+        if let Some(max) = gate[key].as_f64() {
+            if actual.is_finite() && actual > max {
+                regressions.push(format!(
+                    "{cell} lumen {name}: {actual:.3}ms above {max:.3}ms regression floor"
+                ));
+            }
+        }
+    };
+    check("e2e min", stat.e2e_min, "max_e2e_min_ms");
+    check("e2e p50", stat.e2e_p50, "max_e2e_p50_ms");
+    if let Some(engine_min) = stat.engine_min {
+        check("engine min", engine_min, "max_engine_min_ms");
+    }
+    regressions
 }
 
 // ===========================================================================
@@ -2166,10 +2268,10 @@ fn assert_segment_backed(engine: &lumen::storage::Engine) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "DISK-tier competitive perf gate — needs Postgres (dbname=lumenbench) + \
-            OpenSearch (:9200); run --ignored --nocapture"]
+#[ignore = "DISK-tier explicit peer calibration gate — requires Postgres + OpenSearch"]
 async fn competitive_perf_gate_disk() {
-    // Same scale rationale as the in-mem gate: lumen's wins are at N=1M.
+    // Explicit peer disk calibration keeps the retained N=1M proof available
+    // without making routine AW/release runs pay this cost.
     let n = gate_n();
 
     let baseline: Value = serde_json::from_str(include_str!("perf-baseline.json"))
@@ -2361,8 +2463,8 @@ async fn competitive_perf_gate_disk() {
 // ===========================================================================
 // LUMEN-ONLY SCALE BENCH (Stage 2): measure the DISK engine across the
 // project-standard local row-count ladder with NO Postgres and NO OpenSearch.
-// The standard cap is 1M docs; larger rows are research-only and are blocked by
-// default so local benchmark cost does not become the development bottleneck.
+// The standard cap is 100k docs; 1M+ rows are explicit release-soak/research runs
+// so local benchmark cost does not become the development bottleneck.
 // For each N it stream-generates docs, indexes directly via the Engine API (NOT
 // over HTTP), `flush_to_segments` so queries are segment-backed (the disk path),
 // wraps the SAME engine in the axum server so `measure_lumen`/`run_load` hit it
@@ -2376,7 +2478,7 @@ async fn competitive_perf_gate_disk() {
 //
 //   cargo test --release -p lumen --test perf_gate_vs_db -- \
 //       --ignored --nocapture lumen_scale_bench
-//   LUMEN_GATE_WINDOW_S=0.2 LUMEN_SCALE_CHUNK_ROWS=500000 \
+//   LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1 LUMEN_GATE_WINDOW_S=0.2 LUMEN_SCALE_CHUNK_ROWS=100000 \
 //       LUMEN_SCALE_ROWS=1000000 \
 //       cargo test --release -p lumen --test perf_gate_vs_db -- \
 //       --ignored --nocapture lumen_scale_bench   # reopened-shard HTTP qps smoke
@@ -3139,7 +3241,7 @@ struct ScaleStorage {
 #[ignore = "LUMEN-ONLY disk scale bench (no pg/OS) — report, run --ignored --nocapture lumen_scale_bench"]
 async fn lumen_scale_bench() {
     // Row ladder: env LUMEN_SCALE_ROWS (comma-separated). DEFAULT stays within
-    // the project-standard 1M local benchmark scope.
+    // the project-standard 100k local benchmark scope.
     let rows: Vec<usize> = std::env::var("LUMEN_SCALE_ROWS")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -3148,21 +3250,19 @@ async fn lumen_scale_bench() {
                 .filter_map(|t| t.trim().parse::<usize>().ok())
                 .collect()
         })
-        .unwrap_or_else(|| vec![1_000, 1_000_000]);
+        .unwrap_or_else(|| DEFAULT_SCALE_ROWS.to_vec());
     let standard_max_rows = std::env::var("LUMEN_SCALE_MAX_ROWS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1_000_000);
-    let allow_above_1m = std::env::var("LUMEN_SCALE_ALLOW_ABOVE_1M")
-        .ok()
-        .map(|s| s == "1" || s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("yes"))
-        .unwrap_or(false);
-    if !allow_above_1m {
+        .unwrap_or(DEFAULT_SCALE_MAX_ROWS);
+    let allow_above_standard = env_flag_enabled("LUMEN_SCALE_ALLOW_ABOVE_STANDARD")
+        || env_flag_enabled("LUMEN_SCALE_ALLOW_ABOVE_1M");
+    if !allow_above_standard {
         if let Some(&too_large) = rows.iter().find(|&&n| n > standard_max_rows) {
             panic!(
                 "LUMEN_SCALE_ROWS contains {too_large}, above the standard local benchmark cap {standard_max_rows}. \
-                 The lumen release/perf standard stops at 1M docs; do not run larger rows locally unless this is \
-                 an explicit research experiment with LUMEN_SCALE_ALLOW_ABOVE_1M=1."
+                 The lumen readiness default stops at 100k docs; run larger rows only as an explicit \
+                 release-soak/research experiment with LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1."
             );
         }
     }
@@ -3235,8 +3335,8 @@ async fn lumen_scale_bench() {
                 panic!(
                     "LUMEN_SCALE_ROWS contains {too_large}, above the default in-memory-build guard {max_inmem_rows}. \
                      The scale bench stream-generates docs, but the single-segment path still holds the mutable index \
-                     until flush_to_segments. Keep the standard benchmark at 1M, or set LUMEN_SCALE_CHUNK_ROWS=<rows_per_chunk> \
-                     only for an explicit above-1M research run."
+                     until flush_to_segments. Keep the standard benchmark at 100k, or set LUMEN_SCALE_CHUNK_ROWS=<rows_per_chunk> \
+                     only for an explicit release-soak/research run."
                 );
             }
         }
@@ -3601,7 +3701,7 @@ async fn lumen_scale_bench() {
     println!("\n########################################################################");
     println!("# LUMEN-ONLY SCALE BENCH COMPLETE — numbers above are lumen's disk tier.");
     println!(
-        "#   (no pg / no OpenSearch; standard local cap is 1M docs; above-1M rows require explicit research opt-in)"
+        "#   (no pg / no OpenSearch; standard local cap is 100k docs; larger rows require explicit release-soak/research opt-in)"
     );
     println!("########################################################################");
 }

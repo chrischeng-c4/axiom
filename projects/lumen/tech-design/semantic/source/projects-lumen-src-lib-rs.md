@@ -33,18 +33,18 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 | `operator` | projects/lumen/src/lib.rs | module | pub | 40 |  |
 | `raft` | projects/lumen/src/lib.rs | module | pub | 43 |  |
 | `raft_sm` | projects/lumen/src/lib.rs | module | pub | 49 |  |
-| `rdb` | projects/lumen/src/lib.rs | module | pub | 44 |  |
-| `routing` | projects/lumen/src/lib.rs | module | pub | 45 |  |
-| `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 57 |  |
-| `spec` | projects/lumen/src/lib.rs | module | pub | 61 |  |
-| `storage` | projects/lumen/src/lib.rs | module | pub | 62 |  |
-| `tls` | projects/lumen/src/lib.rs | module | pub | 63 |  |
-| `tokenize` | projects/lumen/src/lib.rs | module | pub | 64 |  |
-| `types` | projects/lumen/src/lib.rs | module | pub | 65 |  |
-| `vector_index` | projects/lumen/src/lib.rs | module | pub | 66 |  |
-| `wal` | projects/lumen/src/lib.rs | module | pub | 67 |  |
-| `wal_nats` | projects/lumen/src/lib.rs | module | pub | 68 |  |
-| `wal_relay` | projects/lumen/src/lib.rs | module | pub | 70 |  |
+| `rdb` | projects/lumen/src/lib.rs | module | pub | 50 |  |
+| `routing` | projects/lumen/src/lib.rs | module | pub | 51 |  |
+| `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 63 |  |
+| `spec` | projects/lumen/src/lib.rs | module | pub | 67 |  |
+| `storage` | projects/lumen/src/lib.rs | module | pub | 68 |  |
+| `tls` | projects/lumen/src/lib.rs | module | pub | 69 |  |
+| `tokenize` | projects/lumen/src/lib.rs | module | pub | 70 |  |
+| `types` | projects/lumen/src/lib.rs | module | pub | 71 |  |
+| `vector_index` | projects/lumen/src/lib.rs | module | pub | 72 |  |
+| `wal` | projects/lumen/src/lib.rs | module | pub | 73 |  |
+| `wal_nats` | projects/lumen/src/lib.rs | module | pub | 74 |  |
+| `wal_relay` | projects/lumen/src/lib.rs | module | pub | 76 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

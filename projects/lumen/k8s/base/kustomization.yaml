@@ -5,11 +5,9 @@ kind: Kustomization
 
 namespace: lumen
 
-# Base spans two components (serving Deployment + Relay broker), so the
-# shared label is the app name only; per-component identity comes from the
-# `role:` label already on each resource. includeSelectors:false keeps these
-# common labels out of the immutable workload/Service selectors (which are
-# pinned to app+role), so re-applies never hit a selector-immutability error.
+# Base is a Lumen-only direct install. includeSelectors:false keeps these common
+# labels out of immutable workload/Service selectors (which are pinned to
+# app+role), so re-applies never hit a selector-immutability error.
 labels:
   - pairs:
       app.kubernetes.io/name: lumen
@@ -20,10 +18,8 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - configmap.yaml
-  # Write log / broker (the only stateful component).
-  - relay-statefulset.yaml
-  - relay-service.yaml
-  # Serving nodes (stateless, autoscaled cattle).
+  # Single-node direct serving. HA goes through the Lumen operator
+  # (`replicasPerShard > 1`) so the data plane gets raft StatefulSet identity.
   - deployment.yaml
   - service.yaml
   - hpa.yaml

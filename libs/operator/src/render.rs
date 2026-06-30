@@ -1,8 +1,9 @@
 //! The sharded-HA render toolkit: a [`RenderCtx`] carrying the per-service
 //! identity (app/manager/GVK/name/ns/owner) plus helpers that emit the common
 //! k8s objects — labels/selector/meta, ServiceAccount, headless + client
-//! Services, PodDisruptionBudget, and [`sharded_statefulset`]: the downward-API
-//! StatefulSet whose env feeds `raft_host::cluster::ClusterTopology::from_env`.
+//! Services, PodDisruptionBudget, CronJobs, and [`sharded_statefulset`]: the
+//! downward-API StatefulSet whose env feeds
+//! `raft_host::cluster::ClusterTopology::from_env`.
 //!
 //! Lifted + parameterized from lumen's `operator::render` helpers. A service
 //! keeps its own service-specific rendering and calls these for the shared
@@ -122,6 +123,84 @@ pub fn pdb(cx: &RenderCtx, name: &str, component: &str, max_unavailable: i32) ->
         "kind": "PodDisruptionBudget",
         "metadata": cx.meta(name, component),
         "spec": { "maxUnavailable": max_unavailable, "selector": { "matchLabels": cx.selector(component) } },
+    })
+}
+
+/// Parameters for [`cron_job`].
+pub struct CronJob<'a> {
+    pub cx: &'a RenderCtx<'a>,
+    pub name: &'a str,
+    pub component: &'a str,
+    pub schedule: &'a str,
+    pub image: &'a str,
+    pub image_pull_policy: &'a str,
+    pub command: Vec<String>,
+    pub args: Vec<String>,
+    pub env: Vec<Value>,
+    pub env_from: Vec<Value>,
+    pub volumes: Vec<Value>,
+    pub volume_mounts: Vec<Value>,
+    pub service_account_name: Option<&'a str>,
+    pub cpu: &'a str,
+    pub memory: &'a str,
+    pub successful_jobs_history_limit: i32,
+    pub failed_jobs_history_limit: i32,
+}
+
+/// A CronJob for service-side maintenance runners such as object-store backups.
+///
+/// Operators schedule and wire the runner; the service or runner still owns the
+/// actual domain bytes. This helper deliberately stays manifest-only.
+pub fn cron_job(p: CronJob) -> Value {
+    let cx = p.cx;
+    let mut container = json!({
+        "name": p.component,
+        "image": p.image,
+        "imagePullPolicy": p.image_pull_policy,
+        "command": p.command,
+        "args": p.args,
+        "env": p.env,
+        "resources": {
+            "requests": { "cpu": p.cpu, "memory": p.memory },
+            "limits": { "cpu": p.cpu, "memory": p.memory },
+        },
+    });
+    if !p.env_from.is_empty() {
+        container["envFrom"] = json!(p.env_from);
+    }
+    if !p.volume_mounts.is_empty() {
+        container["volumeMounts"] = json!(p.volume_mounts);
+    }
+
+    let mut pod_spec = json!({
+        "restartPolicy": "OnFailure",
+        "containers": [container],
+    });
+    if let Some(service_account_name) = p.service_account_name {
+        pod_spec["serviceAccountName"] = json!(service_account_name);
+    }
+    if !p.volumes.is_empty() {
+        pod_spec["volumes"] = json!(p.volumes);
+    }
+
+    json!({
+        "apiVersion": "batch/v1",
+        "kind": "CronJob",
+        "metadata": cx.meta(p.name, p.component),
+        "spec": {
+            "schedule": p.schedule,
+            "concurrencyPolicy": "Forbid",
+            "successfulJobsHistoryLimit": p.successful_jobs_history_limit,
+            "failedJobsHistoryLimit": p.failed_jobs_history_limit,
+            "jobTemplate": {
+                "spec": {
+                    "template": {
+                        "metadata": { "labels": cx.labels(p.component) },
+                        "spec": pod_spec,
+                    },
+                },
+            },
+        },
     })
 }
 
@@ -246,6 +325,45 @@ mod tests {
             cx.labels("server")["app.kubernetes.io/managed-by"],
             "svc-operator"
         );
+    }
+
+    #[test]
+    fn cron_job_wires_runner_without_domain_bytes() {
+        let cx = cx();
+        let cj = cron_job(CronJob {
+            cx: &cx,
+            name: "s-backup",
+            component: "backup",
+            schedule: "*/5 * * * *",
+            image: "svc:1",
+            image_pull_policy: "IfNotPresent",
+            command: vec!["svc".into()],
+            args: vec!["backup".into(), "run".into()],
+            env: vec![json!({ "name": "DESTINATION", "value": "s3://bucket/prefix" })],
+            env_from: vec![json!({ "secretRef": { "name": "s-backup" } })],
+            volumes: vec![json!({ "name": "token", "projected": {} })],
+            volume_mounts: vec![json!({ "name": "token", "mountPath": "/var/run/secrets" })],
+            service_account_name: Some("s-backup"),
+            cpu: "100m",
+            memory: "128Mi",
+            successful_jobs_history_limit: 1,
+            failed_jobs_history_limit: 3,
+        });
+        assert_eq!(cj["kind"], "CronJob");
+        assert_eq!(cj["spec"]["concurrencyPolicy"], "Forbid");
+        assert_eq!(cj["spec"]["schedule"], "*/5 * * * *");
+        let pod = &cj["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+        assert_eq!(pod["serviceAccountName"], "s-backup");
+        assert_eq!(pod["restartPolicy"], "OnFailure");
+        assert_eq!(
+            pod["containers"][0]["env"][0]["value"],
+            "s3://bucket/prefix"
+        );
+        assert_eq!(
+            pod["containers"][0]["envFrom"][0]["secretRef"]["name"],
+            "s-backup"
+        );
+        assert_eq!(pod["volumes"][0]["name"], "token");
     }
 
     #[test]

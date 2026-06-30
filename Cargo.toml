@@ -41,6 +41,7 @@ members = [
     "libs/operator",
     "libs/service-http",
     "libs/service-auth",
+    "libs/service-backup",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",

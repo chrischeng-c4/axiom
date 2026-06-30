@@ -216,15 +216,21 @@ template for the gate files).
 
 ### The shared service kit — compose these libs, do not hand-roll
 
-A service is mostly *wiring* four shared libs together. **Adopting them is
+A service is mostly *wiring* shared libs together. **Adopting them is
 mandatory** — a service that re-implements any of these is a defect, not a
-variation:
+variation. `lumen`, `keep`, `relay`, and `loom` may be at different adoption
+stages, but new work moves them toward this common kit. If the common kit is
+missing a hook, extend the shared lib first; do not fork the pattern into one
+project.
 
 | Lib | Role |
 |-----|------|
 | **`libs/raft-core`** | the step-driven raft **consensus core** (serde-only; replaced openraft). |
 | **`libs/raft-host`** | the raft **host**: h2c peer transport, the single apply loop, **snapshot + log compaction** (the "backup layer"), read-your-write `propose`, and **k8s topology + auto-mode** (`cluster::ClusterTopology::from_env` + `replica_mode`). A service supplies a `RaftStateMachine` (`apply`/`snapshot`/`restore`/`applied_index`) and gets HA + backup for free. |
+| **`libs/operator`** | the **k8s operator scaffold + render toolkit**: `ManagedService`, `ClusterSpec`, `ResourceSpec`, owner refs, labels/selectors, ServiceAccount, client/headless Services, PDB, CronJob, and `sharded_statefulset` with the exact downward-API env that `raft-host` reads. |
 | **`libs/h2c`** | the **transport**: `h2c::serve` (server, feature `server`) + `h2c_client`/`H2cPool` (client). |
+| **`libs/service-http`** | the **HTTP service shell**: standard probe/admin routes, tracing init, graceful drain, metrics/readiness hooks, and h2c serving composition. |
+| **`libs/service-backup`** | the **backup contract**: destination/policy schema, `BackupSink`, local sink, and a runner primitive. Services produce consistent snapshot bytes; runners upload them; operators schedule/manage the runner. |
 | **`libs/cli-std`** | the **standard CLI** commands (`llm` / `upgrade` / `issue`). |
 
 **k8s-native auto-mode + discovery.** A service defaults to single-node and turns
@@ -236,17 +242,29 @@ derived from the downward API by `ClusterTopology::from_env` (a local
 `<SVC>_PEERS=host:port,…` override runs a multi-node group on one machine). Do not
 hand-roll the pod-ordinal or peer-DNS math.
 
+**Operator/render convergence.** The Kubernetes topology that drives that
+auto-mode is also shared. A service CR should flatten or mirror
+`operator::ClusterSpec`/`ResourceSpec` unless it has a concrete product reason
+not to, implement `operator::ManagedService`, and render shared shapes with
+`libs/operator::render` helpers. In particular, StatefulSet identity,
+`SHARD_COUNT`, `REPLICAS_PER_SHARD`, `VOTER_COUNT`, headless-service env,
+labels/selectors, owner refs, PDB/client/headless Service shapes, and
+maintenance CronJobs are library contracts. Do not duplicate that YAML/JSON
+construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/operator`
+when the helper is incomplete.
+
 A service is not "done" until it satisfies every row:
 
 | Dimension | Requirement | Reference / gotcha |
 |-----------|-------------|--------------------|
 | **Shape** | Workspace member that is **both `lib` and `bin`** — embeddable as a crate, runnable as a server. Metadata via `version/edition/authors/license = .workspace`. | every service `Cargo.toml` |
-| **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Serve via **`libs/h2c`'s `h2c::serve` (feature `server`)** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
-| **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | `lumen` is the reference (all five). The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
+| **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Compose **`libs/service-http`** and **`libs/h2c`** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
+| **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | Prefer **`libs/service-http`** standard probe/admin route helpers. `lumen` is the reference for the full surface. The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
 | **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
 | **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
+| **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. The operator may render a CronJob/Job and secrets/IAM wiring, but it never serializes service data itself. | `raft-host` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to local/S3/GCS; the operator schedules and reports status. |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
-| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; an `HA.md`. | `keep/k8s`, `lumen k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. |
+| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; dedicated/standalone data-plane mode as the production baseline; an `HA.md`. | Use **`libs/operator`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
@@ -306,6 +324,40 @@ Kubernetes output is split by lifecycle layer:
 an independent namespace such as `<svc>-system`; `operator run` is the controller
 process/container entrypoint. `instance` renders the app-namespace custom
 resource that an application team applies next to the app it integrates with.
+
+### Deploy tenancy — dedicated first, shared only when justified
+
+The service archetype is **dedicated-first**. A stateful service must be able to
+run as its own data plane — one service instance, one app namespace or
+service-owned namespace, one StatefulSet/Deployment, one storage/backup surface,
+and one operational SLO envelope. This dedicated/standalone mode is mandatory
+because it is the simplest reliable production shape: ownership, upgrades,
+backups, failure blast radius, and delete/finalizer behavior are all local to the
+service instance.
+
+Shared multi-tenant backends are a separate platform capability, not the default.
+They are appropriate only when the product explicitly needs many small tenants to
+share a physical data plane and the platform is ready to own the extra control
+loops. A shared mode requires placement, metering, quota/rate-limit enforcement,
+tenant identity, backend capacity accounting, promotion/demotion policy,
+migration, endpoint/secret rotation, backup partitioning, and finalizer semantics.
+Those moving parts materially increase operational complexity, and most service
+deployments do not need them.
+
+When a shared mode exists, keep the API resource paths service-domain scoped, not
+Kubernetes-namespace scoped. Namespace is deployment and service-discovery
+context; it belongs in DNS, RBAC, CR metadata, and status endpoints, not in HTTP
+paths. For example a tenant may reach
+`http://lumen.lumen-shared.svc/collections/users/index`, while the HTTP route
+remains `POST /collections/{collection_id}/index`.
+
+Use this default decision rule:
+
+| Mode | Default? | Use when |
+|------|----------|----------|
+| **Dedicated / standalone** | Yes | Most production services, high isolation, simple ownership, clear backup/restore and SLO boundaries. |
+| **Shared backend** | No | A platform team explicitly owns placement, metering, quotas, migration, endpoint switching, and tenant lifecycle. |
+| **Promote to dedicated** | Optional | A shared tenant exceeds sustained usage, SLO, storage, or isolation thresholds and migration is controlled by policy. |
 
 ### Standard endpoints — one operational surface, one contract three ways
 

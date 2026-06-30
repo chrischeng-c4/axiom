@@ -7,14 +7,14 @@
 // @contract long-running-log-fanout
 // @category stability
 // @required_for_production true
-// @command cargo test -p lumen --test wal_relay --test wal_nats_e2e -- --nocapture
+// @command cargo test -p lumen --test wal_nats_e2e -- --nocapture
 // AW-EC-END
 
 // Contract: A late or second node can replay the published write stream and converge with live writes.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_long_running_log_fanout() {
-    let command = "cargo test -p lumen --test wal_relay --test wal_nats_e2e -- --nocapture";
+    let command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture";
     let id = "lumen-claim-long-running-log-fanout";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

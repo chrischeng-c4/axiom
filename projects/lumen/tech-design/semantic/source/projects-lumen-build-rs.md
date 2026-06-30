@@ -14,8 +14,11 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/lumen/build.rs`, captured during #39 lumen migration onto td_ast lossless source generation.
+Public API manifest for `projects/lumen/build.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

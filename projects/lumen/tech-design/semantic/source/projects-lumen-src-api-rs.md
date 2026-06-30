@@ -27,18 +27,18 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 341 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1090 |  |
-| `AppState` | projects/lumen/src/api.rs | struct | pub | 48 |  |
-| `new` | projects/lumen/src/api.rs | function | pub | 228 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
-| `open` | projects/lumen/src/api.rs | function | pub | 249 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 1044 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 344 | router(state: AppState) -> Router |
-| `with_cluster` | projects/lumen/src/api.rs | function | pub | 232 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
-| `with_components` | projects/lumen/src/api.rs | function | pub | 207 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<WriteCoordinator>,     ) -> Self |
-| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 237 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
-| `with_wal` | projects/lumen/src/api.rs | function | pub | 199 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
-| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 242 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 342 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1072 |  |
+| `AppState` | projects/lumen/src/api.rs | struct | pub | 49 |  |
+| `new` | projects/lumen/src/api.rs | function | pub | 229 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
+| `open` | projects/lumen/src/api.rs | function | pub | 250 | open(engine: Arc<Engine>) -> Self |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 1060 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 359 | router(state: AppState) -> Router |
+| `with_cluster` | projects/lumen/src/api.rs | function | pub | 233 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
+| `with_components` | projects/lumen/src/api.rs | function | pub | 208 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
+| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 238 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
+| `with_wal` | projects/lumen/src/api.rs | function | pub | 200 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
+| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 243 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

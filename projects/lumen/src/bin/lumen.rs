@@ -6,14 +6,14 @@
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
-//! configured write log. In single-node mode that log is local; in explicit
-//! broker mode it is Relay/NATS; in primary-replica mode Lumen owns ordering
-//! and replication via raft_core. Apply happens in the background subscribe
-//! loop — see `coordinator` / `wal`.
+//! configured write log. In single-node mode that log is local; in legacy
+//! NATS mode it is external; in primary-replica mode Lumen owns ordering and
+//! replication via raft_core. Apply happens in the background subscribe loop —
+//! see `coordinator` / `wal`.
 //!
 //! ```text
 //! lumen serve                          # single node, in-process log, :7373
-//! lumen serve --wal relay --relay-url http://relay:7000
+//! lumen serve --wal raft               # k8s StatefulSet / HA mode
 //! lumen serve --host 0.0.0.0 --port 7373 --log-format json
 //! ```
 
@@ -193,12 +193,6 @@ struct K8sInstanceRenderArgs {
     /// Serving image. Defaults are profile-specific.
     #[arg(long)]
     image: Option<String>,
-    /// Managed Relay image for dev/staging/template profiles.
-    #[arg(long)]
-    relay_image: Option<String>,
-    /// External Relay URL. When set, the operator skips the managed broker.
-    #[arg(long)]
-    relay_url: Option<String>,
     /// Write to this path instead of stdout. A directory receives `lumen.yaml`.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -206,11 +200,11 @@ struct K8sInstanceRenderArgs {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum K8sInstanceProfile {
-    /// Small local/kind CR: one serving pod, managed Relay, auth disabled.
+    /// Small local/kind CR: one serving pod, embedded WAL, auth disabled.
     Dev,
-    /// Pre-prod CR: json logs, modest floor, observability enabled.
+    /// Pre-prod CR: json logs, raft data-plane shape, observability enabled.
     Staging,
-    /// Production-shape CR: auth required, json logs, external Relay by default.
+    /// Production-shape CR: auth required, json logs, raft data-plane shape.
     Prod,
     /// Fill-in-the-blanks CR skeleton for app teams.
     Template,
@@ -347,9 +341,6 @@ enum WalBackend {
     Embedded,
     /// NATS JetStream legacy backend.
     Nats,
-    /// relay broadcast (#124). Explicit external broker mode.
-    #[cfg(feature = "relay-wal")]
-    Relay,
     /// Lumen-owned raft_core replication (#515). HA without an external broker.
     #[cfg(feature = "raft-wal")]
     Raft,
@@ -481,19 +472,6 @@ struct ServeArgs {
     /// rollout) retries with backoff instead of crash-looping.
     #[arg(long, env = "LUMEN_NATS_CONNECT_TIMEOUT_SECS", default_value_t = 120)]
     nats_connect_timeout_secs: u64,
-    /// relay base URL (used when `--wal relay`).
-    #[cfg(feature = "relay-wal")]
-    #[arg(long, env = "LUMEN_RELAY_URL", default_value = "http://localhost:7000")]
-    relay_url: String,
-    /// relay subject carrying the lumen WAL (used when `--wal relay`).
-    #[cfg(feature = "relay-wal")]
-    #[arg(long, env = "LUMEN_RELAY_SUBJECT", default_value = "lumen-wal")]
-    relay_subject: String,
-    /// relay broadcast subscriber id for this serving node. Defaults to POD_NAME
-    /// or HOSTNAME when unset, so every pod keeps an independent replay cursor.
-    #[cfg(feature = "relay-wal")]
-    #[arg(long, env = "LUMEN_RELAY_SUBSCRIBER_ID")]
-    relay_subscriber_id: Option<String>,
     /// Data dir for raft hard state (used when `--wal raft`). A PVC in k8s.
     #[cfg(feature = "raft-wal")]
     #[arg(
@@ -541,6 +519,7 @@ struct ServeArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    lumen::tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
         Command::Serve(args) => serve(args).await,
@@ -877,46 +856,22 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     let name = args.name.as_deref().unwrap_or(default_name);
     let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
     let image = args.image.as_deref().unwrap_or(&default_image);
-    let relay_image = args.relay_image.as_deref().unwrap_or("relay:latest");
 
     let mut yaml = format!(
         "apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
     );
     match body {
         InstanceBody::Dev => {
-            yaml.push_str("  shardCount: 1\n  logFormat: pretty\n  serving:\n    autoscaling:\n      minReplicas: 1\n      maxReplicas: 3\n      targetCpuUtilization: 70\n  broker:\n");
-            if let Some(url) = args.relay_url.as_deref() {
-                yaml.push_str(&format!("    externalUrl: {url}\n"));
-            } else {
-                yaml.push_str(&format!("    image: {relay_image}\n    storage: 10Gi\n"));
-            }
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  serving:\n    autoscaling:\n      minReplicas: 1\n      maxReplicas: 3\n      targetCpuUtilization: 70\n");
         }
         InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 3\n      maxReplicas: 6\n      targetCpuUtilization: 70\n  broker:\n");
-            if let Some(url) = args.relay_url.as_deref() {
-                yaml.push_str(&format!("    externalUrl: {url}\n"));
-            } else {
-                yaml.push_str(&format!("    image: {relay_image}\n    storage: 20Gi\n"));
-            }
-            yaml.push_str("  observability: true\n");
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 3\n      maxReplicas: 6\n      targetCpuUtilization: 70\n  observability: true\n");
         }
         InstanceBody::Prod => {
-            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    autoscaling:\n      minReplicas: 6\n      maxReplicas: 12\n      targetCpuUtilization: 65\n    cpu: \"4\"\n    memory: 16Gi\n    graceSecs: 45\n  broker:\n");
-            let url = args
-                .relay_url
-                .as_deref()
-                .unwrap_or("http://relay.infra.svc:7000");
-            yaml.push_str(&format!(
-                "    externalUrl: {url}\n    subject: lumen-wal\n  observability: true\n"
-            ));
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    autoscaling:\n      minReplicas: 6\n      maxReplicas: 12\n      targetCpuUtilization: 65\n    cpu: \"4\"\n    memory: 16Gi\n    graceSecs: 45\n  observability: true\n");
         }
         InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 2\n      maxReplicas: 8\n      targetCpuUtilization: 70\n  broker:\n");
-            if let Some(url) = args.relay_url.as_deref() {
-                yaml.push_str(&format!("    externalUrl: {url}\n"));
-            } else {
-                yaml.push_str("    image: REPLACE_ME__REGISTRY/relay:REPLACE_ME__RELAY_IMAGE_TAG\n    storage: 20Gi\n");
-            }
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 2\n      maxReplicas: 8\n      targetCpuUtilization: 70\n");
         }
     }
     ensure_trailing_newline(&yaml)
@@ -1015,25 +970,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
                     .await
                     .context("connect NATS write log")?,
             ))
-        }
-        #[cfg(feature = "relay-wal")]
-        WalBackend::Relay => {
-            tracing::info!(
-                url = %args.relay_url,
-                subject = %args.relay_subject,
-                subscriber_id = ?args.relay_subscriber_id,
-                "wal=relay (broadcast)"
-            );
-            let relay = match &args.relay_subscriber_id {
-                Some(id) => lumen::wal_relay::RelayWal::new_with_subscriber_id(
-                    &args.relay_url,
-                    &args.relay_subject,
-                    id,
-                ),
-                None => lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject),
-            }
-            .context("connect relay write log")?;
-            Some(Arc::new(relay))
         }
         #[cfg(feature = "raft-wal")]
         WalBackend::Raft => {

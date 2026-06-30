@@ -22,42 +22,14 @@ keep = "always"
 [env]
 # vat children get spec.env ONLY (no parent-env inheritance); commands
 # resolved from PATH (pgrep, python3, toxiproxy-server) need it explicit.
-PATH = "/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:/usr/bin:/bin:/usr/sbin"
+PATH = "/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/Users/chrischeng/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:/usr/bin:/bin:/usr/sbin"
 LUMEN_REQUIRE_DB_PEERS = "1"
-
-[[setup]]
-id = "build-rig-tests"
-cmd = [
-  "cargo",
-  "test",
-  "-p",
-  "lumen",
-  "--test",
-  "api_e2e",
-  "--test",
-  "drop_drain_e2e",
-  "--test",
-  "perf_gate",
-  "--test",
-  "planner_diff",
-  "--test",
-  "reindex_stream_e2e",
-  "--no-run",
-]
-
-[[setup]]
-id = "build-meter"
-cmd = ["cargo", "build", "-p", "meter-cli"]
-
-[[setup]]
-id = "build-lumen-bench"
-cmd = ["cargo", "build", "--release", "-p", "lumen", "--bin", "lumen-bench"]
 
 [[services]]
 id = "lumen"
-cmd = ["../../target/release/lumen", "serve"]
+cmd = ["sh", "-c", "CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" cargo build --release -p lumen --bin lumen && exec \"$VAT_WORKSPACE_BASE/target/release/lumen\" serve"]
 ready_http = "http://127.0.0.1:7373/healthz"
-timeout_s = 60
+timeout_s = 600
 
 [[services]]
 id = "toxiproxy"
@@ -85,24 +57,24 @@ port = 9200
 export = { OPENSEARCH_URL = "LUMEN_BENCH_OS_URL" }
 timeout_s = 120
 
-# Runner cmds use the repo-relative debug rig so no PATH entry is needed
-# for rig itself: `cargo build -p rig-cli` keeps it fresh.
+# Runner cmds use the host repo target via VAT_WORKSPACE_BASE; vat rootfs
+# intentionally excludes the Rust target cache so runner startup stays bounded.
 [[runners]]
 id = "rig-resilience"
 requires = ["lumen", "toxiproxy"]
-cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/cases/resilience"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/resilience"]
 timeout_s = 600
 
 [[runners]]
 id = "rig-endurance"
 requires = ["lumen"]
-cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/cases/endurance"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/endurance"]
 timeout_s = 900
 
 [[runners]]
 id = "rig-load"
 requires = ["lumen"]
-cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/cases/load", "--pins", "tests/rig/config/pins"]
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && cargo test -p lumen --test api_e2e --test drop_drain_e2e --test perf_gate --test planner_diff --test reindex_stream_e2e --no-run && exec \"$VAT_WORKSPACE_BASE/target/debug/rig\" run --dir tests/rig/cases/load --pins tests/rig/config/pins"]
 timeout_s = 300
 
 # Legacy competitive comparison runners: vat owns the serving lumen process;
@@ -145,7 +117,7 @@ for i in range(2000):
     items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
 send("POST", "/collections/docs/index", {"items": items})
 PY
-exec ../../target/debug/arena run --spec ../../projects/arena/examples/lumen-vs-pg.toml
+exec "$VAT_WORKSPACE_BASE/target/debug/arena" run --spec "$VAT_WORKSPACE_BASE/projects/arena/examples/lumen-vs-pg.toml"
 """,
 ]
 timeout_s = 900
@@ -186,7 +158,7 @@ for i in range(2000):
     items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
 send("POST", "/collections/docs/index", {"items": items})
 PY
-exec ../../target/debug/arena run --spec ../../projects/arena/examples/lumen-vs-opensearch.toml
+exec "$VAT_WORKSPACE_BASE/target/debug/arena" run --spec "$VAT_WORKSPACE_BASE/projects/arena/examples/lumen-vs-opensearch.toml"
 """,
 ]
 timeout_s = 900
@@ -198,22 +170,31 @@ timeout_s = 900
 [[runners]]
 id = "meter-profile"
 requires = ["lumen"]
-cmd = ["../../target/debug/meter", "profile", "--exec", "../../target/release/lumen-bench", "--duration", "25", "--", "run", "--tiers", "s", "--types", "sorted_page_deep", "--documents", "20000", "--page-size", "100", "--queries", "200"]
+cmd = ["sh", "-c", "CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" cargo build -p meter-cli && CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" cargo build --release -p lumen --bin lumen-bench && exec \"$VAT_WORKSPACE_BASE/target/debug/meter\" profile --exec \"$VAT_WORKSPACE_BASE/target/release/lumen-bench\" --duration 25 -- run --tiers s --types sorted_page_deep --documents 20000 --page-size 100 --queries 200"]
 timeout_s = 300
 
-# Self-provisioned efficiency helper. The production EC dispatch path is the
-# meter-wrapped perf gate in aw.toml; this runner remains available when the
-# caller wants vat to bring up pg + OpenSearch.
-# vat brings up pg + OpenSearch (empty); perf_gate_vs_db self-hosts lumen,
-# self-seeds both peers from the env DSNs, and asserts the ratcheted floors.
+# Self-provisioned efficiency helpers. The production EC dispatch path is the
+# meter-wrapped Lumen-only regression gate in aw.toml; retained pg/OpenSearch
+# ratios are calibration evidence and are refreshed only by explicit compare
+# runners when benchmark cells or peer configs change.
 [[runners]]
 id = "ec-efficiency"
-requires = ["pg", "opensearch"]
-cmd = ["cargo", "test", "-p", "lumen", "--release", "--test", "perf_gate_vs_db", "--", "--ignored", "--test-threads=1"]
+cmd = ["sh", "-c", "LUMEN_GATE_N=10000 LUMEN_GATE_QPS_TARGETS=100 LUMEN_GATE_WINDOW_S=0.5 LUMEN_SCALE_ROWS=1000,10000,100000 LUMEN_SCALE_MAX_ROWS=100000 CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" exec cargo test -p lumen --release --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --test-threads=1 --nocapture"]
 timeout_s = 1800
 
 [[runners]]
 id = "ec-efficiency-meter"
+cmd = ["sh", "-c", "CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" cargo build -p meter-cli && LUMEN_GATE_N=10000 LUMEN_GATE_QPS_TARGETS=100 LUMEN_GATE_WINDOW_S=0.5 CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" exec \"$VAT_WORKSPACE_BASE/target/debug/meter\" test -- -p lumen --release --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --test-threads=1 --nocapture"]
+timeout_s = 1800
+
+[[runners]]
+id = "ec-efficiency-meter-calibrate"
 requires = ["pg", "opensearch"]
-cmd = ["../../target/debug/meter", "test", "--", "-p", "lumen", "--release", "--test", "perf_gate_vs_db", "competitive_perf_gate", "--", "--ignored", "--exact", "--test-threads=1", "--nocapture"]
+cmd = ["sh", "-c", "CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" cargo build -p meter-cli && LUMEN_GATE_COMPARE_PEERS=1 LUMEN_GATE_N=100000 CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" exec \"$VAT_WORKSPACE_BASE/target/debug/meter\" test -- -p lumen --release --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --test-threads=1 --nocapture"]
+timeout_s = 1800
+
+[[runners]]
+id = "ec-efficiency-meter-soak"
+requires = ["pg", "opensearch"]
+cmd = ["sh", "-c", "CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" cargo build -p meter-cli && LUMEN_GATE_COMPARE_PEERS=1 LUMEN_GATE_RELEASE_SOAK=1 CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" exec \"$VAT_WORKSPACE_BASE/target/debug/meter\" test -- -p lumen --release --test perf_gate_vs_db competitive_perf_gate -- --ignored --exact --test-threads=1 --nocapture"]
 timeout_s = 1800
