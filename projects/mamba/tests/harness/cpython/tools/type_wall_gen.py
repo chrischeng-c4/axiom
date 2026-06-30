@@ -93,10 +93,11 @@ def annotation_label(node: ast.expr | None) -> str:
 
 
 def is_not_wrongable(node: ast.expr | None) -> bool:
-    """object/Any/untyped — no value is wrong for it, so it can't anchor a case."""
+    """object/Any/typevars/untyped cannot anchor a wrong-typed runtime case."""
     if node is None:
         return True
-    return annotation_label(node) in NOT_WRONGABLE
+    label = annotation_label(node)
+    return label in NOT_WRONGABLE or _typevar_convention(label)
 
 
 def sample_annotation(node: ast.expr | None) -> str | None:

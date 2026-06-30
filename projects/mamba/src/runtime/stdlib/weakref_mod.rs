@@ -1852,6 +1852,7 @@ fn register_weakref_classes() {
 pub fn register() {
     register_weakref_classes();
     let mut attrs = HashMap::new();
+    let mut c_api_attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
         ("ref", dispatch_ref as *const () as usize),
@@ -1879,6 +1880,9 @@ pub fn register() {
     for (name, addr) in dispatchers {
         let fval = MbValue::from_func(addr);
         attrs.insert(name.to_string(), fval);
+        if matches!(name, "ref" | "proxy" | "getweakrefcount" | "getweakrefs") {
+            c_api_attrs.insert(name.to_string(), fval);
+        }
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
@@ -1920,28 +1924,27 @@ pub fn register() {
     });
 
     // Type placeholders — Instance stubs with `__name__` set.
-    attrs.insert(
-        "ReferenceType".to_string(),
-        make_class_stub("ReferenceType"),
-    );
-    attrs.insert("ProxyType".to_string(), make_class_stub("ProxyType"));
-    attrs.insert(
-        "CallableProxyType".to_string(),
-        make_class_stub("CallableProxyType"),
-    );
+    let reference_type = make_class_stub("ReferenceType");
+    let proxy_type = make_class_stub("ProxyType");
+    let callable_proxy_type = make_class_stub("CallableProxyType");
+    attrs.insert("ReferenceType".to_string(), reference_type);
+    attrs.insert("ProxyType".to_string(), proxy_type);
+    attrs.insert("CallableProxyType".to_string(), callable_proxy_type);
     attrs.insert("KeyedRef".to_string(), make_class_stub("KeyedRef"));
+    c_api_attrs.insert("ReferenceType".to_string(), reference_type);
+    c_api_attrs.insert("ProxyType".to_string(), proxy_type);
+    c_api_attrs.insert("CallableProxyType".to_string(), callable_proxy_type);
 
     // `ProxyTypes` is a CPython tuple of (ProxyType, CallableProxyType).
-    let proxy_types = MbObject::new_tuple(vec![
-        make_class_stub("ProxyType"),
-        make_class_stub("CallableProxyType"),
-    ]);
-    attrs.insert("ProxyTypes".to_string(), MbValue::from_ptr(proxy_types));
+    let proxy_types = MbValue::from_ptr(MbObject::new_tuple(vec![proxy_type, callable_proxy_type]));
+    attrs.insert("ProxyTypes".to_string(), proxy_types);
+    c_api_attrs.insert("ProxyTypes".to_string(), proxy_types);
 
     // Submodule re-exports leaked by CPython's weakref.
     attrs.insert("itertools".to_string(), make_class_stub("itertools"));
     attrs.insert("sys".to_string(), make_class_stub("sys"));
 
+    super::register_module("_weakref", c_api_attrs);
     super::register_module("weakref", attrs);
 }
 // HANDWRITE-END
