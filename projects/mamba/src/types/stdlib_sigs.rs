@@ -2501,6 +2501,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("fp", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "email.charset",
+        qualifier: "Charset",
+        name: "body_encode",
+        kind: SigKind::Method,
+        params: &[p("string", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -5014,6 +5022,16 @@ mod tests {
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
+    }
+
+    #[test]
+    fn curated_email_charset_body_encode_wall_overrides_unknown_row() {
+        let sig = get("email.charset", "Charset", "body_encode")
+            .expect("Charset.body_encode row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "string");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
     }
 
     #[test]
