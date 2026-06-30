@@ -10,6 +10,7 @@ only a full run can go green.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -40,6 +41,22 @@ PLATFORM_SPECIFIC_TYPE_LIBS = {
     "_winapi": "win32",
     "msilib": "win32",
     "ossaudiodev": ("linux", "freebsd"),
+}
+OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS = {
+    "_tkinter": "_tkinter",
+    "tkinter": "_tkinter",
+    "tkinter_colorchooser": "_tkinter",
+    "tkinter_commondialog": "_tkinter",
+    "tkinter_dialog": "_tkinter",
+    "tkinter_dnd": "_tkinter",
+    "tkinter_filedialog": "_tkinter",
+    "tkinter_font": "_tkinter",
+    "tkinter_messagebox": "_tkinter",
+    "tkinter_scrolledtext": "_tkinter",
+    "tkinter_simpledialog": "_tkinter",
+    "tkinter_tix": "_tkinter",
+    "tkinter_ttk": "_tkinter",
+    "turtle": "_tkinter",
 }
 VERSION_SPECIFIC_TYPE_LIBS = {
     "_zstd": (3, 14),
@@ -172,6 +189,14 @@ def is_platform_specific_unavailable_type_fixture(path: Path) -> bool:
     )
 
 
+def is_optional_stdlib_extension_unavailable_type_fixture(path: Path) -> bool:
+    lib = type_fixture_lib(path)
+    if lib is None:
+        return False
+    module = OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS.get(lib)
+    return module is not None and importlib.util.find_spec(module) is None
+
+
 def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
     try:
         rel = "/".join(path.relative_to(TYPE_DIR).parts)
@@ -197,6 +222,7 @@ def is_excluded_type_fixture(path: Path) -> bool:
     return (
         is_non_runtime_stub_type_fixture(path)
         or is_platform_specific_unavailable_type_fixture(path)
+        or is_optional_stdlib_extension_unavailable_type_fixture(path)
         or is_version_specific_unavailable_type_fixture(path)
     )
 
@@ -346,6 +372,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         for path in type_fixture_candidates
         if is_platform_specific_unavailable_type_fixture(path)
     ]
+    excluded_optional_extensions = [
+        path
+        for path in type_fixture_candidates
+        if is_optional_stdlib_extension_unavailable_type_fixture(path)
+    ]
     excluded_version_specific = [
         path
         for path in type_fixture_candidates
@@ -453,6 +484,10 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "excluded_platform_specific_type_fixtures": len(excluded_platform_specific),
             "platform_specific_type_libs": PLATFORM_SPECIFIC_TYPE_LIBS,
             "host_platform": sys.platform,
+            "excluded_optional_stdlib_extension_type_fixtures": len(
+                excluded_optional_extensions
+            ),
+            "optional_stdlib_extension_type_libs": OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS,
             "excluded_version_specific_type_fixtures": len(excluded_version_specific),
             "version_specific_type_libs": VERSION_SPECIFIC_TYPE_LIBS,
             "version_removed_type_libs": VERSION_REMOVED_TYPE_LIBS,
