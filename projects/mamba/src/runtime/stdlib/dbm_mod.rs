@@ -52,6 +52,36 @@ fn extract_path(val: MbValue) -> Option<String> {
     })
 }
 
+fn path_type_name(val: MbValue) -> String {
+    if val.is_none() {
+        return "NoneType".to_string();
+    }
+    if val.is_int() {
+        return "int".to_string();
+    }
+    if val.is_float() {
+        return "float".to_string();
+    }
+    if val.as_bool().is_some() {
+        return "bool".to_string();
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            return match &(*ptr).data {
+                ObjData::Str(_) => "str".to_string(),
+                ObjData::Bytes(_) => "bytes".to_string(),
+                ObjData::ByteArray(_) => "bytearray".to_string(),
+                ObjData::List(_) => "list".to_string(),
+                ObjData::Tuple(_) => "tuple".to_string(),
+                ObjData::Dict(_) => "dict".to_string(),
+                ObjData::Instance { class_name, .. } => class_name.clone(),
+                _ => "object".to_string(),
+            };
+        }
+    }
+    "object".to_string()
+}
+
 /// Key/value coercion: str encodes to UTF-8 bytes; bytes pass through.
 fn as_bytes(val: MbValue) -> Option<Vec<u8>> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -249,8 +279,20 @@ unsafe extern "C" fn dispatch_whichdb(args_ptr: *const MbValue, nargs: usize) ->
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
-    let Some(path) = a.first().copied().and_then(extract_path) else {
-        return MbValue::none();
+    let Some(filename) = a.first().copied() else {
+        return raise(
+            "TypeError",
+            "whichdb() missing 1 required positional argument: 'filename'",
+        );
+    };
+    let Some(path) = extract_path(filename) else {
+        return raise(
+            "TypeError",
+            &format!(
+                "expected str, bytes or os.PathLike object, not {}",
+                path_type_name(filename)
+            ),
+        );
     };
     let dir = std::path::Path::new(&format!("{path}.dir")).exists();
     let dat = std::path::Path::new(&format!("{path}.dat")).exists();
