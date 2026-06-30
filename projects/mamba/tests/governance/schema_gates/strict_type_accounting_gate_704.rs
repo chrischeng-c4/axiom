@@ -579,6 +579,65 @@ assert gen_module.is_signature_param_not_wrongable("configparser", "ParsingError
 }
 
 #[test]
+fn dataclasses_is_dataclass_query_is_not_a_strict_type_wall() {
+    let root = mamba_root();
+    for rel in [
+        "is_dataclass__obj_as_Never_wrong.py",
+        "is_dataclass__obj_as_type_wrong.py",
+    ] {
+        assert!(
+            !root
+                .join("tests/cpython/type/std-libs/dataclasses")
+                .join(rel)
+                .exists(),
+            "dataclasses.is_dataclass(obj) is a query helper and must not be an executable strict wall: {rel}"
+        );
+    }
+
+    let script = r#"
+import dataclasses
+import importlib.util
+import pathlib
+import sys
+
+class Plain:
+    pass
+
+@dataclasses.dataclass
+class Data:
+    x: int = 1
+
+assert dataclasses.is_dataclass(Plain()) is False
+assert dataclasses.is_dataclass(Plain) is False
+assert dataclasses.is_dataclass(Data()) is True
+assert dataclasses.is_dataclass(Data) is True
+assert dataclasses.is_dataclass(12345) is False
+assert dataclasses.is_dataclass(None) is False
+
+gen_tool = pathlib.Path("tests/harness/cpython/tools/type_wall_gen.py")
+sys.path.insert(0, str(gen_tool.parent))
+gen_spec = importlib.util.spec_from_file_location("type_wall_gen", gen_tool)
+gen_module = importlib.util.module_from_spec(gen_spec)
+assert gen_spec.loader is not None
+sys.modules[gen_spec.name] = gen_module
+gen_spec.loader.exec_module(gen_module)
+assert gen_module.is_signature_param_not_wrongable("dataclasses", "", "is_dataclass", "obj")
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run dataclasses is_dataclass smoke");
+    assert!(
+        output.status.success(),
+        "dataclasses is_dataclass smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn type_wall_generator_skips_typevar_fixture_params() {
     let script = r#"
 import ast
@@ -607,6 +666,7 @@ assert gen_module.is_signature_param_not_wrongable("array", "array", "__getitem_
 assert gen_module.is_signature_param_not_wrongable("array", "array", "__new__", "typecode")
 assert gen_module.is_signature_param_not_wrongable("array", "array", "append", "v")
 assert gen_module.is_signature_param_not_wrongable("configparser", "ParsingError", "filename", "value")
+assert gen_module.is_signature_param_not_wrongable("dataclasses", "", "is_dataclass", "obj")
 assert not gen_module.is_signature_param_not_wrongable("aifc", "Aifc_read", "getmark", "id")
 assert not gen_module.is_signature_param_not_wrongable("argparse", "ArgumentParser", "error", "message")
 assert not gen_module.is_signature_param_not_wrongable("array", "array", "__mul__", "value")
