@@ -96,7 +96,7 @@ name = "agentic-workflow"
 aliases = ["aw"]
 path = "projects/agentic-workflow"
 td_path = "projects/agentic-workflow/tech-design"
-cap_path = "projects/agentic-workflow/README.md"
+cap_path = "projects/agentic-workflow/CAPABILITIES.md"
 label = "project:agentic-workflow"
 
 [[projects.workspaces]]
@@ -328,41 +328,6 @@ paths = ["projects/jet/**"]
 target = "rust"
 test_cmd = "projects/jet/scripts/verify-basic-dom-gates.sh --all"
 verify_cold = true
-
-
-[[projects]]
-name = "cue"
-path = "projects/cue"
-td_path = ".aw/tech-design/projects/cue"
-label = "project:cue"
-
-[[projects.workspaces]]
-name = "cue-app"
-paths = ["projects/cue/app/**"]
-target = "typescript"
-test_cmd = "npm run typecheck --prefix projects/cue/app"
-
-[[projects.workspaces]]
-name = "cue-fe"
-paths = ["projects/cue/fe/**"]
-target = "typescript"
-test_cmd = "cd projects/cue/fe && jet check"
-
-[[projects.workspaces]]
-name = "cue-be"
-paths = ["projects/cue/be/**"]
-target = "python"
-
-[[projects.workspaces]]
-name = "cue-contracts"
-paths = [
-  "projects/cue/README.md",
-  "projects/cue/schemas/**",
-  "projects/cue/examples/**",
-  "projects/cue/docs/**",
-]
-target = "schemas"
-test_cmd = "true"
 
 
 [[projects]]
@@ -687,21 +652,6 @@ path = "projects/cgdb"
 paths = ["projects/cgdb/**"]
 target = "rust"
 test_cmd = "cargo test -p cgdb-smoke"
-
-[[projects]]
-name = "cue"
-path = "projects/cue"
-
-[[projects.workspaces]]
-name = "be"
-paths = ["projects/cue/be/**"]
-target = "schemas"
-test_cmd = "true"
-
-[[projects.workspaces]]
-name = "fe"
-paths = ["projects/cue/fe/**"]
-target = "typescript"
 
 [[projects]]
 name = "guard"

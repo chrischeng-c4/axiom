@@ -276,6 +276,7 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
             if args.sync_public_api {
                 anyhow::bail!("--sync-public-api cannot be combined with --verify");
             }
+            ensure_td_lock_clean_for_project(&std::env::current_dir()?, project)?;
             return run_force_regen_verify(
                 project,
                 args.workspace.as_deref(),
@@ -289,11 +290,13 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
             if args.semantic_sample.is_some() {
                 anyhow::bail!("--semantic-sample is only supported with --verify");
             }
+            ensure_td_lock_clean_for_project(&std::env::current_dir()?, project)?;
             return run_force_regen_verify_cold(project, args.workspace.as_deref());
         }
         if args.semantic_sample.is_some() {
             anyhow::bail!("--semantic-sample is only supported with --verify");
         }
+        ensure_td_lock_clean_for_project(&std::env::current_dir()?, project)?;
         return run_force_regen(
             args.dry_run,
             project,
@@ -330,6 +333,17 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
         spec_path: args.spec_path,
     };
     td::run_gen_code(td_args).await
+}
+
+fn ensure_td_lock_clean_for_project(root: &std::path::Path, project: &str) -> Result<()> {
+    let status = crate::cli::td_lock::check_project_td_lock_at_root(root, project)?;
+    if status.clean {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "td gen requires a clean TD IR lock before generation: {}",
+        status.message
+    )
 }
 
 fn run_force_regen(

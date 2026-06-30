@@ -17,6 +17,7 @@ pub mod commands;
 pub mod ec;
 pub mod fillback;
 pub mod generator;
+pub mod guard;
 pub mod hook;
 pub mod init;
 pub mod issues;

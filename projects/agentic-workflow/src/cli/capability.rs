@@ -12034,9 +12034,9 @@ Mamba should improve both runtime CPU and memory profile on selected workloads.
     #[test]
     fn capability_tables_without_contract_fields_are_candidate_input() {
         let doc = cap_doc(
-            r#"# cue
+            r#"# meter
 
-Cue turns business intent into governed internal work.
+Meter turns business intent into governed internal work.
 
 ## Required Platform Capabilities
 
@@ -12199,7 +12199,7 @@ Native PostgreSQL toolkit core.
 
     #[test]
     fn empty_capability_map_next_action_requires_hitl_definition() {
-        let document = cap_doc("# Cue\n\n## Capabilities\n\n");
+        let document = cap_doc("# Meter\n\n## Capabilities\n\n");
         let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
         report.capability_count = 0;
         report.verified_count = 0;
@@ -12496,8 +12496,8 @@ traits = ["cli_facing", "forever_service"]
     #[test]
     fn empty_capability_map_draft_artifact_is_definition_worksheet() {
         let artifact = render_capability_map_draft(
-            "cue",
-            Path::new("projects/cue/README.md"),
+            "meter",
+            Path::new("projects/meter/README.md"),
             &[],
             &CapabilityProfileReport::default(),
             0,
@@ -12516,10 +12516,10 @@ traits = ["cli_facing", "forever_service"]
         assert!(artifact.contains("README has no candidate capability roots"));
         assert!(artifact.contains("## Review Decisions"));
         assert!(artifact.contains(
-            "| Cue Capability | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |"
+            "| Meter Capability | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |"
         ));
-        assert!(artifact.contains("### Cue Capability"));
-        assert!(artifact.contains("ID: cue-capability"));
+        assert!(artifact.contains("### Meter Capability"));
+        assert!(artifact.contains("ID: meter-capability"));
         assert!(artifact.contains(
             "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
         ));
@@ -12534,8 +12534,8 @@ traits = ["cli_facing", "forever_service"]
     #[test]
     fn apply_draft_rejects_unreviewed_placeholders() {
         let artifact = render_capability_map_draft(
-            "cue",
-            Path::new("projects/cue/README.md"),
+            "meter",
+            Path::new("projects/meter/README.md"),
             &[],
             &CapabilityProfileReport::default(),
             0,
@@ -12548,7 +12548,7 @@ traits = ["cli_facing", "forever_service"]
 
     #[test]
     fn apply_draft_requires_review_decisions_before_readme_mutation() {
-        let draft = r#"# Cue Capability Map Draft
+        let draft = r#"# Meter Capability Map Draft
 
 ## Review Decisions
 
@@ -12575,13 +12575,13 @@ Root WI: #3893
 Status: confirmed
 Required Verification: smoke
 Promise:
-Cue provides a team workflow control plane over AW Core concepts.
+Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
-- projects/cue/tests/workflow-control-plane.md
+- projects/meter/tests/workflow-control-plane.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |
 ```
 "#;
 
@@ -12592,13 +12592,13 @@ Gate Inventory:
 
     #[test]
     fn apply_draft_materializes_review_decisions_into_canonical_registry() {
-        let draft = r#"# Cue Capability Map Draft
+        let draft = r#"# Meter Capability Map Draft
 
 ## Review Decisions
 
 | Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |
 |---|---|---|---|---|---:|---|
-| Workflow Control Plane | confirm | DeveloperTool | CLI: `cue run` - app generation command | behavior: `jet e2e` - browser/API workflow | #3893 | projects/cue/tests/workflow-control-plane.md |
+| Workflow Control Plane | confirm | DeveloperTool | CLI: `meter measure` - resource measurement command | behavior: `jet e2e` - browser/API workflow | #3893 | projects/meter/tests/workflow-control-plane.md |
 
 ## Draft Canonical README Section
 
@@ -12623,7 +12623,7 @@ Root WI: -
 Status: candidate
 Required Verification: smoke
 Promise:
-Cue provides a team workflow control plane over AW Core concepts.
+Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
 - (confirm gate inventory)
 
@@ -12639,10 +12639,10 @@ Gate Inventory:
         assert!(!registry.contains("(confirm"));
         assert!(registry.contains("| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |"));
         assert!(registry.contains("Type: DeveloperTool"));
-        assert!(registry.contains("Surfaces: CLI: `cue run` - app generation command"));
+        assert!(registry.contains("Surfaces: CLI: `meter measure` - resource measurement command"));
         assert!(registry.contains("EC Dimensions: behavior: `jet e2e` - browser/API workflow"));
-        assert!(registry.contains("Gate Inventory: projects/cue/tests/workflow-control-plane.md"));
-        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |"));
+        assert!(registry.contains("Gate Inventory: projects/meter/tests/workflow-control-plane.md"));
+        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |"));
         assert_eq!(doc.capabilities.len(), 1);
         assert_eq!(doc.capabilities[0].id, "workflow-control-plane");
         assert_eq!(
@@ -12658,7 +12658,7 @@ Gate Inventory:
 
     #[test]
     fn apply_reviewed_draft_replaces_capabilities_section() {
-        let draft = r#"# Cue Capability Map Draft
+        let draft = r#"# Meter Capability Map Draft
 
 ## Draft Canonical README Section
 
@@ -12679,17 +12679,17 @@ Root WI: #3893
 Status: confirmed
 Required Verification: smoke
 Promise:
-Cue provides a team workflow control plane over AW Core concepts.
+Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
-- projects/cue/tests/workflow-control-plane.md
+- projects/meter/tests/workflow-control-plane.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |
 ```
 "#;
         let registry = extract_reviewed_draft_registry(draft).unwrap();
-        let original = r#"# Cue
+        let original = r#"# Meter
 
 Team workflow product.
 
@@ -12702,7 +12702,7 @@ old placeholder
 Keep this section.
 "#;
 
-        let applied = apply_capability_registry_to_readme(original, &registry, "cue").unwrap();
+        let applied = apply_capability_registry_to_readme(original, &registry, "meter").unwrap();
         let doc = cap_doc(&applied);
 
         assert!(applied.contains("## Brief\n\nTeam workflow product."));
@@ -12831,19 +12831,19 @@ old tail placeholder
 
     #[test]
     fn draft_commands_preserve_cap_path_override() {
-        let cap_path = Path::new("/tmp/aw draft/cue README.md");
-        let draft_path = Path::new("/tmp/aw draft/cue capability draft.md");
+        let cap_path = Path::new("/tmp/aw draft/meter README.md");
+        let draft_path = Path::new("/tmp/aw draft/meter capability draft.md");
 
-        let apply = capability_apply_draft_command("cue", draft_path, Some(cap_path));
-        let check = capability_check_command("cue", Some(cap_path));
+        let apply = capability_apply_draft_command("meter", draft_path, Some(cap_path));
+        let check = capability_check_command("meter", Some(cap_path));
 
         assert_eq!(
             apply,
-            "aw capability apply-draft --project cue --draft '/tmp/aw draft/cue capability draft.md' --cap-path '/tmp/aw draft/cue README.md' --reviewed"
+            "aw capability apply-draft --project meter --draft '/tmp/aw draft/meter capability draft.md' --cap-path '/tmp/aw draft/meter README.md' --reviewed"
         );
         assert_eq!(
             check,
-            "aw capability check --project cue --cap-path '/tmp/aw draft/cue README.md'"
+            "aw capability check --project meter --cap-path '/tmp/aw draft/meter README.md'"
         );
     }
 
@@ -13613,16 +13613,16 @@ Gate Inventory:
             CapabilityDraftReport {
                 schema_version: "aw.cli.v1",
                 action: "capability_draft",
-                project: "cue".to_string(),
-                cap_path: PathBuf::from("projects/cue/README.md"),
-                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                project: "meter".to_string(),
+                cap_path: PathBuf::from("projects/meter/README.md"),
+                path: PathBuf::from("/tmp/aw/meter/capability-map-drafts/draft.md"),
                 status: "pending_review".to_string(),
                 source: "prose_candidates",
                 candidate_count: 3,
                 agent_review_required: true,
                 review_status: "pending",
-                apply_command: "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed".to_string(),
-                check_command: "aw capability check --project cue".to_string(),
+                apply_command: "aw capability apply-draft --project meter --draft '/tmp/aw/meter/capability-map-drafts/draft.md' --reviewed".to_string(),
+                check_command: "aw capability check --project meter".to_string(),
             },
         ]);
 
@@ -13634,7 +13634,7 @@ Gate Inventory:
         ));
         assert!(index.contains("| definition needed | 1 | 0 | define product promises before applying a README capability section |"));
         assert!(index.contains("## Suggested Review Order"));
-        assert!(index.contains("| cue | 3 | /tmp/aw/cue/capability-map-drafts/draft.md | `aw capability check --project cue` |"));
+        assert!(index.contains("| meter | 3 | /tmp/aw/meter/capability-map-drafts/draft.md | `aw capability check --project meter` |"));
         assert!(index.contains("| pg | empty_capability_map | 0 |"));
         assert!(index.contains("/tmp/aw/pg/capability-map-drafts/draft.md"));
         assert!(index.contains(
@@ -13806,10 +13806,10 @@ Gate Inventory:
     fn capability_sweep_rollout_index_links_review_artifacts() {
         let mut draftable = sample_report(sample_action(
             CapabilityActionKind::DefineCapabilityMap,
-            "aw capability draft --project cue",
+            "aw capability draft --project meter",
             false,
         ));
-        draftable.project = "cue".to_string();
+        draftable.project = "meter".to_string();
         let mut sweep = capability_sweep_report(
             &[
                 sample_report(sample_action(CapabilityActionKind::None, "", false)),
@@ -13835,18 +13835,18 @@ Gate Inventory:
             CapabilityDraftReport {
                 schema_version: "aw.cli.v1",
                 action: "capability_draft",
-                project: "cue".to_string(),
-                cap_path: PathBuf::from("projects/cue/README.md"),
-                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                project: "meter".to_string(),
+                cap_path: PathBuf::from("projects/meter/README.md"),
+                path: PathBuf::from("/tmp/aw/meter/capability-map-drafts/draft.md"),
                 status: "pending_review".to_string(),
                 source: "prose_candidates",
                 candidate_count: 3,
                 agent_review_required: true,
                 review_status: "pending",
                 apply_command:
-                    "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed"
+                    "aw capability apply-draft --project meter --draft '/tmp/aw/meter/capability-map-drafts/draft.md' --reviewed"
                         .to_string(),
-                check_command: "aw capability check --project cue".to_string(),
+                check_command: "aw capability check --project meter".to_string(),
             },
             CapabilityDraftReport {
                 schema_version: "aw.cli.v1",
@@ -13914,7 +13914,7 @@ Gate Inventory:
         assert!(index.contains("| WI plans | 1 | /tmp/aw/capability-wi-plans/wi-plan-index.md |"));
         assert!(index
             .contains("| Action queue | 1 | /tmp/aw/capability-action-queue/action-queue.md |"));
-        assert!(index.contains("| blocked | define_capability_map:draft | 1 | cue |"));
+        assert!(index.contains("| blocked | define_capability_map:draft | 1 | meter |"));
         assert!(index.contains("Start with the check index"));
         assert!(index.contains("skipped issue inventory alone is not backlog"));
 
@@ -13952,7 +13952,7 @@ Gate Inventory:
         assert!(
             packet.contains("| Project | Candidate Roots | Draft | Apply After Review | Check |")
         );
-        assert!(packet.contains("| cue | 3 | /tmp/aw/cue/capability-map-drafts/draft.md | `aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project cue` |"));
+        assert!(packet.contains("| meter | 3 | /tmp/aw/meter/capability-map-drafts/draft.md | `aw capability apply-draft --project meter --draft '/tmp/aw/meter/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project meter` |"));
         assert!(packet.contains("### Definition Needed"));
         assert!(packet.contains("These projects have no confirmed capability roots yet."));
         assert!(packet.contains("| pg | empty_capability_map | /tmp/aw/pg/capability-map-drafts/draft.md | `aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project pg` |"));

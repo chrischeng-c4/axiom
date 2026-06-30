@@ -327,6 +327,11 @@ pub struct ProjectEcGateReport {
     pub verify_evaluated: bool,
     pub status: ProjectEcGateStatus,
     pub note: Option<String>,
+    pub lock_status: Option<crate::cli::ec::EcLockState>,
+    pub lock_clean: bool,
+    pub lock_path: String,
+    pub lock_ir_digest: Option<String>,
+    pub locked_lock_ir_digest: Option<String>,
     pub inventory_path: String,
     pub expected_case_count: usize,
     pub case_count: usize,
@@ -451,6 +456,11 @@ impl ProjectEcGateReport {
             note: Some(format!(
                 "EC not evaluated; run `aw health --project {project} --verify-ec`"
             )),
+            lock_status: None,
+            lock_clean: true,
+            lock_path: format!("projects/{project}/external-contracts/ec.lock"),
+            lock_ir_digest: None,
+            locked_lock_ir_digest: None,
             inventory_path: format!("projects/{project}/aw.toml"),
             expected_case_count: 0,
             case_count: 0,
@@ -490,6 +500,11 @@ impl ProjectEcGateReport {
             verify_evaluated: false,
             status,
             note,
+            lock_status: None,
+            lock_clean: true,
+            lock_path: format!("projects/{}/external-contracts/ec.lock", summary.project),
+            lock_ir_digest: None,
+            locked_lock_ir_digest: None,
             inventory_path: summary.inventory_path,
             expected_case_count: summary.expected_case_count,
             case_count: summary.case_count,
@@ -2041,6 +2056,8 @@ fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "status": &report.ec.status,
         "verified": report.ec.verify_evaluated,
+        "lock_status": report.ec.lock_status,
+        "lock_clean": report.ec.lock_clean,
         "passed_commands": report.ec.passed_count,
         "command_count": report.ec.command_count,
     })
@@ -2214,6 +2231,11 @@ fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
         "verify_evaluated": report.verify_evaluated,
         "status": &report.status,
         "note": &report.note,
+        "lock_status": report.lock_status,
+        "lock_clean": report.lock_clean,
+        "lock_path": &report.lock_path,
+        "lock_ir_digest": &report.lock_ir_digest,
+        "locked_lock_ir_digest": &report.locked_lock_ir_digest,
         "inventory_path": &report.inventory_path,
         "expected_case_count": report.expected_case_count,
         "case_count": report.case_count,
@@ -2275,17 +2297,26 @@ fn project_claim_closure_detail(report: &ProjectClaimClosureReport) -> serde_jso
 fn project_td_lock_summary(lock: &crate::cli::td_lock::TdLockStatus) -> serde_json::Value {
     serde_json::json!({
         "project": &lock.project,
+        "ir_kind": &lock.ir_kind,
         "td_path": &lock.td_path,
         "lock_path": &lock.lock_path,
         "status": &lock.status,
         "clean": lock.clean,
+        "source_digest": &lock.source_digest,
+        "locked_source_digest": &lock.locked_source_digest,
+        "ir_digest": &lock.ir_digest,
+        "locked_ir_digest": &lock.locked_ir_digest,
         "file_count": lock.file_count,
+        "td_ir_count": lock.td_ir_count,
+        "td_ir_error_count": lock.td_ir_error_count,
         "changed_count": lock.changed.len(),
         "changed_preview": preview_strings(&lock.changed),
         "added_count": lock.added.len(),
         "added_preview": preview_strings(&lock.added),
         "removed_count": lock.removed.len(),
         "removed_preview": preview_strings(&lock.removed),
+        "ir_changed_count": lock.ir_changed.len(),
+        "ir_changed_preview": preview_strings(&lock.ir_changed),
         "message": &lock.message,
     })
 }
@@ -2489,6 +2520,15 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             },
         );
     }
+    if !report.ec.lock_clean {
+        return Some(
+            if report.ec.lock_status == Some(crate::cli::ec::EcLockState::Missing) {
+                format!("aw ec lock --project {}", report.project)
+            } else {
+                format!("aw ec lock --project {} --show", report.project)
+            },
+        );
+    }
     if !report.ec.check_clean {
         return Some(format!("aw ec gen --project {} --verify", report.project));
     }
@@ -2576,6 +2616,13 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     }
     if !caps_ec_only && !report.td_lock.clean {
         return report.td_lock.message.clone();
+    }
+    if !report.ec.lock_clean {
+        return report
+            .ec
+            .note
+            .clone()
+            .unwrap_or_else(|| "EC lock is not clean".to_string());
     }
     if !report.ec.check_clean {
         return report
@@ -2883,6 +2930,24 @@ pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Resul
 pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bool) -> Result<()> {
     let summary = crate::cli::ec::project_ec_check_summary(&report.project)?;
     let mut ec_report = ProjectEcGateReport::from_check(summary);
+    let lock_status = crate::cli::ec::project_ec_lock_status(&report.project)?;
+    ec_report.lock_status = Some(lock_status.status);
+    ec_report.lock_clean = lock_status.clean;
+    ec_report.lock_path = lock_status.lock_path.clone();
+    ec_report.lock_ir_digest = Some(lock_status.ir_digest.clone());
+    ec_report.locked_lock_ir_digest = lock_status.locked_ir_digest.clone();
+
+    if !lock_status.clean {
+        ec_report.status = ProjectEcGateStatus::CheckFailed;
+        ec_report.note = Some(lock_status.message.clone());
+        ec_report
+            .findings
+            .push(format!("ec lock: {}", lock_status.message));
+        block_health_report(report, format!("ec lock: {}", lock_status.message));
+        report.ec = ec_report;
+        report.refresh_takeover_readiness();
+        return Ok(());
+    }
 
     if !ec_report.check_clean {
         block_health_report(
@@ -4198,16 +4263,24 @@ mod tests {
         report.production_status = ProductionStatus::Blocked;
         report.td_lock = crate::cli::td_lock::TdLockStatus {
             project: "agentic-workflow".to_string(),
+            ir_kind: "td".to_string(),
             td_path: "projects/agentic-workflow/tech-design".to_string(),
             lock_path: "projects/agentic-workflow/tech-design/td.lock".to_string(),
             status: crate::cli::td_lock::TdLockState::Stale,
             clean: false,
+            source_digest: "sha256:new".to_string(),
+            locked_source_digest: Some("sha256:old".to_string()),
+            ir_digest: "sha256:new-ir".to_string(),
+            locked_ir_digest: Some("sha256:old-ir".to_string()),
             current_digest: "sha256:new".to_string(),
             locked_digest: Some("sha256:old".to_string()),
             file_count: 1,
+            td_ir_count: 1,
+            td_ir_error_count: 0,
             changed: vec!["x.md".to_string()],
             added: Vec::new(),
             removed: Vec::new(),
+            ir_changed: vec!["x.md".to_string()],
             message: "td lock stale".to_string(),
         };
         report.ec = ProjectEcGateReport {
@@ -4216,6 +4289,11 @@ mod tests {
             verify_evaluated: false,
             status: ProjectEcGateStatus::CheckFailed,
             note: Some("EC inventory/check is blocked".to_string()),
+            lock_status: Some(crate::cli::ec::EcLockState::Locked),
+            lock_clean: true,
+            lock_path: "projects/agentic-workflow/external-contracts/ec.lock".to_string(),
+            lock_ir_digest: Some("sha256:lock".to_string()),
+            locked_lock_ir_digest: Some("sha256:lock".to_string()),
             inventory_path: "projects/agentic-workflow/aw.toml".to_string(),
             expected_case_count: 1,
             case_count: 1,
@@ -4338,6 +4416,11 @@ mod tests {
                 ProjectEcGateStatus::Failed
             },
             note: None,
+            lock_status: Some(crate::cli::ec::EcLockState::Locked),
+            lock_clean: true,
+            lock_path: "projects/demo/external-contracts/ec.lock".to_string(),
+            lock_ir_digest: Some("sha256:lock".to_string()),
+            locked_lock_ir_digest: Some("sha256:lock".to_string()),
             inventory_path: "projects/demo/aw.toml".to_string(),
             expected_case_count: 1,
             case_count: 1,
