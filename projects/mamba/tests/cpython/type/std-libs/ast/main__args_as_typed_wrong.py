@@ -9,12 +9,11 @@
 # case = "main__args_as_typed_wrong"
 # subject = "ast.main(args: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ast.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args
 # mamba-strict-type: TypeError
 """Type wall: ast.main(args: typed); call it with the wrong type.
 
