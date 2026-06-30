@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use chrono::{DateTime, Utc};
 
 use crate::broadcast::BroadcastDelivery;
-use crate::config::RelayCoreConfig;
+use crate::config::{RelayCoreConfig, RetentionMode};
 use crate::log::Log;
 use crate::shard::shard_for;
 use crate::types::{
@@ -51,6 +51,9 @@ pub struct Relay {
     shards: u32,
     subjects: RwLock<HashMap<(String, ShardId), Arc<Mutex<SubjectState>>>>,
     subject_wakes: RwLock<HashMap<String, SubjectWake>>,
+    /// Per-subject retention override (delete-on-ack vs age/size). Absent =
+    /// `config.retention.mode`. Applies to every shard of the subject.
+    subject_modes: RwLock<HashMap<String, RetentionMode>>,
     /// Rotating start shard for `lease`, to spread consumers across shards.
     lease_cursor: AtomicU64,
 }
@@ -64,8 +67,34 @@ impl Relay {
             shards,
             subjects: RwLock::new(HashMap::new()),
             subject_wakes: RwLock::new(HashMap::new()),
+            subject_modes: RwLock::new(HashMap::new()),
             lease_cursor: AtomicU64::new(0),
         }
+    }
+
+    /// Set a subject's retention mode (delete-on-ack vs age/size pruning),
+    /// applying to every shard — already-open shards are updated in place and
+    /// lazily-opened ones resolve it on open. Mark task-queue subjects `Ack` so
+    /// their storage tracks backlog depth; leave broadcast/replay subjects `Age`.
+    ///
+    /// @spec projects/relay/tech-design/logic/log-segment-rotation-retention-full-log-lifecycle.md#logic
+    pub fn set_retention_mode(&self, subject: &str, mode: RetentionMode) -> io::Result<()> {
+        self.subject_modes
+            .write()
+            .expect("subject modes rwlock")
+            .insert(subject.to_string(), mode);
+        for shard in 0..self.shards {
+            if let Some(ss) = self
+                .subjects
+                .read()
+                .expect("subjects rwlock")
+                .get(&(subject.to_string(), shard))
+                .cloned()
+            {
+                ss.lock().expect("subject mutex").log.set_retention_mode(mode);
+            }
+        }
+        Ok(())
     }
 
     /// Shard a routing key falls in: `crc32(key) % shards`.
@@ -85,7 +114,15 @@ impl Relay {
         if let Some(s) = map.get(&key) {
             return Ok(Arc::clone(s));
         }
-        let log = Log::open(&self.config, subject, shard)?;
+        let mut log = Log::open(&self.config, subject, shard)?;
+        if let Some(&mode) = self
+            .subject_modes
+            .read()
+            .expect("subject modes rwlock")
+            .get(subject)
+        {
+            log.set_retention_mode(mode);
+        }
         let mut workqueue = WorkQueue::new(
             subject,
             shard,
@@ -345,7 +382,13 @@ impl Relay {
             let mut g = ss.lock().expect("subject mutex");
             if g.workqueue.ack(lease_id, epoch) {
                 let wm = g.workqueue.committed_watermark();
+                // H1: persist the watermark durably BEFORE reclaiming segments,
+                // so a crash can never leave the watermark stale-low with the
+                // acked segment already gone.
                 g.log.persist_commit(wm)?;
+                if g.log.retention_mode() == RetentionMode::Ack {
+                    g.log.truncate_below_acked(wm)?;
+                }
                 return Ok(true);
             }
         }
@@ -389,7 +432,11 @@ impl Relay {
             let n = g.workqueue.ack_batch(acks);
             if n > 0 {
                 let wm = g.workqueue.committed_watermark();
+                // H1: durable watermark before delete-on-ack truncation.
                 g.log.persist_commit(wm)?;
+                if g.log.retention_mode() == RetentionMode::Ack {
+                    g.log.truncate_below_acked(wm)?;
+                }
             }
             total += n;
         }

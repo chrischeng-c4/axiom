@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use chrono::Utc;
 
-use relay::{Log, RelayCoreConfig};
+use relay::{Log, RelayCoreConfig, RetentionMode};
 
 fn seg_cfg(dir: &std::path::Path, segment_bytes: u64, max_bytes: u64) -> RelayCoreConfig {
     let mut cfg = RelayCoreConfig::default();
@@ -16,6 +16,12 @@ fn seg_cfg(dir: &std::path::Path, segment_bytes: u64, max_bytes: u64) -> RelayCo
     cfg.segment_bytes = segment_bytes;
     cfg.ram_ring_entries = 4; // force disk-backed reads alongside segmentation
     cfg.retention.max_bytes_per_shard = max_bytes;
+    cfg
+}
+
+fn ack_seg_cfg(dir: &std::path::Path, segment_bytes: u64, max_bytes: u64) -> RelayCoreConfig {
+    let mut cfg = seg_cfg(dir, segment_bytes, max_bytes);
+    cfg.retention.mode = RetentionMode::Ack;
     cfg
 }
 
@@ -139,5 +145,80 @@ fn single_segment_parity_default_sizes() {
     assert_eq!(count_segments(dir.path()), 1);
     assert_eq!(log.range(0).unwrap().len(), 10);
     assert_eq!(log.start_seq(), 0);
+}
+
+// Phase 1 (delete-on-ack): in `Ack` mode, truncate_below_acked drops every
+// oldest whole segment fully below the committed watermark, advancing start_seq;
+// entries below the watermark are gone while the watermark's own segment (and
+// everything after) survives.
+#[test]
+fn ack_mode_truncates_acked_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut log = Log::open(&ack_seg_cfg(dir.path(), 200, 0), "s", 0).unwrap();
+    for i in 0..20 {
+        append(&mut log, i);
+    }
+    let before = count_segments(dir.path());
+    assert!(before > 1, "rolled into multiple segments");
+    assert_eq!(log.start_seq(), 0);
+
+    // Ack the contiguous prefix [0, 12): reclaim whole segments fully below 12.
+    log.truncate_below_acked(12).unwrap();
+
+    let start = log.start_seq();
+    assert!(start > 0, "acked-prefix segments reclaimed, start_seq advanced");
+    assert!(start <= 12, "never drops the segment holding seq 12 or beyond");
+    assert!(
+        count_segments(dir.path()) < before,
+        "old segment files deleted"
+    );
+    assert!(log.entry(start - 1).unwrap().is_none(), "below start is gone");
+    assert_eq!(
+        log.entry(12).unwrap().unwrap().seq,
+        12,
+        "watermark entry survives"
+    );
+    assert_eq!(log.range(0).unwrap().last().unwrap().seq, 19);
+}
+
+// Phase 1: a still-un-acked hole pins the head — a low watermark keeps every
+// segment even though much has been appended (the broker owns durability until
+// the entry is acked).
+#[test]
+fn ack_mode_hole_pins_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut log = Log::open(&ack_seg_cfg(dir.path(), 200, 0), "s", 0).unwrap();
+    for i in 0..20 {
+        append(&mut log, i);
+    }
+    let before = count_segments(dir.path());
+    // Watermark 0 = nothing contiguously acked (hole at seq 0) → nothing dropped.
+    log.truncate_below_acked(0).unwrap();
+    assert_eq!(log.start_seq(), 0, "an un-acked head pins all segments");
+    assert_eq!(count_segments(dir.path()), before);
+    assert!(log.entry(0).unwrap().is_some());
+}
+
+// Phase 1 / hazard H3: `Ack` mode disables age/size pruning so an un-acked
+// backlog is never deleted by wall-clock or size. Same params as
+// `byte_retention_prunes_and_clamps` (which DOES prune in `Age` mode) — the
+// contrast is the point.
+#[test]
+fn ack_mode_disables_age_and_size_prune() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut log = Log::open(&ack_seg_cfg(dir.path(), 200, 600), "s", 0).unwrap();
+    for i in 0..40 {
+        append(&mut log, i);
+    }
+    assert_eq!(
+        log.start_seq(),
+        0,
+        "no age/size pruning of un-acked backlog in Ack mode"
+    );
+    assert!(
+        log.entry(0).unwrap().is_some(),
+        "oldest un-acked entry retained"
+    );
+    assert_eq!(log.range(0).unwrap().len(), 40);
 }
 // HANDWRITE-END

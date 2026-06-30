@@ -58,7 +58,8 @@ pub mod workqueue;
 
 pub use broadcast::BroadcastDelivery;
 pub use config::{
-    BroadcastConfig, DedupeConfig, FsyncPolicy, RelayCoreConfig, RetentionConfig, WorkQueueConfig,
+    BroadcastConfig, DedupeConfig, FsyncPolicy, RelayCoreConfig, RetentionConfig, RetentionMode,
+    WorkQueueConfig,
 };
 pub use engine::Relay;
 pub use log::Log;

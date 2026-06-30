@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::config::{FsyncPolicy, RelayCoreConfig};
+use crate::config::{FsyncPolicy, RelayCoreConfig, RetentionMode};
 use crate::types::{AppendOutcome, LogEntry, MessageId, Payload, Seq, ShardId, Subject};
 
 /// One on-disk NDJSON segment holding seqs `[base_seq, next segment's base_seq)`.
@@ -53,6 +53,9 @@ pub struct Log {
     segment_bytes: u64,
     max_bytes: u64,
     max_age: i64,
+    /// Storage reclaim strategy: `Age` prunes by age/size on append; `Ack`
+    /// disables that and truncates the fully-acked prefix on the ack path.
+    retention_mode: RetentionMode,
     segments: Vec<Segment>,
     writer: Option<BufWriter<File>>,
     /// Bytes in the active (last) segment.
@@ -114,6 +117,7 @@ impl Log {
             segment_bytes: config.segment_bytes.max(1),
             max_bytes: config.retention.max_bytes_per_shard,
             max_age: config.retention.max_age_secs as i64,
+            retention_mode: config.retention.mode,
             segments: Vec::new(),
             writer: None,
             active_bytes: 0,
@@ -390,9 +394,39 @@ impl Log {
         Ok(())
     }
 
+    /// Override the storage reclaim strategy after open (per-subject mode set by
+    /// the engine). `Ack` mode disables age/size pruning and switches to
+    /// delete-on-ack truncation driven by the committed watermark.
+    pub fn set_retention_mode(&mut self, mode: RetentionMode) {
+        self.retention_mode = mode;
+    }
+
+    /// The active storage reclaim strategy for this log.
+    pub fn retention_mode(&self) -> RetentionMode {
+        self.retention_mode
+    }
+
+    /// Remove the oldest whole segment, advancing `start_seq` and dropping the
+    /// sparse index below the new start. Caller guarantees `segments.len() > 1`
+    /// (the active/last segment is never removed).
+    fn drop_oldest_segment(&mut self) {
+        let removed = self.segments.remove(0);
+        let _ = std::fs::remove_file(&removed.path);
+        let new_start = self.segments[0].base_seq;
+        // Drop sparse index points below the new start.
+        let drop_n = self.index.partition_point(|&(s, _)| s < new_start);
+        self.index.drain(0..drop_n);
+        self.start_seq = new_start;
+    }
+
     /// Prune the oldest whole segments by total bytes / age, advancing `start_seq`.
-    /// Never prunes the active (last) segment.
+    /// Never prunes the active (last) segment. No-op in `Ack` retention mode,
+    /// where storage is reclaimed by [`Log::truncate_below_acked`] instead so an
+    /// un-acked backlog is never deleted by wall-clock/size.
     fn prune(&mut self, now: DateTime<Utc>) -> io::Result<()> {
+        if self.retention_mode != RetentionMode::Age {
+            return Ok(());
+        }
         loop {
             if self.segments.len() <= 1 {
                 break;
@@ -405,13 +439,32 @@ impl Log {
             if !over_bytes && !too_old {
                 break;
             }
-            let removed = self.segments.remove(0);
-            let _ = std::fs::remove_file(&removed.path);
-            let new_start = self.segments[0].base_seq;
-            // Drop sparse index points below the new start.
-            let drop_n = self.index.partition_point(|&(s, _)| s < new_start);
-            self.index.drain(0..drop_n);
-            self.start_seq = new_start;
+            self.drop_oldest_segment();
+        }
+        Ok(())
+    }
+
+    /// Delete-on-ack head truncation: drop every oldest whole segment whose
+    /// entries are all `< watermark` (i.e. fully acked), advancing `start_seq`.
+    /// Never drops the active (last) segment. A still-leased / un-acked hole at
+    /// seq `h` pins `watermark = h`, so the segment containing `h` and every
+    /// later segment survive.
+    ///
+    /// `watermark` is the work-queue committed watermark (count of contiguous
+    /// acked entries from 0, so seqs `[0, watermark)` are acked). The caller MUST
+    /// have durably persisted `watermark` (via [`Log::persist_commit`]) *before*
+    /// calling this, so a crash can never leave the watermark stale-low while the
+    /// acked segment is already gone.
+    ///
+    /// @spec projects/relay/tech-design/logic/log-segment-rotation-retention-full-log-lifecycle.md#logic
+    pub fn truncate_below_acked(&mut self, watermark: Seq) -> io::Result<()> {
+        while self.segments.len() > 1 {
+            // segment_end(0) is the exclusive end of the oldest segment; when it
+            // is <= watermark every seq it holds is < watermark (fully acked).
+            if self.segment_end(0) > watermark {
+                break;
+            }
+            self.drop_oldest_segment();
         }
         Ok(())
     }
