@@ -9,12 +9,11 @@
 # case = "MIMEMessage__init___msg_as__MessageT_wrong"
 # subject = "email.mime.message.MIMEMessage.__init__(_msg: _MessageT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _msg"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _msg
 # mamba-strict-type: TypeError
 """Type wall: email.mime.message.MIMEMessage.__init__(_msg: _MessageT); call it with the wrong type.
 
