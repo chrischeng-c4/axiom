@@ -25,11 +25,11 @@ class _W:
 
 
 from importlib.metadata import EntryPoints
-obj = object.__new__(EntryPoints)
+obj = EntryPoints(())
 try:
     obj.__getitem__(_W())  # name: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
 except Exception as e:
-    print("setup_or_other:", type(e).__name__)
+    print("no_typeerror:", type(e).__name__)
