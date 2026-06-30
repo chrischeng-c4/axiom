@@ -9,12 +9,11 @@
 # case = "findlabels__code_as__HaveCodeType_wrong"
 # subject = "dis.findlabels(code: _HaveCodeType)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed code"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/dis.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed code
 # mamba-strict-type: TypeError
 """Type wall: dis.findlabels(code: _HaveCodeType); call it with the wrong type.
 

@@ -9,12 +9,11 @@
 # case = "dis__x_as_typed_wrong"
 # subject = "dis.dis(x: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/dis.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x
 # mamba-strict-type: TypeError
 """Type wall: dis.dis(x: typed); call it with the wrong type.
 
