@@ -9,12 +9,11 @@
 # case = "sin__z_as__C_wrong"
 # subject = "cmath.sin(z: _C)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed z"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cmath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed z
 # mamba-strict-type: TypeError
 """Type wall: cmath.sin(z: _C); call it with the wrong type.
 

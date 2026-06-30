@@ -9,12 +9,11 @@
 # case = "isclose__a_as__C_wrong"
 # subject = "cmath.isclose(a: _C)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cmath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: cmath.isclose(a: _C); call it with the wrong type.
 
