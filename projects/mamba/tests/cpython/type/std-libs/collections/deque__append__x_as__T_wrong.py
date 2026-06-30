@@ -9,12 +9,10 @@
 # case = "deque__append__x_as__T_wrong"
 # subject = "collections.deque.append(x: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x
 # mamba-strict-type: TypeError
 """Type wall: collections.deque.append(x: _T); call it with the wrong type.
 
