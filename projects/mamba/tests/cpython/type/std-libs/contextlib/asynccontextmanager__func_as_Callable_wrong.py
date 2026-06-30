@@ -9,12 +9,10 @@
 # case = "asynccontextmanager__func_as_Callable_wrong"
 # subject = "contextlib.asynccontextmanager(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: contextlib.asynccontextmanager(func: Callable); call it with the wrong type.
 

@@ -9,12 +9,10 @@
 # case = "nullcontext__init__enter_result_as__T_wrong"
 # subject = "contextlib.nullcontext.__init__(enter_result: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enter_result"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/contextlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enter_result
 # mamba-strict-type: TypeError
 """Type wall: contextlib.nullcontext.__init__(enter_result: _T); call it with the wrong type.
 

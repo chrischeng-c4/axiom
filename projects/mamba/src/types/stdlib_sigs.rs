@@ -1615,6 +1615,67 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("dictionary", CoreTy::Typed), p("source", CoreTy::Str)],
         enforceable: true,
     },
+    // POSITIVE: contextlib's decorator/context-manager contracts include
+    // Callable, path-like, type-variable, and exception-type shapes that the
+    // generated scalar table collapses to Unknown. In strict mode, a bare user
+    // object cannot satisfy those contracts, while real callable/path/exception
+    // objects stay skip-safe through the Typed wall.
+    StdlibSig {
+        module: "contextlib",
+        qualifier: "",
+        name: "asynccontextmanager",
+        kind: SigKind::ModuleFn,
+        params: &[p("func", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "contextlib",
+        qualifier: "",
+        name: "contextmanager",
+        kind: SigKind::ModuleFn,
+        params: &[p("func", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "contextlib",
+        qualifier: "AbstractAsyncContextManager",
+        name: "__aexit__",
+        kind: SigKind::Method,
+        params: &[
+            p("exc_type", CoreTy::Typed),
+            p("exc_value", CoreTy::Typed),
+            p("traceback", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "contextlib",
+        qualifier: "AbstractContextManager",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[
+            p("exc_type", CoreTy::Typed),
+            p("exc_value", CoreTy::Typed),
+            p("traceback", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "contextlib",
+        qualifier: "chdir",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "contextlib",
+        qualifier: "nullcontext",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("enter_result", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
     // but the typeshed-derived strict wall must still reject a bare user object
     // before import-time behavior is observed.
@@ -3627,6 +3688,30 @@ mod tests {
         assert!(read_dict.enforceable);
         assert_eq!(read_dict.params[0].name, "dictionary");
         assert_eq!(read_dict.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_contextlib_walls_override_unknown_rows() {
+        for name in ["asynccontextmanager", "contextmanager"] {
+            let sig = get("contextlib", "", name).expect("contextlib decorator present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn);
+            assert_eq!(sig.params[0].name, "func");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        for (qualifier, name, param) in [
+            ("AbstractAsyncContextManager", "__aexit__", "exc_type"),
+            ("AbstractContextManager", "__exit__", "exc_type"),
+            ("chdir", "__init__", "path"),
+            ("nullcontext", "__init__", "enter_result"),
+        ] {
+            let sig = get("contextlib", qualifier, name).expect("contextlib method present");
+            assert!(sig.enforceable, "{qualifier}.{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
     }
 
     #[test]
