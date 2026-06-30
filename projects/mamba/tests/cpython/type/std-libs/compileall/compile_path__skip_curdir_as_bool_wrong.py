@@ -9,12 +9,10 @@
 # case = "compile_path__skip_curdir_as_bool_wrong"
 # subject = "compileall.compile_path(skip_curdir: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed skip_curdir"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/compileall.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed skip_curdir
 # mamba-strict-type: TypeError
 """Type wall: compileall.compile_path(skip_curdir: bool); call it with the wrong type.
 
