@@ -9,12 +9,11 @@
 # case = "BytesFeedParser__init___factory_as_Callable_wrong"
 # subject = "email.feedparser.BytesFeedParser.__init__(_factory: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _factory"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/feedparser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _factory
 # mamba-strict-type: TypeError
 """Type wall: email.feedparser.BytesFeedParser.__init__(_factory: Callable); call it with the wrong type.
 

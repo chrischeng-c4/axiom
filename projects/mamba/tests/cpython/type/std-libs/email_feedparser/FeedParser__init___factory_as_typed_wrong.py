@@ -9,12 +9,11 @@
 # case = "FeedParser__init___factory_as_typed_wrong"
 # subject = "email.feedparser.FeedParser.__init__(_factory: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _factory"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/feedparser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _factory
 # mamba-strict-type: TypeError
 """Type wall: email.feedparser.FeedParser.__init__(_factory: typed); call it with the wrong type.
 
