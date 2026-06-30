@@ -12,6 +12,13 @@ details.
 | [mamba](projects/mamba/README.md) | Force-typed Python compiler — lexes Python, lowers through HIR/MIR, and emits native machine code via Cranelift JIT/AOT. Real binaries, not a transpiler or interpreter. |
 | [jet](projects/jet/README.md) | Rust-native web toolchain — package management, dev server, production builds, test/e2e, and WASM/multi-target execution. Replaces the Vite/pnpm/Playwright stack. |
 | [lumen](projects/lumen/README.md) | K8s-native, log-replicated search specialist — exact, lexical (BM25), semantic (HNSW/GPU kNN), perceptual, and duplicate search in one engine. |
+| [loom](projects/loom/README.md) | Workflow scheduler — DAG/state machine orchestration over relay delivery and keep result refs. |
+| [relay](projects/relay/README.md) | Broker — durable ordered log, online delivery, broadcast fan-out, and work-queue leasing. |
+| [keep](projects/keep/README.md) | KV/result backend — claim-check payload/result storage, collections, durability, and HA path. |
+| [tape](projects/tape/README.md) | Topic replay journal — append-only topic history, consumer checkpoints, retention, and backfill. |
+| [defer](projects/defer/README.md) | Delayed task dispatch service — scheduled HTTP tasks, retry policy, rate limits, and DLQs. |
+| [cube](projects/cube/README.md) | OLAP service — columnar ingest, analytical query, rollups, and partition pruning. |
+| [beam](projects/beam/README.md) | GPU vector database — vector-first storage, GPU ANN indexing, batch ingest, and vector query. |
 | [vat](projects/vat/README.md) | Agent-native, GPU-native dev containers — a sandboxed host-process runtime (no VM) where the GPU just works on Apple Silicon, with a single JSON state surface for agents. |
 | [cap](projects/cap/README.md) | Resource-protection wrapper — throttles heavy local commands (and the Bash an agent fires) by watching free memory and pausing/resuming/killing, so nothing OOMs the box. |
 | [meter](projects/meter/README.md) | Local resource measurement for agents — `measure` observes external executables for cpu/wall/RSS and sampled hot spots; `profile` folds embedded/source-aware phase data. |
@@ -31,6 +38,9 @@ an installer yet are marked _coming soon_.
 | [cap](projects/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/cap/install.sh \| sh` |
 | [guard](projects/guard/README.md) | `guard` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/guard/install.sh \| sh` |
 | [jet](projects/jet/README.md) | `jet` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/jet/install.sh \| sh` |
+| [beam](projects/beam/README.md) | `beam` | _coming soon_ |
+| [cube](projects/cube/README.md) | `cube` | _coming soon_ |
+| [defer](projects/defer/README.md) | `defer` | _coming soon_ |
 | [keep](projects/keep/README.md) | `keep` | _coming soon_ |
 | [loom](projects/loom/README.md) | `loom` | _coming soon_ |
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
@@ -38,6 +48,7 @@ an installer yet are marked _coming soon_.
 | [meter](projects/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/meter/install.sh \| sh` |
 | [relay](projects/relay/README.md) | `relay-server` | _coming soon_ |
 | [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
+| [tape](projects/tape/README.md) | `tape` | _coming soon_ |
 | [vat](projects/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/vat/install.sh \| sh` |
 
 ## Runtime Evidence Loop

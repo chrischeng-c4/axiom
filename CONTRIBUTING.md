@@ -209,10 +209,23 @@ headers, the CPython oracle, and the perf-baseline flow.
 > anything.
 
 Reference instantiations: **`keep`** (KV / claim-check store), **`relay`**
-(durable-log broker), **`lumen`** (search / dedup index). `loom` is a
-control-plane variant on the same runtime (greenfield — it shares the stack but
-its governance files are not yet grown; treat it as aspirational, not as a
-template for the gate files).
+(broker), **`lumen`** (search / dedup index), and **`loom`** (workflow
+scheduler). Planned service placeholders follow the same archetype:
+**`tape`** (topic replay journal), **`defer`** (delayed task dispatch),
+**`cube`** (OLAP service), and **`beam`** (GPU vector database).
+
+Use these portfolio boundaries when creating TDs or assigning agents:
+
+| Service | Owns | Does not own |
+|---------|------|--------------|
+| `loom` | workflow state, DAG scheduling, runner selection, timers, fair dispatch | broker delivery, payload bytes, replay archive |
+| `relay` | online broker delivery, ordered log, broadcast fan-out, work-queue leasing | workflow decisions, long-term replay/archive, task HTTP dispatch |
+| `keep` | KV/result storage, claim-check payloads, collections, durable values | broker delivery, workflow orchestration, analytical scans |
+| `tape` | topic history, offset/time replay, consumer checkpoints, retention/backfill | online broker delivery, workflow decisions |
+| `defer` | delayed HTTP task lifecycle, retry/DLQ, rate limits, dedupe keys | pub/sub fan-out, topic replay archive |
+| `cube` | columnar facts, OLAP scan/filter/group-by/aggregate, rollups, partitions | search ranking, vector ANN, KV payload storage |
+| `beam` | GPU vector indexes, vector ingest/rebuild, nearest-neighbor query | lexical/perceptual/duplicate search, OLAP aggregation |
+| `lumen` | exact/lexical/semantic/perceptual/duplicate search in one service | OLAP aggregation, vector-only GPU DB ownership |
 
 ### The shared service kit — compose these libs, do not hand-roll
 
@@ -358,6 +371,48 @@ Use this default decision rule:
 | **Dedicated / standalone** | Yes | Most production services, high isolation, simple ownership, clear backup/restore and SLO boundaries. |
 | **Shared backend** | No | A platform team explicitly owns placement, metering, quotas, migration, endpoint switching, and tenant lifecycle. |
 | **Promote to dedicated** | Optional | A shared tenant exceeds sustained usage, SLO, storage, or isolation thresholds and migration is controlled by policy. |
+
+### Service dogfood rules — keep the whole surface honest
+
+Recent service hardening work exposed a repeated failure mode: one slice moves to
+the new archetype while build scripts, CRDs, k8s overlays, tests, or EC gates
+still point at the old backend. Treat the following as contract, not cleanup
+advice:
+
+- **One active data plane.** A service may keep legacy compatibility code only
+  when it is explicitly labelled legacy and still tested. The production build,
+  Dockerfiles, release workflow, `build.sh`, k8s manifests, operator render
+  path, examples, README/HA docs, perf modes, and EC gates must all name the
+  same active data plane. Retired backends must not remain in active gates.
+- **Direct install is not the HA story.** Kustomize `base` / overlays should be a
+  small direct install, usually single-node/embedded for kind and smoke tests.
+  Production HA goes through the operator CR path, which renders the StatefulSet
+  topology and downward-API env that `raft-host` consumes.
+- **Operator owns lifecycle, not bytes.** The operator creates RBAC,
+  ServiceAccounts, Services, StatefulSets/Deployments, PDBs, CronJobs, Secrets,
+  status, and finalizers. It does not serialize service data. Snapshot bytes are
+  produced by the service state machine/admin surface; `raft-host` installs
+  snapshots and compacts logs; `libs/service-backup` runners upload/prune them.
+- **Namespace is deployment context.** The service instance CR lives with the app
+  namespace unless a platform team intentionally separates app and backend
+  lifecycle. Operator/control-plane resources normally live in `<svc>-system`.
+  HTTP paths stay service-domain scoped; do not add Kubernetes namespace names to
+  public routes.
+- **CRDs must be Kubernetes OpenAPI compatible.** Generated CRDs are not done
+  until `kustomize build` and CRD render pass. Normalize schema details that
+  Kubernetes rejects, such as `format: uint32` / `format: uint64`; express
+  unsigned integer intent as `type: integer` plus `minimum: 0`.
+- **Rustls provider is binary startup work.** Any binary that links rustls-backed
+  clients, including operator mode or raft/online CLI paths, installs the
+  process-level crypto provider before parsing commands or starting async work.
+- **Kind gates exercise the current service, not retired dependencies.** A
+  service dogfood script must not build or deploy a retired external component
+  just because old manifests still mention it. If the current kind gate is
+  intentionally single-node, say so and keep replay/HA claims in separate gates.
+- **Peer-service benchmarks are calibration, not every-run work.** Once
+  Postgres/OpenSearch or similar competitor baselines are captured, regular
+  production gates should run the service-only regression path against retained
+  floors. Rerun peers only for explicit recalibration or new comparison rows.
 
 ### Standard endpoints — one operational surface, one contract three ways
 
