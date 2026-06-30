@@ -110,6 +110,9 @@ NOT_WRONGABLE_SIGNATURE_PARAMS = {
     ("array", "array", "fromlist", "list"),
     ("array", "array", "index", "v"),
     ("array", "array", "remove", "v"),
+    # CPython 3.12 exposes no callable ParsingError.filename(value) API. A
+    # stale generated fixture here fails the CPython oracle before mamba runs.
+    ("configparser", "ParsingError", "filename", "value"),
 }
 BUILTINS = "builtins"
 NON_RUNTIME_STUB_MODULE_PREFIXES = ("_typeshed",)
