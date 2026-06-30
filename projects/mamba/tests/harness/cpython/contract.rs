@@ -451,6 +451,38 @@ fn platform_specific_type_libs_are_excluded_consistently() {
 }
 
 #[test]
+fn optional_stdlib_extension_type_libs_are_excluded_consistently() {
+    for rel in [
+        "tools/verify_cpython_oracle.py",
+        "tools/strict_type_accounting.py",
+    ] {
+        let path = cpython_harness_dir().join(rel);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+        for required in [
+            "OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS",
+            "\"_tkinter\": \"_tkinter\"",
+            "\"tkinter_ttk\": \"_tkinter\"",
+            "\"turtle\": \"_tkinter\"",
+            "importlib.util.find_spec(module) is None",
+        ] {
+            assert!(
+                raw.contains(required),
+                "{} missing optional stdlib extension exclusion marker `{required}`",
+                path.display()
+            );
+        }
+        if rel == "tools/verify_cpython_oracle.py" {
+            assert!(
+                raw.contains("optional-stdlib-extension-unavailable"),
+                "{} missing optional stdlib extension oracle skip reason",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn removed_importlib_type_fixtures_are_excluded_consistently() {
     for rel in [
         "tools/verify_cpython_oracle.py",

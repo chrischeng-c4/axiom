@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import importlib.util
 import os
 import subprocess
 import sys
@@ -37,6 +38,22 @@ PLATFORM_SPECIFIC_TYPE_LIBS = {
     "_winapi": "win32",
     "msilib": "win32",
     "ossaudiodev": ("linux", "freebsd"),
+}
+OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS = {
+    "_tkinter": "_tkinter",
+    "tkinter": "_tkinter",
+    "tkinter_colorchooser": "_tkinter",
+    "tkinter_commondialog": "_tkinter",
+    "tkinter_dialog": "_tkinter",
+    "tkinter_dnd": "_tkinter",
+    "tkinter_filedialog": "_tkinter",
+    "tkinter_font": "_tkinter",
+    "tkinter_messagebox": "_tkinter",
+    "tkinter_scrolledtext": "_tkinter",
+    "tkinter_simpledialog": "_tkinter",
+    "tkinter_tix": "_tkinter",
+    "tkinter_ttk": "_tkinter",
+    "turtle": "_tkinter",
 }
 VERSION_SPECIFIC_TYPE_LIBS = {
     "_zstd": (3, 14),
@@ -122,6 +139,14 @@ def is_platform_specific_unavailable_type_fixture(path: Path) -> bool:
     return not any(
         sys.platform == item or sys.platform.startswith(item) for item in required
     )
+
+
+def is_optional_stdlib_extension_unavailable_type_fixture(path: Path) -> bool:
+    lib = type_fixture_lib(path)
+    if lib is None:
+        return False
+    module = OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS.get(lib)
+    return module is not None and importlib.util.find_spec(module) is None
 
 
 def is_version_specific_unavailable_type_fixture(path: Path) -> bool:
@@ -258,6 +283,8 @@ def run_one(
         return CaseResult(path, "skip", "non-runtime-stub-type-helper")
     if is_platform_specific_unavailable_type_fixture(path):
         return CaseResult(path, "skip", "platform-specific-type-helper")
+    if is_optional_stdlib_extension_unavailable_type_fixture(path):
+        return CaseResult(path, "skip", "optional-stdlib-extension-unavailable")
     if is_version_specific_unavailable_type_fixture(path):
         return CaseResult(path, "skip", "version-specific-type-helper")
     if is_bench(path):
