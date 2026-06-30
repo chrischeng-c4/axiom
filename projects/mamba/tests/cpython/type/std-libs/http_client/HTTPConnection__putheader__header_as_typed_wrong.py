@@ -26,8 +26,9 @@ class _W:
 
 
 from http.client import HTTPConnection
-obj = object.__new__(HTTPConnection)
+obj = HTTPConnection("example.com")
 try:
+    obj.putrequest("GET", "/")
     obj.putheader(_W())  # header: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
