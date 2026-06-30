@@ -207,6 +207,66 @@ if expected:
 }
 
 #[test]
+fn optional_stdlib_extension_type_fixtures_follow_oracle_capabilities() {
+    let script = r#"
+import importlib.util
+import pathlib
+import sys
+
+strict_tool = pathlib.Path("tests/harness/cpython/tools/strict_type_accounting.py")
+sys.path.insert(0, str(strict_tool.parent))
+strict_spec = importlib.util.spec_from_file_location("strict_type_accounting", strict_tool)
+strict_module = importlib.util.module_from_spec(strict_spec)
+assert strict_spec.loader is not None
+sys.modules[strict_spec.name] = strict_module
+strict_spec.loader.exec_module(strict_module)
+
+oracle_tool = pathlib.Path("tests/harness/cpython/tools/verify_cpython_oracle.py")
+oracle_spec = importlib.util.spec_from_file_location("verify_cpython_oracle", oracle_tool)
+oracle_module = importlib.util.module_from_spec(oracle_spec)
+assert oracle_spec.loader is not None
+sys.modules[oracle_spec.name] = oracle_module
+oracle_spec.loader.exec_module(oracle_module)
+
+strict_tk_fixture = strict_module.TYPE_DIR / "std-libs/_tkinter/TkappType__adderrorinfo__msg_as_str_wrong.py"
+strict_ttk_fixture = strict_module.TYPE_DIR / "std-libs/tkinter_ttk/Button__configure__cnf_as_str_wrong.py"
+strict_turtle_fixture = strict_module.TYPE_DIR / "std-libs/turtle/bgcolor__color_as__Color_wrong.py"
+oracle_tk_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/_tkinter/TkappType__adderrorinfo__msg_as_str_wrong.py"
+oracle_ttk_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/tkinter_ttk/Button__configure__cnf_as_str_wrong.py"
+oracle_turtle_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/turtle/bgcolor__color_as__Color_wrong.py"
+
+expected = importlib.util.find_spec("_tkinter") is None
+assert strict_module.OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS["_tkinter"] == "_tkinter"
+assert strict_module.OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS["tkinter_ttk"] == "_tkinter"
+assert strict_module.OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS["turtle"] == "_tkinter"
+assert oracle_module.OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS["_tkinter"] == "_tkinter"
+assert oracle_module.OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS["tkinter_ttk"] == "_tkinter"
+assert oracle_module.OPTIONAL_STDLIB_EXTENSION_TYPE_LIBS["turtle"] == "_tkinter"
+for strict_fixture, oracle_fixture in [
+    (strict_tk_fixture, oracle_tk_fixture),
+    (strict_ttk_fixture, oracle_ttk_fixture),
+    (strict_turtle_fixture, oracle_turtle_fixture),
+]:
+    assert strict_module.is_optional_stdlib_extension_unavailable_type_fixture(strict_fixture) == expected
+    assert oracle_module.is_optional_stdlib_extension_unavailable_type_fixture(oracle_fixture) == expected
+    if expected:
+        assert strict_fixture not in strict_module.executable_type_fixtures([strict_fixture])
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run optional stdlib extension fixture smoke");
+    assert!(
+        output.status.success(),
+        "optional stdlib extension fixture smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn version_specific_type_fixtures_are_not_py312_oracles() {
     let script = r#"
 import importlib.util
