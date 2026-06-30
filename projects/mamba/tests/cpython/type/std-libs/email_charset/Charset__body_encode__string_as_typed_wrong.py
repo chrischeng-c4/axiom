@@ -9,12 +9,11 @@
 # case = "Charset__body_encode__string_as_typed_wrong"
 # subject = "email.charset.Charset.body_encode(string: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed string"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/charset.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed string
 # mamba-strict-type: TypeError
 """Type wall: email.charset.Charset.body_encode(string: typed); call it with the wrong type.
 
