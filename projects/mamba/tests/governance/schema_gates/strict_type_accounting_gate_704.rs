@@ -196,6 +196,58 @@ fn weakrefset_constructor_strict_type_wall_is_curated() {
 }
 
 #[test]
+fn weakref_proxy_typevars_are_surface_not_strict_walls() {
+    let root = mamba_root();
+    for path in [
+        "tests/cpython/type/std-libs/_weakref/proxy__object_as__C_wrong.py",
+        "tests/cpython/type/std-libs/_weakref/proxy__object_as__T_wrong.py",
+    ] {
+        assert!(
+            !root.join(path).exists(),
+            "_weakref.proxy TypeVar params are Unknown and must not be executable strict walls: {path}"
+        );
+    }
+    assert!(
+        root.join("tests/cpython/surface/std-libs/_weakref/proxy_accepts_user_object.py")
+            .exists(),
+        "_weakref.proxy still needs executable surface coverage"
+    );
+}
+
+#[test]
+fn type_wall_generator_skips_typevar_fixture_params() {
+    let script = r#"
+import ast
+import importlib.util
+import pathlib
+import sys
+
+gen_tool = pathlib.Path("tests/harness/cpython/tools/type_wall_gen.py")
+sys.path.insert(0, str(gen_tool.parent))
+gen_spec = importlib.util.spec_from_file_location("type_wall_gen", gen_tool)
+gen_module = importlib.util.module_from_spec(gen_spec)
+assert gen_spec.loader is not None
+sys.modules[gen_spec.name] = gen_module
+gen_spec.loader.exec_module(gen_module)
+assert gen_module.is_not_wrongable(ast.Name(id="_T"))
+assert gen_module.is_not_wrongable(ast.Name(id="_C"))
+assert not gen_module.is_not_wrongable(ast.Name(id="str"))
+"#;
+    let output = Command::new("python3.12")
+        .arg("-c")
+        .arg(script)
+        .current_dir(mamba_root())
+        .output()
+        .expect("run type-wall TypeVar skip smoke");
+    assert!(
+        output.status.success(),
+        "type-wall TypeVar skip smoke failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn declared_type_divergences_have_machine_owner_refs() {
     let path = mamba_root().join("tests/harness/cpython/config/type_divergences.txt");
     let text = fs::read_to_string(path).expect("read type_divergences.txt");
