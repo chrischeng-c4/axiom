@@ -233,6 +233,9 @@ strict_compression_fixture = strict_module.TYPE_DIR / "std-libs/compression_zstd
 strict_annotationlib_fixture = strict_module.TYPE_DIR / "std-libs/annotationlib/ForwardRef__init__arg_as_str_wrong.py"
 strict_asyncio_graph_fixture = strict_module.TYPE_DIR / "std-libs/asyncio_graph/capture_call_graph__future_as_Future_wrong.py"
 strict_asyncio_tools_fixture = strict_module.TYPE_DIR / "std-libs/asyncio_tools/CycleFoundException__init__cycles_as_list_wrong.py"
+strict_concurrent_interpreters_fixture = strict_module.TYPE_DIR / "std-libs/concurrent_interpreters/Interpreter__call__callable_as_Callable_wrong.py"
+strict_concurrent_crossinterp_fixture = strict_module.TYPE_DIR / "std-libs/concurrent_interpreters__crossinterp/serialize_unbound__unbound_as__AnyUnbound_wrong.py"
+strict_concurrent_queues_fixture = strict_module.TYPE_DIR / "std-libs/concurrent_interpreters__queues/Queue__get__block_as_bool_wrong.py"
 strict_templatestr_fixture = strict_module.TYPE_DIR / "std-libs/ast/TemplateStr__init__values_as_list_wrong.py"
 strict_z85decode_fixture = strict_module.TYPE_DIR / "std-libs/base64/z85decode__s_as_typed_wrong.py"
 strict_z85encode_fixture = strict_module.TYPE_DIR / "std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py"
@@ -242,6 +245,9 @@ oracle_zstd_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/_zstd/finaliz
 oracle_annotationlib_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/annotationlib/ForwardRef__init__arg_as_str_wrong.py"
 oracle_asyncio_graph_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/asyncio_graph/capture_call_graph__future_as_Future_wrong.py"
 oracle_asyncio_tools_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/asyncio_tools/CycleFoundException__init__cycles_as_list_wrong.py"
+oracle_concurrent_interpreters_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/concurrent_interpreters/Interpreter__call__callable_as_Callable_wrong.py"
+oracle_concurrent_crossinterp_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/concurrent_interpreters__crossinterp/serialize_unbound__unbound_as__AnyUnbound_wrong.py"
+oracle_concurrent_queues_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/concurrent_interpreters__queues/Queue__get__block_as_bool_wrong.py"
 oracle_templatestr_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/ast/TemplateStr__init__values_as_list_wrong.py"
 oracle_z85decode_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/base64/z85decode__s_as_typed_wrong.py"
 oracle_z85encode_fixture = oracle_module.FIXTURES_ROOT / "type/std-libs/base64/z85encode__s_as_ReadableBuffer_wrong.py"
@@ -258,6 +264,9 @@ assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["asyncio_graph"] == (3, 14)
 assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["asyncio_tools"] == (3, 14)
 assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["compression_zstd"] == (3, 14)
 assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["compression_zstd__zstdfile"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["concurrent_interpreters"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["concurrent_interpreters__crossinterp"] == (3, 14)
+assert strict_module.VERSION_SPECIFIC_TYPE_LIBS["concurrent_interpreters__queues"] == (3, 14)
 assert strict_module.VERSION_REMOVED_TYPE_LIBS["asynchat"] == (3, 12)
 assert strict_module.VERSION_REMOVED_TYPE_LIBS["asyncore"] == (3, 12)
 assert strict_module.VERSION_REMOVED_TYPE_LIBS["smtpd"] == (3, 12)
@@ -269,6 +278,9 @@ assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["annotationlib"] == (3, 14)
 assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["_zstd"] == (3, 14)
 assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["asyncio_graph"] == (3, 14)
 assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["asyncio_tools"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["concurrent_interpreters"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["concurrent_interpreters__crossinterp"] == (3, 14)
+assert oracle_module.VERSION_SPECIFIC_TYPE_LIBS["concurrent_interpreters__queues"] == (3, 14)
 assert oracle_module.VERSION_REMOVED_TYPE_LIBS["asynchat"] == (3, 12)
 assert oracle_module.VERSION_REMOVED_TYPE_LIBS["asyncore"] == (3, 12)
 assert oracle_module.VERSION_REMOVED_TYPE_LIBS["smtpd"] == (3, 12)
@@ -281,6 +293,9 @@ assert strict_module.is_version_specific_unavailable_type_fixture(strict_zstd_fi
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_compression_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_asyncio_graph_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_asyncio_tools_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_concurrent_interpreters_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_concurrent_crossinterp_fixture) == expected
+assert strict_module.is_version_specific_unavailable_type_fixture(strict_concurrent_queues_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_templatestr_fixture) == expected
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_z85decode_fixture) == expected_z85
 assert strict_module.is_version_specific_unavailable_type_fixture(strict_z85encode_fixture) == expected_z85
@@ -290,6 +305,9 @@ assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_annotat
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_zstd_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_asyncio_graph_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_asyncio_tools_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_concurrent_interpreters_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_concurrent_crossinterp_fixture) == expected
+assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_concurrent_queues_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_templatestr_fixture) == expected
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_z85decode_fixture) == expected_z85
 assert oracle_module.is_version_specific_unavailable_type_fixture(oracle_z85encode_fixture) == expected_z85
@@ -301,6 +319,9 @@ if expected:
     assert strict_zstd_fixture not in strict_module.executable_type_fixtures([strict_zstd_fixture])
     assert strict_asyncio_graph_fixture not in strict_module.executable_type_fixtures([strict_asyncio_graph_fixture])
     assert strict_asyncio_tools_fixture not in strict_module.executable_type_fixtures([strict_asyncio_tools_fixture])
+    assert strict_concurrent_interpreters_fixture not in strict_module.executable_type_fixtures([strict_concurrent_interpreters_fixture])
+    assert strict_concurrent_crossinterp_fixture not in strict_module.executable_type_fixtures([strict_concurrent_crossinterp_fixture])
+    assert strict_concurrent_queues_fixture not in strict_module.executable_type_fixtures([strict_concurrent_queues_fixture])
     assert strict_templatestr_fixture not in strict_module.executable_type_fixtures([strict_templatestr_fixture])
 if expected_z85:
     assert strict_z85decode_fixture not in strict_module.executable_type_fixtures([strict_z85decode_fixture])
