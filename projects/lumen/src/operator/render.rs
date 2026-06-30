@@ -7,9 +7,9 @@
 //! and its primary test surface: assert the rendered objects, no kind needed.
 //!
 //! The objects mirror `k8s/base` + the staging/prod overlays exactly: serving
-//! Deployment/Service/ConfigMap/HPA/PDB/ServiceAccount and (when the broker is
-//! managed) Relay StatefulSet/Services/PDB. The reconcile loop in
-//! [`super::reconcile`] server-side-applies whatever this returns.
+//! Deployment or StatefulSet, Service, ConfigMap, HPA when applicable, PDB, and
+//! ServiceAccount. The reconcile loop in [`super::reconcile`] server-side-applies
+//! whatever this returns.
 
 use serde_json::{json, Value};
 
@@ -20,7 +20,6 @@ const APP: &str = "lumen";
 const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
 const CLIENT_PORT: i32 = 7373;
-const BROKER_PORT: i32 = 7000;
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -39,16 +38,6 @@ fn namespace(lumen: &Lumen) -> String {
         .namespace
         .clone()
         .unwrap_or_else(|| "default".to_string())
-}
-
-/// The Relay client URL serving pods connect to: the managed broker's ClusterIP
-/// service, or the caller-supplied external URL.
-/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
-pub fn broker_url(lumen: &Lumen) -> String {
-    match &lumen.spec.broker.external_url {
-        Some(url) => url.clone(),
-        None => format!("http://{}-relay:{BROKER_PORT}", instance(lumen)),
-    }
 }
 
 /// lumen's render identity for the shared [`operator::render`] helpers.
@@ -99,12 +88,6 @@ fn meta(name: &str, ns: &str, labels: Value, owner: &Option<Value>) -> Value {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let mut out = vec![service_account(lumen), serving_configmap(lumen)];
-    if lumen.spec.broker.is_managed() {
-        out.push(broker_statefulset(lumen));
-        out.push(broker_service(lumen));
-        out.push(broker_headless_service(lumen));
-        out.push(broker_pdb(lumen));
-    }
     if lumen.spec.replicas_per_shard > 1 {
         // raft-HA serving: a StatefulSet (stable peer identity) + its headless
         // Service; no HPA (raft needs a fixed membership).
@@ -148,20 +131,45 @@ fn serving_statefulset(lumen: &Lumen) -> Value {
     let name = instance(lumen);
     let mut sts = serving_deployment(lumen);
     sts["kind"] = json!("StatefulSet");
-    let spec = sts["spec"]
-        .as_object_mut()
-        .expect("serving spec is an object");
-    spec.remove("strategy"); // Deployment-only
-    spec.insert("serviceName".into(), json!(format!("{name}-headless")));
-    spec.insert("podManagementPolicy".into(), json!("Parallel"));
-    spec.insert("updateStrategy".into(), json!({ "type": "RollingUpdate" }));
-    spec.insert(
-        "replicas".into(),
-        json!(lumen.spec.shard_count * lumen.spec.replicas_per_shard),
-    );
+    let s = &lumen.spec.serving;
+    {
+        let spec = sts["spec"]
+            .as_object_mut()
+            .expect("serving spec is an object");
+        spec.remove("strategy"); // Deployment-only
+        spec.insert("serviceName".into(), json!(format!("{name}-headless")));
+        spec.insert("podManagementPolicy".into(), json!("Parallel"));
+        spec.insert("updateStrategy".into(), json!({ "type": "RollingUpdate" }));
+        spec.insert(
+            "replicas".into(),
+            json!(lumen.spec.shard_count * lumen.spec.replicas_per_shard),
+        );
+    }
     if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
         env.extend(downward_api_env(lumen));
     }
+    if let Some(mounts) =
+        sts["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].as_array_mut()
+    {
+        mounts.push(json!({ "name": "raft", "mountPath": "/var/lib/lumen" }));
+    }
+    let mut pvc_spec = json!({
+        "accessModes": ["ReadWriteOnce"],
+        "resources": { "requests": { "storage": s.raft_storage.clone() } },
+    });
+    if let Some(sc) = &s.raft_storage_class {
+        pvc_spec["storageClassName"] = json!(sc);
+    }
+    sts["spec"]
+        .as_object_mut()
+        .expect("serving spec is an object")
+        .insert(
+            "volumeClaimTemplates".into(),
+            json!([{
+                "metadata": { "name": "raft", "labels": labels(&name, "server") },
+                "spec": pvc_spec,
+            }]),
+        );
     sts
 }
 
@@ -194,8 +202,6 @@ fn serving_configmap(lumen: &Lumen) -> Value {
     let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
     let mut data = json!({
         "SHARD_COUNT": lumen.spec.shard_count.to_string(),
-        "LUMEN_RELAY_URL": broker_url(lumen),
-        "LUMEN_RELAY_SUBJECT": lumen.spec.broker.subject.clone(),
         "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
         "LUMEN_PORT": CLIENT_PORT.to_string(),
         "LUMEN_AUTH": lumen.spec.auth.as_env(),
@@ -220,12 +226,9 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         json!({ "name": "POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
         json!({ "name": "POD_NAMESPACE", "valueFrom": { "fieldRef": { "fieldPath": "metadata.namespace" } } }),
         json!({ "name": "LUMEN_HOST", "value": "0.0.0.0" }),
-        json!({ "name": "LUMEN_WAL", "value": "relay" }),
-        json!({ "name": "LUMEN_RELAY_SUBSCRIBER_ID", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
+        json!({ "name": "LUMEN_WAL", "value": "auto" }),
         json!({ "name": "LUMEN_GRACE_SECS", "value": lumen.spec.serving.grace_secs.to_string() }),
         from_cfg("LUMEN_PORT"),
-        from_cfg("LUMEN_RELAY_URL"),
-        from_cfg("LUMEN_RELAY_SUBJECT"),
         from_cfg("LUMEN_LOG_FORMAT"),
         from_cfg("LUMEN_AUTH"),
         from_cfg("SHARD_COUNT"),
@@ -304,8 +307,8 @@ fn serving_deployment(lumen: &Lumen) -> Value {
                         "ports": [{ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" }],
                         "env": serving_env(lumen),
                         "resources": res,
-                        // 503 until the log tail catches up; generous threshold
-                        // lets a cold pod rebuild from the broker log.
+                        // 503 until the serving node has finished startup and
+                        // any local/raft recovery work.
                         "readinessProbe": {
                             "httpGet": { "path": "/readyz", "port": "http" },
                             "initialDelaySeconds": 5, "periodSeconds": 10,
@@ -389,128 +392,6 @@ fn serving_pdb(lumen: &Lumen) -> Value {
         // Comfort guard on stateless cattle: keep read capacity during drains
         // without ever blocking a single-replica dev deployment.
         "spec": { "maxUnavailable": 1, "selector": { "matchLabels": selector(&name, "server") } },
-    })
-}
-
-// ---- Relay broker (managed only) ------------------------------------------
-
-fn broker_statefulset(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    let b = &lumen.spec.broker;
-    let mut pvc_spec = json!({
-        "accessModes": ["ReadWriteOnce"],
-        "resources": { "requests": { "storage": b.storage.clone() } },
-    });
-    if let Some(sc) = &b.storage_class {
-        pvc_spec["storageClassName"] = json!(sc);
-    }
-    json!({
-        "apiVersion": "apps/v1",
-        "kind": "StatefulSet",
-        "metadata": meta(&format!("{name}-relay"), &ns, labels(&name, "broker"), &owner),
-        "spec": {
-            // relay-server is a single durable log. Use externalUrl for HA
-            // Relay until relay-raft exposes subscribe/len, otherwise multiple
-            // pods would be independent logs behind one Service.
-            "replicas": 1,
-            "serviceName": format!("{name}-relay-headless"),
-            "podManagementPolicy": "Parallel",
-            "selector": { "matchLabels": selector(&name, "broker") },
-            "template": {
-                "metadata": {
-                    "labels": labels(&name, "broker"),
-                    "annotations": {
-                        "prometheus.io/scrape": "true",
-                        "prometheus.io/port": BROKER_PORT.to_string(),
-                        "prometheus.io/path": "/healthz",
-                    },
-                },
-                "spec": {
-                    "serviceAccountName": name,
-                    "terminationGracePeriodSeconds": 30,
-                    "securityContext": {
-                        "runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001,
-                        "seccompProfile": { "type": "RuntimeDefault" },
-                    },
-                    "containers": [{
-                        "name": "relay",
-                        "image": b.image.clone(),
-                        "imagePullPolicy": "IfNotPresent",
-                        "command": ["relay-server"],
-                        "ports": [{ "name": "http", "containerPort": BROKER_PORT, "protocol": "TCP" }],
-                        "env": [
-                            { "name": "RELAY_BIND", "value": format!("0.0.0.0:{BROKER_PORT}") },
-                            { "name": "RELAY_DATA_DIR", "value": "/data" },
-                        ],
-                        "resources": {
-                            "requests": { "cpu": b.cpu.clone(), "memory": b.memory.clone() },
-                            "limits": { "cpu": b.cpu.clone(), "memory": b.memory.clone() },
-                        },
-                        "readinessProbe": {
-                            "httpGet": { "path": "/healthz", "port": "http" },
-                            "initialDelaySeconds": 5, "periodSeconds": 10, "timeoutSeconds": 3, "failureThreshold": 6,
-                        },
-                        "livenessProbe": {
-                            "httpGet": { "path": "/healthz", "port": "http" },
-                            "initialDelaySeconds": 15, "periodSeconds": 30, "timeoutSeconds": 5, "failureThreshold": 3,
-                        },
-                        "startupProbe": {
-                            "httpGet": { "path": "/healthz", "port": "http" },
-                            "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 30,
-                        },
-                        "securityContext": {
-                            "runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001,
-                            "allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true,
-                            "capabilities": { "drop": ["ALL"] },
-                        },
-                        "volumeMounts": [{ "name": "data", "mountPath": "/data" }],
-                    }],
-                },
-            },
-            "volumeClaimTemplates": [{
-                "metadata": { "name": "data", "labels": labels(&name, "broker") },
-                "spec": pvc_spec,
-            }],
-        },
-    })
-}
-
-fn broker_service(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    json!({
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": meta(&format!("{name}-relay"), &ns, labels(&name, "broker"), &owner),
-        "spec": {
-            "type": "ClusterIP",
-            "selector": selector(&name, "broker"),
-            "ports": [{ "name": "http", "port": BROKER_PORT, "targetPort": "http", "protocol": "TCP" }],
-        },
-    })
-}
-
-fn broker_headless_service(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    json!({
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": meta(&format!("{name}-relay-headless"), &ns, labels(&name, "broker"), &owner),
-        "spec": {
-            "clusterIP": "None",
-            "publishNotReadyAddresses": true,
-            "selector": selector(&name, "broker"),
-            "ports": [{ "name": "http", "port": BROKER_PORT, "targetPort": "http", "protocol": "TCP" }],
-        },
-    })
-}
-
-fn broker_pdb(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    json!({
-        "apiVersion": "policy/v1",
-        "kind": "PodDisruptionBudget",
-        "metadata": meta(&format!("{name}-relay"), &ns, labels(&name, "broker"), &owner),
-        "spec": { "maxUnavailable": 1, "selector": { "matchLabels": selector(&name, "broker") } },
     })
 }
 

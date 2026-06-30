@@ -10,10 +10,6 @@ data:
   # Install-time shard fan-out for client-side crc32 routing. Not
   # online-changeable; overlays may override but a live cluster must not.
   SHARD_COUNT: "3"
-  # Relay write-log endpoint (ClusterIP service over the broker).
-  LUMEN_RELAY_URL: "http://lumen-relay:7000"
-  # Relay subject carrying the Lumen WAL.
-  LUMEN_RELAY_SUBJECT: "lumen-wal"
   # json (prod/staging) or pretty (dev). Overridden per overlay.
   LUMEN_LOG_FORMAT: "json"
   # Client API listener port.

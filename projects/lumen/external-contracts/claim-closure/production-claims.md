@@ -79,7 +79,7 @@ e2e_tests:
     claim_id: log-fan-out-rebuild-from-log
     contract_id: long-running-log-fanout
     category: stability
-    command: "cargo test -p lumen --test wal_relay --test wal_nats_e2e -- --nocapture"
+    command: "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
     assertions:
       - "A late or second node can replay the published write stream and converge with live writes."
   - id: lumen-claim-long-running-kustomize-base

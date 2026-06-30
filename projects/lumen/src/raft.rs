@@ -8,9 +8,7 @@
 //! `libs/raft-core` so multi-pod Lumen owns write ordering and primary/replica
 //! synchronization itself.
 //!
-//! The old broker-owned framing is stale: Relay remains an explicit external
-//! broker mode, but Lumen's multi-pod auto path should use Lumen-owned
-//! primary/replica replication.
+//! Lumen's multi-pod auto path uses Lumen-owned primary/replica replication.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

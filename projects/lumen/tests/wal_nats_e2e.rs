@@ -9,8 +9,8 @@
 //!
 //! What it proves: publish a mutation stream once; two INDEPENDENT
 //! consumers (simulating two serving nodes) each tail the full stream
-//! and build identical indexes. RelayWal is the current deployment default;
-//! this keeps the older NATS backend honest while it remains available.
+//! and build identical indexes. This keeps the older NATS backend honest while
+//! it remains available.
 
 use std::sync::Arc;
 use std::time::Duration;

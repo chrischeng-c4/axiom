@@ -64,7 +64,7 @@ if [[ "$MODE" == "debug" ]]; then
   VERSION_FILES=(projects/lumen/Cargo.toml)
   CURRENT_VERSION="$(project_build_read_version projects/lumen/Cargo.toml)"
   project_build_prepare_debug_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
-  cargo build -p lumen --bin lumen --features relay-wal
+  cargo build -p lumen --bin lumen --features raft-wal
   install_lumen debug
   project_build_restore_manifests
   echo ""
@@ -78,7 +78,7 @@ export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
 project_build_prepare_release_version lumen "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p lumen --bin lumen --features "otel operator relay-wal self-update issue"
+cargo build --release -p lumen --bin lumen --features "otel operator raft-wal self-update issue"
 install_lumen release
 
 TAG="${PROJECT_BUILD_RELEASE_TAG}"

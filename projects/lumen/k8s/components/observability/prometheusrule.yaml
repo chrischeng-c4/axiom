@@ -28,11 +28,11 @@ spec:
             role: server
           annotations:
             summary: "lumen search p99 latency above SLO (>50ms)"
-            description: "Search p99 has exceeded 50ms for 10m. Check posting cache hit ratio, pod CPU saturation, and broker consumer lag (a node still catching up on the log will serve stale + slow)."
+            description: "Search p99 has exceeded 50ms for 10m. Check posting cache hit ratio, pod CPU saturation, and WAL apply lag."
 
         # Write rate sanity: sustained zero published mutations across the
         # fleet is almost always a regression (upstream stuck, auth broken,
-        # broker unreachable), not a real idle window.
+        # or write path stalled), not a real idle window.
         - alert: LumenWriteRateZero
           expr: |
             sum(rate(lumen_index_writes_total{app="lumen",role="server"}[5m])) == 0
@@ -43,10 +43,10 @@ spec:
             role: server
           annotations:
             summary: "lumen has accepted no writes for 15m"
-            description: "Fleet-wide index write rate is zero. Check upstream consumer health, auth configuration, and the Relay broker."
+            description: "Fleet-wide index write rate is zero. Check upstream consumer health, auth configuration, and the Lumen write path."
 
-        # Broker consumer lag: each serving node tails the full write log. A
-        # node that falls behind is serving an increasingly stale index.
+        # WAL apply lag: a serving node that falls behind is serving an
+        # increasingly stale index.
         - alert: LumenConsumerLagHigh
           expr: |
             max by (app, role, pod) (
@@ -58,8 +58,8 @@ spec:
             app: lumen
             role: server
           annotations:
-            summary: "lumen broker consumer lag > 30s"
-            description: "A serving node is more than 30s behind the Relay write log. Its in-memory index is stale; reads from it may miss recent writes. README perf gate is P95 <= 30s."
+            summary: "lumen WAL apply lag > 30s"
+            description: "A serving node is more than 30s behind the Lumen write log. Its in-memory index is stale; reads from it may miss recent writes. README perf gate is P95 <= 30s."
 
         - alert: LumenConsumerLagCritical
           expr: |
@@ -72,11 +72,11 @@ spec:
             app: lumen
             role: server
           annotations:
-            summary: "lumen broker consumer lag > 120s"
-            description: "A serving node is severely behind the write log and is almost certainly unable to catch up under current load. Consider scaling the broker or the node's resources."
+            summary: "lumen WAL apply lag > 120s"
+            description: "A serving node is severely behind the write log and is almost certainly unable to catch up under current load. Check raft health, CPU, and memory pressure."
 
         # Pod restarts: serving nodes are ephemeral, but a tight restart loop
-        # (OOM, crash on broker connect, panic) signals a real problem.
+        # (OOM, raft store failure, panic) signals a real problem.
         - alert: LumenPodRestarting
           expr: |
             increase(
@@ -89,20 +89,4 @@ spec:
             role: server
           annotations:
             summary: "lumen pod restarting repeatedly"
-            description: "A lumen serving container has restarted more than twice in 15m. Check for OOMKills (raise memory limit), failed broker connects, or panics in the log."
-
-        # Relay broker liveness: the write log is the only stateful component.
-        # If Relay is down, the whole data plane stalls.
-        - alert: LumenBrokerDown
-          expr: |
-            absent(up{namespace="lumen",job=~".*lumen-relay.*"} == 1)
-            or
-            min(up{namespace="lumen",job=~".*lumen-relay.*"}) == 0
-          for: 2m
-          labels:
-            severity: critical
-            app: lumen
-            role: broker
-          annotations:
-            summary: "lumen Relay broker is down"
-            description: "The Relay write log is unreachable. Writes cannot be durably logged and serving nodes cannot tail new mutations. This is a data-plane outage."
+            description: "A lumen serving container has restarted more than twice in 15m. Check for OOMKills, raft store failures, or panics in the log."

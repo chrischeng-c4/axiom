@@ -6346,7 +6346,6 @@ dependencies = [
  "raft-host",
  "rand 0.8.6",
  "rayon",
- "relay",
  "reqwest 0.12.28",
  "roaring",
  "rustc-hash 2.1.2",
@@ -6357,6 +6356,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "service-auth",
+ "service-backup",
  "service-http",
  "smallvec",
  "tempfile",
@@ -10663,6 +10663,16 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower 0.5.3",
+]
+
+[[package]]
+name = "service-backup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -142,9 +142,9 @@ deploy_lumen() {
 
 # Operator path: install the CRD + RBAC + operator (same image as serving),
 # then apply a dev-shaped Lumen CR and let the reconcile loop materialize the
-# serving Deployment. The CR uses an external broker URL only to prevent the
-# operator from rendering managed Relay objects; the Deployment is patched to
-# embedded WAL by configure_lumen_only_deployment below.
+# serving Deployment. The Deployment is pinned to embedded WAL by
+# configure_lumen_only_deployment below so this gate remains single-node and
+# service-only.
 deploy_via_operator() {
   kubectl apply -k "${LUMEN_DIR}/k8s/operator"
   # Pin the operator to the freshly-built image (the manifest hard-codes
@@ -173,8 +173,6 @@ spec:
       minReplicas: 1
       maxReplicas: 3
       targetCpuUtilization: 70
-  broker:
-    externalUrl: http://relay-disabled.invalid:7000
 EOF
 
   echo "   Lumen/${LUMEN_CR_NAME} applied; waiting for the operator to render child objects"
@@ -192,21 +190,9 @@ EOF
 }
 
 configure_lumen_only_deployment() {
-  # The shipped kustomize/operator surfaces still support Relay mode. This
-  # dogfood gate is intentionally Lumen-only so it never builds or depends on
-  # the Relay project.
+  # This dogfood gate is intentionally Lumen-only and single-node.
   kubectl -n "$NAMESPACE" set env deploy/"${LUMEN_CR_NAME}" \
-    LUMEN_WAL=embedded \
-    LUMEN_RELAY_URL- \
-    LUMEN_RELAY_SUBJECT- \
-    LUMEN_RELAY_SUBSCRIBER_ID-
-
-  kubectl -n "$NAMESPACE" delete \
-    statefulset/"${LUMEN_CR_NAME}-relay" \
-    service/"${LUMEN_CR_NAME}-relay" \
-    service/"${LUMEN_CR_NAME}-relay-headless" \
-    poddisruptionbudget/"${LUMEN_CR_NAME}-relay" \
-    --ignore-not-found
+    LUMEN_WAL=embedded
 
   kubectl -n "$NAMESPACE" rollout status deploy/"${LUMEN_CR_NAME}" --timeout=180s
 }
@@ -398,8 +384,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # 5. Kill all serving pods. The replacement pod uses embedded WAL, so this
-#    only proves k8s rollout/recovery and fresh-write readiness, not broker
-#    replay or cross-pod log durability.
+#    proves k8s rollout/recovery and fresh-write readiness for the single-node
+#    dogfood path.
 # ---------------------------------------------------------------------------
 
 step "5. kubectl delete pod -l $APP_LABEL (serving-pod restart)" \

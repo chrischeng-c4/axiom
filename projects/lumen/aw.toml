@@ -337,7 +337,7 @@ contract_id = "long-running-log-fanout"
 category = "stability"
 td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-log-fanout"
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs"
-command = "cargo test -p lumen --test wal_relay --test wal_nats_e2e -- --nocapture"
+command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
 required_for_production = true
 assertions = ["A late or second node can replay the published write stream and converge with live writes."]
 

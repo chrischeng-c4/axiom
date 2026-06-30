@@ -14,8 +14,8 @@
 # the edition2024 Cargo feature (stabilized in 1.85), so an older builder fails.
 FROM rust:1.92-slim-bookworm AS builder
 WORKDIR /src
-# Only ca-certificates needed — lumen links no openssl (reqwest is dev-only), so
-# no pkg-config / libssl-dev.
+# Only ca-certificates needed — lumen uses rustls-backed clients for raft/CLI
+# online paths, so no pkg-config / libssl-dev.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
@@ -25,7 +25,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release -p lumen --bin lumen --features "otel operator relay-wal jieba" \
+    cargo build --release -p lumen --bin lumen --features "otel operator raft-wal jieba" \
  && cp target/release/lumen /usr/local/bin/
 
 # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching
@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # binary handles SIGTERM (graceful drain) and spawns no children.
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /usr/local/bin/lumen /usr/local/bin/lumen
-# 7373 = client API. The write log lives in the broker, not in this container.
+# 7373 = client API. WAL storage is embedded locally or Lumen-owned raft state.
 EXPOSE 7373
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]

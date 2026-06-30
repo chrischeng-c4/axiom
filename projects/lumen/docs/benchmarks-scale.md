@@ -119,8 +119,8 @@ LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test write_qps write_qps_ben
 `LUMEN_WRITE_SHARDS` (default 4) to route one HTTP `/index` request by
 `external_id` across independent `WriteCoordinator`/`Engine` shards. That row is
 for multi-core write-apply exploration. The retained historical JetStream
-comparison is against Postgres and OpenSearch; Relay is the current serving /
-operator broker. The strict historical cell is the single-stream row
+comparison is against Postgres and OpenSearch; the current serving/operator HA
+path uses Lumen-owned raft. The strict historical cell is the single-stream row
 (`nats_index_100`); the partitioned row
 (`natssharded_index_100`) is a TARGET/trend row until it is stable under the same
 timeout/error envelope. `LUMEN_WRITE_MODES=embedded,sharded` plus a short
@@ -145,7 +145,7 @@ on the same 1s quick window. The result is useful for direction; the retained
 NATS-vs-peer run below is historical benchmark evidence, not the current broker
 deployment path.
 
-Current Relay write-path quick trend (`LUMEN_WRITE_MODES=embedded,relay`,
+Retired Relay write-path quick trend (`LUMEN_WRITE_MODES=embedded,relay`,
 `LUMEN_WRITE_WARMUP_S=0.1`, `LUMEN_WRITE_WINDOW_S=1.0`,
 `LUMEN_WRITE_BATCH_DOCS=100`, `--features relay-wal`, 2026-06-21):
 
@@ -154,16 +154,10 @@ Current Relay write-path quick trend (`LUMEN_WRITE_MODES=embedded,relay`,
 | embedded local WAL | 927.4k | 941.9k | 9.383 ms | 13.499 ms | 62.442 ms | 0 |
 | RelayWal + in-process relay broker | 702.7k | 829.7k | 10.972 ms | 16.246 ms | 39.853 ms | 0 |
 
-Relay is **0.88x** of embedded throughput at 100 workers in this short local
+Relay was **0.88x** of embedded throughput at 100 workers in this short local
 run. That row includes the HTTP/2 broker hop plus the Lumen apply path waiting
-for subscriber delivery. A pre-wakeup probe exposed the old 25 ms subscribe
-polling floor (`196.2k` docs/s, p95 `70.972 ms` at 100 workers); subject-scoped
-publish observer wakeup raised the same quick row to `275.1k` docs/s and p95
-`45.500 ms`, the `RelayWal` binary payload envelope plus CBOR publish fast path
-raised it to `678.1k` docs/s and p95 `17.975 ms`, and the compact versioned
-string envelope raised it to `829.7k` docs/s and p95 `16.246 ms`. Keep this row
-report-only until it is repeated with a longer window and the same environment
-used for strict peer comparisons.
+for subscriber delivery. This is retained only as historical evidence; Relay WAL
+is no longer an active Lumen backend or perf gate.
 
 Latest JetStream trend (`LUMEN_TEST_NATS_URL=nats://localhost:4223`,
 `LUMEN_WRITE_MODES=nats,natssharded`, `LUMEN_WRITE_WARMUP_S=0.1`,

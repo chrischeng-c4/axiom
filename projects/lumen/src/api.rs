@@ -54,7 +54,7 @@ pub struct AppState {
     /// replace it with a fan-in router while keeping writes/stats local.
     pub search_backend: Arc<dyn SearchBackend>,
     /// Writes go through a [`WriteSink`]: the WAL-seam coordinator for
-    /// embedded/nats/relay, or the raft host for `--wal raft`. Reads use
+    /// embedded/nats, or the raft host for `--wal raft`. Reads use
     /// `engine` directly. See `coordinator` / `wal` / `raft_sm`.
     pub writer: Arc<dyn WriteSink>,
     /// Write/mutation backend. Defaults to the local coordinator; sharded
@@ -195,8 +195,7 @@ impl WriteBackend for LocalWriteBackend {
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl AppState {
-    /// Build state with an explicit write log (e.g. a broker-backed one
-    /// for clustered deployments). Spawns the apply loop.
+    /// Build state with an explicit write log. Spawns the apply loop.
     pub fn with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self {
         let writer = WriteCoordinator::start(wal, engine.clone());
         Self::with_components(engine, auth, writer)
@@ -706,7 +705,7 @@ async fn search(
 ) -> Result<Json<SearchResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Read)?;
     let _consistency = read_consistency_from(&headers);
-    // Standalone and explicit-broker builds satisfy this locally. Primary-
+    // Standalone and legacy external-log builds satisfy this locally. Primary-
     // replica mode will enforce leader/bounded/any against the live cluster
     // state once the raft_core-backed surface is wired.
     Ok(Json(
