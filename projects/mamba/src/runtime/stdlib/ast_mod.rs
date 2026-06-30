@@ -1270,6 +1270,8 @@ pub fn mb_ast_increment_lineno(node: MbValue, n: MbValue) -> MbValue {
     if !n.is_none() && n.as_int().is_none() {
         return ast_arg_type_error("increment_lineno", "n");
     }
+    let delta = n.as_int().unwrap_or(1);
+    increment_ast_node_locations(node, delta);
     node
 }
 
@@ -1323,6 +1325,146 @@ fn copy_non_none_ast_attr(old_node: MbValue, new_node: MbValue, attr: &str) {
             set_ast_attr(new_node, attr, value);
         }
     }
+}
+
+fn increment_ast_node_locations(node: MbValue, delta: i64) {
+    if ast_node_allows_location_attrs(node) {
+        increment_ast_location_attr(node, "lineno", delta);
+        increment_ast_location_attr(node, "end_lineno", delta);
+    }
+    for child in ast_child_nodes(node) {
+        increment_ast_node_locations(child, delta);
+    }
+}
+
+fn ast_node_allows_location_attrs(node: MbValue) -> bool {
+    node.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            super::super::rc::ObjData::Instance { class_name, .. }
+                if ast_node_type_has_location_attrs(class_name)
+        )
+    })
+}
+
+fn ast_node_type_has_location_attrs(class_name: &str) -> bool {
+    matches!(
+        class_name,
+        "AnnAssign"
+            | "Assert"
+            | "Assign"
+            | "AsyncFor"
+            | "AsyncFunctionDef"
+            | "AsyncWith"
+            | "Attribute"
+            | "AugAssign"
+            | "Await"
+            | "BinOp"
+            | "BoolOp"
+            | "Break"
+            | "Call"
+            | "ClassDef"
+            | "Compare"
+            | "Constant"
+            | "Continue"
+            | "Delete"
+            | "Dict"
+            | "DictComp"
+            | "ExceptHandler"
+            | "Expr"
+            | "For"
+            | "FormattedValue"
+            | "FunctionDef"
+            | "GeneratorExp"
+            | "Global"
+            | "If"
+            | "IfExp"
+            | "Import"
+            | "ImportFrom"
+            | "JoinedStr"
+            | "Lambda"
+            | "List"
+            | "ListComp"
+            | "Match"
+            | "MatchAs"
+            | "MatchClass"
+            | "MatchMapping"
+            | "MatchOr"
+            | "MatchSequence"
+            | "MatchSingleton"
+            | "MatchStar"
+            | "MatchValue"
+            | "Name"
+            | "NamedExpr"
+            | "Nonlocal"
+            | "ParamSpec"
+            | "Pass"
+            | "Raise"
+            | "Return"
+            | "Set"
+            | "SetComp"
+            | "Slice"
+            | "Starred"
+            | "Subscript"
+            | "Try"
+            | "TryStar"
+            | "Tuple"
+            | "TypeAlias"
+            | "TypeVar"
+            | "TypeVarTuple"
+            | "UnaryOp"
+            | "While"
+            | "With"
+            | "Yield"
+            | "YieldFrom"
+            | "alias"
+            | "arg"
+            | "keyword"
+            | "NameConstant"
+            | "Num"
+            | "Str"
+            | "Bytes"
+    )
+}
+
+fn increment_ast_location_attr(node: MbValue, attr: &str, delta: i64) {
+    let Some(value) = ast_attr_value(node, attr) else {
+        return;
+    };
+    let Some(current) = value.as_int() else {
+        return;
+    };
+    set_ast_attr(node, attr, MbValue::from_int(current.saturating_add(delta)));
+}
+
+fn ast_child_nodes(node: MbValue) -> Vec<MbValue> {
+    use super::super::rc::ObjData;
+    let mut children = Vec::new();
+    if let Some(ptr) = node.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let guard = fields.read().unwrap();
+                for (name, val) in guard.iter() {
+                    if is_internal_field(name) {
+                        continue;
+                    }
+                    if is_ast_node_value(*val) {
+                        children.push(*val);
+                    } else if let Some(list_ptr) = val.as_ptr() {
+                        if let ObjData::List(ref lock) = (*list_ptr).data {
+                            let list = lock.read().unwrap();
+                            for item in list.iter() {
+                                if is_ast_node_value(*item) {
+                                    children.push(*item);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    children
 }
 
 /// ast.walk(node) -> iterator of all nodes
@@ -1700,6 +1842,66 @@ mod tests {
         assert_eq!(field(copied, "col_offset").as_int(), Some(5));
         assert!(field(copied, "end_lineno").is_none());
         assert!(field(copied, "end_col_offset").is_none());
+    }
+
+    #[test]
+    fn test_increment_lineno_updates_child_locations() {
+        fn field(node: MbValue, name: &str) -> MbValue {
+            let ptr = node.as_ptr().expect("ast node");
+            unsafe {
+                if let super::super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    *fields.read().unwrap().get(name).expect("location attr")
+                } else {
+                    panic!("expected AST instance")
+                }
+            }
+        }
+
+        let leaf = make_ast_node("Constant", FxHashMap::default());
+        set_ast_attr(leaf, "lineno", MbValue::from_int(3));
+        set_ast_attr(leaf, "end_lineno", MbValue::from_int(3));
+
+        let mut expr_fields = FxHashMap::default();
+        expr_fields.insert("value".to_string(), leaf);
+        let expr = make_ast_node("Expr", expr_fields);
+        set_ast_attr(expr, "lineno", MbValue::from_int(2));
+        set_ast_attr(expr, "end_lineno", MbValue::from_int(2));
+
+        let mut module_fields = FxHashMap::default();
+        module_fields.insert(
+            "body".to_string(),
+            MbValue::from_ptr(MbObject::new_list_borrowed(vec![expr])),
+        );
+        module_fields.insert(
+            "type_ignores".to_string(),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let module = make_ast_node("Module", module_fields);
+        set_ast_attr(module, "lineno", MbValue::from_int(1));
+        set_ast_attr(module, "end_lineno", MbValue::from_int(1));
+
+        let incremented = mb_ast_increment_lineno(module, MbValue::from_int(5));
+
+        assert_eq!(incremented.to_bits(), module.to_bits());
+        assert_eq!(field(module, "lineno").as_int(), Some(1));
+        assert_eq!(field(module, "end_lineno").as_int(), Some(1));
+        assert_eq!(field(expr, "lineno").as_int(), Some(7));
+        assert_eq!(field(expr, "end_lineno").as_int(), Some(7));
+        assert_eq!(field(leaf, "lineno").as_int(), Some(8));
+        assert_eq!(field(leaf, "end_lineno").as_int(), Some(8));
+
+        set_ast_attr(leaf, "lineno", MbValue::from_int(10));
+        set_ast_attr(leaf, "end_lineno", MbValue::none());
+        mb_ast_increment_lineno(leaf, MbValue::none());
+        assert_eq!(field(leaf, "lineno").as_int(), Some(11));
+        assert!(field(leaf, "end_lineno").is_none());
+
+        let op = make_ast_node("Add", FxHashMap::default());
+        set_ast_attr(op, "lineno", MbValue::from_int(4));
+        set_ast_attr(op, "end_lineno", MbValue::from_int(4));
+        mb_ast_increment_lineno(op, MbValue::from_int(5));
+        assert_eq!(field(op, "lineno").as_int(), Some(4));
+        assert_eq!(field(op, "end_lineno").as_int(), Some(4));
     }
 
     #[test]
