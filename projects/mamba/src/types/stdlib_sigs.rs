@@ -1014,6 +1014,42 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: defaultdict typevar/default-factory and merge operands collapse
+    // to Unknown or an empty generated row. The fixtures probe bare user objects
+    // and scalar non-dicts, so these rows restore strict walls while leaving the
+    // full mapping/callable overload matrix to future protocol modeling.
+    StdlibSig {
+        module: "collections",
+        qualifier: "defaultdict",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("default_factory", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "defaultdict",
+        name: "__missing__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "defaultdict",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Dict)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "collections",
+        qualifier: "defaultdict",
+        name: "__ror__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Dict)],
+        enforceable: true,
+    },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
     StdlibSig {
@@ -3496,6 +3532,21 @@ mod tests {
         ] {
             let sig = get("collections", "UserString", name).expect("UserString row present");
             assert!(sig.enforceable, "UserString.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, first_ty);
+        }
+    }
+
+    #[test]
+    fn curated_defaultdict_walls_override_unknown_generated_rows() {
+        for (name, first_param, first_ty) in [
+            ("__init__", "default_factory", CoreTy::Typed),
+            ("__missing__", "key", CoreTy::Typed),
+            ("__or__", "value", CoreTy::Dict),
+            ("__ror__", "value", CoreTy::Dict),
+        ] {
+            let sig = get("collections", "defaultdict", name).expect("defaultdict row present");
+            assert!(sig.enforceable, "defaultdict.{name} must stay enforceable");
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, first_ty);
         }
