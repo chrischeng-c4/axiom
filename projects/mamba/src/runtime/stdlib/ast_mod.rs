@@ -1281,7 +1281,48 @@ pub fn mb_ast_copy_location(new_node: MbValue, old_node: MbValue) -> MbValue {
     if !is_ast_node_value(old_node) {
         return ast_arg_type_error("copy_location", "old_node");
     }
+    copy_non_none_ast_attr(old_node, new_node, "lineno");
+    copy_non_none_ast_attr(old_node, new_node, "col_offset");
+    copy_ast_attr(old_node, new_node, "end_lineno");
+    copy_ast_attr(old_node, new_node, "end_col_offset");
     new_node
+}
+
+fn ast_attr_value(node: MbValue, attr: &str) -> Option<MbValue> {
+    node.as_ptr().and_then(|ptr| unsafe {
+        if let super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(attr).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn set_ast_attr(node: MbValue, attr: &str, value: MbValue) {
+    if let Some(ptr) = node.as_ptr() {
+        unsafe {
+            if let super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(value);
+                if let Some(old) = fields.write().unwrap().insert(attr.to_string(), value) {
+                    super::super::rc::release_if_ptr(old);
+                }
+            }
+        }
+    }
+}
+
+fn copy_ast_attr(old_node: MbValue, new_node: MbValue, attr: &str) {
+    if let Some(value) = ast_attr_value(old_node, attr) {
+        set_ast_attr(new_node, attr, value);
+    }
+}
+
+fn copy_non_none_ast_attr(old_node: MbValue, new_node: MbValue, attr: &str) {
+    if let Some(value) = ast_attr_value(old_node, attr) {
+        if !value.is_none() {
+            set_ast_attr(new_node, attr, value);
+        }
+    }
 }
 
 /// ast.walk(node) -> iterator of all nodes
@@ -1615,6 +1656,50 @@ mod tests {
         let node = mb_ast_parse(MbValue::from_ptr(MbObject::new_str("".to_string())));
         let fixed = mb_ast_fix_missing_locations(node);
         assert!(fixed.as_ptr().is_some());
+    }
+
+    #[test]
+    fn test_copy_location_copies_cpython_location_attrs() {
+        fn field(node: MbValue, name: &str) -> MbValue {
+            let ptr = node.as_ptr().expect("ast node");
+            unsafe {
+                if let super::super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    *fields.read().unwrap().get(name).expect("location attr")
+                } else {
+                    panic!("expected AST instance")
+                }
+            }
+        }
+
+        let old = make_ast_node("Constant", FxHashMap::default());
+        set_ast_attr(old, "lineno", MbValue::from_int(7));
+        set_ast_attr(old, "col_offset", MbValue::from_int(3));
+        set_ast_attr(old, "end_lineno", MbValue::none());
+        set_ast_attr(old, "end_col_offset", MbValue::none());
+
+        let new_node = make_ast_node("Constant", FxHashMap::default());
+        let copied = mb_ast_copy_location(new_node, old);
+
+        assert_eq!(field(copied, "lineno").as_int(), Some(7));
+        assert_eq!(field(copied, "col_offset").as_int(), Some(3));
+        assert!(field(copied, "end_lineno").is_none());
+        assert!(field(copied, "end_col_offset").is_none());
+
+        let old_without_start = make_ast_node("Constant", FxHashMap::default());
+        set_ast_attr(old_without_start, "lineno", MbValue::none());
+        set_ast_attr(old_without_start, "col_offset", MbValue::none());
+        set_ast_attr(old_without_start, "end_lineno", MbValue::none());
+        set_ast_attr(old_without_start, "end_col_offset", MbValue::none());
+
+        let preserved_start = make_ast_node("Constant", FxHashMap::default());
+        set_ast_attr(preserved_start, "lineno", MbValue::from_int(11));
+        set_ast_attr(preserved_start, "col_offset", MbValue::from_int(5));
+        let copied = mb_ast_copy_location(preserved_start, old_without_start);
+
+        assert_eq!(field(copied, "lineno").as_int(), Some(11));
+        assert_eq!(field(copied, "col_offset").as_int(), Some(5));
+        assert!(field(copied, "end_lineno").is_none());
+        assert!(field(copied, "end_col_offset").is_none());
     }
 
     #[test]
