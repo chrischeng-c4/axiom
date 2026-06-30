@@ -1915,6 +1915,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: decimal.Decimal.__round__ has a no-argument overload and an
+    // `ndigits: SupportsIndex` overload. The generated overload row collapses
+    // to an empty unenforceable signature; keep zero-arg calls skip-safe while
+    // rejecting concrete non-index scalars when ndigits is present.
+    StdlibSig {
+        module: "decimal",
+        qualifier: "Decimal",
+        name: "__round__",
+        kind: SigKind::Method,
+        params: &[p("ndigits", CoreTy::Int)],
+        enforceable: true,
+    },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
     // bare user instance and impossible concrete scalar cannot satisfy those
@@ -4104,6 +4116,15 @@ mod tests {
             assert_eq!(sig.params[0].name, "value");
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
+    }
+
+    #[test]
+    fn curated_decimal_round_ndigits_overrides_empty_generated_row() {
+        let sig = get("decimal", "Decimal", "__round__").expect("Decimal.__round__ present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "ndigits");
+        assert_eq!(sig.params[0].ty, CoreTy::Int);
     }
 
     #[test]
