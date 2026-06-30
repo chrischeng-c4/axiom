@@ -2642,6 +2642,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     StdlibSig {
         module: "email.message",
         qualifier: "Message",
+        name: "get_payload",
+        kind: SigKind::Method,
+        params: &[
+            p("i", CoreTy::Int),
+            p("decode", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
         name: "as_string",
         kind: SigKind::Method,
         params: &[
@@ -5301,6 +5312,18 @@ mod tests {
             assert_eq!(sig.params[0].name, param_name, "Message.{name}");
             assert_eq!(sig.params[0].ty, CoreTy::Typed, "Message.{name}");
         }
+    }
+
+    #[test]
+    fn curated_email_message_get_payload_index_wall_overrides_unknown_row() {
+        let sig = get("email.message", "Message", "get_payload")
+            .expect("email.message Message.get_payload row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "i");
+        assert_eq!(sig.params[0].ty, CoreTy::Int);
+        assert_eq!(sig.params[1].name, "decode");
+        assert_eq!(sig.params[1].ty, CoreTy::Unknown);
     }
 
     #[test]
