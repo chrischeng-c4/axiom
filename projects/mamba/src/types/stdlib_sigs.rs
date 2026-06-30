@@ -2576,6 +2576,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     StdlibSig {
         module: "email.message",
         qualifier: "MIMEPart",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("policy", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "MIMEPart",
         name: "attach",
         kind: SigKind::Method,
         params: &[p("payload", CoreTy::Typed)],
@@ -2604,11 +2612,30 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     StdlibSig {
         module: "email.message",
         qualifier: "Message",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("policy", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
         name: "as_bytes",
         kind: SigKind::Method,
         params: &[
             p("unixfrom", CoreTy::Bool),
             p("policy", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "set_payload",
+        kind: SigKind::Method,
+        params: &[
+            p("payload", CoreTy::Typed),
+            p("charset", CoreTy::Unknown),
         ],
         enforceable: true,
     },
@@ -5221,6 +5248,7 @@ mod tests {
     #[test]
     fn curated_email_message_mimepart_typed_walls_override_unknown_rows() {
         for (name, param_name) in [
+            ("__init__", "policy"),
             ("attach", "payload"),
             ("get_body", "preferencelist"),
         ] {
@@ -5230,6 +5258,21 @@ mod tests {
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, param_name, "MIMEPart.{name}");
             assert_eq!(sig.params[0].ty, CoreTy::Typed, "MIMEPart.{name}");
+        }
+    }
+
+    #[test]
+    fn curated_email_message_message_typed_walls_override_unknown_rows() {
+        for (name, param_name) in [
+            ("__init__", "policy"),
+            ("set_payload", "payload"),
+        ] {
+            let sig = get("email.message", "Message", name)
+                .expect("email.message Message row present");
+            assert!(sig.enforceable, "Message.{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, param_name, "Message.{name}");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed, "Message.{name}");
         }
     }
 
