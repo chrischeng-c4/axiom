@@ -89,6 +89,10 @@ unsafe extern "C" fn raw_turtle_write(_self_v: MbValue, args: MbValue) -> MbValu
     MbValue::none()
 }
 
+unsafe extern "C" fn transport_socket_noop(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::none()
+}
+
 unsafe extern "C" fn curses_bool_flag(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     raise_type_error("curses flag must be bool")
 }
@@ -98,6 +102,15 @@ fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usi
     let mut methods = HashMap::new();
     methods.insert(method_name.to_string(), MbValue::from_func(addr));
     super::super::class::mb_class_register(class_name, vec!["object".to_string()], methods);
+}
+
+fn register_variadic_method_class_many(class_name: &str, methods: &[(&str, usize)]) {
+    let mut map = HashMap::new();
+    for (method_name, addr) in methods {
+        super::super::module::register_variadic_func(*addr as u64);
+        map.insert((*method_name).to_string(), MbValue::from_func(*addr));
+    }
+    super::super::class::mb_class_register(class_name, vec!["object".to_string()], map);
 }
 
 /// logging.config.fileConfig(fname) — validates the config file: a missing
@@ -214,6 +227,60 @@ fn register_asyncio_transports() {
         write_transport_write as *const () as usize,
     );
     super::register_module("asyncio.transports", attrs);
+}
+
+fn register_asyncio_trsock() {
+    let addr = transport_socket_noop as *const () as usize;
+    register_variadic_method_class_many(
+        "TransportSocket",
+        &[
+            ("__enter__", addr),
+            ("__exit__", addr),
+            ("__getstate__", addr),
+            ("__init__", addr),
+            ("accept", addr),
+            ("bind", addr),
+            ("close", addr),
+            ("connect", addr),
+            ("connect_ex", addr),
+            ("detach", addr),
+            ("dup", addr),
+            ("fileno", addr),
+            ("get_inheritable", addr),
+            ("getpeername", addr),
+            ("getsockbyname", addr),
+            ("getsockname", addr),
+            ("getsockopt", addr),
+            ("gettimeout", addr),
+            ("ioctl", addr),
+            ("listen", addr),
+            ("makefile", addr),
+            ("recv", addr),
+            ("recv_into", addr),
+            ("recvfrom", addr),
+            ("recvfrom_into", addr),
+            ("recvmsg", addr),
+            ("recvmsg_into", addr),
+            ("send", addr),
+            ("sendall", addr),
+            ("sendfile", addr),
+            ("sendmsg", addr),
+            ("sendmsg_afalg", addr),
+            ("sendto", addr),
+            ("set_inheritable", addr),
+            ("setblocking", addr),
+            ("setsockopt", addr),
+            ("settimeout", addr),
+            ("share", addr),
+            ("shutdown", addr),
+        ],
+    );
+    let mut attrs = build_attrs(&[], &[], &[], &[]);
+    attrs.insert(
+        "TransportSocket".into(),
+        make_type_obj("TransportSocket", "asyncio.trsock"),
+    );
+    super::register_module("asyncio.trsock", attrs);
 }
 
 fn register_turtle() {
@@ -523,6 +590,7 @@ pub fn register() {
         &[],
     );
     register_asyncio_transports();
+    register_asyncio_trsock();
     register_with(
         "asyncio.events",
         &[

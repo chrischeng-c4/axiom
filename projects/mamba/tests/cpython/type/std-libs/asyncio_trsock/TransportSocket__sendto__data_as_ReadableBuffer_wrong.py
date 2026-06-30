@@ -9,12 +9,11 @@
 # case = "TransportSocket__sendto__data_as_ReadableBuffer_wrong"
 # subject = "asyncio.trsock.TransportSocket.sendto(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/trsock.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: asyncio.trsock.TransportSocket.sendto(data: ReadableBuffer); call it with the wrong type.
 

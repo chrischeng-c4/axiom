@@ -9,12 +9,11 @@
 # case = "TransportSocket__sendmsg_afalg__msg_as_Iterable_wrong"
 # subject = "asyncio.trsock.TransportSocket.sendmsg_afalg(msg: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/trsock.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg
 # mamba-strict-type: TypeError
 """Type wall: asyncio.trsock.TransportSocket.sendmsg_afalg(msg: Iterable); call it with the wrong type.
 

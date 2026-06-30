@@ -9,12 +9,11 @@
 # case = "TransportSocket__share__process_id_as_int_wrong"
 # subject = "asyncio.trsock.TransportSocket.share(process_id: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed process_id"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/trsock.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed process_id
 # mamba-strict-type: TypeError
 """Type wall: asyncio.trsock.TransportSocket.share(process_id: int); call it with the wrong type.
 
