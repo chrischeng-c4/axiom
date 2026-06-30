@@ -1,0 +1,13 @@
+[project]
+name = "tape"
+cap_path = "README.md"
+label = "project:tape"
+
+[capability.profile]
+traits = ["long_running", "cli_facing", "competitive_replacement", "network_exposed", "http2_api", "kubernetes_native", "primary_replicas", "stateful_storage"]
+
+[[workspaces]]
+name = "tape"
+paths = ["**"]
+target = "schemas"
+test_cmd = "true"

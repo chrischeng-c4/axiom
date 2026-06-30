@@ -1,0 +1,14 @@
+[project]
+name = "loom"
+cap_path = "README.md"
+label = "project:loom"
+
+[capability.profile]
+traits = ["long_running", "cli_facing", "network_exposed", "http2_api", "kubernetes_native", "primary_replicas", "stateful_storage"]
+
+[[workspaces]]
+name = "loom"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p loom"
+codegen.profile = "rust/score-crate"
