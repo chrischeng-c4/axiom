@@ -178,6 +178,24 @@ fn warnings_strict_type_wall_is_curated() {
 }
 
 #[test]
+fn weakrefset_constructor_strict_type_wall_is_curated() {
+    let text =
+        fs::read_to_string(mamba_root().join("src/types/stdlib_sigs.rs")).expect("read sig table");
+    let needle =
+        "module: \"_weakrefset\",\n        qualifier: \"WeakSet\",\n        name: \"__init__\"";
+    let row_start = text
+        .find(needle)
+        .expect("missing curated _weakrefset.WeakSet.__init__ row");
+    let rest = &text[row_start..];
+    let row_end = rest.find("\n    StdlibSig {").unwrap_or(rest.len());
+    let row = &rest[..row_end];
+    assert!(
+        row.contains("p(\"data\", CoreTy::Typed)"),
+        "_weakrefset.WeakSet.__init__ must keep a strict Typed wall for data"
+    );
+}
+
+#[test]
 fn declared_type_divergences_have_machine_owner_refs() {
     let path = mamba_root().join("tests/harness/cpython/config/type_divergences.txt");
     let text = fs::read_to_string(path).expect("read type_divergences.txt");
