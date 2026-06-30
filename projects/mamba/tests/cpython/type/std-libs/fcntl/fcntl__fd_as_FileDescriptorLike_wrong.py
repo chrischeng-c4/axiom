@@ -9,12 +9,11 @@
 # case = "fcntl__fd_as_FileDescriptorLike_wrong"
 # subject = "fcntl.fcntl(fd: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fd"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fcntl.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fd
 # mamba-strict-type: TypeError
 """Type wall: fcntl.fcntl(fd: FileDescriptorLike); call it with the wrong type.
 
