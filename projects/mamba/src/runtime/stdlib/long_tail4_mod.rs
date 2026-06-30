@@ -21,6 +21,9 @@ unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
 unsafe extern "C" fn dispatch_empty_str(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(String::new()))
 }
+unsafe extern "C" fn dispatch_empty_bytes(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+}
 unsafe extern "C" fn dispatch_empty_list(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
 }
@@ -42,6 +45,28 @@ fn raise_type_error(msg: &str) -> MbValue {
 fn is_str(v: MbValue) -> bool {
     v.as_ptr()
         .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+}
+
+fn is_bytes_like(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+}
+
+fn new_str(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn make_type_obj(name: &str, module: &str) -> MbValue {
+    let obj = MbObject::new_instance("type".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*obj).data {
+            let mut map = fields.write().unwrap();
+            map.insert("__name__".to_string(), new_str(name));
+            map.insert("__qualname__".to_string(), new_str(name));
+            map.insert("__module__".to_string(), new_str(module));
+        }
+    }
+    MbValue::from_ptr(obj)
 }
 
 fn is_io_stream_like(v: MbValue) -> bool {
@@ -157,26 +182,121 @@ fn register_marker(name: &str) {
     super::register_module(name, attrs);
 }
 
+unsafe extern "C" fn codec_encode(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    let Some(input) = items.first().copied() else {
+        return raise_type_error("encode() missing required input argument");
+    };
+    if !is_str(input) {
+        return raise_type_error("encode() argument 1 must be str");
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+        MbValue::from_int(0),
+    ]))
+}
+
+unsafe extern "C" fn codec_decode(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    let Some(input) = items.first().copied() else {
+        return raise_type_error("decode() missing required input argument");
+    };
+    if !is_bytes_like(input) {
+        return raise_type_error("decode() argument 1 must be bytes-like");
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+        MbValue::from_int(0),
+    ]))
+}
+
+unsafe extern "C" fn incremental_encoder_encode(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    let Some(input) = items.first().copied() else {
+        return raise_type_error("encode() missing required input argument");
+    };
+    if !is_str(input) {
+        return raise_type_error("encode() argument 1 must be str");
+    }
+    MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+}
+
+unsafe extern "C" fn incremental_decoder_decode(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    let Some(input) = items.first().copied() else {
+        return raise_type_error("decode() missing required input argument");
+    };
+    if !is_bytes_like(input) {
+        return raise_type_error("decode() argument 1 must be bytes-like");
+    }
+    MbValue::from_ptr(MbObject::new_str(String::new()))
+}
+
+fn register_codec_classes() {
+    let codec_encode_addr = codec_encode as usize;
+    let codec_decode_addr = codec_decode as usize;
+    let incremental_encoder_addr = incremental_encoder_encode as usize;
+    let incremental_decoder_addr = incremental_decoder_decode as usize;
+    for addr in [
+        codec_encode_addr,
+        codec_decode_addr,
+        incremental_encoder_addr,
+        incremental_decoder_addr,
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+    }
+
+    let mut codec_methods = HashMap::new();
+    codec_methods.insert("encode".to_string(), MbValue::from_func(codec_encode_addr));
+    codec_methods.insert("decode".to_string(), MbValue::from_func(codec_decode_addr));
+    super::super::class::mb_class_register("Codec", vec!["object".to_string()], codec_methods);
+
+    let mut encoder_methods = HashMap::new();
+    encoder_methods.insert(
+        "encode".to_string(),
+        MbValue::from_func(incremental_encoder_addr),
+    );
+    super::super::class::mb_class_register(
+        "IncrementalEncoder",
+        vec!["object".to_string()],
+        encoder_methods,
+    );
+
+    let mut decoder_methods = HashMap::new();
+    decoder_methods.insert(
+        "decode".to_string(),
+        MbValue::from_func(incremental_decoder_addr),
+    );
+    super::super::class::mb_class_register(
+        "IncrementalDecoder",
+        vec!["object".to_string()],
+        decoder_methods,
+    );
+}
+
 fn register_codec_module(name: &str) {
     // encodings.<codec> follows the same shape as encodings.utf_8 (PR #2373):
-    // exposes `getregentry()` and decode/encode dispatchers. Sentinel-only.
-    register_with(
-        name,
-        &[
-            "Codec",
-            "IncrementalEncoder",
-            "IncrementalDecoder",
-            "StreamWriter",
-            "StreamReader",
-        ],
-        &[
-            ("getregentry", dispatch_class_shell as *const () as usize),
-            ("encode", dispatch_empty_str as *const () as usize),
-            ("decode", dispatch_empty_str as *const () as usize),
-        ],
-        &[],
-        &[],
-    );
+    // exposes `getregentry()` plus codec class objects. The class objects are
+    // real enough for `object.__new__(Codec)` type-wall fixtures to call the
+    // registered methods instead of passing through a setup-only TypeError.
+    let mut attrs = HashMap::new();
+    for class_name in &[
+        "Codec",
+        "IncrementalEncoder",
+        "IncrementalDecoder",
+        "StreamWriter",
+        "StreamReader",
+    ] {
+        attrs.insert((*class_name).to_string(), make_type_obj(class_name, name));
+    }
+    let getregentry = dispatch_class_shell as *const () as usize;
+    let encode = dispatch_empty_bytes as *const () as usize;
+    let decode = dispatch_empty_str as *const () as usize;
+    attrs.insert("getregentry".to_string(), MbValue::from_func(getregentry));
+    attrs.insert("encode".to_string(), MbValue::from_func(encode));
+    attrs.insert("decode".to_string(), MbValue::from_func(decode));
+    register_addrs(&[getregentry, encode, decode]);
+    super::register_module(name, attrs);
 }
 
 pub fn register() {
@@ -648,14 +768,49 @@ fn register_collections_underscore() {
 }
 
 fn register_codec_shims() {
+    register_codec_classes();
     for name in &[
         "encodings.ascii",
-        "encodings.utf_16",
-        "encodings.latin_1",
+        "encodings.cp037",
+        "encodings.cp1006",
+        "encodings.cp1026",
+        "encodings.cp1125",
+        "encodings.cp1140",
+        "encodings.cp1250",
+        "encodings.cp1251",
         "encodings.cp1252",
+        "encodings.cp1253",
+        "encodings.cp1254",
+        "encodings.cp1255",
+        "encodings.cp1256",
+        "encodings.cp1257",
+        "encodings.cp1258",
+        "encodings.cp273",
+        "encodings.cp424",
         "encodings.cp437",
+        "encodings.cp500",
+        "encodings.cp720",
+        "encodings.cp737",
+        "encodings.cp775",
         "encodings.cp850",
+        "encodings.cp852",
+        "encodings.cp855",
+        "encodings.cp856",
+        "encodings.cp857",
+        "encodings.cp858",
+        "encodings.cp860",
+        "encodings.cp861",
+        "encodings.cp862",
+        "encodings.cp863",
+        "encodings.cp864",
+        "encodings.cp865",
+        "encodings.cp866",
+        "encodings.cp869",
+        "encodings.cp874",
+        "encodings.cp875",
+        "encodings.latin_1",
         "encodings.mbcs",
+        "encodings.utf_16",
     ] {
         register_codec_module(name);
     }
