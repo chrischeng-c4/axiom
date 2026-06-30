@@ -15,23 +15,11 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/tests/vat_emulator_httpmock_routing.rs`, captured as a rust-source-unit (td_ast) item-tree
-during vat standardization onto the codegen ladder.
+Public API manifest for `projects/vat/tests/vat_emulator_httpmock_routing.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `vat_bin` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 14 | fn vat_bin() -> &'static str |
-| `free_port` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 18 | fn free_port() -> u16 |
-| `wait_for_port` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 26 | fn wait_for_port(addr: &str) |
-| `drop` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 39 | fn drop(&mut self) |
-| `spawn_sink` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 47 | fn spawn_sink() -> (u16, mpsc::Receiver<String>) |
-| `spawn_proxy` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 71 | fn spawn_proxy(routes: &[(&str, u16)]) -> (String, Killed) |
-| `http_mock_routes_known_host_to_local_sink` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 101 | async fn http_mock_routes_known_host_to_local_sink() |
-| `http_mock_admin_registers_route_at_runtime` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 124 | async fn http_mock_admin_registers_route_at_runtime() |
-| `http_mock_routes_https_via_mitm` | projects/vat/tests/vat_emulator_httpmock_routing.rs | function | private | 153 | async fn http_mock_routes_https_via_mitm() |
-
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

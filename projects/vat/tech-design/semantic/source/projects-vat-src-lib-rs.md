@@ -16,12 +16,33 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/lib.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/lib.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `VERSION` | projects/vat/src/lib.rs | constant | pub | 52 |  |
+| `cli` | projects/vat/src/lib.rs | module | pub | 49 |  |
+| `cluster` | projects/vat/src/lib.rs | module | pub | 34 |  |
+| `commands` | projects/vat/src/lib.rs | module | pub | 35 |  |
+| `config` | projects/vat/src/lib.rs | module | pub | 36 |  |
+| `emulator` | projects/vat/src/lib.rs | module | pub | 38 |  |
+| `event` | projects/vat/src/lib.rs | module | pub | 39 |  |
+| `gpu` | projects/vat/src/lib.rs | module | pub | 40 |  |
+| `id` | projects/vat/src/lib.rs | module | pub | 41 |  |
+| `overlay` | projects/vat/src/lib.rs | module | pub | 42 |  |
+| `paths` | projects/vat/src/lib.rs | module | pub | 43 |  |
+| `sandbox` | projects/vat/src/lib.rs | module | pub | 44 |  |
+| `spec` | projects/vat/src/lib.rs | module | pub | 45 |  |
+| `state` | projects/vat/src/lib.rs | module | pub | 46 |  |
+| `store` | projects/vat/src/lib.rs | module | pub | 47 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! vat — agent-native, GPU-native dev containers.
 //!
 //! ## What vat is
@@ -72,6 +93,7 @@ pub mod cli;
 
 /// Crate version, surfaced by `vat --version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+// CODEGEN-END
 ````
 
 ## Changes

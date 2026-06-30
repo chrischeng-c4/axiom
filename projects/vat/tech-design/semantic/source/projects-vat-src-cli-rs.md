@@ -16,12 +16,20 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/cli.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/cli.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `EmulatorKind` | projects/vat/src/cli.rs | enum | pub | 222 |  |
+| `run` | projects/vat/src/cli.rs | function | pub | 278 | run() -> Result<ExitCode> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-cli-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! CLI surface.
 //!
 //! Verbs are deliberately few and composable, because the operator is an
@@ -37,7 +45,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands;
-use crate::config::ClusterBackend;
+use crate::config::{ClusterBackend, RetentionPolicy};
 use crate::spec::{GpuRequest, Isolation};
 
 #[derive(Parser)]
@@ -56,6 +64,9 @@ struct Cli {
 enum Cmd {
     /// Create a fresh vat and run a command inside it.
     Run {
+        /// Run a named production-like integration scenario from vat.toml.
+        #[arg(long)]
+        scenario: Option<String>,
         /// Named runner(s) from vat.toml. Omit to use default_runner or the
         /// only runner; pass several to run them CONCURRENTLY against one
         /// shared workspace + service set (worst exit code wins).
@@ -78,6 +89,9 @@ enum Cmd {
         /// Agent runner mode already emits compact JSONL. Direct mode uses this for full VatState JSON.
         #[arg(long)]
         json: bool,
+        /// Override vat.toml [workspace].keep for this configured run.
+        #[arg(long, value_enum)]
+        keep: Option<RetentionPolicy>,
         /// Direct command mode, e.g. `vat run -- python train.py`.
         #[arg(last = true, allow_hyphen_values = true, value_name = "COMMAND")]
         cmd: Vec<String>,
@@ -176,6 +190,10 @@ enum Cmd {
         /// Seed a host route (http-mock only), repeatable: `--route host=base`.
         #[arg(long)]
         route: Vec<String>,
+        /// Hermetic mode (http-mock only): block unmatched requests instead of
+        /// forwarding them to the real upstream.
+        #[arg(long)]
+        no_forward: bool,
     },
 }
 
@@ -185,6 +203,7 @@ enum LlmFormat {
     Json,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-cli-rs.md#source
 impl From<LlmFormat> for cli_std::llm::Format {
     fn from(format: LlmFormat) -> Self {
         match format {
@@ -290,6 +309,7 @@ pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Run {
+            scenario,
             runners,
             base,
             from,
@@ -297,8 +317,28 @@ pub fn run() -> Result<ExitCode> {
             isolation,
             gpu,
             json,
+            keep,
             mut cmd,
         } => {
+            if let Some(scenario_id) = scenario {
+                if !cmd.is_empty() {
+                    anyhow::bail!("vat run --scenario cannot be combined with direct command mode");
+                }
+                if !runners.is_empty() {
+                    anyhow::bail!("vat run --scenario cannot be combined with runner ids");
+                }
+                let target = commands::run::Target::Scenario { scenario_id };
+                return commands::run::exec(commands::run::Args {
+                    target,
+                    base,
+                    from,
+                    name,
+                    isolation,
+                    gpu,
+                    json,
+                    keep,
+                });
+            }
             let target = if !cmd.is_empty() {
                 let program = cmd.remove(0);
                 commands::run::Target::Direct {
@@ -318,6 +358,7 @@ pub fn run() -> Result<ExitCode> {
                 isolation,
                 gpu,
                 json,
+                keep,
             })
         }
         Cmd::Ls { json } => commands::ls::exec(json),
@@ -355,7 +396,16 @@ pub fn run() -> Result<ExitCode> {
             cassette_dir,
             spec,
             route,
-        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec, route),
+            no_forward,
+        } => commands::emulator::exec(
+            kind,
+            host_port,
+            ca_path,
+            cassette_dir,
+            spec,
+            route,
+            no_forward,
+        ),
     }
 }
 
@@ -363,10 +413,7 @@ pub fn run() -> Result<ExitCode> {
 /// (`llm` / `upgrade` / `issue`), per CONTRIBUTING.md. Stamps come from `build.rs`.
 /// @spec projects/vat/tech-design/interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md#cli
 // Used by the feature-gated upgrade/issue dispatch; unused in a lean build.
-#[cfg_attr(
-    not(any(feature = "self-update", feature = "issue")),
-    allow(dead_code)
-)]
+#[cfg_attr(not(any(feature = "self-update", feature = "issue")), allow(dead_code))]
 const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "vat",
     repo: "chrischeng-c4/axiom",
@@ -443,8 +490,13 @@ fn issue_cmd(cmd: IssueCmd) -> Result<ExitCode> {
                 let message = (!message.is_empty()).then(|| message.join(" "));
                 let title = title.unwrap_or_else(|| {
                     if let Some(message) = message.as_deref().filter(|m| !m.trim().is_empty()) {
-                        let head: String =
-                            message.lines().next().unwrap_or("").chars().take(72).collect();
+                        let head: String = message
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .chars()
+                            .take(72)
+                            .collect();
                         format!("vat: {head}")
                     } else {
                         "vat: issue report".to_string()
@@ -476,6 +528,7 @@ fn issue_cmd(_cmd: IssueCmd) -> Result<ExitCode> {
          default features (the published binary includes it)"
     )
 }
+// CODEGEN-END
 ````
 
 ## Changes

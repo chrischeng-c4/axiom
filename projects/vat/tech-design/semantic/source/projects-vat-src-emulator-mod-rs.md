@@ -16,12 +16,31 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/mod.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/mod.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Kind` | projects/vat/src/emulator/mod.rs | enum | pub | 57 |  |
+| `auth` | projects/vat/src/emulator/mod.rs | module | pub | 13 |  |
+| `dispatch` | projects/vat/src/emulator/mod.rs | module | pub | 14 |  |
+| `googleapis` | projects/vat/src/emulator/mod.rs | module | pub | 32 |  |
+| `grpc_mux` | projects/vat/src/emulator/mod.rs | module | pub | 15 |  |
+| `httpmock` | projects/vat/src/emulator/mod.rs | module | pub | 16 |  |
+| `openapi` | projects/vat/src/emulator/mod.rs | module | pub | 17 |  |
+| `pubsub` | projects/vat/src/emulator/mod.rs | module | pub | 18 |  |
+| `scheduler` | projects/vat/src/emulator/mod.rs | module | pub | 19 |  |
+| `serve` | projects/vat/src/emulator/mod.rs | function | pub | 83 | serve(kind: Kind, host_port: &str) -> Result<()> |
+| `storage` | projects/vat/src/emulator/mod.rs | module | pub | 20 |  |
+| `tasks` | projects/vat/src/emulator/mod.rs | module | pub | 21 |  |
+| `workflows` | projects/vat/src/emulator/mod.rs | module | pub | 22 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! vat's built-in Rust local-test emulators.
 //!
 //! Each emulator is a pure in-process server (no Java, no gcloud, no Docker),
@@ -75,6 +94,7 @@ pub mod googleapis {
 use anyhow::Result;
 
 /// Which built-in emulator to serve.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-mod-rs.md#source
 pub enum Kind {
     Pubsub,
     FirebaseAuth,
@@ -88,6 +108,9 @@ pub enum Kind {
         ca_path: String,
         cassette_dir: String,
         routes: Vec<(String, String)>,
+        /// Forward unmatched requests to the real upstream (default). When false
+        /// (hermetic / `--no-forward`) an unmatched request is blocked.
+        forward: bool,
     },
     /// The OpenAPI mock serves responses from a spec document.
     Openapi {
@@ -97,6 +120,7 @@ pub enum Kind {
 
 /// Serve the selected emulator on `host_port` (e.g. `127.0.0.1:8085`) until the
 /// process is killed.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-mod-rs.md#source
 pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
     match kind {
         Kind::FirebaseAuth => auth::serve(host_port).await,
@@ -109,10 +133,12 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
             ca_path,
             cassette_dir,
             routes,
-        } => httpmock::serve(host_port, &ca_path, &cassette_dir, &routes).await,
+            forward,
+        } => httpmock::serve(host_port, &ca_path, &cassette_dir, &routes, forward).await,
         Kind::Openapi { spec } => openapi::serve(host_port, &spec).await,
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

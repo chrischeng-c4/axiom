@@ -1,22 +1,24 @@
-// SPEC-MANAGED: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#vat-firebase-bundle-smoke
+// SPEC-MANAGED: projects/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec vat-firebase-bundle-smoke
+// @ec scenario-hermetic-requires-http-mock-service
 // @capability agent-native-gpu-native-dev-containers
-// @claim gcp-firebase-emulator-service-presets
-// @contract local-agent-test-runner-protocol
+// @claim production-like-integration-scenarios
+// @contract production-like-integration-scenarios
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat --test vat_emulators -- --nocapture --include-ignored
+// @command cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture
 // AW-EC-END
 
-// Contract: a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars.
-// Contract: the test skips gracefully when firebase-tools and docker are both unavailable.
+// Contract: hermetic scenario without http-mock exits non-zero
+// Contract: stdout JSONL contains scenario_hermetic_proxy_required
+// Contract: runner command is not executed
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn vat_firebase_bundle_smoke() {
-    let command = "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored";
-    let id = "vat-firebase-bundle-smoke";
+fn scenario_hermetic_requires_http_mock_service() {
+    let command =
+        "cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture";
+    let id = "scenario-hermetic-requires-http-mock-service";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

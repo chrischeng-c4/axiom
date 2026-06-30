@@ -16,12 +16,24 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/spec.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/spec.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Base` | projects/vat/src/spec.rs | enum | pub | 78 |  |
+| `EgressPolicy` | projects/vat/src/spec.rs | enum | pub | 105 |  |
+| `EnvSpec` | projects/vat/src/spec.rs | struct | pub | 18 |  |
+| `GpuRequest` | projects/vat/src/spec.rs | enum | pub | 122 |  |
+| `Isolation` | projects/vat/src/spec.rs | enum | pub | 89 |  |
+| `Limits` | projects/vat/src/spec.rs | struct | pub | 135 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Declarative environment spec.
 //!
 //! Not a Dockerfile. A vat's spec is data an agent reads and rewrites: where
@@ -160,6 +172,7 @@ pub struct Limits {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
 }
+// CODEGEN-END
 ````
 
 ## Changes

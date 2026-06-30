@@ -16,8 +16,24 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/commands/mod.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/commands/mod.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `cluster` | projects/vat/src/commands/mod.rs | module | pub | 10 |  |
+| `diff` | projects/vat/src/commands/mod.rs | module | pub | 11 |  |
+| `emulator` | projects/vat/src/commands/mod.rs | module | pub | 12 |  |
+| `gpu` | projects/vat/src/commands/mod.rs | module | pub | 13 |  |
+| `llm` | projects/vat/src/commands/mod.rs | module | pub | 14 |  |
+| `logs` | projects/vat/src/commands/mod.rs | module | pub | 15 |  |
+| `ls` | projects/vat/src/commands/mod.rs | module | pub | 16 |  |
+| `print_json` | projects/vat/src/commands/mod.rs | function | pub | 27 | print_json(value: &T, compact: bool) -> Result<()> |
+| `rm` | projects/vat/src/commands/mod.rs | module | pub | 17 |  |
+| `run` | projects/vat/src/commands/mod.rs | module | pub | 18 |  |
+| `snapshot` | projects/vat/src/commands/mod.rs | module | pub | 19 |  |
+| `state` | projects/vat/src/commands/mod.rs | module | pub | 20 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

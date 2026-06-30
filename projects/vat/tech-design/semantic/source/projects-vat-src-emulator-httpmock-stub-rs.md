@@ -16,8 +16,20 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/httpmock/stub.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/httpmock/stub.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Matcher` | projects/vat/src/emulator/httpmock/stub.rs | struct | pub | 17 |  |
+| `Registry` | projects/vat/src/emulator/httpmock/stub.rs | struct | pub | 73 |  |
+| `Stub` | projects/vat/src/emulator/httpmock/stub.rs | struct | pub | 46 |  |
+| `StubResponse` | projects/vat/src/emulator/httpmock/stub.rs | struct | pub | 31 |  |
+| `add` | projects/vat/src/emulator/httpmock/stub.rs | function | pub | 79 | add(&self, stub: Stub) |
+| `clear` | projects/vat/src/emulator/httpmock/stub.rs | function | pub | 83 | clear(&self) |
+| `find` | projects/vat/src/emulator/httpmock/stub.rs | function | pub | 87 | find(&self, method: &str, host: &str, path: &str) -> Option<StubResponse> |
+| `matches` | projects/vat/src/emulator/httpmock/stub.rs | function | pub | 55 | matches(&self, method: &str, host: &str, path: &str) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

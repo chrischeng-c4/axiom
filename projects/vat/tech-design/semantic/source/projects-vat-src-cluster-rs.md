@@ -16,8 +16,29 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/cluster.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/cluster.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `BackendUnavailable` | projects/vat/src/cluster.rs | struct | pub | 285 |  |
+| `ClusterInfo` | projects/vat/src/cluster.rs | struct | pub | 274 |  |
+| `ClusterSpec` | projects/vat/src/cluster.rs | struct | pub | 264 |  |
+| `ResolvedBackend` | projects/vat/src/cluster.rs | enum | pub | 26 |  |
+| `backend_token` | projects/vat/src/cluster.rs | function | pub | 311 | backend_token(backend: ClusterBackend) -> &'static str |
+| `binary` | projects/vat/src/cluster.rs | function | pub | 47 | binary(self) -> &'static str |
+| `cluster_name` | projects/vat/src/cluster.rs | function | pub | 369 | cluster_name(vat_id: &str, service_id: &str) -> String |
+| `create` | projects/vat/src/cluster.rs | function | pub | 80 | create(self, spec: &ClusterSpec, timeout: Duration) -> Result<ClusterInfo> |
+| `delete` | projects/vat/src/cluster.rs | function | pub | 172 | delete(self, name: &str) -> Result<()> |
+| `from_name` | projects/vat/src/cluster.rs | function | pub | 52 | from_name(name: &str) -> Option<Self> |
+| `installed` | projects/vat/src/cluster.rs | function | pub | 63 | installed(self) -> bool |
+| `list` | projects/vat/src/cluster.rs | function | pub | 202 | list(self) -> Result<Vec<String>> |
+| `message` | projects/vat/src/cluster.rs | function | pub | 299 | message(&self) -> String |
+| `name` | projects/vat/src/cluster.rs | function | pub | 38 | name(self) -> &'static str |
+| `ready_argv` | projects/vat/src/cluster.rs | function | pub | 68 | ready_argv(self, kubeconfig: &Path) -> Vec<String> |
+| `requested_name` | projects/vat/src/cluster.rs | function | pub | 294 | requested_name(&self) -> &'static str |
+| `resolve_backend` | projects/vat/src/cluster.rs | function | pub | 323 | resolve_backend(     requested: ClusterBackend, ) -> std::result::Result<ResolvedBackend, BackendUnavailable> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

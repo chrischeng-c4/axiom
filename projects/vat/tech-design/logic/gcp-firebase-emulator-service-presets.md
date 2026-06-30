@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: gcp-firebase-emulator-service-presets
+    claim: gcp-firebase-emulator-service-presets
     coverage: partial
     rationale: "Extends the local agent test runner protocol's preset model with GCP and Firebase emulators so cloud-targeting agents can declare local emulators as run-scoped services."
 ---
@@ -215,6 +215,7 @@ e2e_tests:
   - id: vat-emulator-unavailable-smoke
     name: "emulator preset reports structured unavailable error"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulators -- --nocapture"
@@ -224,6 +225,7 @@ e2e_tests:
   - id: vat-firestore-native-smoke
     name: "native Firestore emulator exports FIRESTORE_EMULATOR_HOST"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
@@ -233,6 +235,7 @@ e2e_tests:
   - id: vat-pubsub-docker-smoke
     name: "Pub/Sub emulator falls back to docker"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
@@ -242,6 +245,7 @@ e2e_tests:
   - id: vat-firebase-bundle-smoke
     name: "Firebase bundle exports configured emulator hosts"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"

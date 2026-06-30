@@ -16,12 +16,19 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/sandbox/process.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/sandbox/process.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ProcessBackend` | projects/vat/src/sandbox/process.rs | struct | pub | 18 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-sandbox-process-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Host-process backend.
 //!
 //! The default and simplest sandbox: the command runs as an ordinary macOS (or
@@ -50,6 +57,7 @@ impl Sandbox for ProcessBackend {
         (program.to_string(), args.to_vec())
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

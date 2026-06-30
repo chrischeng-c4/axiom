@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: built-in-http-mock-record-replay-proxy-https-mitm
+    claim: built-in-http-mock-record-replay-proxy-https-mitm
     coverage: partial
     rationale: "Adds a built-in HTTP stub + record/replay proxy with HTTPS MITM so a runner's outbound third-party API calls are intercepted locally, letting test suites drop hand-rolled HTTP mocks — through vat's run and evidence surface, with no app code change."
 ---
@@ -257,6 +257,7 @@ e2e_tests:
   - id: vat-http-mock-stub-and-mitm-smoke
     name: "HTTP mock proxy stubs plain and HTTPS-MITM requests"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-http-mock-record-replay-proxy-https-mitm
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_httpmock -- --nocapture"
@@ -267,6 +268,7 @@ e2e_tests:
   - id: vat-http-mock-preset-run-smoke
     name: "http-mock preset wires the runner's proxy + CA trust"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-http-mock-record-replay-proxy-https-mitm
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_httpmock -- --nocapture --include-ignored"
@@ -275,6 +277,7 @@ e2e_tests:
   - id: vat-http-mock-lean-build
     name: "lean build still compiles"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: built-in-http-mock-record-replay-proxy-https-mitm
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

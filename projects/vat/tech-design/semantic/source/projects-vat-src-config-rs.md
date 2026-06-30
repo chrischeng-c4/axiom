@@ -16,12 +16,49 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/config.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/config.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ClusterBackend` | projects/vat/src/config.rs | enum | pub | 337 |  |
+| `ExternalServiceConfig` | projects/vat/src/config.rs | struct | pub | 201 |  |
+| `FILE_NAME` | projects/vat/src/config.rs | constant | pub | 18 |  |
+| `NetworkConfig` | projects/vat/src/config.rs | struct | pub | 56 |  |
+| `PortSpec` | projects/vat/src/config.rs | enum | pub | 353 |  |
+| `RetentionPolicy` | projects/vat/src/config.rs | enum | pub | 104 |  |
+| `RouteConfig` | projects/vat/src/config.rs | struct | pub | 68 |  |
+| `RunnerConfig` | projects/vat/src/config.rs | struct | pub | 408 |  |
+| `RunnerSelectionReason` | projects/vat/src/config.rs | enum | pub | 368 |  |
+| `ScenarioConfig` | projects/vat/src/config.rs | struct | pub | 383 |  |
+| `ScenarioNetworkMode` | projects/vat/src/config.rs | enum | pub | 397 |  |
+| `ServiceConfig` | projects/vat/src/config.rs | struct | pub | 124 |  |
+| `ServicePreset` | projects/vat/src/config.rs | enum | pub | 217 |  |
+| `ServiceRuntime` | projects/vat/src/config.rs | enum | pub | 319 |  |
+| `SetupStep` | projects/vat/src/config.rs | struct | pub | 114 |  |
+| `VatConfig` | projects/vat/src/config.rs | struct | pub | 23 |  |
+| `WorkspaceConfig` | projects/vat/src/config.rs | struct | pub | 76 |  |
+| `base_dir` | projects/vat/src/config.rs | function | pub | 803 | base_dir(&self) -> PathBuf |
+| `is_builtin` | projects/vat/src/config.rs | function | pub | 266 | is_builtin(self) -> bool |
+| `is_builtin_only` | projects/vat/src/config.rs | function | pub | 283 | is_builtin_only(self) -> bool |
+| `is_emulator` | projects/vat/src/config.rs | function | pub | 244 | is_emulator(self) -> bool |
+| `load_file` | projects/vat/src/config.rs | function | pub | 437 | load_file(path: &Path) -> Result<VatConfig> |
+| `load_nearest` | projects/vat/src/config.rs | function | pub | 421 | load_nearest(start: &Path) -> Result<VatConfig> |
+| `preset_gcp_host` | projects/vat/src/config.rs | function | pub | 300 | preset_gcp_host(self) -> Option<&'static str> |
+| `resolve_relative` | projects/vat/src/config.rs | function | pub | 809 | resolve_relative(root: &Path, path: &Path) -> PathBuf |
+| `runner` | projects/vat/src/config.rs | function | pub | 782 | runner(&self, id: &str) -> Result<&RunnerConfig> |
+| `scenario` | projects/vat/src/config.rs | function | pub | 796 | scenario(&self, id: &str) -> Result<&ScenarioConfig> |
+| `select_runner` | projects/vat/src/config.rs | function | pub | 760 | select_runner(         &self,         requested: Option<&str>,     ) -> Result<(&RunnerConfig, RunnerSelectionReason)> |
+| `service` | projects/vat/src/config.rs | function | pub | 789 | service(&self, id: &str) -> Result<&ServiceConfig> |
+| `should_run_setup` | projects/vat/src/config.rs | function | pub | 818 | should_run_setup(rootfs: &Path, step: &SetupStep) -> bool |
+| `validate` | projects/vat/src/config.rs | function | pub | 457 | validate(cfg: &VatConfig) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! vat.toml project contract for ephemeral local agent test runs.
 //!
 //! `vat.toml` is the explicit protocol between an agent and vat: the agent
@@ -58,6 +95,8 @@ pub struct VatConfig {
     pub services: Vec<ServiceConfig>,
     #[serde(default)]
     pub runners: Vec<RunnerConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenarios: Vec<ScenarioConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<NetworkConfig>,
 
@@ -119,7 +158,7 @@ fn default_dot() -> PathBuf {
 
 /// Evidence retention policy after runner completion.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionPolicy {
     #[default]
@@ -178,6 +217,11 @@ pub struct ServiceConfig {
     /// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<ClusterBackend>,
+    /// Attach to a service already provisioned by the surrounding environment,
+    /// such as a GitLab CI `services:` sidecar. vat waits for readiness,
+    /// exports env, and records evidence, but never starts or stops it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalServiceConfig>,
     /// Optional Kubernetes version for the cluster node image (e.g. "1.30").
     /// Only meaningful with `cluster`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,6 +252,14 @@ pub struct ServiceConfig {
     pub ready_cmd: Vec<String>,
     #[serde(default = "default_service_timeout")]
     pub timeout_s: u64,
+}
+
+/// Endpoint for an externally managed service.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalServiceConfig {
+    pub host: String,
+    pub port: u16,
 }
 
 /// Built-in local service presets.
@@ -244,6 +296,7 @@ pub enum ServicePreset {
     Openapi,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 impl ServicePreset {
     /// Whether this preset is a GCP/Firebase emulator (vs a datastore/broker).
     /// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
@@ -381,6 +434,33 @@ fn default_service_timeout() -> u64 {
     60
 }
 
+/// Named production-like integration scenario. A scenario promotes an app
+/// service plus its dependency set to a first-class runner target while reusing
+/// the existing service lifecycle.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioConfig {
+    pub id: String,
+    pub app: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+    pub runner: String,
+    #[serde(default)]
+    pub network: ScenarioNetworkMode,
+}
+
+/// Scenario-scoped network safety mode.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScenarioNetworkMode {
+    /// Use the project/run network policy as configured.
+    #[default]
+    Open,
+    /// Require http-mock participation and no-forward proxy behavior.
+    Hermetic,
+}
+
 /// Named runner an agent can invoke via `vat run <id>`.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -455,13 +535,14 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
         let has_preset = service.preset.is_some();
         let has_image = service.image.is_some();
         let has_cluster = service.cluster.is_some();
-        let backing = [has_cmd, has_preset, has_image, has_cluster]
+        let has_external = service.external.is_some();
+        let backing = [has_cmd, has_preset, has_image, has_cluster, has_external]
             .into_iter()
             .filter(|b| *b)
             .count();
         match backing {
             0 => bail!(
-                "service `{}` must define exactly one of cmd, preset, image, or cluster",
+                "service `{}` must define exactly one of cmd, preset, image, cluster, or external",
                 service.id
             ),
             1 => {
@@ -471,6 +552,8 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                     validate_image_service(service)?;
                 } else if has_cluster {
                     validate_cluster_service(service)?;
+                } else if has_external {
+                    validate_external_service(service)?;
                 } else if service.preset == Some(ServicePreset::Firebase) {
                     validate_firebase_service(cfg, service)?;
                 } else if service.preset == Some(ServicePreset::Openapi) {
@@ -479,7 +562,7 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                 // other presets: no extra checks here.
             }
             _ => bail!(
-                "service `{}` must define only one of cmd, preset, image, or cluster",
+                "service `{}` must define only one of cmd, preset, image, cluster, or external",
                 service.id
             ),
         }
@@ -556,6 +639,36 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
             bail!("default_runner `{default_runner}` does not match any runner id");
         }
     }
+    let mut scenario_ids = BTreeSet::new();
+    for scenario in &cfg.scenarios {
+        validate_id("scenario", &scenario.id)?;
+        if !scenario_ids.insert(scenario.id.as_str()) {
+            bail!("duplicate scenario id `{}`", scenario.id);
+        }
+        if !service_ids.contains(scenario.app.as_str()) {
+            bail!(
+                "scenario `{}` app references unknown service `{}`",
+                scenario.id,
+                scenario.app
+            );
+        }
+        if !runner_ids.contains(scenario.runner.as_str()) {
+            bail!(
+                "scenario `{}` runner references unknown runner `{}`",
+                scenario.id,
+                scenario.runner
+            );
+        }
+        for required in &scenario.requires {
+            if !service_ids.contains(required.as_str()) {
+                bail!(
+                    "scenario `{}` requires unknown service `{}`",
+                    scenario.id,
+                    required
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -583,6 +696,36 @@ fn validate_service_dependency_cycle(
 fn validate_id(kind: &str, id: &str) -> Result<()> {
     if id.trim().is_empty() {
         bail!("{kind} id must not be empty");
+    }
+    Ok(())
+}
+
+/// An `external` service is owned by CI/local infrastructure. vat only attaches
+/// to the endpoint, so Docker/cluster/service-start knobs do not apply.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+fn validate_external_service(service: &ServiceConfig) -> Result<()> {
+    let endpoint = service
+        .external
+        .as_ref()
+        .context("external service missing endpoint")?;
+    if endpoint.host.trim().is_empty() {
+        bail!("service `{}` external host must not be empty", service.id);
+    }
+    if endpoint.port == 0 {
+        bail!(
+            "service `{}` external port must be greater than 0",
+            service.id
+        );
+    }
+    if service.container_port.is_some()
+        || !service.image_env.is_empty()
+        || !service.seed.is_empty()
+        || matches!(service.port, PortSpec::Fixed(_))
+    {
+        bail!(
+            "service `{}` external does not accept port, container_port, image_env, or seed",
+            service.id
+        );
     }
     Ok(())
 }
@@ -707,6 +850,13 @@ impl VatConfig {
             .iter()
             .find(|s| s.id == id)
             .with_context(|| format!("service `{id}` not found in {}", self.path.display()))
+    }
+
+    pub fn scenario(&self, id: &str) -> Result<&ScenarioConfig> {
+        self.scenarios
+            .iter()
+            .find(|s| s.id == id)
+            .with_context(|| format!("scenario `{id}` not found in {}", self.path.display()))
     }
 
     pub fn base_dir(&self) -> PathBuf {
@@ -839,6 +989,82 @@ artifacts = ["out.txt"]
     }
 
     #[test]
+    fn parses_scenario_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r#"
+version = 1
+
+[[services]]
+id = "api"
+cmd = ["true"]
+
+[[services]]
+id = "pg"
+cmd = ["true"]
+
+[[runners]]
+id = "e2e"
+requires = ["pg"]
+cmd = ["true"]
+
+[[scenarios]]
+id = "prod-like"
+app = "api"
+requires = ["pg"]
+runner = "e2e"
+network = "hermetic"
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_file(&path).unwrap();
+        let scenario = cfg.scenario("prod-like").unwrap();
+        assert_eq!(scenario.app, "api");
+        assert_eq!(scenario.requires, vec!["pg"]);
+        assert_eq!(scenario.runner, "e2e");
+        assert_eq!(scenario.network, ScenarioNetworkMode::Hermetic);
+    }
+
+    #[test]
+    fn rejects_scenario_unknown_references() {
+        let cfg = VatConfig {
+            version: 1,
+            network: None,
+            name: None,
+            default_runner: None,
+            workspace: WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: {
+                let mut service = bare_service("api");
+                service.cmd = vec!["true".into()];
+                vec![service]
+            },
+            runners: vec![RunnerConfig {
+                id: "e2e".into(),
+                requires: Vec::new(),
+                cmd: vec!["true".into()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            scenarios: vec![ScenarioConfig {
+                id: "bad".into(),
+                app: "missing".into(),
+                requires: Vec::new(),
+                runner: "e2e".into(),
+                network: ScenarioNetworkMode::Open,
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        };
+        assert!(validate(&cfg).is_err());
+    }
+
+    #[test]
     fn rejects_unknown_required_service() {
         let cfg = VatConfig {
             version: 1,
@@ -856,6 +1082,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -883,6 +1110,7 @@ artifacts = ["out.txt"]
                 image_env: BTreeMap::new(),
                 runtime: ServiceRuntime::default(),
                 cluster: None,
+                external: None,
                 k8s_version: None,
                 nodes: None,
                 spec: None,
@@ -901,6 +1129,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -929,6 +1158,7 @@ artifacts = ["out.txt"]
                     image_env: BTreeMap::new(),
                     runtime: ServiceRuntime::default(),
                     cluster: None,
+                    external: None,
                     k8s_version: None,
                     nodes: None,
                     spec: None,
@@ -950,6 +1180,7 @@ artifacts = ["out.txt"]
                     image_env: BTreeMap::new(),
                     runtime: ServiceRuntime::default(),
                     cluster: None,
+                    external: None,
                     k8s_version: None,
                     nodes: None,
                     spec: None,
@@ -969,6 +1200,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -993,6 +1225,7 @@ artifacts = ["out.txt"]
                 timeout_s: None,
                 artifacts: Vec::new(),
             }],
+            scenarios: Vec::new(),
             path: PathBuf::from("vat.toml"),
             root: PathBuf::from("."),
             digest: String::new(),
@@ -1010,6 +1243,7 @@ artifacts = ["out.txt"]
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
             cluster: None,
+            external: None,
             k8s_version: None,
             nodes: None,
             spec: None,
@@ -1085,6 +1319,71 @@ artifacts = ["out.txt"]
         let mut svc = bare_service("svc");
         svc.cluster = Some(ClusterBackend::Auto);
         assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn accepts_external_service() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 5432,
+        });
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_external_and_cmd_together() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 5432,
+        });
+        svc.cmd = vec!["true".into()];
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_external_empty_host() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: " ".into(),
+            port: 5432,
+        });
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_external_zero_port() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 0,
+        });
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_external_with_service_start_knobs() {
+        let mut svc = bare_service("svc");
+        svc.external = Some(ExternalServiceConfig {
+            host: "postgres".into(),
+            port: 5432,
+        });
+        svc.port = PortSpec::Fixed(15432);
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        svc.port = PortSpec::default();
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        svc.container_port = None;
+        svc.image_env
+            .insert("POSTGRES_PASSWORD".into(), "pw".into());
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        svc.image_env.clear();
+        svc.seed = vec![PathBuf::from("schema.sql")];
+        assert!(validate(&cfg_with_service(svc)).is_err());
     }
 
     #[test]
@@ -1314,6 +1613,7 @@ artifacts = ["out.txt"]
         assert_eq!(ServicePreset::HttpMock.preset_gcp_host(), None);
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

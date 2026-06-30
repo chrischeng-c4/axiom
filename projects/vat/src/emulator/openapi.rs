@@ -360,7 +360,6 @@ async fn handle_any(State(st): State<AppState>, req: Request) -> Response {
             .into_response(),
     }
 }
-// CODEGEN-END
 
 #[cfg(test)]
 mod tests {

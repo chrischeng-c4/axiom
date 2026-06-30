@@ -16,8 +16,21 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/httpmock/cassette.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/httpmock/cassette.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Cassettes` | projects/vat/src/emulator/httpmock/cassette.rs | struct | pub | 48 |  |
+| `Recording` | projects/vat/src/emulator/httpmock/cassette.rs | struct | pub | 22 |  |
+| `body` | projects/vat/src/emulator/httpmock/cassette.rs | function | pub | 39 | body(&self) -> Vec<u8> |
+| `get` | projects/vat/src/emulator/httpmock/cassette.rs | function | pub | 78 | get(&self, key: &str) -> Option<Recording> |
+| `key` | projects/vat/src/emulator/httpmock/cassette.rs | function | pub | 61 | key(method: &str, host: &str, path_and_query: &str, body: &[u8]) -> String |
+| `keys` | projects/vat/src/emulator/httpmock/cassette.rs | function | pub | 91 | keys(&self) -> Vec<String> |
+| `new` | projects/vat/src/emulator/httpmock/cassette.rs | function | pub | 31 | new(status: u16, headers: Vec<(String, String)>, body: &[u8]) -> Self |
+| `new` | projects/vat/src/emulator/httpmock/cassette.rs | function | pub | 54 | new(dir: impl Into<PathBuf>) -> Self |
+| `put` | projects/vat/src/emulator/httpmock/cassette.rs | function | pub | 84 | put(&self, key: &str, rec: &Recording) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

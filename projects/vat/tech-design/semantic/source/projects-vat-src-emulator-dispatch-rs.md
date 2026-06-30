@@ -16,8 +16,17 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/dispatch.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/dispatch.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `DispatchResult` | projects/vat/src/emulator/dispatch.rs | struct | pub | 70 |  |
+| `Oidc` | projects/vat/src/emulator/dispatch.rs | struct | pub | 32 |  |
+| `Target` | projects/vat/src/emulator/dispatch.rs | struct | pub | 23 |  |
+| `dispatch_collect` | projects/vat/src/emulator/dispatch.rs | function | pub | 78 | dispatch_collect(     client: &reqwest::Client,     target: &Target, ) -> anyhow::Result<DispatchResult> |
+| `dispatch_http` | projects/vat/src/emulator/dispatch.rs | function | pub | 100 | dispatch_http(client: &reqwest::Client, target: &Target) -> anyhow::Result<u16> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

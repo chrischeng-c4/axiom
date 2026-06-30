@@ -15,20 +15,11 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/tests/vat_emulator_scheduler_grpc.rs`, captured as a rust-source-unit (td_ast) item-tree
-during vat standardization onto the codegen ladder.
+Public API manifest for `projects/vat/tests/vat_emulator_scheduler_grpc.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `vat_bin` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 16 | fn vat_bin() -> &'static str |
-| `free_port` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 20 | fn free_port() -> u16 |
-| `wait_for_port` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 28 | fn wait_for_port(addr: &str) |
-| `drop` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 41 | fn drop(&mut self) |
-| `spawn_sink` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 47 | fn spawn_sink() -> (u16, mpsc::Receiver<String>) |
-| `cloud_scheduler_grpc_fires_job_on_run` | projects/vat/tests/vat_emulator_scheduler_grpc.rs | function | private | 65 | async fn cloud_scheduler_grpc_fires_job_on_run() |
-
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

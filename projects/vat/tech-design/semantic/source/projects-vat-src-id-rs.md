@@ -16,12 +16,19 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/id.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/id.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `fresh` | projects/vat/src/id.rs | function | pub | 17 | fresh() -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-id-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Vat identifiers.
 //!
 //! An id is short, lowercase, and greppable: `vat-` + a base36 stamp derived
@@ -82,6 +89,7 @@ mod tests {
         assert_eq!(base36(36), "10");
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

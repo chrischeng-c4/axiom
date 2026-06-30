@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention
+    claim: vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention
     coverage: partial
     rationale: "vat is the agent's dev-container CLI; the mandatory agent-facing contract (self-document, self-update, and tracker issue search/read/create) is incomplete unless the binary exposes llm, upgrade, and issue."
 ---
@@ -213,6 +213,7 @@ e2e_tests:
   - id: vat-cli-convention-help-lists-all-three
     name: "vat --help lists llm, upgrade, issue"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_cli_convention -- --nocapture"
@@ -223,6 +224,7 @@ e2e_tests:
   - id: vat-cli-convention-lean-build
     name: "lean build still compiles"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: vat-llm-vat-upgrade-vat-issue-mandatory-cli-convention
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"
@@ -234,6 +236,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: expose the mandatory llm, upgrade, and issue subcommands in vat's top-level parser."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: feature-gate online upgrade/issue behavior while keeping lean builds parseable."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: select upgrade versions, assemble issue diagnostics, and dispatch the standard verbs."
+  - path: projects/vat/build.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: stamp VAT_TARGET, VAT_GIT_SHA, and VAT_BUILT_AT used by upgrade and issue diagnostics."
+  - path: projects/vat/tests/vat_cli_convention.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: standard CLI smoke tests cover help, upgrade check, and issue dry-run contracts."
   - path: projects/vat/src/commands/upgrade.rs
     action: create
     section: source

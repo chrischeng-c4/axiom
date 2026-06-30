@@ -15,15 +15,13 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/vat/src/emulator/grpc_mux.rs`, captured as a rust-source-unit (td_ast) item-tree
-during vat standardization onto the codegen ladder.
+Public API manifest for `projects/vat/src/emulator/grpc_mux.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `serve` | projects/vat/src/emulator/grpc_mux.rs | function | pub | 22 | serve<S>(host_port: &str, rest: Router, grpc: S) -> Result<()> |
-
+| `serve` | projects/vat/src/emulator/grpc_mux.rs | function | pub | 26 | serve(host_port: &str, rest: Router, grpc: S) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

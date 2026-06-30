@@ -16,8 +16,16 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/emulator/httpmock/ca.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/emulator/httpmock/ca.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `CaStore` | projects/vat/src/emulator/httpmock/ca.rs | struct | pub | 22 |  |
+| `ca_pem` | projects/vat/src/emulator/httpmock/ca.rs | function | pub | 53 | ca_pem(&self) -> &str |
+| `generate` | projects/vat/src/emulator/httpmock/ca.rs | function | pub | 33 | generate() -> Result<Self> |
+| `server_config` | projects/vat/src/emulator/httpmock/ca.rs | function | pub | 59 | server_config(&self, host: &str) -> Result<Arc<ServerConfig>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

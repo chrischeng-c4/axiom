@@ -16,8 +16,13 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/commands/rm.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/commands/rm.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `exec` | projects/vat/src/commands/rm.rs | function | pub | 13 | exec(id: String) -> Result<ExitCode> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

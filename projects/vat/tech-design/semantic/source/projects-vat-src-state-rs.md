@@ -16,12 +16,38 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/state.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/state.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ArtifactRecord` | projects/vat/src/state.rs | struct | pub | 194 |  |
+| `ChangeSet` | projects/vat/src/state.rs | struct | pub | 226 |  |
+| `ChangeSummary` | projects/vat/src/state.rs | struct | pub | 272 |  |
+| `ClusterRunRecord` | projects/vat/src/state.rs | struct | pub | 88 |  |
+| `ConfigRef` | projects/vat/src/state.rs | struct | pub | 80 |  |
+| `ProcessStatus` | projects/vat/src/state.rs | enum | pub | 182 |  |
+| `RouteRecord` | projects/vat/src/state.rs | struct | pub | 158 |  |
+| `RunRecord` | projects/vat/src/state.rs | struct | pub | 44 |  |
+| `RunnerRunRecord` | projects/vat/src/state.rs | struct | pub | 143 |  |
+| `ScenarioRunRecord` | projects/vat/src/state.rs | struct | pub | 167 |  |
+| `ServiceRunRecord` | projects/vat/src/state.rs | struct | pub | 105 |  |
+| `Status` | projects/vat/src/state.rs | enum | pub | 30 |  |
+| `TestRunEvidence` | projects/vat/src/state.rs | struct | pub | 203 |  |
+| `VatMeta` | projects/vat/src/state.rs | struct | pub | 59 |  |
+| `VatState` | projects/vat/src/state.rs | struct | pub | 297 |  |
+| `WorkspaceInfo` | projects/vat/src/state.rs | struct | pub | 287 |  |
+| `is_empty` | projects/vat/src/state.rs | function | pub | 238 | is_empty(&self) -> bool |
+| `oneline` | projects/vat/src/state.rs | function | pub | 243 | oneline(&self) -> String |
+| `summary` | projects/vat/src/state.rs | function | pub | 254 | summary(&self, sample: usize) -> ChangeSummary |
+| `total` | projects/vat/src/state.rs | function | pub | 234 | total(&self) -> usize |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-state-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The state model — vat's reason to exist.
 //!
 //! Two shapes live here:
@@ -131,7 +157,11 @@ pub struct ServiceRunRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by_vat: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepare_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,6 +200,29 @@ pub struct RunnerRunRecord {
     pub stderr_log: String,
 }
 
+/// Route visible in a scenario topology report.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteRecord {
+    pub host: String,
+    pub target: String,
+    pub source: String,
+}
+
+/// Captured scenario topology for a production-like integration run.
+/// @spec projects/vat/tech-design/logic/production-like-integration-scenarios.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioRunRecord {
+    pub id: String,
+    pub app: String,
+    pub runner: String,
+    pub network: String,
+    pub services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<RouteRecord>,
+    pub hermetic: bool,
+}
+
 /// Process status used inside test-run evidence.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,6 +253,10 @@ pub struct TestRunEvidence {
     pub runner_id: String,
     pub retention: RetentionPolicy,
     pub services: Vec<ServiceRunRecord>,
+    /// Scenario topology for `vat run --scenario`; absent for existing runner
+    /// modes and old metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<ScenarioRunRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<RunnerRunRecord>,
     /// Every runner of a concurrent `vat run a b ...` set; `runner` keeps the
@@ -305,6 +362,7 @@ pub struct VatState {
     pub gpu: GpuInfo,
     pub events_tail: Vec<Event>,
 }
+// CODEGEN-END
 ````
 
 ## Changes

@@ -16,12 +16,25 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Rust source-unit TD for `projects/vat/src/overlay.rs`, captured during #39 vat migration onto td_ast lossless source generation.
+Public API manifest for `projects/vat/src/overlay.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `FileStat` | projects/vat/src/overlay.rs | struct | pub | 28 |  |
+| `Manifest` | projects/vat/src/overlay.rs | type | pub | 36 |  |
+| `clone_tree` | projects/vat/src/overlay.rs | function | pub | 40 | clone_tree(src: &Path, dst: &Path) -> Result<()> |
+| `diff` | projects/vat/src/overlay.rs | function | pub | 205 | diff(base: &Manifest, now: &Manifest) -> ChangeSet |
+| `load_manifest` | projects/vat/src/overlay.rs | function | pub | 232 | load_manifest(path: &Path) -> Result<Manifest> |
+| `manifest_of` | projects/vat/src/overlay.rs | function | pub | 172 | manifest_of(root: &Path) -> Result<Manifest> |
+| `save_manifest` | projects/vat/src/overlay.rs | function | pub | 224 | save_manifest(path: &Path, m: &Manifest) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Copy-on-write workspace + filesystem diffing.
 //!
 //! A vat's `rootfs` is a copy-on-write clone of its base. On APFS (macOS) this
@@ -309,6 +322,7 @@ mod tests {
         );
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes
