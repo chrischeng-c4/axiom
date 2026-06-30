@@ -323,8 +323,13 @@ broadcast:
 
 # Retention / pruning of the durable log.
 retention:
-  max_age_secs: 604800          # prune fully-acked / aged segments after 7 days
-  max_bytes_per_shard: 0        # 0 = unbounded; else prune oldest segments past this size
+  max_age_secs: 604800          # (Age mode) prune aged segments after 7 days
+  max_bytes_per_shard: 0        # (Age mode) 0 = unbounded; else prune oldest segments past this size
+  mode: "age"                   # storage reclaim strategy: age | ack
+                                #   age = Kafka-style retain-then-prune by age/size (broadcast/replay subjects, e.g. lumen)
+                                #   ack = celery/airflow delete-on-ack: reclaim segments as the committed watermark
+                                #         advances past them (storage tracks backlog depth); disables age/size pruning
+                                #         so an un-acked backlog is never deleted (broker owns task durability until ack)
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -446,7 +451,7 @@ changes:
     action: create
     section: config
     impl_mode: hand-written
-    reason: "RelayCoreConfig per the Config contract."
+    reason: "RelayCoreConfig per the Config contract, incl. RetentionMode { age, ack } on RetentionConfig (delete-on-ack vs age/size pruning)."
   - path: projects/relay/src/log.rs
     action: create
     section: logic
@@ -466,7 +471,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "Relay core engine tying publish -> classify -> broadcast / work-queue delivery over one durable log."
+    reason: "Relay core engine tying publish -> classify -> broadcast / work-queue delivery over one durable log. Per-subject retention override (subject_modes + set_retention_mode, applied to all shards); ack/ack_batch persist the committed watermark then, in ack mode, truncate the fully-acked segment prefix (persist-before-truncate ordering)."
   - path: projects/relay/tests/relay_core.rs
     action: create
     section: unit-test
