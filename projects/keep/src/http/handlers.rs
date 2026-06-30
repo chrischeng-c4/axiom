@@ -706,23 +706,25 @@ async fn claim_put(
         (status = 404, description = "Not found", body = crate::http::error::ApiError)
     )
 )]
-/// Enforce a scoped claim-check token on worker ops (#446). No-op when token
-/// enforcement is off. `write` = PUT result (scope.w); else GET input (scope.r).
+/// Enforce a scoped claim-check token on worker ops (#446, #746). No-op when
+/// token enforcement is off (`AppState.verifier` is `None`). `write` = PUT
+/// result (scope.w); else GET input (scope.r).
+///
+/// Delegates bearer extraction + token verification to keep's shared
+/// `service_auth::Verifier` (`auth::KeepVerifier`, which composes
+/// `libs/claimtoken`) and keeps the per-resource scope decision here: the token
+/// scope is matched against the BARE url `id`, before the `X-Keep-Namespace`
+/// prefix is applied. Every failure — missing, invalid, expired, or
+/// out-of-scope — maps to the same `403 Forbidden` keep already returns; the
+/// blanket `service_auth::auth_middleware` (which renders 401 and gates whole
+/// routers) deliberately is NOT used, to preserve this contract.
 fn check_scope(st: &AppState, headers: &HeaderMap, id: &str, write: bool) -> Result<(), ApiErr> {
-    let Some(secret) = &st.token_secret else {
+    use service_auth::Verifier;
+    let Some(verifier) = &st.verifier else {
         return Ok(());
     };
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .unwrap_or("");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    match claimtoken::verify(secret, token, now) {
-        Some(scope) if (if write { scope.w == id } else { scope.r == id }) => Ok(()),
+    match verifier.authenticate(headers) {
+        Ok(principal) if principal.authorizes(id, write) => Ok(()),
         _ => Err(ApiErr::new(
             StatusCode::FORBIDDEN,
             "forbidden",

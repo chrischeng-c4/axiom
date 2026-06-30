@@ -451,3 +451,95 @@ async fn keep_ns_token_checks_bare_key() {
     let (st, _) = send(&app, req).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
 }
+
+/// #746: after the service-auth adoption, the claim-check contract is unchanged
+/// — enforcement runs through keep's `KeepVerifier` per-handler but still
+/// returns 403 (not 401) for invalid and out-of-scope tokens, and the accepted
+/// read scope on GET /v1/inputs/{id} returns 200.
+#[tokio::test]
+async fn keep_token_invalid_and_out_of_scope_are_403() {
+    let secret = b"test-secret".to_vec();
+    let state =
+        AppState::new(Arc::new(KvEngine::with_shards(16))).with_token_secret(secret.clone());
+    let app = router(state);
+
+    // Seed an input the worker is allowed to read with an in-scope token.
+    let scope = claimtoken::Scope {
+        r: "job-7".into(),
+        w: "job-7".into(),
+        exp: u64::MAX,
+    };
+    let token = claimtoken::sign(&secret, &scope);
+    let put = Request::builder()
+        .method("PUT")
+        .uri("/v1/inputs/job-7")
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .body(Body::from("IN7"))
+        .unwrap();
+    // PUT input is deliberately NOT scope-checked, so no token is needed.
+    let (st, _) = send(&app, put).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Accepted read scope ⇒ 200.
+    let get_ok = Request::builder()
+        .method("GET")
+        .uri("/v1/inputs/job-7")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (st, body) = send(&app, get_ok).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body, b"IN7".to_vec());
+
+    // A syntactically-broken bearer value ⇒ 403 (not 401).
+    let get_bad = Request::builder()
+        .method("GET")
+        .uri("/v1/inputs/job-7")
+        .header(header::AUTHORIZATION, "Bearer not-a-real-token")
+        .body(Body::empty())
+        .unwrap();
+    let (st, _) = send(&app, get_bad).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // A valid token for a DIFFERENT id (out of scope) ⇒ 403.
+    let other = claimtoken::Scope {
+        r: "job-other".into(),
+        w: "job-other".into(),
+        exp: u64::MAX,
+    };
+    let other_token = claimtoken::sign(&secret, &other);
+    let get_oos = Request::builder()
+        .method("GET")
+        .uri("/v1/inputs/job-7")
+        .header(header::AUTHORIZATION, format!("Bearer {other_token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (st, _) = send(&app, get_oos).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+/// #746/#446: with no secret configured the verifier is absent, so claim-check
+/// stays open (no-op) — a tokenless worker read still succeeds.
+#[tokio::test]
+async fn keep_token_disabled_is_open() {
+    let (app, _) = app();
+
+    let put = Request::builder()
+        .method("PUT")
+        .uri("/v1/inputs/job-open")
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .body(Body::from("OPEN"))
+        .unwrap();
+    let (st, _) = send(&app, put).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // No Authorization header, enforcement off ⇒ 200.
+    let get = Request::builder()
+        .method("GET")
+        .uri("/v1/inputs/job-open")
+        .body(Body::empty())
+        .unwrap();
+    let (st, body) = send(&app, get).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body, b"OPEN".to_vec());
+}

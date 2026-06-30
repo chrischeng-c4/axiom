@@ -49,6 +49,10 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 # tracing, h2c serve, and graceful drain. Composes libs/h2c for HTTP/2 cleartext
 # + HTTP/1.1 on one port, so keep no longer hand-rolls the hyper-util auto-server.
 service-http = { path = "../../libs/service-http" }
+# Shared request-auth plumbing (#746) — the Verifier trait + bearer extraction.
+# keep's KeepVerifier composes libs/claimtoken; the per-handler scope decision
+# (claim-check-only, bare-id, 403) stays in keep, not in a blanket middleware.
+service-auth = { path = "../../libs/service-auth" }
 # HTTP client for in-tree Rust consumers (behind the `client` feature).
 reqwest = { workspace = true, optional = true }
 # Shared h2c client construction + ln(concurrency) pool sizing (#467).

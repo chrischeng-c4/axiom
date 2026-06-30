@@ -5795,6 +5795,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "service-auth",
  "service-http",
  "sha2 0.10.9",
  "tempfile",
