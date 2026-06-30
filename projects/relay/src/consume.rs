@@ -29,7 +29,12 @@ static CONSUMER_SEQ: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ConsumeUp {
-    Subscribe { prefetch: u32 },
+    Subscribe {
+        prefetch: u32,
+        /// Named consumer group (multicast). Omitted / "" = the default group.
+        #[serde(default)]
+        group: String,
+    },
     Ack { lease_id: String, epoch: u64 },
     Nack { lease_id: String },
 }
@@ -117,8 +122,8 @@ async fn drive(
     tx: mpsc::Sender<Vec<u8>>,
 ) {
     let mut dec = Frames::default();
-    let prefetch = match read_up(&mut up, &mut dec).await {
-        Some(ConsumeUp::Subscribe { prefetch }) => prefetch.max(1),
+    let (prefetch, group) = match read_up(&mut up, &mut dec).await {
+        Some(ConsumeUp::Subscribe { prefetch, group }) => (prefetch.max(1), group),
         _ => return, // first frame must be Subscribe
     };
     let mut inflight: u32 = 0;
@@ -129,7 +134,10 @@ async fn drive(
     let mut wake = relay.subscribe_wake(&subject);
     loop {
         while inflight < prefetch {
-            match relay.lease(&subject, &consumer_id, Utc::now()).unwrap_or(None) {
+            match relay
+                .lease_in(&subject, &group, &consumer_id, Utc::now())
+                .unwrap_or(None)
+            {
                 Some(l) => {
                     let (message_id, payload) = relay
                         .entry(&l.subject, l.shard, l.seq)
@@ -149,13 +157,13 @@ async fn drive(
         tokio::select! {
             up_frame = read_up(&mut up, &mut dec) => match up_frame {
                 Some(ConsumeUp::Ack { lease_id, epoch }) => {
-                    let _ = relay.ack(&subject, &lease_id, Some(epoch));
+                    let _ = relay.ack_in(&subject, &group, &lease_id, Some(epoch));
                     inflight = inflight.saturating_sub(1);
                 }
                 Some(ConsumeUp::Nack { lease_id }) => {
                     // Fast release (#465): reset this lease for immediate
                     // redelivery rather than waiting out the lease TTL.
-                    let _ = relay.release(&subject, &lease_id);
+                    let _ = relay.release_in(&subject, &group, &lease_id);
                     inflight = inflight.saturating_sub(1);
                 }
                 Some(ConsumeUp::Subscribe { .. }) => {}
@@ -186,7 +194,7 @@ mod tests {
         }
         assert!(matches!(
             serde_json::from_slice::<ConsumeUp>(br#"{"type":"subscribe","prefetch":4}"#).unwrap(),
-            ConsumeUp::Subscribe { prefetch: 4 }
+            ConsumeUp::Subscribe { prefetch: 4, .. }
         ));
         assert!(matches!(
             serde_json::from_slice::<ConsumeUp>(br#"{"type":"nack","lease_id":"x"}"#).unwrap(),
