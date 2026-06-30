@@ -263,6 +263,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("main", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "asyncio.subprocess",
+        qualifier: "",
+        name: "create_subprocess_exec",
+        kind: SigKind::ModuleFn,
+        params: &[p("program", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact
