@@ -9,12 +9,11 @@
 # case = "RawConfigParser__read__filenames_as_Iterable_wrong"
 # subject = "configparser.RawConfigParser.read(filenames: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filenames"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filenames
 # mamba-strict-type: TypeError
 """Type wall: configparser.RawConfigParser.read(filenames: Iterable); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from configparser import RawConfigParser
-obj = object.__new__(RawConfigParser)
+obj = RawConfigParser()
 try:
     obj.read(_W())  # filenames: Iterable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
