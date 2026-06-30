@@ -246,7 +246,7 @@ A service is not "done" until it satisfies every row:
 | **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
 | **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
-| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; an `HA.md`. | `keep/k8s`, `lumen k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. |
+| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; dedicated/standalone data-plane mode as the production baseline; an `HA.md`. | `keep/k8s`, `lumen k8s` (+ `operator` feature). `loom` currently ships only a flat `deploy/k8s.yaml` — that's the un-grown form, not the target. Shared multi-tenant backends are optional platform work, not the default service archetype. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
@@ -306,6 +306,40 @@ Kubernetes output is split by lifecycle layer:
 an independent namespace such as `<svc>-system`; `operator run` is the controller
 process/container entrypoint. `instance` renders the app-namespace custom
 resource that an application team applies next to the app it integrates with.
+
+### Deploy tenancy — dedicated first, shared only when justified
+
+The service archetype is **dedicated-first**. A stateful service must be able to
+run as its own data plane — one service instance, one app namespace or
+service-owned namespace, one StatefulSet/Deployment, one storage/backup surface,
+and one operational SLO envelope. This dedicated/standalone mode is mandatory
+because it is the simplest reliable production shape: ownership, upgrades,
+backups, failure blast radius, and delete/finalizer behavior are all local to the
+service instance.
+
+Shared multi-tenant backends are a separate platform capability, not the default.
+They are appropriate only when the product explicitly needs many small tenants to
+share a physical data plane and the platform is ready to own the extra control
+loops. A shared mode requires placement, metering, quota/rate-limit enforcement,
+tenant identity, backend capacity accounting, promotion/demotion policy,
+migration, endpoint/secret rotation, backup partitioning, and finalizer semantics.
+Those moving parts materially increase operational complexity, and most service
+deployments do not need them.
+
+When a shared mode exists, keep the API resource paths service-domain scoped, not
+Kubernetes-namespace scoped. Namespace is deployment and service-discovery
+context; it belongs in DNS, RBAC, CR metadata, and status endpoints, not in HTTP
+paths. For example a tenant may reach
+`http://lumen.lumen-shared.svc/collections/users/index`, while the HTTP route
+remains `POST /collections/{collection_id}/index`.
+
+Use this default decision rule:
+
+| Mode | Default? | Use when |
+|------|----------|----------|
+| **Dedicated / standalone** | Yes | Most production services, high isolation, simple ownership, clear backup/restore and SLO boundaries. |
+| **Shared backend** | No | A platform team explicitly owns placement, metering, quotas, migration, endpoint switching, and tenant lifecycle. |
+| **Promote to dedicated** | Optional | A shared tenant exceeds sustained usage, SLO, storage, or isolation thresholds and migration is controlled by policy. |
 
 ### Standard endpoints — one operational surface, one contract three ways
 
