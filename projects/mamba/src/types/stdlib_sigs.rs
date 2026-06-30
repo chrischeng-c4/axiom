@@ -2573,6 +2573,41 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "MIMEPart",
+        name: "as_string",
+        kind: SigKind::Method,
+        params: &[
+            p("unixfrom", CoreTy::Bool),
+            p("maxheaderlen", CoreTy::Typed),
+            p("policy", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "as_bytes",
+        kind: SigKind::Method,
+        params: &[
+            p("unixfrom", CoreTy::Bool),
+            p("policy", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "as_string",
+        kind: SigKind::Method,
+        params: &[
+            p("unixfrom", CoreTy::Bool),
+            p("maxheaderlen", CoreTy::Int),
+            p("policy", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -5148,6 +5183,23 @@ mod tests {
         assert_eq!(sig.params[1].ty, CoreTy::Str);
         assert_eq!(sig.params[2].name, "subtype");
         assert_eq!(sig.params[2].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_email_message_serialization_unixfrom_walls_override_typed_rows() {
+        for (qualifier, name, expected_len) in [
+            ("MIMEPart", "as_string", 3),
+            ("Message", "as_bytes", 2),
+            ("Message", "as_string", 3),
+        ] {
+            let sig = get("email.message", qualifier, name)
+                .expect("email.message serialization row present");
+            assert!(sig.enforceable, "{qualifier}.{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params.len(), expected_len, "{qualifier}.{name}");
+            assert_eq!(sig.params[0].name, "unixfrom", "{qualifier}.{name}");
+            assert_eq!(sig.params[0].ty, CoreTy::Bool, "{qualifier}.{name}");
+        }
     }
 
     #[test]
