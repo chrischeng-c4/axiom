@@ -9,12 +9,11 @@
 # case = "to_thread__func_as_Callable_wrong"
 # subject = "asyncio.threads.to_thread(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/threads.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: asyncio.threads.to_thread(func: Callable); call it with the wrong type.
 
