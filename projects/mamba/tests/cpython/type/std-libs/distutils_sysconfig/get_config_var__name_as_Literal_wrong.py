@@ -9,12 +9,11 @@
 # case = "get_config_var__name_as_Literal_wrong"
 # subject = "distutils.sysconfig.get_config_var(name: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/sysconfig.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: distutils.sysconfig.get_config_var(name: Literal); call it with the wrong type.
 

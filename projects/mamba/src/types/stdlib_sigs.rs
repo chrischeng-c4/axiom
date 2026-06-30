@@ -2389,6 +2389,45 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // POSITIVE: distutils.sysconfig generated rows lose Literal/string and
+    // bool-ish flag walls. Restore the required prefix checks while leaving
+    // optional prefix/path-like values skip-safe through Typed.
+    StdlibSig {
+        module: "distutils.sysconfig",
+        qualifier: "",
+        name: "get_config_var",
+        kind: SigKind::ModuleFn,
+        params: &[p("name", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.sysconfig",
+        qualifier: "",
+        name: "get_config_vars",
+        kind: SigKind::ModuleFn,
+        params: &[p("arg", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.sysconfig",
+        qualifier: "",
+        name: "get_python_inc",
+        kind: SigKind::ModuleFn,
+        params: &[p("plat_specific", CoreTy::Typed), p("prefix", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "distutils.sysconfig",
+        qualifier: "",
+        name: "get_python_lib",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("plat_specific", CoreTy::Typed),
+            p("standard_lib", CoreTy::Typed),
+            p("prefix", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -4808,6 +4847,42 @@ mod tests {
             assert_eq!(log.params[2].ty, CoreTy::Unknown);
             assert!(log.params[2].star);
         }
+    }
+
+    #[test]
+    fn curated_distutils_sysconfig_walls_override_unknown_rows() {
+        let config_var = get("distutils.sysconfig", "", "get_config_var")
+            .expect("get_config_var row present");
+        assert!(config_var.enforceable);
+        assert_eq!(config_var.kind, SigKind::ModuleFn);
+        assert_eq!(config_var.params[0].name, "name");
+        assert_eq!(config_var.params[0].ty, CoreTy::Str);
+
+        let config_vars = get("distutils.sysconfig", "", "get_config_vars")
+            .expect("get_config_vars row present");
+        assert!(config_vars.enforceable);
+        assert_eq!(config_vars.kind, SigKind::ModuleFn);
+        assert_eq!(config_vars.params[0].name, "arg");
+        assert_eq!(config_vars.params[0].ty, CoreTy::Str);
+        assert!(!config_vars.params[0].star);
+
+        let python_inc = get("distutils.sysconfig", "", "get_python_inc")
+            .expect("get_python_inc row present");
+        assert!(python_inc.enforceable);
+        assert_eq!(python_inc.kind, SigKind::ModuleFn);
+        assert_eq!(python_inc.params[0].name, "plat_specific");
+        assert_eq!(python_inc.params[0].ty, CoreTy::Typed);
+        assert_eq!(python_inc.params[1].name, "prefix");
+        assert_eq!(python_inc.params[1].ty, CoreTy::Typed);
+
+        let python_lib = get("distutils.sysconfig", "", "get_python_lib")
+            .expect("get_python_lib row present");
+        assert!(python_lib.enforceable);
+        assert_eq!(python_lib.kind, SigKind::ModuleFn);
+        assert_eq!(python_lib.params[0].name, "plat_specific");
+        assert_eq!(python_lib.params[0].ty, CoreTy::Typed);
+        assert_eq!(python_lib.params[1].name, "standard_lib");
+        assert_eq!(python_lib.params[1].ty, CoreTy::Typed);
     }
 
     #[test]
