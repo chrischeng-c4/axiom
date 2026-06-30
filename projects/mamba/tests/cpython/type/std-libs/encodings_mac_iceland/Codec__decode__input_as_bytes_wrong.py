@@ -9,12 +9,11 @@
 # case = "Codec__decode__input_as_bytes_wrong"
 # subject = "encodings.mac_iceland.Codec.decode(input: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed input"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/encodings/mac_iceland.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed input
 # mamba-strict-type: TypeError
 """Type wall: encodings.mac_iceland.Codec.decode(input: bytes); call it with the wrong type.
 
