@@ -271,6 +271,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("program", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "asyncio.tasks",
+        qualifier: "",
+        name: "create_eager_task_factory",
+        kind: SigKind::ModuleFn,
+        params: &[p("custom_task_constructor", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
     // them to `Typed` or lose the parameter entirely; keep the strict wall exact
