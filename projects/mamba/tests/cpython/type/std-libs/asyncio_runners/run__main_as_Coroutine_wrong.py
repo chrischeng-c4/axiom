@@ -9,12 +9,11 @@
 # case = "run__main_as_Coroutine_wrong"
 # subject = "asyncio.runners.run(main: Coroutine)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed main"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/runners.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed main
 # mamba-strict-type: TypeError
 """Type wall: asyncio.runners.run(main: Coroutine); call it with the wrong type.
 
