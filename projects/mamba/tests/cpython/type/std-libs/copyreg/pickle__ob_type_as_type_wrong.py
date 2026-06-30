@@ -9,12 +9,10 @@
 # case = "pickle__ob_type_as_type_wrong"
 # subject = "copyreg.pickle(ob_type: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ob_type"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copyreg.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ob_type
 # mamba-strict-type: TypeError
 """Type wall: copyreg.pickle(ob_type: type); call it with the wrong type.
 
