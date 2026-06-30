@@ -9,12 +9,11 @@
 # case = "Message__get_payload__i_as_typed_wrong"
 # subject = "email.message.Message.get_payload(i: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed i"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed i
 # mamba-strict-type: TypeError
 """Type wall: email.message.Message.get_payload(i: typed); call it with the wrong type.
 
