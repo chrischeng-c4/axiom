@@ -519,6 +519,28 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "concurrent.futures.interpreter",
+        qualifier: "InterpreterPoolExecutor",
+        name: "prepare_context",
+        kind: SigKind::Method,
+        params: &[
+            p("initializer", CoreTy::Typed),
+            p("initargs", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "concurrent.futures.interpreter",
+        qualifier: "WorkerContext",
+        name: "prepare",
+        kind: SigKind::Method,
+        params: &[
+            p("initializer", CoreTy::Typed),
+            p("initargs", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "concurrent.futures.process",
         qualifier: "ProcessPoolExecutor",
         name: "__init__",
@@ -537,6 +559,39 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[
             p("max_workers", CoreTy::Int),
             p("thread_name_prefix", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "concurrent.futures.thread",
+        qualifier: "ThreadPoolExecutor",
+        name: "prepare_context",
+        kind: SigKind::Method,
+        params: &[
+            p("initializer", CoreTy::Typed),
+            p("initargs", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "concurrent.futures.thread",
+        qualifier: "WorkerContext",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("initializer", CoreTy::Typed),
+            p("initargs", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "concurrent.futures.thread",
+        qualifier: "WorkerContext",
+        name: "prepare",
+        kind: SigKind::Method,
+        params: &[
+            p("initializer", CoreTy::Typed),
+            p("initargs", CoreTy::Unknown),
         ],
         enforceable: true,
     },
@@ -3461,6 +3516,31 @@ mod tests {
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, "max_workers");
             assert_eq!(sig.params[0].ty, CoreTy::Int);
+        }
+    }
+
+    #[test]
+    fn curated_concurrent_initializer_uses_typed_wall() {
+        for (module, qualifier, name) in [
+            (
+                "concurrent.futures.interpreter",
+                "InterpreterPoolExecutor",
+                "prepare_context",
+            ),
+            ("concurrent.futures.interpreter", "WorkerContext", "prepare"),
+            (
+                "concurrent.futures.thread",
+                "ThreadPoolExecutor",
+                "prepare_context",
+            ),
+            ("concurrent.futures.thread", "WorkerContext", "__init__"),
+            ("concurrent.futures.thread", "WorkerContext", "prepare"),
+        ] {
+            let sig = get(module, qualifier, name).expect("initializer sig present");
+            assert!(sig.enforceable, "{module}.{qualifier}.{name}");
+            assert_eq!(sig.kind, SigKind::Method);
+            assert_eq!(sig.params[0].name, "initializer");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
         }
     }
 
