@@ -56,14 +56,12 @@ deployment:
         components:
           - ../../components/observability
         
-        # prod: 6+ serving nodes (HPA floor 6, ceiling 12), strict auth, json logs,
-        # full resources. Managed Relay is a single broker; production HA should patch
-        # LUMEN_RELAY_URL to an external Relay until relay-raft exposes subscribe/len.
+        # prod: direct single-node install with strict auth, json logs, full resources.
+        # Production HA uses the operator CR path (`replicasPerShard > 1`) so Lumen owns
+        # raft replication without an external broker.
         
         replicas:
           - name: lumen
-            count: 6
-          - name: lumen-relay
             count: 1
         
         patches:
@@ -101,8 +99,11 @@ deployment:
               - op: replace
                 path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable
                 value: "DoNotSchedule"
-              # Strict auth: LUMEN_TOKENS must be supplied out-of-band (e.g. a Secret
-              # patched in by the platform layer). Wire LUMEN_AUTH from the ConfigMap.
+              # Strict auth: a Secret named `lumen-tokens` with key
+              # `token-registry.json` must be supplied out-of-band, commonly from GCP
+              # Secret Manager via External Secrets Operator / Secret Store CSI. Lumen
+              # reads only the mounted file path at startup, so rotate by rolling pods
+              # or running a Secret reloader controller.
               - op: add
                 path: /spec/template/spec/containers/0/env/-
                 value:
@@ -111,42 +112,37 @@ deployment:
                     configMapKeyRef:
                       name: lumen-config
                       key: LUMEN_AUTH
-          # HPA floor 6 (matches the Deployment replica count), ceiling 12.
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: LUMEN_TOKEN_REGISTRY_FILE
+                  value: /var/run/secrets/lumen/token-registry.json
+              - op: add
+                path: /spec/template/spec/containers/0/volumeMounts/-
+                value:
+                  name: lumen-token-registry
+                  mountPath: /var/run/secrets/lumen
+                  readOnly: true
+              - op: add
+                path: /spec/template/spec/volumes/-
+                value:
+                  name: lumen-token-registry
+                  secret:
+                    secretName: lumen-tokens
+                    items:
+                      - key: token-registry.json
+                        path: token-registry.json
+          # Direct kustomize stays single-node. Use the operator for raft HA/scaling.
           - target:
               kind: HorizontalPodAutoscaler
               name: lumen
             patch: |-
               - op: replace
                 path: /spec/minReplicas
-                value: 6
+                value: 1
               - op: replace
                 path: /spec/maxReplicas
-                value: 12
-          # Managed Relay broker resources. Do not scale relay-server above 1 here:
-          # multiple relay-server pods are independent logs, not HA.
-          - target:
-              kind: StatefulSet
-              name: lumen-relay
-            patch: |-
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/requests/cpu
-                value: "2"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/requests/memory
-                value: "4Gi"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/limits/cpu
-                value: "2"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/limits/memory
-                value: "4Gi"
-              # Cloud SSD storage class (base omits storageClassName for portability).
-              - op: add
-                path: /spec/volumeClaimTemplates/0/spec/storageClassName
-                value: "ssd"
-              - op: replace
-                path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
-                value: "100Gi"
+                value: 1
         # CODEGEN-END
 
 ```

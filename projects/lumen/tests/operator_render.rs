@@ -209,6 +209,7 @@ fn deployment_wires_serving_contract() {
     }
     // auth=off and no log level → those env vars are absent.
     assert!(!names.contains(&"LUMEN_TOKENS".to_string()));
+    assert!(!names.contains(&"LUMEN_TOKEN_REGISTRY_FILE".to_string()));
     assert!(!names.contains(&"LUMEN_LOG_LEVEL".to_string()));
 }
 
@@ -241,18 +242,40 @@ fn prod_wires_auth_and_observability() {
     let l = lumen("lumen", prod_spec());
     let objs = render(&l);
 
-    // auth=required + tokensSecret → LUMEN_TOKENS env from the Secret.
+    // auth=required + tokensSecret → registry file env + Secret volume mount.
     let dep = find(&objs, "Deployment", "lumen");
     let c = &dep["spec"]["template"]["spec"]["containers"][0];
     assert_eq!(c["image"], "registry.example.com/lumen:1.2.3");
     assert_eq!(c["imagePullPolicy"], "Always");
-    let tokens = c["env"]
+    let registry_env = c["env"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|e| e["name"] == "LUMEN_TOKENS")
-        .expect("LUMEN_TOKENS env");
-    assert_eq!(tokens["valueFrom"]["secretKeyRef"]["name"], "lumen-tokens");
+        .find(|e| e["name"] == "LUMEN_TOKEN_REGISTRY_FILE")
+        .expect("LUMEN_TOKEN_REGISTRY_FILE env");
+    assert_eq!(
+        registry_env["value"],
+        "/var/run/secrets/lumen/token-registry.json"
+    );
+    let registry_mount = c["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "lumen-token-registry")
+        .expect("token registry mount");
+    assert_eq!(registry_mount["mountPath"], "/var/run/secrets/lumen");
+    assert_eq!(registry_mount["readOnly"], true);
+    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "lumen-token-registry")
+        .expect("token registry volume");
+    assert_eq!(registry_volume["secret"]["secretName"], "lumen-tokens");
+    assert_eq!(
+        registry_volume["secret"]["items"][0]["key"],
+        "token-registry.json"
+    );
     // log level set → present.
     assert!(env_names(c).contains(&"LUMEN_LOG_LEVEL".to_string()));
 

@@ -38,13 +38,11 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 // CODEGEN-BEGIN
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
 //!
-//! One `Lumen` object declares a full deployment: a stateless, autoscaled
-//! serving fleet plus a Relay write-log broker. The reconcile loop in
-//! [`super::reconcile`] turns this spec into the same set of objects that
-//! `k8s/base` + the overlays express by hand today — Deployment, Service,
-//! ConfigMap, HPA, PDB, ServiceAccount (serving) and StatefulSet, Services,
-//! PDB (broker) — but driven declaratively and garbage-collected via owner
-//! references.
+//! One `Lumen` object declares a full deployment. Single-replica instances use
+//! an embedded WAL; multi-replica instances use Lumen-owned raft replication via
+//! a serving StatefulSet. The reconcile loop in [`super::reconcile`] turns this
+//! spec into Deployment/StatefulSet, Service, ConfigMap, HPA, PDB, and
+//! ServiceAccount objects, garbage-collected via owner references.
 
 use kube::CustomResource;
 use schemars::JsonSchema;
@@ -70,8 +68,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct LumenSpec {
-    /// Serving + (managed) broker-sidecar-free container image, e.g.
-    /// `lumen:latest`. Required.
+    /// Serving container image, e.g. `lumen:latest`. Required.
     pub image: String,
 
     /// Image pull policy. Defaults to `IfNotPresent`.
@@ -103,24 +100,21 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `off` (dev) or `required` (tokens supplied via
+    /// Auth mode: `off` (dev) or `required` (token registry supplied via
     /// `tokensSecret`).
     #[serde(default)]
     pub auth: AuthMode,
 
-    /// Name of a Secret (key `LUMEN_TOKENS`) wired into serving pods when
-    /// `auth: required`. Ignored when `auth: off`.
+    /// Name of a Secret whose `token-registry.json` key is mounted at
+    /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
+    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. Ignored
+    /// when `auth: off`.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
     /// Stateless serving-fleet shape.
     #[serde(default)]
     pub serving: ServingSpec,
-
-    /// Relay write-log broker. Managed by default; set `externalUrl` to point
-    /// at an existing broker and skip provisioning one.
-    #[serde(default, alias = "nats")]
-    pub broker: BrokerSpec,
 
     /// Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator
     /// CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
@@ -162,7 +156,7 @@ pub enum AuthMode {
     #[default]
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token required; tokens come from `tokensSecret`.
+    /// Bearer-token required; the token registry file comes from `tokensSecret`.
     Required,
 }
 
@@ -195,6 +189,13 @@ pub struct ServingSpec {
     /// `terminationGracePeriodSeconds`.
     #[serde(default = "default_grace_secs")]
     pub grace_secs: u64,
+    /// Per-pod raft hard-state PVC size. Used only when
+    /// `replicasPerShard > 1`.
+    #[serde(default = "default_raft_storage")]
+    pub raft_storage: String,
+    /// PVC StorageClass for raft hard state. Unset means cluster default.
+    #[serde(default)]
+    pub raft_storage_class: Option<String>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
@@ -205,6 +206,8 @@ impl Default for ServingSpec {
             cpu: default_serving_cpu(),
             memory: default_serving_memory(),
             grace_secs: default_grace_secs(),
+            raft_storage: default_raft_storage(),
+            raft_storage_class: None,
         }
     }
 }
@@ -233,66 +236,6 @@ impl Default for Autoscaling {
     }
 }
 
-/// Relay write-log broker: either managed (StatefulSet) or external (BYO).
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
-pub struct BrokerSpec {
-    /// Point serving pods at an existing broker. When set, the operator
-    /// renders NO broker objects (StatefulSet/Services/PDB) and wires
-    /// `LUMEN_RELAY_URL` straight to this value.
-    #[serde(default)]
-    pub external_url: Option<String>,
-    /// Managed Relay image. The image should contain the `relay-server` binary.
-    #[serde(default = "default_broker_image")]
-    pub image: String,
-    /// Relay subject carrying the Lumen WAL.
-    #[serde(default = "default_broker_subject")]
-    pub subject: String,
-    /// Managed-broker replica count. `1` is the current managed mode; use
-    /// `externalUrl` for production Relay HA until relay-raft exposes the full
-    /// broadcast subscribe API.
-    #[serde(default = "default_broker_replicas")]
-    pub replicas: i32,
-    /// Per-broker PVC size. e.g. `"20Gi"`, `"100Gi"`.
-    #[serde(default = "default_broker_storage")]
-    pub storage: String,
-    /// PVC StorageClass. Unset → cluster default (portable; kind → local-path
-    /// `standard`). Set to e.g. `"ssd"` in cloud.
-    #[serde(default)]
-    pub storage_class: Option<String>,
-    /// Per-broker CPU, applied as request==limit.
-    #[serde(default = "default_broker_cpu")]
-    pub cpu: String,
-    /// Per-broker memory, applied as request==limit.
-    #[serde(default = "default_broker_memory")]
-    pub memory: String,
-}
-
-/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
-impl BrokerSpec {
-    /// True when the broker is operator-managed (no `externalUrl`).
-    pub fn is_managed(&self) -> bool {
-        self.external_url.is_none()
-    }
-}
-
-/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
-impl Default for BrokerSpec {
-    fn default() -> Self {
-        Self {
-            external_url: None,
-            image: default_broker_image(),
-            subject: default_broker_subject(),
-            replicas: default_broker_replicas(),
-            storage: default_broker_storage(),
-            storage_class: None,
-            cpu: default_broker_cpu(),
-            memory: default_broker_memory(),
-        }
-    }
-}
-
 /// Status subresource, written back by the reconcile loop.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -313,9 +256,6 @@ pub struct LumenStatus {
     /// Effective shard count.
     #[serde(default)]
     pub shard_count: u32,
-    /// Whether the Relay broker is Ready (managed) or assumed up (external).
-    #[serde(default, alias = "natsReady")]
-    pub broker_ready: bool,
     /// Last human-readable reconcile message.
     #[serde(default)]
     pub message: String,
@@ -336,23 +276,8 @@ fn default_serving_memory() -> String {
 fn default_grace_secs() -> u64 {
     30
 }
-fn default_broker_image() -> String {
-    "relay:latest".into()
-}
-fn default_broker_subject() -> String {
-    "lumen-wal".into()
-}
-fn default_broker_replicas() -> i32 {
-    1
-}
-fn default_broker_storage() -> String {
+fn default_raft_storage() -> String {
     "20Gi".into()
-}
-fn default_broker_cpu() -> String {
-    "1".into()
-}
-fn default_broker_memory() -> String {
-    "1Gi".into()
 }
 // CODEGEN-END
 

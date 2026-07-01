@@ -36,7 +36,7 @@ spec:
             properties:
               auth:
                 default: disabled
-                description: 'Auth mode: `off` (dev) or `required` (tokens supplied via `tokensSecret`).'
+                description: 'Auth mode: `off` (dev) or `required` (token registry supplied via `tokensSecret`).'
                 enum:
                 - disabled
                 - required
@@ -133,7 +133,7 @@ spec:
                 type: integer
                 minimum: 0.0
               tokensSecret:
-                description: 'Name of a Secret (key `LUMEN_TOKENS`) wired into serving pods when `auth: required`. Ignored when `auth: off`.'
+                description: 'Name of a Secret whose `token-registry.json` key is mounted at `/var/run/secrets/lumen/token-registry.json` and exposed to the serving process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. Ignored when `auth: off`.'
                 nullable: true
                 type: string
               voterCount:

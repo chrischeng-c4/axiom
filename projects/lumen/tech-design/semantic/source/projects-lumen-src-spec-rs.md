@@ -173,7 +173,7 @@ Use the smallest topic that answers the task:
   flavor choices, connection, and non-goals.
 - `lumen llm integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
-  and no direct external writes to lumen's internal broker WAL.
+  and no direct external writes to lumen's internal WAL.
 - `lumen llm quickstart` — copy-paste local create → index → search flow.
 - `lumen llm recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
@@ -227,8 +227,12 @@ hydrate the hits against your own store.
 
 ## Connection
 HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. When the
-node runs with `LUMEN_AUTH=required`, send `Authorization: Bearer <token>`.
-Sharded deployments route on the client: `crc32(collection_id) % shard_count`.
+node runs with `LUMEN_AUTH=required`, send `Authorization: Bearer <LUMEN_TOKEN>`.
+Production server pods load the token registry from
+`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; on GKE
+that file should be materialized from GCP Secret Manager through Kubernetes
+Secret projection, External Secrets Operator, or Secret Store CSI. Sharded
+deployments route on the client: `crc32(collection_id) % shard_count`.
 
 ## Do NOT ask lumen to
 - store or return documents — it returns `external_id`s; hydrate them yourself
@@ -266,9 +270,9 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 4. If upstream delivery can arrive out of order, carry a monotonic
    `source_version` / commit LSN in the adapter and suppress stale writes before
    POSTing.
-5. Do not publish directly to lumen's broker stream. Relay is lumen's internal
-   WAL and fan-out substrate; external producers use the HTTP API so
-   every write goes through validation, routing, and the same log/apply path.
+5. Do not publish directly to lumen's internal WAL. External producers use the
+   HTTP API so every write goes through validation, routing, and the same
+   log/apply path.
 
 ## Ownership boundary
 - lumen core owns schema validation, sharded HTTP writes, the internal WAL,
@@ -287,7 +291,10 @@ pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
 Assumes a node at `http://localhost:7373` (`lumen serve`). Add
-`-H 'authorization: Bearer <token>'` when `LUMEN_AUTH=required`.
+`-H 'authorization: Bearer <LUMEN_TOKEN>'` when `LUMEN_AUTH=required`. In
+production the server-side `.env` contract is `LUMEN_AUTH=required` plus
+`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; clients
+only need `LUMEN_URL` and `LUMEN_TOKEN`.
 
 ## 1. Declare a collection
 ```bash

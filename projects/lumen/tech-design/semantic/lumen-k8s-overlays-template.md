@@ -67,7 +67,7 @@ deployment:
         resources:
           - ../../base
           # AUTH (optional, off by default). To require bearer auth: copy
-          # secret.example.yaml -> secret.yaml, fill real tokens, uncomment this line
+          # secret.example.yaml -> secret.yaml, fill token-registry.json, uncomment this line
           # AND the OPTIONAL auth patch block at the bottom.
           # - secret.yaml
         
@@ -78,15 +78,11 @@ deployment:
           - name: lumen
             newName: REPLACE_ME__REGISTRY/lumen   # e.g. asia-east1-docker.pkg.dev/PROJECT/REPO/lumen
             newTag: REPLACE_ME__IMAGE_TAG         # e.g. v1   (avoid :latest in prod)
-          - name: relay
-            newName: REPLACE_ME__REGISTRY/relay
-            newTag: REPLACE_ME__RELAY_IMAGE_TAG
         
-        # Replica floors at apply time. The HPA owns lumen's live count from here up.
+        # Direct kustomize is single-node. For HA, render/apply a Lumen CR through the
+        # operator with replicasPerShard > 1.
         replicas:
           - name: lumen
-            count: 2
-          - name: lumen-relay
             count: 1
         
         patches:
@@ -102,18 +98,9 @@ deployment:
                 path: /data/LUMEN_LOG_FORMAT
                 value: "json"
         
-          # GKE storage class for the Relay PVC (the one stateful component). base omits
-          # it (cluster default). GKE SSD = premium-rwo; balanced PD = standard-rwo.
-          # Non-GKE: set your class, or delete this patch to use the cluster default.
-          - target: { kind: StatefulSet, name: lumen-relay }
-            patch: |-
-              - op: add
-                path: /spec/volumeClaimTemplates/0/spec/storageClassName
-                value: "premium-rwo"
-        
           # ── OPTIONAL: bearer auth ────────────────────────────────────────────────
           # Uncomment this whole block AND the `- secret.yaml` resource line above to
-          # require a token on every route. Leave commented for an open (auth=off) start.
+          # require a token on data-plane routes. Leave commented for an open (auth=off) start.
           # - target: { kind: ConfigMap, name: lumen-config }
           #   patch: |-
           #     - op: add
@@ -129,8 +116,23 @@ deployment:
           #     - op: add
           #       path: /spec/template/spec/containers/0/env/-
           #       value:
-          #         name: LUMEN_TOKENS
-          #         valueFrom: { secretKeyRef: { name: lumen-tokens, key: LUMEN_TOKENS } }
+          #         name: LUMEN_TOKEN_REGISTRY_FILE
+          #         value: /var/run/secrets/lumen/token-registry.json
+          #     - op: add
+          #       path: /spec/template/spec/containers/0/volumeMounts/-
+          #       value:
+          #         name: lumen-token-registry
+          #         mountPath: /var/run/secrets/lumen
+          #         readOnly: true
+          #     - op: add
+          #       path: /spec/template/spec/volumes/-
+          #       value:
+          #         name: lumen-token-registry
+          #         secret:
+          #           secretName: lumen-tokens
+          #           items:
+          #             - key: token-registry.json
+          #               path: token-registry.json
         # CODEGEN-END
 
 ```

@@ -24,7 +24,7 @@ namespace: lumen
 resources:
   - ../../base
   # AUTH (optional, off by default). To require bearer auth: copy
-  # secret.example.yaml -> secret.yaml, fill real tokens, uncomment this line
+  # secret.example.yaml -> secret.yaml, fill token-registry.json, uncomment this line
   # AND the OPTIONAL auth patch block at the bottom.
   # - secret.yaml
 
@@ -57,7 +57,7 @@ patches:
 
   # ── OPTIONAL: bearer auth ────────────────────────────────────────────────
   # Uncomment this whole block AND the `- secret.yaml` resource line above to
-  # require a token on every route. Leave commented for an open (auth=off) start.
+  # require a token on data-plane routes. Leave commented for an open (auth=off) start.
   # - target: { kind: ConfigMap, name: lumen-config }
   #   patch: |-
   #     - op: add
@@ -73,6 +73,21 @@ patches:
   #     - op: add
   #       path: /spec/template/spec/containers/0/env/-
   #       value:
-  #         name: LUMEN_TOKENS
-  #         valueFrom: { secretKeyRef: { name: lumen-tokens, key: LUMEN_TOKENS } }
+  #         name: LUMEN_TOKEN_REGISTRY_FILE
+  #         value: /var/run/secrets/lumen/token-registry.json
+  #     - op: add
+  #       path: /spec/template/spec/containers/0/volumeMounts/-
+  #       value:
+  #         name: lumen-token-registry
+  #         mountPath: /var/run/secrets/lumen
+  #         readOnly: true
+  #     - op: add
+  #       path: /spec/template/spec/volumes/-
+  #       value:
+  #         name: lumen-token-registry
+  #         secret:
+  #           secretName: lumen-tokens
+  #           items:
+  #             - key: token-registry.json
+  #               path: token-registry.json
 # CODEGEN-END
