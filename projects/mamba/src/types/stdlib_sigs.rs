@@ -5165,6 +5165,54 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
         enforceable: true,
     },
+    // POSITIVE: mmap is a C-extension class not implemented in the runtime yet,
+    // but the strict type wall can still reject impossible method arguments
+    // before import execution. Index contracts are SupportsIndex/slice unions;
+    // use Typed so valid index/slice/dynamic values remain skip-safe.
+    StdlibSig {
+        module: "mmap",
+        qualifier: "mmap",
+        name: "__delitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "mmap",
+        qualifier: "mmap",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[
+            p("exc_type", CoreTy::Typed),
+            p("exc_value", CoreTy::Unknown),
+            p("traceback", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "mmap",
+        qualifier: "mmap",
+        name: "__getitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "mmap",
+        qualifier: "mmap",
+        name: "__release_buffer__",
+        kind: SigKind::Method,
+        params: &[p("buffer", CoreTy::MemoryView)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "mmap",
+        qualifier: "mmap",
+        name: "__setitem__",
+        kind: SigKind::Method,
+        params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
     StdlibSig {
         module: "logging.config",
         qualifier: "BaseConfigurator",
@@ -8273,6 +8321,18 @@ mod tests {
             ),
             ("logging.config", "", "dictConfig", 0, "config", CoreTy::Typed),
             ("lzma", "", "open", 0, "filename", CoreTy::Typed),
+            ("mmap", "mmap", "__delitem__", 0, "key", CoreTy::Typed),
+            ("mmap", "mmap", "__exit__", 0, "exc_type", CoreTy::Typed),
+            ("mmap", "mmap", "__getitem__", 0, "key", CoreTy::Typed),
+            (
+                "mmap",
+                "mmap",
+                "__release_buffer__",
+                0,
+                "buffer",
+                CoreTy::MemoryView,
+            ),
+            ("mmap", "mmap", "__setitem__", 0, "key", CoreTy::Typed),
             (
                 "logging.config",
                 "BaseConfigurator",

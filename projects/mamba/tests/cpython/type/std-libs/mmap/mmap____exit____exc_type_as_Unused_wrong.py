@@ -9,12 +9,11 @@
 # case = "mmap____exit____exc_type_as_Unused_wrong"
 # subject = "mmap.mmap.__exit__(exc_type: Unused)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mmap.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type
 # mamba-strict-type: TypeError
 """Type wall: mmap.mmap.__exit__(exc_type: Unused); call it with the wrong type.
 
