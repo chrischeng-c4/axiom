@@ -4,8 +4,8 @@
 //! `schema-layer` (worker bidi edge).
 //!
 //! Alongside the role commands sit the standard agent-facing commands — `loom
-//! llm`, `loom upgrade`, `loom report-issue` (the CONTRIBUTING.md CLI
-//! convention, via the shared `cli-std` lib, #475). Agents start at
+//! llm`, `loom upgrade`, `loom issue` (search/view/create) (the CONTRIBUTING.md
+//! CLI convention, via the shared `cli-std` lib, #475). Agents start at
 //! `loom llm outline`.
 
 use clap::{Parser, Subcommand};
@@ -42,11 +42,11 @@ enum Command {
     /// verifies its sha256, and atomically replaces the executable. `--check`
     /// reports the available version without changing anything.
     Upgrade(UpgradeArgs),
-    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
-    /// git sha and OS/arch with your description, then opens an issue via
-    /// `GITHUB_TOKEN` — or prints a pre-filled `issues/new` URL when no token is
-    /// set. `--dry-run` previews without submitting.
-    ReportIssue(ReportIssueArgs),
+    /// Search, view, and file loom issues on the axiom tracker. `search` and
+    /// `view` read existing `project:loom` issues; `create` files a
+    /// diagnostics-rich issue tagged `project:loom` (via `GITHUB_TOKEN`, or a
+    /// pre-filled `issues/new` URL when no token is set).
+    Issue(IssueArgs),
 }
 
 /// `loom llm` flags.
@@ -77,15 +77,51 @@ struct UpgradeArgs {
     yes: bool,
 }
 
-/// `loom report-issue` flags.
+/// `loom issue <search|view|create>` flags.
 #[derive(clap::Args)]
-struct ReportIssueArgs {
-    /// Issue title.
+struct IssueArgs {
+    #[command(subcommand)]
+    command: IssueCommand,
+}
+
+#[derive(Subcommand)]
+enum IssueCommand {
+    /// Search loom issues (`project:loom`); omit the query to list recent.
+    Search(IssueSearchArgs),
+    /// Print one issue by number.
+    View(IssueViewArgs),
+    /// File a diagnostics-rich loom issue.
+    Create(IssueCreateArgs),
+}
+
+#[derive(clap::Args)]
+struct IssueSearchArgs {
+    /// Search text. Omit to list recent issues.
+    #[arg(value_name = "QUERY", num_args = 0..)]
+    query: Vec<String>,
+    /// Issue state: open, closed, or all.
+    #[arg(long, default_value = "open", value_parser = ["open", "closed", "all"])]
+    state: String,
+    /// Max results.
+    #[arg(long, default_value_t = 20)]
+    limit: u32,
+}
+
+#[derive(clap::Args)]
+struct IssueViewArgs {
+    /// Issue number.
+    number: u64,
+}
+
+#[derive(clap::Args)]
+struct IssueCreateArgs {
+    /// Issue title (defaults to a `loom: <first line>` summary of the message).
     #[arg(short = 't', long)]
-    title: String,
-    /// Free-text description of the problem (placed above the diagnostics block).
-    #[arg(short = 'm', long)]
-    message: Option<String>,
+    title: Option<String>,
+    /// Free-text description of the problem (trailing words; placed above the
+    /// diagnostics block). The only positional — parameters are flags.
+    #[arg(value_name = "MSG", num_args = 0..)]
+    message: Vec<String>,
     /// Include a running node's `/version`+`/healthz` (e.g. http://localhost:7474).
     #[arg(long)]
     url: Option<String>,
@@ -104,7 +140,7 @@ struct ReportIssueArgs {
 }
 
 /// This binary's identity + build provenance for the standard CLI ops
-/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention (#475).
+/// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention (#475).
 const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "loom",
     repo: "chrischeng-c4/axiom",
@@ -201,23 +237,61 @@ fn main() -> anyhow::Result<()> {
                 yes: args.yes,
             },
         )),
-        Command::ReportIssue(args) => block_on(cli_std::report_issue::run(
-            &TOOL,
-            cli_std::report_issue::Options {
-                title: args.title,
-                message: args.message,
-                url: args.url,
-                repo: args.repo,
-                label: args.label,
-                dry_run: args.dry_run,
-                yes: args.yes,
-            },
-        )),
+        Command::Issue(args) => block_on(issue(args)),
+    }
+}
+
+/// Dispatch `loom issue <search|view|create>` to the shared `cli_std::issue`
+/// implementation. `search`/`view` are read-only; `create` files (or previews)
+/// a diagnostics-rich issue always tagged `project:loom` (CLI convention).
+async fn issue(args: IssueArgs) -> anyhow::Result<()> {
+    match args.command {
+        IssueCommand::Search(args) => {
+            let query = (!args.query.is_empty()).then(|| args.query.join(" "));
+            cli_std::issue::search(
+                &TOOL,
+                cli_std::issue::SearchOptions {
+                    query,
+                    state: args.state,
+                    limit: args.limit,
+                },
+            )
+            .await
+        }
+        IssueCommand::View(args) => cli_std::issue::view(&TOOL, args.number).await,
+        IssueCommand::Create(args) => {
+            let message = (!args.message.is_empty()).then(|| args.message.join(" "));
+            let title = args.title.unwrap_or_else(|| {
+                if let Some(message) = message.as_deref() {
+                    let head: String = message.lines().next().unwrap_or("").chars().take(72).collect();
+                    format!("loom: {head}")
+                } else {
+                    "loom: issue report".to_string()
+                }
+            });
+            cli_std::issue::create(
+                &TOOL,
+                cli_std::issue::CreateOptions {
+                    title,
+                    message,
+                    url: args.url,
+                    repo: args.repo,
+                    // Always tag with the project label so reports route
+                    // automatically (CLI convention); keep any user labels too.
+                    label: std::iter::once("project:loom".to_string())
+                        .chain(args.label)
+                        .collect(),
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
     }
 }
 
 /// Run a future to completion on a fresh runtime. The standard CLI ops
-/// (`upgrade`/`report-issue`) are async, but loom's role subcommands each build
+/// (`upgrade`/`issue`) are async, but loom's role subcommands each build
 /// their own runtime, so `main` stays sync.
 fn block_on<F: std::future::Future<Output = anyhow::Result<()>>>(fut: F) -> anyhow::Result<()> {
     tokio::runtime::Runtime::new()?.block_on(fut)
