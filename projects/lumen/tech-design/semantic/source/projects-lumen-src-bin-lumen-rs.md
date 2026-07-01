@@ -187,6 +187,13 @@ enum K8sOperatorCmd {
     Run,
     /// Render operator namespace/RBAC/deployment YAML.
     Render(K8sOperatorRenderArgs),
+    /// One-shot: grow a running instance's `raft-<name>-<n>` PVCs to match
+    /// its CR's `spec.serving.raftStorage` (#809). StatefulSet
+    /// `volumeClaimTemplates` are immutable, so a CR edit alone never
+    /// resizes existing PVCs; this patches them directly when the bound
+    /// `StorageClass` allows expansion. Never shrinks (unsupported by
+    /// Kubernetes) and never mutates the CR itself.
+    ResizeStorage(K8sOperatorResizeStorageArgs),
 }
 
 #[derive(clap::Args)]
@@ -198,6 +205,19 @@ struct K8sOperatorRenderArgs {
     /// `operator.yaml`.
     #[arg(long)]
     out: Option<PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorResizeStorageArgs {
+    /// Namespace of the `Lumen` instance to resize.
+    #[arg(long)]
+    namespace: String,
+    /// `Lumen` CR name.
+    #[arg(long)]
+    name: String,
+    /// Report what would be patched without mutating any PVC.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(clap::Args)]
@@ -782,9 +802,10 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
     }
 }
 
-/// `lumen k8s` — cluster artifacts split by lifecycle layer. Only
-/// `operator run` needs kube-rs at runtime; the render paths are offline and
-/// work from the static manifests/CR templates embedded in the binary.
+/// `lumen k8s` — cluster artifacts split by lifecycle layer. `operator run`
+/// and `operator resize-storage` need kube-rs at runtime; the render paths
+/// are offline and work from the static manifests/CR templates embedded in
+/// the binary.
 async fn k8s(args: K8sArgs) -> Result<()> {
     match args.cmd {
         K8sCmd::Crd(args) => match args.cmd {
@@ -796,6 +817,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
                 let yaml = render_operator_yaml(&args.namespace);
                 write_or_print(args.out.as_deref(), "operator.yaml", &yaml)
             }
+            K8sOperatorCmd::ResizeStorage(args) => resize_storage(args).await,
         },
         K8sCmd::Instance(args) => match args.cmd {
             K8sInstanceCmd::Render(args) => {
@@ -818,6 +840,29 @@ async fn run_operator() -> Result<()> {
 
 #[cfg(not(feature = "operator"))]
 async fn run_operator() -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
+}
+
+/// `lumen k8s operator resize-storage` (#809): one-shot detect-and-patch for
+/// the `raft` PVC's `volumeClaimTemplates` immutability gap — see
+/// `lumen::operator::resize::resize_instance`.
+#[cfg(feature = "operator")]
+async fn resize_storage(args: K8sOperatorResizeStorageArgs) -> Result<()> {
+    let client = kube::Client::try_default()
+        .await
+        .context("build a kube client from the in-cluster/kubeconfig context")?;
+    let outcomes =
+        lumen::operator::resize::resize_instance(client, &args.namespace, &args.name, args.dry_run)
+            .await?;
+    println!("{}", serde_json::to_string_pretty(&outcomes)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "operator"))]
+async fn resize_storage(_args: K8sOperatorResizeStorageArgs) -> Result<()> {
     anyhow::bail!(
         "this lumen build was compiled without operator support; rebuild with \
          `--features operator` (the published image includes it)"
@@ -1646,7 +1691,6 @@ fn init_otel_meter(
     Ok(())
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
@@ -1657,8 +1701,11 @@ changes:
   - path: projects/lumen/src/bin/lumen.rs
     action: modify
     section: rust-source-unit
-    impl_mode: codegen
+    impl_mode: hand-written
     description: |
-      rust-source-unit (td_ast) source for `projects/lumen/src/bin/lumen.rs` captured during lumen
-      standardization onto the per-file codegen ladder.
+      #809: add `K8sOperatorCmd::ResizeStorage` + `K8sOperatorResizeStorageArgs`
+      (`--namespace`, `--name`, `--dry-run`), wire it into the `k8s()` dispatcher's
+      `K8sCmd::Operator` match, and add the feature-gated `resize_storage`
+      dispatch pair (real impl behind `operator`, `bail!` fallback otherwise)
+      alongside the existing `run_operator`/`crd_yaml`/`dispatch_backup` verbs.
 ```
