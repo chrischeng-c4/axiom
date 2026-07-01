@@ -9,12 +9,10 @@
 # case = "walktree__classes_as_list_wrong"
 # subject = "inspect.walktree(classes: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed classes"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed classes
 # mamba-strict-type: TypeError
 """Type wall: inspect.walktree(classes: list); call it with the wrong type.
 
