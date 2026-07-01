@@ -51,7 +51,6 @@ flowchart TD
     every_property_supported -->|no| isolated_error
     synthesize_type --> emit_synthesized([Emit export declare const with synthesized object type])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
