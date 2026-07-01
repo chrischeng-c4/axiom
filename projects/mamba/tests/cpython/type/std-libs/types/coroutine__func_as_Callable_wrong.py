@@ -9,7 +9,6 @@
 # case = "coroutine__func_as_Callable_wrong"
 # subject = "types.coroutine(func: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

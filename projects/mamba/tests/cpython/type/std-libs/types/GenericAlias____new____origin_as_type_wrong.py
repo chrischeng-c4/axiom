@@ -9,12 +9,10 @@
 # case = "GenericAlias____new____origin_as_type_wrong"
 # subject = "types.GenericAlias.__new__(origin: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed origin"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed origin
 # mamba-strict-type: TypeError
 """Type wall: types.GenericAlias.__new__(origin: type); call it with the wrong type.
 

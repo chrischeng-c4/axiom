@@ -9,7 +9,6 @@
 # case = "SimpleNamespace____delattr____name_as_str_wrong"
 # subject = "types.SimpleNamespace.__delattr__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

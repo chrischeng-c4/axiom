@@ -9,7 +9,6 @@
 # case = "FrameLocalsProxyType____new____frame_as_FrameType_wrong"
 # subject = "types.FrameLocalsProxyType.__new__(frame: FrameType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

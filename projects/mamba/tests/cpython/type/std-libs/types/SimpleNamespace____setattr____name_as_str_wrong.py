@@ -9,7 +9,6 @@
 # case = "SimpleNamespace____setattr____name_as_str_wrong"
 # subject = "types.SimpleNamespace.__setattr__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
