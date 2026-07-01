@@ -29,6 +29,7 @@
 //! @issue #722
 //! @issue #784
 //! @issue #796
+//! @issue #797
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -1323,6 +1324,20 @@ mod tests {
         assert!(
             dts.contains("export { Helper } from \"./helper\""),
             "re-export preserved, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn preserves_svgr_asset_reexport_from() {
+        let src = "export { ReactComponent as ErrorCircleIcon } from \"./icons/error.svg\";\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export { ReactComponent as ErrorCircleIcon } from \"./icons/error.svg\""),
+            "SVGR asset re-export must be preserved, got:\n{dts}"
+        );
+        assert!(
+            !dts.contains("SvgError") && !dts.contains("SvgErrorCircleIcon"),
+            "declaration must not expose transformed runtime aliases, got:\n{dts}"
         );
     }
 
