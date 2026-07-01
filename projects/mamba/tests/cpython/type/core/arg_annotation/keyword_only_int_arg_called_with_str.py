@@ -9,7 +9,6 @@
 # case = "keyword_only_int_arg_called_with_str"
 # subject = "function keyword-only parameter annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

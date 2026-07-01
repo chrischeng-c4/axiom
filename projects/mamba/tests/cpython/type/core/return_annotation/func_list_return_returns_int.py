@@ -9,7 +9,6 @@
 # case = "func_list_return_returns_int"
 # subject = "function return annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "dict_str_int_with_wrong_value"
 # subject = "dict value annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

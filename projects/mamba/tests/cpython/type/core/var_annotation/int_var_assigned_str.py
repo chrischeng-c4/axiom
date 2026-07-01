@@ -9,7 +9,6 @@
 # case = "int_var_assigned_str"
 # subject = "variable annotation assignment"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "default_int_arg_uses_str_default"
 # subject = "function default parameter annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

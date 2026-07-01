@@ -9,7 +9,6 @@
 # case = "varargs_int_arg_called_with_str"
 # subject = "function variadic positional parameter annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
