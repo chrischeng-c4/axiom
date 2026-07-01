@@ -20,6 +20,7 @@
 //! @issue #722
 //! @issue #757
 //! @issue #784
+//! @issue #795
 
 use anyhow::{Context, Result};
 use std::collections::HashSet;
@@ -224,10 +225,7 @@ fn resolve_lib_entries(
     let mut entries = library_entries(pkg_path, conditions)
         .with_context(|| format!("resolving library entries from {}", pkg_path.display()))?;
 
-    let any_missing = entries
-        .iter()
-        .any(|e| resolve_entry_path(&options.project_root, &e.source).is_err());
-    if entries.is_empty() || any_missing {
+    if entries.is_empty() {
         if let Some(conv) = [
             "src/index.tsx",
             "src/index.ts",
@@ -243,7 +241,85 @@ fn resolve_lib_entries(
             }];
         }
     }
+
+    for entry in &mut entries {
+        if let Some(source) = source_entry_fallback(&options.project_root, entry) {
+            entry.source = source;
+        }
+    }
     Ok(entries)
+}
+
+fn source_entry_fallback(root: &Path, entry: &LibraryEntry) -> Option<String> {
+    let source = entry.source.trim_start_matches("./");
+    let source_path = Path::new(source);
+    let is_default_dist_output = source_path
+        .components()
+        .next()
+        .and_then(|component| match component {
+            std::path::Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .map(|name| name == "dist")
+        .unwrap_or(false);
+
+    if !is_default_dist_output && resolve_entry_path(root, &entry.source).is_ok() {
+        return None;
+    }
+
+    for stem in source_entry_fallback_stems(entry, source_path) {
+        if let Some(candidate) = source_candidate(root, &stem) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn source_entry_fallback_stems(entry: &LibraryEntry, source_path: &Path) -> Vec<PathBuf> {
+    let mut stems = Vec::new();
+
+    if let Ok(without_dist) = source_path.strip_prefix("dist") {
+        let mut stem = without_dist.to_path_buf();
+        stem.set_extension("");
+        if !stem.as_os_str().is_empty() {
+            stems.push(stem);
+        }
+    }
+
+    if entry.subpath == "." {
+        stems.push(PathBuf::from("index"));
+    } else {
+        let mut stem = PathBuf::from(entry.subpath.trim_start_matches("./"));
+        stem.set_extension("");
+        if !stem.as_os_str().is_empty() {
+            stems.push(stem);
+        }
+    }
+
+    stems
+}
+
+fn source_candidate(root: &Path, stem: &Path) -> Option<String> {
+    for ext in ["tsx", "ts", "jsx", "js"] {
+        let candidate = Path::new("src").join(stem).with_extension(ext);
+        if root.join(&candidate).is_file() {
+            return Some(path_to_slash(&candidate));
+        }
+    }
+    for ext in ["tsx", "ts", "jsx", "js"] {
+        let candidate = Path::new("src").join(stem).join(format!("index.{ext}"));
+        if root.join(&candidate).is_file() {
+            return Some(path_to_slash(&candidate));
+        }
+    }
+    None
+}
+
+fn path_to_slash(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {

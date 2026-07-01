@@ -28,6 +28,7 @@
 //! @issue #171
 //! @issue #722
 //! @issue #784
+//! @issue #796
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -336,6 +337,15 @@ fn emit_value_declaration(
                 );
             }
             None => {
+                if kind_kw == "const" {
+                    if let Some(inferred) = infer_variable_declarator_type(child, source) {
+                        push_line(
+                            out,
+                            &format!("export declare {kind_kw} {name}: {inferred};"),
+                        );
+                        continue;
+                    }
+                }
                 diagnostics.push(DtsDiagnostic::new(
                     child,
                     format!(
@@ -348,6 +358,52 @@ fn emit_value_declaration(
         }
     }
     Ok(())
+}
+
+fn infer_variable_declarator_type(node: Node, source: &str) -> Option<String> {
+    let value = node
+        .child_by_field_name("value")
+        .or_else(|| last_named_child(node))?;
+    infer_object_literal_type(value, source)
+}
+
+fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
+    if node.kind() != "object" {
+        return None;
+    }
+    let text = node_text(node, source).trim();
+    let inner = text.strip_prefix('{')?.strip_suffix('}')?.trim();
+    if inner.is_empty() {
+        return Some("{}".to_string());
+    }
+
+    let mut members = Vec::new();
+    let empty_param_types = HashMap::new();
+    for raw_property in split_top_level(inner, ',') {
+        let property = raw_property.trim();
+        if property.is_empty() {
+            continue;
+        }
+        if property.starts_with("...") || property.starts_with('[') {
+            return None;
+        }
+        let (key, value) = split_once_top_level(property, ':')?;
+        let key = key.trim();
+        if !is_supported_object_literal_key(key) {
+            return None;
+        }
+        let ty = infer_expression_type(value.trim(), &empty_param_types)?;
+        members.push(format!("    {key}: {ty};"));
+    }
+
+    if members.is_empty() {
+        return Some("{}".to_string());
+    }
+    Some(format!("{{\n{}\n}}", members.join("\n")))
+}
+
+fn is_supported_object_literal_key(key: &str) -> bool {
+    is_identifier(key) || is_string_literal(key) || is_number_literal(key)
 }
 
 /// Build a function signature string (name + type params + params + return
@@ -1211,6 +1267,31 @@ mod tests {
         assert!(
             !dts.contains("1.0.0"),
             "const initializer must be dropped, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_plain_object_literal_const_signature() {
+        let src = r#"export const UPLOAD_ACCEPT_TYPE = {
+    JPG: "image/jpeg",
+    PNG: "image/png",
+    PDF: "application/pdf",
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const UPLOAD_ACCEPT_TYPE: {"),
+            "object literal const should synthesize a declaration type, got:\n{dts}"
+        );
+        for expected in ["JPG: string;", "PNG: string;", "PDF: string;"] {
+            assert!(
+                dts.contains(expected),
+                "object property {expected:?} should be emitted, got:\n{dts}"
+            );
+        }
+        assert!(
+            !dts.contains("image/jpeg"),
+            "object literal values must not leak into .d.ts, got:\n{dts}"
         );
     }
 
