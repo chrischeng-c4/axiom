@@ -9,7 +9,6 @@
 # case = "divmod_rejects_str_rhs_argument"
 # subject = "divmod"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "binascii_hexlify_rejects_str_argument"
 # subject = "binascii.hexlify"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

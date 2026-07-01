@@ -9,7 +9,6 @@
 # case = "abs_rejects_str_argument"
 # subject = "abs"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
