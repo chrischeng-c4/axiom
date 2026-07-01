@@ -9,7 +9,6 @@
 # case = "abs__a_as_SupportsAbs_wrong"
 # subject = "_operator.abs(a: SupportsAbs)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

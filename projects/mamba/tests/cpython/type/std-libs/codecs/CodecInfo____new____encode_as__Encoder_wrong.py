@@ -9,7 +9,6 @@
 # case = "CodecInfo____new____encode_as__Encoder_wrong"
 # subject = "codecs.CodecInfo.__new__(encode: _Encoder)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

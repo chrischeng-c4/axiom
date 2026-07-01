@@ -9,7 +9,6 @@
 # case = "mod__a_as_SupportsMod_wrong"
 # subject = "_operator.mod(a: SupportsMod)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

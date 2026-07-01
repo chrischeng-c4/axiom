@@ -9,7 +9,6 @@
 # case = "latin_1_decode__data_as_ReadableBuffer_wrong"
 # subject = "_codecs.latin_1_decode(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "new__name_as_str_wrong"
 # subject = "_hashlib.new(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

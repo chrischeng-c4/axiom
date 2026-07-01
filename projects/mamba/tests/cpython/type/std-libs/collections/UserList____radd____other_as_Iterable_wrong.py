@@ -9,7 +9,6 @@
 # case = "UserList____radd____other_as_Iterable_wrong"
 # subject = "collections.UserList.__radd__(other: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

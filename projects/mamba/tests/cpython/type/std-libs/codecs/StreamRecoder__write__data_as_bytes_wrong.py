@@ -9,12 +9,10 @@
 # case = "StreamRecoder__write__data_as_bytes_wrong"
 # subject = "codecs.StreamRecoder.write(data: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: codecs.StreamRecoder.write(data: bytes); call it with the wrong type.
 

@@ -9,7 +9,6 @@
 # case = "pos__a_as__SupportsPos_wrong"
 # subject = "_operator.pos(a: _SupportsPos)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

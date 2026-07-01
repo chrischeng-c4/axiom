@@ -9,7 +9,6 @@
 # case = "UserString__find__sub_as_typed_wrong"
 # subject = "collections.UserString.find(sub: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

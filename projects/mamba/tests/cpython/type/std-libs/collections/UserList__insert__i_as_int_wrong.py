@@ -9,7 +9,6 @@
 # case = "UserList__insert__i_as_int_wrong"
 # subject = "collections.UserList.insert(i: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

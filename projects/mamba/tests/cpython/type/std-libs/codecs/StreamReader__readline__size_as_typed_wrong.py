@@ -9,7 +9,6 @@
 # case = "StreamReader__readline__size_as_typed_wrong"
 # subject = "codecs.StreamReader.readline(size: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

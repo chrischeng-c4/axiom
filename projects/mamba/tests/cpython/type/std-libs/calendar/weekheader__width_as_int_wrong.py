@@ -9,7 +9,6 @@
 # case = "weekheader__width_as_int_wrong"
 # subject = "calendar.weekheader(width: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

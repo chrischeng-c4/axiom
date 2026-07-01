@@ -9,7 +9,6 @@
 # case = "contains__a_as_Container_wrong"
 # subject = "_operator.contains(a: Container)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

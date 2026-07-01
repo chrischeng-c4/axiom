@@ -9,7 +9,6 @@
 # case = "HTMLCalendar__formatweekday__day_as_int_wrong"
 # subject = "calendar.HTMLCalendar.formatweekday(day: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

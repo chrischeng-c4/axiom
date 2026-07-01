@@ -9,7 +9,6 @@
 # case = "UserList__pop__i_as_int_wrong"
 # subject = "collections.UserList.pop(i: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

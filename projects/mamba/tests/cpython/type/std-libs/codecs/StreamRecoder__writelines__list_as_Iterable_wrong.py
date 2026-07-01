@@ -9,7 +9,6 @@
 # case = "StreamRecoder__writelines__list_as_Iterable_wrong"
 # subject = "codecs.StreamRecoder.writelines(list: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

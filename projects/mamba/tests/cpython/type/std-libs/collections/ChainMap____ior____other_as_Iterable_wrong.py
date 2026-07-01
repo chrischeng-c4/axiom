@@ -9,7 +9,6 @@
 # case = "ChainMap____ior____other_as_Iterable_wrong"
 # subject = "collections.ChainMap.__ior__(other: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

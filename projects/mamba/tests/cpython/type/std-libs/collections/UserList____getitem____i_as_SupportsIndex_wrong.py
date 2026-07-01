@@ -9,7 +9,6 @@
 # case = "UserList____getitem____i_as_SupportsIndex_wrong"
 # subject = "collections.UserList.__getitem__(i: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

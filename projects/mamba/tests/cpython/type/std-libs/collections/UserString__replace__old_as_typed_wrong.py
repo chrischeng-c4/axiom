@@ -9,7 +9,6 @@
 # case = "UserString__replace__old_as_typed_wrong"
 # subject = "collections.UserString.replace(old: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

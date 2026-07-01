@@ -9,7 +9,6 @@
 # case = "Counter__init__mapping_as_SupportsKeysAndGetItem_wrong"
 # subject = "collections.Counter.__init__(mapping: SupportsKeysAndGetItem)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

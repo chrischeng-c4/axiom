@@ -9,7 +9,6 @@
 # case = "UserString__join__seq_as_Iterable_wrong"
 # subject = "collections.UserString.join(seq: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

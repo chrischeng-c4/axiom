@@ -9,7 +9,6 @@
 # case = "UserString____lt____string_as_typed_wrong"
 # subject = "collections.UserString.__lt__(string: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

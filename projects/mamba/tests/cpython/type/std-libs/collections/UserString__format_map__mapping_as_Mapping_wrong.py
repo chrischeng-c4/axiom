@@ -9,7 +9,6 @@
 # case = "UserString__format_map__mapping_as_Mapping_wrong"
 # subject = "collections.UserString.format_map(mapping: Mapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

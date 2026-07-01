@@ -9,7 +9,6 @@
 # case = "charmap_build__map_as_str_wrong"
 # subject = "_codecs.charmap_build(map: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

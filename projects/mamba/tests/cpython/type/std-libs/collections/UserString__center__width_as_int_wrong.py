@@ -9,7 +9,6 @@
 # case = "UserString__center__width_as_int_wrong"
 # subject = "collections.UserString.center(width: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

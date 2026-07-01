@@ -9,7 +9,6 @@
 # case = "deque____delitem____key_as_SupportsIndex_wrong"
 # subject = "collections.deque.__delitem__(key: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

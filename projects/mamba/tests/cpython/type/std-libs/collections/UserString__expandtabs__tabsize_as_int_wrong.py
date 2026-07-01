@@ -9,7 +9,6 @@
 # case = "UserString__expandtabs__tabsize_as_int_wrong"
 # subject = "collections.UserString.expandtabs(tabsize: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

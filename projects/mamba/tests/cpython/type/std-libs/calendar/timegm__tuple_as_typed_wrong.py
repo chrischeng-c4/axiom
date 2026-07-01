@@ -9,7 +9,6 @@
 # case = "timegm__tuple_as_typed_wrong"
 # subject = "calendar.timegm(tuple: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

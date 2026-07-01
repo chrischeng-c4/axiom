@@ -9,7 +9,6 @@
 # case = "deque____iadd____value_as_Iterable_wrong"
 # subject = "collections.deque.__iadd__(value: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

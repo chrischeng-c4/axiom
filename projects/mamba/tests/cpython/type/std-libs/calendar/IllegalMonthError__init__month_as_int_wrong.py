@@ -9,7 +9,6 @@
 # case = "IllegalMonthError__init__month_as_int_wrong"
 # subject = "calendar.IllegalMonthError.__init__(month: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

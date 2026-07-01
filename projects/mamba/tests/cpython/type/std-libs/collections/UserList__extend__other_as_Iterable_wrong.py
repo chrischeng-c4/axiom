@@ -9,7 +9,6 @@
 # case = "UserList__extend__other_as_Iterable_wrong"
 # subject = "collections.UserList.extend(other: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

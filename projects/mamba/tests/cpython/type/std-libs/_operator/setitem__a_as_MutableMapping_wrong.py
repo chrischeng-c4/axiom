@@ -9,7 +9,6 @@
 # case = "setitem__a_as_MutableMapping_wrong"
 # subject = "_operator.setitem(a: MutableMapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

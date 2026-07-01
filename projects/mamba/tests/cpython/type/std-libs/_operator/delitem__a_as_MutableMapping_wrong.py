@@ -9,7 +9,6 @@
 # case = "delitem__a_as_MutableMapping_wrong"
 # subject = "_operator.delitem(a: MutableMapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

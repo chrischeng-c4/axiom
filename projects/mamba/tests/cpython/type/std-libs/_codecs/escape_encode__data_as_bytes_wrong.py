@@ -9,7 +9,6 @@
 # case = "escape_encode__data_as_bytes_wrong"
 # subject = "_codecs.escape_encode(data: bytes)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

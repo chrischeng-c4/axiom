@@ -9,7 +9,6 @@
 # case = "LocaleTextCalendar__init__firstweekday_as_int_wrong"
 # subject = "calendar.LocaleTextCalendar.__init__(firstweekday: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

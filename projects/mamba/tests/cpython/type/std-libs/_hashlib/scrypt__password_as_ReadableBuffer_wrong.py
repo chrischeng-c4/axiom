@@ -9,7 +9,6 @@
 # case = "scrypt__password_as_ReadableBuffer_wrong"
 # subject = "_hashlib.scrypt(password: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

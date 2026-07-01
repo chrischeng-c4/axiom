@@ -9,7 +9,6 @@
 # case = "Counter__update__iterable_as_typed_wrong"
 # subject = "collections.Counter.update(iterable: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

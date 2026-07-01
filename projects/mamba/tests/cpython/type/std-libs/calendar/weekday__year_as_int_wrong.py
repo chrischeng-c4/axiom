@@ -9,7 +9,6 @@
 # case = "weekday__year_as_int_wrong"
 # subject = "calendar.weekday(year: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "compare_digest__a_as_AnyStr_wrong"
 # subject = "_hashlib.compare_digest(a: AnyStr)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

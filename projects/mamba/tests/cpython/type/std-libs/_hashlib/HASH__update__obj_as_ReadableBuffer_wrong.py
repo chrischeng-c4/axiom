@@ -9,7 +9,6 @@
 # case = "HASH__update__obj_as_ReadableBuffer_wrong"
 # subject = "_hashlib.HASH.update(obj: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"
