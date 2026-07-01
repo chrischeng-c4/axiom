@@ -9,7 +9,6 @@
 # case = "IMAP4__list__directory_as_str_wrong"
 # subject = "imaplib.IMAP4.list(directory: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

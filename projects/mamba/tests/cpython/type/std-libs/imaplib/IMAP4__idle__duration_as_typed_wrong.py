@@ -9,7 +9,6 @@
 # case = "IMAP4__idle__duration_as_typed_wrong"
 # subject = "imaplib.IMAP4.idle(duration: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

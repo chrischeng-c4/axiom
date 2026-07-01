@@ -9,7 +9,6 @@
 # case = "IMAP4__init__host_as_str_wrong"
 # subject = "imaplib.IMAP4.__init__(host: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

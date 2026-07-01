@@ -9,7 +9,6 @@
 # case = "IMAP4__rename__oldmailbox_as_str_wrong"
 # subject = "imaplib.IMAP4.rename(oldmailbox: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

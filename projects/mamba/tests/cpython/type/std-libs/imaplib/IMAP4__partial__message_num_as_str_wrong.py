@@ -9,7 +9,6 @@
 # case = "IMAP4__partial__message_num_as_str_wrong"
 # subject = "imaplib.IMAP4.partial(message_num: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

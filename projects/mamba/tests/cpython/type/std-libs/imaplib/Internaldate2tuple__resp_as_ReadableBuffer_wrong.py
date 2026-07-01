@@ -9,7 +9,6 @@
 # case = "Internaldate2tuple__resp_as_ReadableBuffer_wrong"
 # subject = "imaplib.Internaldate2tuple(resp: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

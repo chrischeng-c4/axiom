@@ -9,7 +9,6 @@
 # case = "IMAP4__setquota__root_as_str_wrong"
 # subject = "imaplib.IMAP4.setquota(root: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

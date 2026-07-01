@@ -4912,6 +4912,21 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("numerator", CoreTy::Typed)],
         enforceable: true,
     },
+    // imaplib.Idler.__exit__ uses Unused/Optional exception-state overload
+    // pieces that the generated table collapses to Unknown. Keep the probed
+    // exception-value slot as a strict typed wall while skipping None sentinels.
+    StdlibSig {
+        module: "imaplib",
+        qualifier: "Idler",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[
+            p("exc_type", CoreTy::Unknown),
+            p("exc_val", CoreTy::Typed),
+            p("exc_tb", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // pathlib generated rows intentionally collapse type variables, overload
     // literals, and Optional exception state to Unknown/Typed. Keep strict-mode
     // fixture walls enforceable while still skipping correct None sentinels and
@@ -6152,6 +6167,14 @@ mod tests {
         let walk = get("pathlib", "Path", "walk").expect("Path.walk row present");
         assert_eq!(walk.params[2].name, "follow_symlinks");
         assert_eq!(walk.params[2].ty, CoreTy::Bool);
+    }
+
+    #[test]
+    fn curated_imaplib_idler_exit_wall_overrides_unknown_generated_row() {
+        let sig = get("imaplib", "Idler", "__exit__").expect("Idler.__exit__ present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.params[1].name, "exc_val");
+        assert_eq!(sig.params[1].ty, CoreTy::Typed);
     }
 
     #[test]

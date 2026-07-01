@@ -9,7 +9,6 @@
 # case = "IMAP4__append__mailbox_as_typed_wrong"
 # subject = "imaplib.IMAP4.append(mailbox: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

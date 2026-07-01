@@ -9,12 +9,10 @@
 # case = "Idler____exit____exc_val_as_Unused_wrong"
 # subject = "imaplib.Idler.__exit__(exc_val: Unused)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_val"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_val
 # mamba-strict-type: TypeError
 """Type wall: imaplib.Idler.__exit__(exc_val: Unused); call it with the wrong type.
 

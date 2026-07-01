@@ -9,7 +9,6 @@
 # case = "IMAP4__myrights__mailbox_as_str_wrong"
 # subject = "imaplib.IMAP4.myrights(mailbox: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

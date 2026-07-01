@@ -9,12 +9,10 @@
 # case = "IMAP4__search__charset_as_typed_wrong"
 # subject = "imaplib.IMAP4.search(charset: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed charset"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed charset
 # mamba-strict-type: TypeError
 """Type wall: imaplib.IMAP4.search(charset: typed); call it with the wrong type.
 
