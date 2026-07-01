@@ -9,7 +9,6 @@
 # case = "bin__number_as_SupportsIndex_wrong"
 # subject = "builtins.bin(number: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
