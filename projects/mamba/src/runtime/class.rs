@@ -6584,10 +6584,14 @@ fn mb_getattr_impl(
                             return make_bound_native_method(obj, attr_s);
                         }
                     }
-                    // A module namespace (dict carrying __name__) reports a
-                    // missing non-dunder attribute as AttributeError, like
-                    // CPython. Dunder lookups still fall to the slow path.
-                    if !attr_s.starts_with("__") && guard.contains_key("__name__") {
+                    // A real module value reports missing non-dunder attrs as
+                    // module AttributeError. A vars(module) / module.__dict__
+                    // snapshot also carries "__name__", but remains a dict and
+                    // must expose dict methods such as items().
+                    if !attr_s.starts_with("__")
+                        && guard.contains_key("__name__")
+                        && super::module::is_module_value(obj)
+                    {
                         let mod_name = guard
                             .get("__name__")
                             .copied()
