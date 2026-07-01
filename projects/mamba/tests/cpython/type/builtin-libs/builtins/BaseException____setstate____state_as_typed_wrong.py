@@ -9,7 +9,6 @@
 # case = "BaseException____setstate____state_as_typed_wrong"
 # subject = "builtins.BaseException.__setstate__(state: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

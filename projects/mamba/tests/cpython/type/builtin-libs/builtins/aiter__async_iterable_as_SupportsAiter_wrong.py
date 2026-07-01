@@ -9,7 +9,6 @@
 # case = "aiter__async_iterable_as_SupportsAiter_wrong"
 # subject = "builtins.aiter(async_iterable: SupportsAiter)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

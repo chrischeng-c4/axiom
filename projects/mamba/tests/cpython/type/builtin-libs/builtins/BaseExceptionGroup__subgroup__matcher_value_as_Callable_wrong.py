@@ -9,7 +9,6 @@
 # case = "BaseExceptionGroup__subgroup__matcher_value_as_Callable_wrong"
 # subject = "builtins.BaseExceptionGroup.subgroup(matcher_value: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
