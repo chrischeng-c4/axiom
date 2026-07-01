@@ -9,12 +9,11 @@
 # case = "escape__m_as_Match_wrong"
 # subject = "lib2to3.pgen2.literals.escape(m: Match)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed m"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/pgen2/literals.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed m
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.pgen2.literals.escape(m: Match); call it with the wrong type.
 

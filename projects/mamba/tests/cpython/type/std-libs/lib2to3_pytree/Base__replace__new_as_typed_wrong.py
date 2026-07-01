@@ -9,12 +9,11 @@
 # case = "Base__replace__new_as_typed_wrong"
 # subject = "lib2to3.pytree.Base.replace(new: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed new"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/pytree.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed new
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.pytree.Base.replace(new: typed); call it with the wrong type.
 

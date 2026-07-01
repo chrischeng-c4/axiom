@@ -9,12 +9,11 @@
 # case = "BaseFix__init__options_as_MutableMapping_wrong"
 # subject = "lib2to3.fixer_base.BaseFix.__init__(options: MutableMapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed options"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/fixer_base.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed options
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.fixer_base.BaseFix.__init__(options: MutableMapping); call it with the wrong type.
 

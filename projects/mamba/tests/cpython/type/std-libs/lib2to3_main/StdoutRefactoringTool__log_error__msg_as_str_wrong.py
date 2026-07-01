@@ -9,12 +9,11 @@
 # case = "StdoutRefactoringTool__log_error__msg_as_str_wrong"
 # subject = "lib2to3.main.StdoutRefactoringTool.log_error(msg: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/main.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.main.StdoutRefactoringTool.log_error(msg: str); call it with the wrong type.
 
