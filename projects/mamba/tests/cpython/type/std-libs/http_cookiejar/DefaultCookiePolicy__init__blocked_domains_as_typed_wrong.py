@@ -9,12 +9,11 @@
 # case = "DefaultCookiePolicy__init__blocked_domains_as_typed_wrong"
 # subject = "http.cookiejar.DefaultCookiePolicy.__init__(blocked_domains: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed blocked_domains"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/http/cookiejar.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed blocked_domains
 # mamba-strict-type: TypeError
 """Type wall: http.cookiejar.DefaultCookiePolicy.__init__(blocked_domains: typed); call it with the wrong type.
 
