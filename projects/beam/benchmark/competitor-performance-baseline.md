@@ -37,8 +37,9 @@ batching). The competitor is measured the **same way** — one `index.search`
 per query in a loop — so `avg query ms` is directly comparable single-query
 latency. One warmup query is discarded on each side. `q/s = 1000 / query_ms`
 (single-stream). faiss's *batched* throughput (all 200 queries in one call) is
-reported separately as faiss's best case, since beam has no batched path to
-match it.
+reported separately as faiss's best case; beam now has a matching batched path,
+measured head-to-head in the **[Batched query](#batched-query-the-throughput-lever-now-measured)**
+section below (`beam bench --index flat --batch 200`).
 
 ## Results
 
@@ -113,8 +114,11 @@ also scales sublinearly: beam-GPU-flat goes 1.77 → 5.04 → 25.2 ms for a 100�
 data increase, and **beam-GPU-ivfflat stays exact (recall 1.000) while scanning
 only ~8% of vectors** (100k in 2.56 ms). Extrapolating the trend, a crossover
 would need n well beyond 1M **and/or** a batched GPU query path + elimination of
-the per-query readback. That batched path is the concrete lever to turn this
-into a win; today it is future work, not a measured result.
+the per-query readback. That batched path is now **built and measured** (see
+**[Batched query](#batched-query-the-throughput-lever-now-measured)**): it is a
+large gain over beam's own serial path (up to 7.1× at 10k) but, honestly, still
+does **not** beat faiss's *batched* throughput at any tested n — the crossover
+would need GPU-side top-k to kill the `T × n` readback, which remains future work.
 
 ### Beam's actual, defensible advantages (not raw same-machine latency)
 
@@ -137,6 +141,72 @@ shrinks with n), plus (b) the availability + memory wins — not a raw-speed win
 The "faster on this machine" claim in the feature matrix is **not supported for
 flat search on this hardware** and is corrected by this pinned baseline.
 
+## Batched query (the throughput lever, now measured)
+
+The pinned rows above are **single-query** — one GPU dispatch per query, so the
+~1.7 ms dispatch+readback floor dominates and beam cannot match faiss's *batched*
+BLAS call. The interpretation above named the fix: **batch the queries into one
+dispatch** so the fixed overhead amortizes. That path now exists
+([`GpuFlatIndex::search_knn_batch`], `beam bench --index flat --batch <B>`): the
+batch is tiled, each tile scores its `T × n` distance sub-matrix in **one**
+dispatch (one GPU thread per DB row, looping the tile's queries), reads back
+`T × n` f32, and does exact top-k per query on the CPU. Recall stays **1.000**
+(same exact distances as the serial scan). Same machine, same dataset shape
+(`dim=128`, `k=10`, `queries=200`, uniform seeded), measured with
+`--batch 200` (all 200 queries in one batched call, directly comparable to
+faiss's all-200-in-one-call batched throughput).
+
+**Batched throughput — beam-GPU vs faiss-CPU, head-to-head (both batched):**
+
+| n | beam-GPU-batched q/s | faiss-CPU-batched q/s | beam vs faiss batched |
+|---:|---:|---:|---|
+| 10_000 | ~4_050 | 37_174 | **9.2× slower** |
+| 100_000 | ~467 | 3_483 | **7.5× slower** |
+| 1_000_000 | ~52 | 234 | **4.5× slower** |
+
+**What batching bought beam (its own serial → batched, same binary):**
+
+| n | beam serial q/s (single) | beam batched q/s | batched speedup |
+|---:|---:|---:|---:|
+| 10_000 | 571 | ~4_050 | **7.1×** |
+| 100_000 | 199 | ~467 | **2.4×** |
+| 1_000_000 | 37.5 | ~52 | **1.4×** |
+
+(beam-batched amortized latency: 0.25 / 2.14 / 19.2 ms/query at 10k / 100k / 1M.
+Numbers are ±10% run-to-run; representative values shown.)
+
+### Honest verdict: batched beam-GPU still does NOT beat faiss batched
+
+At **every** tested size, batched beam-GPU-flat loses to batched faiss-CPU-flat —
+by **~9.2× / 7.5× / 4.5×** at 10k / 100k / 1M. So the "batched path turns the
+loss into a win" hope is **not** realized on this M1 Max: it is a real,
+large improvement over beam's *own* serial path (up to **7.1×** at 10k), and the
+gap to faiss narrows monotonically with n (9.2× → 4.5×, the same
+GPU-scales-better-than-AMX trend the single-query rows show) — but no crossover
+at n ≤ 1M. Do not claim a batched throughput win.
+
+Two honest reasons batching helped less than hoped, especially at large n:
+
+1. **faiss's batched mode also speeds up a lot.** Its all-queries-in-one-call
+   flat scan is a single big BLAS GEMM, so faiss jumps 990 → 3_483 q/s (3.5×) at
+   100k and 87 → 234 q/s (2.7×) at 1M going serial → batched — outrunning beam's
+   batched gain there. beam is chasing a moving target, not a static one.
+2. **beam's batched bottleneck moved off the dispatch floor onto the readback +
+   CPU top-k.** With one dispatch per tile the ~1.7 ms floor is amortized away,
+   but the kernel now streams back the full `T × n` distance matrix (e.g. 800 MB
+   total at n=1M for 200 queries) and the host does single-threaded exact top-k
+   over it. That transport + selection — not GPU compute — dominates at large n
+   (measured: swapping the naive per-(query,row) kernel for the DB-traffic-light
+   per-row kernel changed throughput by <10%, confirming compute is not the
+   limiter). The next lever is **GPU-side per-query top-k**, which shrinks the
+   readback from `T × n` to `T × k` (a ~n/k reduction, ~100_000× at n=1M/k=10)
+   and offloads the selection — that is where a crossover would come from, and it
+   is the recommended follow-up. It is deliberately out of scope here (the CPU
+   top-k keeps the batched path exact and simple), so this section reports the
+   simple-batched result honestly rather than the projected one.
+
+[`GpuFlatIndex::search_knn_batch`]: ../src/gpu/mod.rs
+
 ## Reproducer
 
 - **Competitor (CPU):** `projects/beam/benchmark/competitor_bench.py` — seeded
@@ -154,6 +224,8 @@ flat search on this hardware** and is corrected by this pinned baseline.
   ```bash
   beam bench --index flat    --n <N> --dim 128 --k 10 --queries 200
   beam bench --index ivfflat --n <N> --dim 128 --k 10 --queries 200 --nlist 256 --nprobe 16
+  # batched throughput (the "Batched query" section): all 200 queries in one call
+  beam bench --index flat    --n <N> --dim 128 --k 10 --queries 200 --batch 200
   ```
 
 Both sides are deterministic (fixed seeds), so a re-run on the same hardware

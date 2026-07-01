@@ -96,6 +96,13 @@ pub struct BenchConfig {
     /// the original bench. Proves search still equals the live oracle after
     /// mutation.
     pub churn: f64,
+    /// Batched-query size for the `flat` backend. `1` (default) is the original
+    /// serial per-query path (one GPU dispatch per query). `> 1` runs the
+    /// `--queries` set through [`GpuFlatIndex::search_knn_batch`] in batches of
+    /// this many queries — one dispatch amortizes the fixed dispatch/readback
+    /// floor across the whole batch — and reports **batched throughput** (q/s) +
+    /// avg amortized ms/query alongside recall (still 1.000 vs the CPU oracle).
+    pub batch: usize,
     /// When `Some(path)`, run the durable **persistence round-trip** demo instead
     /// of the normal timing bench: build the index, save it to `path`, load it into
     /// a fresh index, and assert the loaded top-k is identical to the original
@@ -125,6 +132,7 @@ impl Default for BenchConfig {
             filter_category: None,
             churn: 0.0,
             persist: None,
+            batch: 1,
         }
     }
 }
@@ -223,6 +231,17 @@ fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     let cpu = CpuFlatIndex::new(&collection);
     let gpu_index = GpuFlatIndex::new(gpu, &collection);
 
+    // Batched-throughput path: run the whole query set through
+    // `search_knn_batch` in batches of `cfg.batch`, so the fixed dispatch/readback
+    // floor amortizes across each batch. Default `batch = 1` falls through to the
+    // original serial per-query timing below.
+    if cfg.batch > 1 {
+        if cfg.filter_category.is_some() {
+            anyhow::bail!("--batch is the unfiltered batched path; drop --filter to use it");
+        }
+        return run_flat_batched(&cpu, &gpu_index, &queries, cfg);
+    }
+
     // The optional attribute filter (keep only `category == cat`).
     let filter = cfg
         .filter_category
@@ -273,6 +292,62 @@ fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     println!("recall vs {label}: {recall:.3} (exact flat)");
     println!("candidates scanned / n: 1.000 (brute force)");
     println!("GPU query timing: avg {avg_ms:.3} ms/query over {} queries", cfg.queries);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Batched GPU flat throughput: push the query set through
+/// [`GpuFlatIndex::search_knn_batch`] in batches of `cfg.batch`, timing the whole
+/// run so a single dispatch's fixed overhead amortizes across the batch. Reports
+/// **batched throughput** (q/s, the number directly comparable to faiss's batched
+/// throughput) + avg amortized ms/query, and recall vs the CPU oracle (must stay
+/// 1.000, since the batch kernel computes the exact same distances as the serial
+/// scan). One batch is run un-timed first to warm the pipeline.
+fn run_flat_batched(
+    cpu: &CpuFlatIndex,
+    gpu_index: &GpuFlatIndex,
+    queries: &[Vec<f32>],
+    cfg: &BenchConfig,
+) -> anyhow::Result<ExitCode> {
+    let batch = cfg.batch.max(1);
+    println!("batched query: batch={batch} (one GPU dispatch amortizes over the batch)");
+
+    // Ground truth per query (exact CPU oracle) for the recall check.
+    let truth: Vec<HashSet<u32>> = queries
+        .iter()
+        .map(|q| cpu.search_knn(q, cfg.k).iter().map(|nb| nb.row).collect())
+        .collect();
+
+    // Warm the batch pipeline (shader compile + first-dispatch cost) un-timed.
+    if let Some(first) = queries.first() {
+        let _ = gpu_index.search_knn_batch(std::slice::from_ref(first), cfg.k);
+    }
+
+    let mut matched = 0usize;
+    let mut total = 0usize;
+    let mut qi_base = 0usize;
+    let mut elapsed = std::time::Duration::ZERO;
+    for chunk in queries.chunks(batch) {
+        let t0 = Instant::now();
+        let res = gpu_index.search_knn_batch(chunk, cfg.k);
+        elapsed += t0.elapsed();
+        for (local, nbs) in res.iter().enumerate() {
+            let qi = qi_base + local;
+            matched += nbs.iter().filter(|nb| truth[qi].contains(&nb.row)).count();
+            total += nbs.len();
+        }
+        qi_base += chunk.len();
+    }
+
+    let recall = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
+    let nq = queries.len().max(1);
+    let secs = elapsed.as_secs_f64();
+    let qps = if secs > 0.0 { nq as f64 / secs } else { f64::INFINITY };
+    let amortized_ms = secs * 1000.0 / nq as f64;
+    println!("recall vs CPU oracle: {recall:.3} (exact flat, batched)");
+    println!(
+        "batched throughput: {qps:.0} q/s (avg {amortized_ms:.4} ms/query amortized over {} queries, batch={batch})",
+        queries.len()
+    );
     Ok(ExitCode::SUCCESS)
 }
 

@@ -107,3 +107,86 @@ fn main_filtered(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     out_dist_f[row] = acc;
 }
+
+// ---- Batched flat scan (entry point `main_batch`) --------------------------
+//
+// Scores a TILE of `num_q` queries against all `n` DB rows in ONE dispatch, so
+// the fixed per-dispatch + blocking-readback overhead amortizes across the whole
+// tile — the batched-throughput lever. Invocation grid is 1D over DB rows:
+// invocation `row` loads its DB row ONCE and scores it against ALL `num_q`
+// queries in the tile, so each row's `dim` floats are read from global memory
+// once and reused across the whole tile (a ~`num_q`× cut in global DB traffic vs
+// one invocation per (query, row) — the naive scan is DB-bandwidth bound). The
+// tile's queries are tiny (`num_q * dim` floats) and stay hot in cache across the
+// inner loop.
+//
+// Output is query-major (`out_batch[q * n + row]`) so the host reads each query's
+// `n` distances as one contiguous slice and runs the shared top-k per query.
+//
+// Every row also carries the host keep bit `keep_batch[row]` (the collection's
+// live mask, folded in exactly like `main_filtered`): a tombstoned row is
+// assigned the metric's worst sentinel so it can never enter any query's top-k.
+// With no tombstones the mask is all-ones, so every row is scored. Distances are
+// computed with the SAME per-metric summation as `main`, so a batched query's
+// scores match the serial `main` path bit-for-intent.
+
+struct BatchParams {
+    n: u32,
+    dim: u32,
+    metric: u32,
+    num_q: u32,
+};
+
+@group(0) @binding(9)  var<storage, read> db_b: array<f32>;
+@group(0) @binding(10) var<storage, read> queries_b: array<f32>;
+@group(0) @binding(11) var<uniform> params_b: BatchParams;
+@group(0) @binding(12) var<storage, read_write> out_batch: array<f32>;
+@group(0) @binding(13) var<storage, read> keep_batch: array<u32>;
+
+@compute @workgroup_size(64)
+fn main_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let row: u32 = gid.x;
+    if (row >= params_b.n) {
+        return;
+    }
+    let n: u32 = params_b.n;
+    let num_q: u32 = params_b.num_q;
+
+    if (keep_batch[row] == 0u) {
+        // Tombstoned / non-kept row: worst-possible score for the metric, for
+        // every query — so it can never enter any query's top-k.
+        var sentinel: f32 = SENTINEL;
+        if (params_b.metric != 0u) {
+            sentinel = -SENTINEL;
+        }
+        for (var q: u32 = 0u; q < num_q; q = q + 1u) {
+            out_batch[q * n + row] = sentinel;
+        }
+        return;
+    }
+
+    let dim: u32 = params_b.dim;
+    let dbase: u32 = row * dim;
+    // Score this row against every query in the tile, reusing the DB row across
+    // the whole inner loop (loaded once from global memory).
+    if (params_b.metric == 0u) {
+        for (var q: u32 = 0u; q < num_q; q = q + 1u) {
+            let qbase: u32 = q * dim;
+            var acc: f32 = 0.0;
+            for (var j: u32 = 0u; j < dim; j = j + 1u) {
+                let d: f32 = db_b[dbase + j] - queries_b[qbase + j];
+                acc = acc + d * d;
+            }
+            out_batch[q * n + row] = acc;
+        }
+    } else {
+        for (var q: u32 = 0u; q < num_q; q = q + 1u) {
+            let qbase: u32 = q * dim;
+            var acc: f32 = 0.0;
+            for (var j: u32 = 0u; j < dim; j = j + 1u) {
+                acc = acc + db_b[dbase + j] * queries_b[qbase + j];
+            }
+            out_batch[q * n + row] = acc;
+        }
+    }
+}

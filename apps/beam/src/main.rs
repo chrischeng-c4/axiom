@@ -202,6 +202,14 @@ struct BenchArgs {
     /// oracle. `0` (default) leaves the corpus untouched.
     #[arg(long, default_value_t = 0.0)]
     churn: f64,
+    /// Batched-query size for `--index flat`. `1` (default) is the serial
+    /// per-query path (one GPU dispatch per query). `> 1` runs the `--queries` set
+    /// through the batched GPU path in batches of this size — one dispatch
+    /// amortizes the fixed dispatch/readback floor across the batch — and reports
+    /// batched throughput (q/s) + avg amortized ms/query (recall stays 1.000). Use
+    /// e.g. `--batch 200` for beam's best-case throughput vs faiss batched.
+    #[arg(long, default_value_t = 1)]
+    batch: usize,
     /// Persistence round-trip demo: build the index, SAVE it to this path, LOAD it
     /// back into a fresh index, and assert the loaded top-k is identical (rows +
     /// scores) to the original — printing `persist round-trip OK: results
@@ -337,6 +345,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 filter_category: args.filter,
                 churn: args.churn,
                 persist: args.persist,
+                batch: args.batch,
             })
         }
         // Report the resolved GPU backend + device — the dual-platform proof.
