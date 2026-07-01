@@ -9,7 +9,6 @@
 # case = "DictWriter__init__f_as_SupportsWrite_wrong"
 # subject = "csv.DictWriter.__init__(f: SupportsWrite)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/csv.pyi"
 # status = "filled"

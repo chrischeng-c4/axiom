@@ -9,7 +9,6 @@
 # case = "compressobj__level_as_int_wrong"
 # subject = "zlib.compressobj(level: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zlib.pyi"
 # status = "filled"

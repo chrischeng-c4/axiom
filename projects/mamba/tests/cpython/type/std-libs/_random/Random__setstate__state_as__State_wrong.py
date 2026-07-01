@@ -9,7 +9,6 @@
 # case = "Random__setstate__state_as__State_wrong"
 # subject = "_random.Random.setstate(state: _State)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_random.pyi"
 # status = "filled"

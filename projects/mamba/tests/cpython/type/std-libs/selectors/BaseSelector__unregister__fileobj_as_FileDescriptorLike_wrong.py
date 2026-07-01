@@ -9,7 +9,6 @@
 # case = "BaseSelector__unregister__fileobj_as_FileDescriptorLike_wrong"
 # subject = "selectors.BaseSelector.unregister(fileobj: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/selectors.pyi"
 # status = "filled"

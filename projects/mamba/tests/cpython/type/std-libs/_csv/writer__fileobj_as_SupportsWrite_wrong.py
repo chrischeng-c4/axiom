@@ -9,7 +9,6 @@
 # case = "writer__fileobj_as_SupportsWrite_wrong"
 # subject = "_csv.writer(fileobj: SupportsWrite)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_csv.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "make_encoder____new____markers_as_typed_wrong"
 # subject = "_json.make_encoder.__new__(markers: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed markers"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_json.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed markers
 # mamba-strict-type: TypeError
 """Type wall: _json.make_encoder.__new__(markers: typed); call it with the wrong type.
 

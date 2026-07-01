@@ -9,7 +9,6 @@
 # case = "nl_langinfo__key_as_int_wrong"
 # subject = "_locale.nl_langinfo(key: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_locale.pyi"
 # status = "filled"

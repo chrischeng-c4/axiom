@@ -9,7 +9,6 @@
 # case = "Writer__writerow__row_as_Iterable_wrong"
 # subject = "_csv.Writer.writerow(row: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_csv.pyi"
 # status = "filled"

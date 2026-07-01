@@ -9,7 +9,6 @@
 # case = "unregister_dialect__name_as_str_wrong"
 # subject = "_csv.unregister_dialect(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_csv.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "dict_keys__isdisjoint__other_as_Iterable_wrong"
 # subject = "_collections_abc.dict_keys.isdisjoint(other: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_collections_abc.pyi"
 # status = "filled"

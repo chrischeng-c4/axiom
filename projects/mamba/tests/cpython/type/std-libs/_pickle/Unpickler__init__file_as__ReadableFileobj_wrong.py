@@ -9,7 +9,6 @@
 # case = "Unpickler__init__file_as__ReadableFileobj_wrong"
 # subject = "_pickle.Unpickler.__init__(file: _ReadableFileobj)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"

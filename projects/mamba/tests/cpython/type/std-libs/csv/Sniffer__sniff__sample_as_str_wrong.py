@@ -9,7 +9,6 @@
 # case = "Sniffer__sniff__sample_as_str_wrong"
 # subject = "csv.Sniffer.sniff(sample: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/csv.pyi"
 # status = "filled"

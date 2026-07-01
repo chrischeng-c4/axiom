@@ -9,7 +9,6 @@
 # case = "make_scanner____call____string_as_str_wrong"
 # subject = "_json.make_scanner.__call__(string: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_json.pyi"
 # status = "filled"

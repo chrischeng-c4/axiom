@@ -9,7 +9,6 @@
 # case = "_heappop_max__heap_as_list_wrong"
 # subject = "_heapq._heappop_max(heap: list)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "python3.12:_heapq"
 # status = "filled"

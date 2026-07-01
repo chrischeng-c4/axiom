@@ -9,7 +9,6 @@
 # case = "run_module__mod_name_as_str_wrong"
 # subject = "runpy.run_module(mod_name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/runpy.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "SimpleQueue__get__block_as_bool_wrong"
 # subject = "_queue.SimpleQueue.get(block: bool)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_queue.pyi"
 # status = "filled"
