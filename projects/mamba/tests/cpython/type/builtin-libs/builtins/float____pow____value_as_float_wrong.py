@@ -9,12 +9,10 @@
 # case = "float____pow____value_as_float_wrong"
 # subject = "builtins.float.__pow__(value: float)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: builtins.float.__pow__(value: float); call it with the wrong type.
 

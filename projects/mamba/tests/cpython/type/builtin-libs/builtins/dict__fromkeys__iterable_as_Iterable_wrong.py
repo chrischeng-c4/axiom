@@ -9,7 +9,6 @@
 # case = "dict__fromkeys__iterable_as_Iterable_wrong"
 # subject = "builtins.dict.fromkeys(iterable: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "complex__from_number__number_as_typed_wrong"
 # subject = "builtins.complex.from_number(number: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

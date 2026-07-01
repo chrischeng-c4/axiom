@@ -9,7 +9,6 @@
 # case = "float____sub____value_as_float_wrong"
 # subject = "builtins.float.__sub__(value: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

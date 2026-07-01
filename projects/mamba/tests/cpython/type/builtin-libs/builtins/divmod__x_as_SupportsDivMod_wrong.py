@@ -9,7 +9,6 @@
 # case = "divmod__x_as_SupportsDivMod_wrong"
 # subject = "builtins.divmod(x: SupportsDivMod)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
