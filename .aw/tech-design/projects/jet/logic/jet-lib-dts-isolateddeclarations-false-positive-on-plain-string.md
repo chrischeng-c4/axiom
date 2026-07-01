@@ -51,3 +51,28 @@ flowchart TD
     every_property_supported -->|no| isolated_error
     synthesize_type --> emit_synthesized([Emit export declare const with synthesized object type])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/bundler/dts.rs"
+    action: modify
+    section: logic
+    description: |
+      Extend isolatedDeclarations local inference so exported const declarations
+      with plain object literal initializers whose property values are simple
+      literals synthesize a declaration type instead of producing a missing
+      annotation diagnostic.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_dts.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Add a regression fixture proving a string-valued object literal export
+      succeeds and emits a concrete object type compatible with TypeScript's
+      isolatedDeclarations behavior.
+    impl_mode: hand-written
+```
