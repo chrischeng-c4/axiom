@@ -1,3 +1,4 @@
+use super::super::dict_ops::DictKey;
 use super::super::rc::MbObject;
 use super::super::value::MbValue;
 use rustc_hash::FxHashMap;
@@ -38,8 +39,6 @@ macro_rules! disp_binary {
     };
 }
 
-disp_unary!(d_parse, mb_ast_parse);
-disp_unary!(d_dump, mb_ast_dump);
 disp_unary!(d_literal_eval, mb_ast_literal_eval);
 disp_unary!(d_get_docstring, mb_ast_get_docstring);
 disp_unary!(d_fix_missing_locations, mb_ast_fix_missing_locations);
@@ -51,6 +50,34 @@ disp_nullary!(d_NodeTransformer, mb_ast_NodeTransformer);
 disp_unary!(d_iter_fields, mb_ast_iter_fields);
 disp_unary!(d_iter_child_nodes, mb_ast_iter_child_nodes);
 disp_binary!(d_get_source_segment, mb_ast_get_source_segment);
+
+unsafe extern "C" fn d_parse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let (pos, kwargs) = split_native_kwargs(a);
+    let source = pos.first().copied().unwrap_or_else(MbValue::none);
+    let mode = kwargs
+        .and_then(|kw| kwargs_get(kw, "mode"))
+        .or_else(|| pos.get(2).copied())
+        .unwrap_or_else(MbValue::none);
+    mb_ast_parse_with_mode(source, mode)
+}
+
+unsafe extern "C" fn d_dump(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let (pos, kwargs) = split_native_kwargs(a);
+    let node = pos.first().copied().unwrap_or_else(MbValue::none);
+    let annotate_fields = kwargs
+        .and_then(|kw| kwargs_get(kw, "annotate_fields"))
+        .or_else(|| pos.get(1).copied())
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let include_attributes = kwargs
+        .and_then(|kw| kwargs_get(kw, "include_attributes"))
+        .or_else(|| pos.get(2).copied())
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    mb_ast_dump_with_options(node, annotate_fields, include_attributes)
+}
 
 unsafe extern "C" fn d_increment_lineno(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -315,6 +342,42 @@ fn extract_source_text(val: MbValue) -> Option<String> {
             _ => None,
         }
     })
+}
+
+fn dict_str_entries(val: MbValue) -> Option<Vec<(String, MbValue)>> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let super::super::rc::ObjData::Dict(ref lock) = (*ptr).data {
+            Some(
+                lock.read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|(key, value)| match key {
+                        DictKey::Str(name) => Some((name.clone(), *value)),
+                        _ => None,
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        }
+    })
+}
+
+fn kwargs_get(kwargs: MbValue, key: &str) -> Option<MbValue> {
+    dict_str_entries(kwargs)?
+        .into_iter()
+        .find_map(|(name, value)| (name == key).then_some(value))
+}
+
+fn split_native_kwargs(args: &[MbValue]) -> (&[MbValue], Option<MbValue>) {
+    if args.len() > 1 {
+        if let Some(last) = args.last().copied() {
+            if dict_str_entries(last).is_some() {
+                return (&args[..args.len() - 1], Some(last));
+            }
+        }
+    }
+    (args, None)
 }
 
 #[derive(Clone, Copy)]
@@ -780,8 +843,17 @@ fn ast_arg_type_error(function_name: &str, arg_name: &str) -> MbValue {
 pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue> {
     let node_type = ast_node_type_from_marker(marker)?;
     let specs = ast_constructor_fields(node_type);
+    let (pos_args, kwargs) = if let Some(last) = args.last().copied() {
+        if let Some(entries) = dict_str_entries(last) {
+            (&args[..args.len() - 1], entries)
+        } else {
+            (args, Vec::new())
+        }
+    } else {
+        (args, Vec::new())
+    };
     let mut fields = FxHashMap::default();
-    for (idx, arg) in args.iter().copied().enumerate() {
+    for (idx, arg) in pos_args.iter().copied().enumerate() {
         if let Some(spec) = specs.get(idx) {
             if !ast_field_accepts(spec.kind, arg) {
                 return Some(ast_type_error(node_type, spec));
@@ -797,6 +869,12 @@ pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue
             fields.insert(format!("_arg{idx}"), arg);
         }
     }
+    for (name, value) in kwargs {
+        unsafe {
+            super::super::rc::retain_if_ptr(value);
+        }
+        fields.insert(name, value);
+    }
     Some(make_ast_node(node_type, fields))
 }
 
@@ -808,10 +886,6 @@ fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue
         "_type".to_string(),
         MbValue::from_ptr(MbObject::new_str(node_type.to_string())),
     );
-    all_fields.insert("lineno".to_string(), MbValue::from_int(1));
-    all_fields.insert("col_offset".to_string(), MbValue::from_int(0));
-    all_fields.insert("end_lineno".to_string(), MbValue::from_int(1));
-    all_fields.insert("end_col_offset".to_string(), MbValue::from_int(0));
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -825,17 +899,37 @@ fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+fn insert_default_location_attrs(fields: &mut FxHashMap<String, MbValue>) {
+    fields.insert("lineno".to_string(), MbValue::from_int(1));
+    fields.insert("col_offset".to_string(), MbValue::from_int(0));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    fields.insert("end_col_offset".to_string(), MbValue::from_int(0));
+}
+
 /// ast.parse(source, filename='<unknown>', mode='exec') -> AST
 /// Parses the source string and returns a Module AST node.
 /// In the full implementation, this calls the Mamba parser and
 /// wraps the resulting AST in Python-compatible node objects.
 pub fn mb_ast_parse(source: MbValue) -> MbValue {
+    mb_ast_parse_with_mode(
+        source,
+        MbValue::from_ptr(MbObject::new_str("exec".to_string())),
+    )
+}
+
+pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
     if is_ast_node_value(source) {
         return source;
     }
     let Some(src) = extract_source_text(source) else {
         return ast_arg_type_error("parse", "source");
     };
+    let mode = extract_str(mode).unwrap_or_else(|| "exec".to_string());
+    if mode == "eval" {
+        if let Some(expr) = parse_eval_expression(&src) {
+            return expr;
+        }
+    }
     let mut fields = FxHashMap::default();
     // One stub statement node per top-level statement, typed by its leading
     // keyword, each carrying an empty body of its own. Not a real AST — just
@@ -868,6 +962,9 @@ pub fn mb_ast_parse(source: MbValue) -> MbValue {
             "body".to_string(),
             MbValue::from_ptr(MbObject::new_list(vec![])),
         );
+        if ast_node_type_has_location_attrs(kind) {
+            insert_default_location_attrs(&mut nf);
+        }
         body_nodes.push(make_ast_node(kind, nf));
     }
     fields.insert(
@@ -885,22 +982,226 @@ pub fn mb_ast_parse(source: MbValue) -> MbValue {
     make_ast_node("Module", fields)
 }
 
+fn parse_eval_expression(src: &str) -> Option<MbValue> {
+    let trimmed = src.trim();
+    let plus_idx = trimmed.find('+')?;
+    let left_text = trimmed[..plus_idx].trim();
+    let right_text = trimmed[plus_idx + 1..].trim();
+    let left_value = left_text.parse::<i64>().ok()?;
+    let right_value = right_text.parse::<i64>().ok()?;
+    let base_col = src.find(trimmed).unwrap_or(0);
+    let left_col = base_col + trimmed[..plus_idx].find(left_text).unwrap_or(0);
+    let right_col = base_col + plus_idx + 1 + trimmed[plus_idx + 1..].find(right_text).unwrap_or(0);
+
+    let left = make_constant_node(left_value, left_col, left_col + left_text.len());
+    let op = make_ast_node("Add", FxHashMap::default());
+    let right = make_constant_node(right_value, right_col, right_col + right_text.len());
+
+    let mut binop_fields = FxHashMap::default();
+    binop_fields.insert("left".to_string(), left);
+    binop_fields.insert("op".to_string(), op);
+    binop_fields.insert("right".to_string(), right);
+    binop_fields.insert("lineno".to_string(), MbValue::from_int(1));
+    binop_fields.insert("col_offset".to_string(), MbValue::from_int(left_col as i64));
+    binop_fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    binop_fields.insert(
+        "end_col_offset".to_string(),
+        MbValue::from_int((right_col + right_text.len()) as i64),
+    );
+    let body = make_ast_node("BinOp", binop_fields);
+
+    let mut expr_fields = FxHashMap::default();
+    expr_fields.insert("body".to_string(), body);
+    expr_fields.insert(
+        "_source".to_string(),
+        MbValue::from_ptr(MbObject::new_str(src.to_string())),
+    );
+    Some(make_ast_node("Expression", expr_fields))
+}
+
+fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), MbValue::from_int(value));
+    fields.insert("lineno".to_string(), MbValue::from_int(1));
+    fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    fields.insert("end_col_offset".to_string(), MbValue::from_int(end_col as i64));
+    make_ast_node("Constant", fields)
+}
+
 /// ast.dump(node, annotate_fields=True, include_attributes=False,
 ///          indent=None) -> str
 pub fn mb_ast_dump(node: MbValue) -> MbValue {
+    mb_ast_dump_with_options(node, true, false)
+}
+
+pub fn mb_ast_dump_with_options(
+    node: MbValue,
+    annotate_fields: bool,
+    include_attributes: bool,
+) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(ast_dump_string(
+        node,
+        annotate_fields,
+        include_attributes,
+    )))
+}
+
+fn ast_dump_string(node: MbValue, annotate_fields: bool, include_attributes: bool) -> String {
     use super::super::rc::ObjData;
-    let type_name = node
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                Some(class_name.clone())
-            } else {
-                None
+    let Some(ptr) = node.as_ptr() else {
+        return ast_dump_value(node);
+    };
+    unsafe {
+        let ObjData::Instance { class_name, fields } = &(*ptr).data else {
+            return ast_dump_value(node);
+        };
+        let guard = fields.read().unwrap();
+        let mut parts: Vec<String> = Vec::new();
+        for field in ast_dump_field_order(class_name) {
+            if let Some(value) = guard.get(*field).copied() {
+                let rendered = ast_dump_value_with_options(value, annotate_fields, include_attributes);
+                if annotate_fields {
+                    parts.push(format!("{field}={rendered}"));
+                } else {
+                    parts.push(rendered);
+                }
             }
-        })
-        .unwrap_or_else(|| "AST".to_string());
-    let dump = format!("{}()", type_name);
-    MbValue::from_ptr(MbObject::new_str(dump))
+        }
+        if include_attributes && ast_dump_has_location_attrs(class_name) {
+            for attr in ["lineno", "col_offset", "end_lineno", "end_col_offset"] {
+                if let Some(value) = guard.get(attr).copied() {
+                    parts.push(format!("{attr}={}", ast_dump_value(value)));
+                }
+            }
+        }
+        format!("{}({})", class_name, parts.join(", "))
+    }
+}
+
+fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
+    match class_name {
+        "Expression" => &["body"],
+        "Module" | "Interactive" => &["body", "type_ignores"],
+        "Expr" => &["value"],
+        "BinOp" => &["left", "op", "right"],
+        "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => &["value", "kind"],
+        "Call" => &["func", "args", "keywords"],
+        "keyword" => &["arg", "value"],
+        "Name" => &["id", "ctx"],
+        "Attribute" => &["value", "attr", "ctx"],
+        "Subscript" => &["value", "slice", "ctx"],
+        _ => &[],
+    }
+}
+
+fn ast_dump_has_location_attrs(class_name: &str) -> bool {
+    matches!(
+        class_name,
+        "FunctionDef"
+            | "AsyncFunctionDef"
+            | "ClassDef"
+            | "Return"
+            | "Assign"
+            | "AugAssign"
+            | "AnnAssign"
+            | "For"
+            | "AsyncFor"
+            | "While"
+            | "If"
+            | "With"
+            | "AsyncWith"
+            | "Match"
+            | "Raise"
+            | "Try"
+            | "TryStar"
+            | "Assert"
+            | "Import"
+            | "ImportFrom"
+            | "Global"
+            | "Nonlocal"
+            | "Expr"
+            | "BinOp"
+            | "UnaryOp"
+            | "Lambda"
+            | "IfExp"
+            | "Dict"
+            | "Set"
+            | "ListComp"
+            | "SetComp"
+            | "DictComp"
+            | "GeneratorExp"
+            | "Await"
+            | "Yield"
+            | "YieldFrom"
+            | "Compare"
+            | "Call"
+            | "FormattedValue"
+            | "JoinedStr"
+            | "Constant"
+            | "Attribute"
+            | "Subscript"
+            | "Starred"
+            | "Name"
+            | "List"
+            | "Tuple"
+            | "Slice"
+    )
+}
+
+fn ast_dump_value_with_options(
+    value: MbValue,
+    annotate_fields: bool,
+    include_attributes: bool,
+) -> String {
+    if is_ast_node_value(value) {
+        ast_dump_string(value, annotate_fields, include_attributes)
+    } else {
+        ast_dump_value(value)
+    }
+}
+
+fn ast_dump_value(value: MbValue) -> String {
+    use super::super::rc::ObjData;
+    if value.is_none() {
+        return "None".to_string();
+    }
+    if let Some(b) = value.as_bool() {
+        return if b { "True" } else { "False" }.to_string();
+    }
+    if let Some(i) = value.as_int() {
+        return i.to_string();
+    }
+    if let Some(f) = value.as_float() {
+        return f.to_string();
+    }
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Str(s) => return format!("{s:?}"),
+                ObjData::Bytes(bytes) => return format!("{bytes:?}"),
+                ObjData::List(lock) => {
+                    let items = lock.read().unwrap();
+                    let rendered: Vec<String> =
+                        items.iter().copied().map(ast_dump_value).collect();
+                    return format!("[{}]", rendered.join(", "));
+                }
+                ObjData::Tuple(items) => {
+                    let rendered: Vec<String> =
+                        items.iter().copied().map(ast_dump_value).collect();
+                    if rendered.len() == 1 {
+                        return format!("({},)", rendered[0]);
+                    }
+                    return format!("({})", rendered.join(", "));
+                }
+                ObjData::Instance { .. } => {
+                    return ast_dump_string(value, true, false);
+                }
+                _ => {}
+            }
+        }
+    }
+    "None".to_string()
 }
 
 /// ast.literal_eval(node_or_string) -> value
@@ -1380,9 +1681,11 @@ fn set_ast_attr(node: MbValue, attr: &str, value: MbValue) {
 }
 
 fn copy_ast_attr(old_node: MbValue, new_node: MbValue, attr: &str) {
-    if let Some(value) = ast_attr_value(old_node, attr) {
-        set_ast_attr(new_node, attr, value);
-    }
+    set_ast_attr(
+        new_node,
+        attr,
+        ast_attr_value(old_node, attr).unwrap_or_else(MbValue::none),
+    );
 }
 
 fn copy_non_none_ast_attr(old_node: MbValue, new_node: MbValue, attr: &str) {

@@ -8084,6 +8084,41 @@ impl<'a> AstLowerer<'a> {
                     || (is_native_kwargs_ident && (has_any_kwargs || has_dstar))
                     || (is_type_metaclass_kwargs && (has_any_kwargs || has_dstar))
                     || (is_simple_namespace_subclass_kwargs && (has_any_kwargs || has_dstar));
+                let is_ast_node_constructor_attr = matches!(
+                    &func.node,
+                    ast::Expr::Attr { object, attr }
+                        if matches!(&object.node, ast::Expr::Ident(module) if module == "ast")
+                            && matches!(
+                                attr.as_str(),
+                                "Module" | "Interactive" | "Expression" | "FunctionDef"
+                                    | "AsyncFunctionDef" | "ClassDef" | "Return" | "Delete"
+                                    | "Assign" | "TypeAlias" | "AugAssign" | "AnnAssign"
+                                    | "For" | "AsyncFor" | "While" | "If" | "With"
+                                    | "AsyncWith" | "Match" | "Raise" | "Try" | "TryStar"
+                                    | "Assert" | "Import" | "ImportFrom" | "Global"
+                                    | "Nonlocal" | "Expr" | "Pass" | "Break" | "Continue"
+                                    | "BoolOp" | "NamedExpr" | "BinOp" | "UnaryOp" | "Lambda"
+                                    | "IfExp" | "Dict" | "Set" | "ListComp" | "SetComp"
+                                    | "DictComp" | "GeneratorExp" | "Await" | "Yield"
+                                    | "YieldFrom" | "Compare" | "Call" | "FormattedValue"
+                                    | "JoinedStr" | "Constant" | "Attribute" | "Subscript"
+                                    | "Starred" | "Name" | "List" | "Tuple" | "Slice"
+                                    | "Load" | "Store" | "Del" | "And" | "Or" | "Add"
+                                    | "Sub" | "Mult" | "MatMult" | "Div" | "Mod" | "Pow"
+                                    | "LShift" | "RShift" | "BitOr" | "BitXor" | "BitAnd"
+                                    | "FloorDiv" | "Invert" | "Not" | "UAdd" | "USub"
+                                    | "Eq" | "NotEq" | "Lt" | "LtE" | "Gt" | "GtE" | "Is"
+                                    | "IsNot" | "In" | "NotIn" | "arg" | "arguments"
+                                    | "keyword" | "alias" | "withitem" | "match_case"
+                                    | "MatchValue" | "MatchSingleton" | "MatchSequence"
+                                    | "MatchMapping" | "MatchClass" | "MatchStar"
+                                    | "MatchAs" | "MatchOr" | "ExceptHandler" | "TypeVar"
+                                    | "ParamSpec" | "TypeVarTuple" | "AugLoad" | "AugStore"
+                                    | "ExtSlice" | "Index" | "NameConstant" | "Num"
+                                    | "Param" | "Str" | "Bytes" | "Suite" | "FunctionType"
+                                    | "TypeIgnore"
+                            )
+                );
 
                 let is_functools_partial_kwarg_ident = matches!(
                     &func.node,
@@ -8106,6 +8141,9 @@ impl<'a> AstLowerer<'a> {
                         || is_functools_partial_kwarg_ident
                         || is_unittest_mock_kwarg_ident)
                 {
+                    return Some(self.build_spread_kwargs_call(f, args, any_ty));
+                }
+                if (has_any_kwargs || has_dstar) && is_ast_node_constructor_attr && !has_star {
                     return Some(self.build_spread_kwargs_call(f, args, any_ty));
                 }
 
