@@ -9,12 +9,10 @@
 # case = "DistributionFinder__find_distributions__context_as_Context_wrong"
 # subject = "importlib.metadata.DistributionFinder.find_distributions(context: Context)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed context"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/metadata.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed context
 # mamba-strict-type: TypeError
 """Type wall: importlib.metadata.DistributionFinder.find_distributions(context: Context); call it with the wrong type.
 
