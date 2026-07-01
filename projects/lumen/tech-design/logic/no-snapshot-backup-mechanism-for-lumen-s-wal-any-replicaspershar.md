@@ -74,3 +74,118 @@ flowchart TD
     fetch --> ship[service_backup::run_backup_once against resolved sink + retention]
     ship --> cli_emit([print BackupRunResult JSON; Job succeeds/fails accordingly])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: serving-backup-cronjob-and-admin-backup-docs-tests
+requirements:
+  llm_storage_documents_admin_backup:
+    id: R1
+    text: "lumen llm storage documents /admin/backup, /admin/backup/local, and /admin/restore (routes, admin-role auth requirement, and that Engine::snapshot() is the same quiesce-free call the raft snapshotter itself uses) as the manual/scriptable snapshot-restore procedure."
+    kind: doc
+    risk: low
+    verify: test
+  no_backup_field_renders_no_cronjob:
+    id: R2
+    text: "When spec.serving.backup is None, render() emits no CronJob object for the serving fleet."
+    kind: behavior
+    risk: low
+    verify: test
+  backup_field_renders_cronjob:
+    id: R3
+    text: "When spec.serving.backup is set, render() emits exactly one batch/v1 CronJob named '<name>-backup' with the configured schedule and a container invoking `lumen backup --url http://<name>.<ns>.svc.cluster.local:7373 --dest <destination>`."
+    kind: behavior
+    risk: medium
+    verify: test
+  retention_and_token_wired_on_cronjob:
+    id: R4
+    text: "retentionSecs (when set) appears as --retention-secs on the CronJob container args, and adminTokenSecret (when set) appears as a LUMEN_BACKUP_TOKEN env var sourced via secretKeyRef."
+    kind: behavior
+    risk: medium
+    verify: test
+  backup_cli_round_trip:
+    id: R5
+    text: "lumen backup --url <base> --dest file://<dir> fetches /admin/backup from a running server and writes a backup object into the destination sink via service_backup::run_backup_once, returning a BackupRunResult."
+    kind: behavior
+    risk: medium
+    verify: test
+  backup_feature_gated_off_default_build:
+    id: R6
+    text: "cargo build -p lumen with no features still compiles with no reqwest/HTTP client linked; the `backup` feature (pulled in transitively by `operator`) is required to enable the `lumen backup` verb."
+    kind: behavior
+    risk: low
+    verify: inspection
+elements:
+  spec_cli_unit_tests:
+    kind: test
+    path: projects/lumen/tests/spec_cli.rs
+  operator_render_unit_tests:
+    kind: test
+    path: projects/lumen/tests/operator_render.rs
+  backup_unit_tests:
+    kind: test
+    path: projects/lumen/src/backup.rs
+relations:
+  - { from: spec_cli_unit_tests, verifies: llm_storage_documents_admin_backup }
+  - { from: operator_render_unit_tests, verifies: no_backup_field_renders_no_cronjob }
+  - { from: operator_render_unit_tests, verifies: backup_field_renders_cronjob }
+  - { from: operator_render_unit_tests, verifies: retention_and_token_wired_on_cronjob }
+  - { from: backup_unit_tests, verifies: backup_cli_round_trip }
+  - { from: backup_unit_tests, verifies: backup_feature_gated_off_default_build }
+---
+requirementDiagram
+    requirement R1 {
+      id: R1
+      text: "llm storage documents admin backup/restore"
+      risk: low
+      verifymethod: test
+    }
+    requirement R2 {
+      id: R2
+      text: "no backup field -> no CronJob"
+      risk: low
+      verifymethod: test
+    }
+    requirement R3 {
+      id: R3
+      text: "backup field -> CronJob rendered"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R4 {
+      id: R4
+      text: "retention + token wired on CronJob"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R5 {
+      id: R5
+      text: "lumen backup CLI round trip"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R6 {
+      id: R6
+      text: "backup feature gated off default build"
+      risk: low
+      verifymethod: inspection
+    }
+    element spec_cli_unit_tests {
+      type: test
+    }
+    element operator_render_unit_tests {
+      type: test
+    }
+    element backup_unit_tests {
+      type: test
+    }
+    spec_cli_unit_tests - satisfies -> R1
+    operator_render_unit_tests - satisfies -> R2
+    operator_render_unit_tests - satisfies -> R3
+    operator_render_unit_tests - satisfies -> R4
+    backup_unit_tests - satisfies -> R5
+    backup_unit_tests - satisfies -> R6
+```
