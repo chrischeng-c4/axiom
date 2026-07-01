@@ -9,12 +9,11 @@
 # case = "send_handle__conn_as_typed_wrong"
 # subject = "multiprocessing.reduction.send_handle(conn: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed conn"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/reduction.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed conn
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.reduction.send_handle(conn: typed); call it with the wrong type.
 
