@@ -930,6 +930,11 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
             return expr;
         }
     }
+    if mode == "exec" {
+        if let Some(module) = parse_exec_call_module(&src) {
+            return module;
+        }
+    }
     let mut fields = FxHashMap::default();
     // One stub statement node per top-level statement, typed by its leading
     // keyword, each carrying an empty body of its own. Not a real AST — just
@@ -1019,6 +1024,153 @@ fn parse_eval_expression(src: &str) -> Option<MbValue> {
     Some(make_ast_node("Expression", expr_fields))
 }
 
+fn parse_exec_call_module(src: &str) -> Option<MbValue> {
+    let trimmed = src.trim();
+    if trimmed.is_empty() || trimmed.contains('\n') {
+        return None;
+    }
+    let open_idx = trimmed.find('(')?;
+    let close_idx = trimmed.rfind(')')?;
+    if close_idx != trimmed.len() - 1 {
+        return None;
+    }
+    let func_text = trimmed[..open_idx].trim();
+    if !is_identifier_text(func_text) {
+        return None;
+    }
+    let base_col = src.find(trimmed).unwrap_or(0);
+    let func_col = base_col + trimmed[..open_idx].find(func_text).unwrap_or(0);
+    let call_end_col = base_col + close_idx + 1;
+    let args_text = &trimmed[open_idx + 1..close_idx];
+    let args_base_col = base_col + open_idx + 1;
+
+    let func = make_name_node(func_text, func_col, func_col + func_text.len());
+    let mut args = Vec::new();
+    for (arg_text, rel_start) in split_simple_call_args(args_text)? {
+        let col = args_base_col + rel_start;
+        let end_col = col + arg_text.len();
+        if let Some(value) = quoted_string_literal(arg_text) {
+            args.push(make_string_constant_node(value, col, end_col));
+        } else if is_identifier_text(arg_text) {
+            args.push(make_name_node(arg_text, col, end_col));
+        } else {
+            return None;
+        }
+    }
+
+    let mut call_fields = FxHashMap::default();
+    call_fields.insert("func".to_string(), func);
+    call_fields.insert("args".to_string(), MbValue::from_ptr(MbObject::new_list(args)));
+    call_fields.insert(
+        "keywords".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    call_fields.insert("lineno".to_string(), MbValue::from_int(1));
+    call_fields.insert("col_offset".to_string(), MbValue::from_int(func_col as i64));
+    call_fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    call_fields.insert(
+        "end_col_offset".to_string(),
+        MbValue::from_int(call_end_col as i64),
+    );
+    let call = make_ast_node("Call", call_fields);
+
+    let mut expr_fields = FxHashMap::default();
+    expr_fields.insert("value".to_string(), call);
+    expr_fields.insert("lineno".to_string(), MbValue::from_int(1));
+    expr_fields.insert("col_offset".to_string(), MbValue::from_int(func_col as i64));
+    expr_fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    expr_fields.insert(
+        "end_col_offset".to_string(),
+        MbValue::from_int(call_end_col as i64),
+    );
+    let expr = make_ast_node("Expr", expr_fields);
+
+    let mut module_fields = FxHashMap::default();
+    module_fields.insert(
+        "body".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![expr])),
+    );
+    module_fields.insert(
+        "type_ignores".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    module_fields.insert(
+        "_source".to_string(),
+        MbValue::from_ptr(MbObject::new_str(src.to_string())),
+    );
+    Some(make_ast_node("Module", module_fields))
+}
+
+fn split_simple_call_args(args_text: &str) -> Option<Vec<(&str, usize)>> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in args_text.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+        } else if ch == ',' {
+            push_simple_call_arg(args_text, start, idx, &mut out)?;
+            start = idx + ch.len_utf8();
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    push_simple_call_arg(args_text, start, args_text.len(), &mut out)?;
+    Some(out)
+}
+
+fn push_simple_call_arg<'a>(
+    source: &'a str,
+    start: usize,
+    end: usize,
+    out: &mut Vec<(&'a str, usize)>,
+) -> Option<()> {
+    let segment = &source[start..end];
+    let trimmed = segment.trim();
+    if trimmed.is_empty() {
+        if source.trim().is_empty() {
+            return Some(());
+        }
+        return None;
+    }
+    let leading_ws = segment.len() - segment.trim_start().len();
+    out.push((trimmed, start + leading_ws));
+    Some(())
+}
+
+fn quoted_string_literal(text: &str) -> Option<String> {
+    let mut chars = text.chars();
+    let quote = chars.next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    if !text.ends_with(quote) || text.len() < 2 {
+        return None;
+    }
+    Some(text[1..text.len() - 1].to_string())
+}
+
+fn is_identifier_text(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("value".to_string(), MbValue::from_int(value));
@@ -1027,6 +1179,30 @@ fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
     fields.insert("end_lineno".to_string(), MbValue::from_int(1));
     fields.insert("end_col_offset".to_string(), MbValue::from_int(end_col as i64));
     make_ast_node("Constant", fields)
+}
+
+fn make_string_constant_node(value: String, col: usize, end_col: usize) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), MbValue::from_ptr(MbObject::new_str(value)));
+    fields.insert("lineno".to_string(), MbValue::from_int(1));
+    fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    fields.insert("end_col_offset".to_string(), MbValue::from_int(end_col as i64));
+    make_ast_node("Constant", fields)
+}
+
+fn make_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "id".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    fields.insert("ctx".to_string(), make_ast_node("Load", FxHashMap::default()));
+    fields.insert("lineno".to_string(), MbValue::from_int(1));
+    fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    fields.insert("end_col_offset".to_string(), MbValue::from_int(end_col as i64));
+    make_ast_node("Name", fields)
 }
 
 /// ast.dump(node, annotate_fields=True, include_attributes=False,
@@ -1157,6 +1333,45 @@ fn ast_dump_value_with_options(
     if is_ast_node_value(value) {
         ast_dump_string(value, annotate_fields, include_attributes)
     } else {
+        if let Some(ptr) = value.as_ptr() {
+            unsafe {
+                match &(*ptr).data {
+                    super::super::rc::ObjData::List(lock) => {
+                        let items = lock.read().unwrap();
+                        let rendered: Vec<String> = items
+                            .iter()
+                            .copied()
+                            .map(|item| {
+                                ast_dump_value_with_options(
+                                    item,
+                                    annotate_fields,
+                                    include_attributes,
+                                )
+                            })
+                            .collect();
+                        return format!("[{}]", rendered.join(", "));
+                    }
+                    super::super::rc::ObjData::Tuple(items) => {
+                        let rendered: Vec<String> = items
+                            .iter()
+                            .copied()
+                            .map(|item| {
+                                ast_dump_value_with_options(
+                                    item,
+                                    annotate_fields,
+                                    include_attributes,
+                                )
+                            })
+                            .collect();
+                        if rendered.len() == 1 {
+                            return format!("({},)", rendered[0]);
+                        }
+                        return format!("({})", rendered.join(", "));
+                    }
+                    _ => {}
+                }
+            }
+        }
         ast_dump_value(value)
     }
 }
@@ -1178,7 +1393,7 @@ fn ast_dump_value(value: MbValue) -> String {
     if let Some(ptr) = value.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Str(s) => return format!("{s:?}"),
+                ObjData::Str(s) => return python_repr_str(s),
                 ObjData::Bytes(bytes) => return format!("{bytes:?}"),
                 ObjData::List(lock) => {
                     let items = lock.read().unwrap();
@@ -1202,6 +1417,22 @@ fn ast_dump_value(value: MbValue) -> String {
         }
     }
     "None".to_string()
+}
+
+fn python_repr_str(s: &str) -> String {
+    let mut out = String::from("'");
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// ast.literal_eval(node_or_string) -> value
@@ -2072,10 +2303,15 @@ mod tests {
 
     #[test]
     fn test_dump() {
-        let src = MbValue::from_ptr(MbObject::new_str("x = 1".to_string()));
+        let src = MbValue::from_ptr(MbObject::new_str("spam(eggs, \"and cheese\")".to_string()));
         let tree = mb_ast_parse(src);
         let dumped = mb_ast_dump(tree);
-        assert!(dumped.as_ptr().is_some());
+        assert_eq!(
+            extract_str(dumped).as_deref(),
+            Some(
+                "Module(body=[Expr(value=Call(func=Name(id='spam', ctx=Load()), args=[Name(id='eggs', ctx=Load()), Constant(value='and cheese')], keywords=[]))], type_ignores=[])"
+            )
+        );
     }
 
     #[test]
