@@ -2,10 +2,16 @@ version = 2
 project = "keep"
 ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-06-30T17:11:41.318812+00:00"
-digest = "sha256:3ba159daf3854fe175fff2d59424312b6b8f21710d70a63f00671909a5fb82c2"
-source_digest = "sha256:3ba159daf3854fe175fff2d59424312b6b8f21710d70a63f00671909a5fb82c2"
-ir_digest = "sha256:a60dfdf3045c7a9b00799cbeca1dbd80f618d7590711d21e09c00e37c19f8b63"
+generated_at = "2026-07-01T02:25:50.415834+00:00"
+digest = "sha256:7abf9ba16bfeca55a4b20b0cf94348a76b8dcf964ee41ec0ae82ec40136be790"
+source_digest = "sha256:7abf9ba16bfeca55a4b20b0cf94348a76b8dcf964ee41ec0ae82ec40136be790"
+ir_digest = "sha256:70393ab7f27d31332ad9a6c41cccc11d00a14bb830b92e054cb5e7ef4116c212"
+
+[[files]]
+path = "interfaces/cli/adopt-libs-operator-keep-k8s-crd-operator-instance-cli.md"
+digest = "sha256:687e463825eb57d76189c2bf53fda15bf0515643a8c06b88e534d5f68f347aa9"
+ir_digest = "sha256:ab32a214b684ce43cee8cf9ea7e98c80923a845342993756cc9c83a670ff0f3f"
+section_count = 3
 
 [[files]]
 path = "interfaces/cli/migrate-keep-cli-from-report-issue-to-the-issue-group-cli-std-is.md"
