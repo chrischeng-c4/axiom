@@ -2,10 +2,10 @@ version = 2
 project = "keep"
 ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-07-01T02:54:52.061543+00:00"
-digest = "sha256:2433561ccbb88912d46df98b19ac381a482ac1ca1c90ba26ed93a71a08d014e3"
-source_digest = "sha256:2433561ccbb88912d46df98b19ac381a482ac1ca1c90ba26ed93a71a08d014e3"
-ir_digest = "sha256:22e0cc257114875997985c14f6cc166a21ad1c6fa01de76d3331ee0f115bdcf8"
+generated_at = "2026-07-01T03:08:41.757766+00:00"
+digest = "sha256:83fefb0fe861a569e23cf884e2e100e418867aacf3122c337db29522061be501"
+source_digest = "sha256:83fefb0fe861a569e23cf884e2e100e418867aacf3122c337db29522061be501"
+ir_digest = "sha256:22095d93176974d6ffc5c34626e19e5a94203dfa613f047af0e8489f1182d2f3"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-keep-k8s-crd-operator-instance-cli.md"
@@ -27,8 +27,8 @@ section_count = 3
 
 [[files]]
 path = "logic/adopt-libs-service-backup-snapshot-sink-keep-backup-verb.md"
-digest = "sha256:4adf452c928f4e96f47d2e6bec6933de74e91e360acca662b9e1bc8f25c08a9f"
-ir_digest = "sha256:19b2b4d86667c6b13dd8de150d06c7cf16f287782b5eae10602c16daed26b0e2"
+digest = "sha256:5916317aece4134bbd60353d3c30161e5a045da56d6771e72a50d223379f28a8"
+ir_digest = "sha256:bc405b81cf6a7112431c78d44fe1d5bb9caca992022ec552bad60b517632b8cc"
 section_count = 3
 
 [[files]]

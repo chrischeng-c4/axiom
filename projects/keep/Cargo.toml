@@ -53,6 +53,11 @@ service-http = { path = "../../libs/service-http" }
 # keep's KeepVerifier composes libs/claimtoken; the per-handler scope decision
 # (claim-check-only, bare-id, 403) stays in keep, not in a blanket middleware.
 service-auth = { path = "../../libs/service-auth" }
+# Shared backup contract (#776) — destination/policy/sink/runner. keep's backup
+# module produces consistent snapshot bytes and wires them through this instead
+# of a bespoke sink; the `operator` feature also embeds BackupPolicy in KeepSpec.
+# Always linked (lightweight: anyhow + serde + schemars).
+service-backup = { path = "../../libs/service-backup" }
 # HTTP client for in-tree Rust consumers (behind the `client` feature).
 reqwest = { workspace = true, optional = true }
 # Shared h2c client construction + ln(concurrency) pool sizing (#467).

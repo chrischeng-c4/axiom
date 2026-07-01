@@ -34,6 +34,7 @@ fn spec(shard_count: u32, replicas: u32) -> KeepSpec {
         grace_secs: 30,
         storage: "10Gi".into(),
         storage_class: None,
+        backup: None,
     }
 }
 
@@ -154,6 +155,53 @@ fn render_emits_downward_api_statefulset() {
         ready: HashMap::new(),
     });
     assert_eq!(status["status"]["phase"], "Pending");
+}
+
+/// R3 (#776) — the operator renders a backup CronJob invoking `keep backup`
+/// when `spec.backup` is configured, and omits it otherwise.
+#[test]
+fn render_emits_backup_cronjob_when_configured() {
+    use keep::operator::KeepBackupSpec;
+
+    // No policy -> no CronJob.
+    let plain = Keep::new("store", spec(1, 1));
+    assert!(
+        render(&plain).iter().all(|o| o["kind"] != "CronJob"),
+        "no backup policy must render no CronJob"
+    );
+
+    // Policy set -> a CronJob invoking `keep backup` with the schedule + dest +
+    // retention flags.
+    let mut s = spec(1, 1);
+    s.backup = Some(KeepBackupSpec {
+        schedule: "17 3 * * *".into(),
+        destination: "s3://bucket/keep".into(),
+        retention_secs: Some(604_800),
+    });
+    let keep = Keep::new("store", s);
+    let objs = render(&keep);
+
+    let cj = of_kind(&objs, "CronJob");
+    assert_eq!(cj["metadata"]["name"], "store-backup");
+    assert_eq!(cj["spec"]["schedule"], "17 3 * * *");
+    let container = &cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0];
+    assert_eq!(container["command"][0], "keep");
+    let args: Vec<&str> = container["args"]
+        .as_array()
+        .expect("args array")
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(args[0], "backup");
+    assert!(args.contains(&"--dest"));
+    assert!(args.contains(&"s3://bucket/keep"));
+    assert!(args.contains(&"--retention-secs"));
+    assert!(args.contains(&"604800"));
+    // The runner runs under keep's ServiceAccount.
+    assert_eq!(
+        cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["serviceAccountName"],
+        "store"
+    );
 }
 
 /// R4 — the generated CRD is Kubernetes-OpenAPI compatible.

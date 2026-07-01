@@ -5802,6 +5802,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "service-auth",
+ "service-backup",
  "service-http",
  "sha2 0.10.9",
  "tempfile",

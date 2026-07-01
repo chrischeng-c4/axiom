@@ -16,7 +16,7 @@ pub mod crd;
 pub mod reconcile;
 pub mod render;
 
-pub use crd::{Keep, KeepSpec, KeepStatus};
+pub use crd::{Keep, KeepBackupSpec, KeepSpec, KeepStatus};
 pub use reconcile::run;
 
 /// The `Keep` CustomResourceDefinition as YAML, for `kubectl apply`.

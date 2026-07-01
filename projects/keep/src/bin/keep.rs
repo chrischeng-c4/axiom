@@ -59,6 +59,13 @@ enum Command {
     /// (they work from the binary); only `operator run` needs the `operator`
     /// build feature.
     K8s(K8sArgs),
+    /// Write a consistent snapshot of keep's on-disk state to a backup
+    /// destination through the shared libs/service-backup runner. Recovers the
+    /// engine from `--data-dir` (latest snapshot + WAL replay), serializes a
+    /// full-state payload, and stores it at `--dest` (`file://` local; `s3://`,
+    /// `gs://` route to the shared placeholder sink until a cloud adapter
+    /// feature is linked), applying optional age retention.
+    Backup(BackupArgs),
 }
 
 /// `keep k8s <crd|operator|instance>` — cluster artifacts split by lifecycle
@@ -249,6 +256,28 @@ struct IssueCreateArgs {
     message: Vec<String>,
 }
 
+/// `keep backup --dest <uri>` flags (#776). The destination is the one primary
+/// object; everything else is a flag (the CLI convention).
+#[derive(clap::Args, Debug)]
+struct BackupArgs {
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix`.
+    #[arg(long)]
+    dest: String,
+    /// Data directory to recover the snapshot from (WAL + snapshots); matches
+    /// the server's `--data-dir`.
+    #[arg(long, env = "KEEP_DATA_DIR", default_value = "./data")]
+    data_dir: PathBuf,
+    /// Engine shard count used to recover the data dir — match the server's
+    /// `--shards`.
+    #[arg(long, env = "KEEP_SHARDS", default_value_t = 256)]
+    shards: usize,
+    /// Drop backup objects older than this many seconds after a successful put
+    /// (omit to keep everything).
+    #[arg(long)]
+    retention_secs: Option<u64>,
+}
+
 #[derive(clap::Args, Debug)]
 struct ServeArgs {
     /// Bind host. k8s passes 0.0.0.0.
@@ -400,7 +429,24 @@ async fn dispatch(cmd: Command) -> Result<()> {
         }
         Command::Issue(args) => dispatch_issue(args).await,
         Command::K8s(args) => k8s(args).await,
+        Command::Backup(args) => dispatch_backup(args),
     }
+}
+
+/// `keep backup` — recover a consistent snapshot from the data dir and write it
+/// through the shared libs/service-backup runner (#776). Offline: no server, no
+/// network beyond the sink (local `file://` here).
+///
+/// @spec projects/keep/tech-design/logic/adopt-libs-service-backup-snapshot-sink-keep-backup-verb.md
+fn dispatch_backup(args: BackupArgs) -> Result<()> {
+    let dest = keep::backup::BackupDestination::from_uri(&args.dest)?;
+    let retention = match args.retention_secs {
+        Some(secs) => keep::backup::RetentionPolicy::max_age_seconds(secs),
+        None => keep::backup::RetentionPolicy::default(),
+    };
+    let result = keep::backup::run_backup(&args.data_dir, args.shards, &dest, &retention)?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
 }
 
 /// `keep k8s` — cluster artifacts split by lifecycle layer. Only `operator run`

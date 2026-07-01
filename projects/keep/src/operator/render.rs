@@ -25,6 +25,7 @@ const API_VERSION: &str = "keep.dev/v1alpha1";
 const KIND: &str = "Keep";
 const CLIENT_PORT: i32 = 7117;
 const COMPONENT: &str = "server";
+const BACKUP_COMPONENT: &str = "backup";
 
 /// Resolve the instance name (defaults to `keep` only when metadata is absent,
 /// which never happens for a real CR).
@@ -72,7 +73,7 @@ pub fn render(keep: &Keep) -> Vec<Value> {
     let cx = ctx(keep, &name, &ns);
     let headless = format!("{name}-headless");
 
-    vec![
+    let mut objects = vec![
         render::service_account(&cx, COMPONENT),
         configmap(keep, &cx),
         statefulset(keep, &cx, &headless),
@@ -81,7 +82,59 @@ pub fn render(keep: &Keep) -> Vec<Value> {
         // keep must not lose its sole store pod to a voluntary drain without an
         // operator override: maxUnavailable 0 (mirrors k8s/base/pdb.yaml).
         render::pdb(&cx, &name, COMPONENT, 0),
-    ]
+    ];
+    // Optional scheduled backup runner: only when a policy is configured (#776).
+    if let Some(cj) = backup_cron_job(keep, &cx) {
+        objects.push(cj);
+    }
+    objects
+}
+
+/// The optional backup CronJob (#776): rendered only when `spec.backup` is set.
+/// It invokes `keep backup --dest <uri> --data-dir /data --shards <engineShards>
+/// [--retention-secs <n>]` on the policy's schedule, so keep still owns
+/// producing the consistent snapshot bytes (the runner just schedules it). The
+/// shared [`operator::render::cron_job`] helper stays manifest-only.
+fn backup_cron_job(keep: &Keep, cx: &RenderCtx) -> Option<Value> {
+    let policy = keep.spec.backup.as_ref()?;
+    let s = &keep.spec;
+    let name = format!("{}-backup", cx.name);
+    let mut args = vec![
+        "backup".to_string(),
+        "--dest".to_string(),
+        policy.destination.clone(),
+        "--data-dir".to_string(),
+        "/data".to_string(),
+        "--shards".to_string(),
+        s.engine_shards.to_string(),
+    ];
+    if let Some(secs) = policy.retention_secs {
+        args.push("--retention-secs".to_string());
+        args.push(secs.to_string());
+    }
+    Some(render::cron_job(render::CronJob {
+        cx,
+        name: &name,
+        component: BACKUP_COMPONENT,
+        schedule: &policy.schedule,
+        image: s.cluster.image.as_str(),
+        image_pull_policy: s
+            .cluster
+            .image_pull_policy
+            .as_deref()
+            .unwrap_or("IfNotPresent"),
+        command: vec!["keep".into()],
+        args,
+        env: vec![],
+        env_from: vec![],
+        volumes: vec![],
+        volume_mounts: vec![],
+        service_account_name: Some(cx.name),
+        cpu: "100m",
+        memory: "128Mi",
+        successful_jobs_history_limit: 3,
+        failed_jobs_history_limit: 3,
+    }))
 }
 
 /// keep's serving ConfigMap: the config-driven runtime knobs a pod reads (so a

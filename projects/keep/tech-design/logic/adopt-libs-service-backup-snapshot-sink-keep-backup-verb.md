@@ -143,7 +143,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add an optional `backup: Option<service_backup::BackupPolicy>` field to KeepSpec (schedule + destination + retention); the crd_yaml uint normalization already covers the retention maxAgeSeconds u64."
+    description: "Add an optional `backup: Option<KeepBackupSpec>` field to KeepSpec (schedule + destination URI + retentionSecs). The CRD carries the destination as a URI string rather than embedding service_backup's tagged-union BackupDestination schema (whose shared `prefix` property differs across variants and is not a valid Kubernetes structural schema); the `keep backup` verb parses it back via BackupDestination::from_uri. The crd_yaml uint normalization already covers retentionSecs (u64)."
   - path: projects/keep/src/operator/render.rs
     action: modify
     section: logic

@@ -61,6 +61,37 @@ pub struct KeepSpec {
     /// PVC StorageClass for the disk tier. Unset means the cluster default.
     #[serde(default)]
     pub storage_class: Option<String>,
+
+    /// Optional scheduled backup (#776). When set, the operator renders a backup
+    /// CronJob (see [`super::render`]) that invokes `keep backup` on this
+    /// schedule to the given destination, applying the retention. Absent means
+    /// no backup CronJob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<KeepBackupSpec>,
+}
+
+/// Declarative backup policy carried on a `Keep` CR (#776).
+///
+/// The runner contract itself lives in `libs/service-backup`
+/// (`BackupDestination`/`BackupSink`/`run_backup_once`); the `keep backup` verb
+/// parses `destination` back into a `service_backup::BackupDestination` via
+/// `from_uri`. This CRD-facing shape deliberately carries the destination as a
+/// URI string rather than embedding the shared tagged-union `BackupDestination`
+/// schema, which Kubernetes structural schemas cannot represent (a shared
+/// `prefix` property differs across variants). `retentionSecs` (u64) is
+/// normalized by [`super::crd_yaml`] so the CRD stays OpenAPI compatible.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepBackupSpec {
+    /// Cron schedule (`CronJob.spec.schedule`) for the backup runner.
+    pub schedule: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    pub destination: String,
+    /// Drop backup objects older than this many seconds after a successful put.
+    /// Absent keeps everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_secs: Option<u64>,
 }
 
 /// Status subresource, written back by the reconcile loop.
