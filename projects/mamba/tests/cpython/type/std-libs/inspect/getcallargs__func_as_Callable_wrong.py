@@ -9,12 +9,10 @@
 # case = "getcallargs__func_as_Callable_wrong"
 # subject = "inspect.getcallargs(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: inspect.getcallargs(func: Callable); call it with the wrong type.
 
