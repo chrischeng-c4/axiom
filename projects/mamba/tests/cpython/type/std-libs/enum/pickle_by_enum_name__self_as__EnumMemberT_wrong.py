@@ -9,12 +9,11 @@
 # case = "pickle_by_enum_name__self_as__EnumMemberT_wrong"
 # subject = "enum.pickle_by_enum_name(self: _EnumMemberT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed self"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/enum.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed self
 # mamba-strict-type: TypeError
 """Type wall: enum.pickle_by_enum_name(self: _EnumMemberT); call it with the wrong type.
 

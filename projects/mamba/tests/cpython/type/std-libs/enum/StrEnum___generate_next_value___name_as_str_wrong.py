@@ -9,12 +9,11 @@
 # case = "StrEnum___generate_next_value___name_as_str_wrong"
 # subject = "enum.StrEnum._generate_next_value_(name: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/enum.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: enum.StrEnum._generate_next_value_(name: str); call it with the wrong type.
 

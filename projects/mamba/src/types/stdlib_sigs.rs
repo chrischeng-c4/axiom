@@ -2796,6 +2796,116 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("_class", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: enum's public typeshed surface uses several Self/typevar/
+    // decorator contracts that the generated table keeps Unknown-skipped. These
+    // rows restore fixture-backed force-typed walls while rejecting only
+    // provably wrong scalars or bare `_W()` instances.
+    StdlibSig {
+        module: "enum",
+        qualifier: "EnumMeta",
+        name: "__call__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Str), p("names", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "Enum",
+        name: "_generate_next_value_",
+        kind: SigKind::Method,
+        params: &[
+            p("name", CoreTy::Str),
+            p("start", CoreTy::Int),
+            p("count", CoreTy::Int),
+            p("last_values", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "StrEnum",
+        name: "_generate_next_value_",
+        kind: SigKind::Method,
+        params: &[
+            p("name", CoreTy::Str),
+            p("start", CoreTy::Int),
+            p("count", CoreTy::Int),
+            p("last_values", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "Flag",
+        name: "__and__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "Flag",
+        name: "__contains__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "Flag",
+        name: "__or__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "Flag",
+        name: "__xor__",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "",
+        name: "global_enum",
+        kind: SigKind::ModuleFn,
+        params: &[p("cls", CoreTy::Typed), p("update_str", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "member",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "nonmember",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("value", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "",
+        name: "pickle_by_enum_name",
+        kind: SigKind::ModuleFn,
+        params: &[p("self", CoreTy::Typed), p("proto", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "enum",
+        qualifier: "",
+        name: "unique",
+        kind: SigKind::ModuleFn,
+        params: &[p("enumeration", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
     // strict walls that prove bare objects/scalars cannot cross this boundary.
@@ -6398,6 +6508,56 @@ mod tests {
             assert_eq!(sig.kind, SigKind::ModuleFn, "{name}");
             assert_eq!(sig.params[0].name, "data", "{name}");
             assert_eq!(sig.params[0].ty, CoreTy::Str, "{name}");
+        }
+    }
+
+    #[test]
+    fn curated_enum_walls_override_unknown_generated_rows() {
+        let call = get("enum", "EnumMeta", "__call__").expect("EnumMeta.__call__ row present");
+        assert!(call.enforceable);
+        assert_eq!(call.kind, SigKind::Method);
+        assert_eq!(call.params[0].name, "value");
+        assert_eq!(call.params[0].ty, CoreTy::Str);
+        assert_eq!(call.params[1].name, "names");
+        assert_eq!(call.params[1].ty, CoreTy::Typed);
+
+        for qualifier in ["Enum", "StrEnum"] {
+            let sig = get("enum", qualifier, "_generate_next_value_")
+                .expect("enum _generate_next_value_ row present");
+            assert!(sig.enforceable, "{qualifier}");
+            assert_eq!(sig.kind, SigKind::Method, "{qualifier}");
+            assert_eq!(sig.params[0].name, "name", "{qualifier}");
+            assert_eq!(sig.params[0].ty, CoreTy::Str, "{qualifier}");
+            assert_eq!(sig.params[1].name, "start", "{qualifier}");
+            assert_eq!(sig.params[1].ty, CoreTy::Int, "{qualifier}");
+        }
+
+        for name in ["__and__", "__contains__", "__or__", "__xor__"] {
+            let sig = get("enum", "Flag", name).expect("Flag method row present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::Method, "{name}");
+            assert_eq!(sig.params[0].name, "other", "{name}");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed, "{name}");
+        }
+
+        for (name, param) in [
+            ("global_enum", "cls"),
+            ("pickle_by_enum_name", "self"),
+            ("unique", "enumeration"),
+        ] {
+            let sig = get("enum", "", name).expect("enum module function row present");
+            assert!(sig.enforceable, "{name}");
+            assert_eq!(sig.kind, SigKind::ModuleFn, "{name}");
+            assert_eq!(sig.params[0].name, param, "{name}");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed, "{name}");
+        }
+
+        for qualifier in ["member", "nonmember"] {
+            let sig = get("enum", qualifier, "__init__").expect("enum wrapper init row present");
+            assert!(sig.enforceable, "{qualifier}");
+            assert_eq!(sig.kind, SigKind::Method, "{qualifier}");
+            assert_eq!(sig.params[0].name, "value", "{qualifier}");
+            assert_eq!(sig.params[0].ty, CoreTy::Typed, "{qualifier}");
         }
     }
 
