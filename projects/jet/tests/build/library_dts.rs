@@ -13,6 +13,8 @@
 //! @issue #171
 //! @issue #722
 //! @issue #784
+//! @issue #795
+//! @issue #796
 
 use jet::bundler::types::OutputFormat;
 use jet::bundler::types::SourceMapOption;
@@ -171,6 +173,92 @@ fn build_records_types_path_on_result_and_entry() {
         recorded.parent(),
         js.path.parent(),
         "declarations must be emitted next to the JS output"
+    );
+}
+
+#[test]
+fn plain_object_literal_const_export_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "object-literal-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const UPLOAD_ACCEPT_TYPE = {
+    JPG: "image/jpeg",
+    PNG: "image/png",
+    PDF: "application/pdf",
+};
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("object literal export must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+
+    assert!(
+        dts.contains("export declare const UPLOAD_ACCEPT_TYPE: {"),
+        "plain object literal export must synthesize an object type, got:\n{dts}"
+    );
+    for expected in ["JPG: string;", "PNG: string;", "PDF: string;"] {
+        assert!(
+            dts.contains(expected),
+            "object property {expected:?} should be emitted, got:\n{dts}"
+        );
+    }
+}
+
+#[test]
+fn stale_default_dist_index_does_not_control_dts_emit_with_custom_out_dir() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "stale-dist-lib", "version": "1.0.0", "module": "./dist/index.js" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const SOURCE_VALUE: string = "from-source";
+"#,
+    );
+    write_file(root, "dist/index.js", "not valid js from stale dist\n");
+
+    let mut options = lib_options(root);
+    options.out_dir = root.join("custom-out");
+    let result = build_library(options).expect("stale default dist must not affect dts emit");
+
+    let dts_path = root.join("custom-out/index.d.ts");
+    assert_eq!(result.types[0].path, dts_path);
+    assert!(
+        dts_path.is_file(),
+        "declaration should be written to the explicit output directory"
+    );
+    let dts = std::fs::read_to_string(&dts_path).unwrap();
+    assert!(
+        dts.contains("export declare const SOURCE_VALUE: string;"),
+        "declaration must come from src/index.ts, got:\n{dts}"
+    );
+    assert!(
+        !dts.is_empty() && !root.join("dist/index.d.ts").exists(),
+        "stale default dist must not become declaration input/output"
+    );
+
+    let js = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Esm)
+        .expect("ESM output present");
+    assert!(
+        js.code.contains("SOURCE_VALUE") && !js.code.contains("not valid js"),
+        "runtime output must also be source-derived, got:\n{}",
+        js.code
     );
 }
 
