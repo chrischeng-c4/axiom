@@ -9,7 +9,6 @@
 # case = "bytearray__extend__iterable_of_ints_as_Iterable_wrong"
 # subject = "builtins.bytearray.extend(iterable_of_ints: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
