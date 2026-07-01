@@ -9,12 +9,10 @@
 # case = "AsyncGeneratorType__athrow__typ_as_BaseException_wrong"
 # subject = "types.AsyncGeneratorType.athrow(typ: BaseException)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typ"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typ
 # mamba-strict-type: TypeError
 """Type wall: types.AsyncGeneratorType.athrow(typ: BaseException); call it with the wrong type.
 

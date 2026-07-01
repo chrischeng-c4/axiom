@@ -9,12 +9,10 @@
 # case = "GeneratorType__send__arg_as__SendT_contra_wrong"
 # subject = "types.GeneratorType.send(arg: _SendT_contra)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg
 # mamba-strict-type: TypeError
 """Type wall: types.GeneratorType.send(arg: _SendT_contra); call it with the wrong type.
 

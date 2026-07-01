@@ -9,7 +9,6 @@
 # case = "GenericAlias____mro_entries____bases_as_Iterable_wrong"
 # subject = "types.GenericAlias.__mro_entries__(bases: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

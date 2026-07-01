@@ -9,12 +9,10 @@
 # case = "SimpleNamespace__init__mapping_or_iterable_as_typed_wrong"
 # subject = "types.SimpleNamespace.__init__(mapping_or_iterable: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mapping_or_iterable"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mapping_or_iterable
 # mamba-strict-type: TypeError
 """Type wall: types.SimpleNamespace.__init__(mapping_or_iterable: typed); call it with the wrong type.
 

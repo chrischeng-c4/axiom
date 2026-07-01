@@ -9,12 +9,10 @@
 # case = "FunctionType____get____owner_as_typed_wrong"
 # subject = "types.FunctionType.__get__(owner: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed owner"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed owner
 # mamba-strict-type: TypeError
 """Type wall: types.FunctionType.__get__(owner: typed); call it with the wrong type.
 

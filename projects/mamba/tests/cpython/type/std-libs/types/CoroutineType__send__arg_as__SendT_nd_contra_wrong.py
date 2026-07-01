@@ -9,12 +9,10 @@
 # case = "CoroutineType__send__arg_as__SendT_nd_contra_wrong"
 # subject = "types.CoroutineType.send(arg: _SendT_nd_contra)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg
 # mamba-strict-type: TypeError
 """Type wall: types.CoroutineType.send(arg: _SendT_nd_contra); call it with the wrong type.
 

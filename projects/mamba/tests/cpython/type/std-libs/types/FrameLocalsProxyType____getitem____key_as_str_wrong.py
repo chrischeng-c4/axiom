@@ -9,7 +9,6 @@
 # case = "FrameLocalsProxyType____getitem____key_as_str_wrong"
 # subject = "types.FrameLocalsProxyType.__getitem__(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
