@@ -1259,6 +1259,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         }
     }
     if mode == "exec" {
+        if let Some(module) = parse_tuple_assign_module(&src) {
+            return module;
+        }
         if let Some(module) = parse_continued_string_assign_module(&src) {
             return module;
         }
@@ -1409,6 +1412,143 @@ fn parse_continued_string_assign_module(src: &str) -> Option<MbValue> {
     assign_fields.insert("type_comment".to_string(), MbValue::none());
     insert_location_attrs(&mut assign_fields, 1, target_col as i64, 2, end_col as i64);
     Some(make_module_with_body(src, vec![make_ast_node("Assign", assign_fields)]))
+}
+
+fn parse_tuple_assign_module(src: &str) -> Option<MbValue> {
+    let lines = source_logical_lines(src);
+    let first = lines.first().copied()?;
+    let (target_text, value_text, value_lineno, value_col, end_lineno, end_col) =
+        if lines.len() == 1 {
+            parse_single_line_tuple_assign_parts(first)?
+        } else {
+            parse_multi_line_tuple_assign_parts(&lines)?
+        };
+    if !is_identifier_text(target_text) {
+        return None;
+    }
+
+    let elts = if lines.len() == 1 {
+        parse_tuple_elts(value_text, value_lineno, value_col)?
+    } else {
+        parse_multi_line_tuple_elts(&lines)?
+    };
+    let value = make_tuple_node(elts, value_lineno, value_col, end_lineno, end_col);
+    let target_col = first.find(target_text).unwrap_or(0);
+    let target = make_store_name_node(target_text, target_col, target_col + target_text.len());
+
+    let mut assign_fields = FxHashMap::default();
+    assign_fields.insert(
+        "targets".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![target])),
+    );
+    assign_fields.insert("value".to_string(), value);
+    assign_fields.insert("type_comment".to_string(), MbValue::none());
+    insert_location_attrs(
+        &mut assign_fields,
+        1,
+        target_col as i64,
+        end_lineno as i64,
+        end_col as i64,
+    );
+    Some(make_module_with_body(src, vec![make_ast_node("Assign", assign_fields)]))
+}
+
+fn parse_single_line_tuple_assign_parts(
+    line: &str,
+) -> Option<(&str, &str, usize, usize, usize, usize)> {
+    let (target, rhs) = line.split_once('=')?;
+    let mut value_text = rhs.trim();
+    if let Some(before_semicolon) = value_text.strip_suffix(';') {
+        value_text = before_semicolon.trim_end();
+    }
+    if !looks_like_tuple_expr(value_text) {
+        return None;
+    }
+    let value_col = line.find(value_text).unwrap_or(0);
+    Some((
+        target.trim(),
+        value_text,
+        1,
+        value_col,
+        1,
+        value_col + value_text.len(),
+    ))
+}
+
+fn parse_multi_line_tuple_assign_parts<'a>(
+    lines: &'a [&'a str],
+) -> Option<(&'a str, &'a str, usize, usize, usize, usize)> {
+    let first = lines.first().copied()?;
+    let last = lines.last().copied()?;
+    let (target, rhs) = first.split_once('=')?;
+    let value_text = rhs.trim();
+    if value_text != "(" || last.trim() != ")" {
+        return None;
+    }
+    let value_col = first.find('(')?;
+    let end_col = last.find(')')? + 1;
+    Some((target.trim(), value_text, 1, value_col, lines.len(), end_col))
+}
+
+fn looks_like_tuple_expr(text: &str) -> bool {
+    (text.starts_with('(') && text.ends_with(')')) || text.ends_with(',')
+}
+
+fn parse_tuple_elts(text: &str, lineno: usize, col: usize) -> Option<Vec<MbValue>> {
+    let (inner, inner_col) = if text.starts_with('(') && text.ends_with(')') {
+        (&text[1..text.len() - 1], col + 1)
+    } else {
+        (text, col)
+    };
+    parse_tuple_elts_line(inner, lineno, inner_col)
+}
+
+fn parse_multi_line_tuple_elts(lines: &[&str]) -> Option<Vec<MbValue>> {
+    let mut out = Vec::new();
+    for (idx, line) in lines.iter().enumerate().skip(1).take(lines.len().saturating_sub(2)) {
+        out.extend(parse_tuple_elts_line(line, idx + 1, 0)?);
+    }
+    Some(out)
+}
+
+fn parse_tuple_elts_line(text: &str, lineno: usize, base_col: usize) -> Option<Vec<MbValue>> {
+    let mut out = Vec::new();
+    let mut segment_start = 0usize;
+    for raw_segment in text.split(',') {
+        let leading = raw_segment.len() - raw_segment.trim_start().len();
+        let item = raw_segment.trim();
+        if item.is_empty() {
+            segment_start += raw_segment.len() + 1;
+            continue;
+        }
+        let col = base_col + segment_start + leading;
+        out.push(parse_simple_expr_atom_at(item, lineno, col, col + item.len())?);
+        segment_start += raw_segment.len() + 1;
+    }
+    Some(out)
+}
+
+fn make_tuple_node(
+    elts: Vec<MbValue>,
+    lineno: usize,
+    col: usize,
+    end_lineno: usize,
+    end_col: usize,
+) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("elts".to_string(), MbValue::from_ptr(MbObject::new_list(elts)));
+    fields.insert(
+        "ctx".to_string(),
+        make_ast_node("Load", FxHashMap::default()),
+    );
+    insert_location_attrs(
+        &mut fields,
+        lineno as i64,
+        col as i64,
+        end_lineno as i64,
+        end_col as i64,
+    );
+    make_ast_node("Tuple", fields)
 }
 
 fn parse_from_import_statement(stmt: &str) -> Option<MbValue> {
@@ -1996,17 +2136,26 @@ fn split_simple_keyword_arg(text: &str) -> Option<(&str, &str)> {
 }
 
 fn parse_simple_expr_atom(text: &str, col: usize, end_col: usize) -> Option<MbValue> {
+    parse_simple_expr_atom_at(text, 1, col, end_col)
+}
+
+fn parse_simple_expr_atom_at(
+    text: &str,
+    lineno: usize,
+    col: usize,
+    end_col: usize,
+) -> Option<MbValue> {
     if text == "None" {
-        return Some(make_none_constant_node(col, end_col));
+        return Some(make_none_constant_node_at(lineno, col, end_col));
     }
     if let Some(value) = quoted_string_literal(text) {
-        return Some(make_string_constant_node(value, col, end_col));
+        return Some(make_string_constant_node_at(value, lineno, col, end_col));
     }
     if let Ok(value) = text.parse::<i64>() {
-        return Some(make_constant_node(value, col, end_col));
+        return Some(make_constant_node_at(value, lineno, col, end_col));
     }
     if is_identifier_text(text) {
-        return Some(make_name_node(text, col, end_col));
+        return Some(make_name_node_at(text, lineno, col, end_col));
     }
     None
 }
@@ -2112,11 +2261,15 @@ fn is_identifier_text(text: &str) -> bool {
 }
 
 fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
+    make_constant_node_at(value, 1, col, end_col)
+}
+
+fn make_constant_node_at(value: i64, lineno: usize, col: usize, end_col: usize) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("value".to_string(), MbValue::from_int(value));
-    fields.insert("lineno".to_string(), MbValue::from_int(1));
+    fields.insert("lineno".to_string(), MbValue::from_int(lineno as i64));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
-    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(lineno as i64));
     fields.insert(
         "end_col_offset".to_string(),
         MbValue::from_int(end_col as i64),
@@ -2125,14 +2278,20 @@ fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
 }
 
 fn make_none_constant_node(col: usize, end_col: usize) -> MbValue {
-    let mut fields = FxHashMap::default();
-    fields.insert("value".to_string(), MbValue::none());
-    insert_location_attrs(&mut fields, 1, col as i64, 1, end_col as i64);
-    make_ast_node("Constant", fields)
+    make_none_constant_node_at(1, col, end_col)
 }
 
-fn make_string_constant_node(value: String, col: usize, end_col: usize) -> MbValue {
-    make_string_constant_node_at(value, 1, col, end_col)
+fn make_none_constant_node_at(lineno: usize, col: usize, end_col: usize) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), MbValue::none());
+    insert_location_attrs(
+        &mut fields,
+        lineno as i64,
+        col as i64,
+        lineno as i64,
+        end_col as i64,
+    );
+    make_ast_node("Constant", fields)
 }
 
 fn make_string_constant_node_at(
@@ -2167,23 +2326,33 @@ fn make_string_constant_node_span(
 }
 
 fn make_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
-    make_name_node_with_ctx(name, col, end_col, "Load")
+    make_name_node_at(name, 1, col, end_col)
+}
+
+fn make_name_node_at(name: &str, lineno: usize, col: usize, end_col: usize) -> MbValue {
+    make_name_node_with_ctx_at(name, lineno, col, end_col, "Load")
 }
 
 fn make_store_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
-    make_name_node_with_ctx(name, col, end_col, "Store")
+    make_name_node_with_ctx_at(name, 1, col, end_col, "Store")
 }
 
-fn make_name_node_with_ctx(name: &str, col: usize, end_col: usize, ctx: &str) -> MbValue {
+fn make_name_node_with_ctx_at(
+    name: &str,
+    lineno: usize,
+    col: usize,
+    end_col: usize,
+    ctx: &str,
+) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert(
         "id".to_string(),
         MbValue::from_ptr(MbObject::new_str(name.to_string())),
     );
     fields.insert("ctx".to_string(), make_ast_node(ctx, FxHashMap::default()));
-    fields.insert("lineno".to_string(), MbValue::from_int(1));
+    fields.insert("lineno".to_string(), MbValue::from_int(lineno as i64));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
-    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(lineno as i64));
     fields.insert(
         "end_col_offset".to_string(),
         MbValue::from_int(end_col as i64),
@@ -2390,6 +2559,7 @@ fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
         "ImportFrom" => &["module", "names", "level"],
         "alias" => &["name", "asname"],
         "Name" => &["id", "ctx"],
+        "Tuple" => &["elts", "ctx"],
         "Attribute" => &["value", "attr", "ctx"],
         "Subscript" => &["value", "slice", "ctx"],
         _ => &[],
