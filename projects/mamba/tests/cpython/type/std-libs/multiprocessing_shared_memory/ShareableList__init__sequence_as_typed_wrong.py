@@ -9,12 +9,11 @@
 # case = "ShareableList__init__sequence_as_typed_wrong"
 # subject = "multiprocessing.shared_memory.ShareableList.__init__(sequence: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequence"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/shared_memory.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequence
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.shared_memory.ShareableList.__init__(sequence: typed); call it with the wrong type.
 
