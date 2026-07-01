@@ -9,12 +9,10 @@
 # case = "getmro__cls_as_type_wrong"
 # subject = "inspect.getmro(cls: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls
 # mamba-strict-type: TypeError
 """Type wall: inspect.getmro(cls: type); call it with the wrong type.
 
