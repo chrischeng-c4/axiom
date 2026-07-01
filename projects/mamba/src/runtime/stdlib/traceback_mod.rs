@@ -490,23 +490,39 @@ pub fn mb_traceback_extract_tb(tb: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
-    let frame = make_instance(
-        "FrameSummary",
-        vec![
-            (
-                "filename",
-                MbValue::from_ptr(MbObject::new_str("<unknown>".to_string())),
-            ),
-            ("lineno", MbValue::from_int(1)),
-            (
-                "name",
-                MbValue::from_ptr(MbObject::new_str("<module>".to_string())),
-            ),
-            ("line", MbValue::from_ptr(MbObject::new_str("".to_string()))),
-            ("locals", MbValue::none()),
-        ],
-    );
-    MbValue::from_ptr(MbObject::new_list(vec![frame]))
+    let mut frames = Vec::new();
+    for pair in traceback_frame_pairs(tb) {
+        let items = list_items_of(pair);
+        let frame = items.first().copied().unwrap_or_else(MbValue::none);
+        let lineno = items
+            .get(1)
+            .copied()
+            .or_else(|| instance_field(frame, "f_lineno"))
+            .unwrap_or_else(|| MbValue::from_int(1));
+        let filename = frame_filename(frame).unwrap_or_else(|| "<unknown>".to_string());
+        let name = frame_name(frame).unwrap_or_else(|| "<module>".to_string());
+        let line = lineno
+            .as_int()
+            .and_then(|n| source_line(&filename, n))
+            .unwrap_or_default();
+        frames.push(make_instance(
+            "FrameSummary",
+            vec![
+                (
+                    "filename",
+                    MbValue::from_ptr(MbObject::new_str(filename)),
+                ),
+                ("lineno", lineno),
+                ("name", MbValue::from_ptr(MbObject::new_str(name))),
+                ("line", MbValue::from_ptr(MbObject::new_str(line))),
+                ("end_lineno", lineno),
+                ("colno", MbValue::none()),
+                ("end_colno", MbValue::none()),
+                ("locals", MbValue::none()),
+            ],
+        ));
+    }
+    MbValue::from_ptr(MbObject::new_list(frames))
 }
 
 /// traceback.extract_stack(f=None, limit=None) -> StackSummary (empty list).
@@ -605,11 +621,7 @@ pub fn mb_traceback_walk_stack() -> MbValue {
 pub fn mb_traceback_walk_stack_frame(filename: MbValue, lineno: MbValue, name: MbValue) -> MbValue {
     let filename_s = extract_str(filename).unwrap_or_else(|| "None".to_string());
     let name_s = extract_str(name).unwrap_or_else(|| "<module>".to_string());
-    let lineno_v = if lineno.as_int().is_some() {
-        lineno
-    } else {
-        MbValue::from_int(1)
-    };
+    let lineno_v = MbValue::from_int(trace_lineno(lineno) as i64);
     let frame = make_instance(
         "frame",
         vec![
@@ -634,7 +646,7 @@ pub fn mb_traceback_reset_stack() {
 pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue) {
     let filename = extract_str(filename).unwrap_or_else(|| "<string>".to_string());
     let name = extract_str(name).unwrap_or_else(|| "<module>".to_string());
-    let lineno = lineno.as_int().unwrap_or(1).max(1) as u32;
+    let lineno = trace_lineno(lineno);
     TRACE_FRAME_STACK.with(|stack| {
         stack.borrow_mut().push(TraceFrame {
             filename,
@@ -651,7 +663,7 @@ pub fn mb_traceback_pop_frame() {
 }
 
 pub fn mb_traceback_capture_raise(lineno: MbValue) {
-    let raise_lineno = lineno.as_int().unwrap_or(1).max(1) as u32;
+    let raise_lineno = trace_lineno(lineno);
     let entries: Vec<(String, u32, String)> = TRACE_FRAME_STACK.with(|stack| {
         let mut frames = stack.borrow().clone();
         if frames.is_empty() {
@@ -681,6 +693,45 @@ pub fn mb_traceback_capture_raise(lineno: MbValue) {
             super::super::rc::release_if_ptr(instance);
         }
     }
+}
+
+pub fn mb_traceback_note_propagation(lineno: MbValue) {
+    let propagate_lineno = trace_lineno(lineno);
+    let current = TRACE_FRAME_STACK.with(|stack| stack.borrow().last().cloned());
+    if let Some(frame) = current {
+        super::super::exception::update_current_traceback_frame_line(
+            &frame.filename,
+            &frame.name,
+            propagate_lineno,
+        );
+    }
+}
+
+pub(crate) fn trim_traceback_to_current_handler(
+    entries: &[(String, u32, String)],
+) -> Vec<(String, u32, String)> {
+    let current = TRACE_FRAME_STACK.with(|stack| stack.borrow().last().cloned());
+    let Some(current) = current else {
+        return entries.to_vec();
+    };
+    match entries
+        .iter()
+        .rposition(|(filename, _lineno, name)| filename == &current.filename && name == &current.name)
+    {
+        Some(idx) => entries[idx..].to_vec(),
+        None => entries.to_vec(),
+    }
+}
+
+fn trace_lineno(value: MbValue) -> u32 {
+    if let Some(n) = value.as_int_pyint() {
+        return n.max(1) as u32;
+    }
+    let raw = value.to_bits();
+    if raw > 0 && raw <= i32::MAX as u64 {
+        return raw as u32;
+    }
+    1
 }
 
 // ── Class shells ──
@@ -1116,7 +1167,11 @@ fn make_tb_instance_with_depth_and_walk_depth(depth: usize, walk_depth: usize) -
     for i in 0..depth {
         next = make_tb_node(next, i == 0);
     }
-    set_instance_field(next, "__mamba_walk_depth", MbValue::from_int(walk_depth as i64));
+    set_instance_field(
+        next,
+        "__mamba_walk_depth",
+        MbValue::from_int(walk_depth as i64),
+    );
     next
 }
 
@@ -1391,6 +1446,16 @@ fn frame_name(frame: MbValue) -> Option<String> {
                 .and_then(|code| instance_field(code, "co_name"))
                 .and_then(extract_str)
         })
+}
+
+fn source_line(filename: &str, lineno: i64) -> Option<String> {
+    if lineno < 1 || filename.starts_with('<') {
+        return None;
+    }
+    let idx = (lineno - 1) as usize;
+    std::fs::read_to_string(filename)
+        .ok()
+        .and_then(|src| src.lines().nth(idx).map(|line| line.trim().to_string()))
 }
 
 fn stack_summary_format_hook(self_v: MbValue) -> bool {
@@ -1743,6 +1808,51 @@ mod tests {
             }
         }
         usize::MAX
+    }
+
+    fn list_first(v: MbValue) -> MbValue {
+        if let Some(ptr) = v.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    return lock
+                        .read()
+                        .unwrap()
+                        .first()
+                        .copied()
+                        .unwrap_or_else(MbValue::none);
+                }
+            }
+        }
+        MbValue::none()
+    }
+
+    #[test]
+    fn test_capture_raise_threads_traceback_into_caught_exception() {
+        super::super::super::exception::mb_clear_exception();
+        mb_traceback_reset_stack();
+        mb_traceback_push_frame(
+            MbValue::from_ptr(MbObject::new_str("file.py".to_string())),
+            MbValue::from_int(10),
+            MbValue::from_ptr(MbObject::new_str("f".to_string())),
+        );
+        super::super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("Exception".to_string())),
+            MbValue::from_ptr(MbObject::new_str("boom".to_string())),
+        );
+        mb_traceback_capture_raise(MbValue::from_int(12));
+
+        let caught = super::super::super::class::mb_catch_exception_instance();
+        let tb = get_field(caught, "__traceback__");
+        assert!(!tb.is_none());
+        let summary = mb_traceback_extract_tb(tb);
+        assert_eq!(list_len(summary), 1);
+        let frame = list_first(summary);
+        assert_eq!(extract_str(get_field(frame, "filename")).as_deref(), Some("file.py"));
+        assert_eq!(extract_str(get_field(frame, "name")).as_deref(), Some("f"));
+        assert_eq!(get_field(frame, "lineno").as_int(), Some(12));
+        assert_eq!(get_field(frame, "end_lineno").as_int(), Some(12));
+        super::super::super::exception::mb_clear_exception();
+        mb_traceback_reset_stack();
     }
 
     // -- format_exc / format_exception (CPython list semantics) --
