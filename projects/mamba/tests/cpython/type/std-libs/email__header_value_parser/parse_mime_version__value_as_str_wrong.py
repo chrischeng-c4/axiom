@@ -9,7 +9,6 @@
 # case = "parse_mime_version__value_as_str_wrong"
 # subject = "email._header_value_parser.parse_mime_version(value: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/_header_value_parser.pyi"
 # status = "filled"

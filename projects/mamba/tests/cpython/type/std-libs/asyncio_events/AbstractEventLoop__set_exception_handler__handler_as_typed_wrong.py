@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__set_exception_handler__handler_as_typed_wrong"
 # subject = "asyncio.events.AbstractEventLoop.set_exception_handler(handler: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

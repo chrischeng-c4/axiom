@@ -9,12 +9,10 @@
 # case = "AbstractEventLoop__set_debug__enabled_as_bool_wrong"
 # subject = "asyncio.events.AbstractEventLoop.set_debug(enabled: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enabled"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enabled
 # mamba-strict-type: TypeError
 """Type wall: asyncio.events.AbstractEventLoop.set_debug(enabled: bool); call it with the wrong type.
 

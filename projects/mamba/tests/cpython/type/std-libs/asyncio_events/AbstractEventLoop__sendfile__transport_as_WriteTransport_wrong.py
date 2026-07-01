@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__sendfile__transport_as_WriteTransport_wrong"
 # subject = "asyncio.events.AbstractEventLoop.sendfile(transport: WriteTransport)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

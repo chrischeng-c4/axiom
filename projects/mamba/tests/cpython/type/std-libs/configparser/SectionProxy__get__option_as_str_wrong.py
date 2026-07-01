@@ -9,7 +9,6 @@
 # case = "SectionProxy__get__option_as_str_wrong"
 # subject = "configparser.SectionProxy.get(option: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

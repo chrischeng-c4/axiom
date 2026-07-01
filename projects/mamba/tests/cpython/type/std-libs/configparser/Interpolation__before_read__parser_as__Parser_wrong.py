@@ -9,7 +9,6 @@
 # case = "Interpolation__before_read__parser_as__Parser_wrong"
 # subject = "configparser.Interpolation.before_read(parser: _Parser)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

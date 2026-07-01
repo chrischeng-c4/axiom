@@ -9,7 +9,6 @@
 # case = "SectionProxy____getattr____key_as_str_wrong"
 # subject = "configparser.SectionProxy.__getattr__(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

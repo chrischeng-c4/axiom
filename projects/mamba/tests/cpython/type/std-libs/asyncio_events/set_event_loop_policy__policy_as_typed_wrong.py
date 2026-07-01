@@ -9,7 +9,6 @@
 # case = "set_event_loop_policy__policy_as_typed_wrong"
 # subject = "asyncio.events.set_event_loop_policy(policy: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

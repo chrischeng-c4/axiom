@@ -9,7 +9,6 @@
 # case = "RawConfigParser__init__defaults_as_typed_wrong"
 # subject = "configparser.RawConfigParser.__init__(defaults: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
