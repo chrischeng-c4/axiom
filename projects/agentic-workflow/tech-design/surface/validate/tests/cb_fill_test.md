@@ -116,9 +116,9 @@ fn test_cb_fill_spec_path_flag() {
 fn test_issue_phase_cb_filled_variant() {
     use agentic_workflow::issues::types::td_phase;
     assert_eq!(td_phase::CB_FILLED, "cb_filled");
-    assert!(td_phase::is_mergeable("cb_filled"));
-    assert!(td_phase::is_mergeable("cb_genned"));
-    assert!(!td_phase::is_mergeable("td_reviewed"));
+    assert!(td_phase::is_terminal_code_checkable("cb_filled"));
+    assert!(td_phase::is_terminal_code_checkable("cb_genned"));
+    assert!(!td_phase::is_terminal_code_checkable("td_reviewed"));
 }
 
 /// R9: `Cb-Fill` trailer const exists in lifecycle_trailer module.
@@ -128,12 +128,12 @@ fn test_lifecycle_trailer_cb_fill_variant() {
     assert_eq!(lifecycle_trailer::CB_FILL, "Cb-Fill");
 }
 
-/// R10: `aw td merge` accepts `cb_filled` as a valid pre-merge phase.
-/// We verify this at the helper-level: `is_mergeable("cb_filled") == true`.
+/// R10: `aw td code-check` accepts `cb_filled` as a valid pre-merge phase.
+/// We verify this at the helper-level: `is_terminal_code_checkable("cb_filled") == true`.
 #[test]
-fn test_td_merge_accepts_cb_filled() {
+fn test_td_code_check_accepts_cb_filled() {
     use agentic_workflow::issues::types::td_phase;
-    assert!(td_phase::is_mergeable(td_phase::CB_FILLED));
+    assert!(td_phase::is_terminal_code_checkable(td_phase::CB_FILLED));
 }
 
 // ── R2 / R14(1) — brief mode envelope shape ─────────────────────────────

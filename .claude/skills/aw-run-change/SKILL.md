@@ -18,7 +18,7 @@ work runs through `aw td` (CRRR envelope protocol, same shape as
 | legacy create-change-spec command          | `aw td create <slug>`              |
 | legacy review-change-spec command          | `aw td review <slug>`              |
 | legacy create-change-impl command          | `aw cb gen <slug>`                 |
-| legacy create-change-merge command         | `aw td merge <slug>`               |
+| legacy create-change-merge command         | `aw td code-check <slug>`          |
 
 ## What to do
 

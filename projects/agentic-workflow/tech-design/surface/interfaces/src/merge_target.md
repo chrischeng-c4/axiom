@@ -28,7 +28,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/merge_target.rs` gene
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/cli/merge_target.rs -->
 ```rust
-//! Resolve the target branch for `aw td merge` and `aw wi merge`.
+//! Resolve the target branch for `aw td code-check` and `aw wi merge`.
 //!
 //! Resolution order (per the Logic flowchart in the TD spec
 //! `projects/agentic-workflow/tech-design/core/issues/issue-merge-target.md`):

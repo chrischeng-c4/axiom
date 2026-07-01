@@ -342,7 +342,7 @@ changes:
     notes: |
       run_validate (TD CRRR) gains the same push step. The IssuePatch
       writes that advance phase (Td-Init / Td-Create / Td-Review /
-      Td-Revise / Td-Merge / Cb-Gen / Cb-Fill / Cb-Review / Cb-Revise /
+      Td-Revise / Cb-CodeCheck / Cb-Gen / Cb-Fill / Cb-Review / Cb-Revise /
       Cb-Arbitrate) all flow through push_through after the quality check
       and before commit_lifecycle. Branch activation uses
       branch_switch::switch_or_create_branch against the current checkout.

@@ -127,7 +127,7 @@ fall back to source code only when needed, then consider `aw td code-claim`.
 
 Every implementation change goes through Agentic Workflow unless the user explicitly asks
 to bypass it. The lifecycle is LINEAR (no review/revise; the gate is EC):
-`aw wi` -> `aw td` (author -> `gen` -> `fill`) -> `aw td merge`. The
+`aw wi` -> `aw td` (author -> `gen` -> `fill`) -> `aw td code-check`. The
 CLI owns the concrete phase queue, prompt text, validation gates, commits, git
 trailers, and next command. Run `aw llm` for the binary-owned orientation (the
 loop model: aw=loop, wi=state, caps=goal, ec=verifier, td=artifact).

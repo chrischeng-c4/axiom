@@ -229,7 +229,7 @@ loop converges on ec green.
 
 ## The decision (driven by ec, not review)
 
-    ec green  -> converged   -> aw td merge
+    ec green  -> converged   -> aw td code-check
     ec red    -> iterating   -> aw td gen      (adapt; never re-run the same fail)
     blocked   -> HITL        -> surface hitl_question to a human
 

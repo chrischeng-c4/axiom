@@ -352,7 +352,7 @@ changes:
       locally via `git rev-parse <branch>` before writing frontmatter; emit
       `action:error` if it does not exist. Write `target_branch` to the `Issue`
       struct only when the flag is supplied; omit the field when the flag is
-      absent (R4). Update `resolve_merge_target` call in `run_merge` to pass
+      absent (R4). Update `resolve_merge_target` call in `run_code_check` to pass
       `issue.target_branch.clone()` as the frontmatter override before the
       existing `args.target_branch` CLI override (R6 precedence: CLI flag
       beats frontmatter beats current branch beats config).

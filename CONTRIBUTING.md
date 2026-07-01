@@ -512,9 +512,9 @@ named so `ls` tells you what is enforced before you open anything:
   run via `vat run guard-security`; evidence under
   `external-contracts/security-hardening/`.
 
-A breach is a non-zero-exit finding that blocks the `aw td merge` gate. Keep
-these files `SPEC-MANAGED` — regenerate them from their contract; do not
-hand-edit the `AW-EC-TOOL` block.
+A breach is a non-zero-exit finding that blocks the terminal
+`aw td code-check <slug>` gate. Keep these files `SPEC-MANAGED` — regenerate
+them from their contract; do not hand-edit the `AW-EC-TOOL` block.
 
 ## CLI convention: every CLI ships `llm`, `upgrade`, `issue`
 
