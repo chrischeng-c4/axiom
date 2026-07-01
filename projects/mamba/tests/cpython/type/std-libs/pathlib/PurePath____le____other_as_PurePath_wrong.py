@@ -9,7 +9,6 @@
 # case = "PurePath____le____other_as_PurePath_wrong"
 # subject = "pathlib.PurePath.__le__(other: PurePath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

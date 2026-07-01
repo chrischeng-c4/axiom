@@ -9,7 +9,6 @@
 # case = "Path__samefile__other_path_as_StrPath_wrong"
 # subject = "pathlib.Path.samefile(other_path: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

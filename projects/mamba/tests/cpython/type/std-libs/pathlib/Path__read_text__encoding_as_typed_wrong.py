@@ -9,7 +9,6 @@
 # case = "Path__read_text__encoding_as_typed_wrong"
 # subject = "pathlib.Path.read_text(encoding: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

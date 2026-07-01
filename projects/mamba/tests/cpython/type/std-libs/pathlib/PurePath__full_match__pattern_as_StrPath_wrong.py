@@ -9,7 +9,6 @@
 # case = "PurePath__full_match__pattern_as_StrPath_wrong"
 # subject = "pathlib.PurePath.full_match(pattern: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
