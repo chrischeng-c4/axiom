@@ -9,12 +9,10 @@
 # case = "str____add____value_as_LiteralString_wrong"
 # subject = "builtins.str.__add__(value: LiteralString)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.__add__(value: LiteralString); call it with the wrong type.
 

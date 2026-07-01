@@ -9,12 +9,10 @@
 # case = "reversed____new____sequence_as_Reversible_wrong"
 # subject = "builtins.reversed.__new__(sequence: Reversible)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequence"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequence
 # mamba-strict-type: TypeError
 """Type wall: builtins.reversed.__new__(sequence: Reversible); call it with the wrong type.
 

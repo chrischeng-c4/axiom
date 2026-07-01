@@ -9,12 +9,10 @@
 # case = "object____subclasshook____subclass_as_type_wrong"
 # subject = "builtins.object.__subclasshook__(subclass: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subclass"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subclass
 # mamba-strict-type: TypeError
 """Type wall: builtins.object.__subclasshook__(subclass: type); call it with the wrong type.
 

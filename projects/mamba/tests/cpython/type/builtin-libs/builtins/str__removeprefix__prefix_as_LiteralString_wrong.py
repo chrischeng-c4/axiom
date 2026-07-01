@@ -9,7 +9,6 @@
 # case = "str__removeprefix__prefix_as_LiteralString_wrong"
 # subject = "builtins.str.removeprefix(prefix: LiteralString)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

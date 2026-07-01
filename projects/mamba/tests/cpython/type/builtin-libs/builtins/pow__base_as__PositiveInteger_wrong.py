@@ -9,7 +9,6 @@
 # case = "pow__base_as__PositiveInteger_wrong"
 # subject = "builtins.pow(base: _PositiveInteger)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

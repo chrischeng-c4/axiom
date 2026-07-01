@@ -9,7 +9,6 @@
 # case = "round__number_as__SupportsRound2_wrong"
 # subject = "builtins.round(number: _SupportsRound2)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

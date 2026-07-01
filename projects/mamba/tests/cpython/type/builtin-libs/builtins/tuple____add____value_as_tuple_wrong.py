@@ -9,7 +9,6 @@
 # case = "tuple____add____value_as_tuple_wrong"
 # subject = "builtins.tuple.__add__(value: tuple)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

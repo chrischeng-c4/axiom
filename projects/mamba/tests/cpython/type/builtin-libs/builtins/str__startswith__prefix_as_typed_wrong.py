@@ -9,7 +9,6 @@
 # case = "str__startswith__prefix_as_typed_wrong"
 # subject = "builtins.str.startswith(prefix: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

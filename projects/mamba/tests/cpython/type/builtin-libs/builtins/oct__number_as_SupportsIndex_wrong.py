@@ -9,7 +9,6 @@
 # case = "oct__number_as_SupportsIndex_wrong"
 # subject = "builtins.oct(number: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
