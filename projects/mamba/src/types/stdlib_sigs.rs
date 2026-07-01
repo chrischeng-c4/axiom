@@ -5154,6 +5154,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "importlib.util",
+        qualifier: "",
+        name: "set_package",
+        kind: SigKind::ModuleFn,
+        params: &[p("fxn", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "http.client",
         qualifier: "",
         name: "parse_headers",
@@ -6938,6 +6946,7 @@ mod tests {
             ("imghdr", "", "what", 1, "h", CoreTy::Bytes),
             ("importlib.util", "", "module_for_loader", 0, "fxn", CoreTy::Typed),
             ("importlib.util", "", "set_loader", 0, "fxn", CoreTy::Typed),
+            ("importlib.util", "", "set_package", 0, "fxn", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
