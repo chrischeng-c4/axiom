@@ -187,6 +187,11 @@ struct BenchArgs {
     /// vs the filtered CPU oracle. Omit for the unfiltered bench.
     #[arg(long = "filter")]
     filter: Option<i64>,
+    /// CRUD churn demo: before querying, delete + reinsert this fraction of rows
+    /// (LSM-style, so tombstones accumulate), then report recall vs the LIVE
+    /// oracle. `0` (default) leaves the corpus untouched.
+    #[arg(long, default_value_t = 0.0)]
+    churn: f64,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
@@ -303,6 +308,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 m: args.m,
                 rank: args.rank,
                 filter_category: args.filter,
+                churn: args.churn,
             })
         }
         // Placeholder service verbs — a consistent, tracked "not built yet" exit.

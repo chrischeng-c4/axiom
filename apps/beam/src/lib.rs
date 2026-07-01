@@ -14,7 +14,9 @@
 //!
 //! The first real vector-search engine lives here:
 //!
-//! - [`collection`] — the in-memory row-major vector store + [`collection::Metric`].
+//! - [`collection`] — the in-memory row-major vector store + [`collection::Metric`],
+//!   with external-id addressing and delete / update / upsert (tombstones + an
+//!   append-only vector store; the live-mask folds into every index's keep-bitmask).
 //! - [`payload`] — row attribute payloads ([`payload::Payload`]) and the
 //!   composable [`payload::Filter`] for filtered k-NN (metadata + filtered
 //!   search, the vector-DB table stakes).

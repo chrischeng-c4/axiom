@@ -89,6 +89,13 @@ pub struct BenchConfig {
     /// vs the filtered CPU oracle + timing. `None` (default) is the original
     /// unfiltered bench.
     pub filter_category: Option<i64>,
+    /// CRUD churn fraction in `[0, 1]`. When `> 0`, a deterministic ~`churn`
+    /// fraction of rows is deleted and reinserted (delete + re-add the same id and
+    /// vector, LSM-style, so tombstones accumulate) BEFORE querying, then recall is
+    /// reported vs the live oracle. `0.0` (default) leaves the corpus untouched —
+    /// the original bench. Proves search still equals the live oracle after
+    /// mutation.
+    pub churn: f64,
 }
 
 /// Number of distinct `category` buckets the `--filter` bench assigns
@@ -109,8 +116,40 @@ impl Default for BenchConfig {
             m: 8,
             rank: 0,
             filter_category: None,
+            churn: 0.0,
         }
     }
+}
+
+/// Deterministically churn ~`frac` of the collection's live rows: delete each
+/// picked id then re-add it under the same id + vector + payload (LSM-style, so
+/// the old physical row is tombstoned and a fresh live row appended). The live
+/// set is unchanged, but tombstones now accumulate — so a subsequent search must
+/// still equal the live oracle. Returns the number of rows churned.
+fn apply_churn(collection: &mut crate::collection::Collection, frac: f64) -> usize {
+    if frac <= 0.0 {
+        return 0;
+    }
+    let cap = collection.capacity();
+    let count = (((cap as f64) * frac).round() as usize).clamp(1, cap.max(1));
+    let stride = (cap / count).max(1);
+    let mut churned = 0usize;
+    let mut i = 0usize;
+    while i < cap {
+        if collection.is_live(i as u32) {
+            // Capture the row's id/vector/payload (owned) before mutating.
+            let id = collection.external_ids()[i].clone();
+            let vector = collection.row(i).to_vec();
+            let payload = collection.payload(i).clone();
+            collection.delete(&id);
+            collection
+                .add_with_payload(id, &vector, payload)
+                .expect("re-add of a captured row always matches dim");
+            churned += 1;
+        }
+        i += stride;
+    }
+    churned
 }
 
 /// Tag every row `i` with `category = i % FILTER_CATEGORIES` (see
@@ -118,7 +157,8 @@ impl Default for BenchConfig {
 /// filters on.
 fn assign_category_payloads(collection: &mut crate::collection::Collection) {
     use crate::payload::Payload;
-    for i in 0..collection.len() {
+    // Freshly-built corpus (no tombstones yet), so iterate physical rows.
+    for i in 0..collection.capacity() {
         collection.set_payload(i, Payload::new().with("category", i as i64 % FILTER_CATEGORIES));
     }
 }
@@ -153,6 +193,15 @@ fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
         dataset::random_collection("bench", cfg.n, cfg.dim, cfg.metric, DATASET_SEED);
     if cfg.filter_category.is_some() {
         assign_category_payloads(&mut collection);
+    }
+    if cfg.churn > 0.0 {
+        let churned = apply_churn(&mut collection, cfg.churn);
+        println!(
+            "churn: deleted + reinserted {churned} rows ({:.1}% of n); {} live, {} tombstoned (recall is vs the live oracle)",
+            cfg.churn * 100.0,
+            collection.len(),
+            collection.tombstoned(),
+        );
     }
     let queries = dataset::random_queries(cfg.queries, cfg.dim, QUERY_SEED);
 
@@ -304,6 +353,17 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     // before training, which snapshots the payloads into the index).
     if cfg.filter_category.is_some() {
         assign_category_payloads(&mut collection);
+    }
+    // Optional CRUD churn before training, so the index materializes over the
+    // churned (tombstone-carrying) collection and must still equal the live oracle.
+    if cfg.churn > 0.0 {
+        let churned = apply_churn(&mut collection, cfg.churn);
+        println!(
+            "churn: deleted + reinserted {churned} rows ({:.1}% of n); {} live, {} tombstoned (recall is vs the live oracle)",
+            cfg.churn * 100.0,
+            collection.len(),
+            collection.tombstoned(),
+        );
     }
     let filter = cfg
         .filter_category

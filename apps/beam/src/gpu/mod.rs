@@ -103,13 +103,24 @@ pub struct GpuFlatIndex {
     device: wgpu::Device,
     queue: wgpu::Queue,
     dim: usize,
+    /// Physical row count (live + tombstoned) = the number of rows uploaded to
+    /// `db_buffer` and the kernel dispatch width.
     n: usize,
     metric: Metric,
     external_ids: Vec<String>,
     /// Row-aligned attribute payloads (snapshot of the collection), read on the
     /// host to build the GPU filter bitmask.
     payloads: Vec<Payload>,
-    /// The whole corpus (`n * dim` f32) uploaded once as a read-only storage buffer.
+    /// Per physical row liveness as the base keep-bitmask (`1` = live, `0` =
+    /// tombstoned), snapshot from the collection. Folded into the filter mask so a
+    /// tombstoned row is skipped by the SAME sentinel kernel filtered search uses.
+    /// A delete-only change is reflected by [`GpuFlatIndex::refresh_mask`] WITHOUT
+    /// re-uploading `db_buffer`.
+    live: Vec<u32>,
+    /// Cached live-row count (`== live.iter().filter(|&&b| b == 1).count()`).
+    n_live: usize,
+    /// The whole corpus (`n * dim` f32, live + tombstoned rows) uploaded once as a
+    /// read-only storage buffer.
     db_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
@@ -126,7 +137,9 @@ impl GpuFlatIndex {
         let device = ctx.device.clone();
         let queue = ctx.queue.clone();
         let dim = collection.dim();
-        let n = collection.len();
+        // Physical rows (live + tombstoned): the whole `data` buffer is uploaded and
+        // the live-mask excludes tombstones at scoring time.
+        let n = collection.capacity();
         let metric = collection.metric();
 
         // Upload the whole corpus once. `mapped_at_creation` via the util init
@@ -227,6 +240,8 @@ impl GpuFlatIndex {
             metric,
             external_ids: collection.external_ids().to_vec(),
             payloads: collection.payloads().to_vec(),
+            live: collection.live().iter().map(|&l| l as u32).collect(),
+            n_live: collection.len(),
             db_buffer,
             bind_group_layout,
             pipeline,
@@ -235,14 +250,44 @@ impl GpuFlatIndex {
         }
     }
 
-    /// Number of stored vectors.
+    /// Number of **live** vectors (tombstoned rows excluded).
     pub fn len(&self) -> usize {
+        self.n_live
+    }
+
+    /// Whether the index has zero live vectors.
+    pub fn is_empty(&self) -> bool {
+        self.n_live == 0
+    }
+
+    /// Physical row count (live + tombstoned) uploaded to the GPU.
+    pub fn capacity(&self) -> usize {
         self.n
     }
 
-    /// Whether the index is empty.
-    pub fn is_empty(&self) -> bool {
-        self.n == 0
+    /// Number of tombstoned rows still resident in the GPU buffer (masked out of
+    /// search).
+    pub fn tombstoned(&self) -> usize {
+        self.n - self.n_live
+    }
+
+    /// Re-sync the live-mask from `collection` WITHOUT re-uploading the vector
+    /// buffer — the mask-only path for reflecting deletes on the GPU (requirement:
+    /// avoid an O(n) re-upload on every delete). Valid only when no physical rows
+    /// were added since the index was built (i.e. delete-only changes, so
+    /// `collection.capacity() == self.capacity()`); returns `false` (a no-op)
+    /// otherwise, signalling the caller to rebuild to pick up appended rows (an
+    /// update/upsert appends, so it needs a rebuild to re-materialize the buffer).
+    pub fn refresh_mask(&mut self, collection: &Collection) -> bool {
+        if collection.capacity() != self.n {
+            return false;
+        }
+        // Deletes only flip live bits and drop id-map entries; the per-row vectors,
+        // external ids, and payloads of existing rows are unchanged, so only the
+        // mask + live count need refreshing.
+        self.live = collection.live().iter().map(|&l| l as u32).collect();
+        self.n_live = collection.len();
+        true
     }
 
     /// Run the kernel over every row and return the raw `n` per-row distances.
@@ -488,8 +533,20 @@ impl VectorIndex for GpuFlatIndex {
         if query.len() != self.dim || self.n == 0 || k == 0 {
             return Vec::new();
         }
-        let scores = self.compute_distances(query);
-        topk(&scores, self.metric, k, &self.external_ids)
+        if self.n_live == 0 {
+            return Vec::new();
+        }
+        if self.n_live == self.n {
+            // No tombstones: the original fast, unmasked scan (this is the path the
+            // gpu-vs-cpu parity test exercises).
+            let scores = self.compute_distances(query);
+            return topk(&scores, self.metric, k, &self.external_ids);
+        }
+        // Tombstones present: fold the live-mask into the keep-bitmask and run the
+        // SAME sentinel kernel filtered search uses, so deleted rows are excluded.
+        // Cap top-k at the live count so sentinels are never selected.
+        let scores = self.compute_distances_filtered(query, &self.live);
+        topk(&scores, self.metric, k.min(self.n_live), &self.external_ids)
     }
 
     fn num_vectors(&self) -> usize {
@@ -510,13 +567,16 @@ impl VectorIndex for GpuFlatIndex {
         if query.len() != self.dim || self.n == 0 || k == 0 {
             return Vec::new();
         }
-        // Host-built keep bitmask (1 = payload matches filter) + match count.
+        // Host-built keep bitmask: a row survives iff it is LIVE and its payload
+        // matches the filter (live AND filter) — the deleted-row live bit is just
+        // one more clause folded into the keep-set. `+ match count`.
         let mut nmatch = 0usize;
         let mask: Vec<u32> = self
             .payloads
             .iter()
-            .map(|p| {
-                if filter.matches(p) {
+            .zip(&self.live)
+            .map(|(p, &live)| {
+                if live == 1 && filter.matches(p) {
                     nmatch += 1;
                     1
                 } else {

@@ -118,6 +118,14 @@ pub struct IvfPqIndex {
     /// Row-aligned attribute payloads (snapshot of the collection), read to
     /// filter candidates in filtered search.
     payloads: Vec<Payload>,
+    /// Per physical row liveness (snapshot of the collection), folded into the
+    /// candidate keep-bitmask so tombstoned rows are excluded from search via the
+    /// same sentinel path as a filtered-out candidate. A delete-only change is
+    /// reflected by [`IvfPqIndex::refresh_mask`] without re-training.
+    live: Vec<bool>,
+    /// Cached live-row count.
+    n_live: usize,
+    /// Physical row count (live + tombstoned) — the rows trained + inverted.
     n: usize,
 }
 
@@ -228,7 +236,10 @@ impl IvfPqIndex {
     /// (seeded by `config.seed`).
     pub fn train(collection: &Collection, config: IvfPqConfig) -> anyhow::Result<Self> {
         let dim = collection.dim();
-        let n = collection.len();
+        // Train + invert over ALL physical rows (live + tombstoned). Tombstoned rows
+        // are masked out at top-k, so at Refine::Flat + full probe every live
+        // candidate is still scored exactly and the result equals the live oracle.
+        let n = collection.capacity();
         let metric = collection.metric();
         if metric != Metric::L2 {
             anyhow::bail!("IvfPqIndex supports Metric::L2 only, got {metric:?}");
@@ -350,6 +361,8 @@ impl IvfPqIndex {
             list_resid,
             external_ids: collection.external_ids().to_vec(),
             payloads: collection.payloads().to_vec(),
+            live: collection.live().to_vec(),
+            n_live: collection.len(),
             n,
         })
     }
@@ -364,14 +377,39 @@ impl IvfPqIndex {
         self.nlist
     }
 
-    /// Number of indexed vectors.
+    /// Number of **live** indexed vectors (tombstoned rows excluded).
     pub fn len(&self) -> usize {
+        self.n_live
+    }
+
+    /// Whether the index holds zero **live** vectors.
+    pub fn is_empty(&self) -> bool {
+        self.n_live == 0
+    }
+
+    /// Physical indexed-row count (live + tombstoned).
+    pub fn capacity(&self) -> usize {
         self.n
     }
 
-    /// Whether the index holds zero vectors.
-    pub fn is_empty(&self) -> bool {
-        self.n == 0
+    /// Number of tombstoned rows still resident in the inverted lists (masked out
+    /// of search).
+    pub fn tombstoned(&self) -> usize {
+        self.n - self.n_live
+    }
+
+    /// Re-sync the live-mask from `collection` without re-training — the mask-only
+    /// path for reflecting deletes on the IVF index. Valid only when no physical
+    /// rows were added since training (`collection.capacity() == self.capacity()`,
+    /// i.e. delete-only); returns `false` (a no-op) otherwise, signalling the caller
+    /// to rebuild to pick up appended rows.
+    pub fn refresh_mask(&mut self, collection: &Collection) -> bool {
+        if collection.capacity() != self.n {
+            return false;
+        }
+        self.live = collection.live().to_vec();
+        self.n_live = collection.len();
+        true
     }
 
     /// The refine mode this index was trained with.
@@ -560,8 +598,62 @@ impl IvfPqIndex {
     }
 
     /// Assemble best-first [`Neighbor`]s from candidate `rows` + their `dist`
-    /// (smaller = better, L2). Shared by the CPU and GPU search paths.
+    /// (smaller = better, L2), excluding tombstoned candidates. Shared by the CPU
+    /// and GPU search paths. A tombstoned candidate is sunk with the L2 sentinel
+    /// (`+∞`) — the SAME mechanism [`Self::topk_candidates_filtered`] uses — so a
+    /// deleted row is folded into the keep-set exactly like a filtered-out one, and
+    /// the result caps at the live-candidate count.
     pub fn topk_candidates(&self, rows: &[u32], dist: &[f32], k: usize) -> Vec<Neighbor> {
+        let mut nlive = 0usize;
+        let masked: Vec<f32> = rows
+            .iter()
+            .zip(dist)
+            .map(|(&row, &d)| {
+                if self.live[row as usize] {
+                    nlive += 1;
+                    d
+                } else {
+                    f32::INFINITY
+                }
+            })
+            .collect();
+        self.topk_candidates_raw(rows, &masked, k.min(nlive))
+    }
+
+    /// Filtered variant of [`Self::topk_candidates`]: keep only candidates that are
+    /// LIVE and match `filter` (live AND filter), sinking the rest with the L2
+    /// sentinel (`+∞`), then take the top `min(k, #kept)` — so tombstoned and
+    /// non-matching candidates are both excluded, and the result length is the kept
+    /// count when fewer than `k` survive. Shared by the CPU reference and GPU
+    /// filtered search.
+    pub fn topk_candidates_filtered(
+        &self,
+        rows: &[u32],
+        dist: &[f32],
+        k: usize,
+        filter: &Filter,
+    ) -> Vec<Neighbor> {
+        // IVF-PQ is L2-only, so smaller is better and `+∞` sinks a candidate.
+        let mut nmatch = 0usize;
+        let fdist: Vec<f32> = rows
+            .iter()
+            .zip(dist)
+            .map(|(&row, &d)| {
+                if self.live[row as usize] && filter.matches(&self.payloads[row as usize]) {
+                    nmatch += 1;
+                    d
+                } else {
+                    f32::INFINITY
+                }
+            })
+            .collect();
+        self.topk_candidates_raw(rows, &fdist, nmatch.min(k))
+    }
+
+    /// The raw best-first selection over candidate `rows` + `dist` with no masking
+    /// (callers pre-apply the live/filter sentinels and cap `k`). `+∞`-sentineled
+    /// candidates sort last, so a `k` capped at the survivor count never returns one.
+    fn topk_candidates_raw(&self, rows: &[u32], dist: &[f32], k: usize) -> Vec<Neighbor> {
         let num = rows.len();
         let want = k.min(num);
         if want == 0 {
@@ -588,35 +680,6 @@ impl IvfPqIndex {
                 }
             })
             .collect()
-    }
-
-    /// Filtered variant of [`Self::topk_candidates`]: assign the L2 sentinel
-    /// (`+∞`) to candidates whose payload fails `filter`, then take the top
-    /// `min(k, #matching)` — so only matching candidates from the probed cells
-    /// survive, and the result length is the match count when fewer than `k`
-    /// match. Shared by the CPU reference and the GPU filtered search.
-    pub fn topk_candidates_filtered(
-        &self,
-        rows: &[u32],
-        dist: &[f32],
-        k: usize,
-        filter: &Filter,
-    ) -> Vec<Neighbor> {
-        // IVF-PQ is L2-only, so smaller is better and `+∞` sinks a candidate.
-        let mut nmatch = 0usize;
-        let fdist: Vec<f32> = rows
-            .iter()
-            .zip(dist)
-            .map(|(&row, &d)| {
-                if filter.matches(&self.payloads[row as usize]) {
-                    nmatch += 1;
-                    d
-                } else {
-                    f32::INFINITY
-                }
-            })
-            .collect();
-        self.topk_candidates(rows, &fdist, k.min(nmatch))
     }
 }
 
