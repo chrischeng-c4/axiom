@@ -9,12 +9,10 @@
 # case = "Path__open__mode_as_OpenBinaryModeWriting_wrong"
 # subject = "pathlib.Path.open(mode: OpenBinaryModeWriting)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode
 # mamba-strict-type: TypeError
 """Type wall: pathlib.Path.open(mode: OpenBinaryModeWriting); call it with the wrong type.
 

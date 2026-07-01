@@ -9,7 +9,6 @@
 # case = "Path__replace__target_as_StrPath_wrong"
 # subject = "pathlib.Path.replace(target: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

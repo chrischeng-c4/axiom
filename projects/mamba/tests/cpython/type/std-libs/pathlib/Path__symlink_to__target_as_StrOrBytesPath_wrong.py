@@ -9,7 +9,6 @@
 # case = "Path__symlink_to__target_as_StrOrBytesPath_wrong"
 # subject = "pathlib.Path.symlink_to(target: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

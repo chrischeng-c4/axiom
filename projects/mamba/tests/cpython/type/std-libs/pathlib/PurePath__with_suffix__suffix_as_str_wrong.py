@@ -9,7 +9,6 @@
 # case = "PurePath__with_suffix__suffix_as_str_wrong"
 # subject = "pathlib.PurePath.with_suffix(suffix: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "Path__move__target_as_StrPath_wrong"
 # subject = "pathlib.Path.move(target: StrPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target
 # mamba-strict-type: TypeError
 """Type wall: pathlib.Path.move(target: StrPath); call it with the wrong type.
 

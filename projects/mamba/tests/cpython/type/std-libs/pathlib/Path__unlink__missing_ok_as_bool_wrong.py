@@ -9,12 +9,10 @@
 # case = "Path__unlink__missing_ok_as_bool_wrong"
 # subject = "pathlib.Path.unlink(missing_ok: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed missing_ok"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed missing_ok
 # mamba-strict-type: TypeError
 """Type wall: pathlib.Path.unlink(missing_ok: bool); call it with the wrong type.
 

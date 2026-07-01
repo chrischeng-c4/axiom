@@ -9,12 +9,10 @@
 # case = "Path__copy__target_as__PathT_wrong"
 # subject = "pathlib.Path.copy(target: _PathT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target
 # mamba-strict-type: TypeError
 """Type wall: pathlib.Path.copy(target: _PathT); call it with the wrong type.
 

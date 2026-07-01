@@ -9,7 +9,6 @@
 # case = "Path__hardlink_to__target_as_StrOrBytesPath_wrong"
 # subject = "pathlib.Path.hardlink_to(target: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
