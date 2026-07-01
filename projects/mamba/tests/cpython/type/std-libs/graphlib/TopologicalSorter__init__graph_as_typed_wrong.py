@@ -9,12 +9,11 @@
 # case = "TopologicalSorter__init__graph_as_typed_wrong"
 # subject = "graphlib.TopologicalSorter.__init__(graph: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed graph"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/graphlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed graph
 # mamba-strict-type: TypeError
 """Type wall: graphlib.TopologicalSorter.__init__(graph: typed); call it with the wrong type.
 

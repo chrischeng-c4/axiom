@@ -9,12 +9,11 @@
 # case = "glob0__dirname_as_AnyStr_wrong"
 # subject = "glob.glob0(dirname: AnyStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dirname"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/glob.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dirname
 # mamba-strict-type: TypeError
 """Type wall: glob.glob0(dirname: AnyStr); call it with the wrong type.
 

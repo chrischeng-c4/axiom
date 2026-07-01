@@ -9,12 +9,11 @@
 # case = "iglob__pathname_as_AnyStr_wrong"
 # subject = "glob.iglob(pathname: AnyStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pathname"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/glob.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pathname
 # mamba-strict-type: TypeError
 """Type wall: glob.iglob(pathname: AnyStr); call it with the wrong type.
 
