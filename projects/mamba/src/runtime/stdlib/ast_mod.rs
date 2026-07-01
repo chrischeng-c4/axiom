@@ -576,6 +576,16 @@ const VALUES_FIELDS: &[AstFieldSpec] = &[AstFieldSpec {
     name: "values",
     kind: AstFieldKind::List,
 }];
+const RAISE_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "exc",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "cause",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+];
 
 fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
     match node_type {
@@ -601,6 +611,7 @@ fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
         ],
         "JoinedStr" | "TemplateStr" => VALUES_FIELDS,
         "List" | "Set" | "Tuple" => LIST_FIELDS,
+        "Raise" => RAISE_FIELDS,
         "MatchMapping" => &[
             AstFieldSpec {
                 name: "keys",
@@ -1234,14 +1245,18 @@ fn ast_dump_string(node: MbValue, annotate_fields: bool, include_attributes: boo
         };
         let guard = fields.read().unwrap();
         let mut parts: Vec<String> = Vec::new();
+        let mut missing_prior_field = false;
         for field in ast_dump_field_order(class_name) {
             if let Some(value) = guard.get(*field).copied() {
-                let rendered = ast_dump_value_with_options(value, annotate_fields, include_attributes);
-                if annotate_fields {
+                let rendered =
+                    ast_dump_value_with_options(value, annotate_fields, include_attributes);
+                if annotate_fields || missing_prior_field {
                     parts.push(format!("{field}={rendered}"));
                 } else {
                     parts.push(rendered);
                 }
+            } else {
+                missing_prior_field = true;
             }
         }
         if include_attributes && ast_dump_has_location_attrs(class_name) {
@@ -1262,6 +1277,7 @@ fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
         "Expr" => &["value"],
         "BinOp" => &["left", "op", "right"],
         "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => &["value", "kind"],
+        "Raise" => &["exc", "cause"],
         "Call" => &["func", "args", "keywords"],
         "keyword" => &["arg", "value"],
         "Name" => &["id", "ctx"],
@@ -2311,6 +2327,15 @@ mod tests {
             Some(
                 "Module(body=[Expr(value=Call(func=Name(id='spam', ctx=Load()), args=[Name(id='eggs', ctx=Load()), Constant(value='and cheese')], keywords=[]))], type_ignores=[])"
             )
+        );
+
+        let mut raise_fields = FxHashMap::default();
+        raise_fields.insert("cause".to_string(), make_name_node("e", 0, 1));
+        let raise = make_ast_node("Raise", raise_fields);
+        let dumped = mb_ast_dump_with_options(raise, false, false);
+        assert_eq!(
+            extract_str(dumped).as_deref(),
+            Some("Raise(cause=Name('e', Load()))")
         );
     }
 
