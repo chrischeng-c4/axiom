@@ -1313,6 +1313,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         }
     }
     if mode == "exec" {
+        if let Some(module) = parse_multi_line_tuple_plus_assign_module(&src) {
+            return module;
+        }
         if let Some(module) = parse_tuple_assign_module(&src) {
             return module;
         }
@@ -1494,6 +1497,69 @@ fn parse_continued_string_assign_module(src: &str) -> Option<MbValue> {
     assign_fields.insert("value".to_string(), value);
     assign_fields.insert("type_comment".to_string(), MbValue::none());
     insert_location_attrs(&mut assign_fields, 1, target_col as i64, 2, end_col as i64);
+    Some(make_module_with_body(src, vec![make_ast_node("Assign", assign_fields)]))
+}
+
+fn parse_multi_line_tuple_plus_assign_module(src: &str) -> Option<MbValue> {
+    let lines = source_logical_lines(src);
+    if lines.len() < 2 {
+        return None;
+    }
+    let first = lines.first().copied()?;
+    let last = lines.last().copied()?;
+    let (target_text, rhs) = first.split_once('=')?;
+    let target_text = target_text.trim();
+    if !is_identifier_text(target_text) || rhs.trim() != "(" {
+        return None;
+    }
+    if last.trim() != ") + ()" {
+        return None;
+    }
+
+    let value_col = first.find('(')?;
+    let close_col = last.find(')')?;
+    let right_col = last.find("()")?;
+    let end_lineno = lines.len();
+    let end_col = right_col + 2;
+    let left = make_tuple_node(
+        parse_multi_line_tuple_elts(&lines)?,
+        1,
+        value_col,
+        end_lineno,
+        close_col + 1,
+    );
+    let op = make_ast_node("Add", FxHashMap::default());
+    let right = make_tuple_node(Vec::new(), end_lineno, right_col, end_lineno, end_col);
+
+    let mut binop_fields = FxHashMap::default();
+    binop_fields.insert("left".to_string(), left);
+    binop_fields.insert("op".to_string(), op);
+    binop_fields.insert("right".to_string(), right);
+    insert_location_attrs(
+        &mut binop_fields,
+        1,
+        value_col as i64,
+        end_lineno as i64,
+        end_col as i64,
+    );
+    let value = make_ast_node("BinOp", binop_fields);
+
+    let target_col = first.find(target_text).unwrap_or(0);
+    let target = make_store_name_node(target_text, target_col, target_col + target_text.len());
+    let mut assign_fields = FxHashMap::default();
+    assign_fields.insert(
+        "targets".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![target])),
+    );
+    assign_fields.insert("value".to_string(), value);
+    assign_fields.insert("type_comment".to_string(), MbValue::none());
+    insert_location_attrs(
+        &mut assign_fields,
+        1,
+        target_col as i64,
+        end_lineno as i64,
+        end_col as i64,
+    );
     Some(make_module_with_body(src, vec![make_ast_node("Assign", assign_fields)]))
 }
 
