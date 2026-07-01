@@ -49,7 +49,6 @@ flowchart TD
     write_to_output --> ignore_stale_dist[Ignore default dist/index.js and dist/index.cjs as declaration inputs]
     ignore_stale_dist --> done([Return deterministic declaration output])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
