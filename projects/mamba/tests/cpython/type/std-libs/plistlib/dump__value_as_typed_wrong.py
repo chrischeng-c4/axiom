@@ -9,12 +9,10 @@
 # case = "dump__value_as_typed_wrong"
 # subject = "plistlib.dump(value: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/plistlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: plistlib.dump(value: typed); call it with the wrong type.
 

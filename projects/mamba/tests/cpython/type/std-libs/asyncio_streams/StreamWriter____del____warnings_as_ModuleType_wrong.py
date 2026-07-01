@@ -9,12 +9,10 @@
 # case = "StreamWriter____del____warnings_as_ModuleType_wrong"
 # subject = "asyncio.streams.StreamWriter.__del__(warnings: ModuleType)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed warnings"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/streams.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed warnings
 # mamba-strict-type: TypeError
 """Type wall: asyncio.streams.StreamWriter.__del__(warnings: ModuleType); call it with the wrong type.
 

@@ -9,12 +9,10 @@
 # case = "Condition__wait_for__predicate_as_Callable_wrong"
 # subject = "asyncio.locks.Condition.wait_for(predicate: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed predicate"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/locks.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed predicate
 # mamba-strict-type: TypeError
 """Type wall: asyncio.locks.Condition.wait_for(predicate: Callable); call it with the wrong type.
 
