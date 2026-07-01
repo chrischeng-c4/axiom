@@ -177,6 +177,11 @@ struct BenchArgs {
     /// PQ subvector count (ivfpq); `dim` must be divisible by `m`.
     #[arg(long, default_value_t = 16)]
     m: usize,
+    /// Corpus intrinsic dimension. `0` (default) = isotropic clustered data (PQ's
+    /// worst case). `> 0` (e.g. 16 for dim=128) = embedding-like low-rank data
+    /// where IVF-PQ recall is high. Only affects the ivfflat / ivfpq backends.
+    #[arg(long, default_value_t = 0)]
+    rank: usize,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
@@ -291,6 +296,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 nlist: args.nlist,
                 nprobe: args.nprobe,
                 m: args.m,
+                rank: args.rank,
             })
         }
         // Placeholder service verbs — a consistent, tracked "not built yet" exit.

@@ -30,13 +30,28 @@ struct ScanParams {
     _pad1: u32,
 }
 
-/// Owns the two IVF-PQ scan pipelines (PQ ADC + flat residual) and the device /
-/// queue to run them. Build once per [`GpuContext`], reuse across queries.
+/// The most PQ subspaces the shared-memory ADC kernel can hold on-chip: its
+/// `var<workgroup>` table is `16 * 256` f32 = 16 KB (Metal's threadgroup ceiling
+/// is 32 KB). Plans with `m` above this fall back to the per-candidate `adc`
+/// kernel — see [`GpuIvfScanner::scan`].
+const MAX_SHARED_M: usize = 16;
+
+/// Threads per workgroup in the cell-tiled shared ADC kernel — must equal the
+/// `@workgroup_size(SH_WG)` in `ivfpq.wgsl`. Each probed cell is split into
+/// tiles of this many candidates (one thread per candidate), so a small
+/// `nprobe` still yields many workgroups and keeps the GPU busy.
+const SHARED_TILE: usize = 128;
+
+/// Owns the IVF-PQ scan pipelines (per-cell shared ADC, per-candidate ADC
+/// fallback, and flat residual) and the device / queue to run them. Build once
+/// per [`GpuContext`], reuse across queries.
 pub struct GpuIvfScanner {
     device: wgpu::Device,
     queue: wgpu::Queue,
     adc_layout: wgpu::BindGroupLayout,
     adc_pipeline: wgpu::ComputePipeline,
+    adc_shared_layout: wgpu::BindGroupLayout,
+    adc_shared_pipeline: wgpu::ComputePipeline,
     flat_layout: wgpu::BindGroupLayout,
     flat_pipeline: wgpu::ComputePipeline,
 }
@@ -65,6 +80,28 @@ impl GpuIvfScanner {
         });
         let adc_pipeline = compute_pipeline(&device, &shader, &adc_layout, "adc", "beam_ivfpq_adc");
 
+        // Cell-tiled shared-memory ADC kernel: bindings 10..16.
+        let adc_shared_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("beam_ivfpq_adc_shared_bgl"),
+                entries: &[
+                    storage_entry(10, true),  // tables
+                    storage_entry(11, true),  // codes
+                    storage_entry(12, true),  // tile_slot
+                    storage_entry(13, true),  // tile_base
+                    storage_entry(14, true),  // tile_len
+                    uniform_entry(15),        // params
+                    storage_entry(16, false), // out
+                ],
+            });
+        let adc_shared_pipeline = compute_pipeline(
+            &device,
+            &shader,
+            &adc_shared_layout,
+            "adc_shared",
+            "beam_ivfpq_adc_shared",
+        );
+
         // Flat kernel: bindings 5..9.
         let flat_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("beam_ivfpq_flat_bgl"),
@@ -84,6 +121,8 @@ impl GpuIvfScanner {
             queue,
             adc_layout,
             adc_pipeline,
+            adc_shared_layout,
+            adc_shared_pipeline,
             flat_layout,
             flat_pipeline,
         }
@@ -92,6 +131,15 @@ impl GpuIvfScanner {
     /// Score every candidate in `plan` on the GPU, returning the per-candidate
     /// distance in `plan.rows` order — matching [`QueryPlan::cpu_scan`]. An empty
     /// candidate set returns an empty vector without touching the GPU.
+    ///
+    /// PQ plans use the per-candidate **global-table** `adc` kernel. On Apple
+    /// Silicon this is the *faster* ADC path: the ADC table (`m·256` f32 =
+    /// 16–32 KB) stays hot in the GPU's L2, so a one-thread-per-candidate scan
+    /// with full occupancy beats staging the table in `var<workgroup>` — the
+    /// shared-memory load + `workgroupBarrier` cost more than the cached global
+    /// reads they replace (measured ~2× slower here; see [`Self::scan_shared`]).
+    /// The shared-memory design still wins on discrete GPUs / large cells and is
+    /// kept as [`Self::scan_shared`], validated bit-for-intent against this path.
     pub fn scan(&self, plan: &QueryPlan) -> Vec<f32> {
         let num_cand = plan.rows.len();
         if num_cand == 0 {
@@ -132,6 +180,30 @@ impl GpuIvfScanner {
                 },
                 num_cand,
             ),
+        }
+    }
+
+    /// Score a PQ plan with the **per-cell shared-memory** ADC kernel — the P0
+    /// design: the host tiles each probed cell's candidate block into
+    /// workgroup-sized chunks; each workgroup stages that cell's `m·256` ADC
+    /// table in `var<workgroup>` once, barriers, then scores one candidate per
+    /// thread from the on-chip table. Requires `m ≤ 16` (the 16 KB shared
+    /// table); a wider `m` or a [`ScanData::Flat`] plan transparently falls back
+    /// to [`Self::scan`]. Returns the identical distances as [`Self::scan`]
+    /// (validated to 1e-3 in `tests/ivf_recall.rs`); exposed separately because
+    /// on Apple Silicon it is measurably slower than the cached global path, so
+    /// it is not the default but remains the correct design for discrete GPUs.
+    pub fn scan_shared(&self, plan: &QueryPlan) -> Vec<f32> {
+        let num_cand = plan.rows.len();
+        if num_cand == 0 {
+            return Vec::new();
+        }
+        match &plan.data {
+            ScanData::Pq { tables, codes, m } if *m <= MAX_SHARED_M => {
+                self.dispatch_shared(tables, codes, plan, *m)
+            }
+            // Wide-m PQ or Flat: no shared-table kernel, use the standard path.
+            _ => self.scan(plan),
         }
     }
 
@@ -235,6 +307,143 @@ impl GpuIvfScanner {
             cpass.set_bind_group(0, &bind_group, &[]);
             let workgroups = (num_cand as u32).div_ceil(64).max(1);
             cpass.dispatch_workgroups(workgroups, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out_buffer, 0, &readback, 0, out_bytes);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .expect("map_async callback dropped")
+            .expect("gpu buffer map failed");
+
+        let data = slice.get_mapped_range();
+        let out: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        readback.unmap();
+        out
+    }
+
+    /// One dispatch of the cell-tiled shared-memory ADC kernel. Splits each
+    /// probed cell's candidate block into `SHARED_TILE`-wide tiles (one workgroup
+    /// each, so a small `nprobe` still fills the GPU), uploads the tables, codes,
+    /// and tile descriptors, runs one workgroup per tile, and reads back the
+    /// per-candidate f32 distances in `plan.rows` order.
+    fn dispatch_shared(
+        &self,
+        tables: &[f32],
+        codes: &[u32],
+        plan: &QueryPlan,
+        m: usize,
+    ) -> Vec<f32> {
+        let num_cand = plan.rows.len();
+        // Build the tile descriptors: for each probed cell, one tile per
+        // `SHARED_TILE` candidates. Empty cells contribute no tiles.
+        let mut tile_slot: Vec<u32> = Vec::new();
+        let mut tile_base: Vec<u32> = Vec::new();
+        let mut tile_len: Vec<u32> = Vec::new();
+        for slot in 0..plan.num_probed {
+            let off = plan.cell_offsets[slot];
+            let cnt = plan.cell_counts[slot];
+            let mut c = 0u32;
+            while c < cnt {
+                let len = (cnt - c).min(SHARED_TILE as u32);
+                tile_slot.push(slot as u32);
+                tile_base.push(off + c);
+                tile_len.push(len);
+                c += SHARED_TILE as u32;
+            }
+        }
+        let num_tiles = tile_slot.len();
+
+        let params = ScanParams {
+            num_cand: num_tiles as u32,
+            secondary: m as u32,
+            _pad0: 0,
+            _pad1: 0,
+        };
+
+        let b_tables = self.storage_from(bytemuck::cast_slice(tables), "beam_ivf_sh_tables");
+        let b_codes = self.storage_from(bytemuck::cast_slice(codes), "beam_ivf_sh_codes");
+        let b_tile_slot = self.storage_from(bytemuck::cast_slice(&tile_slot), "beam_ivf_sh_tslot");
+        let b_tile_base = self.storage_from(bytemuck::cast_slice(&tile_base), "beam_ivf_sh_tbase");
+        let b_tile_len = self.storage_from(bytemuck::cast_slice(&tile_len), "beam_ivf_sh_tlen");
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_ivf_sh_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let out_bytes = (num_cand * std::mem::size_of::<f32>()) as wgpu::BufferAddress;
+        let out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_ivf_sh_out"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_ivf_sh_readback"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("beam_ivf_sh_bind_group"),
+            layout: &self.adc_shared_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: b_tables.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: b_codes.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: b_tile_slot.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: b_tile_base.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: b_tile_len.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: params_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: out_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("beam_ivf_sh_encoder"),
+            });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("beam_ivf_sh_pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.adc_shared_pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            // One workgroup per cell-tile: each loads its cell's ADC table into
+            // shared memory, then one thread scores one candidate.
+            cpass.dispatch_workgroups((num_tiles as u32).max(1), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&out_buffer, 0, &readback, 0, out_bytes);
         self.queue.submit(std::iter::once(encoder.finish()));

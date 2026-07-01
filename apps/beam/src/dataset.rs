@@ -145,6 +145,169 @@ pub fn clustered_queries(
         .collect()
 }
 
+/// A deterministic **low-rank (low-intrinsic-dimension)** generative model — the
+/// realistic-embedding stand-in that makes product quantization actually pay off.
+///
+/// Real embeddings are nominally `dim`-dimensional but live on a much
+/// lower-dimensional manifold: their coordinates are strongly correlated. Pure
+/// isotropic Gaussian noise (`random_collection`) is the pathological *worst*
+/// case for PQ — every subspace is independent, so 256 centroids can't summarize
+/// it and recall collapses. This model instead draws each point as
+///
+/// ```text
+///   x = B · c  +  ε
+/// ```
+///
+/// where `B` is a fixed random `dim × rank` basis (`rank << dim`), `c` is a
+/// **clustered** coefficient vector in the small `rank`-dim space, and `ε` is a
+/// small full-`dim` Gaussian noise. So every point sits near a `rank`-dim
+/// subspace (low intrinsic dim) *and* clumps into clusters — exactly the
+/// structure PQ exploits and IVF prunes. Fully LCG-seeded: `(seed, dim, rank,
+/// num_clusters)` reproduces the basis and the coefficient clusters byte-for-byte.
+#[derive(Debug, Clone)]
+pub struct LowRankModel {
+    /// `dim × rank` basis, row-major: `basis[d * rank + r]`. Columns are unit-norm
+    /// so the projected signal scale is stable across `rank`.
+    basis: Vec<f32>,
+    /// Cluster centers for the low-dim coefficients, `num_clusters * rank`.
+    coef_centers: Vec<f32>,
+    rank: usize,
+    num_clusters: usize,
+    /// Gaussian jitter added to a coefficient cluster center (in `rank`-space).
+    coef_jitter: f32,
+    /// Std-dev of the small full-`dim` off-manifold noise `ε`.
+    noise: f32,
+}
+
+impl LowRankModel {
+    /// Build the model deterministically from `seed`: a unit-column random
+    /// `dim × rank` basis and `num_clusters` coefficient centers in `rank`-space.
+    /// `rank` is clamped to `1..=dim`.
+    pub fn new(
+        dim: usize,
+        rank: usize,
+        num_clusters: usize,
+        coef_jitter: f32,
+        noise: f32,
+        seed: u64,
+    ) -> Self {
+        assert!(num_clusters > 0, "num_clusters must be > 0");
+        let rank = rank.clamp(1, dim.max(1));
+
+        // Basis: fill each of the `rank` columns with Gaussian entries, then
+        // normalize the column to unit L2 so `x = B·c` keeps a stable scale.
+        let mut rng = Lcg::new(seed ^ 0x10AD_4A31_B0A5_15C7);
+        let mut basis = vec![0.0f32; dim * rank];
+        for r in 0..rank {
+            let mut norm_sq = 0.0f32;
+            for d in 0..dim {
+                let v = rng.next_gaussian();
+                basis[d * rank + r] = v;
+                norm_sq += v * v;
+            }
+            let inv = if norm_sq > 0.0 { 1.0 / norm_sq.sqrt() } else { 0.0 };
+            for d in 0..dim {
+                basis[d * rank + r] *= inv;
+            }
+        }
+
+        // Coefficient cluster centers in `rank`-space, uniform in [-1, 1).
+        let mut crng = Lcg::new(seed ^ 0xC0EF_CE27_E12A_B00C);
+        let mut coef_centers = vec![0.0f32; num_clusters * rank];
+        for c in coef_centers.iter_mut() {
+            *c = crng.next_signed();
+        }
+
+        Self {
+            basis,
+            coef_centers,
+            rank,
+            num_clusters,
+            coef_jitter,
+            noise,
+        }
+    }
+
+    /// Draw one `dim`-vector into `out`: pick a coefficient cluster, jitter it in
+    /// `rank`-space, project through the basis, and add small full-`dim` noise.
+    /// `coef` is a caller-owned scratch of length `rank` (avoids a per-point
+    /// allocation across a million draws). `rng` is advanced for reproducibility.
+    pub fn draw(&self, rng: &mut Lcg, coef: &mut [f32], out: &mut [f32]) {
+        let cl = ((rng.next_unit() * self.num_clusters as f32) as usize)
+            .min(self.num_clusters - 1);
+        let cbase = cl * self.rank;
+        for (r, cr) in coef.iter_mut().enumerate() {
+            *cr = self.coef_centers[cbase + r] + self.coef_jitter * rng.next_gaussian();
+        }
+        for (d, o) in out.iter_mut().enumerate() {
+            let brow = &self.basis[d * self.rank..(d + 1) * self.rank];
+            let mut acc = 0.0f32;
+            for r in 0..self.rank {
+                acc += brow[r] * coef[r];
+            }
+            *o = acc + self.noise * rng.next_gaussian();
+        }
+    }
+}
+
+/// Default off-manifold noise for the low-rank generators (small vs the on-
+/// manifold signal, so intrinsic dim stays ≈ `rank`).
+pub const LOW_RANK_NOISE: f32 = 0.02;
+
+/// Build a deterministic **low-rank** collection: `n` points drawn from a
+/// [`LowRankModel`] (`rank`-dim clustered manifold + small noise) under `metric`.
+/// This is the embedding-like corpus where IVF-PQ recall is meaningful — unlike
+/// the isotropic [`random_collection`], PQ's per-subspace codebooks capture the
+/// correlated structure. The basis + coefficient clusters are seeded by `seed`;
+/// the point stream is a separate LCG so [`low_rank_queries`] with the same
+/// `seed` shares the manifold but draws distinct points.
+pub fn low_rank_collection(
+    id: impl Into<String>,
+    n: usize,
+    dim: usize,
+    metric: Metric,
+    rank: usize,
+    num_clusters: usize,
+    coef_jitter: f32,
+    seed: u64,
+) -> Collection {
+    let model = LowRankModel::new(dim, rank, num_clusters, coef_jitter, LOW_RANK_NOISE, seed);
+    let mut rng = Lcg::new(seed ^ 0xA5A5_10AD_2222_1111);
+    let mut collection = Collection::new(id, dim, metric);
+    let mut coef = vec![0.0f32; rank.clamp(1, dim.max(1))];
+    let mut v = vec![0.0f32; dim];
+    for i in 0..n {
+        model.draw(&mut rng, &mut coef, &mut v);
+        collection
+            .add(format!("id-{i}"), &v)
+            .expect("fixed-dim vector always matches collection dim");
+    }
+    collection
+}
+
+/// Build `count` deterministic low-rank query vectors that share the corpus's
+/// basis + coefficient clusters (same `seed`) but come from an independent point
+/// stream — representative near-neighbor queries on the same manifold.
+pub fn low_rank_queries(
+    count: usize,
+    dim: usize,
+    rank: usize,
+    num_clusters: usize,
+    coef_jitter: f32,
+    seed: u64,
+) -> Vec<Vec<f32>> {
+    let model = LowRankModel::new(dim, rank, num_clusters, coef_jitter, LOW_RANK_NOISE, seed);
+    let mut rng = Lcg::new(seed ^ 0x3333_10AD_4444_5555);
+    let mut coef = vec![0.0f32; rank.clamp(1, dim.max(1))];
+    let mut v = vec![0.0f32; dim];
+    (0..count)
+        .map(|_| {
+            model.draw(&mut rng, &mut coef, &mut v);
+            v.clone()
+        })
+        .collect()
+}
+
 /// Build a deterministic collection of `n` random `dim`-vectors (components in
 /// `[-1, 1)`) under `metric`. External ids are `id-0 .. id-(n-1)`.
 pub fn random_collection(
@@ -243,5 +406,58 @@ mod tests {
         // Same seed ⇒ same centers, but independent point streams ⇒ query 0 is
         // NOT corpus row 0 (would be a trivial exact-match otherwise).
         assert_ne!(queries[0].as_slice(), corpus.row(0));
+    }
+
+    #[test]
+    fn low_rank_collection_is_reproducible_and_low_dimensional() {
+        let (dim, rank) = (48usize, 6usize);
+        let a = low_rank_collection("lr", 300, dim, Metric::L2, rank, 5, 0.05, 31);
+        let b = low_rank_collection("lr", 300, dim, Metric::L2, rank, 5, 0.05, 31);
+        assert_eq!(a.data(), b.data(), "same seed → identical low-rank corpus");
+        assert_eq!(a.len(), 300);
+
+        // The corpus should be (near-)confined to a `rank`-dim subspace. Project
+        // every centered point onto the top-`rank` directions of the empirical
+        // basis and confirm the residual off-subspace energy is tiny — evidence
+        // of genuinely low intrinsic dimension. We test the weaker, cheap proxy:
+        // the mean coordinate variance is dominated by a handful of directions.
+        // Concretely, reconstruct the model's own basis and check each point's
+        // off-manifold (noise) energy is small vs its on-manifold energy.
+        let model = LowRankModel::new(dim, rank, 5, 0.05, LOW_RANK_NOISE, 31);
+        // Gram-Schmidt the basis columns to an orthonormal set Q (dim x rank).
+        let mut q = vec![0.0f32; dim * rank];
+        for r in 0..rank {
+            let mut col: Vec<f32> = (0..dim).map(|d| model.basis[d * rank + r]).collect();
+            for p in 0..r {
+                let dot: f32 = (0..dim).map(|d| col[d] * q[d * rank + p]).sum();
+                for d in 0..dim {
+                    col[d] -= dot * q[d * rank + p];
+                }
+            }
+            let norm: f32 = col.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let inv = if norm > 1e-6 { 1.0 / norm } else { 0.0 };
+            for d in 0..dim {
+                q[d * rank + r] = col[d] * inv;
+            }
+        }
+        let mut on = 0.0f64;
+        let mut total = 0.0f64;
+        for i in 0..a.len() {
+            let row = a.row(i);
+            let energy: f32 = row.iter().map(|x| x * x).sum();
+            // Energy captured by the rank-dim orthonormal subspace.
+            let mut proj = 0.0f32;
+            for r in 0..rank {
+                let c: f32 = (0..dim).map(|d| row[d] * q[d * rank + r]).sum();
+                proj += c * c;
+            }
+            on += proj as f64;
+            total += energy as f64;
+        }
+        let captured = on / total;
+        assert!(
+            captured > 0.9,
+            "rank-{rank} subspace should capture >90% of energy (low intrinsic dim), got {captured:.3}"
+        );
     }
 }

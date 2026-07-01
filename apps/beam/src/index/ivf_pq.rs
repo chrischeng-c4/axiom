@@ -65,6 +65,12 @@ pub struct IvfPqConfig {
     pub nbits: u32,
     /// Cell storage mode: exact [`Refine::Flat`] or compressed [`Refine::Pq`].
     pub refine: Refine,
+    /// Train the coarse quantizer + PQ codebooks on a bounded, deterministic
+    /// **sample** of this many vectors instead of all `n` — standard Faiss
+    /// practice that keeps k-means tractable at scale (e.g. `min(n, 100_000)` at
+    /// `n = 1_000_000`). `0` means "train on all `n`". Every vector is still
+    /// assigned + encoded; only the centroid/codebook *fitting* is sampled.
+    pub train_sample: usize,
     /// Seed for every deterministic k-means (init + tie-breaks). No entropy.
     pub seed: u64,
 }
@@ -76,6 +82,7 @@ impl Default for IvfPqConfig {
             kmeans_iters: 20,
             nbits: 8,
             refine: Refine::Pq { m: 8 },
+            train_sample: 0,
             seed: 0xBEA3_1FBE_A31F_BEA3,
         }
     }
@@ -142,11 +149,20 @@ pub enum ScanData {
 pub struct QueryPlan {
     /// Number of probed cells (one table / query-residual slot each).
     pub num_probed: usize,
-    /// Candidate corpus row ids, length `num_cand`.
+    /// Candidate corpus row ids, length `num_cand`. Laid out cell-by-cell in
+    /// slot order, so slot `s`'s candidates occupy one contiguous block.
     pub rows: Vec<u32>,
     /// Per-candidate probed-cell slot (`0..num_probed`) selecting its table /
-    /// query residual. Length `num_cand`.
+    /// query residual. Length `num_cand`. Non-decreasing (candidates are grouped
+    /// by cell), which the per-candidate GPU kernels index directly.
     pub cand_slot: Vec<u32>,
+    /// Start offset of each probed cell's candidate block in `rows`/`codes`,
+    /// indexed by slot (`0..num_probed`). With [`QueryPlan::cell_counts`] this is
+    /// what the per-cell workgroup ADC kernel grid-strides over.
+    pub cell_offsets: Vec<u32>,
+    /// Candidate count of each probed cell, indexed by slot (`0..num_probed`).
+    /// `cell_offsets[s]..cell_offsets[s]+cell_counts[s]` is slot `s`'s block.
+    pub cell_counts: Vec<u32>,
     /// The scan payload (PQ or Flat) matching the index's refine mode.
     pub data: ScanData,
 }
@@ -223,15 +239,35 @@ impl IvfPqIndex {
             }
         }
 
-        // (1) Coarse quantizer over the raw vectors.
-        let coarse = kmeans(
-            collection.data(),
-            n,
-            dim,
-            nlist,
-            config.kmeans_iters,
-            config.seed,
-        );
+        // Deterministic training sample: `n_train` rows spread evenly across the
+        // corpus (a strided pick, seed-free and reproducible). k-means fits the
+        // coarse centroids + PQ codebooks on this sample only; assignment and
+        // encoding below still touch every one of the `n` vectors. This is what
+        // keeps training tractable at n = 1_000_000 (train on ~100k, index all).
+        let n_train = if config.train_sample == 0 {
+            n
+        } else {
+            config.train_sample.min(n).max(1)
+        };
+        let sample_idx: Vec<usize> = if n_train == n {
+            (0..n).collect()
+        } else {
+            (0..n_train)
+                .map(|j| ((j as u64 * n as u64) / n_train as u64) as usize)
+                .collect()
+        };
+
+        // (1) Coarse quantizer over the (sampled) raw vectors.
+        let coarse = if n_train == n {
+            kmeans(collection.data(), n, dim, nlist, config.kmeans_iters, config.seed)
+        } else {
+            let mut td = vec![0.0f32; n_train * dim];
+            for (j, &i) in sample_idx.iter().enumerate() {
+                td[j * dim..(j + 1) * dim]
+                    .copy_from_slice(&collection.data()[i * dim..(i + 1) * dim]);
+            }
+            kmeans(&td, n_train, dim, nlist, config.kmeans_iters, config.seed)
+        };
 
         // (2) Assign each vector to its nearest coarse centroid + form residual.
         let mut assign = vec![0u32; n];
@@ -251,20 +287,21 @@ impl IvfPqIndex {
             Refine::Flat => (0usize, 0usize, Vec::new()),
             Refine::Pq { m } => {
                 let dsub = dim / m;
-                // One codebook per subspace: gather the subspace columns of every
-                // residual, then k-means them to 256 centroids.
+                // One codebook per subspace: gather the subspace columns of the
+                // SAMPLED residuals, then k-means them to 256 centroids. (Every
+                // residual is still encoded against these codebooks below.)
                 let mut codebooks = vec![0.0f32; m * PQ_KSUB * dsub];
-                let mut sub = vec![0.0f32; n * dsub];
+                let mut sub = vec![0.0f32; n_train * dsub];
                 for s in 0..m {
-                    for i in 0..n {
+                    for (j, &i) in sample_idx.iter().enumerate() {
                         let src = i * dim + s * dsub;
-                        sub[i * dsub..(i + 1) * dsub]
+                        sub[j * dsub..(j + 1) * dsub]
                             .copy_from_slice(&residuals[src..src + dsub]);
                     }
                     // Distinct per-subspace seed so subspaces don't share init.
                     let cb = kmeans(
                         &sub,
-                        n,
+                        n_train,
                         dsub,
                         PQ_KSUB,
                         config.kmeans_iters,
@@ -337,6 +374,25 @@ impl IvfPqIndex {
         self.refine
     }
 
+    /// The dominant per-vector memory footprint, in bytes — the number that makes
+    /// PQ win at scale. [`Refine::Flat`] stores each residual as `dim` f32
+    /// (`n·dim·4` bytes, ≈ 512 MB at n=1M, dim=128); [`Refine::Pq`] stores `m`
+    /// code bytes per vector (`n·m` bytes, ≈ 16 MB at n=1M, m=16) — a `dim·4/m`
+    /// (≈ 32×) reduction. Excludes the fixed, `n`-independent coarse centroids +
+    /// PQ codebooks (see [`Self::overhead_bytes`]) and the shared row-id lists.
+    pub fn payload_bytes(&self) -> usize {
+        match self.refine {
+            Refine::Flat => self.n * self.dim * std::mem::size_of::<f32>(),
+            Refine::Pq { .. } => self.n * self.m,
+        }
+    }
+
+    /// The fixed, `n`-independent index overhead in bytes: coarse centroids
+    /// (`nlist·dim` f32) plus PQ codebooks (`m·256·dsub` f32, zero for Flat).
+    pub fn overhead_bytes(&self) -> usize {
+        (self.coarse.len() + self.codebooks.len()) * std::mem::size_of::<f32>()
+    }
+
     /// Build a [`QueryPlan`]: pick the `nprobe` nearest cells, gather their
     /// candidates, and assemble the scan payload (PQ tables+codes or Flat
     /// residuals). Both the CPU reference and the GPU kernel score this plan.
@@ -368,55 +424,69 @@ impl IvfPqIndex {
         cell_dist.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         let num_probed = cell_dist.len();
-        let mut rows: Vec<u32> = Vec::new();
-        let mut cand_slot: Vec<u32> = Vec::new();
+        // Total candidates across the probed cells — reserve exactly, so the
+        // gather below is a handful of bulk copies (no Vec regrowth). This is the
+        // dominant host cost per query, so preallocating matters (especially in
+        // unoptimized builds).
+        let total_cand: usize = cell_dist
+            .iter()
+            .map(|&(_, cell)| self.list_rows[cell].len())
+            .sum();
+        let mut rows: Vec<u32> = Vec::with_capacity(total_cand);
+        let mut cand_slot: Vec<u32> = Vec::with_capacity(total_cand);
+        let mut cell_offsets = vec![0u32; num_probed];
+        let mut cell_counts = vec![0u32; num_probed];
 
         match self.refine {
             Refine::Pq { .. } => {
                 let m = self.m;
                 let mut tables = vec![0.0f32; num_probed * m * PQ_KSUB];
-                let mut codes: Vec<u32> = Vec::new();
+                let mut codes: Vec<u32> = Vec::with_capacity(total_cand * m);
                 for (slot, &(_, cell)) in cell_dist.iter().enumerate() {
                     // Per-cell ADC table from the query residual qr = q − μ_cell.
                     self.build_adc_table(query, cell, &mut tables[slot * m * PQ_KSUB..]);
-                    let cell_codes = &self.list_codes[cell];
-                    let count = self.list_rows[cell].len();
-                    for c in 0..count {
-                        rows.push(self.list_rows[cell][c]);
-                        cand_slot.push(slot as u32);
-                        for s in 0..m {
-                            codes.push(cell_codes[c * m + s] as u32);
-                        }
-                    }
+                    let cell_rows = &self.list_rows[cell];
+                    let count = cell_rows.len();
+                    cell_offsets[slot] = rows.len() as u32;
+                    cell_counts[slot] = count as u32;
+                    // Bulk-append this cell's rows, slot tags, and codes.
+                    rows.extend_from_slice(cell_rows);
+                    cand_slot.resize(cand_slot.len() + count, slot as u32);
+                    codes.extend(self.list_codes[cell].iter().map(|&b| b as u32));
                 }
                 QueryPlan {
                     num_probed,
                     rows,
                     cand_slot,
+                    cell_offsets,
+                    cell_counts,
                     data: ScanData::Pq { tables, codes, m },
                 }
             }
             Refine::Flat => {
                 let mut qresid = vec![0.0f32; num_probed * dim];
-                let mut resid: Vec<f32> = Vec::new();
+                let mut resid: Vec<f32> = Vec::with_capacity(total_cand * dim);
                 for (slot, &(_, cell)) in cell_dist.iter().enumerate() {
                     let cbase = cell * dim;
                     let qbase = slot * dim;
                     for d in 0..dim {
                         qresid[qbase + d] = query[d] - self.coarse[cbase + d];
                     }
-                    let cell_resid = &self.list_resid[cell];
-                    let count = self.list_rows[cell].len();
-                    for c in 0..count {
-                        rows.push(self.list_rows[cell][c]);
-                        cand_slot.push(slot as u32);
-                        resid.extend_from_slice(&cell_resid[c * dim..(c + 1) * dim]);
-                    }
+                    let cell_rows = &self.list_rows[cell];
+                    let count = cell_rows.len();
+                    cell_offsets[slot] = rows.len() as u32;
+                    cell_counts[slot] = count as u32;
+                    // Bulk-append this cell's rows, slot tags, and residual block.
+                    rows.extend_from_slice(cell_rows);
+                    cand_slot.resize(cand_slot.len() + count, slot as u32);
+                    resid.extend_from_slice(&self.list_resid[cell]);
                 }
                 QueryPlan {
                     num_probed,
                     rows,
                     cand_slot,
+                    cell_offsets,
+                    cell_counts,
                     data: ScanData::Flat { qresid, resid, dim },
                 }
             }
@@ -685,6 +755,7 @@ mod tests {
             kmeans_iters: 12,
             nbits: 8,
             refine: Refine::Flat,
+            train_sample: 0,
             seed: 7,
         };
         let idx = IvfPqIndex::train(&c, cfg).unwrap();
@@ -707,6 +778,7 @@ mod tests {
             kmeans_iters: 12,
             nbits: 8,
             refine: Refine::Pq { m: 8 },
+            train_sample: 0,
             seed: 9,
         };
         let idx = IvfPqIndex::train(&c, cfg).unwrap();
@@ -732,6 +804,7 @@ mod tests {
             kmeans_iters: 4,
             nbits: 8,
             refine: Refine::Pq { m: 8 },
+            train_sample: 0,
             seed: 1,
         };
         assert!(IvfPqIndex::train(&c, bad).is_err());
@@ -742,6 +815,7 @@ mod tests {
             kmeans_iters: 4,
             nbits: 8,
             refine: Refine::Flat,
+            train_sample: 0,
             seed: 1,
         };
         assert!(IvfPqIndex::train(&cos, cfg).is_err());

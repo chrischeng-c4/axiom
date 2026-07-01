@@ -53,6 +53,7 @@ fn config(refine: Refine) -> IvfPqConfig {
         kmeans_iters: 20,
         nbits: 8,
         refine,
+        train_sample: 0,
         seed: TRAIN_SEED,
     }
 }
@@ -176,28 +177,106 @@ fn gpu_adc_matches_cpu_reference() {
 
     for refine in [Refine::Pq { m: 8 }, Refine::Flat] {
         let index = IvfPqIndex::train(&corpus, config(refine)).unwrap();
-        let mut max_abs = 0.0f32;
+        // Both GPU scan paths must match the CPU reference: the default
+        // global-table `adc` kernel AND the P0 per-cell shared-memory kernel
+        // (`scan_shared`). For Flat, `scan_shared` falls back to `scan`.
+        let mut max_global = 0.0f32;
+        let mut max_shared = 0.0f32;
         let mut checked = 0usize;
         for q in &queries {
             // A mid-range nprobe so tables/residuals + candidate gather are all
             // exercised (not the trivial 1-cell or all-cells extremes).
             let plan = index.plan(q, NLIST / 2);
             let cpu = plan.cpu_scan();
-            let gpu_dist = scanner.scan(&plan);
-            assert_eq!(cpu.len(), gpu_dist.len());
-            for (a, b) in cpu.iter().zip(&gpu_dist) {
-                max_abs = max_abs.max((a - b).abs());
+            let gpu_global = scanner.scan(&plan);
+            let gpu_shared = scanner.scan_shared(&plan);
+            assert_eq!(cpu.len(), gpu_global.len());
+            assert_eq!(cpu.len(), gpu_shared.len());
+            for i in 0..cpu.len() {
+                max_global = max_global.max((cpu[i] - gpu_global[i]).abs());
+                max_shared = max_shared.max((cpu[i] - gpu_shared[i]).abs());
             }
             checked += cpu.len();
         }
         eprintln!(
-            "  {refine:?}: GPU vs CPU ADC max abs diff = {max_abs:.3e} over {checked} candidate distances"
+            "  {refine:?}: GPU vs CPU ADC max abs diff = global {max_global:.3e}, shared {max_shared:.3e} over {checked} candidate distances"
         );
         assert!(
-            max_abs <= 1e-3,
-            "{refine:?}: GPU candidate distance diverges from CPU reference by {max_abs}"
+            max_global <= 1e-3,
+            "{refine:?}: global-table GPU distance diverges from CPU reference by {max_global}"
+        );
+        assert!(
+            max_shared <= 1e-3,
+            "{refine:?}: shared-memory GPU distance diverges from CPU reference by {max_shared}"
         );
     }
+}
+
+/// (6) PQ benefits from low intrinsic dimension. On isotropic data (independent
+/// subspaces) PQ has nothing to compress and recall is poor (~0.48); on
+/// embedding-like LOW-RANK data (points near a `rank`-dim manifold, `rank << dim`)
+/// recall improves (~0.55) — but only modestly, because a RANDOMLY oriented basis
+/// smears the rank-16 signal across all m subspaces, so per-subspace codebooks
+/// can't fully exploit it. Closing the gap to a strong recall needs OPQ (a learned
+/// rotation that aligns residuals to the PQ subspaces) — see TODO(opq). This test
+/// pins the honest baseline: low-rank beats PQ's isotropic worst case; OPQ is the
+/// lever for the rest.
+#[test]
+fn ivf_pq_recall_low_rank_beats_isotropic() {
+    let Some(gpu) = gpu_or_skip("ivf_pq_recall_low_rank_beats_isotropic") else {
+        return;
+    };
+    // dim=128 / rank=16 mirrors the prompt's embedding example (1/8 intrinsic).
+    const LN: usize = 20_000;
+    const LDIM: usize = 128;
+    const LRANK: usize = 16;
+    const LNLIST: usize = 64;
+    const LCLUST: usize = 50;
+    const LM: usize = 16;
+    const JIT: f32 = 0.05;
+
+    let scanner = GpuIvfScanner::new(&gpu);
+    let cfg = |refine| IvfPqConfig {
+        nlist: LNLIST,
+        kmeans_iters: 20,
+        nbits: 8,
+        refine,
+        train_sample: 0,
+        seed: TRAIN_SEED,
+    };
+
+    // Isotropic clustered corpus — PQ's worst case (within-cluster spread is
+    // full-rank Gaussian, nothing for the subspace codebooks to exploit).
+    let iso =
+        dataset::clustered_collection("iso", LN, LDIM, Metric::L2, LCLUST, JIT, CORPUS_SEED);
+    let iso_q = dataset::clustered_queries(N_QUERIES, LDIM, LCLUST, JIT, QUERY_SEED);
+    let iso_idx = IvfPqIndex::train(&iso, cfg(Refine::Pq { m: LM })).unwrap();
+    let iso_oracle = CpuFlatIndex::new(&iso);
+    let iso_recall = mean_recall(&scanner, &iso_idx, &iso_oracle, &iso_q, LNLIST);
+
+    // Low-rank (embedding-like) corpus — within-cluster variation lives near a
+    // 16-dim manifold, so PQ resolves distances finely.
+    let lr = dataset::low_rank_collection(
+        "lr", LN, LDIM, Metric::L2, LRANK, LCLUST, JIT, CORPUS_SEED,
+    );
+    let lr_q = dataset::low_rank_queries(N_QUERIES, LDIM, LRANK, LCLUST, JIT, QUERY_SEED);
+    let lr_idx = IvfPqIndex::train(&lr, cfg(Refine::Pq { m: LM })).unwrap();
+    let lr_oracle = CpuFlatIndex::new(&lr);
+    let lr_recall = mean_recall(&scanner, &lr_idx, &lr_oracle, &lr_q, LNLIST);
+
+    eprintln!(
+        "  IVFPQ recall@{K} (full probe, m={LM}, dim={LDIM}): isotropic={iso_recall:.3}  low-rank(rank={LRANK})={lr_recall:.3}"
+    );
+    // Honest baseline for plain PQ (no OPQ): low-rank clears 0.50 and beats the
+    // isotropic worst case. OPQ is the lever that would push this toward 0.85+.
+    assert!(
+        lr_recall >= 0.50,
+        "low-rank PQ recall should clear 0.50 (OPQ is the lever for higher), got {lr_recall}"
+    );
+    assert!(
+        lr_recall > iso_recall,
+        "low-rank recall should beat isotropic ({lr_recall:.3} vs {iso_recall:.3})"
+    );
 }
 
 /// (5) Scaling proof: at small nprobe the candidate set is a small fraction of n.
