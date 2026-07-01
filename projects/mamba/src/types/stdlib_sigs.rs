@@ -2751,6 +2751,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     StdlibSig {
         module: "email.utils",
         qualifier: "",
+        name: "localtime",
+        kind: SigKind::ModuleFn,
+        params: &[p("dt", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.utils",
+        qualifier: "",
         name: "parseaddr",
         kind: SigKind::ModuleFn,
         params: &[p("addr", CoreTy::Str)],
@@ -6362,6 +6370,15 @@ mod tests {
         assert_eq!(sig.params[0].ty, CoreTy::Tuple);
         assert_eq!(sig.params[1].name, "charset");
         assert_eq!(sig.params[1].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_email_utils_localtime_dt_wall_overrides_unknown_row() {
+        let sig = get("email.utils", "", "localtime").expect("email.utils.localtime row present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::ModuleFn);
+        assert_eq!(sig.params[0].name, "dt");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
     }
 
     #[test]
