@@ -33,7 +33,7 @@ for i in $(seq 1 40); do curl -sf $LOOM/healthz>/dev/null 2>&1 && curl -sf $SL/h
 "$VENV/bin/python" apps/loom/tests/integration/bidi_worker.py 7464 >$d/pyworker.log 2>&1 &
 sleep 1
 echo "=== submit two tasks (upper + echo) through the schema layer to the Python bidi worker ==="
-printf 'hello world' | curl -s -X PUT $KEEP/v1/inputs/g -H 'content-type: application/octet-stream' --data-binary @- >/dev/null
+printf 'hello world' | curl -s -X PUT $KEEP/inputs/g -H 'content-type: application/octet-stream' --data-binary @- >/dev/null
 curl -s -X POST $LOOM/runs -H 'content-type: application/json' \
   -d '{"run_id":"p1","nodes":[{"id":"a","task_name":"upper","input_refs":["g"]},{"id":"b","task_name":"echo","input_refs":["g"]}]}' -w ' submit[%{http_code}]'; echo
 ok=0

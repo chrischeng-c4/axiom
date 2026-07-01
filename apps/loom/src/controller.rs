@@ -642,7 +642,7 @@ async fn completion_consumer(
             return;
         }
     };
-    let url = format!("{relay_base}/v1/{subject}/consume");
+    let url = format!("{relay_base}/{subject}/consume");
     let idle = std::time::Duration::from_millis(200);
     eprintln!("loom: consuming completions from {url} (bidi /consume)");
     loop {
