@@ -72,7 +72,6 @@ changes:
       .scss.js, removes the JS style import, and links the CSS from previews.
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
