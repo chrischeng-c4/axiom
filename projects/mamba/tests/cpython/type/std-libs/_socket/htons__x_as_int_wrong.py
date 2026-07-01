@@ -9,7 +9,6 @@
 # case = "htons__x_as_int_wrong"
 # subject = "_socket.htons(x: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

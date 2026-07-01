@@ -9,7 +9,6 @@
 # case = "FragmentBuilder__init__context_as_Node_wrong"
 # subject = "xml.dom.expatbuilder.FragmentBuilder.__init__(context: Node)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

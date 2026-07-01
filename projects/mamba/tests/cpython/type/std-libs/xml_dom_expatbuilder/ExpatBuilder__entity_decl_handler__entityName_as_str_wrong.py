@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__entity_decl_handler__entityName_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.entity_decl_handler(entityName: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

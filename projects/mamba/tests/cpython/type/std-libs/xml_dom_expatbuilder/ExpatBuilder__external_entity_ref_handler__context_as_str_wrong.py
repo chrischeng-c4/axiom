@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__external_entity_ref_handler__context_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.external_entity_ref_handler(context: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

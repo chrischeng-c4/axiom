@@ -9,7 +9,6 @@
 # case = "Namespaces__install__parser_as_XMLParserType_wrong"
 # subject = "xml.dom.expatbuilder.Namespaces.install(parser: XMLParserType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

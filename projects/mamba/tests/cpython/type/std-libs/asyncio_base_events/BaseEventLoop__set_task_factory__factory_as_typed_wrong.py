@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__set_task_factory__factory_as_typed_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.set_task_factory(factory: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

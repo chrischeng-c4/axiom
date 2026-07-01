@@ -9,12 +9,10 @@
 # case = "CCompiler__execute__func_as_Callable_wrong"
 # subject = "distutils.ccompiler.CCompiler.execute(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.CCompiler.execute(func: Callable); call it with the wrong type.
 

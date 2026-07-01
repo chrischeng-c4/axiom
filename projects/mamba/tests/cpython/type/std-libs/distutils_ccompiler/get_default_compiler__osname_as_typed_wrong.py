@@ -9,7 +9,6 @@
 # case = "get_default_compiler__osname_as_typed_wrong"
 # subject = "distutils.ccompiler.get_default_compiler(osname: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

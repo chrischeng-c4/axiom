@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__start_doctype_decl_handler__doctypeName_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.start_doctype_decl_handler(doctypeName: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

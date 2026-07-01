@@ -9,12 +9,10 @@
 # case = "BaseEventLoop__run_in_executor__executor_as_typed_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.run_in_executor(executor: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed executor"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed executor
 # mamba-strict-type: TypeError
 """Type wall: asyncio.base_events.BaseEventLoop.run_in_executor(executor: typed); call it with the wrong type.
 
