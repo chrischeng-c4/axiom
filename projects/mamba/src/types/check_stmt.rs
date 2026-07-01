@@ -21,13 +21,10 @@ impl TypeChecker {
     /// `obj.method(arg)` can resolve a `Method` signature and apply the same
     /// guarded scalar check.
     ///
-    /// The import-time qualifier in `import_origins` only reflects the *curated*
-    /// table (see `is_known_stdlib_class`), so generated stdlib classes are bound
-    /// with an empty qualifier and the old `qual == cls` test misses them. We
-    /// therefore consult the sig table directly: `cls` must be a from-imported
-    /// name (present in `import_origins`) whose `(module, cls)` owns a `Method`
-    /// row. A from-imported *module function* never owns a `Method` row keyed on
-    /// its own name, so this never mis-binds a module fn as an instance class.
+    /// `cls` must be a from-imported name (present in `import_origins`) whose
+    /// `(module, cls)` owns a `Method` row. A from-imported *module function*
+    /// never owns a `Method` row keyed on its own name, so this never mis-binds a
+    /// module fn as an instance class.
     fn stdlib_method_class(&self, cls: &str) -> Option<String> {
         use super::stdlib_sigs::{SigKind, STDLIB_SIGS};
         use super::stdlib_sigs_generated::STDLIB_SIGS_GENERATED;
