@@ -45,8 +45,8 @@ Reads the current issue phase and picks up where the chain left off.
 | `td_reviewed` | Legacy reviewed phase: continue to `aw td gen`; EC and code-check gates decide whether another TD iteration is needed |
 | `td_revised` | Legacy phase: run `aw td review <slug> --spec-path <path>` and follow the emitted envelope |
 | `cb_genned` | Run `aw td fill` to fill HANDWRITE markers |
-| `cb_filled` | Run `aw td merge`; local code-check already passed, and EC/health decide the next iteration |
-| `cb_reviewed` | Legacy reviewed phase: run `aw td merge` |
+| `cb_filled` | Run `aw td code-check <slug>`; terminal code-check commits closure, and EC/health decide the next iteration |
+| `cb_reviewed` | Legacy reviewed phase: run `aw td code-check <slug>` |
 | `td_merged` | Already done — report success |
 
 3. For phases that need the spec_path, find it by scanning `projects/agentic-workflow/tech-design/` in the current checkout for `.md` files with `fill_sections` in their frontmatter.

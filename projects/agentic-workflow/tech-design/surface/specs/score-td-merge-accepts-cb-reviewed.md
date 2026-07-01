@@ -12,9 +12,9 @@ capability_refs:
 
 # Score TD Merge — Accept cb_reviewed Phase
 
-Fixes the one-line gap in the `aw td merge` accepted-phase guard: after
+Fixes the one-line gap in the `aw td code-check` accepted-phase guard: after
 `aw cb review --apply` advances phase to `cb_reviewed` and dispatches
-`aw td merge`, the guard previously rejected `cb_reviewed` because it was
+`aw td code-check`, the guard previously rejected `cb_reviewed` because it was
 never added to the accepted set. This spec adds `cb_reviewed` to the guard,
 updates the comment, and adds a regression test.
 
@@ -26,16 +26,16 @@ updates the comment, and adds a regression test.
 $id: score-td-merge-accepts-cb-reviewed#schema
 title: "TD Merge — Accepted Pre-Merge Phases"
 description: >
-  Defines the exhaustive set of issue phases that `aw td merge` will accept
+  Defines the exhaustive set of issue phases that `aw td code-check` will accept
   before proceeding. Any phase not in this set causes the guard to emit an error
   envelope and exit without merging.
   @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#schema IssuePhase for the full IssuePhase enum.
   @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli for the `cb_reviewed` phase advance.
 definitions:
-  TdMergeAcceptedPhase:
+  TdCodeCheckAcceptedPhase:
     type: string
     description: >
-      The set of IssuePhase values that pass the guard in `run_merge`
+      The set of IssuePhase values that pass the guard in `run_code_check`
       (projects/agentic-workflow/src/cli/td.rs). Each value listed here is a distinct
       pre-merge terminal state that legitimately precedes `td_merged`.
     enum:
@@ -73,7 +73,7 @@ nodes:
     label: "Emit error envelope; exit 0"
   proceed_to_merge:
     kind: process
-    label: "Continue run_merge: check impl, copy specs, close issue"
+    label: "Continue run_code_check: check impl, copy specs, close issue"
   merge_done:
     kind: terminal
     label: "Emit done envelope; phase → td_merged"
@@ -92,7 +92,7 @@ edges:
 flowchart TD
     read_phase([Read issue phase from frontmatter]) --> is_accepted_phase{"phase ∈ accepted set?"}
     is_accepted_phase -->|"no — not in accepted set"| emit_error(["Emit error envelope; exit 0"])
-    is_accepted_phase -->|"yes — cb_genned | cb_filled | cb_reviewed | td_gen_coded | td_reviewed | td_merged"| proceed_to_merge["Continue run_merge: check impl, copy specs, close issue"]
+    is_accepted_phase -->|"yes — cb_genned | cb_filled | cb_reviewed | td_gen_coded | td_reviewed | td_merged"| proceed_to_merge["Continue run_code_check: check impl, copy specs, close issue"]
     proceed_to_merge --> merge_done(["Emit done envelope; phase → td_merged"])
 ```
 ## Test Plan: td-merge-accepts-cb-reviewed
@@ -104,7 +104,7 @@ id: td-merge-accepts-cb-reviewed-test-plan
 requirements:
   r1_cb_reviewed_merges:
     id: R1
-    text: "aw td merge accepts cb_reviewed phase and proceeds to td_merged without error"
+    text: "aw td code-check accepts cb_reviewed phase and proceeds to td_merged without error"
     kind: functional
     risk: high
     verify: test
@@ -122,7 +122,7 @@ requirements:
     verify: inspection
   r4_end_to_end_chain:
     id: R4
-    text: "cb gen → cb fill → cb review → td merge chain completes end-to-end when phase is cb_reviewed"
+    text: "cb gen → cb fill → cb review → td code-check chain completes end-to-end when phase is cb_reviewed"
     kind: functional
     risk: high
     verify: test
@@ -169,7 +169,7 @@ relations:
 requirementDiagram
     requirement R1 {
       id: R1
-      text: "aw td merge accepts cb_reviewed phase; proceeds to td_merged"
+      text: "aw td code-check accepts cb_reviewed phase; proceeds to td_merged"
       risk: high
       verifymethod: test
     }
@@ -187,7 +187,7 @@ requirementDiagram
     }
     requirement R4 {
       id: R4
-      text: "cb gen → cb fill → cb review → td merge chain completes end-to-end"
+      text: "cb gen → cb fill → cb review → td code-check chain completes end-to-end"
       risk: high
       verifymethod: test
     }
@@ -231,7 +231,7 @@ changes:
     section: logic
     impl_mode: hand-written
     description: >
-      Add `cb_reviewed` to the accepted-phase guard in `run_merge` at lines
+      Add `cb_reviewed` to the accepted-phase guard in `run_code_check` at lines
       2520-2532. Extend the multi-condition if-check with `&& phase != "cb_reviewed"`.
       Update the comment block at lines 2516-2519 to document `cb_reviewed` as
       a valid accepted phase produced by `aw cb review --apply` (Phase 4).
@@ -247,7 +247,7 @@ changes:
       and asserting the guard accepts all valid pre-merge phases without regression
       (R1, R2, R4). Tests:
         - test_cb_reviewed_merge_succeeds: set up a minimal worktree fixture with
-          phase=cb_reviewed, call run_merge, assert exit 0 and phase advances to
+          phase=cb_reviewed, call run_code_check, assert exit 0 and phase advances to
           td_merged.
         - test_cb_genned_still_accepted: phase=cb_genned proceeds through guard
           without error envelope (R2).
@@ -271,7 +271,7 @@ changes:
       Update the `LifecycleTrailer` enum to add `CbReview` (serialised as
       "Cb-Review") if not already present from projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md.
       Update the Logic section (`cb-fill-control-flow`) to annotate the
-      `emit_dispatch_td_merge` terminal with a note that the caller may also
+      `emit_dispatch_td_code_check` terminal with a note that the caller may also
       arrive here from `cb_reviewed` phase (dispatched by aw cb review --apply).
       Update the Changes section entry for `td.rs` to reference
       @spec projects/agentic-workflow/tech-design/surface/specs/score-td-merge-accepts-cb-reviewed.md#logic for the guard fix.
@@ -282,7 +282,7 @@ changes:
     impl_mode: hand-written
     description: >
       This spec file. Defines the authoritative accepted-phase set for
-      `aw td merge` (TdMergeAcceptedPhase schema), the logic flowchart
+      `aw td code-check` (TdCodeCheckAcceptedPhase schema), the logic flowchart
       for the guard, the test plan, and the file change list.
   - action: annotate
     section: schema

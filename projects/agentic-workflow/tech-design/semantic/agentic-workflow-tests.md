@@ -186,7 +186,7 @@ semantic_domain:
           - name: "td_dispatch_chain_test"
             kind: "module"
             public: false
-          - name: "td_merge_atomic_test"
+          - name: "td_no_merge_test"
             kind: "module"
             public: false
         source_evidence_node:

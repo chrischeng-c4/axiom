@@ -76,9 +76,8 @@ pub struct CbFillArgs {
     // Force brief mode to re-enumerate even if a dispatch was emitted earlier.
     #[arg(long)]
     pub force: bool,
-    // Skip the cb review step after marker fill completes; dispatch
-    // `aw td merge` directly. Backward-compat path for callers that
-    // don't yet need the CB CRRR loop.
+    // Deprecated compatibility no-op. The CB review loop and TD merge phase
+    // are retired; terminal completion runs through `aw td code-check`.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
     #[arg(long)]
     pub no_review: bool,
@@ -178,7 +177,23 @@ pub struct CbCheckArgs {
 pub async fn run(args: CbArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
-        CbCommand::Check(_) => {}
+        CbCommand::Check(a) => {
+            if let Some(target) = a.target.as_deref() {
+                let target_path = std::path::Path::new(target);
+                let target_abs = if target_path.is_absolute() {
+                    target_path.to_path_buf()
+                } else {
+                    project_root.join(target_path)
+                };
+                if !target_abs.exists() {
+                    crate::cli::workflow_guard::guard_issue_mutation(
+                        &project_root,
+                        Some(("cb", target)),
+                    )
+                    .await?;
+                }
+            }
+        }
         CbCommand::GenSource(_) => {}
         CbCommand::Gen(a) => {
             if let Some(slug) = a.slug.as_deref() {
@@ -199,7 +214,7 @@ pub async fn run(args: CbArgs) -> Result<()> {
     match args.command {
         CbCommand::Gen(a) => run_gen(a).await,
         CbCommand::GenSource(a) => run_gen_source(a),
-        CbCommand::Check(a) => run_check(a),
+        CbCommand::Check(a) => run_check(a).await,
         CbCommand::Claim(a) => run_claim(a).await,
         CbCommand::Fill(a) => crate::cli::cb_fill::run(a).await,
     }
@@ -4168,7 +4183,20 @@ pub fn signature_only() -> Result<()>
 // the historical audit behaviour.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-pub fn run_check(args: CbCheckArgs) -> Result<()> {
+pub async fn run_check(args: CbCheckArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    if let Some(target) = args.target.as_deref() {
+        let target_path = std::path::Path::new(target);
+        let target_abs = if target_path.is_absolute() {
+            target_path.to_path_buf()
+        } else {
+            project_root.join(target_path)
+        };
+        if !target_abs.exists() && run_check_lifecycle_terminal(&project_root, target).await? {
+            return Ok(());
+        }
+    }
+
     let td_args = AuditArgs {
         path: args.target,
         json: args.json,
@@ -4177,6 +4205,124 @@ pub fn run_check(args: CbCheckArgs) -> Result<()> {
         drift: false,
     };
     td::run_audit(td_args)
+}
+
+async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str) -> Result<bool> {
+    use crate::cli::remote_push::maybe_push_remote;
+    use crate::issues::types::{td_phase, ShipStatus};
+    use crate::issues::{IssueBackend, IssuePatch, IssueState, LocalBackend};
+
+    let backend = LocalBackend::from_project_root(project_root);
+    let Some(issue) = backend.get(slug).await? else {
+        return Ok(false);
+    };
+    let phase = issue.phase.as_deref().unwrap_or("");
+    if !td_phase::is_terminal_code_checkable(phase) {
+        let env = serde_json::json!({
+            "action": "error",
+            "slug": slug,
+            "message": format!(
+                "cannot complete code-check: phase is '{}', expected '{}', '{}', or legacy '{}'",
+                phase,
+                td_phase::CB_FILLED,
+                td_phase::CB_GENNED,
+                td_phase::LEGACY_TD_GEN_CODED,
+            ),
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        return Ok(true);
+    }
+
+    if let Err(message) = crate::cli::cb_fill::run_cb_check_gate(project_root).await {
+        let env = serde_json::json!({
+            "action": "error",
+            "slug": slug,
+            "message": format!("td code-check gate failed: {}", message),
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        return Ok(true);
+    }
+
+    let patch = IssuePatch {
+        state: Some(IssueState::Closed),
+        phase: Some(td_phase::TD_MERGED.to_string()),
+        ship_status: Some(ShipStatus::Step1Shipped),
+        add_labels: vec![format!("phase:{}", td_phase::TD_MERGED)],
+        remove_labels: vec![
+            crate::cli::workflow_guard::LOCK_LABEL.to_string(),
+            crate::cli::workflow_guard::TD_LOCK_LABEL.to_string(),
+            crate::cli::workflow_guard::CB_LOCK_LABEL.to_string(),
+            format!("phase:{}", td_phase::CB_GENNED),
+            format!("phase:{}", td_phase::CB_FILLED),
+            "phase:td_gen_coded".to_string(),
+        ],
+        flagged_sections: Some(vec![]),
+        validation_errors: Some(vec![]),
+        ..Default::default()
+    };
+    backend.update(slug, &patch).await?;
+    let closed_issue = backend
+        .get(slug)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("closed issue '{}' was not readable", slug))?;
+    let closed_path = backend.issue_path(&closed_issue);
+    maybe_push_remote(project_root, &closed_path, slug).await?;
+
+    commit_cb_code_check_terminal(project_root, slug, &closed_path)?;
+    crate::cli::workflow_guard::complete_issue_lock(project_root, slug, "td").await?;
+
+    let env = serde_json::json!({
+        "action": "done",
+        "slug": slug,
+        "message": "td code-check passed; lifecycle closed",
+    });
+    println!("{}", serde_json::to_string(&env)?);
+    Ok(true)
+}
+
+fn commit_cb_code_check_terminal(
+    project_root: &std::path::Path,
+    slug: &str,
+    issue_path: &std::path::Path,
+) -> Result<()> {
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    if issue_path.starts_with(project_root) {
+        let add = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(project_root)
+            .args(["add"])
+            .arg(issue_path)
+            .output()
+            .context("git add")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add '{}' failed: {}",
+                issue_path.display(),
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
+    }
+    let msg = format!(
+        "cb({slug}) - code-check passed\n\n\
+         Lifecycle-Slug: {slug}\n\
+         Work-Item: {slug}\n\
+         Lifecycle-Stage: {}",
+        crate::issues::types::lifecycle_trailer::CB_CODE_CHECK,
+    );
+    let out = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["commit", "--allow-empty", "-m", &msg])
+        .output()
+        .context("git commit")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "{}",
+            String::from_utf8_lossy(&out.stderr).trim().to_string()
+        );
+    }
+    Ok(())
 }
 
 // ── cb claim ────────────────────────────────────────────────────────

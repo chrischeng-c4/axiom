@@ -6958,8 +6958,8 @@ fn lifecycle_action_for_work_item(
         ),
         Some("cb_filled") | Some("cb_reviewed") => (
             CapabilityActionKind::RunTd,
-            format!("aw td merge {work_item}"),
-            "active WI has generated and checked implementation output; merge TD lifecycle"
+            format!("aw td code-check {work_item}"),
+            "active WI has generated and checked implementation output; run terminal code-check"
                 .to_string(),
         ),
         Some("td_merged") => (

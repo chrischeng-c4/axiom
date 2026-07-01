@@ -205,7 +205,7 @@ stateDiagram-v2
 | Structured issue = hard gate | [structured-issue](logic/structured-issue.md) R2 | `init_change` rejects non-structured |
 | 1 issue : 1 worktree : 1 change | [issue-centric-workflow](logic/issue-centric-workflow.md) R3 | `init_change` checks `issue.phase` |
 | change_id = issue slug | [issue-centric-workflow](logic/issue-centric-workflow.md) R4 | Deterministic derivation |
-| Mainthread drives merge decisions | CLAUDE.md | Read verdict → /aw:merge or /aw:revise |
+| Mainthread drives merge decisions | CLAUDE.md | Read verdict → /aw:td-code-check or /aw:revise |
 | Executor is per-action | CLAUDE.md | Call `score workflow <action>` → read `executor` field |
 | Subagent failure → mainthread takes over | CLAUDE.md | Mainthread reads same `prompt_path` |
 

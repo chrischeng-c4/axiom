@@ -1,6 +1,6 @@
 ---
 name: aw:cb:fill
-description: Fill HANDWRITE markers via mainthread per-marker loop, then td code-check + td merge. Mainthread-only; no subagent dispatch.
+description: Fill HANDWRITE markers via mainthread per-marker loop, then terminal td code-check. Mainthread-only; no subagent dispatch.
 user-invocable: true
 amended_by: aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
 amended_on: "2026-05-03"
@@ -10,7 +10,7 @@ amended_on: "2026-05-03"
 
 Fills HANDWRITE-BEGIN/END marker blocks emitted by `aw td gen` for a
 tech-design slug, then drives the td-fill lifecycle: brief → mainthread
-per-marker fill loop → `aw td code-check` → `aw td merge`.
+per-marker fill loop → `aw td code-check`.
 
 > **Mainthread-only model (post Phase-2).** The `aw-cb-handwriter`
 > subagent has been removed atomically with this skill rewrite.
@@ -44,7 +44,7 @@ flowchart TD
     F[aw td fill brief] --> L[mainthread: write expected marker payload]
     L -->|"hook/mainthread runs exact expected command"| L
     L -->|"all markers filled"| G[aw td code-check slug]
-    G -- pass --> M[aw td merge → done]
+    G -- pass --> M[done]
     G -- fail --> ROLL[mainthread: re-write the offending marker payload + re-apply]
     ROLL --> G
 ```
@@ -61,13 +61,9 @@ For each envelope:
   next marker or, after the last marker, a dispatch to `aw td code-check <slug>`.
 
 - **dispatch with `agent: null` and `command: "aw td code-check"`** — run
-  from mainthread directly. On pass it advances phase to `cb_filled` and emits
-  the next dispatch (`aw td merge`). On fail it emits an `error` envelope;
-  mainthread re-writes the offending marker payload and re-applies.
-
-- **dispatch with `agent: null` and `command: "aw td merge"`** — run
-  from mainthread; merges the approved branch, closes the issue, and
-  cleans up lifecycle state.
+  from mainthread directly. On pass it commits terminal lifecycle closure. On
+  fail it emits an `error` envelope; mainthread re-writes the offending marker
+  payload and re-applies.
 
 - **dispatch with `agent: ...` non-null** — legacy compatibility. Treat
   as if `agent` were `null` and run `invoke.command` directly. The
@@ -110,14 +106,14 @@ unrelated to your changes, the gate will not pass cleanly. Bypass:
 mainthread commits `Lifecycle-Stage: Cb-Fill` directly via
 `git commit --allow-empty -m "Lifecycle-Stage: Cb-Fill\n\nNo new HANDWRITE markers introduced by this spec."`,
 manually advances `phase: cb_genned → cb_filled` in the issue
-frontmatter, then runs `aw td merge` to finish.
+frontmatter, then runs `aw td code-check <slug>` to finish.
 
 ### What `aw td fill` does
 
 - **Brief mode** (default): walks the current checkout for HANDWRITE-BEGIN/END
   blocks, builds a fill brief, prints the brief to stdout, and emits
   a dispatch envelope with `agent: null` and a marker list. Zero-marker
-  fast-path emits a direct dispatch to `aw td merge`.
+  fast-path emits a direct dispatch to `aw td code-check <slug>`.
 - **Apply mode** (`--apply --marker <id>`): merges the expected marker payload
   into the matching HANDWRITE block, commits the marker and WI projection, then
   locks the next marker or dispatches `aw td code-check <slug>`.

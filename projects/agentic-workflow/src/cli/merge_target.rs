@@ -1,10 +1,10 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/merge_target.md#source
 // CODEGEN-BEGIN
-//! Resolve the target branch for `aw td merge` and `aw wi merge`.
+//! Resolve the target branch for legacy merge-style workflows.
 //!
 //! Resolution order (per the Logic flowchart in the TD spec
 //! `projects/agentic-workflow/tech-design/core/issues/issue-merge-target.md`):
-//!   1. `override_branch` (CLI `--target-branch`) if `Some` → return verbatim
+//!   1. `override_branch` (legacy CLI `--target-branch`) if `Some` → return verbatim
 //!      (no branch-exists check; user is explicit).
 //!   2. `frontmatter_branch` (`issue.target_branch`) if `Some` → return it.
 //!   3. `git -C <project_root> rev-parse --abbrev-ref HEAD` → if output ≠ "HEAD"

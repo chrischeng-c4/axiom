@@ -135,7 +135,7 @@ pub struct CbFillArgs {
     #[arg(long)]
     pub force: bool,
     // Skip the cb review step after marker fill completes; dispatch
-    // `aw td merge` directly. Backward-compat path for callers that
+    // `aw td code-check` directly. Backward-compat path for callers that
     // don't yet need the CB CRRR loop.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
     #[arg(long)]

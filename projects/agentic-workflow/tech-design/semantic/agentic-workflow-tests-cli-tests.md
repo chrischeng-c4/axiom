@@ -52,7 +52,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests/cli/tests"
-      - path: "projects/agentic-workflow/tests/cli/tests/td_merge_atomic_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["test_case"]
@@ -303,7 +303,7 @@ semantic_domain:
           - name: "smoke_lifecycle_trailers_compile"
             kind: "function"
             public: false
-          - name: "smoke_is_mergeable_includes_new_phases"
+          - name: "smoke_is_terminal_code_checkable_includes_new_phases"
             kind: "function"
             public: false
         source_evidence_node:
@@ -680,7 +680,7 @@ semantic_domain:
           - name: "test_lifecycle_trailer_cb_fill_variant"
             kind: "function"
             public: false
-          - name: "test_td_merge_accepts_cb_filled"
+          - name: "test_td_code_check_accepts_cb_filled"
             kind: "function"
             public: false
           - name: "test_brief_mode_envelope_shape"
@@ -787,7 +787,7 @@ tests:
   evidence:
     source_tests:
       - path: "projects/agentic-workflow/tests/cli/tests/td_check_test.rs"
-      - path: "projects/agentic-workflow/tests/cli/tests/td_merge_atomic_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/recovery_flow_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/standardize_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_namespace_test.rs"
@@ -819,7 +819,7 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/agentic-workflow/tests/cli/tests/td_merge_atomic_test.rs"
+  - path: "projects/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
     action: modify
     section: schema
     description: |

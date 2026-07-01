@@ -106,10 +106,10 @@ pub struct Issue {
     /// Loop-fill retry counter. Reset to None on successful phase advance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill_retry_count: Option<u8>,
-    /// Ship lifecycle status for merged issues.
+    /// Ship lifecycle status for issues closed by the terminal TD/CB action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ship_status: Option<ShipStatus>,
-    /// Git commit hash written by validate when phase first advances to td_merged.
+    /// Git commit hash written by the terminal TD/CB lifecycle action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ship_commit: Option<String>,
     /// Git commit hash recorded when validate confirmed regen byte-equivalence.
@@ -267,15 +267,15 @@ pub enum IssueType {
     Test,
 }
 
-/// Tracks the ship lifecycle of a merged issue.
+/// Tracks the ship lifecycle of an issue closed by the terminal TD/CB action.
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/issues/types.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShipStatus {
-    /// No td_merged yet (default).
+    /// No terminal code-check yet (default).
     #[default]
     NotStarted,
-    /// Validate advanced phase to td_merged and recorded the merge commit.
+    /// Terminal code-check advanced phase to td_merged and recorded a commit.
     Step1Shipped,
     /// Validate verified that gen-code output is byte-equivalent to current source.
     LoopClosed,
@@ -343,19 +343,19 @@ pub mod td_phase {
         matches!(phase, CB_GENNED | LEGACY_TD_GEN_CODED)
     }
 
-    /// True if `phase` is acceptable as a pre-merge phase. The lifecycle is
-    /// linear (no review/revise ceremony), so the only pre-merge phases are
+    /// True if `phase` is acceptable as a pre-terminal-code-check phase. The
+    /// lifecycle is linear (no review/revise ceremony), so the only such phases are
     /// `cb_genned` / `td_gen_coded` (HANDWRITE gap, no fill needed) and
     /// `cb_filled` (markers filled).
     ///
     /// @spec projects/agentic-workflow/tech-design/logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md
-    pub fn is_mergeable(phase: &str) -> bool {
+    pub fn is_terminal_code_checkable(phase: &str) -> bool {
         matches!(phase, CB_GENNED | LEGACY_TD_GEN_CODED | CB_FILLED)
     }
 
     /// The next lifecycle command for a phase, in the linear lifecycle
     /// `td_inited -> create -> td_created -> gen -> cb_genned -> fill ->
-    /// cb_filled -> merge`. There is no review/revise hop. `td_inited`
+    /// cb_filled -> code-check`. There is no review/revise hop. `td_inited`
     /// (create is the externally-driven entry) and `td_merged` (terminal)
     /// have no successor.
     ///
@@ -363,8 +363,8 @@ pub mod td_phase {
     pub fn next_phase_command(phase: &str) -> Option<&'static str> {
         match normalize(phase) {
             TD_CREATED => Some("aw td gen"),
-            CB_GENNED => Some("aw cb fill"),
-            CB_FILLED => Some("aw td merge"),
+            CB_GENNED => Some("aw td fill"),
+            CB_FILLED => Some("aw td code-check"),
             _ => None,
         }
     }
@@ -382,24 +382,24 @@ pub mod td_phase {
 
         // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R2
         #[test]
-        fn is_mergeable_linear_only_genned_filled() {
-            assert!(is_mergeable(CB_GENNED));
-            assert!(is_mergeable(CB_FILLED));
-            assert!(is_mergeable(LEGACY_TD_GEN_CODED));
-            // Non-code / pre-gen phases are not mergeable.
-            assert!(!is_mergeable(TD_INITED));
-            assert!(!is_mergeable(TD_CREATED));
-            // Removed CRRR phases are no longer mergeable.
-            assert!(!is_mergeable("cb_reviewed"));
-            assert!(!is_mergeable("cb_revised"));
-            assert!(!is_mergeable("cb_arbitrated"));
+        fn terminal_code_checkable_linear_only_genned_filled() {
+            assert!(is_terminal_code_checkable(CB_GENNED));
+            assert!(is_terminal_code_checkable(CB_FILLED));
+            assert!(is_terminal_code_checkable(LEGACY_TD_GEN_CODED));
+            // Non-code / pre-gen phases are not terminal code-checkable.
+            assert!(!is_terminal_code_checkable(TD_INITED));
+            assert!(!is_terminal_code_checkable(TD_CREATED));
+            // Removed CRRR phases are no longer terminal code-checkable.
+            assert!(!is_terminal_code_checkable("cb_reviewed"));
+            assert!(!is_terminal_code_checkable("cb_revised"));
+            assert!(!is_terminal_code_checkable("cb_arbitrated"));
         }
 
         // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R3
         #[test]
         fn next_phase_command_is_linear() {
-            assert_eq!(next_phase_command(CB_GENNED), Some("aw cb fill"));
-            assert_eq!(next_phase_command(CB_FILLED), Some("aw td merge"));
+            assert_eq!(next_phase_command(CB_GENNED), Some("aw td fill"));
+            assert_eq!(next_phase_command(CB_FILLED), Some("aw td code-check"));
             // Entry and terminal phases have no successor.
             assert_eq!(next_phase_command(TD_INITED), None);
             assert_eq!(next_phase_command(TD_MERGED), None);
@@ -423,7 +423,8 @@ pub mod lifecycle_trailer {
     pub const CB_GEN: &str = "Cb-Gen";
     /// Legacy trailer — readers MUST accept it; writers MUST NOT emit it.
     pub const LEGACY_TD_GEN_CODE: &str = "Td-GenCode";
-    pub const TD_MERGE: &str = "Td-Merge";
+    /// Canonical terminal trailer written by `aw td code-check <slug>`.
+    pub const CB_CODE_CHECK: &str = "Cb-CodeCheck";
     /// Phase 2: TD spec adopted from disk; phase bypassed to td_reviewed.
     /// @spec projects/agentic-workflow/tech-design/surface/specs/score-recovery-verbs.md#schema
     pub const TD_CLAIM: &str = "Td-Claim";

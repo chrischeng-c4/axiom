@@ -28,7 +28,7 @@ estimate, unresolved HITL state, and target artifact routes. The requested
 artifact type must be allowed by one of those routes before a client can create
 or revise that artifact.
 
-The existing `aw wi -> aw td -> aw cb -> aw td merge` path is the code route
+The existing `aw wi -> aw td -> aw cb -> aw td code-check` path is the code route
 inside this generalized model. It is not a special exception; it is one route
 where WorkItem admission permits TD authoring and code artifact generation.
 

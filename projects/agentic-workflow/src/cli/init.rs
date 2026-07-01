@@ -20,7 +20,6 @@ const SKILL_GEMINI_EXPLORE_SPECS: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-gemini-explore-specs/SKILL.md");
 const SKILL_GEMINI_EXPLORE_CODEBASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-gemini-explore-codebase/SKILL.md");
-const SKILL_MERGE: &str = include_str!("../../templates/cli/mainthread/skills/aw-merge/SKILL.md");
 const SKILL_CAPABILITY: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-capability/SKILL.md");
 const SKILL_WI: &str = include_str!("../../templates/cli/mainthread/skills/aw-wi/SKILL.md");
@@ -1304,7 +1303,6 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         ("aw-codex-review", SKILL_CODEX_REVIEW),
         ("aw-gemini-explore-specs", SKILL_GEMINI_EXPLORE_SPECS),
         ("aw-gemini-explore-codebase", SKILL_GEMINI_EXPLORE_CODEBASE),
-        ("aw-merge", SKILL_MERGE),
         ("aw-capability", SKILL_CAPABILITY),
         ("aw-wi", SKILL_WI),
         ("aw-build-debug", SKILL_BUILD_DEBUG),
@@ -2022,7 +2020,6 @@ auth_method = "cli"
             "aw-codex-review",
             "aw-gemini-explore-specs",
             "aw-gemini-explore-codebase",
-            "aw-merge",
             "aw-capability",
             "aw-wi",
             "aw-standardize",

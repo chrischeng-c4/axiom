@@ -135,7 +135,7 @@ pub async fn run_arbitrate(args: CbArbitrateArgs) -> Result<()> {
     eprintln!("  Checkout: {}", worktree.display());
     eprintln!("  {} review rounds completed without approval.", count);
     eprintln!("  Read the # Reviews section in the issue, then either:");
-    eprintln!("    - Force-merge:  aw td merge {}", args.slug);
+    eprintln!("    - Force-merge:  aw td code-check {}", args.slug);
     eprintln!(
         "    - Send-back:    edit the flagged HANDWRITE blocks back to stubs and re-run `aw cb fill {}`",
         args.slug

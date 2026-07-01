@@ -37,7 +37,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/cb_review.rs` generat
 //! files and the filled HANDWRITE markers within them. Apply mode reads
 //! `.aw/payloads/<slug>/cb_review.md`, validates the verdict, commits a
 //! `Lifecycle-Stage: Cb-Review` trailer, advances phase to `cb_reviewed`, and
-//! emits the next dispatch (td merge / cb revise / cb arbitrate).
+//! emits the next dispatch (td code-check / cb revise / cb arbitrate).
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
 
@@ -350,7 +350,7 @@ async fn run_review_apply(args: CbReviewArgs) -> Result<()> {
             "agent": serde_json::Value::Null,
             "slug": args.slug,
             "invoke": {
-                "command": "aw td merge",
+                "command": "aw td code-check",
                 "args": { "slug": args.slug },
             },
         }),
