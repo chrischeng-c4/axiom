@@ -9,12 +9,11 @@
 # case = "parse_headers__fp_as_SupportsReadline_wrong"
 # subject = "http.client.parse_headers(fp: SupportsReadline)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fp"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/http/client.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fp
 # mamba-strict-type: TypeError
 """Type wall: http.client.parse_headers(fp: SupportsReadline); call it with the wrong type.
 
