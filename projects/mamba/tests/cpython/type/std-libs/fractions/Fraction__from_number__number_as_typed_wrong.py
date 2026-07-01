@@ -9,7 +9,6 @@
 # case = "Fraction__from_number__number_as_typed_wrong"
 # subject = "fractions.Fraction.from_number(number: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"
