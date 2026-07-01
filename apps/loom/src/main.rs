@@ -41,6 +41,12 @@ enum Command {
     /// Render loom's container image Dockerfile — `--variant source` (dev/CI
     /// from-source build) or `release` (fetch a published binary). Offline.
     Dockerfile(DockerfileArgs),
+    /// Render loom's k8s artifacts (`crd render`, `operator render`,
+    /// `instance render --profile`) or run the operator (`operator run`).
+    K8s(K8sArgs),
+    /// Upload a raft snapshot to a backup destination via `service-backup`
+    /// (`--source <file> --destination <uri>`). Needs an `operator` build.
+    Backup(BackupArgs),
     /// Print agent-facing LLM topics — offline, no server. `outline` (default)
     /// maps the topics; pass a topic id for detail (`--format json` for a
     /// machine-readable form).
@@ -146,6 +152,108 @@ struct DockerfileRenderArgs {
 enum DockerfileVariant {
     Source,
     Release,
+}
+
+/// `loom k8s …` flags. Kubernetes output split by lifecycle layer: `crd`
+/// (cluster-scoped API), `operator` (control plane), `instance` (app CR).
+#[derive(clap::Args)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sCmd {
+    /// The cluster-scoped `Loom` CRD.
+    Crd(K8sCrdArgs),
+    /// The operator control plane (RBAC + Deployment), or run it.
+    Operator(K8sOperatorArgs),
+    /// An app-namespace `Loom` custom resource.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    cmd: K8sCrdCmd,
+}
+#[derive(Subcommand)]
+enum K8sCrdCmd {
+    /// Print (or write with `--out`) the CRD YAML.
+    Render(K8sOutArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    cmd: K8sOperatorCmd,
+}
+#[derive(Subcommand)]
+enum K8sOperatorCmd {
+    /// Print (or write) the operator manifests (RBAC + Deployment).
+    Render(K8sOperatorRenderArgs),
+    /// Run the reconcile controller (needs an `operator` build + a cluster).
+    Run,
+}
+#[derive(clap::Args)]
+struct K8sOperatorRenderArgs {
+    /// Namespace to deploy the operator control plane into.
+    #[arg(long, default_value = "loom-system")]
+    namespace: String,
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    cmd: K8sInstanceCmd,
+}
+#[derive(Subcommand)]
+enum K8sInstanceCmd {
+    /// Print (or write) a `Loom` CR for a deployment profile.
+    Render(K8sInstanceRenderArgs),
+}
+#[derive(clap::Args)]
+struct K8sInstanceRenderArgs {
+    /// Deployment profile: dev / staging / prod / template.
+    #[arg(long, value_enum, default_value_t = K8sProfile::Dev)]
+    profile: K8sProfile,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    namespace: Option<String>,
+    #[arg(long)]
+    image: Option<String>,
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum K8sProfile {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+#[derive(clap::Args)]
+struct K8sOutArgs {
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+/// `loom backup` flags.
+#[derive(clap::Args)]
+struct BackupArgs {
+    /// Snapshot file to upload (the controller's `runs.snapshot.json`).
+    #[arg(long)]
+    source: PathBuf,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, `gs://bucket/prefix`.
+    #[arg(long)]
+    destination: String,
+    /// Prune uploaded objects older than this many seconds.
+    #[arg(long)]
+    max_age_secs: Option<u64>,
 }
 
 /// `loom llm` flags.
@@ -320,6 +428,10 @@ fn main() -> anyhow::Result<()> {
         Command::Spec(args) => spec(args),
         // Offline: emit a container image Dockerfile, no server.
         Command::Dockerfile(args) => dockerfile(args),
+        // k8s artifacts (offline render, except `operator run`).
+        Command::K8s(args) => k8s(args),
+        // Upload a raft snapshot via service-backup (operator build only).
+        Command::Backup(args) => backup(args),
         // Offline: render the in-code topics, no runtime/server/I/O beyond stdout.
         Command::Llm(args) => {
             let out = cli_std::llm::render(
@@ -503,6 +615,127 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
         out.push('\n');
     }
     out
+}
+
+/// `loom k8s …` — render the cluster-scoped CRD, the operator control plane, or
+/// an app-namespace `Loom` CR; or run the reconcile controller. The render paths
+/// are offline (templates baked into the binary); `operator run` needs a build
+/// with the `operator` feature and a cluster.
+fn k8s(args: K8sArgs) -> anyhow::Result<()> {
+    match args.cmd {
+        K8sCmd::Crd(a) => match a.cmd {
+            K8sCrdCmd::Render(o) => write_or_print(o.out.as_deref(), "crd.yaml", &crd_yaml()),
+        },
+        K8sCmd::Operator(a) => match a.cmd {
+            K8sOperatorCmd::Render(r) => {
+                let yaml = render_operator_yaml(&r.namespace);
+                write_or_print(r.out.as_deref(), "operator.yaml", &yaml)
+            }
+            K8sOperatorCmd::Run => block_on(run_operator()),
+        },
+        K8sCmd::Instance(a) => match a.cmd {
+            K8sInstanceCmd::Render(r) => {
+                let yaml = render_instance_yaml(&r);
+                write_or_print(r.out.as_deref(), "loom.yaml", &yaml)
+            }
+        },
+    }
+}
+
+/// The `Loom` CRD YAML. An `operator` build derives it from the source type; a
+/// serving build emits the checked-in copy (kept in sync by the operator build).
+#[cfg(feature = "operator")]
+fn crd_yaml() -> String {
+    loom::operator::crd_yaml()
+}
+#[cfg(not(feature = "operator"))]
+fn crd_yaml() -> String {
+    include_str!("../k8s/operator/crd.yaml").to_string()
+}
+
+/// The operator control plane (RBAC + Deployment) as one document, with the
+/// system namespace substituted.
+fn render_operator_yaml(namespace: &str) -> String {
+    let sub = |s: &str| {
+        s.replace("namespace: loom-system", &format!("namespace: {namespace}"))
+            .replace("name: loom-system", &format!("name: {namespace}"))
+    };
+    format!(
+        "{}\n---\n{}",
+        sub(include_str!("../k8s/operator/rbac.yaml")).trim_end(),
+        sub(include_str!("../k8s/operator/deployment.yaml")).trim_end(),
+    )
+}
+
+/// Run the reconcile controller. Only an `operator` build links the kube runtime.
+#[cfg(feature = "operator")]
+fn run_operator() -> impl std::future::Future<Output = anyhow::Result<()>> {
+    tracing_subscriber::fmt().init();
+    loom::operator::run()
+}
+#[cfg(not(feature = "operator"))]
+async fn run_operator() -> anyhow::Result<()> {
+    anyhow::bail!(
+        "this loom build has no operator support; rebuild with `--features operator` \
+         (the published operator image includes it)"
+    )
+}
+
+/// A `Loom` custom resource for a deployment profile — dev (single-node),
+/// staging / prod (raft HA), or a REPLACE_ME template.
+fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let (name, ns, image, body) = match args.profile {
+        K8sProfile::Dev => ("loom", "default", "loom:dev".to_string(), Profile::Dev),
+        K8sProfile::Staging => ("loom", "loom-staging", "loom:staging".to_string(), Profile::Staging),
+        K8sProfile::Prod => ("loom", "loom", format!("loom:{version}"), Profile::Prod),
+        K8sProfile::Template => (
+            "REPLACE_ME__NAME",
+            "REPLACE_ME__NAMESPACE",
+            "REPLACE_ME__REGISTRY/loom:REPLACE_ME__TAG".to_string(),
+            Profile::Template,
+        ),
+    };
+    let name = args.name.as_deref().unwrap_or(name);
+    let ns = args.namespace.as_deref().unwrap_or(ns);
+    let image = args.image.as_deref().unwrap_or(&image);
+    let mut y = format!(
+        "apiVersion: loom.dev/v1alpha1\nkind: Loom\nmetadata:\n  name: {name}\n  namespace: {ns}\nspec:\n  image: {image}\n"
+    );
+    match body {
+        Profile::Dev => y.push_str(
+            "  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  storage: 2Gi\n",
+        ),
+        Profile::Staging => y.push_str(
+            "  shardCount: 1\n  replicasPerShard: 3\n  voterCount: 3\n  storage: 5Gi\n  cpu: \"500m\"\n  memory: 512Mi\n",
+        ),
+        Profile::Prod => y.push_str(
+            "  imagePullPolicy: Always\n  shardCount: 1\n  replicasPerShard: 3\n  voterCount: 3\n  storage: 10Gi\n  cpu: \"1\"\n  memory: 1Gi\n  gcRetentionSecs: 86400\n  backupSchedule: \"0 */6 * * *\"\n  backupDestination: \"s3://loom-backups/prod\"\n",
+        ),
+        Profile::Template => y.push_str(
+            "  imagePullPolicy: IfNotPresent\n  shardCount: 1\n  replicasPerShard: REPLACE_ME__REPLICAS\n  voterCount: REPLACE_ME__VOTERS\n  storage: REPLACE_ME__STORAGE\n",
+        ),
+    }
+    y
+}
+
+enum Profile {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+/// `loom backup` — upload a raft snapshot via `service-backup` (operator build).
+#[cfg(feature = "operator")]
+fn backup(args: BackupArgs) -> anyhow::Result<()> {
+    loom::operator::backup::run(&args.source, &args.destination, args.max_age_secs)
+}
+#[cfg(not(feature = "operator"))]
+fn backup(_args: BackupArgs) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "this loom build has no backup support; rebuild with `--features operator`"
+    )
 }
 
 /// Write `body` to `out` (a file, or `<dir>/<name>` when `out` is a directory),
