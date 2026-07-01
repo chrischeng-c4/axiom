@@ -1232,6 +1232,14 @@ unsafe extern "C" fn ssl_socket_init(_self_v: MbValue, _args: MbValue) -> MbValu
         "SSLSocket does not have a public constructor. Instances are returned by SSLContext.wrap_socket().")
 }
 
+unsafe extern "C" fn certificate_init(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_err("TypeError", "cannot create '_ssl.Certificate' instances")
+}
+
+unsafe extern "C" fn certificate_public_bytes(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+}
+
 unsafe extern "C" fn ssl_wrapper_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     unsafe {
         super::super::rc::retain_if_ptr(self_v);
@@ -1393,6 +1401,22 @@ fn register_ssl_classes() {
             methods.insert(name.to_string(), MbValue::from_func(addr));
         }
         super::super::class::mb_class_register("MemoryBIO", Vec::new(), methods);
+    }
+
+    // _ssl.Certificate: public runtime surface exists in CPython 3.12, but
+    // instances are created by the TLS stack rather than public construction.
+    {
+        let init_addr = certificate_init as usize;
+        let public_bytes_addr = certificate_public_bytes as usize;
+        super::super::module::register_variadic_func(init_addr as u64);
+        super::super::module::register_variadic_func(public_bytes_addr as u64);
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        methods.insert("__init__".to_string(), MbValue::from_func(init_addr));
+        methods.insert(
+            "public_bytes".to_string(),
+            MbValue::from_func(public_bytes_addr),
+        );
+        super::super::class::mb_class_register("Certificate", Vec::new(), methods);
     }
 }
 
@@ -1799,5 +1823,13 @@ pub fn register() {
     });
 
     register_ssl_classes();
+    let mut ssl_accel_attrs = attrs.clone();
+    ssl_accel_attrs.insert("Certificate".into(), new_str("Certificate"));
+    super::register_module("_ssl", ssl_accel_attrs);
+    let ssl_accel_module = super::super::module::mb_import(new_str("_ssl"));
+    unsafe {
+        super::super::rc::retain_if_ptr(ssl_accel_module);
+    }
+    attrs.insert("_ssl".into(), ssl_accel_module);
     super::register_module("ssl", attrs);
 }
