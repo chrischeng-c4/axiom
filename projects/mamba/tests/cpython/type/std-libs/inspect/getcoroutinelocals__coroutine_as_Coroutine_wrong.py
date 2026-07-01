@@ -9,12 +9,10 @@
 # case = "getcoroutinelocals__coroutine_as_Coroutine_wrong"
 # subject = "inspect.getcoroutinelocals(coroutine: Coroutine)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coroutine"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed coroutine
 # mamba-strict-type: TypeError
 """Type wall: inspect.getcoroutinelocals(coroutine: Coroutine); call it with the wrong type.
 
