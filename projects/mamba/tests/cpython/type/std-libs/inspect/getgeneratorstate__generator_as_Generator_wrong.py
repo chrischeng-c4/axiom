@@ -9,12 +9,10 @@
 # case = "getgeneratorstate__generator_as_Generator_wrong"
 # subject = "inspect.getgeneratorstate(generator: Generator)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed generator"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed generator
 # mamba-strict-type: TypeError
 """Type wall: inspect.getgeneratorstate(generator: Generator); call it with the wrong type.
 
