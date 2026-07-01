@@ -36,17 +36,18 @@ fn r2_help_lists_standard_verbs() {
     }
 }
 
-/// R3: `beam --help` lists the placeholder service verbs, and each exits with a
-/// consistent non-zero code and a tracked `not implemented yet: …` diagnostic.
+/// R3: `beam --help` lists the service verbs. `serve` is now a real subcommand
+/// (the HTTP/2 service — see `tests/service.rs`); the remaining five are still
+/// placeholders that exit non-zero with a tracked `not implemented yet: …`
+/// diagnostic.
 #[test]
 fn r3_help_lists_placeholder_verbs_and_they_are_tracked() {
     let help = stdout_of(&["--help"]);
     for verb in ["serve", "collections", "index", "query", "dockerfile", "k8s"] {
-        assert!(help.contains(verb), "help missing placeholder verb `{verb}`:\n{help}");
+        assert!(help.contains(verb), "help missing service verb `{verb}`:\n{help}");
     }
 
     for (verb, detail) in [
-        ("serve", "HTTP service shell"),
         ("collections", "collection lifecycle"),
         ("index", "index lifecycle"),
         ("query", "vector query"),

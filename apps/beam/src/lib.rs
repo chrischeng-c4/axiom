@@ -32,6 +32,9 @@
 //!   model persist to disk (GPU buffers are rebuilt on load, never persisted), so
 //!   a cold start reproduces identical search results without retraining.
 //! - [`bench`] — the `beam bench` GPU-vs-CPU parity + timing demo.
+//! - [`service`] — the `beam serve` HTTP/2 (h2c) service layer: the in-process
+//!   collection registry + REST routes that turn the engine into a callable
+//!   vector database.
 
 pub mod bench;
 pub mod collection;
@@ -40,6 +43,7 @@ pub mod gpu;
 pub mod index;
 pub mod payload;
 pub mod persist;
+pub mod service;
 
 /// One-line statement of the Beam/Lumen boundary, surfaced in `beam llm`.
 pub const LUMEN_BOUNDARY: &str =

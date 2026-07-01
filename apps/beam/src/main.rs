@@ -76,9 +76,14 @@ const TOPICS: &[cli_std::llm::Topic] = &[
             - `beam llm --topic <t>` — offline docs (this).\n\
             - `beam upgrade [--version <tag>] [--check]` — self-update from beam@* releases.\n\
             - `beam issue search|view|create` — read/file project:beam issues.\n\n\
-            Service verbs — placeholders in this first slice; each exits with a \
-            tracked 'not implemented yet: …' diagnostic until the feature lands:\n\
-            - `beam serve` — HTTP service shell.\n\
+            Service:\n\
+            - `beam serve [--addr host:port]` — run the HTTP/2 (h2c) vector DB. \
+            REST under /v1/collections: create/list/drop a collection, batch-upsert \
+            or delete vectors, and run a (optionally filtered) k-NN query; /healthz \
+            + /readyz probes. Query uses the GPU flat path when a GPU is present, \
+            else the CPU flat oracle.\n\n\
+            Service verbs still to land — placeholders that exit with a tracked \
+            'not implemented yet: …' diagnostic until the feature lands:\n\
             - `beam collections` — collection lifecycle.\n\
             - `beam index` — index lifecycle.\n\
             - `beam query` — vector query.\n\
@@ -123,8 +128,9 @@ enum Command {
     /// which GPU beam is using. wgpu selects it automatically: Metal on Apple
     /// Silicon, Vulkan on NVIDIA/Linux, DX12 on Windows (one WGSL codebase).
     Info,
-    /// (Placeholder) HTTP service shell — not implemented yet in this slice.
-    Serve,
+    /// Run the HTTP/2 (h2c) vector-database service: bind `--addr`, print the
+    /// bound address, and serve the REST API (collections + query) until Ctrl-C.
+    Serve(ServeArgs),
     /// (Placeholder) Vector collection lifecycle — not implemented yet.
     Collections,
     /// (Placeholder) ANN index lifecycle — not implemented yet.
@@ -204,6 +210,15 @@ struct BenchArgs {
     /// segment); both are removed afterward.
     #[arg(long = "persist")]
     persist: Option<String>,
+}
+
+/// `beam serve` flags.
+#[derive(Args)]
+struct ServeArgs {
+    /// Address to bind, `host:port`. Port `0` (the default) picks an ephemeral
+    /// port; the bound address is printed on startup.
+    #[arg(long, default_value = "127.0.0.1:0")]
+    addr: String,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
@@ -341,8 +356,12 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        // Real HTTP/2 (h2c) vector-database service. Blocks until Ctrl-C/SIGTERM.
+        Command::Serve(args) => {
+            block_on(beam::service::serve(&args.addr))?;
+            Ok(ExitCode::SUCCESS)
+        }
         // Placeholder service verbs — a consistent, tracked "not built yet" exit.
-        Command::Serve => Ok(placeholder("HTTP service shell")),
         Command::Collections => Ok(placeholder("collection lifecycle")),
         Command::Index => Ok(placeholder("index lifecycle")),
         Command::Query => Ok(placeholder("vector query")),

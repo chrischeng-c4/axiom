@@ -47,6 +47,21 @@ pollster = "0.4"
 serde = { workspace = true }
 bincode = "1.3"
 
+# --- HTTP/2 (h2c) service layer (`beam serve`) ---------------------------
+# The REST front end over the engine: an axum router served on one port as
+# HTTP/1.1 + HTTP/2 cleartext (h2c) via the shared `h2c` transport (the
+# ecosystem's drop-in for `axum::serve`, which is HTTP/1 only — same setup as
+# keep / loom / lumen). `axum` / `serde_json` inherit the workspace pins so the
+# shared Cargo.lock stays single-versioned.
+axum = { workspace = true }
+serde_json = { workspace = true }
+h2c = { path = "../../libs/h2c", features = ["server"] }
+
+[dev-dependencies]
+# Drive the `beam serve` REST API end-to-end from the service integration test
+# (plain HTTP/1.1 over the h2c port). Inherits the workspace reqwest pin.
+reqwest = { workspace = true }
+
 [features]
 default = []
 # Online (HTTPS) paths of the standard CLI ops: `upgrade` self-install and
