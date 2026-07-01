@@ -9,12 +9,11 @@
 # case = "ip_interface__address_as_typed_wrong"
 # subject = "ipaddress.ip_interface(address: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ipaddress.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address
 # mamba-strict-type: TypeError
 """Type wall: ipaddress.ip_interface(address: typed); call it with the wrong type.
 
