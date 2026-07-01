@@ -9,7 +9,6 @@
 # case = "getincrementaldecoder__encoding_as__BufferedEncoding_wrong"
 # subject = "codecs.getincrementaldecoder(encoding: _BufferedEncoding)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

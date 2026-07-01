@@ -9,7 +9,6 @@
 # case = "countOf__a_as_Iterable_wrong"
 # subject = "_operator.countOf(a: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

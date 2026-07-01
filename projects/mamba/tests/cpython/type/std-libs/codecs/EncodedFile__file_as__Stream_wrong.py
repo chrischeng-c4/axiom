@@ -9,7 +9,6 @@
 # case = "EncodedFile__file_as__Stream_wrong"
 # subject = "codecs.EncodedFile(file: _Stream)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

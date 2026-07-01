@@ -9,7 +9,6 @@
 # case = "different_locale__init__locale_as__LocaleType_wrong"
 # subject = "calendar.different_locale.__init__(locale: _LocaleType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

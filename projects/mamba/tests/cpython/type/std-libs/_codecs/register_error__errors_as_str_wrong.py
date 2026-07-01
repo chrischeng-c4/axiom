@@ -9,7 +9,6 @@
 # case = "register_error__errors_as_str_wrong"
 # subject = "_codecs.register_error(errors: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

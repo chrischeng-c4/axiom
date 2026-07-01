@@ -9,7 +9,6 @@
 # case = "StreamReaderWriter__seek__offset_as_int_wrong"
 # subject = "codecs.StreamReaderWriter.seek(offset: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

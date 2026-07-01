@@ -9,7 +9,6 @@
 # case = "Codec__encode__input_as_str_wrong"
 # subject = "codecs.Codec.encode(input: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

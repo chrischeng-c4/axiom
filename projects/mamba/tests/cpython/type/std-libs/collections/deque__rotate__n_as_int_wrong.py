@@ -9,7 +9,6 @@
 # case = "deque__rotate__n_as_int_wrong"
 # subject = "collections.deque.rotate(n: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

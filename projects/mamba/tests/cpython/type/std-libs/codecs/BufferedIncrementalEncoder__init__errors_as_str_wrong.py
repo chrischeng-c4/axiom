@@ -9,7 +9,6 @@
 # case = "BufferedIncrementalEncoder__init__errors_as_str_wrong"
 # subject = "codecs.BufferedIncrementalEncoder.__init__(errors: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

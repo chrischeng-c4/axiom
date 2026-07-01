@@ -9,7 +9,6 @@
 # case = "UserString____getitem____index_as_typed_wrong"
 # subject = "collections.UserString.__getitem__(index: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ascii_decode__data_as_ReadableBuffer_wrong"
 # subject = "_codecs.ascii_decode(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

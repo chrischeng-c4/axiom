@@ -9,7 +9,6 @@
 # case = "StreamWriter__init__stream_as__WritableStream_wrong"
 # subject = "codecs.StreamWriter.__init__(stream: _WritableStream)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

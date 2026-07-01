@@ -9,7 +9,6 @@
 # case = "TextCalendar__prmonth__theyear_as_int_wrong"
 # subject = "calendar.TextCalendar.prmonth(theyear: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

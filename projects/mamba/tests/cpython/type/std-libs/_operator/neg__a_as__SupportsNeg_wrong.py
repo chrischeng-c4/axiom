@@ -9,7 +9,6 @@
 # case = "neg__a_as__SupportsNeg_wrong"
 # subject = "_operator.neg(a: _SupportsNeg)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

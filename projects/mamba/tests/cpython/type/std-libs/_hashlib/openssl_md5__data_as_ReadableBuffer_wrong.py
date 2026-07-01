@@ -9,7 +9,6 @@
 # case = "openssl_md5__data_as_ReadableBuffer_wrong"
 # subject = "_hashlib.openssl_md5(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

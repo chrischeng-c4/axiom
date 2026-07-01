@@ -9,7 +9,6 @@
 # case = "UserString__ljust__width_as_int_wrong"
 # subject = "collections.UserString.ljust(width: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

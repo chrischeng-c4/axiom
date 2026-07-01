@@ -9,7 +9,6 @@
 # case = "namedtuple__typename_as_str_wrong"
 # subject = "collections.namedtuple(typename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "deque____mul____value_as_int_wrong"
 # subject = "collections.deque.__mul__(value: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "UserList__append__item_as__T_wrong"
 # subject = "collections.UserList.append(item: _T)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

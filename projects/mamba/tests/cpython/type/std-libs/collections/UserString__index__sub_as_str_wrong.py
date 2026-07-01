@@ -9,7 +9,6 @@
 # case = "UserString__index__sub_as_str_wrong"
 # subject = "collections.UserString.index(sub: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

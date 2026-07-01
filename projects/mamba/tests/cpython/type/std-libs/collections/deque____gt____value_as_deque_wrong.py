@@ -9,7 +9,6 @@
 # case = "deque____gt____value_as_deque_wrong"
 # subject = "collections.deque.__gt__(value: deque)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

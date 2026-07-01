@@ -9,7 +9,6 @@
 # case = "Counter__update__iterable_as_Iterable_wrong"
 # subject = "collections.Counter.update(iterable: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

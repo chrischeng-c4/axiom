@@ -9,7 +9,6 @@
 # case = "is_not_none__a_as_typed_wrong"
 # subject = "_operator.is_not_none(a: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

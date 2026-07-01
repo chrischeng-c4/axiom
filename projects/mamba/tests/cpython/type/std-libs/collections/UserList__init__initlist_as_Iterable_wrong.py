@@ -9,7 +9,6 @@
 # case = "UserList__init__initlist_as_Iterable_wrong"
 # subject = "collections.UserList.__init__(initlist: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

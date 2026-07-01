@@ -9,7 +9,6 @@
 # case = "strict_errors__exception_as_UnicodeError_wrong"
 # subject = "codecs.strict_errors(exception: UnicodeError)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "openssl_sha224__string_as_ReadableBuffer_wrong"
 # subject = "_hashlib.openssl_sha224(string: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

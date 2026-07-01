@@ -9,7 +9,6 @@
 # case = "ChainMap____getitem____key_as__KT_wrong"
 # subject = "collections.ChainMap.__getitem__(key: _KT)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

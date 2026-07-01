@@ -9,7 +9,6 @@
 # case = "Calendar__yeardayscalendar__year_as_int_wrong"
 # subject = "calendar.Calendar.yeardayscalendar(year: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

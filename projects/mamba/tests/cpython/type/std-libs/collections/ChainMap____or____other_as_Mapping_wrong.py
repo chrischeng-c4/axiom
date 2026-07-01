@@ -9,7 +9,6 @@
 # case = "ChainMap____or____other_as_Mapping_wrong"
 # subject = "collections.ChainMap.__or__(other: Mapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"
