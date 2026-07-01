@@ -9,7 +9,6 @@
 # case = "isclose__a_as__SupportsFloatOrIndex_wrong"
 # subject = "math.isclose(a: _SupportsFloatOrIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

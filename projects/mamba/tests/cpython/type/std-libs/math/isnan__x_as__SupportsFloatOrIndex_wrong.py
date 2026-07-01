@@ -9,7 +9,6 @@
 # case = "isnan__x_as__SupportsFloatOrIndex_wrong"
 # subject = "math.isnan(x: _SupportsFloatOrIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

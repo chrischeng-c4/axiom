@@ -9,7 +9,6 @@
 # case = "tanh__x_as__SupportsFloatOrIndex_wrong"
 # subject = "math.tanh(x: _SupportsFloatOrIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

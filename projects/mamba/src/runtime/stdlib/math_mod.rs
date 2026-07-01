@@ -71,8 +71,8 @@ macro_rules! dispatch_binary_number {
 }
 
 dispatch_unary_number!(dispatch_sqrt, mb_math_sqrt, "sqrt");
-dispatch_unary!(dispatch_floor, mb_math_floor);
-dispatch_unary!(dispatch_ceil, mb_math_ceil);
+dispatch_unary_number!(dispatch_floor, mb_math_floor, "floor");
+dispatch_unary_number!(dispatch_ceil, mb_math_ceil, "ceil");
 dispatch_unary!(dispatch_trunc, mb_math_trunc);
 dispatch_unary!(dispatch_fabs, mb_math_fabs);
 dispatch_unary!(dispatch_sin, mb_math_sin);
@@ -624,6 +624,12 @@ pub fn mb_math_factorial(val: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
+    if numeric_handle_kind(val).is_some() {
+        return raise_type_error(&format!(
+            "'{}' object cannot be interpreted as an integer",
+            super::super::builtins::value_type_name(val)
+        ));
+    }
     if let Some(n) = val.as_int() {
         if n < 0 {
             super::super::exception::mb_raise(
@@ -640,7 +646,10 @@ pub fn mb_math_factorial(val: MbValue) -> MbValue {
         let result: i64 = (1..=n).product();
         MbValue::from_int(result)
     } else {
-        MbValue::none()
+        raise_type_error(&format!(
+            "'{}' object cannot be interpreted as an integer",
+            super::super::builtins::value_type_name(val)
+        ))
     }
 }
 
@@ -890,14 +899,8 @@ pub fn mb_math_dist(p: MbValue, q: MbValue) -> MbValue {
 /// float as soon as a float appears. Mirrors CPython's
 /// "preserve int when possible" rule.
 pub fn mb_math_prod(iterable: MbValue, start: MbValue) -> MbValue {
-    let items = match iterable.as_ptr() {
-        Some(ptr) => unsafe {
-            match &(*ptr).data {
-                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                ObjData::Tuple(items) => items.clone(),
-                _ => return MbValue::none(),
-            }
-        },
+    let items = match extract_iterable_values_or_type_error(iterable) {
+        Some(items) => items,
         None => return MbValue::none(),
     };
 
@@ -919,7 +922,7 @@ pub fn mb_math_prod(iterable: MbValue, start: MbValue) -> MbValue {
             }
             acc_f *= f;
         } else {
-            return MbValue::none();
+            return raise_type_error("prod() can't multiply sequence by non-int of type");
         }
     }
     if promoted {
@@ -1391,6 +1394,26 @@ fn extract_seq_floats(val: MbValue) -> Option<Vec<f64>> {
         out.push(as_f64(v)?);
     }
     Some(out)
+}
+
+/// Extract any iterable for math.prod. List/Tuple stay fast; other iterables
+/// route through mb_iter so non-iterables leave a catchable TypeError.
+fn extract_iterable_values_or_type_error(val: MbValue) -> Option<Vec<MbValue>> {
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => return Some(lock.read().unwrap().to_vec()),
+                ObjData::Tuple(items) => return Some(items.clone()),
+                _ => {}
+            }
+        }
+    }
+
+    let iter_handle = super::super::iter::mb_iter(val);
+    if iter_handle.is_none() {
+        return None;
+    }
+    super::super::iter::drain_iter_to_vec(iter_handle)
 }
 
 #[cfg(test)]
