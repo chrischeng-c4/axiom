@@ -19,6 +19,7 @@
 //! @issue #170
 //! @issue #722
 //! @issue #757
+//! @issue #784
 
 use anyhow::{Context, Result};
 use std::collections::HashSet;
@@ -370,11 +371,13 @@ fn emit_declaration_tree(
         .canonicalize()
         .unwrap_or_else(|_| entry_path.to_path_buf());
     let mut entry_dts = None;
+    let mut pending_outputs = Vec::new();
+    let mut diagnostics = Vec::new();
 
     for module in modules {
         let source = std::fs::read_to_string(&module)
             .with_context(|| format!("reading {} for .d.ts", module.display()))?;
-        let dts = super::dts::emit_declarations(&source)
+        let emit = super::dts::emit_declarations_with_diagnostics(&source)
             .with_context(|| format!("emitting .d.ts for {}", module.display()))?;
         let module_canonical = module.canonicalize().unwrap_or_else(|_| module.clone());
         let dts_out = if module_canonical == entry_canonical {
@@ -385,6 +388,27 @@ fn emit_declaration_tree(
         if module_canonical == entry_canonical {
             entry_dts = Some(dts_out.clone());
         }
+        for diagnostic in emit.diagnostics {
+            diagnostics.push(format!(
+                "{}:{}:{}: {}",
+                module.display(),
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.message
+            ));
+        }
+        pending_outputs.push((dts_out, emit.text));
+    }
+
+    if !diagnostics.is_empty() {
+        anyhow::bail!(
+            "dts: isolatedDeclarations found {} error(s):\n  - {}",
+            diagnostics.len(),
+            diagnostics.join("\n  - ")
+        );
+    }
+
+    for (dts_out, dts) in pending_outputs {
         if let Some(parent) = dts_out.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;

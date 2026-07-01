@@ -12,6 +12,7 @@
 //!
 //! @issue #171
 //! @issue #722
+//! @issue #784
 
 use jet::bundler::types::OutputFormat;
 use jet::bundler::types::SourceMapOption;
@@ -374,6 +375,72 @@ fn untyped_export_fails_build() {
     assert!(
         msg.contains("isolatedDeclarations"),
         "error must explain the isolatedDeclarations requirement, got: {msg}"
+    );
+}
+
+#[test]
+fn dts_isolated_declarations_errors_are_aggregated() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "aggregate-errors-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const VERSION = "1.0.0";
+
+export function makeThing() {
+    return createThing();
+}
+
+export { Widget } from "./widget";
+"#,
+    );
+    write_file(
+        root,
+        "src/widget.ts",
+        r#"export class Widget {
+    load() {
+        return fetchWidget();
+    }
+
+    count = 1;
+}
+"#,
+    );
+
+    let err = build_library(lib_options(root))
+        .expect_err("all isolatedDeclarations errors should be reported together");
+    let msg = format!("{err:#}");
+
+    for expected in [
+        "src/index.ts",
+        "src/widget.ts",
+        "VERSION",
+        "makeThing",
+        "load",
+        "count",
+    ] {
+        assert!(
+            msg.contains(expected),
+            "aggregated error must include {expected:?}, got:\n{msg}"
+        );
+    }
+    assert!(
+        msg.contains("4 error(s)"),
+        "error count should include every invalid export, got:\n{msg}"
+    );
+    assert!(
+        !root.join("dist/index.d.ts").exists(),
+        "entry declaration must not be written after aggregate failure"
+    );
+    assert!(
+        !root.join("dist/widget.d.ts").exists(),
+        "re-export target declaration must not be written after aggregate failure"
     );
 }
 

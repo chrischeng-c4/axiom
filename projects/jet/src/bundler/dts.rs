@@ -27,10 +27,35 @@
 //!
 //! @issue #171
 //! @issue #722
+//! @issue #784
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use tree_sitter::Node;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclarationEmit {
+    pub(crate) text: String,
+    pub(crate) diagnostics: Vec<DtsDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DtsDiagnostic {
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+    pub(crate) message: String,
+}
+
+impl DtsDiagnostic {
+    fn new(node: Node, message: String) -> Self {
+        let position = node.start_position();
+        Self {
+            line: position.row + 1,
+            column: position.column + 1,
+            message,
+        }
+    }
+}
 
 /// Emit the `.d.ts` text for one library entry's source.
 ///
@@ -43,6 +68,18 @@ use tree_sitter::Node;
 /// return type is neither explicit nor locally inferable, cannot have its type
 /// emitted safely, so this returns `Err`.
 pub fn emit_declarations(entry_source: &str) -> Result<String> {
+    let emit = emit_declarations_with_diagnostics(entry_source)?;
+    if emit.diagnostics.is_empty() {
+        Ok(emit.text)
+    } else {
+        Err(anyhow!(format_diagnostics(&emit.diagnostics)))
+    }
+}
+
+/// Emit declaration text plus all isolatedDeclarations diagnostics for one
+/// source module. Fatal parser/setup errors still return `Err`; declaration
+/// contract violations are collected in source order.
+pub(crate) fn emit_declarations_with_diagnostics(entry_source: &str) -> Result<DeclarationEmit> {
     let mut parser = tree_sitter::Parser::new();
     let language: tree_sitter::Language = tree_sitter_typescript::LANGUAGE_TSX.into();
     parser
@@ -54,6 +91,7 @@ pub fn emit_declarations(entry_source: &str) -> Result<String> {
     let root = tree.root_node();
 
     let mut out = String::new();
+    let mut diagnostics = Vec::new();
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
         match child.kind() {
@@ -64,7 +102,7 @@ pub fn emit_declarations(entry_source: &str) -> Result<String> {
                 push_line(&mut out, node_text(child, entry_source).trim_end());
             }
             "export_statement" => {
-                emit_export_statement(child, entry_source, &mut out)?;
+                emit_export_statement(child, entry_source, &mut out, &mut diagnostics)?;
             }
             // Top-level (non-exported) declarations are NOT part of the public
             // API surface, so they are dropped from the `.d.ts`. The exception
@@ -77,11 +115,33 @@ pub fn emit_declarations(entry_source: &str) -> Result<String> {
         }
     }
 
-    Ok(out)
+    Ok(DeclarationEmit {
+        text: out,
+        diagnostics,
+    })
+}
+
+fn format_diagnostics(diagnostics: &[DtsDiagnostic]) -> String {
+    let mut message = format!(
+        "dts: isolatedDeclarations found {} error(s)",
+        diagnostics.len()
+    );
+    for diagnostic in diagnostics {
+        message.push_str(&format!(
+            "\n  - line {}:{}: {}",
+            diagnostic.line, diagnostic.column, diagnostic.message
+        ));
+    }
+    message
 }
 
 /// Emit one top-level `export_statement` into `out`.
-fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<()> {
+fn emit_export_statement(
+    node: Node,
+    source: &str,
+    out: &mut String,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<()> {
     // `export { A, B }` / `export { A } from "./x"` / `export type { … }` /
     // `export * from "./x"` — re-export forms have no inner declaration node.
     if let Some(line) = reexport_line(node, source) {
@@ -108,7 +168,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
             }
             "class_declaration" | "abstract_class_declaration" => {
                 let is_abstract = child.kind() == "abstract_class_declaration";
-                let decl = emit_class_declaration(child, source)?;
+                let decl = emit_class_declaration(child, source, diagnostics)?;
                 // Ambient classes are valid as `export declare class` /
                 // `export declare abstract class`; a default-exported class is
                 // emitted as `export default class` (no `declare` — TS forbids
@@ -125,13 +185,14 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
                 return Ok(());
             }
             "function_declaration" | "generator_function_declaration" => {
-                let sig = emit_function_signature(child, source)?;
-                let prefix = if is_default {
-                    "export default function "
-                } else {
-                    "export declare function "
-                };
-                push_line(out, &format!("{prefix}{sig};"));
+                if let Some(sig) = emit_function_signature(child, source, diagnostics)? {
+                    let prefix = if is_default {
+                        "export default function "
+                    } else {
+                        "export declare function "
+                    };
+                    push_line(out, &format!("{prefix}{sig};"));
+                }
                 return Ok(());
             }
             // `export function f(): R;` with no body already parses as a
@@ -148,7 +209,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
                 return Ok(());
             }
             "lexical_declaration" | "variable_declaration" => {
-                emit_value_declaration(child, source, out)?;
+                emit_value_declaration(child, source, out, diagnostics)?;
                 return Ok(());
             }
             // `export default <expr>` (identifier / call / object). Without an
@@ -241,7 +302,12 @@ fn first_named_child<'a>(node: Node<'a>) -> Option<Node<'a>> {
 ///
 /// isolatedDeclarations: each declarator must carry an explicit type
 /// annotation; otherwise we cannot emit its declared type without inference.
-fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<()> {
+fn emit_value_declaration(
+    node: Node,
+    source: &str,
+    out: &mut String,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<()> {
     // `const` / `let` / `var` keyword text precedes the declarators.
     let kind_kw = leading_value_keyword(node, source).unwrap_or("const");
 
@@ -250,10 +316,14 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
         if child.kind() != "variable_declarator" {
             continue;
         }
-        let name = child
-            .child_by_field_name("name")
-            .map(|n| node_text(n, source))
-            .ok_or_else(|| anyhow!("dts: export {kind_kw} without a name"))?;
+        let Some(name_node) = child.child_by_field_name("name") else {
+            diagnostics.push(DtsDiagnostic::new(
+                child,
+                format!("export {kind_kw} without a name"),
+            ));
+            continue;
+        };
+        let name = node_text(name_node, source);
         let type_node = child.child_by_field_name("type");
         match type_node {
             Some(t) => {
@@ -266,10 +336,13 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
                 );
             }
             None => {
-                return Err(anyhow!(
-                    "dts: isolatedDeclarations error — exported `{kind_kw} {name}` \
-                     lacks an explicit type annotation; add `: <Type>` so its \
-                     declaration can be emitted without type inference"
+                diagnostics.push(DtsDiagnostic::new(
+                    child,
+                    format!(
+                        "isolatedDeclarations error — exported `{kind_kw} {name}` \
+                         lacks an explicit type annotation; add `: <Type>` so its \
+                         declaration can be emitted without type inference"
+                    ),
                 ));
             }
         }
@@ -285,11 +358,19 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
 /// shapes, the emitter also infers a small set of local return expressions
 /// (`number`, `string`, `boolean`, primitive unions, and `void`) instead of
 /// silently turning them into implicit `any`.
-fn emit_function_signature(node: Node, source: &str) -> Result<String> {
-    let name = node
-        .child_by_field_name("name")
-        .map(|n| node_text(n, source))
-        .ok_or_else(|| anyhow!("dts: exported function without a name"))?;
+fn emit_function_signature(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        diagnostics.push(DtsDiagnostic::new(
+            node,
+            "exported function without a name".to_string(),
+        ));
+        return Ok(None);
+    };
+    let name = node_text(name_node, source);
 
     let type_params = node
         .child_by_field_name("type_parameters")
@@ -303,16 +384,23 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
         Some(n) => node_text(n, source).to_string(),
         None => infer_function_return_type(node, source)?
             .map(|ty| format!(": {ty}"))
-            .ok_or_else(|| {
-                anyhow!(
-                    "dts: isolatedDeclarations error — exported function `{name}` \
-                     lacks an explicit or locally inferable return type; add \
-                     `: <Type>` so its declaration can be emitted safely"
-                )
-            })?,
+            .unwrap_or_else(|| {
+                diagnostics.push(DtsDiagnostic::new(
+                    node,
+                    format!(
+                        "isolatedDeclarations error — exported function `{name}` \
+                         lacks an explicit or locally inferable return type; add \
+                         `: <Type>` so its declaration can be emitted safely"
+                    ),
+                ));
+                String::new()
+            }),
     };
+    if ret.is_empty() && !matches!(node.child_by_field_name("return_type"), Some(_)) {
+        return Ok(None);
+    }
 
-    Ok(format!("{name}{type_params}{params}{ret}"))
+    Ok(Some(format!("{name}{type_params}{params}{ret}")))
 }
 
 /// Emit a class declaration reduced to its public ambient surface.
@@ -332,7 +420,11 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
 ///   * `private` / `protected` accessibility members are dropped, as are
 ///     `#private` fields and methods (not part of the public ambient surface
 ///     for an isolatedDeclarations-style emit).
-fn emit_class_declaration(node: Node, source: &str) -> Result<String> {
+fn emit_class_declaration(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<String> {
     let name = node
         .child_by_field_name("name")
         .map(|n| node_text(n, source))
@@ -366,7 +458,7 @@ fn emit_class_declaration(node: Node, source: &str) -> Result<String> {
     let mut members = String::new();
     let mut cursor = body.walk();
     for member in body.named_children(&mut cursor) {
-        if let Some(line) = reduce_class_member(member, source)? {
+        if let Some(line) = reduce_class_member(member, source, diagnostics)? {
             members.push_str("    ");
             members.push_str(&line);
             members.push('\n');
@@ -384,10 +476,14 @@ fn emit_class_declaration(node: Node, source: &str) -> Result<String> {
 /// Reduce one class-body member to its ambient signature line (without the
 /// trailing newline / leading indentation), or `None` when the member is
 /// dropped (`private` / `protected` / `#private`, or an unreducible shape).
-fn reduce_class_member(node: Node, source: &str) -> Result<Option<String>> {
+fn reduce_class_member(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
     let line = match node.kind() {
-        "method_definition" => reduce_method(node, source),
-        "public_field_definition" => reduce_field(node, source),
+        "method_definition" => reduce_method(node, source, diagnostics),
+        "public_field_definition" => reduce_field(node, source, diagnostics),
         // index signatures (`[key: string]: T;`) are already declaration-only.
         "index_signature" => Ok(Some(format!(
             "{};",
@@ -402,7 +498,11 @@ fn reduce_class_member(node: Node, source: &str) -> Result<Option<String>> {
 
 /// Reduce a `method_definition` to a signature line. Drops the body and
 /// `async`; keeps `static` / `get` / `set` / `readonly` modifiers.
-fn reduce_method(node: Node, source: &str) -> Result<Option<String>> {
+fn reduce_method(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
     // `#private` methods are never part of the public surface.
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(None);
@@ -460,14 +560,25 @@ fn reduce_method(node: Node, source: &str) -> Result<Option<String>> {
         None if is_constructor || is_setter => String::new(),
         None => infer_function_return_type(node, source)?
             .map(|ty| format!(": {ty}"))
-            .ok_or_else(|| {
-                anyhow!(
-                    "dts: isolatedDeclarations error — exported class member `{name}` \
-                     lacks an explicit or locally inferable return type; add \
-                     `: <Type>` so its declaration can be emitted safely"
-                )
-            })?,
+            .unwrap_or_else(|| {
+                diagnostics.push(DtsDiagnostic::new(
+                    node,
+                    format!(
+                        "isolatedDeclarations error — exported class member `{name}` \
+                         lacks an explicit or locally inferable return type; add \
+                         `: <Type>` so its declaration can be emitted safely"
+                    ),
+                ));
+                String::new()
+            }),
     };
+    if ret.is_empty()
+        && !is_constructor
+        && !is_setter
+        && node.child_by_field_name("return_type").is_none()
+    {
+        return Ok(None);
+    }
 
     Ok(Some(format!("{modifiers}{name}{optional}{params}{ret};")))
 }
@@ -869,7 +980,11 @@ fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, 
 /// Reduce a `public_field_definition` to a `field: Type;` line, dropping the
 /// initializer. Keeps `static` / `readonly`. Drops `private` / `protected` /
 /// `#private` fields.
-fn reduce_field(node: Node, source: &str) -> Result<Option<String>> {
+fn reduce_field(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(None);
     };
@@ -918,11 +1033,15 @@ fn reduce_field(node: Node, source: &str) -> Result<Option<String>> {
         .map(|n| node_text(n, source).trim().to_string())
         .unwrap_or_default();
     if ty.is_empty() {
-        return Err(anyhow!(
-            "dts: isolatedDeclarations error — exported class field `{name}` \
-             lacks an explicit type annotation; add `: <Type>` so its \
-             declaration can be emitted without type inference"
+        diagnostics.push(DtsDiagnostic::new(
+            node,
+            format!(
+                "isolatedDeclarations error — exported class field `{name}` \
+                 lacks an explicit type annotation; add `: <Type>` so its \
+                 declaration can be emitted without type inference"
+            ),
         ));
+        return Ok(None);
     }
 
     Ok(Some(format!("{modifiers}{name}{marker}{ty};")))
