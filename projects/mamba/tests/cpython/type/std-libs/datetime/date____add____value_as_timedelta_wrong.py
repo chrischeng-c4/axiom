@@ -9,7 +9,6 @@
 # case = "date____add____value_as_timedelta_wrong"
 # subject = "datetime.date.__add__(value: timedelta)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

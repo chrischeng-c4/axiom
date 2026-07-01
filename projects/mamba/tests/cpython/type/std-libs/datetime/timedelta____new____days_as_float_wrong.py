@@ -9,7 +9,6 @@
 # case = "timedelta____new____days_as_float_wrong"
 # subject = "datetime.timedelta.__new__(days: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

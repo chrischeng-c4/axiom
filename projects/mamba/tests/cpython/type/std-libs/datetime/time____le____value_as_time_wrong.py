@@ -9,7 +9,6 @@
 # case = "time____le____value_as_time_wrong"
 # subject = "datetime.time.__le__(value: time)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

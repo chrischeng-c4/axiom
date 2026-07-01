@@ -9,12 +9,10 @@
 # case = "date__strptime__string_as_str_wrong"
 # subject = "datetime.date.strptime(string: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed string"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed string
 # mamba-strict-type: TypeError
 """Type wall: datetime.date.strptime(string: str); call it with the wrong type.
 
