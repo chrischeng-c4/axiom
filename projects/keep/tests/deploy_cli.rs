@@ -39,7 +39,7 @@ fn spec_matches_the_served_openapi_document() {
 
     let paths = cli["paths"].as_object().expect("paths");
     assert!(
-        paths.keys().any(|p| p.contains("/v1/kv")),
+        paths.keys().any(|p| p.contains("/kv")),
         "KV data plane present"
     );
     assert!(

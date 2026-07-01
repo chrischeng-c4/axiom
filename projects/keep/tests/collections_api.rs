@@ -46,24 +46,24 @@ async fn hash_roundtrip() {
     let (st, body) = call(
         &app,
         "POST",
-        "/v1/hashes/h",
+        "/hashes/h",
         json!({"fields": {"a": 1, "b": "x"}}),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["count"], json!(2));
 
-    let (_, body) = call(&app, "GET", "/v1/hashes/h", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/hashes/h", Value::Null).await;
     assert_eq!(body["fields"]["a"], json!(1));
     assert_eq!(body["fields"]["b"], json!("x"));
 
-    let (_, body) = call(&app, "GET", "/v1/hashes/h/fields/a", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/hashes/h/fields/a", Value::Null).await;
     assert_eq!(body["value"], json!(1));
 
     let (_, body) = call(
         &app,
         "POST",
-        "/v1/hashes/h/mget",
+        "/hashes/h/mget",
         json!({"fields": ["a", "missing"]}),
     )
     .await;
@@ -73,18 +73,18 @@ async fn hash_roundtrip() {
     let (_, body) = call(
         &app,
         "POST",
-        "/v1/hashes/c/incr",
+        "/hashes/c/incr",
         json!({"field": "n", "delta": 5}),
     )
     .await;
     assert_eq!(body["value"], json!(5));
 
-    let (_, body) = call(&app, "GET", "/v1/hashes/h/length", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/hashes/h/length", Value::Null).await;
     assert_eq!(body["count"], json!(2));
 
     let req = Request::builder()
         .method("HEAD")
-        .uri("/v1/hashes/h/fields/a")
+        .uri("/hashes/h/fields/a")
         .body(Body::empty())
         .unwrap();
     assert_eq!(
@@ -92,29 +92,23 @@ async fn hash_roundtrip() {
         StatusCode::OK
     );
 
-    let (_, body) = call(&app, "DELETE", "/v1/hashes/h", json!({"fields": ["a"]})).await;
+    let (_, body) = call(&app, "DELETE", "/hashes/h", json!({"fields": ["a"]})).await;
     assert_eq!(body["count"], json!(1));
 }
 
 #[tokio::test]
 async fn set_roundtrip() {
     let app = app();
-    let (st, body) = call(
-        &app,
-        "POST",
-        "/v1/sets/s",
-        json!({"members": ["a", "b", "a"]}),
-    )
-    .await;
+    let (st, body) = call(&app, "POST", "/sets/s", json!({"members": ["a", "b", "a"]})).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["count"], json!(2)); // dedup
 
-    let (_, body) = call(&app, "GET", "/v1/sets/s/length", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/sets/s/length", Value::Null).await;
     assert_eq!(body["count"], json!(2));
 
     let req = Request::builder()
         .method("HEAD")
-        .uri("/v1/sets/s/members/a")
+        .uri("/sets/s/members/a")
         .body(Body::empty())
         .unwrap();
     assert_eq!(
@@ -123,7 +117,7 @@ async fn set_roundtrip() {
     );
     let req = Request::builder()
         .method("HEAD")
-        .uri("/v1/sets/s/members/z")
+        .uri("/sets/s/members/z")
         .body(Body::empty())
         .unwrap();
     assert_eq!(
@@ -131,7 +125,7 @@ async fn set_roundtrip() {
         StatusCode::NOT_FOUND
     );
 
-    let (_, body) = call(&app, "GET", "/v1/sets/s", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/sets/s", Value::Null).await;
     let mut members: Vec<String> = body["members"]
         .as_array()
         .unwrap()
@@ -141,20 +135,20 @@ async fn set_roundtrip() {
     members.sort();
     assert_eq!(members, vec!["a".to_string(), "b".to_string()]);
 
-    let (_, body) = call(&app, "DELETE", "/v1/sets/s", json!({"members": ["a"]})).await;
+    let (_, body) = call(&app, "DELETE", "/sets/s", json!({"members": ["a"]})).await;
     assert_eq!(body["count"], json!(1));
 }
 
 #[tokio::test]
 async fn zset_roundtrip() {
     let app = app();
-    let (st, body) = call(&app, "POST", "/v1/zsets/z",
+    let (st, body) = call(&app, "POST", "/zsets/z",
         json!({"members": [{"member": "a", "score": 1.0}, {"member": "b", "score": 3.0}, {"member": "c", "score": 2.0}]})).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["count"], json!(3));
 
     // ascending by score: a(1), c(2), b(3)
-    let (_, body) = call(&app, "GET", "/v1/zsets/z?start=0&stop=-1", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/zsets/z?start=0&stop=-1", Value::Null).await;
     let order: Vec<String> = body["entries"]
         .as_array()
         .unwrap()
@@ -166,48 +160,42 @@ async fn zset_roundtrip() {
         vec!["a".to_string(), "c".to_string(), "b".to_string()]
     );
 
-    let (_, body) = call(&app, "GET", "/v1/zsets/z/members/b/score", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/zsets/z/members/b/score", Value::Null).await;
     assert_eq!(body["score"], json!(3.0));
-    let (_, body) = call(&app, "GET", "/v1/zsets/z/members/a/rank", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/zsets/z/members/a/rank", Value::Null).await;
     assert_eq!(body["rank"], json!(0));
 
     let (_, body) = call(
         &app,
         "POST",
-        "/v1/zsets/z/incr",
+        "/zsets/z/incr",
         json!({"member": "a", "delta": 10.0}),
     )
     .await;
     assert_eq!(body["value"], json!(11.0));
 
-    let (_, body) = call(&app, "GET", "/v1/zsets/z/length", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/zsets/z/length", Value::Null).await;
     assert_eq!(body["count"], json!(3));
 }
 
 #[tokio::test]
 async fn list_range_and_expiry() {
     let app = app();
-    call(
-        &app,
-        "POST",
-        "/v1/lists/l/rpush",
-        json!({"values": [1, 2, 3]}),
-    )
-    .await;
-    let (_, body) = call(&app, "GET", "/v1/lists/l?start=0&stop=-1", Value::Null).await;
+    call(&app, "POST", "/lists/l/rpush", json!({"values": [1, 2, 3]})).await;
+    let (_, body) = call(&app, "GET", "/lists/l?start=0&stop=-1", Value::Null).await;
     assert_eq!(body["values"], json!([1, 2, 3]));
-    let (_, body) = call(&app, "GET", "/v1/lists/l/length", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/lists/l/length", Value::Null).await;
     assert_eq!(body["length"], json!(3));
 
     // expiry on a scalar key
-    call(&app, "PUT", "/v1/kv/e", json!({"value": "x"})).await;
-    let (_, body) = call(&app, "GET", "/v1/kv/e/ttl", Value::Null).await;
+    call(&app, "PUT", "/kv/e", json!({"value": "x"})).await;
+    let (_, body) = call(&app, "GET", "/kv/e/ttl", Value::Null).await;
     assert_eq!(body["ttl_secs"], json!(-1)); // exists, no expiry
-    let (_, body) = call(&app, "POST", "/v1/kv/e/expire", json!({"seconds": 100})).await;
+    let (_, body) = call(&app, "POST", "/kv/e/expire", json!({"seconds": 100})).await;
     assert_eq!(body["applied"], json!(true));
-    let (_, body) = call(&app, "GET", "/v1/kv/e/ttl", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/kv/e/ttl", Value::Null).await;
     assert!(body["ttl_secs"].as_i64().unwrap() > 0);
-    let (_, body) = call(&app, "POST", "/v1/kv/e/persist", Value::Null).await;
+    let (_, body) = call(&app, "POST", "/kv/e/persist", Value::Null).await;
     assert_eq!(body["applied"], json!(true));
 }
 
@@ -217,17 +205,11 @@ async fn blpop_returns_present_element() {
     call(
         &app,
         "POST",
-        "/v1/lists/q/rpush",
+        "/lists/q/rpush",
         json!({"values": ["x", "y"]}),
     )
     .await;
-    let (st, body) = call(
-        &app,
-        "POST",
-        "/v1/lists/q/blpop",
-        json!({"timeout_ms": 1000}),
-    )
-    .await;
+    let (st, body) = call(&app, "POST", "/lists/q/blpop", json!({"timeout_ms": 1000})).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["value"], json!("x"));
 }
@@ -238,7 +220,7 @@ async fn blpop_times_out_on_empty() {
     let (st, body) = call(
         &app,
         "POST",
-        "/v1/lists/empty/blpop",
+        "/lists/empty/blpop",
         json!({"timeout_ms": 50}),
     )
     .await;
@@ -253,24 +235,12 @@ async fn blpop_wakes_on_concurrent_push() {
     let popper = {
         let app = app.clone();
         tokio::spawn(async move {
-            call(
-                &app,
-                "POST",
-                "/v1/lists/wq/blpop",
-                json!({"timeout_ms": 5000}),
-            )
-            .await
+            call(&app, "POST", "/lists/wq/blpop", json!({"timeout_ms": 5000})).await
         })
     };
     // ...then a push from elsewhere must wake it.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    call(
-        &app,
-        "POST",
-        "/v1/lists/wq/rpush",
-        json!({"values": ["job1"]}),
-    )
-    .await;
+    call(&app, "POST", "/lists/wq/rpush", json!({"values": ["job1"]})).await;
 
     let (st, body) = popper.await.unwrap();
     assert_eq!(st, StatusCode::OK);
@@ -280,18 +250,18 @@ async fn blpop_wakes_on_concurrent_push() {
 #[tokio::test]
 async fn getex_reads_and_adjusts_ttl() {
     let app = app();
-    call(&app, "PUT", "/v1/kv/g", json!({"value": "hi"})).await;
+    call(&app, "PUT", "/kv/g", json!({"value": "hi"})).await;
 
     // GETEX with a TTL returns the value and arms the expiry.
-    let (st, body) = call(&app, "POST", "/v1/kv/g/getex", json!({"ttl_ms": 100000})).await;
+    let (st, body) = call(&app, "POST", "/kv/g/getex", json!({"ttl_ms": 100000})).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["value"], json!("hi"));
-    let (_, body) = call(&app, "GET", "/v1/kv/g/ttl", Value::Null).await;
+    let (_, body) = call(&app, "GET", "/kv/g/ttl", Value::Null).await;
     assert!(body["ttl_secs"].as_i64().unwrap() > 0, "ttl should be set");
 
     // GETEX persist clears it.
-    call(&app, "POST", "/v1/kv/g/getex", json!({"persist": true})).await;
-    let (_, body) = call(&app, "GET", "/v1/kv/g/ttl", Value::Null).await;
+    call(&app, "POST", "/kv/g/getex", json!({"persist": true})).await;
+    let (_, body) = call(&app, "GET", "/kv/g/ttl", Value::Null).await;
     assert_eq!(body["ttl_secs"], json!(-1), "ttl should be cleared");
 }
 
@@ -301,12 +271,12 @@ async fn openapi_lists_the_new_paths() {
     let (st, doc) = call(&app, "GET", "/openapi.json", Value::Null).await;
     assert_eq!(st, StatusCode::OK);
     for p in [
-        "/v1/hashes/{key}",
-        "/v1/sets/{key}",
-        "/v1/zsets/{key}",
-        "/v1/lists/{key}",
-        "/v1/kv/{key}/ttl",
-        "/v1/kv/{key}/getex",
+        "/hashes/{key}",
+        "/sets/{key}",
+        "/zsets/{key}",
+        "/lists/{key}",
+        "/kv/{key}/ttl",
+        "/kv/{key}/getex",
     ] {
         assert!(doc["paths"][p].is_object(), "openapi missing path {p}");
     }

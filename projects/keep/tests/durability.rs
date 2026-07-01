@@ -40,7 +40,7 @@ async fn durable_before_ack_survives_recovery() {
     // so a 200 means the op is already on disk.
     let req = Request::builder()
         .method("PUT")
-        .uri("/v1/kv/result:job-7")
+        .uri("/kv/result:job-7")
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
             serde_json::to_vec(&json!({"value": {"rows": 1000}})).unwrap(),
@@ -78,7 +78,7 @@ async fn many_concurrent_durable_writes_all_persist() {
         tasks.push(tokio::spawn(async move {
             let req = Request::builder()
                 .method("PUT")
-                .uri(format!("/v1/kv/k:{i}"))
+                .uri(format!("/kv/k:{i}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(format!("{{\"value\":{i}}}")))
                 .unwrap();
@@ -117,48 +117,36 @@ async fn collections_survive_recovery() {
         put_json(
             &app,
             "POST",
-            "/v1/hashes/h",
+            "/hashes/h",
             json!({"fields": {"a": 1, "b": "x"}})
         )
         .await,
         StatusCode::OK
     );
     assert_eq!(
-        put_json(&app, "POST", "/v1/sets/s", json!({"members": ["m1", "m2"]})).await,
+        put_json(&app, "POST", "/sets/s", json!({"members": ["m1", "m2"]})).await,
         StatusCode::OK
     );
     assert_eq!(
         put_json(
             &app,
             "POST",
-            "/v1/zsets/z",
+            "/zsets/z",
             json!({"members": [{"member": "a", "score": 2.0}]})
         )
         .await,
         StatusCode::OK
     );
     assert_eq!(
-        put_json(
-            &app,
-            "POST",
-            "/v1/lists/l/rpush",
-            json!({"values": [1, 2, 3]})
-        )
-        .await,
+        put_json(&app, "POST", "/lists/l/rpush", json!({"values": [1, 2, 3]})).await,
         StatusCode::OK
     );
     assert_eq!(
-        put_json(&app, "PUT", "/v1/kv/scalar", json!({"value": "v"})).await,
+        put_json(&app, "PUT", "/kv/scalar", json!({"value": "v"})).await,
         StatusCode::OK
     );
     assert_eq!(
-        put_json(
-            &app,
-            "POST",
-            "/v1/kv/scalar/expire",
-            json!({"seconds": 1000})
-        )
-        .await,
+        put_json(&app, "POST", "/kv/scalar/expire", json!({"seconds": 1000})).await,
         StatusCode::OK
     );
 

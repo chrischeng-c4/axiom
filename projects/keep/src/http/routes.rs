@@ -28,82 +28,82 @@ pub fn router(state: AppState) -> Router {
 
     let data_plane = Router::new()
         // single-key
-        .route("/v1/kv", get(handlers::scan))
+        .route("/kv", get(handlers::scan))
         .route(
-            "/v1/kv/{key}",
+            "/kv/{key}",
             get(handlers::get_key)
                 .put(handlers::put_key)
                 .delete(handlers::delete_key)
                 .head(handlers::head_key),
         )
-        .route("/v1/kv/{key}/incr", post(handlers::incr_key))
-        .route("/v1/kv/{key}/cas", post(handlers::cas_key))
-        .route("/v1/kv/{key}/setnx", post(handlers::setnx_key))
+        .route("/kv/{key}/incr", post(handlers::incr_key))
+        .route("/kv/{key}/cas", post(handlers::cas_key))
+        .route("/kv/{key}/setnx", post(handlers::setnx_key))
         // batch
-        .route("/v1/kv:mget", post(handlers::mget))
-        .route("/v1/kv:mset", post(handlers::mset))
-        .route("/v1/kv:mdel", post(handlers::mdel))
+        .route("/kv:mget", post(handlers::mget))
+        .route("/kv:mset", post(handlers::mset))
+        .route("/kv:mdel", post(handlers::mdel))
         // claim-check: job input/result payloads by id (#167)
         .route(
-            "/v1/inputs/{id}",
+            "/inputs/{id}",
             get(handlers::get_input).put(handlers::put_input),
         )
         .route(
-            "/v1/results/{id}",
+            "/results/{id}",
             get(handlers::get_result).put(handlers::put_result),
         )
         // locks
         .route(
-            "/v1/locks/{key}",
+            "/locks/{key}",
             post(handlers::lock)
                 .delete(handlers::unlock)
                 .patch(handlers::extend_lock),
         )
         // lists
-        .route("/v1/lists/{key}", get(meta::lrange))
-        .route("/v1/lists/{key}/length", get(meta::llen))
-        .route("/v1/lists/{key}/lpush", post(handlers::lpush))
-        .route("/v1/lists/{key}/rpush", post(handlers::rpush))
-        .route("/v1/lists/{key}/lpop", post(handlers::lpop))
-        .route("/v1/lists/{key}/rpop", post(handlers::rpop))
-        .route("/v1/lists/{key}/blpop", post(lists::blpop))
-        .route("/v1/lists/{key}/brpop", post(lists::brpop))
+        .route("/lists/{key}", get(meta::lrange))
+        .route("/lists/{key}/length", get(meta::llen))
+        .route("/lists/{key}/lpush", post(handlers::lpush))
+        .route("/lists/{key}/rpush", post(handlers::rpush))
+        .route("/lists/{key}/lpop", post(handlers::lpop))
+        .route("/lists/{key}/rpop", post(handlers::rpop))
+        .route("/lists/{key}/blpop", post(lists::blpop))
+        .route("/lists/{key}/brpop", post(lists::brpop))
         // expiry (any key)
-        .route("/v1/kv/{key}/expire", post(meta::expire))
-        .route("/v1/kv/{key}/ttl", get(meta::ttl))
-        .route("/v1/kv/{key}/persist", post(meta::persist))
-        .route("/v1/kv/{key}/getex", post(meta::getex))
+        .route("/kv/{key}/expire", post(meta::expire))
+        .route("/kv/{key}/ttl", get(meta::ttl))
+        .route("/kv/{key}/persist", post(meta::persist))
+        .route("/kv/{key}/getex", post(meta::getex))
         // hashes
         .route(
-            "/v1/hashes/{key}",
+            "/hashes/{key}",
             post(hash::hset).get(hash::hgetall).delete(hash::hdel),
         )
-        .route("/v1/hashes/{key}/length", get(hash::hlen))
-        .route("/v1/hashes/{key}/mget", post(hash::hmget))
-        .route("/v1/hashes/{key}/incr", post(hash::hincr))
+        .route("/hashes/{key}/length", get(hash::hlen))
+        .route("/hashes/{key}/mget", post(hash::hmget))
+        .route("/hashes/{key}/incr", post(hash::hincr))
         .route(
-            "/v1/hashes/{key}/fields/{field}",
+            "/hashes/{key}/fields/{field}",
             get(hash::hget).head(hash::hexists),
         )
         // sets
         .route(
-            "/v1/sets/{key}",
+            "/sets/{key}",
             post(sets::sadd).get(sets::smembers).delete(sets::srem),
         )
-        .route("/v1/sets/{key}/length", get(sets::scard))
+        .route("/sets/{key}/length", get(sets::scard))
         .route(
-            "/v1/sets/{key}/members/{member}",
+            "/sets/{key}/members/{member}",
             axum::routing::head(sets::sismember),
         )
         // sorted sets
         .route(
-            "/v1/zsets/{key}",
+            "/zsets/{key}",
             post(zsets::zadd).get(zsets::zrange).delete(zsets::zrem),
         )
-        .route("/v1/zsets/{key}/length", get(zsets::zcard))
-        .route("/v1/zsets/{key}/incr", post(zsets::zincr))
-        .route("/v1/zsets/{key}/members/{member}/score", get(zsets::zscore))
-        .route("/v1/zsets/{key}/members/{member}/rank", get(zsets::zrank))
+        .route("/zsets/{key}/length", get(zsets::zcard))
+        .route("/zsets/{key}/incr", post(zsets::zincr))
+        .route("/zsets/{key}/members/{member}/score", get(zsets::zscore))
+        .route("/zsets/{key}/members/{member}/rank", get(zsets::zrank))
         // Per-route request metrics (counts + latency). route_layer => only for
         // matched data-plane routes, and MatchedPath is populated.
         .route_layer(from_fn_with_state(req_metrics, metrics::track))

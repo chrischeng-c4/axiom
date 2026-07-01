@@ -1,4 +1,4 @@
-//! Hash (field-map) routes under `/v1/hashes/{key}`. WAL-backed and
+//! Hash (field-map) routes under `/hashes/{key}`. WAL-backed and
 //! durable-before-ack, like the scalar path.
 
 use std::collections::HashMap;
@@ -61,7 +61,7 @@ pub struct IntValueResponse {
 }
 
 /// Set hash fields (HSET). Returns the number of newly-added fields.
-#[utoipa::path(post, path = "/v1/hashes/{key}", tag = "Hashes",
+#[utoipa::path(post, path = "/hashes/{key}", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key")), request_body = HSetRequest,
     responses((status = 200, description = "Fields added", body = CountResponse)))]
 pub async fn hset(
@@ -81,7 +81,7 @@ pub async fn hset(
 }
 
 /// All fields of a hash (HGETALL).
-#[utoipa::path(get, path = "/v1/hashes/{key}", tag = "Hashes",
+#[utoipa::path(get, path = "/hashes/{key}", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key")),
     responses((status = 200, description = "Field map", body = HGetAllResponse)))]
 pub async fn hgetall(
@@ -100,7 +100,7 @@ pub async fn hgetall(
 }
 
 /// Delete hash fields (HDEL). Returns the number removed.
-#[utoipa::path(delete, path = "/v1/hashes/{key}", tag = "Hashes",
+#[utoipa::path(delete, path = "/hashes/{key}", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key")), request_body = FieldsRequest,
     responses((status = 200, description = "Fields removed", body = CountResponse)))]
 pub async fn hdel(
@@ -116,7 +116,7 @@ pub async fn hdel(
 }
 
 /// Number of fields in a hash (HLEN).
-#[utoipa::path(get, path = "/v1/hashes/{key}/length", tag = "Hashes",
+#[utoipa::path(get, path = "/hashes/{key}/length", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key")),
     responses((status = 200, description = "Field count", body = CountResponse)))]
 pub async fn hlen(
@@ -130,7 +130,7 @@ pub async fn hlen(
 }
 
 /// Fetch several hash fields at once (HMGET).
-#[utoipa::path(post, path = "/v1/hashes/{key}/mget", tag = "Hashes",
+#[utoipa::path(post, path = "/hashes/{key}/mget", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key")), request_body = FieldsRequest,
     responses((status = 200, description = "Values parallel to fields", body = HMGetResponse)))]
 pub async fn hmget(
@@ -151,7 +151,7 @@ pub async fn hmget(
 }
 
 /// Increment an integer hash field (HINCRBY).
-#[utoipa::path(post, path = "/v1/hashes/{key}/incr", tag = "Hashes",
+#[utoipa::path(post, path = "/hashes/{key}/incr", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key")), request_body = HIncrRequest,
     responses((status = 200, description = "New value", body = IntValueResponse)))]
 pub async fn hincr(
@@ -169,7 +169,7 @@ pub async fn hincr(
 }
 
 /// Single hash field (HGET).
-#[utoipa::path(get, path = "/v1/hashes/{key}/fields/{field}", tag = "Hashes",
+#[utoipa::path(get, path = "/hashes/{key}/fields/{field}", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key"), ("field" = String, Path, description = "Field")),
     responses((status = 200, description = "Field value or null", body = HGetResponse)))]
 pub async fn hget(
@@ -186,7 +186,7 @@ pub async fn hget(
 }
 
 /// Field existence (HEXISTS), no body.
-#[utoipa::path(head, path = "/v1/hashes/{key}/fields/{field}", tag = "Hashes",
+#[utoipa::path(head, path = "/hashes/{key}/fields/{field}", tag = "Hashes",
     params(("key" = String, Path, description = "Hash key"), ("field" = String, Path, description = "Field")),
     responses((status = 200, description = "Field exists"), (status = 404, description = "Field absent")))]
 pub async fn hexists(

@@ -1,5 +1,5 @@
-//! Cross-cutting routes: TTL / expiry on any key (`/v1/kv/{key}/...`) and list
-//! read ops (`/v1/lists/{key}`).
+//! Cross-cutting routes: TTL / expiry on any key (`/kv/{key}/...`) and list
+//! read ops (`/lists/{key}`).
 
 use std::time::Duration;
 
@@ -44,7 +44,7 @@ pub struct TtlResponse {
 }
 
 /// Set a key's TTL (EXPIRE / PEXPIRE).
-#[utoipa::path(post, path = "/v1/kv/{key}/expire", tag = "Expiry",
+#[utoipa::path(post, path = "/kv/{key}/expire", tag = "Expiry",
     params(("key" = String, Path, description = "Key")), request_body = ExpireRequest,
     responses((status = 200, description = "Whether applied", body = AppliedResponse)))]
 pub async fn expire(
@@ -64,7 +64,7 @@ pub async fn expire(
 }
 
 /// Remaining time-to-live (TTL / PTTL).
-#[utoipa::path(get, path = "/v1/kv/{key}/ttl", tag = "Expiry",
+#[utoipa::path(get, path = "/kv/{key}/ttl", tag = "Expiry",
     params(("key" = String, Path, description = "Key")),
     responses((status = 200, description = "TTL", body = TtlResponse)))]
 pub async fn ttl(
@@ -79,7 +79,7 @@ pub async fn ttl(
 }
 
 /// Remove a key's expiry, making it persistent (PERSIST).
-#[utoipa::path(post, path = "/v1/kv/{key}/persist", tag = "Expiry",
+#[utoipa::path(post, path = "/kv/{key}/persist", tag = "Expiry",
     params(("key" = String, Path, description = "Key")),
     responses((status = 200, description = "Whether an expiry was removed", body = AppliedResponse)))]
 pub async fn persist(
@@ -110,7 +110,7 @@ pub struct GetExResponse {
 
 /// Get a value and atomically adjust its TTL (GETEX). With neither `ttl_ms` nor
 /// `persist` it is a plain read; otherwise the TTL change is durable-before-ack.
-#[utoipa::path(post, path = "/v1/kv/{key}/getex", tag = "Expiry",
+#[utoipa::path(post, path = "/kv/{key}/getex", tag = "Expiry",
     params(("key" = String, Path, description = "Key")), request_body = GetExRequest,
     responses((status = 200, description = "Value", body = GetExResponse)))]
 pub async fn getex(
@@ -154,7 +154,7 @@ pub struct LenResponse {
 }
 
 /// Elements in a list range (LRANGE). Negative indices count from the end.
-#[utoipa::path(get, path = "/v1/lists/{key}", tag = "Lists",
+#[utoipa::path(get, path = "/lists/{key}", tag = "Lists",
     params(("key" = String, Path, description = "List key"),
         ("start" = Option<i64>, Query, description = "Start index (default 0)"),
         ("stop" = Option<i64>, Query, description = "Stop index (default -1)")),
@@ -176,7 +176,7 @@ pub async fn lrange(
 }
 
 /// List length (LLEN).
-#[utoipa::path(get, path = "/v1/lists/{key}/length", tag = "Lists",
+#[utoipa::path(get, path = "/lists/{key}/length", tag = "Lists",
     params(("key" = String, Path, description = "List key")),
     responses((status = 200, description = "Length", body = LenResponse)))]
 pub async fn llen(

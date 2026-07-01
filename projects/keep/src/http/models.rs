@@ -102,7 +102,7 @@ pub struct MSetRequestFast {
 // Single-key string / scalar
 // ---------------------------------------------------------------------------
 
-/// Body of an unconditional `PUT /v1/kv/{key}` with `application/json`.
+/// Body of an unconditional `PUT /kv/{key}` with `application/json`.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SetRequest {
     /// Value to store, as native JSON.
@@ -126,7 +126,7 @@ pub struct OkResponse {
     pub ok: bool,
 }
 
-/// Body of `POST /v1/kv/{key}/cas`.
+/// Body of `POST /kv/{key}/cas`.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CasRequest {
     /// Value the key is expected to currently hold.
@@ -143,7 +143,7 @@ pub struct CasResponse {
     pub swapped: bool,
 }
 
-/// Body of `POST /v1/kv/{key}/incr`.
+/// Body of `POST /kv/{key}/incr`.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct IncrRequest {
     /// Amount to add; negative to decrement. Defaults to 1.

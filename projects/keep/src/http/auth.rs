@@ -7,7 +7,7 @@
 //! - **Optional** — off unless `KEEP_TOKEN_SECRET` is set; when off, claim-check
 //!   is open and backward compatible.
 //! - **Claim-check-worker-only** — enforced only on the worker ops `GET
-//!   /v1/inputs/{id}` (read scope) and `PUT /v1/results/{id}` (write scope);
+//!   /inputs/{id}` (read scope) and `PUT /results/{id}` (write scope);
 //!   `PUT input` / `GET result` stay open by design.
 //! - **Bare-id scoped** — the token scope is checked against the bare url `id`
 //!   *before* the `X-Keep-Namespace` prefix is applied (loom's settled design).

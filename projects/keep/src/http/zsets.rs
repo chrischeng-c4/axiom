@@ -1,4 +1,4 @@
-//! Sorted-set routes under `/v1/zsets/{key}` (string members, f64 scores).
+//! Sorted-set routes under `/zsets/{key}` (string members, f64 scores).
 //! WAL-backed and durable-before-ack.
 
 use axum::{
@@ -70,7 +70,7 @@ pub struct RankResponse {
 }
 
 /// Add scored members (ZADD). Returns the number newly added.
-#[utoipa::path(post, path = "/v1/zsets/{key}", tag = "SortedSets",
+#[utoipa::path(post, path = "/zsets/{key}", tag = "SortedSets",
     params(("key" = String, Path, description = "Sorted-set key")), request_body = ZAddRequest,
     responses((status = 200, description = "Members added", body = CountResponse)))]
 pub async fn zadd(
@@ -91,7 +91,7 @@ pub async fn zadd(
 
 /// Members in a rank range, ascending by score (ZRANGE). Negative indices count
 /// from the end (`stop` defaults to -1 = last).
-#[utoipa::path(get, path = "/v1/zsets/{key}", tag = "SortedSets",
+#[utoipa::path(get, path = "/zsets/{key}", tag = "SortedSets",
     params(("key" = String, Path, description = "Sorted-set key"),
         ("start" = Option<i64>, Query, description = "Start rank (default 0)"),
         ("stop" = Option<i64>, Query, description = "Stop rank (default -1)")),
@@ -113,7 +113,7 @@ pub async fn zrange(
 }
 
 /// Remove members (ZREM). Returns the number removed.
-#[utoipa::path(delete, path = "/v1/zsets/{key}", tag = "SortedSets",
+#[utoipa::path(delete, path = "/zsets/{key}", tag = "SortedSets",
     params(("key" = String, Path, description = "Sorted-set key")), request_body = ZRemRequest,
     responses((status = 200, description = "Members removed", body = CountResponse)))]
 pub async fn zrem(
@@ -128,7 +128,7 @@ pub async fn zrem(
 }
 
 /// Cardinality (ZCARD).
-#[utoipa::path(get, path = "/v1/zsets/{key}/length", tag = "SortedSets",
+#[utoipa::path(get, path = "/zsets/{key}/length", tag = "SortedSets",
     params(("key" = String, Path, description = "Sorted-set key")),
     responses((status = 200, description = "Member count", body = CountResponse)))]
 pub async fn zcard(
@@ -142,7 +142,7 @@ pub async fn zcard(
 }
 
 /// Increment a member's score (ZINCRBY). Returns the new score.
-#[utoipa::path(post, path = "/v1/zsets/{key}/incr", tag = "SortedSets",
+#[utoipa::path(post, path = "/zsets/{key}/incr", tag = "SortedSets",
     params(("key" = String, Path, description = "Sorted-set key")), request_body = ZIncrRequest,
     responses((status = 200, description = "New score", body = FloatValueResponse)))]
 pub async fn zincr(
@@ -160,7 +160,7 @@ pub async fn zincr(
 }
 
 /// A member's score (ZSCORE).
-#[utoipa::path(get, path = "/v1/zsets/{key}/members/{member}/score", tag = "SortedSets",
+#[utoipa::path(get, path = "/zsets/{key}/members/{member}/score", tag = "SortedSets",
     params(("key" = String, Path, description = "Key"), ("member" = String, Path, description = "Member")),
     responses((status = 200, description = "Score or null", body = ScoreResponse)))]
 pub async fn zscore(
@@ -174,7 +174,7 @@ pub async fn zscore(
 }
 
 /// A member's 0-based ascending rank (ZRANK).
-#[utoipa::path(get, path = "/v1/zsets/{key}/members/{member}/rank", tag = "SortedSets",
+#[utoipa::path(get, path = "/zsets/{key}/members/{member}/rank", tag = "SortedSets",
     params(("key" = String, Path, description = "Key"), ("member" = String, Path, description = "Member")),
     responses((status = 200, description = "Rank or null", body = RankResponse)))]
 pub async fn zrank(

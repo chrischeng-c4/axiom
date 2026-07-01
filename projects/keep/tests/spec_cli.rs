@@ -20,7 +20,7 @@ fn openapi_is_valid_json_with_kv_data_plane() {
     );
     let paths = v["paths"].as_object().expect("has paths");
     assert!(
-        paths.keys().any(|p| p.contains("/v1/kv")),
+        paths.keys().any(|p| p.contains("/kv")),
         "exposes the KV data plane: {:?}",
         paths.keys().collect::<Vec<_>>()
     );

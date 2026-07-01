@@ -107,7 +107,7 @@ fn esc(s: &str) -> String {
 }
 
 /// `route_layer` middleware: time the request and record it against its matched
-/// route pattern (so high-cardinality keys collapse to `/v1/kv/{key}` etc.).
+/// route pattern (so high-cardinality keys collapse to `/kv/{key}` etc.).
 pub async fn track(
     State(metrics): State<std::sync::Arc<HttpMetrics>>,
     req: Request,
