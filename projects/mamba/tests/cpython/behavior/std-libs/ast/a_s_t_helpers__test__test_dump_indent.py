@@ -9,12 +9,11 @@
 # case = "a_s_t_helpers__test__test_dump_indent"
 # subject = "cpython.test_ast.ASTHelpers_Test.test_dump_indent"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
 import builtins
 import dis
