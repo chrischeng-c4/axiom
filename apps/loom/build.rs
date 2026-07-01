@@ -1,6 +1,6 @@
 //! Build script: stamp `LOOM_GIT_SHA`, `LOOM_BUILT_AT`, and `LOOM_TARGET` into
 //! the binary so the standard CLI ops (`upgrade` picks the matching release
-//! asset; `report-issue` reports provenance) work without a server (#475).
+//! asset; `issue` reports provenance) work without a server (#475).
 //!
 //! All three are best-effort: outside a git checkout (e.g. a source tarball)
 //! the sha falls back to "unknown". Nothing here fails the build.
