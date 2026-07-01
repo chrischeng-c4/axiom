@@ -5154,6 +5154,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("config", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: lzma.open(filename) accepts path-like or file-like objects.
+    // Bare user objects satisfy neither side of that overload/protocol union;
+    // keep valid path/file values skip-safe through Typed.
+    StdlibSig {
+        module: "lzma",
+        qualifier: "",
+        name: "open",
+        kind: SigKind::ModuleFn,
+        params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
+        enforceable: true,
+    },
     StdlibSig {
         module: "logging.config",
         qualifier: "BaseConfigurator",
@@ -8261,6 +8272,7 @@ mod tests {
                 CoreTy::Typed,
             ),
             ("logging.config", "", "dictConfig", 0, "config", CoreTy::Typed),
+            ("lzma", "", "open", 0, "filename", CoreTy::Typed),
             (
                 "logging.config",
                 "BaseConfigurator",
