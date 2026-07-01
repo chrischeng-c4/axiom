@@ -1229,6 +1229,43 @@ fn insert_source_line_location_attrs(
     );
 }
 
+fn insert_source_statement_location_attrs(
+    fields: &mut FxHashMap<String, MbValue>,
+    start_idx: usize,
+    lines: &[&str],
+    spans_suite: bool,
+) {
+    if !spans_suite {
+        insert_source_line_location_attrs(fields, start_idx + 1, lines[start_idx]);
+        return;
+    }
+    let start_line = lines[start_idx];
+    let trimmed_start = start_line.trim_start();
+    let col_offset = start_line.len() - trimmed_start.len();
+    let mut end_idx = start_idx;
+    for (idx, candidate) in lines.iter().enumerate().skip(start_idx + 1) {
+        let candidate = *candidate;
+        let trimmed = candidate.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !candidate.starts_with(|c: char| c.is_whitespace()) {
+            break;
+        }
+        if !trimmed.starts_with('#') {
+            end_idx = idx;
+        }
+    }
+    let end_col_offset = lines[end_idx].trim_end().len();
+    insert_location_attrs(
+        fields,
+        (start_idx + 1) as i64,
+        col_offset as i64,
+        (end_idx + 1) as i64,
+        end_col_offset as i64,
+    );
+}
+
 fn insert_location_attrs(
     fields: &mut FxHashMap<String, MbValue>,
     lineno: i64,
@@ -1301,7 +1338,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
     // enough shape that `module.body[0]` resolves to a node (since list
     // subscripts now raise IndexError instead of silently yielding None).
     let mut body_nodes: Vec<MbValue> = Vec::new();
-    for (line_idx, line) in source_logical_lines(&src).into_iter().enumerate() {
+    let logical_lines = source_logical_lines(&src);
+    for (line_idx, line) in logical_lines.iter().enumerate() {
+        let line = *line;
         let t = line.trim_start();
         if t.is_empty() || line.starts_with(|c: char| c.is_whitespace()) {
             continue; // nested lines belong to the previous statement
@@ -1340,7 +1379,12 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
             MbValue::from_ptr(MbObject::new_list(vec![])),
         );
         if ast_node_type_has_location_attrs(kind) {
-            insert_source_line_location_attrs(&mut nf, line_idx + 1, line);
+            insert_source_statement_location_attrs(
+                &mut nf,
+                line_idx,
+                &logical_lines,
+                matches!(kind, "FunctionDef" | "AsyncFunctionDef" | "ClassDef"),
+            );
         }
         body_nodes.push(make_ast_node(kind, nf));
     }
