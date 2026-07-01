@@ -9,12 +9,11 @@
 # case = "SyncManager__set__iterable_as_Iterable_wrong"
 # subject = "multiprocessing.managers.SyncManager.set(iterable: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iterable"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iterable
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.SyncManager.set(iterable: Iterable); call it with the wrong type.
 
