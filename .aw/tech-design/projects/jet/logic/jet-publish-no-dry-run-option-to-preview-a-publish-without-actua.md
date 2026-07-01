@@ -51,42 +51,41 @@ flowchart TD
 
 ```mermaid
 ---
-id: jet-publish-dry-run-tests
+id: jet-publish-dry-run-contract-tests
 requirements:
   R1:
-    text: "publish command accepts --dry-run with existing --tag, --access, and --build flags."
+    text: "Command parser exposes publish --dry-run and it composes with --tag and --access."
     risk: high
     verify: unit
   R2:
-    text: "Publisher dry-run returns transformed package.json, target registry/tag/access, tarball file name, and tarball entry list."
+    text: "Dry-run preview includes package name/version, registry URL, tag, access, tarball file name, tarball byte length, entries, and transformed package.json."
     risk: high
     verify: unit
   R3:
-    text: "Dry-run does not execute the registry PUT upload path."
+    text: "Dry-run against the mock registry leaves the mock publish store empty."
     risk: high
     verify: unit
 ---
 requirementDiagram
 requirement R1 {
   id: R1
-  text: "CLI accepts --dry-run"
+  text: "CLI dry-run flag parsed"
   risk: High
   verifymethod: Test
 }
 requirement R2 {
   id: R2
-  text: "Preview contains manifest, registry, and files"
+  text: "Preview report is complete"
   risk: High
   verifymethod: Test
 }
 requirement R3 {
   id: R3
-  text: "Dry-run performs no upload"
+  text: "Mock registry receives no PUT"
   risk: High
   verifymethod: Test
 }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
