@@ -9,12 +9,10 @@
 # case = "Message__get_filename__failobj_as_typed_wrong"
 # subject = "email.message.Message.get_filename(failobj: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed failobj"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed failobj
 # mamba-strict-type: TypeError
 """Type wall: email.message.Message.get_filename(failobj: typed); call it with the wrong type.
 
