@@ -279,10 +279,18 @@ impl Publisher {
         // then either rejects the publish with a confusing version error
         // or — worse — accepts it and downstream installs all fail with
         // no breadcrumb pointing at the actual malformed workspace config.
-        match WorkspaceManager::discover(&self.root_dir) {
+        let package_name = pkg.get("name").and_then(|v| v.as_str()).map(str::to_string);
+
+        match self.discover_workspace_for_package(package_name.as_deref()) {
             Ok(Some(ws)) => {
-                Self::transform_workspace_deps(&mut pkg, &ws, "dependencies");
-                Self::transform_workspace_deps(&mut pkg, &ws, "devDependencies");
+                for field in [
+                    "dependencies",
+                    "devDependencies",
+                    "peerDependencies",
+                    "optionalDependencies",
+                ] {
+                    Self::transform_workspace_deps(&mut pkg, &ws, field);
+                }
             }
             Ok(None) => {
                 // Not a workspace — `workspace:*` deps, if any, will be
@@ -300,6 +308,35 @@ impl Publisher {
         }
 
         Ok(pkg)
+    }
+
+    /// Discover the workspace that owns the package being packed.
+    ///
+    /// `jet pack` and `jet publish` are commonly invoked from a package
+    /// directory inside a monorepo. Workspace configuration usually lives at
+    /// the repository root, so probing only `self.root_dir` leaves
+    /// `workspace:*` ranges unresolved in the packed manifest.
+    fn discover_workspace_for_package(
+        &self,
+        package_name: Option<&str>,
+    ) -> Result<Option<WorkspaceManager>> {
+        for candidate in self.root_dir.ancestors() {
+            let Some(ws) = WorkspaceManager::discover(candidate).with_context(|| {
+                format!("workspace discovery failed under {}", candidate.display())
+            })?
+            else {
+                continue;
+            };
+
+            if package_name
+                .map(|name| ws.get_package(name).is_some())
+                .unwrap_or(true)
+            {
+                return Ok(Some(ws));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Replace workspace:* specs with real version ranges.
