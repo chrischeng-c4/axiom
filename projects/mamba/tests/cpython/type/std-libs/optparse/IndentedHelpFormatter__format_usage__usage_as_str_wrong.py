@@ -9,7 +9,6 @@
 # case = "IndentedHelpFormatter__format_usage__usage_as_str_wrong"
 # subject = "optparse.IndentedHelpFormatter.format_usage(usage: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

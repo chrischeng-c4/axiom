@@ -9,7 +9,6 @@
 # case = "OptionParser__format_help__formatter_as_typed_wrong"
 # subject = "optparse.OptionParser.format_help(formatter: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

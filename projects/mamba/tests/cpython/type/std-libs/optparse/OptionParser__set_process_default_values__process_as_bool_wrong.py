@@ -9,12 +9,10 @@
 # case = "OptionParser__set_process_default_values__process_as_bool_wrong"
 # subject = "optparse.OptionParser.set_process_default_values(process: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed process"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed process
 # mamba-strict-type: TypeError
 """Type wall: optparse.OptionParser.set_process_default_values(process: bool); call it with the wrong type.
 

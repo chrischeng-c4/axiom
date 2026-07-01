@@ -9,7 +9,6 @@
 # case = "OptionGroup__set_title__title_as_str_wrong"
 # subject = "optparse.OptionGroup.set_title(title: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

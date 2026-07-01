@@ -9,12 +9,10 @@
 # case = "Values__init__defaults_as_typed_wrong"
 # subject = "optparse.Values.__init__(defaults: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed defaults"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed defaults
 # mamba-strict-type: TypeError
 """Type wall: optparse.Values.__init__(defaults: typed); call it with the wrong type.
 

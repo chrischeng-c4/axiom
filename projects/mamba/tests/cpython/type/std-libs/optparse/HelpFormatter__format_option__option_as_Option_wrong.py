@@ -9,7 +9,6 @@
 # case = "HelpFormatter__format_option__option_as_Option_wrong"
 # subject = "optparse.HelpFormatter.format_option(option: Option)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

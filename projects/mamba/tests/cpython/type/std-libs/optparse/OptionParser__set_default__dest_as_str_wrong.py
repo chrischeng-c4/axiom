@@ -9,7 +9,6 @@
 # case = "OptionParser__set_default__dest_as_str_wrong"
 # subject = "optparse.OptionParser.set_default(dest: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

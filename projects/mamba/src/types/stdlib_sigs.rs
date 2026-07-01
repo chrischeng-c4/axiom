@@ -4927,6 +4927,29 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // optparse generated rows collapse class objects and defaults mappings to
+    // Unknown. Keep strict fixture walls enforceable while still skipping richer
+    // runtime objects once the type model cannot prove them wrong.
+    StdlibSig {
+        module: "optparse",
+        qualifier: "OptionContainer",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("option_class", CoreTy::Type),
+            p("conflict_handler", CoreTy::Unknown),
+            p("description", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "optparse",
+        qualifier: "Values",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("defaults", CoreTy::Typed)],
+        enforceable: true,
+    },
     // pathlib generated rows intentionally collapse type variables, overload
     // literals, and Optional exception state to Unknown/Typed. Keep strict-mode
     // fixture walls enforceable while still skipping correct None sentinels and
@@ -6175,6 +6198,22 @@ mod tests {
         assert!(sig.enforceable);
         assert_eq!(sig.params[1].name, "exc_val");
         assert_eq!(sig.params[1].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_optparse_constructor_walls_override_unknown_generated_rows() {
+        let container =
+            get("optparse", "OptionContainer", "__init__").expect("OptionContainer.__init__ present");
+        assert!(container.enforceable);
+        assert_eq!(container.params[0].name, "option_class");
+        assert_eq!(container.params[0].ty, CoreTy::Type);
+        assert_eq!(container.params[2].name, "description");
+        assert_eq!(container.params[2].ty, CoreTy::Typed);
+
+        let values = get("optparse", "Values", "__init__").expect("Values.__init__ present");
+        assert!(values.enforceable);
+        assert_eq!(values.params[0].name, "defaults");
+        assert_eq!(values.params[0].ty, CoreTy::Typed);
     }
 
     #[test]

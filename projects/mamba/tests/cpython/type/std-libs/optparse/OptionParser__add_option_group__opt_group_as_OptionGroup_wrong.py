@@ -9,12 +9,10 @@
 # case = "OptionParser__add_option_group__opt_group_as_OptionGroup_wrong"
 # subject = "optparse.OptionParser.add_option_group(opt_group: OptionGroup)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed opt_group"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed opt_group
 # mamba-strict-type: TypeError
 """Type wall: optparse.OptionParser.add_option_group(opt_group: OptionGroup); call it with the wrong type.
 
