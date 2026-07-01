@@ -46,3 +46,44 @@ flowchart TD
     summarize --> upload{dry-run?}
     upload -->|yes| done([Print preview; no registry PUT])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-publish-dry-run-tests
+requirements:
+  R1:
+    text: "publish command accepts --dry-run with existing --tag, --access, and --build flags."
+    risk: high
+    verify: unit
+  R2:
+    text: "Publisher dry-run returns transformed package.json, target registry/tag/access, tarball file name, and tarball entry list."
+    risk: high
+    verify: unit
+  R3:
+    text: "Dry-run does not execute the registry PUT upload path."
+    risk: high
+    verify: unit
+---
+requirementDiagram
+requirement R1 {
+  id: R1
+  text: "CLI accepts --dry-run"
+  risk: High
+  verifymethod: Test
+}
+requirement R2 {
+  id: R2
+  text: "Preview contains manifest, registry, and files"
+  risk: High
+  verifymethod: Test
+}
+requirement R3 {
+  id: R3
+  text: "Dry-run performs no upload"
+  risk: High
+  verifymethod: Test
+}
+```
