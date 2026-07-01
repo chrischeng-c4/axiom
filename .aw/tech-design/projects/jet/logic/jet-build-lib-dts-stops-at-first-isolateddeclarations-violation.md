@@ -66,24 +66,24 @@ changes:
     action: modify
     section: logic
     description: |
-      Change declaration emission from fail-fast to diagnostic aggregation for
-      isolatedDeclarations contract errors within one source module, preserving
-      successful declaration text only when no diagnostics were collected.
+      Introduce a declaration diagnostic aggregate for one module. Export-boundary
+      validation records all isolatedDeclarations errors in source order instead
+      of returning at the first missing type/return annotation.
     impl_mode: hand-written
   - path: "projects/jet/src/bundler/lib_build.rs"
     action: modify
     section: logic
     description: |
-      Aggregate declaration diagnostics across every module reached by one
-      library entry's declaration tree, include each module path in the final
-      error, and avoid writing partial .d.ts output when any module fails.
+      Buffer declaration output for every module in the entry declaration tree,
+      aggregate module-scoped diagnostics, and return one formatted error before
+      writing any .d.ts files when diagnostics exist.
     impl_mode: hand-written
   - path: "projects/jet/tests/build/library_dts.rs"
     action: modify
     section: unit-test
     description: |
-      Add regression coverage proving a lib build with several invalid exported
-      declarations reports all isolatedDeclarations violations in one failure
-      instead of stopping at the first invalid module or first invalid export.
+      Add a regression test with multiple invalid exports across the entry and a
+      local re-exported module. The assertion must prove the final error includes
+      all invalid symbols and both source files.
     impl_mode: hand-written
 ```
