@@ -49,3 +49,35 @@ flowchart TD
     write_to_output --> ignore_stale_dist[Ignore default dist/index.js and dist/index.cjs as declaration inputs]
     ignore_stale_dist --> done([Return deterministic declaration output])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/bundler/lib_build.rs"
+    action: modify
+    section: logic
+    description: |
+      Ensure lib dts emission always routes through the source AST declaration
+      emitter and writes to the resolved output directory, without treating
+      pre-existing default dist/index.js or dist/index.cjs files as declaration
+      inputs or success signals.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/dts.rs"
+    action: modify
+    section: logic
+    description: |
+      Keep declaration output source-driven and deterministic so stale runtime
+      JavaScript files cannot produce empty or import-only .d.ts output.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_dts.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Add regression coverage that creates stale default dist/index.js while
+      building to a separate -o directory and asserts the emitted .d.ts is
+      non-empty and source-derived.
+    impl_mode: hand-written
+```
