@@ -9,12 +9,10 @@
 # case = "formatargspec__args_as_list_wrong"
 # subject = "inspect.formatargspec(args: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args
 # mamba-strict-type: TypeError
 """Type wall: inspect.formatargspec(args: list); call it with the wrong type.
 
