@@ -9,12 +9,11 @@
 # case = "BaseListProxy__count__value_as__T_wrong"
 # subject = "multiprocessing.managers.BaseListProxy.count(value: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.BaseListProxy.count(value: _T); call it with the wrong type.
 

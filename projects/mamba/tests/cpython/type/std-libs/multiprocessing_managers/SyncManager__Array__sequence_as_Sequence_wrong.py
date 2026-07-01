@@ -9,12 +9,11 @@
 # case = "SyncManager__Array__sequence_as_Sequence_wrong"
 # subject = "multiprocessing.managers.SyncManager.Array(sequence: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequence"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequence
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.SyncManager.Array(sequence: Sequence); call it with the wrong type.
 

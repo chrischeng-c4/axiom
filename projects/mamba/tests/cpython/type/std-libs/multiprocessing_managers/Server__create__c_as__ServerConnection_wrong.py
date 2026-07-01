@@ -9,12 +9,11 @@
 # case = "Server__create__c_as__ServerConnection_wrong"
 # subject = "multiprocessing.managers.Server.create(c: _ServerConnection)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed c"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed c
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.Server.create(c: _ServerConnection); call it with the wrong type.
 

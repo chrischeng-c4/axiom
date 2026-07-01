@@ -9,12 +9,11 @@
 # case = "BaseProxy____deepcopy____memo_as_typed_wrong"
 # subject = "multiprocessing.managers.BaseProxy.__deepcopy__(memo: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed memo"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed memo
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.BaseProxy.__deepcopy__(memo: typed); call it with the wrong type.
 

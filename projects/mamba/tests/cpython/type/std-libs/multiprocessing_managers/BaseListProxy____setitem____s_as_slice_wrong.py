@@ -9,12 +9,11 @@
 # case = "BaseListProxy____setitem____s_as_slice_wrong"
 # subject = "multiprocessing.managers.BaseListProxy.__setitem__(s: slice)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.BaseListProxy.__setitem__(s: slice); call it with the wrong type.
 
