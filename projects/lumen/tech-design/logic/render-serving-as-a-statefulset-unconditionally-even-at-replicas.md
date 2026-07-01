@@ -167,7 +167,6 @@ requirementDiagram
     operator_render_unit_tests - verifies -> R5
     spec_cli_unit_tests - verifies -> R7
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
