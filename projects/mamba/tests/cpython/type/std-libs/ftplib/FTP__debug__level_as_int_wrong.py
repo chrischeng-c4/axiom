@@ -9,7 +9,6 @@
 # case = "FTP__debug__level_as_int_wrong"
 # subject = "ftplib.FTP.debug(level: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

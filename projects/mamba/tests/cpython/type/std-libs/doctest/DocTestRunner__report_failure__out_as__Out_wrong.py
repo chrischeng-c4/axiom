@@ -9,7 +9,6 @@
 # case = "DocTestRunner__report_failure__out_as__Out_wrong"
 # subject = "doctest.DocTestRunner.report_failure(out: _Out)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

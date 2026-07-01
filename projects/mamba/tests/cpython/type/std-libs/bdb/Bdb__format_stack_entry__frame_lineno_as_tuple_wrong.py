@@ -9,7 +9,6 @@
 # case = "Bdb__format_stack_entry__frame_lineno_as_tuple_wrong"
 # subject = "bdb.Bdb.format_stack_entry(frame_lineno: tuple)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

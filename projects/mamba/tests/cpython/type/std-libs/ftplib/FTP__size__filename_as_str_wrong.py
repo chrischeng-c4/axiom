@@ -9,7 +9,6 @@
 # case = "FTP__size__filename_as_str_wrong"
 # subject = "ftplib.FTP.size(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "NullTranslations__install__names_as_typed_wrong"
 # subject = "gettext.NullTranslations.install(names: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

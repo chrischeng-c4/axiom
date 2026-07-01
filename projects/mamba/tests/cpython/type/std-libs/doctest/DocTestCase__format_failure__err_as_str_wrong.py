@@ -9,7 +9,6 @@
 # case = "DocTestCase__format_failure__err_as_str_wrong"
 # subject = "doctest.DocTestCase.format_failure(err: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "OutputChecker__check_output__want_as_str_wrong"
 # subject = "doctest.OutputChecker.check_output(want: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

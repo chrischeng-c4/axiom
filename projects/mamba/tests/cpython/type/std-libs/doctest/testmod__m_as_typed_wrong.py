@@ -9,7 +9,6 @@
 # case = "testmod__m_as_typed_wrong"
 # subject = "doctest.testmod(m: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

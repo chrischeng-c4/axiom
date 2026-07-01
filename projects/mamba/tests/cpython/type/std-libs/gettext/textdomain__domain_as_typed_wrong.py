@@ -9,7 +9,6 @@
 # case = "textdomain__domain_as_typed_wrong"
 # subject = "gettext.textdomain(domain: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

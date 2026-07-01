@@ -9,7 +9,6 @@
 # case = "NullTranslations__add_fallback__fallback_as_NullTranslations_wrong"
 # subject = "gettext.NullTranslations.add_fallback(fallback: NullTranslations)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

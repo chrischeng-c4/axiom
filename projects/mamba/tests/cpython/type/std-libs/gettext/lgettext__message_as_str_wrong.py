@@ -9,7 +9,6 @@
 # case = "lgettext__message_as_str_wrong"
 # subject = "gettext.lgettext(message: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

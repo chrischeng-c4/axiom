@@ -9,7 +9,6 @@
 # case = "checkfuncname__b_as_Breakpoint_wrong"
 # subject = "bdb.checkfuncname(b: Breakpoint)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

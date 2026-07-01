@@ -9,7 +9,6 @@
 # case = "Bdb__stop_here__frame_as_FrameType_wrong"
 # subject = "bdb.Bdb.stop_here(frame: FrameType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "set_unittest_reportflags__flags_as_int_wrong"
 # subject = "doctest.set_unittest_reportflags(flags: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

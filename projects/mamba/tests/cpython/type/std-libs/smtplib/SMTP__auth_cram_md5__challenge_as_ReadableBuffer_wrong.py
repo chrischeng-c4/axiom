@@ -9,12 +9,10 @@
 # case = "SMTP__auth_cram_md5__challenge_as_ReadableBuffer_wrong"
 # subject = "smtplib.SMTP.auth_cram_md5(challenge: ReadableBuffer)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed challenge"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed challenge
 # mamba-strict-type: TypeError
 """Type wall: smtplib.SMTP.auth_cram_md5(challenge: ReadableBuffer); call it with the wrong type.
 

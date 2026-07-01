@@ -9,7 +9,6 @@
 # case = "SkipDocTestCase__init__module_as_ModuleType_wrong"
 # subject = "doctest.SkipDocTestCase.__init__(module: ModuleType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

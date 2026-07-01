@@ -9,7 +9,6 @@
 # case = "DocTestCase__init__test_as_DocTest_wrong"
 # subject = "doctest.DocTestCase.__init__(test: DocTest)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

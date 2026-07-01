@@ -9,7 +9,6 @@
 # case = "SMTP__rcpt__recip_as_str_wrong"
 # subject = "smtplib.SMTP.rcpt(recip: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

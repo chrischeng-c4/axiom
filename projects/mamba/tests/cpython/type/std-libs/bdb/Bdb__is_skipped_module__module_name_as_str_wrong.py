@@ -9,7 +9,6 @@
 # case = "Bdb__is_skipped_module__module_name_as_str_wrong"
 # subject = "bdb.Bdb.is_skipped_module(module_name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Bdb__clear_bpbynumber__arg_as_SupportsInt_wrong"
 # subject = "bdb.Bdb.clear_bpbynumber(arg: SupportsInt)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

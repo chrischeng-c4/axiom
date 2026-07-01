@@ -9,7 +9,6 @@
 # case = "SMTP__set_debuglevel__debuglevel_as_int_wrong"
 # subject = "smtplib.SMTP.set_debuglevel(debuglevel: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

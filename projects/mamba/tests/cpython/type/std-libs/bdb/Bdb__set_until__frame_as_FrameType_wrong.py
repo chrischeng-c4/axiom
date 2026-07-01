@@ -9,7 +9,6 @@
 # case = "Bdb__set_until__frame_as_FrameType_wrong"
 # subject = "bdb.Bdb.set_until(frame: FrameType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Bdb__set_trace__frame_as_typed_wrong"
 # subject = "bdb.Bdb.set_trace(frame: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

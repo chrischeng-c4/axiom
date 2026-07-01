@@ -9,7 +9,6 @@
 # case = "SMTPRecipientsRefused__init__recipients_as__SendErrs_wrong"
 # subject = "smtplib.SMTPRecipientsRefused.__init__(recipients: _SendErrs)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

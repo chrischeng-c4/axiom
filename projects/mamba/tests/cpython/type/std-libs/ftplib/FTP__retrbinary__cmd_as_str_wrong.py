@@ -9,7 +9,6 @@
 # case = "FTP__retrbinary__cmd_as_str_wrong"
 # subject = "ftplib.FTP.retrbinary(cmd: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

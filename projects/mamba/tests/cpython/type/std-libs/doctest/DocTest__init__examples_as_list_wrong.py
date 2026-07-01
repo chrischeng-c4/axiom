@@ -9,7 +9,6 @@
 # case = "DocTest__init__examples_as_list_wrong"
 # subject = "doctest.DocTest.__init__(examples: list)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

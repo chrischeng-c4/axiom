@@ -9,7 +9,6 @@
 # case = "parse150__resp_as_str_wrong"
 # subject = "ftplib.parse150(resp: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

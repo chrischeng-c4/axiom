@@ -9,7 +9,6 @@
 # case = "npgettext__context_as_str_wrong"
 # subject = "gettext.npgettext(context: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "FTP__rename__fromname_as_str_wrong"
 # subject = "ftplib.FTP.rename(fromname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

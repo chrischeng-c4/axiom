@@ -9,7 +9,6 @@
 # case = "FTP__putline__line_as_str_wrong"
 # subject = "ftplib.FTP.putline(line: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"
