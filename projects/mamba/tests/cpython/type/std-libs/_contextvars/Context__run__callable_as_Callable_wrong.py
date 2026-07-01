@@ -9,7 +9,6 @@
 # case = "Context__run__callable_as_Callable_wrong"
 # subject = "_contextvars.Context.run(callable: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_contextvars.pyi"
 # status = "filled"

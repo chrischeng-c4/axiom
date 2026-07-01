@@ -9,7 +9,6 @@
 # case = "loads__s_as_typed_wrong"
 # subject = "json.loads(s: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/json.pyi"
 # status = "filled"

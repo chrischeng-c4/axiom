@@ -9,7 +9,6 @@
 # case = "Sniffer__has_header__sample_as_str_wrong"
 # subject = "csv.Sniffer.has_header(sample: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/csv.pyi"
 # status = "filled"

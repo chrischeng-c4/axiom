@@ -9,7 +9,6 @@
 # case = "strcoll__os1_as_str_wrong"
 # subject = "_locale.strcoll(os1: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_locale.pyi"
 # status = "filled"

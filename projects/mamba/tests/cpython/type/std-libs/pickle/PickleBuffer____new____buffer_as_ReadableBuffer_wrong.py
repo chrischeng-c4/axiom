@@ -9,7 +9,6 @@
 # case = "PickleBuffer____new____buffer_as_ReadableBuffer_wrong"
 # subject = "pickle.PickleBuffer.__new__(buffer: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pickle.pyi"
 # status = "filled"

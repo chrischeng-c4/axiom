@@ -9,7 +9,6 @@
 # case = "decode_long__data_as_typed_wrong"
 # subject = "pickle.decode_long(data: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pickle.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "load_tzdata__key_as_str_wrong"
 # subject = "zoneinfo._common.load_tzdata(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zoneinfo/_common.pyi"
 # status = "filled"

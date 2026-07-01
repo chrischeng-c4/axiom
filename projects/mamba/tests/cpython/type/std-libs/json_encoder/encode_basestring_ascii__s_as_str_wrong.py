@@ -9,7 +9,6 @@
 # case = "encode_basestring_ascii__s_as_str_wrong"
 # subject = "json.encoder.encode_basestring_ascii(s: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/json/encoder.pyi"
 # status = "filled"

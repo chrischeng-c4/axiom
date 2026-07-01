@@ -9,7 +9,6 @@
 # case = "PickleBuffer____buffer____flags_as_int_wrong"
 # subject = "pickle.PickleBuffer.__buffer__(flags: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pickle.pyi"
 # status = "filled"

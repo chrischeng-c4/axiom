@@ -9,7 +9,6 @@
 # case = "indent__text_as_str_wrong"
 # subject = "textwrap.indent(text: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/textwrap.pyi"
 # status = "filled"

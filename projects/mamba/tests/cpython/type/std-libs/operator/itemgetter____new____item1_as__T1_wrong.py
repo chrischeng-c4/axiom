@@ -9,12 +9,10 @@
 # case = "itemgetter____new____item1_as__T1_wrong"
 # subject = "operator.itemgetter.__new__(item1: _T1)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item1"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item1
 # mamba-strict-type: TypeError
 """Type wall: operator.itemgetter.__new__(item1: _T1); call it with the wrong type.
 

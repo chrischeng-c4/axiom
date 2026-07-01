@@ -9,7 +9,6 @@
 # case = "dump__fp_as_SupportsWrite_wrong"
 # subject = "json.dump(fp: SupportsWrite)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/json.pyi"
 # status = "filled"

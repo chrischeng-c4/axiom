@@ -9,12 +9,10 @@
 # case = "attrgetter____new____attr_as_str_wrong"
 # subject = "operator.attrgetter.__new__(attr: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed attr"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed attr
 # mamba-strict-type: TypeError
 """Type wall: operator.attrgetter.__new__(attr: str); call it with the wrong type.
 

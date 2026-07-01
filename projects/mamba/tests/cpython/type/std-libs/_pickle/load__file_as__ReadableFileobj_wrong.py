@@ -9,7 +9,6 @@
 # case = "load__file_as__ReadableFileobj_wrong"
 # subject = "_pickle.load(file: _ReadableFileobj)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "load__fp_as_SupportsRead_wrong"
 # subject = "json.load(fp: SupportsRead)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/json.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "register__func_as_Callable_wrong"
 # subject = "atexit.register(func: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/atexit.pyi"
 # status = "filled"

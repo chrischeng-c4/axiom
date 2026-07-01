@@ -9,7 +9,6 @@
 # case = "add_extension__module_as_Hashable_wrong"
 # subject = "copyreg.add_extension(module: Hashable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copyreg.pyi"
 # status = "filled"

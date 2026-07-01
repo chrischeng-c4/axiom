@@ -9,7 +9,6 @@
 # case = "BaseSelector__modify__fileobj_as_FileDescriptorLike_wrong"
 # subject = "selectors.BaseSelector.modify(fileobj: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/selectors.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ContextVar__reset__token_as_Token_wrong"
 # subject = "_contextvars.ContextVar.reset(token: Token)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_contextvars.pyi"
 # status = "filled"

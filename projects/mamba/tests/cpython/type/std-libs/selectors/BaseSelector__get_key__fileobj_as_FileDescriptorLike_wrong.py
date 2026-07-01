@@ -9,7 +9,6 @@
 # case = "BaseSelector__get_key__fileobj_as_FileDescriptorLike_wrong"
 # subject = "selectors.BaseSelector.get_key(fileobj: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/selectors.pyi"
 # status = "filled"

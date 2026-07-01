@@ -9,7 +9,6 @@
 # case = "scanstring__pystr_as_str_wrong"
 # subject = "_json.scanstring(pystr: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_json.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "Queue__put_nowait__item_as__T_wrong"
 # subject = "queue.Queue.put_nowait(item: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/queue.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed item
 # mamba-strict-type: TypeError
 """Type wall: queue.Queue.put_nowait(item: _T); call it with the wrong type.
 

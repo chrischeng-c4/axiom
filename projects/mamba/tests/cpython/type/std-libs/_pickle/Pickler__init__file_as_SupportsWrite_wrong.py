@@ -9,7 +9,6 @@
 # case = "Pickler__init__file_as_SupportsWrite_wrong"
 # subject = "_pickle.Pickler.__init__(file: SupportsWrite)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"

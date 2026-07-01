@@ -9,12 +9,10 @@
 # case = "methodcaller____new____name_as_str_wrong"
 # subject = "operator.methodcaller.__new__(name: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/operator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: operator.methodcaller.__new__(name: str); call it with the wrong type.
 

@@ -9,7 +9,6 @@
 # case = "DictReader__init__f_as_Iterable_wrong"
 # subject = "csv.DictReader.__init__(f: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/csv.pyi"
 # status = "filled"

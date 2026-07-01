@@ -9,7 +9,6 @@
 # case = "setlocale__category_as_int_wrong"
 # subject = "_locale.setlocale(category: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_locale.pyi"
 # status = "filled"

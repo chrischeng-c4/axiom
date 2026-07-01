@@ -9,7 +9,6 @@
 # case = "Dialect____new____dialect_as_typed_wrong"
 # subject = "_csv.Dialect.__new__(dialect: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_csv.pyi"
 # status = "filled"

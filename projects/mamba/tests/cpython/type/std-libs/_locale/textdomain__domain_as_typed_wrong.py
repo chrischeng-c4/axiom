@@ -9,7 +9,6 @@
 # case = "textdomain__domain_as_typed_wrong"
 # subject = "_locale.textdomain(domain: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_locale.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Context____getitem____key_as_ContextVar_wrong"
 # subject = "_contextvars.Context.__getitem__(key: ContextVar)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_contextvars.pyi"
 # status = "filled"

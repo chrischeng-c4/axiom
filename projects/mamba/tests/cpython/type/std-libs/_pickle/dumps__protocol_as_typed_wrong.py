@@ -9,7 +9,6 @@
 # case = "dumps__protocol_as_typed_wrong"
 # subject = "_pickle.dumps(protocol: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"

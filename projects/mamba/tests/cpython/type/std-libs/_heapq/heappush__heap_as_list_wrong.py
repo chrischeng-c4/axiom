@@ -9,7 +9,6 @@
 # case = "heappush__heap_as_list_wrong"
 # subject = "_heapq.heappush(heap: list)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_heapq.pyi"
 # status = "filled"
