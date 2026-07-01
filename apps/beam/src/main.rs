@@ -119,6 +119,10 @@ enum Command {
     /// collection, search it on both the GPU (Metal via wgpu) and the exact CPU
     /// oracle, and print the GPU adapter, GPU-vs-CPU recall, and query timing.
     Bench(BenchArgs),
+    /// Report the resolved GPU backend + device and build provenance — confirms
+    /// which GPU beam is using. wgpu selects it automatically: Metal on Apple
+    /// Silicon, Vulkan on NVIDIA/Linux, DX12 on Windows (one WGSL codebase).
+    Info,
     /// (Placeholder) HTTP service shell — not implemented yet in this slice.
     Serve,
     /// (Placeholder) Vector collection lifecycle — not implemented yet.
@@ -310,6 +314,23 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 filter_category: args.filter,
                 churn: args.churn,
             })
+        }
+        // Report the resolved GPU backend + device — the dual-platform proof.
+        Command::Info => {
+            println!("beam {} ({}, git {})", TOOL.version, TOOL.target, TOOL.git_sha);
+            match beam::gpu::GpuContext::new() {
+                Some(gpu) => {
+                    let (backend, name) = gpu.adapter_info();
+                    println!("GPU backend: {backend}");
+                    println!("GPU device:  {name}");
+                    println!(
+                        "wgpu selects the backend automatically: Metal (Apple Silicon), \
+                         Vulkan (NVIDIA/Linux), DX12 (Windows) — one WGSL codebase."
+                    );
+                }
+                None => println!("GPU: no adapter available on this host (CPU-only)"),
+            }
+            Ok(ExitCode::SUCCESS)
         }
         // Placeholder service verbs — a consistent, tracked "not built yet" exit.
         Command::Serve => Ok(placeholder("HTTP service shell")),
