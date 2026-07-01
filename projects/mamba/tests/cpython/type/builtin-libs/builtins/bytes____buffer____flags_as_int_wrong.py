@@ -21,7 +21,7 @@ typeshed contract: flags is int. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import bytes
-obj = object.__new__(bytes)
+obj = b"abc"
 try:
     obj.__buffer__("not_an_int")  # flags: int <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
