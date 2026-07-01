@@ -9555,6 +9555,9 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__len__",
             "__contains__",
             "__getitem__",
+            "__add__",
+            "__mul__",
+            "__rmul__",
         ],
         // bytearray = bytes surface + the mutable-sequence mutators.
         "bytearray" => vec![
@@ -9614,6 +9617,9 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__getitem__",
             "__setitem__",
             "__delitem__",
+            "__add__",
+            "__mul__",
+            "__rmul__",
         ],
         _ => Vec::new(),
     }
