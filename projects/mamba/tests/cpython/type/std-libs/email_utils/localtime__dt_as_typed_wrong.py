@@ -9,12 +9,10 @@
 # case = "localtime__dt_as_typed_wrong"
 # subject = "email.utils.localtime(dt: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dt"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/utils.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dt
 # mamba-strict-type: TypeError
 """Type wall: email.utils.localtime(dt: typed); call it with the wrong type.
 
