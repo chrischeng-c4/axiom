@@ -21,7 +21,7 @@ typeshed contract: value is int. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import bytearray
-obj = object.__new__(bytearray)
+obj = bytearray(b"abc")
 try:
     obj.remove("not_an_int")  # value: int <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
