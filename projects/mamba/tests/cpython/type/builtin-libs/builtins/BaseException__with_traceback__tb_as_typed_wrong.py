@@ -25,7 +25,7 @@ class _W:
 
 
 from builtins import BaseException
-obj = object.__new__(BaseException)
+obj = BaseException()
 try:
     obj.with_traceback(_W())  # tb: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
