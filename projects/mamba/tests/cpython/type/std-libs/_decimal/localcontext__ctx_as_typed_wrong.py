@@ -9,7 +9,6 @@
 # case = "localcontext__ctx_as_typed_wrong"
 # subject = "_decimal.localcontext(ctx: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_decimal.pyi"
 # status = "filled"

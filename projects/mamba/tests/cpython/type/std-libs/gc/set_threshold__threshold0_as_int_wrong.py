@@ -9,7 +9,6 @@
 # case = "set_threshold__threshold0_as_int_wrong"
 # subject = "gc.set_threshold(threshold0: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gc.pyi"
 # status = "filled"

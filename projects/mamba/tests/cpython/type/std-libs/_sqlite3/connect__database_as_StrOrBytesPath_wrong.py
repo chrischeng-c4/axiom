@@ -9,7 +9,6 @@
 # case = "connect__database_as_StrOrBytesPath_wrong"
 # subject = "_sqlite3.connect(database: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"

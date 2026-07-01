@@ -9,7 +9,6 @@
 # case = "Profiler__enable__subcalls_as_bool_wrong"
 # subject = "_lsprof.Profiler.enable(subcalls: bool)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lsprof.pyi"
 # status = "filled"

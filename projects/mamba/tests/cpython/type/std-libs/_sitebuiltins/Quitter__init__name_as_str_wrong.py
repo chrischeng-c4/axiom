@@ -9,7 +9,6 @@
 # case = "Quitter__init__name_as_str_wrong"
 # subject = "_sitebuiltins.Quitter.__init__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sitebuiltins.pyi"
 # status = "filled"

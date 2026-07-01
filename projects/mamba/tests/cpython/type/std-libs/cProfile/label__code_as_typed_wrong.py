@@ -9,7 +9,6 @@
 # case = "label__code_as_typed_wrong"
 # subject = "cProfile.label(code: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cProfile.pyi"
 # status = "filled"

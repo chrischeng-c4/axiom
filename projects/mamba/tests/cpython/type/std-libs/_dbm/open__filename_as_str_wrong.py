@@ -9,7 +9,6 @@
 # case = "open__filename_as_str_wrong"
 # subject = "_dbm.open(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_dbm.pyi"
 # status = "filled"

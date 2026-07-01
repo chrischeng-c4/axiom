@@ -9,7 +9,6 @@
 # case = "tcgetwinsize__fd_as_FileDescriptorLike_wrong"
 # subject = "termios.tcgetwinsize(fd: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/termios.pyi"
 # status = "filled"

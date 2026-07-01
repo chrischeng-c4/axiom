@@ -9,7 +9,6 @@
 # case = "open__filename_as_StrOrBytesPath_wrong"
 # subject = "_dbm.open(filename: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_dbm.pyi"
 # status = "filled"

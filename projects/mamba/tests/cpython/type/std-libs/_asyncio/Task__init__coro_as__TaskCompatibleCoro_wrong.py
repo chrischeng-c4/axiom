@@ -9,7 +9,6 @@
 # case = "Task__init__coro_as__TaskCompatibleCoro_wrong"
 # subject = "_asyncio.Task.__init__(coro: _TaskCompatibleCoro)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_asyncio.pyi"
 # status = "filled"

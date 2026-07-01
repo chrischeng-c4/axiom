@@ -9,7 +9,6 @@
 # case = "ABCMeta____new____name_as_str_wrong"
 # subject = "_py_abc.ABCMeta.__new__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_py_abc.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "register_converter__typename_as_str_wrong"
 # subject = "_sqlite3.register_converter(typename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"

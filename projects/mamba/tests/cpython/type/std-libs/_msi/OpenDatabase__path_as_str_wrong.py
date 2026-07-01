@@ -9,7 +9,6 @@
 # case = "OpenDatabase__path_as_str_wrong"
 # subject = "_msi.OpenDatabase(path: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_msi.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "DecompressReader__read__size_as_int_wrong"
 # subject = "_compression.DecompressReader.read(size: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_compression.pyi"
 # status = "filled"

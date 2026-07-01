@@ -9,7 +9,6 @@
 # case = "set_debug__flags_as_int_wrong"
 # subject = "gc.set_debug(flags: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gc.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "get_queue_defaults__qid_as_SupportsIndex_wrong"
 # subject = "_interpqueues.get_queue_defaults(qid: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_interpqueues.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "cfmakeraw__mode_as__Attr_wrong"
 # subject = "tty.cfmakeraw(mode: _Attr)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tty.pyi"
 # status = "filled"

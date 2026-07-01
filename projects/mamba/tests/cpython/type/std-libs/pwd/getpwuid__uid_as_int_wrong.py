@@ -9,7 +9,6 @@
 # case = "getpwuid__uid_as_int_wrong"
 # subject = "pwd.getpwuid(uid: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pwd.pyi"
 # status = "filled"

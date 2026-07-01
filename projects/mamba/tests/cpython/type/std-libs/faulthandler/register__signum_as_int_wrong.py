@@ -9,7 +9,6 @@
 # case = "register__signum_as_int_wrong"
 # subject = "faulthandler.register(signum: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/faulthandler.pyi"
 # status = "filled"

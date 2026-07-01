@@ -9,7 +9,6 @@
 # case = "start__nframe_as_int_wrong"
 # subject = "_tracemalloc.start(nframe: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_tracemalloc.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "dump_traceback__file_as_FileDescriptorLike_wrong"
 # subject = "faulthandler.dump_traceback(file: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/faulthandler.pyi"
 # status = "filled"

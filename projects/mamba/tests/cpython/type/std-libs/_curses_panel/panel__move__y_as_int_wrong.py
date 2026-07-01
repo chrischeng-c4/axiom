@@ -9,7 +9,6 @@
 # case = "panel__move__y_as_int_wrong"
 # subject = "_curses_panel.panel.move(y: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_curses_panel.pyi"
 # status = "filled"

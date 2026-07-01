@@ -9,7 +9,6 @@
 # case = "LZMACompressor__init__format_as_int_wrong"
 # subject = "_lzma.LZMACompressor.__init__(format: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lzma.pyi"
 # status = "filled"

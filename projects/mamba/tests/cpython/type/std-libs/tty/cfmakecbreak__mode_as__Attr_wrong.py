@@ -9,7 +9,6 @@
 # case = "cfmakecbreak__mode_as__Attr_wrong"
 # subject = "tty.cfmakecbreak(mode: _Attr)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tty.pyi"
 # status = "filled"

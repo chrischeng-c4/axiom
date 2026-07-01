@@ -9,7 +9,6 @@
 # case = "flock__fd_as_FileDescriptorLike_wrong"
 # subject = "fcntl.flock(fd: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fcntl.pyi"
 # status = "filled"

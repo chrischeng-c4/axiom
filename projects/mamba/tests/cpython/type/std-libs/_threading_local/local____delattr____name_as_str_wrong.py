@@ -9,7 +9,6 @@
 # case = "local____delattr____name_as_str_wrong"
 # subject = "_threading_local.local.__delattr__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_threading_local.pyi"
 # status = "filled"

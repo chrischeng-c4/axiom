@@ -9,7 +9,6 @@
 # case = "enable_shared_cache__do_enable_as_int_wrong"
 # subject = "_sqlite3.enable_shared_cache(do_enable: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"

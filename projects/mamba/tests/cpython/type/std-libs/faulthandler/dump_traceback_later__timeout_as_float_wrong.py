@@ -9,7 +9,6 @@
 # case = "dump_traceback_later__timeout_as_float_wrong"
 # subject = "faulthandler.dump_traceback_later(timeout: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/faulthandler.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "match__key_as_str_wrong"
 # subject = "nis.match(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/nis.pyi"
 # status = "filled"
