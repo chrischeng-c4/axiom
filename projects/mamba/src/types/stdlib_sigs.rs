@@ -1533,6 +1533,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("n", CoreTy::Complex)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "ast",
+        qualifier: "arguments",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("posonlyargs", CoreTy::List)],
+        enforceable: true,
+    },
     // POSITIVE: configparser's `_SectionName` alias is a string-shaped section
     // key in CPython's public API. The generated row keeps it Unknown, which
     // lets a bare user object fall through to runtime NoSectionError instead
@@ -2648,6 +2656,46 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("i", CoreTy::Int),
             p("decode", CoreTy::Unknown),
         ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "get_boundary",
+        kind: SigKind::Method,
+        params: &[p("failobj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "get_charsets",
+        kind: SigKind::Method,
+        params: &[p("failobj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "get_content_charset",
+        kind: SigKind::Method,
+        params: &[p("failobj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "get_filename",
+        kind: SigKind::Method,
+        params: &[p("failobj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "email.message",
+        qualifier: "Message",
+        name: "get_params",
+        kind: SigKind::Method,
+        params: &[p("failobj", CoreTy::Typed)],
         enforceable: true,
     },
     StdlibSig {
@@ -6225,6 +6273,11 @@ mod tests {
         for (name, param_name) in [
             ("__init__", "policy"),
             ("set_payload", "payload"),
+            ("get_boundary", "failobj"),
+            ("get_charsets", "failobj"),
+            ("get_content_charset", "failobj"),
+            ("get_filename", "failobj"),
+            ("get_params", "failobj"),
         ] {
             let sig = get("email.message", "Message", name)
                 .expect("email.message Message row present");
@@ -6245,6 +6298,15 @@ mod tests {
         assert_eq!(sig.params[0].ty, CoreTy::Int);
         assert_eq!(sig.params[1].name, "decode");
         assert_eq!(sig.params[1].ty, CoreTy::Unknown);
+    }
+
+    #[test]
+    fn curated_ast_arguments_posonlyargs_wall_overrides_unknown_row() {
+        let sig = get("ast", "arguments", "__init__").expect("ast.arguments.__init__ present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.kind, SigKind::Method);
+        assert_eq!(sig.params[0].name, "posonlyargs");
+        assert_eq!(sig.params[0].ty, CoreTy::List);
     }
 
     #[test]
