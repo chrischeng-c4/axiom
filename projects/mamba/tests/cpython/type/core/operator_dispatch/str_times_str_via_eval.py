@@ -9,12 +9,10 @@
 # case = "str_times_str_via_eval"
 # subject = "operator dispatch TypeError"
 # kind = "semantic"
-# xfail = "eval operator TypeError dispatch pending; currently MAMBA_TYPE_LEAKED"
 # mem_carveout = ""
 # source = ""
 # status = "filled"
 # ///
-# mamba-xfail: eval operator TypeError dispatch pending; currently MAMBA_TYPE_LEAKED
 # mamba-strict-type: TypeError
 """Mamba strong-typing contract: str * str via eval().
 

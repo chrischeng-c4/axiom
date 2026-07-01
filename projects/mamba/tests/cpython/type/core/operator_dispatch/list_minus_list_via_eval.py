@@ -9,7 +9,6 @@
 # case = "list_minus_list_via_eval"
 # subject = "operator dispatch TypeError"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
