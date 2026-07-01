@@ -17,40 +17,45 @@ capability_refs:
 
 ```mermaid
 ---
-id: jet-build-lib-dts-aggregate-isolated-declarations-logic
+id: jet-build-lib-dts-aggregate-isolated-declarations-contract
 entry: start
 nodes:
   start: { kind: start, label: "Start lib dts emission" }
   collect_modules: { kind: process, label: "Collect entry and reachable local re-export modules" }
-  emit_module: { kind: process, label: "Emit declaration text for each module" }
-  collect_diagnostic: { kind: process, label: "Record module path and isolatedDeclarations diagnostic" }
+  emit_module: { kind: process, label: "Attempt declaration emit for each module" }
+  module_ok: { kind: decision, label: "Module emitted cleanly?" }
+  store_output: { kind: process, label: "Store pending .d.ts path and text" }
+  store_diagnostic: { kind: process, label: "Store source path plus every isolatedDeclarations diagnostic" }
   more_modules: { kind: decision, label: "More modules?" }
-  has_errors: { kind: decision, label: "Any diagnostics collected?" }
-  fail_all: { kind: terminal, label: "Fail once with all diagnostics" }
-  write_outputs: { kind: terminal, label: "Write .d.ts outputs" }
+  has_diagnostics: { kind: decision, label: "Diagnostics collected?" }
+  fail: { kind: terminal, label: "Return one error containing all diagnostics" }
+  write: { kind: terminal, label: "Write pending outputs and return entry .d.ts path" }
 edges:
   - { from: start, to: collect_modules }
   - { from: collect_modules, to: emit_module }
-  - { from: emit_module, to: collect_diagnostic, label: "module has dts error" }
-  - { from: emit_module, to: more_modules, label: "module emits cleanly" }
-  - { from: collect_diagnostic, to: more_modules }
+  - { from: emit_module, to: module_ok }
+  - { from: module_ok, to: store_output, label: "yes" }
+  - { from: module_ok, to: store_diagnostic, label: "no" }
+  - { from: store_output, to: more_modules }
+  - { from: store_diagnostic, to: more_modules }
   - { from: more_modules, to: emit_module, label: "yes" }
-  - { from: more_modules, to: has_errors, label: "no" }
-  - { from: has_errors, to: fail_all, label: "yes" }
-  - { from: has_errors, to: write_outputs, label: "no" }
+  - { from: more_modules, to: has_diagnostics, label: "no" }
+  - { from: has_diagnostics, to: fail, label: "yes" }
+  - { from: has_diagnostics, to: write, label: "no" }
 ---
 flowchart TD
     start([Start lib dts emission]) --> collect_modules[Collect entry and reachable local re-export modules]
-    collect_modules --> emit_module[Emit declaration text for each module]
-    emit_module -->|module has dts error| collect_diagnostic[Record module path and isolatedDeclarations diagnostic]
-    emit_module -->|module emits cleanly| more_modules{More modules?}
-    collect_diagnostic --> more_modules
+    collect_modules --> emit_module[Attempt declaration emit for each module]
+    emit_module --> module_ok{Module emitted cleanly?}
+    module_ok -->|yes| store_output[Store pending .d.ts path and text]
+    module_ok -->|no| store_diagnostic[Store source path plus every isolatedDeclarations diagnostic]
+    store_output --> more_modules{More modules?}
+    store_diagnostic --> more_modules
     more_modules -->|yes| emit_module
-    more_modules -->|no| has_errors{Any diagnostics collected?}
-    has_errors -->|yes| fail_all([Fail once with all diagnostics])
-    has_errors -->|no| write_outputs([Write .d.ts outputs])
+    more_modules -->|no| has_diagnostics{Diagnostics collected?}
+    has_diagnostics -->|yes| fail([Return one error containing all diagnostics])
+    has_diagnostics -->|no| write([Write pending outputs and return entry .d.ts path])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
