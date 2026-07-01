@@ -9,7 +9,6 @@
 # case = "int____rdivmod____value_as_int_wrong"
 # subject = "builtins.int.__rdivmod__(value: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

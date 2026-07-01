@@ -9,12 +9,10 @@
 # case = "isinstance__class_or_tuple_as__ClassInfo_wrong"
 # subject = "builtins.isinstance(class_or_tuple: _ClassInfo)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed class_or_tuple"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed class_or_tuple
 # mamba-strict-type: TypeError
 """Type wall: builtins.isinstance(class_or_tuple: _ClassInfo); call it with the wrong type.
 

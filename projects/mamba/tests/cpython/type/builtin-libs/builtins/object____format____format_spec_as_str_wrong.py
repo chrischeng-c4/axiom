@@ -9,7 +9,6 @@
 # case = "object____format____format_spec_as_str_wrong"
 # subject = "builtins.object.__format__(format_spec: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

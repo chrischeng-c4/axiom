@@ -9,12 +9,10 @@
 # case = "memoryview__cast__format_as__IntegerFormats_wrong"
 # subject = "builtins.memoryview.cast(format: _IntegerFormats)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed format"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed format
 # mamba-strict-type: TypeError
 """Type wall: builtins.memoryview.cast(format: _IntegerFormats); call it with the wrong type.
 

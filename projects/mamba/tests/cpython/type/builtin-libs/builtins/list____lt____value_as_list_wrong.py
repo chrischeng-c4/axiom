@@ -9,12 +9,10 @@
 # case = "list____lt____value_as_list_wrong"
 # subject = "builtins.list.__lt__(value: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: builtins.list.__lt__(value: list); call it with the wrong type.
 
