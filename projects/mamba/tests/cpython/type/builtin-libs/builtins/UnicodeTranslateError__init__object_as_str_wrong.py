@@ -9,7 +9,6 @@
 # case = "UnicodeTranslateError__init__object_as_str_wrong"
 # subject = "builtins.UnicodeTranslateError.__init__(object: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "str__splitlines__keepends_as_bool_wrong"
 # subject = "builtins.str.splitlines(keepends: bool)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

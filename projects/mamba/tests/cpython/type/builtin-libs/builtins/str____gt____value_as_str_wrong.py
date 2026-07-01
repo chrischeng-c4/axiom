@@ -9,7 +9,6 @@
 # case = "str____gt____value_as_str_wrong"
 # subject = "builtins.str.__gt__(value: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

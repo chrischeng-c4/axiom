@@ -9,7 +9,6 @@
 # case = "set__symmetric_difference_update__s_as_Iterable_wrong"
 # subject = "builtins.set.symmetric_difference_update(s: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

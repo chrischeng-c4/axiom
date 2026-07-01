@@ -9,7 +9,6 @@
 # case = "type____subclasscheck____subclass_as_type_wrong"
 # subject = "builtins.type.__subclasscheck__(subclass: type)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

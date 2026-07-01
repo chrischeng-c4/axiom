@@ -9,7 +9,6 @@
 # case = "UnicodeDecodeError__init__encoding_as_str_wrong"
 # subject = "builtins.UnicodeDecodeError.__init__(encoding: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

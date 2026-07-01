@@ -9,7 +9,6 @@
 # case = "setattr__name_as_str_wrong"
 # subject = "builtins.setattr(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

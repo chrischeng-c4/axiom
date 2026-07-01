@@ -9,7 +9,6 @@
 # case = "str__rstrip__chars_as_typed_wrong"
 # subject = "builtins.str.rstrip(chars: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

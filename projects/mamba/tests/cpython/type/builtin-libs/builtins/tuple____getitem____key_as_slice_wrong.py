@@ -9,7 +9,6 @@
 # case = "tuple____getitem____key_as_slice_wrong"
 # subject = "builtins.tuple.__getitem__(key: slice)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

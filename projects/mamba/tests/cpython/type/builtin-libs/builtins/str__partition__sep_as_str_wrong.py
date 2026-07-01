@@ -9,7 +9,6 @@
 # case = "str__partition__sep_as_str_wrong"
 # subject = "builtins.str.partition(sep: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

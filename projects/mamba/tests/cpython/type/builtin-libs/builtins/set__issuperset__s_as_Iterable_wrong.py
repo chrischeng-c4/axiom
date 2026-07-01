@@ -9,7 +9,6 @@
 # case = "set__issuperset__s_as_Iterable_wrong"
 # subject = "builtins.set.issuperset(s: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

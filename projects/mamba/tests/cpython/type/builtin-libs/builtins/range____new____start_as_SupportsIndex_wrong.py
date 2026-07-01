@@ -9,12 +9,10 @@
 # case = "range____new____start_as_SupportsIndex_wrong"
 # subject = "builtins.range.__new__(start: SupportsIndex)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed start"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed start
 # mamba-strict-type: TypeError
 """Type wall: builtins.range.__new__(start: SupportsIndex); call it with the wrong type.
 

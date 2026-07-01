@@ -9,7 +9,6 @@
 # case = "ord__c_as_typed_wrong"
 # subject = "builtins.ord(c: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

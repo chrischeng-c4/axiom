@@ -9,7 +9,6 @@
 # case = "pow__base_as__SupportsPow2_wrong"
 # subject = "builtins.pow(base: _SupportsPow2)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

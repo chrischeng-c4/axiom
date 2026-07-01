@@ -9,12 +9,10 @@
 # case = "str____new____object_as_ReadableBuffer_wrong"
 # subject = "builtins.str.__new__(object: ReadableBuffer)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object
 # mamba-strict-type: TypeError
 """Type wall: builtins.str.__new__(object: ReadableBuffer); call it with the wrong type.
 
