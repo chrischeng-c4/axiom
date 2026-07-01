@@ -9,12 +9,10 @@
 # case = "Fraction____round____ndigits_as_typed_wrong"
 # subject = "fractions.Fraction.__round__(ndigits: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ndigits"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ndigits
 # mamba-strict-type: TypeError
 """Type wall: fractions.Fraction.__round__(ndigits: typed); call it with the wrong type.
 

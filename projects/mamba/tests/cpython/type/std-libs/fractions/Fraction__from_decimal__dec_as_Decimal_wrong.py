@@ -9,7 +9,6 @@
 # case = "Fraction__from_decimal__dec_as_Decimal_wrong"
 # subject = "fractions.Fraction.from_decimal(dec: Decimal)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"

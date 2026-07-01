@@ -9,12 +9,10 @@
 # case = "Fraction____mod____b_as_float_wrong"
 # subject = "fractions.Fraction.__mod__(b: float)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed b"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed b
 # mamba-strict-type: TypeError
 """Type wall: fractions.Fraction.__mod__(b: float); call it with the wrong type.
 

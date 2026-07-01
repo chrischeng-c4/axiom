@@ -9,7 +9,6 @@
 # case = "Fraction____gt____b_as__ComparableNum_wrong"
 # subject = "fractions.Fraction.__gt__(b: _ComparableNum)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"
