@@ -37,6 +37,13 @@ bytemuck = { version = "1", features = ["derive"] }
 # Block on wgpu's async `request_adapter` / `request_device` from sync code.
 pollster = "0.4"
 
+# --- HNSW graph ANN index (CPU) ------------------------------------------
+# The pure-Rust HNSW backend behind `HnswIndex`. Pinned to the SAME version +
+# features lumen uses (`projects/lumen`), so the shared workspace Cargo.lock
+# resolves ONE hnsw_rs/anndists copy. `simdeez_f` compiles anndists' SIMD
+# distance kernels (aarch64 NEON `asimd`, x86 AVX2/SSE2) for DistL2/DistDot.
+hnsw_rs = { version = "0.3", features = ["simdeez_f"] }
+
 # --- Durable persistence (save/load) -------------------------------------
 # Serialize the CPU-side source-of-truth (collection segment + trained IVF-PQ
 # model) to disk so a cold load reproduces identical search results without

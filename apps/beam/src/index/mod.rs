@@ -1,11 +1,14 @@
 //! Vector-index contract + the shared top-k selection both backends use.
 //!
 //! An index answers a single question — the `k` nearest rows to a query — via
-//! [`VectorIndex::search_knn`]. Two backends implement it:
+//! [`VectorIndex::search_knn`]. Several backends implement it:
 //!
 //! - [`cpu_flat::CpuFlatIndex`] — exact CPU brute force, the correctness oracle.
 //! - [`crate::gpu::GpuFlatIndex`] — the same exact scan, but the per-row
 //!   distances are computed by a Metal (wgpu) compute kernel.
+//! - [`ivf_pq::IvfPqIndex`] — IVF-PQ (IVFADC) approximate index (GPU + CPU).
+//! - [`hnsw::HnswIndex`] — HNSW graph ANN (CPU), the default graph index every
+//!   mainstream vector DB ships.
 //!
 //! Both compute the SAME per-row score under a shared convention (see
 //! [`crate::collection::Metric::code`]) and hand it to [`topk`], so their result
@@ -27,6 +30,7 @@ use crate::collection::Metric;
 use crate::payload::{Filter, Payload};
 
 pub mod cpu_flat;
+pub mod hnsw;
 pub mod ivf_pq;
 
 /// One search result: the stored row index, its external id, and its raw score

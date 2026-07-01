@@ -1669,6 +1669,7 @@ dependencies = [
  "clap",
  "cli-std",
  "h2c",
+ "hnsw_rs",
  "pollster",
  "reqwest 0.12.28",
  "serde",

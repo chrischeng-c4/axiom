@@ -47,12 +47,14 @@ const TOPICS: &[cli_std::llm::Topic] = &[
             owns ranking and dedup. Beam is the GPU vector engine underneath vector \
             retrieval — it never claims mixed search, ranking, or dedup.\n\n\
             Engine today: an in-memory vector collection with an exact CPU oracle, \
-            a GPU flat (brute-force) k-NN index, and a GPU IVF-PQ (IVFADC) \
-            approximate-nearest-neighbor index — all on wgpu (Metal on Apple Silicon, \
-            Vulkan on Linux/NVIDIA). IVF-PQ prunes to the nprobe nearest cells and \
-            product-quantizes residuals, so a query touches a small fraction of the \
-            corpus; recall is verified against the flat oracle. `beam bench --index \
-            flat|ivfflat|ivfpq` runs the GPU-vs-CPU parity, recall, pruning, and timing \
+            a GPU flat (brute-force) k-NN index, a GPU IVF-PQ (IVFADC) \
+            approximate-nearest-neighbor index, and a CPU HNSW graph ANN index — the \
+            GPU paths on wgpu (Metal on Apple Silicon, Vulkan on Linux/NVIDIA). IVF-PQ \
+            prunes to the nprobe nearest cells and product-quantizes residuals; HNSW is \
+            the default graph ANN every mainstream vector DB ships (build-then-query, \
+            L2/Cosine/Dot). A query touches a small fraction of the corpus; recall is \
+            verified against the flat oracle. `beam bench --index \
+            flat|ivfflat|ivfpq|hnsw` runs the parity, recall, pruning, and timing \
             demo. Still to come: durable segments, an HTTP/2 query API, and k8s. \
             Capability roots live in projects/beam/README.md (epic #769).\n",
     },
@@ -174,11 +176,12 @@ struct BenchArgs {
     #[arg(long, value_parser = ["l2", "dot", "cosine"], default_value = "l2")]
     metric: String,
     /// Index backend: `flat` (exact GPU brute force), `ivfflat` (IVF + exact
-    /// residual refine), or `ivfpq` (IVF + product-quantized residuals). IVF
-    /// backends use a clustered corpus and print the candidates-scanned ratio.
-    #[arg(long, value_parser = ["flat", "ivfflat", "ivfpq"], default_value = "flat")]
+    /// residual refine), `ivfpq` (IVF + product-quantized residuals), or `hnsw`
+    /// (CPU HNSW graph ANN). IVF/HNSW backends use a clustered corpus and report
+    /// recall vs the flat oracle.
+    #[arg(long, value_parser = ["flat", "ivfflat", "ivfpq", "hnsw"], default_value = "flat")]
     index: String,
-    /// IVF coarse-cell count (ivfflat / ivfpq).
+    /// IVF coarse-cell count (ivfflat / ivfpq). Also seeds the HNSW cluster count.
     #[arg(long, default_value_t = 256)]
     nlist: usize,
     /// Cells probed per query (ivfflat / ivfpq).
@@ -187,6 +190,18 @@ struct BenchArgs {
     /// PQ subvector count (ivfpq); `dim` must be divisible by `m`.
     #[arg(long, default_value_t = 16)]
     m: usize,
+    /// HNSW `M` — max connections per node per layer (`--index hnsw`). Larger =
+    /// higher recall, more memory, slower build.
+    #[arg(long = "hnsw-m", default_value_t = 16)]
+    hnsw_m: usize,
+    /// HNSW `ef_construction` — build-time beam width (`--index hnsw`). Larger =
+    /// higher-quality graph (higher recall) at a higher build cost.
+    #[arg(long = "ef-construction", default_value_t = 200)]
+    ef_construction: usize,
+    /// HNSW `ef_search` — query-time beam width (`--index hnsw`), the
+    /// recall/latency lever. Larger = higher recall, slower query.
+    #[arg(long = "ef-search", default_value_t = 64)]
+    ef_search: usize,
     /// Corpus intrinsic dimension. `0` (default) = isotropic clustered data (PQ's
     /// worst case). `> 0` (e.g. 16 for dim=128) = embedding-like low-rank data
     /// where IVF-PQ recall is high. Only affects the ivfflat / ivfpq backends.
@@ -341,6 +356,9 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 nlist: args.nlist,
                 nprobe: args.nprobe,
                 m: args.m,
+                hnsw_m: args.hnsw_m,
+                ef_construction: args.ef_construction,
+                ef_search: args.ef_search,
                 rank: args.rank,
                 filter_category: args.filter,
                 churn: args.churn,
