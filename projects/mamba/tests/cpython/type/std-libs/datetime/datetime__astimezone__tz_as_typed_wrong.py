@@ -9,7 +9,6 @@
 # case = "datetime__astimezone__tz_as_typed_wrong"
 # subject = "datetime.datetime.astimezone(tz: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

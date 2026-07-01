@@ -9,7 +9,6 @@
 # case = "timezone____new____offset_as_timedelta_wrong"
 # subject = "datetime.timezone.__new__(offset: timedelta)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"
