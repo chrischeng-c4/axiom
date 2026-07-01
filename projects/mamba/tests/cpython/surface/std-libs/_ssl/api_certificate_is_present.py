@@ -22,6 +22,8 @@ from _ssl import Certificate
 assert ssl._ssl is _ssl
 assert hasattr(_ssl, "Certificate")
 assert Certificate is _ssl.Certificate
+assert Certificate.__module__ == "_ssl"
+assert Certificate.__name__ == "Certificate"
 assert callable(Certificate)
 assert hasattr(Certificate, "public_bytes")
 print("api_certificate_is_present OK")
