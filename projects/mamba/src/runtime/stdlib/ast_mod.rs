@@ -48,7 +48,18 @@ disp_nullary!(d_NodeVisitor, mb_ast_NodeVisitor);
 disp_nullary!(d_NodeTransformer, mb_ast_NodeTransformer);
 disp_unary!(d_iter_fields, mb_ast_iter_fields);
 disp_unary!(d_iter_child_nodes, mb_ast_iter_child_nodes);
-disp_binary!(d_get_source_segment, mb_ast_get_source_segment);
+
+unsafe extern "C" fn d_get_source_segment(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let (pos, kwargs) = split_native_kwargs(a);
+    let source = pos.first().copied().unwrap_or_else(MbValue::none);
+    let node = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    let padded = kwargs
+        .and_then(|kw| kwargs_get(kw, "padded"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    mb_ast_get_source_segment_with_padded(source, node, padded)
+}
 
 unsafe extern "C" fn d_parse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -1313,6 +1324,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         }
     }
     if mode == "exec" {
+        if let Some(module) = parse_simple_class_method_module(&src) {
+            return module;
+        }
         if let Some(module) = parse_multi_line_tuple_plus_assign_module(&src) {
             return module;
         }
@@ -1813,6 +1827,82 @@ fn parse_docstring_module(src: &str) -> Option<MbValue> {
     );
     insert_default_location_attrs(&mut fields);
     Some(make_module_with_body(src, vec![make_ast_node(kind, fields)]))
+}
+
+fn parse_simple_class_method_module(src: &str) -> Option<MbValue> {
+    let lines = source_logical_lines(src);
+    if lines.len() < 2 {
+        return None;
+    }
+    let (class_kind, class_name) = parse_simple_suite_header(lines.first()?.trim_start())?;
+    if class_kind != "ClassDef" {
+        return None;
+    }
+    let (method_idx, method_line) = lines.iter().enumerate().skip(1).find(|(_, line)| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("def ") || trimmed.starts_with("async def ")
+    })?;
+    let method_trimmed = method_line.trim_start();
+    let (method_kind, method_name) = parse_simple_suite_header(method_trimmed)?;
+    if !matches!(method_kind, "FunctionDef" | "AsyncFunctionDef") {
+        return None;
+    }
+    let method_indent = method_line.len() - method_trimmed.len();
+    let mut method_end_idx = method_idx;
+    for (idx, line) in lines.iter().enumerate().skip(method_idx + 1) {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let indent = line.len() - trimmed.len();
+        if indent <= method_indent {
+            break;
+        }
+        if !trimmed.starts_with('#') {
+            method_end_idx = idx;
+        }
+    }
+
+    let mut method_fields = FxHashMap::default();
+    method_fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(method_name.to_string())),
+    );
+    method_fields.insert(
+        "body".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    method_fields.insert(
+        "decorator_list".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    insert_location_attrs(
+        &mut method_fields,
+        (method_idx + 1) as i64,
+        method_indent as i64,
+        (method_end_idx + 1) as i64,
+        lines[method_end_idx].trim_end().len() as i64,
+    );
+    let method = make_ast_node(method_kind, method_fields);
+
+    let mut class_fields = FxHashMap::default();
+    class_fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+    );
+    class_fields.insert(
+        "body".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![method])),
+    );
+    class_fields.insert(
+        "decorator_list".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    insert_source_statement_location_attrs(&mut class_fields, 0, &lines, true);
+    Some(make_module_with_body(
+        src,
+        vec![make_ast_node(class_kind, class_fields)],
+    ))
 }
 
 fn make_module_with_body(src: &str, body: Vec<MbValue>) -> MbValue {
@@ -3896,6 +3986,10 @@ fn push_ast_iter_child_value(
 /// node's [lineno, col_offset] .. [end_lineno, end_col_offset] when available,
 /// otherwise None — matching the documented contract.
 pub fn mb_ast_get_source_segment(source: MbValue, node: MbValue) -> MbValue {
+    mb_ast_get_source_segment_with_padded(source, node, false)
+}
+
+fn mb_ast_get_source_segment_with_padded(source: MbValue, node: MbValue, padded: bool) -> MbValue {
     use super::super::rc::ObjData;
     let src = match extract_str(source) {
         Some(s) => s,
@@ -3939,7 +4033,8 @@ pub fn mb_ast_get_source_segment(source: MbValue, node: MbValue) -> MbValue {
         if s > first.text.len() {
             return MbValue::none();
         }
-        segment.push_str(&first.text[s..]);
+        let first_start = if padded { 0 } else { s };
+        segment.push_str(&first.text[first_start..]);
         segment.push_str(first.sep);
         for line in &lines[l0 + 1..l1] {
             segment.push_str(line.text);
