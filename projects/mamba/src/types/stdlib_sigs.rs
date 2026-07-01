@@ -5289,6 +5289,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "inspect",
+        qualifier: "",
+        name: "getmembers_static",
+        kind: SigKind::ModuleFn,
+        params: &[p("object", CoreTy::Unknown), p("predicate", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "http.client",
         qualifier: "",
         name: "parse_headers",
@@ -7087,6 +7095,7 @@ mod tests {
             ("inspect", "", "getcoroutinestate", 0, "coroutine", CoreTy::Typed),
             ("inspect", "", "getgeneratorstate", 0, "generator", CoreTy::Typed),
             ("inspect", "", "getmembers", 1, "predicate", CoreTy::Typed),
+            ("inspect", "", "getmembers_static", 1, "predicate", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
