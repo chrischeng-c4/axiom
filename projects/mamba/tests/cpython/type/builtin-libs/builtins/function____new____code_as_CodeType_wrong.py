@@ -9,7 +9,6 @@
 # case = "function____new____code_as_CodeType_wrong"
 # subject = "builtins.function.__new__(code: CodeType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

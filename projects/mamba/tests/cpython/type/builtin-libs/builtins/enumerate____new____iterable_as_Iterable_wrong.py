@@ -9,7 +9,6 @@
 # case = "enumerate____new____iterable_as_Iterable_wrong"
 # subject = "builtins.enumerate.__new__(iterable: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "filter____new____function_as_typed_wrong"
 # subject = "builtins.filter.__new__(function: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed function"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed function
 # mamba-strict-type: TypeError
 """Type wall: builtins.filter.__new__(function: typed); call it with the wrong type.
 

@@ -9,7 +9,6 @@
 # case = "dict__init__map_as_SupportsKeysAndGetItem_wrong"
 # subject = "builtins.dict.__init__(map: SupportsKeysAndGetItem)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
