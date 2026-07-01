@@ -915,6 +915,9 @@ pub fn register() {
             "AuthenticationError",
             "TimeoutError",
             "DefaultContext",
+            "ForkProcess",
+            "ForkServerProcess",
+            "SpawnProcess",
             "ForkContext",
             "SpawnContext",
             "ForkServerContext",
@@ -922,6 +925,7 @@ pub fn register() {
         &[
             ("get_context", dispatch_class_shell as *const () as usize),
             ("get_start_method", dispatch_empty_str as *const () as usize),
+            ("set_spawning_popen", dispatch_noop as *const () as usize),
             ("set_start_method", dispatch_noop as *const () as usize),
             (
                 "get_all_start_methods",
