@@ -12,9 +12,8 @@ use std::sync::Arc;
 
 use axum::{
     body::Bytes,
-    extract::{Path, Request, State},
-    http::{header, HeaderMap, StatusCode, Uri},
-    middleware::{self, Next},
+    extract::{Path, State},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -57,39 +56,6 @@ impl AppState {
     }
 }
 
-/// vhost-style namespace (#450): rewrite `/v1/{subject}/{op}` →
-/// `/v1/{ns}::{subject}/{op}` so every op is isolated per namespace, with no
-/// per-handler change (the engine already keys by subject string). Pure + tested.
-fn namespaced_path(path: &str, ns: &str) -> Option<String> {
-    // only safe namespace chars (path-segment safe, no collision tricks)
-    if ns.is_empty() || !ns.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
-        return None;
-    }
-    let rest = path.strip_prefix("/v1/")?;
-    let (subject, op) = rest.split_once('/')?;
-    Some(format!("/v1/{ns}::{subject}/{op}"))
-}
-
-/// Middleware: if `X-Relay-Namespace` is set, rewrite the request path to scope
-/// the subject to that namespace.
-async fn namespace_layer(req: Request, next: Next) -> Response {
-    let ns = req.headers().get("x-relay-namespace").and_then(|v| v.to_str().ok()).map(str::to_string);
-    let mut req = req;
-    if let Some(ns) = ns {
-        if let Some(new_path) = namespaced_path(req.uri().path(), &ns) {
-            let q = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
-            if let Ok(pq) = format!("{new_path}{q}").parse() {
-                let mut parts = req.uri().clone().into_parts();
-                parts.path_and_query = Some(pq);
-                if let Ok(uri) = Uri::from_parts(parts) {
-                    *req.uri_mut() = uri;
-                }
-            }
-        }
-    }
-    next.run(req).await
-}
-
 /// Build the HTTP/2 router for the relay transport.
 ///
 /// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#logic
@@ -119,32 +85,9 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/openapi.json", get(openapi_json))
         .with_state(state);
-    // vhost-style namespace isolation (#450): the namespace middleware must run
-    // BEFORE routing so the rewritten subject is the one matched + captured. A
-    // `.layer` on `app` runs *after* path-param capture, so wrap `app` as the
-    // fallback of an outer router whose layer runs first.
-    Router::new().fallback_service(app).layer(middleware::from_fn(namespace_layer))
-}
-
-#[cfg(test)]
-mod ns_tests {
-    use super::namespaced_path;
-
-    #[test]
-    fn namespace_rewrites_subject_segment_only() {
-        assert_eq!(
-            namespaced_path("/v1/myq/consume", "tenant1").as_deref(),
-            Some("/v1/tenant1::myq/consume")
-        );
-        assert_eq!(
-            namespaced_path("/v1/loom.completions.3/publish", "a").as_deref(),
-            Some("/v1/a::loom.completions.3/publish")
-        );
-        // empty / unsafe namespaces are ignored (no rewrite)
-        assert_eq!(namespaced_path("/v1/q/consume", ""), None);
-        assert_eq!(namespaced_path("/v1/q/consume", "bad/ns"), None);
-        assert_eq!(namespaced_path("/healthz", "a"), None);
-    }
+    // relay is single-tenant per deployment (tenancy = k8s namespace); no
+    // app-level namespace rewrite. Run one relay per tenant for isolation.
+    app
 }
 
 fn wants_cbor(headers: &HeaderMap) -> bool {
