@@ -9,7 +9,6 @@
 # case = "getattr_rejects_int_name_argument"
 # subject = "getattr"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

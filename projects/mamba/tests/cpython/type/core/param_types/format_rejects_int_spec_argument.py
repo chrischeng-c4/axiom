@@ -9,7 +9,6 @@
 # case = "format_rejects_int_spec_argument"
 # subject = "format"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

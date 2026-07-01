@@ -9,7 +9,6 @@
 # case = "datetime_date_rejects_str_year_argument"
 # subject = "datetime.date"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "bytes_rejects_str_without_encoding"
 # subject = "bytes"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

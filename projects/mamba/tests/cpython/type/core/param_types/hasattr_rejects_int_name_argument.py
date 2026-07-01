@@ -9,7 +9,6 @@
 # case = "hasattr_rejects_int_name_argument"
 # subject = "hasattr"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

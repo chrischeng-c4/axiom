@@ -9,7 +9,6 @@
 # case = "heapq_heappush_rejects_int_heap_argument"
 # subject = "heapq.heappush"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "memoryview_rejects_non_buffer_argument"
 # subject = "memoryview"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

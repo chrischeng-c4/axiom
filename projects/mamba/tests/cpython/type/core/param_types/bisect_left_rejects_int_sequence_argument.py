@@ -9,7 +9,6 @@
 # case = "bisect_left_rejects_int_sequence_argument"
 # subject = "bisect.bisect_left"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

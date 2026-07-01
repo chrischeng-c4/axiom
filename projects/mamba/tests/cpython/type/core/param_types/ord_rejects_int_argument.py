@@ -9,7 +9,6 @@
 # case = "ord_rejects_int_argument"
 # subject = "ord"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

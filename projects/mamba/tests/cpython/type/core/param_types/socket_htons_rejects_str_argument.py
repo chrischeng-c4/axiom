@@ -9,7 +9,6 @@
 # case = "socket_htons_rejects_str_argument"
 # subject = "socket.htons"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

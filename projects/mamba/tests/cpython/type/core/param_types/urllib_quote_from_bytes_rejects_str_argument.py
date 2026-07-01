@@ -9,7 +9,6 @@
 # case = "urllib_quote_from_bytes_rejects_str_argument"
 # subject = "urllib.parse.quote_from_bytes"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "csv_reader_rejects_non_iterable_argument"
 # subject = "csv.reader"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

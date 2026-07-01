@@ -9,7 +9,6 @@
 # case = "re_compile_rejects_int_pattern_argument"
 # subject = "re.compile"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

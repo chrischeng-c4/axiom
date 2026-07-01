@@ -9,7 +9,6 @@
 # case = "iter_rejects_non_iterable_argument"
 # subject = "iter"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

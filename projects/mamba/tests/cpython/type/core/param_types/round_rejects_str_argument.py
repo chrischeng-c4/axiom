@@ -9,7 +9,6 @@
 # case = "round_rejects_str_argument"
 # subject = "round"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
