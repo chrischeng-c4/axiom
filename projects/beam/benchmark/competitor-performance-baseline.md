@@ -193,6 +193,10 @@ dist-matrix column is the previous pinned batched path, retained for contrast.)
 
 ### Honest verdict: GPU-top-k closes most of the gap, but still does NOT beat faiss batched
 
+> **Superseded:** this verdict is for the `main_batch_topk` path. The **tiled
+> kernel** ([Tiled distance kernel](#tiled-gemm-style-distance-kernel-beam-now-beats-faiss-batched-at-n--100k))
+> now BEATS faiss batched at n ≥ 100k — see that section for the current result.
+
 GPU-side top-k worked as predicted — it removed the `T × n` readback + CPU
 selection that was the measured batched bottleneck, giving a **2.6× / 2.9× / 3.3×**
 gain over beam's *own* previous batched path and an **18× / 6.8× / 4.5×** gain
@@ -230,6 +234,10 @@ path and stays exact.
 
 ### Large-n crossover check (empirical): the gap plateaus, no crossover
 
+> **SUPERSEDED for the batched flat path by the tiled kernel below** — this
+> subsection describes the *one-workgroup-per-query* `main_batch_topk` path (kept
+> as a fallback). The tiled kernel that follows **does** cross over.
+
 The near-parity at 1M (1.4×) raised the question of whether beam simply crosses
 over at larger n. Measured at n = 2M and 4M (beam GPU-top-k batched vs faiss
 batched, same M1 Max, batch 200, recall 1.000):
@@ -240,16 +248,115 @@ batched, same M1 Max, batch 200, recall 1.000):
 | 2_000_000 | 97 | 120 | 1.2× slower |
 | 4_000_000 | 43 | 60 | 1.4× slower |
 
-**No crossover.** Both are O(n) at scale, so once the fixed overheads are
-amortized the ratio stabilizes at beam's ~1.2–1.4× constant-factor disadvantage —
-it does not vanish with more data. The 9.2×→1.4× collapse (serial→GPU-top-k) was
-overhead amortization; the residual ~1.3× is beam's naive per-query DB re-read vs
-faiss's cache-tiled BLAS GEMM. Closing it needs a **GEMM-tiled distance kernel**
-(reuse a DB-row tile across a query tile in shared memory), not more scale — a
-real but larger lever with uncertain payoff against AMX. **Conclusion: on exact
-flat search, beam-GPU does not beat faiss-CPU on Apple Silicon at any tested
-scale (10k–4M).** beam's honest wins are ANN pruning (IVF-flat, lossless, ~8%
-scan), IVF-PQ memory (32×), and portability (Metal at all) — not flat raw speed.
+**No crossover (for `main_batch_topk`).** Both are O(n) at scale, so once the
+fixed overheads are amortized the ratio stabilizes at beam's ~1.2–1.4×
+constant-factor disadvantage — it does not vanish with more data. The 9.2×→1.4×
+collapse (serial→GPU-top-k) was overhead amortization; the residual ~1.3× is
+beam's naive per-query DB re-read. Closing it, we hypothesized, needs a
+**GEMM-tiled distance kernel** (reuse a DB-row tile across a query tile in shared
+memory). That kernel is now built and measured below — and it crosses over.
+
+## Tiled (GEMM-style) distance kernel: beam now BEATS faiss batched at n ≥ 100k
+
+The **shared-memory tiled** batched flat kernel (`src/gpu/flat.wgsl ::
+main_batch_tiled`, host [`GpuFlatIndex::search_knn_batch_gemm`]) is now the
+default batched flat path (`search_knn_batch` auto-selects it for `k ≤ MAX_TOPK`
+and `dim % 4 == 0`; `main_batch_topk` stays the fallback). Same M1 Max, same
+deterministic dataset shape (`dim=128`, `k=10`, `queries=200`, uniform seeded),
+`--batch 200`, **recall 1.000** (exact — the tiled top-k selects the same rows as
+the CPU oracle, verified in `tests/batched_query.rs`).
+
+**Batched throughput — beam-GPU tiled vs faiss-CPU, head-to-head (both batched):**
+
+| n | beam-GPU tiled q/s | faiss-CPU batched q/s | beam vs faiss |
+|---:|---:|---:|---|
+| 10_000 | ~18_800 | 37_174 | **1.98× slower** |
+| 100_000 | ~3_880 | 3_483 | **1.11× FASTER** |
+| 1_000_000 | ~522 | 234 | **2.23× FASTER** |
+| 2_000_000 | ~277 | 120 | **2.31× FASTER** |
+| 4_000_000 | ~139 | 60 | **2.32× FASTER** |
+
+**Honest verdict: beam-GPU tiled BEATS faiss-CPU-batched at every tested n ≥
+100k** — by 1.1× at 100k, growing to a steady **~2.3× at 1M–4M** — and loses only
+at n = 10k (1.98× slower, where the fixed GPU dispatch/readback floor still
+dominates a tiny scan). This is a real crossover, not a projection: the earlier
+"no crossover, beam ~1.3× slower forever" conclusion held for the
+one-workgroup-per-query kernel and is **overturned** for the tiled kernel. Recall
+stays 1.000, so it is an exact-flat win.
+
+**Speedup vs beam's own prior path** (`main_batch_topk`, same binary/methodology):
+
+| n | prior beam-topk q/s | **beam tiled q/s** | tiled vs prior |
+|---:|---:|---:|---:|
+| 10_000 | ~9_700 | **~18_800** | **1.94×** |
+| 100_000 | ~1_370 | **~3_880** | **2.83×** |
+| 1_000_000 | ~174 | **~522** | **3.00×** |
+| 2_000_000 | ~97 | **~277** | **2.86×** |
+| 4_000_000 | ~43 | **~139** | **3.23×** |
+
+(beam tiled amortized latency: 0.053 / 0.26 / 1.9 / 3.6 / 7.2 ms/query at 10k /
+100k / 1M / 2M / 4M. Numbers are ±10% run-to-run at small n; representative values
+shown.)
+
+### What actually moved the needle (honest attribution)
+
+The measured breakdown corrects the a-priori "memory-bandwidth-bound" framing:
+
+- **The workload is latency/ILP-bound, not DRAM-bandwidth-bound.** `main_batch_topk`
+  sustains a flat ~86–89 GB/s regardless of n (measured 1M–4M) — only ~22% of M1
+  Max's ~400 GB/s peak — so it is *not* saturating DRAM. Reducing DB traffic by
+  tiling therefore is **not** the lever it would be on a bandwidth-bound GPU.
+  Confirming this: a *scalar* tiled kernel (shared-memory DB reuse, but the plain
+  128-wide scalar distance loop) measured **140 q/s at 1M — slower than the 174 q/s
+  prior path.** Explicit shared-memory staging alone did not help (a no-staging
+  variant relying on cache measured the same), because the per-tile barrier exposes
+  the same load latency it saves.
+- **vec4 vectorization is the dominant lever.** Reading DB + query as `vec4<f32>`
+  and accumulating in a vec4 register (4 independent lanes) cuts the inner-loop load
+  count and the accumulation dependency chain 4×. That is what took the tiled kernel
+  from 140 → **522 q/s at 1M** (3.7×). The distance reduction's serial dependency
+  chain, not memory bandwidth, was the real bottleneck.
+- **The tiling's DB reuse still earns its keep at scale.** The win ratio vs faiss
+  *grows* with n (1.1× at 100k → ~2.3× at 1M–4M) — exactly where the DB stops fitting
+  in cache (51 MB at 100k vs 512 MB–2 GB at 1M–4M), so the query-tile DB reuse
+  (each DB element read from global once per `TILE_Q=64` queries instead of once per
+  query) becomes the differentiator on top of the vec4 ILP. Tiling + vec4 together
+  are what beat AMX-backed faiss; neither alone did.
+
+### Tiled kernel design + correctness (for reproducers)
+
+- **Tiling:** one workgroup per `(query-tile, DB-split)`. `TILE_Q = 64` queries
+  share a workgroup (workgroup size 64, one query per thread); the DB row range is
+  split-k'd across workgroups for occupancy. Each workgroup walks its split in
+  `TILE_N = 16`-row tiles, cooperatively staging each `TILE_N × dim` DB block into
+  `var<workgroup>` shared memory ONCE (a coalesced contiguous copy) and reusing it
+  across all 64 queries. **Shared memory = `TILE_N × dim × 4` = 8 KB** (only the DB
+  tile; the tiny query buffer is read from cache-resident global memory — staging it
+  too would push shared to 24 KB and let only one workgroup be resident per Metal
+  core, starving latency-hiding). Each thread keeps a private register top-k
+  (`MAX_K = 32`) over its split; the host merges the disjoint per-split partials.
+- **Precision:** L2 is the **direct** `sum((q-d)²)` from the shared tile (vec4
+  lanes), NOT the `‖q‖²+‖d‖²−2q·d` identity — so no catastrophic cancellation, and
+  the ≤1e-3 oracle check holds. Dot/Cosine is `sum(q·d)`. L2 and Dot both supported;
+  Cosine = normalized Dot. The live/tombstone mask is folded in (non-live rows
+  skipped).
+- **Fallbacks:** `k > MAX_TOPK` → distance-matrix path; `dim > 128` or `dim % 4 ≠ 0`
+  → the `main_batch_topk` path. Both stay exact.
+- **Tests** (`tests/batched_query.rs`, not skipped on this Mac): tiled == CPU oracle
+  for k ∈ {1, 10, 32} on L2 and Dot; tiled == the `main_batch_topk` path; tombstones
+  excluded; ragged tile boundaries (n off `TILE_N`, query count off `TILE_Q`);
+  unsupported-dim fallback stays exact.
+
+[`GpuFlatIndex::search_knn_batch_gemm`]: ../src/gpu/mod.rs
+
+### Revised bottom line
+
+On exact flat L2/Dot batched search, **beam-GPU tiled now beats faiss-CPU-batched
+on M1 Max at every tested n ≥ 100k (~1.1×–2.3×), losing only at n = 10k** where GPU
+dispatch overhead dominates. This is beam's goal-2 flat-search win — on top of the
+prior honest advantages (ANN pruning via IVF-flat at ~8% scan, IVF-PQ 32× memory,
+Metal portability). The single-query rows at the top of this doc are unchanged
+(that path is still dispatch-bound); the win is specifically the **batched** path.
 
 ## Reproducer
 
@@ -268,8 +375,9 @@ scan), IVF-PQ memory (32×), and portability (Metal at all) — not flat raw spe
   ```bash
   beam bench --index flat    --n <N> --dim 128 --k 10 --queries 200
   beam bench --index ivfflat --n <N> --dim 128 --k 10 --queries 200 --nlist 256 --nprobe 16
-  # batched throughput (the "Batched query" section): all 200 queries in one call.
-  # k=10 ≤ MAX_TOPK, so this runs the GPU-side per-query top-k path (readback T×k).
+  # batched throughput: all 200 queries in one call. k=10 ≤ MAX_TOPK and
+  # dim=128 (% 4 == 0), so this runs the GEMM-tiled path (the "Tiled distance
+  # kernel" section) — the current default; `main_batch_topk` is the fallback.
   beam bench --index flat    --n <N> --dim 128 --k 10 --queries 200 --batch 200
   ```
 

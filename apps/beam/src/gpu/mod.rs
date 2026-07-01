@@ -125,6 +125,22 @@ struct TopkParams {
     _p2: u32,
 }
 
+/// The `TiledParams` uniform handed to the GEMM-tiled kernel (`main_batch_tiled`).
+/// Adds the split-k geometry (`num_splits`, `split_len`) to the top-k params;
+/// padded to 32 bytes (uniform alignment). Mirrors `TiledParams` in `flat.wgsl`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct TiledParams {
+    n: u32,
+    dim: u32,
+    metric: u32,
+    num_q: u32,
+    want: u32,
+    num_splits: u32,
+    split_len: u32,
+    _p0: u32,
+}
+
 /// Compile-time cap on `k` for the GPU-side per-query top-k kernel
 /// (`main_batch_topk`) — it MUST equal `MAX_K` in `flat.wgsl` (the per-thread
 /// register top-k / shared-memory list length). A batched query with `k` at or
@@ -132,6 +148,34 @@ struct TopkParams {
 /// `k` falls back to the `main_batch` `num_q * n` distance-matrix path + CPU
 /// top-k, so large-k queries still work (just without the readback win).
 pub const MAX_TOPK: usize = 32;
+
+/// GEMM-tiled kernel (`main_batch_tiled`) tile shape — MUST mirror `TILE_Q_T` /
+/// `TILE_N_T` / `MAX_TILE_DIM_T` in `flat.wgsl`. `TILE_Q_GEMM` queries share one
+/// workgroup (== the `@workgroup_size`) and reuse each staged DB block, so each DB
+/// element is read from global memory once per `TILE_Q_GEMM` queries instead of once
+/// per query — the compute-bound lever. `TILE_N_GEMM` DB rows are staged per shared
+/// tile. A batched query with `k <= MAX_TOPK` and `dim <= MAX_TILE_DIM` runs this
+/// path; `dim > MAX_TILE_DIM` or `k > MAX_TOPK` falls back to `main_batch_topk` /
+/// the distance-matrix path.
+pub const TILE_Q_GEMM: usize = 64;
+/// DB rows staged into shared memory per tile step (see [`TILE_Q_GEMM`]).
+pub const TILE_N_GEMM: usize = 16;
+/// Largest query dimension the tiled kernel supports (its shared-tile column
+/// stride). Beyond this the host falls back to the `main_batch_topk` path.
+pub const MAX_TILE_DIM: usize = 128;
+
+/// Split-k tuning for the GEMM-tiled path: the batch has few query-tiles
+/// (`ceil(num_q / TILE_Q_GEMM)`), so the DB row range is split across
+/// `num_splits` workgroups PER query-tile to keep the GPU's cores busy. The host
+/// targets ~[`GEMM_TARGET_WORKGROUPS`] total workgroups, never splitting finer than
+/// [`GEMM_MIN_SPLIT_ROWS`] rows per split, capped at [`GEMM_MAX_SPLITS`]. Splitting
+/// does NOT reduce DB reuse (reuse is across the queries within a workgroup); it
+/// only trades a tiny per-query cross-split merge for GPU occupancy.
+const GEMM_TARGET_WORKGROUPS: usize = 2048;
+/// Never split a query-tile's DB range into pieces smaller than this many rows.
+const GEMM_MIN_SPLIT_ROWS: usize = 1024;
+/// Hard cap on split-k fan-out (bounds the partial readback + host merge).
+const GEMM_MAX_SPLITS: usize = 256;
 
 /// Cap on the per-tile readback: at most this many f32 distances (`tile × n`) are
 /// computed + read back in one `main_batch` dispatch, so the batch is tiled into
@@ -187,6 +231,13 @@ pub struct GpuFlatIndex {
     /// pairs — the readback-killing batched-throughput path).
     topk_bind_group_layout: wgpu::BindGroupLayout,
     topk_pipeline: wgpu::ComputePipeline,
+    /// Bind-group layout + pipeline for the `main_batch_tiled` GEMM kernel (a tile of
+    /// TILE_Q queries reuses each shared-memory DB block across the tile, so DB rows
+    /// are read from global memory once per tile instead of once per query — the
+    /// compute-bound lever). Split-k over the DB range for occupancy; the host merges
+    /// the per-(query, split) partial top-k.
+    tiled_bind_group_layout: wgpu::BindGroupLayout,
+    tiled_pipeline: wgpu::ComputePipeline,
 }
 
 impl GpuFlatIndex {
@@ -369,6 +420,45 @@ impl GpuFlatIndex {
             cache: None,
         });
 
+        // GEMM-tiled kernel: db/queries/params/out at disjoint bindings 19..23 plus
+        // the per-row keep bitmask at binding 23. A 2D workgroup grid (query-tile ×
+        // DB split) with shared-memory DB reuse across the query tile.
+        let tiled_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("beam_flat_tiled_bgl"),
+                entries: &[
+                    storage_entry(19, true), // db vectors
+                    storage_entry(20, true), // packed tile queries
+                    // params (uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 21,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    storage_entry(22, false), // out partial (id, score) pairs (read_write)
+                    storage_entry(23, true),  // keep bitmask (read-only)
+                ],
+            });
+        let tiled_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("beam_flat_tiled_pipeline_layout"),
+                bind_group_layouts: &[&tiled_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let tiled_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("beam_flat_tiled_pipeline"),
+            layout: Some(&tiled_pipeline_layout),
+            module: &shader,
+            entry_point: Some("main_batch_tiled"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
         Self {
             device,
             queue,
@@ -388,6 +478,8 @@ impl GpuFlatIndex {
             batch_pipeline,
             topk_bind_group_layout,
             topk_pipeline,
+            tiled_bind_group_layout,
+            tiled_pipeline,
         }
     }
 
@@ -657,22 +749,25 @@ impl GpuFlatIndex {
     /// as possible, so the fixed per-dispatch + blocking-readback overhead
     /// amortizes across the batch instead of being paid once per query.
     ///
-    /// Two GPU paths, auto-selected by `k`:
+    /// Three GPU paths, auto-selected by `k` and `dim`:
     ///
-    /// - `k <= `[`MAX_TOPK`] — the **GPU top-k** path
+    /// - `k <= `[`MAX_TOPK`] **and** `dim <= `[`MAX_TILE_DIM`] — the **GEMM-tiled**
+    ///   path ([`Self::search_knn_batch_gemm`]): a tile of [`TILE_Q_GEMM`] queries
+    ///   shares each shared-memory DB block, so DB rows are read from global memory
+    ///   once per tile instead of once per query (the compute-bound lever that lifts
+    ///   the memory-bound plateau). GPU-side per-query top-k, split-k for occupancy.
+    /// - `k <= `[`MAX_TOPK`] but `dim > `[`MAX_TILE_DIM`] — the **GPU top-k** path
     ///   ([`Self::search_knn_batch_topk_tiled`]): ONE workgroup per query scans all
-    ///   rows and selects the top-k on the GPU, so only `num_q * k` (id, score)
-    ///   pairs are read back (a ~`n/k` cut vs the distance matrix). This is the
-    ///   throughput lever — it removes the `num_q * n` readback + single-threaded
-    ///   CPU top-k that dominated the distance-matrix path.
+    ///   rows and selects the top-k on the GPU (no shared-memory tiling; used when
+    ///   the query dim exceeds the tiled kernel's shared-tile width). Readback is
+    ///   only `num_q * k` (id, score) pairs.
     /// - `k > `[`MAX_TOPK`] — the **distance-matrix** fallback
     ///   ([`Self::search_knn_batch_distmatrix`]): each tile scores its `T × n`
     ///   distance sub-matrix in one `main_batch` dispatch, reads back `T × n` f32,
-    ///   and runs the shared CPU top-k — so large-k queries still work (without the
-    ///   readback win, since the GPU kernel's register/shared top-k is capped at
-    ///   `MAX_TOPK`).
+    ///   and runs the shared CPU top-k — so large-k queries still work (the GPU
+    ///   register/shared top-k is capped at `MAX_TOPK`).
     ///
-    /// Both fold the collection's live mask into the SAME keep-bitmask filtered +
+    /// All fold the collection's live mask into the SAME keep-bitmask filtered +
     /// deleted single-query search uses, so a batched query excludes tombstoned
     /// rows and returns, per query, **exactly** what serial [`Self::search_knn`]
     /// returns (same row set, per-row scores bit-for-intent identical).
@@ -682,9 +777,14 @@ impl GpuFlatIndex {
     /// at its position (matching the serial dimension-mismatch contract); an empty
     /// batch, `k == 0`, or an empty/all-tombstoned index yields all-empty results.
     pub fn search_knn_batch<Q: AsRef<[f32]>>(&self, queries: &[Q], k: usize) -> Vec<Vec<Neighbor>> {
-        if k <= MAX_TOPK {
-            // GPU top-k: readback is `num_q * k`, so the whole batch can share one
-            // dispatch (one workgroup per query, capped at the workgroup-count ceiling).
+        if k <= MAX_TOPK && self.dim <= MAX_TILE_DIM && self.dim.is_multiple_of(4) {
+            // GEMM-tiled: shared-memory DB reuse across a query tile + vec4 inner loop
+            // (the fast path for the common metric/k/dim). Needs dim <= MAX_TILE_DIM
+            // (shared-tile width) and dim % 4 == 0 (the vec4 lanes).
+            self.search_knn_batch_gemm(queries, k)
+        } else if k <= MAX_TOPK {
+            // dim too wide for the tiled kernel's shared tile (or not vec4-aligned):
+            // one workgroup per query.
             let tile = queries.len().clamp(1, MAX_BATCH_TILE_QUERIES);
             self.search_knn_batch_topk_tiled(queries, k, tile)
         } else {
@@ -778,6 +878,104 @@ impl GpuFlatIndex {
                     })
                     .collect();
             }
+        }
+        results
+    }
+
+    /// **GEMM-tiled** batched path: the compute-bound lever. A tile of
+    /// [`TILE_Q_GEMM`] queries shares one workgroup and reuses each staged
+    /// shared-memory DB block, so every DB element is read from global memory once
+    /// per `TILE_Q_GEMM` queries instead of once per query (the memory-bound plateau
+    /// fix). The DB row range is split across `num_splits` workgroups per query-tile
+    /// (split-k) for GPU occupancy; each thread selects its query's top-`want` over
+    /// its split on the GPU, and the host merges the `num_splits` disjoint partials
+    /// per query to the global top-k. Requires `k <= `[`MAX_TOPK`] and
+    /// `dim <= `[`MAX_TILE_DIM`] (callers route here only when both hold). Edge cases
+    /// match [`Self::search_knn_batch`] (empty batch / `k == 0` /
+    /// empty-or-all-tombstoned index → all-empty; wrong-dim query → empty slot). The
+    /// result equals, per query, exactly what the serial path and the CPU oracle
+    /// return (exact flat).
+    #[doc(hidden)]
+    pub fn search_knn_batch_gemm<Q: AsRef<[f32]>>(
+        &self,
+        queries: &[Q],
+        k: usize,
+    ) -> Vec<Vec<Neighbor>> {
+        let mut results: Vec<Vec<Neighbor>> = vec![Vec::new(); queries.len()];
+        if queries.is_empty() || k == 0 || self.n == 0 || self.n_live == 0 {
+            return results;
+        }
+        // Each split emits up to `want` real rows; the cross-split merge yields the
+        // same `min(k, n_live)` the serial path returns. `want <= MAX_K` by the
+        // caller's `k <= MAX_TOPK` gate.
+        let want = k.min(self.n_live).min(MAX_TOPK);
+
+        let valid: Vec<usize> = (0..queries.len())
+            .filter(|&i| queries[i].as_ref().len() == self.dim)
+            .collect();
+        if valid.is_empty() {
+            return results;
+        }
+
+        // Pack every valid (host-normalized) query contiguously in `valid` order.
+        let mut packed = Vec::with_capacity(valid.len() * self.dim);
+        for &qi in &valid {
+            match self.metric {
+                Metric::Cosine => packed.extend_from_slice(&l2_normalize(queries[qi].as_ref())),
+                _ => packed.extend_from_slice(queries[qi].as_ref()),
+            }
+        }
+        let num_q = valid.len();
+
+        // Split-k geometry: aim for ~GEMM_TARGET_WORKGROUPS total workgroups
+        // (num_qtiles × num_splits) for occupancy, never splitting finer than
+        // GEMM_MIN_SPLIT_ROWS rows, capped at GEMM_MAX_SPLITS. `split_len` is derived
+        // last and `num_splits` recomputed from it so no trailing split is empty.
+        let num_qtiles = num_q.div_ceil(TILE_Q_GEMM).max(1);
+        let splits_for_occupancy = (GEMM_TARGET_WORKGROUPS / num_qtiles).max(1);
+        let max_splits_by_rows = self.n.div_ceil(GEMM_MIN_SPLIT_ROWS).max(1);
+        let target_splits = splits_for_occupancy
+            .min(max_splits_by_rows)
+            .min(self.n)
+            .clamp(1, GEMM_MAX_SPLITS);
+        let split_len = self.n.div_ceil(target_splits).max(1);
+        let num_splits = self.n.div_ceil(split_len);
+
+        // The keep-bitmask (collection live bits) is identical for the whole batch.
+        let mask_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_tiled_keep_mask"),
+                contents: bytemuck::cast_slice(&self.live),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
+        // One dispatch → per-(query, split) partial top-`want` (row, score) pairs,
+        // laid out `(local_q * num_splits + sp) * want + j`.
+        let partials =
+            self.dispatch_batch_tiled(&packed, num_q, want, num_splits, split_len, &mask_buffer);
+
+        // Merge each query's `num_splits` disjoint partial lists to its global top-k.
+        let stride = num_splits * want;
+        let mut cand: Vec<(u32, f32)> = Vec::with_capacity(stride);
+        for (local, &qi) in valid.iter().enumerate() {
+            cand.clear();
+            let base = local * stride;
+            for entry in &partials[base..base + stride] {
+                // Padding slots (a split with < want live rows) carry EMPTY_ROW.
+                if entry.0 != u32::MAX {
+                    cand.push(*entry);
+                }
+            }
+            merge_split_topk(&mut cand, self.metric, want);
+            results[qi] = cand
+                .iter()
+                .map(|&(row, score)| Neighbor {
+                    row,
+                    external_id: self.external_ids[row as usize].clone(),
+                    score,
+                })
+                .collect();
         }
         results
     }
@@ -1087,6 +1285,150 @@ impl GpuFlatIndex {
         readback.unmap();
         pairs
     }
+
+    /// One `main_batch_tiled` (GEMM-tiled) dispatch: upload the packed `num_q`
+    /// queries + params, run the 2D workgroup grid `(num_qtiles, num_splits)` — each
+    /// workgroup stages DB tiles into shared memory and reuses them across its
+    /// [`TILE_Q_GEMM`] queries — and read back the per-(query, split) partial
+    /// top-`want` `(row, score)` pairs, laid out
+    /// `(local_q * num_splits + split) * want + j`. A padding slot (a split with
+    /// fewer than `want` live rows) carries `row == u32::MAX`.
+    fn dispatch_batch_tiled(
+        &self,
+        packed_q: &[f32],
+        num_q: usize,
+        want: usize,
+        num_splits: usize,
+        split_len: usize,
+        mask_buffer: &wgpu::Buffer,
+    ) -> Vec<(u32, f32)> {
+        let query_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_tiled_queries"),
+                contents: bytemuck::cast_slice(packed_q),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
+        let params = TiledParams {
+            n: self.n as u32,
+            dim: self.dim as u32,
+            metric: self.metric.code(),
+            num_q: num_q as u32,
+            want: want as u32,
+            num_splits: num_splits as u32,
+            split_len: split_len as u32,
+            _p0: 0,
+        };
+        let params_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("beam_tiled_params"),
+                    contents: bytemuck::bytes_of(&params),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+        // Output: num_q * num_splits * want entries, each two u32s [score_bits, row].
+        let out_u32 = num_q * num_splits * want * 2;
+        let out_bytes = (out_u32 * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+        let out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_tiled_out"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_tiled_readback"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("beam_flat_tiled_bind_group"),
+            layout: &self.tiled_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 19,
+                    resource: self.db_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: query_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 21,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 22,
+                    resource: out_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 23,
+                    resource: mask_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("beam_flat_tiled_encoder"),
+            });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("beam_flat_tiled_pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.tiled_pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            // 2D grid: x = query-tiles (TILE_Q_GEMM queries each), y = DB splits.
+            let wg_x = (num_q as u32).div_ceil(TILE_Q_GEMM as u32).max(1);
+            cpass.dispatch_workgroups(wg_x, num_splits as u32, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out_buffer, 0, &readback, 0, out_bytes);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .expect("map_async callback dropped")
+            .expect("gpu buffer map failed");
+
+        let data = slice.get_mapped_range();
+        let raw: &[u32] = bytemuck::cast_slice(&data);
+        let pairs: Vec<(u32, f32)> = raw
+            .chunks_exact(2)
+            .map(|c| (c[1], f32::from_bits(c[0])))
+            .collect();
+        drop(data);
+        readback.unmap();
+        pairs
+    }
+}
+
+/// Merge the GEMM-tiled path's disjoint per-split partial top-k candidates into
+/// the query's global top-`want`, best-first, in place. `cand` holds every real
+/// (row, score) from the query's `num_splits` partials (each split covers a
+/// disjoint DB range, so there are no duplicate rows); this sorts them best-first
+/// under `metric` (L2 ascending, Dot/Cosine descending) and truncates to `want`.
+/// The candidate count is tiny (`<= num_splits * want`), so a full sort is cheap.
+fn merge_split_topk(cand: &mut Vec<(u32, f32)>, metric: Metric, want: usize) {
+    let larger_better = metric.larger_is_better();
+    cand.sort_by(|a, b| {
+        let ord = a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal);
+        if larger_better {
+            ord.reverse()
+        } else {
+            ord
+        }
+    });
+    cand.truncate(want);
 }
 
 /// A `COMPUTE`-visible storage-buffer bind-group-layout entry (`read_only`

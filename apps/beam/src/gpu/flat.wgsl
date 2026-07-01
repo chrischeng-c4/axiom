@@ -396,3 +396,232 @@ fn main_batch_topk(
         }
     }
 }
+
+// ---- GEMM-tiled batched flat scan + GPU-side top-k (entry `main_batch_tiled`) ----
+//
+// The compute-bound lever. `main_batch_topk` above uses ONE workgroup per query,
+// so every query re-reads the WHOLE DB from global memory (T × n × dim global
+// reads, no reuse) — the plateau vs faiss's cache-tiled BLAS GEMM. This kernel
+// applies the matmul tiling trick to get DB-row REUSE across a tile of queries: a
+// block of DB rows is staged into `var<workgroup>` shared memory ONCE and then
+// reused by every query in the tile, so each DB element is read from global memory
+// once per TILE_Q queries instead of once per query (a ~TILE_Q× cut in global DB
+// traffic).
+//
+// Layout — a 2D workgroup grid `(qtile, split)`:
+//   * `workgroup_id.x = qtile` selects a tile of TILE_Q_T queries
+//     (`q_start = qtile*TILE_Q_T`), one per thread (workgroup size == TILE_Q_T).
+//   * `workgroup_id.y = split` selects a contiguous DB row range (split-k), so the
+//     n rows are spread over `num_splits` workgroups PER query-tile — this keeps
+//     the GPU's cores busy even though the batch has few queries (few query-tiles).
+//     Reuse is unaffected by the split: within a workgroup the staged DB tile is
+//     still shared by all TILE_Q_T queries.
+//
+// Each thread owns exactly ONE query and keeps a PRIVATE sorted register top-`want`
+// (insertion sort, capped at MAX_K) over its split — so NO cross-thread merge is
+// needed (unlike `main_batch_topk`, where 64 threads split one query and tree-merge).
+// The workgroup walks its split in DB tiles of TILE_N_T rows:
+//   1. Cooperatively stage the TILE_N_T × dim DB block CONTIGUOUSLY into `sh_db_t`
+//      (a coalesced flat copy from the row-major `db`), plus the tile's keep bits
+//      into `sh_keep_t`.
+//   2. Barrier, then each thread scores its query against the staged rows straight
+//      from shared memory (reusing the DB block across all TILE_Q_T queries) and
+//      folds each live row into its register top-k. Non-live rows are SKIPPED (the
+//      live/tombstone mask, folded in exactly like `main_batch_topk`).
+//   3. Barrier, advance to the next DB tile.
+// Finally each thread writes its per-(query, split) partial top-`want` as
+// `(score_bits, row)` pairs; the HOST merges the `num_splits` disjoint partials per
+// query (splits cover disjoint row ranges, so no duplicates) to the global top-k —
+// a tiny merge (`num_splits × want` candidates), the split-k counterpart of the
+// in-kernel tree-merge.
+//
+// OCCUPANCY: only the DB tile is staged in shared — the query is read from the
+// (tiny, cache-resident) global `queries` buffer, NOT staged. This is deliberate:
+// Metal gives each core ~32 KB of threadgroup memory, so a workgroup that hogged
+// shared for a query block too (e.g. TILE_Q×dim = 16 KB) would let only ONE
+// workgroup be resident per core, starving latency-hiding. Keeping shared at just
+// TILE_N_T×dim (8 KB) lets several workgroups stay resident, which is what makes
+// the tiled path actually beat the one-workgroup-per-query kernel. DB reuse (the
+// lever) is preserved regardless — the query buffer is small and stays in cache.
+//
+// Precision: L2 is the DIRECT `sum((q-d)²)` from the shared DB tile (NOT the
+// `‖q‖²+‖d‖²−2q·d` identity, which cancels catastrophically for near-duplicate
+// vectors and would break the ≤1e-3 oracle check); Dot/Cosine is `sum(q·d)`. Same
+// per-metric summation and j-order as `main`/`main_batch_topk`, so a selected row's
+// score is bit-for-intent identical to the serial scan and the row SET equals the
+// CPU oracle's (exact flat).
+//
+// Shared-memory budget: `sh_db_t` is TILE_N_T × MAX_TILE_DIM_T f32 = 16×128×4 =
+// 8 KB (rows packed CONTIGUOUSLY at column stride `dim`, so dim < 128 uses less);
+// `sh_keep_t` is 64 B — ~8 KB total, well under Metal's 32 KB ceiling and small
+// enough for good residency. The tile array is sized at compile-time width
+// MAX_TILE_DIM_T (=128, the bench dim); the host falls back to `main_batch_topk`
+// for dim > MAX_TILE_DIM_T, and k > MAX_K also falls back.
+
+const TILE_Q_T: u32 = 64u;         // queries per workgroup == @workgroup_size
+const TILE_N_T: u32 = 16u;         // DB rows staged per shared tile
+const MAX_TILE_DIMV_T: u32 = 32u;  // compile-time shared-tile capacity (max dim / 4)
+const SH_DBV_LEN_T: u32 = 512u;    // TILE_N_T * MAX_TILE_DIMV_T (vec4 slots)
+const EMPTY_ROW_T: u32 = 0xFFFFFFFFu; // partial-slot padding marker (host skips it)
+
+struct TiledParams {
+    n: u32,
+    dim: u32,        // real dim; the host guarantees dim % 4 == 0 on this path
+    metric: u32,
+    num_q: u32,
+    want: u32,       // min(k, n_live), <= MAX_K
+    num_splits: u32, // DB-range splits per query-tile (split-k occupancy)
+    split_len: u32,  // rows per split (ceil(n / num_splits))
+    _p0: u32,
+};
+
+// DB + queries are viewed as `vec4<f32>` lanes (the host packs them so dim is a
+// multiple of 4): a single vec4 load fetches 4 columns and a single vec4 multiply
+// does 4 lanes, cutting the inner-loop load count AND the accumulation dependency
+// chain 4× — the ILP lever for this latency-bound distance kernel.
+@group(0) @binding(19) var<storage, read> db_tiled: array<vec4<f32>>;
+@group(0) @binding(20) var<storage, read> queries_tiled: array<vec4<f32>>;
+@group(0) @binding(21) var<uniform> params_tiled: TiledParams;
+// Output: per (query, split) a length-`want` partial, each two u32s
+// [bitcast<u32>(score), row]; empty slots carry row == EMPTY_ROW_T.
+@group(0) @binding(22) var<storage, read_write> out_tiled: array<u32>;
+@group(0) @binding(23) var<storage, read> keep_tiled: array<u32>;
+
+var<workgroup> sh_db_t: array<vec4<f32>, SH_DBV_LEN_T>;
+var<workgroup> sh_keep_t: array<u32, TILE_N_T>;
+
+@compute @workgroup_size(64)
+fn main_batch_tiled(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let tid: u32 = lid.x;
+    let n: u32 = params_tiled.n;
+    let dim_v: u32 = params_tiled.dim >> 2u; // vec4 lanes per row (dim / 4)
+    let want: u32 = params_tiled.want;
+    let num_q: u32 = params_tiled.num_q;
+    let num_splits: u32 = params_tiled.num_splits;
+    let split_len: u32 = params_tiled.split_len;
+    let larger_better: bool = params_tiled.metric != 0u;
+
+    let qtile: u32 = wid.x;
+    let sp: u32 = wid.y;
+    let qi: u32 = qtile * TILE_Q_T + tid; // this thread's global query index
+    let has_q: bool = qi < num_q;
+    let qvbase: u32 = qi * dim_v;          // this thread's query row (vec4 units)
+
+    // This workgroup's DB row range (split-k). All uniform across the workgroup, so
+    // the tile loop trip count — and thus the barriers below — are uniform.
+    let split_start: u32 = sp * split_len;
+    var split_end: u32 = split_start + split_len;
+    if (split_end > n) {
+        split_end = n;
+    }
+
+    // Private sorted register top-`want` for this thread's query over its split.
+    var best_s: array<f32, MAX_K>;
+    var best_r: array<u32, MAX_K>;
+    var cnt: u32 = 0u;
+
+    var base_row: u32 = split_start;
+    loop {
+        if (base_row >= split_end) {
+            break;
+        }
+        var rows_this: u32 = split_end - base_row;
+        if (rows_this > TILE_N_T) {
+            rows_this = TILE_N_T;
+        }
+
+        // Cooperatively stage the DB tile (rows_this × dim_v vec4s) CONTIGUOUSLY into
+        // `sh_db_t` — a coalesced flat copy from the row-major `db` — plus the tile's
+        // keep bits. Every thread helps, so each staged DB element is read from
+        // global memory exactly ONCE and then reused by all TILE_Q_T queries below.
+        let total_v: u32 = rows_this * dim_v;
+        let gvbase: u32 = base_row * dim_v;
+        var idx: u32 = tid;
+        loop {
+            if (idx >= total_v) {
+                break;
+            }
+            sh_db_t[idx] = db_tiled[gvbase + idx];
+            idx = idx + TILE_Q_T;
+        }
+        if (tid < rows_this) {
+            sh_keep_t[tid] = keep_tiled[base_row + tid];
+        }
+        workgroupBarrier();
+
+        // Each thread scores its own query against the staged rows: the DB row comes
+        // from shared (reused across the query tile), the query from global (cached).
+        // vec4 loads + a vec4 accumulator keep 4 independent lanes in flight (ILP),
+        // then a single horizontal sum — the exact-arithmetic direct L2/Dot form.
+        if (has_q) {
+            for (var r: u32 = 0u; r < rows_this; r = r + 1u) {
+                if (sh_keep_t[r] != 0u) {
+                    let db_vb: u32 = r * dim_v;
+                    var acc4: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+                    if (larger_better) {
+                        for (var jv: u32 = 0u; jv < dim_v; jv = jv + 1u) {
+                            acc4 = acc4 + queries_tiled[qvbase + jv] * sh_db_t[db_vb + jv];
+                        }
+                    } else {
+                        for (var jv: u32 = 0u; jv < dim_v; jv = jv + 1u) {
+                            let d: vec4<f32> = queries_tiled[qvbase + jv] - sh_db_t[db_vb + jv];
+                            acc4 = acc4 + d * d;
+                        }
+                    }
+                    let acc: f32 = acc4.x + acc4.y + acc4.z + acc4.w;
+                    let row_g: u32 = base_row + r;
+                    // Insertion into the private sorted top-`want` (best-first).
+                    var qualifies: bool = cnt < want;
+                    if (!qualifies) {
+                        let worst: f32 = best_s[cnt - 1u];
+                        qualifies = select(acc < worst, acc > worst, larger_better);
+                    }
+                    if (qualifies) {
+                        if (cnt < want) {
+                            cnt = cnt + 1u;
+                        }
+                        var p: u32 = cnt - 1u;
+                        loop {
+                            if (p == 0u) {
+                                break;
+                            }
+                            let prev: f32 = best_s[p - 1u];
+                            let better: bool = select(acc < prev, acc > prev, larger_better);
+                            if (better) {
+                                best_s[p] = best_s[p - 1u];
+                                best_r[p] = best_r[p - 1u];
+                                p = p - 1u;
+                            } else {
+                                break;
+                            }
+                        }
+                        best_s[p] = acc;
+                        best_r[p] = row_g;
+                    }
+                }
+            }
+        }
+        workgroupBarrier();
+        base_row = base_row + TILE_N_T;
+    }
+
+    // Emit this thread's per-(query, split) partial top-`want`. Unfilled slots (a
+    // split with fewer than `want` live rows) are padded with the worst sentinel and
+    // EMPTY_ROW_T so the host skips them during the cross-split merge.
+    if (has_q) {
+        let sentinel: f32 = select(SENTINEL, -SENTINEL, larger_better);
+        let obase: u32 = (qi * num_splits + sp) * want * 2u;
+        for (var j: u32 = 0u; j < want; j = j + 1u) {
+            if (j < cnt) {
+                out_tiled[obase + j * 2u + 0u] = bitcast<u32>(best_s[j]);
+                out_tiled[obase + j * 2u + 1u] = best_r[j];
+            } else {
+                out_tiled[obase + j * 2u + 0u] = bitcast<u32>(sentinel);
+                out_tiled[obase + j * 2u + 1u] = EMPTY_ROW_T;
+            }
+        }
+    }
+}

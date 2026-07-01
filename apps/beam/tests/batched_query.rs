@@ -29,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 
 use beam::collection::Metric;
 use beam::dataset;
-use beam::gpu::{GpuContext, GpuFlatIndex, MAX_TOPK};
+use beam::gpu::{GpuContext, GpuFlatIndex, MAX_TOPK, TILE_N_GEMM, TILE_Q_GEMM};
 use beam::index::cpu_flat::CpuFlatIndex;
 use beam::index::{Neighbor, VectorIndex};
 
@@ -296,4 +296,141 @@ fn gpu_topk_falls_back_above_max_k() {
         assert_same(&format!("fallback k={k} q{qi} vs distmatrix"), &batched[qi], &distmatrix[qi]);
     }
     eprintln!("  k > MAX_TOPK ({k}) falls back to distance-matrix path + stays exact OK");
+}
+
+// ---- GEMM-tiled kernel (`main_batch_tiled`, `search_knn_batch_gemm`) ----------
+//
+// The shared-memory tiled kernel: a tile of TILE_Q_GEMM queries reuses each staged
+// DB block (DB-row reuse across the query tile), split-k for occupancy, vec4 inner
+// loop, GPU-side per-query top-k merged across splits on the host. These tests pin
+// its exactness directly (the auto path already routes L2/Dot dim-48 batches here,
+// but these force the `search_knn_batch_gemm` entry and cross its tile boundaries).
+
+/// GEMM-tiled result == the exact CPU oracle per query for k ∈ {1, 10, 32}, on L2
+/// and Dot — the direct-arithmetic (vec4) distances select the same rows as ground
+/// truth (row set + scores within 1e-3).
+#[test]
+fn gemm_tiled_matches_cpu_oracle() {
+    let Some(gpu) = GpuContext::new() else {
+        eprintln!("no GPU adapter; skipping gemm_tiled_matches_cpu_oracle");
+        return;
+    };
+    let (backend, name) = gpu.adapter_info();
+    eprintln!("GPU adapter: {name} ({backend})");
+
+    for metric in [Metric::L2, Metric::Dot] {
+        let collection = dataset::random_collection("gemm", N, DIM, metric, DATASET_SEED);
+        let queries = dataset::random_queries(N_QUERIES, DIM, QUERY_SEED);
+        let cpu = CpuFlatIndex::new(&collection);
+        let index = GpuFlatIndex::new(&gpu, &collection);
+
+        for &k in &[1usize, 10, 32] {
+            assert!(k <= MAX_TOPK, "test k must stay on the GEMM-tiled path");
+            let tiled = index.search_knn_batch_gemm(&queries, k);
+            assert_eq!(tiled.len(), queries.len());
+            for (qi, q) in queries.iter().enumerate() {
+                let oracle = cpu.search_knn(q, k);
+                assert_eq!(oracle.len(), k, "{metric:?} k={k} q{qi}: oracle len");
+                assert_eq!(tiled[qi].len(), k, "{metric:?} k={k} q{qi}: gemm len");
+                assert_same(&format!("gemm {metric:?} k={k} q{qi} vs oracle"), &tiled[qi], &oracle);
+            }
+        }
+        eprintln!("  GEMM-tiled == CPU oracle OK for {metric:?} (k ∈ 1,10,32)");
+    }
+}
+
+/// GEMM-tiled result == the one-workgroup-per-query `main_batch_topk` path, per
+/// query (row set + scores). Guards that the two GPU batched top-k kernels agree.
+#[test]
+fn gemm_tiled_matches_topk_path() {
+    let Some(gpu) = GpuContext::new() else {
+        eprintln!("no GPU adapter; skipping gemm_tiled_matches_topk_path");
+        return;
+    };
+    for metric in [Metric::L2, Metric::Dot] {
+        let collection = dataset::random_collection("gemm-tk", N, DIM, metric, DATASET_SEED);
+        let queries = dataset::random_queries(N_QUERIES, DIM, QUERY_SEED);
+        let index = GpuFlatIndex::new(&gpu, &collection);
+        for &k in &[1usize, 10, 32] {
+            let tiled = index.search_knn_batch_gemm(&queries, k);
+            let topk = index.search_knn_batch_topk_tiled(&queries, k, queries.len());
+            assert_eq!(tiled.len(), topk.len());
+            for qi in 0..queries.len() {
+                assert_same(&format!("{metric:?} k={k} q{qi} gemm vs topk"), &tiled[qi], &topk[qi]);
+            }
+        }
+    }
+    eprintln!("  GEMM-tiled == main_batch_topk path OK (k ∈ 1,10,32, L2+Dot)");
+}
+
+/// GEMM-tiled stays exact across the tile boundaries: n NOT a multiple of
+/// TILE_N_GEMM (ragged DB tiles), a query count NOT a multiple of TILE_Q_GEMM
+/// (ragged query tiles / idle threads + multiple query-tiles), AND tombstones
+/// (skipped rows) — all must still equal the live CPU oracle.
+#[test]
+fn gemm_tiled_tile_boundaries_and_tombstones() {
+    let Some(gpu) = GpuContext::new() else {
+        eprintln!("no GPU adapter; skipping gemm_tiled_tile_boundaries_and_tombstones");
+        return;
+    };
+    // n chosen off a TILE_N_GEMM multiple; query count off a TILE_Q_GEMM multiple
+    // (spanning >1 query-tile with a ragged last tile).
+    let n_boundary = 130 * TILE_N_GEMM + 7;
+    let nq_boundary = 2 * TILE_Q_GEMM + 5;
+    assert!(!n_boundary.is_multiple_of(TILE_N_GEMM), "n must be off a TILE_N boundary");
+    assert!(!nq_boundary.is_multiple_of(TILE_Q_GEMM), "nq must be off a TILE_Q boundary");
+
+    let mut collection =
+        dataset::random_collection("gemm-b", n_boundary, DIM, Metric::L2, DATASET_SEED);
+    // Delete a spread-out set so tombstones fall inside DB tiles.
+    let deleted: HashSet<u32> = (0..n_boundary as u32).filter(|r| r % 5 == 0).collect();
+    for &r in &deleted {
+        assert!(collection.delete(&format!("id-{r}")));
+    }
+    assert!(collection.tombstoned() > 0);
+
+    let queries = dataset::random_queries(nq_boundary, DIM, QUERY_SEED);
+    let cpu = CpuFlatIndex::new(&collection);
+    let index = GpuFlatIndex::new(&gpu, &collection);
+
+    for &k in &[1usize, 10, 32] {
+        let tiled = index.search_knn_batch_gemm(&queries, k);
+        assert_eq!(tiled.len(), queries.len());
+        for (qi, q) in queries.iter().enumerate() {
+            for nb in &tiled[qi] {
+                assert!(!deleted.contains(&nb.row), "k={k} q{qi}: tombstoned row {} selected", nb.row);
+            }
+            assert_same(&format!("boundary k={k} q{qi}"), &tiled[qi], &cpu.search_knn(q, k));
+        }
+    }
+    eprintln!(
+        "  GEMM-tiled boundaries OK (n={n_boundary} off TILE_N={TILE_N_GEMM}, nq={nq_boundary} off TILE_Q={TILE_Q_GEMM}, {} tombstoned)",
+        collection.tombstoned()
+    );
+}
+
+/// A query dimension not supported by the tiled kernel (not a multiple of 4, or
+/// wider than the shared-tile width) makes `search_knn_batch` fall back to the
+/// one-workgroup-per-query top-k path and stay exact vs the CPU oracle — so any
+/// dim still works, just off the tiled fast path.
+#[test]
+fn gemm_tiled_falls_back_for_unsupported_dim() {
+    let Some(gpu) = GpuContext::new() else {
+        eprintln!("no GPU adapter; skipping gemm_tiled_falls_back_for_unsupported_dim");
+        return;
+    };
+    // dim = 50 is not a multiple of 4 → tiled kernel ineligible → topk fallback.
+    let dim = 50usize;
+    assert!(!dim.is_multiple_of(4), "test dim must be vec4-unaligned to force the fallback");
+    let collection = dataset::random_collection("gemm-fb", 1500, dim, Metric::L2, DATASET_SEED);
+    let queries = dataset::random_queries(N_QUERIES, dim, QUERY_SEED);
+    let cpu = CpuFlatIndex::new(&collection);
+    let index = GpuFlatIndex::new(&gpu, &collection);
+
+    let batched = index.search_knn_batch(&queries, K);
+    for (qi, q) in queries.iter().enumerate() {
+        assert_eq!(batched[qi].len(), K, "q{qi}: fallback should return K");
+        assert_same(&format!("dim-fallback q{qi}"), &batched[qi], &cpu.search_knn(q, K));
+    }
+    eprintln!("  vec4-unaligned dim={dim} falls back to top-k path + stays exact OK");
 }
