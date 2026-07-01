@@ -9,7 +9,6 @@
 # case = "Error__init__msg_as_str_wrong"
 # subject = "configparser.Error.__init__(msg: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

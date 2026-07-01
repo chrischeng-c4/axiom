@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__remove_signal_handler__sig_as_int_wrong"
 # subject = "asyncio.events.AbstractEventLoop.remove_signal_handler(sig: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

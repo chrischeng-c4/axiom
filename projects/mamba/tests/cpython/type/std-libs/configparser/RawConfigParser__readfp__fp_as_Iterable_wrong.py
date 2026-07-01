@@ -9,7 +9,6 @@
 # case = "RawConfigParser__readfp__fp_as_Iterable_wrong"
 # subject = "configparser.RawConfigParser.readfp(fp: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

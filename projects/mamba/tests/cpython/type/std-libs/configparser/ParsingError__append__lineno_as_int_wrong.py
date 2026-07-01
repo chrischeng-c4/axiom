@@ -9,7 +9,6 @@
 # case = "ParsingError__append__lineno_as_int_wrong"
 # subject = "configparser.ParsingError.append(lineno: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

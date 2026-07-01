@@ -9,7 +9,6 @@
 # case = "DuplicateOptionError__init__section_as__SectionName_wrong"
 # subject = "configparser.DuplicateOptionError.__init__(section: _SectionName)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

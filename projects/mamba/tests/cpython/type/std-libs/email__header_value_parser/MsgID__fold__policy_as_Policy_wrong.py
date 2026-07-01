@@ -9,7 +9,6 @@
 # case = "MsgID__fold__policy_as_Policy_wrong"
 # subject = "email._header_value_parser.MsgID.fold(policy: Policy)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/_header_value_parser.pyi"
 # status = "filled"

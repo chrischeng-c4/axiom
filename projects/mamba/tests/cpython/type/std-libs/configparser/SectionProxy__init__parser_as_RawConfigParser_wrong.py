@@ -9,7 +9,6 @@
 # case = "SectionProxy__init__parser_as_RawConfigParser_wrong"
 # subject = "configparser.SectionProxy.__init__(parser: RawConfigParser)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

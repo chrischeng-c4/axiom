@@ -9,7 +9,6 @@
 # case = "TimerHandle__init__when_as_float_wrong"
 # subject = "asyncio.events.TimerHandle.__init__(when: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

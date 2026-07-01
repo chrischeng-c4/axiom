@@ -9,7 +9,6 @@
 # case = "Handle__init__callback_as_Callable_wrong"
 # subject = "asyncio.events.Handle.__init__(callback: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

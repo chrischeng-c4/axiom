@@ -9,7 +9,6 @@
 # case = "parse_content_disposition_header__value_as_str_wrong"
 # subject = "email._header_value_parser.parse_content_disposition_header(value: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/_header_value_parser.pyi"
 # status = "filled"
