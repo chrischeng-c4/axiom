@@ -287,6 +287,7 @@ pub fn register() {
         );
         register_ast_class_metadata(node_type);
     }
+    refresh_ast_class_mros();
 
     // Names that CPython's ast module pulls into its namespace from other
     // modules (`from enum import IntEnum, auto`, `from contextlib import
@@ -409,11 +410,9 @@ extern "C" fn ast_node_getattr(obj: MbValue, attr: MbValue) -> MbValue {
 
 fn register_ast_class_metadata(node_type: &str) {
     let name = MbValue::from_ptr(MbObject::new_str(node_type.to_string()));
-    let base = if node_type == "AST" {
-        MbValue::none()
-    } else {
-        MbValue::from_ptr(MbObject::new_str("AST".to_string()))
-    };
+    let base = ast_base_class_name(node_type)
+        .map(|base| MbValue::from_ptr(MbObject::new_str(base.to_string())))
+        .unwrap_or_else(MbValue::none);
     let (method_names, method_values) = if node_type == "AST" {
         (
             MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
@@ -440,6 +439,159 @@ fn register_ast_class_metadata(node_type: &str) {
         MbValue::from_ptr(MbObject::new_str("_fields".to_string())),
         MbValue::from_ptr(MbObject::new_tuple(fields)),
     );
+}
+
+const AST_MOD_NODES: &[&str] = &["Module", "Interactive", "Expression", "FunctionType", "Suite"];
+const AST_STMT_NODES: &[&str] = &[
+    "FunctionDef",
+    "AsyncFunctionDef",
+    "ClassDef",
+    "Return",
+    "Delete",
+    "Assign",
+    "TypeAlias",
+    "AugAssign",
+    "AnnAssign",
+    "For",
+    "AsyncFor",
+    "While",
+    "If",
+    "With",
+    "AsyncWith",
+    "Match",
+    "Raise",
+    "Try",
+    "TryStar",
+    "Assert",
+    "Import",
+    "ImportFrom",
+    "Global",
+    "Nonlocal",
+    "Expr",
+    "Pass",
+    "Break",
+    "Continue",
+];
+const AST_EXPR_NODES: &[&str] = &[
+    "BoolOp",
+    "NamedExpr",
+    "BinOp",
+    "UnaryOp",
+    "Lambda",
+    "IfExp",
+    "Dict",
+    "Set",
+    "ListComp",
+    "SetComp",
+    "DictComp",
+    "GeneratorExp",
+    "Await",
+    "Yield",
+    "YieldFrom",
+    "Compare",
+    "Call",
+    "FormattedValue",
+    "JoinedStr",
+    "Constant",
+    "Attribute",
+    "Subscript",
+    "Starred",
+    "Name",
+    "List",
+    "Tuple",
+    "Slice",
+];
+const AST_EXPR_CONTEXT_NODES: &[&str] = &[
+    "Load", "Store", "Del", "AugLoad", "AugStore", "Param",
+];
+const AST_BOOLOP_NODES: &[&str] = &["And", "Or"];
+const AST_OPERATOR_NODES: &[&str] = &[
+    "Add", "Sub", "Mult", "MatMult", "Div", "Mod", "Pow", "LShift", "RShift", "BitOr",
+    "BitXor", "BitAnd", "FloorDiv",
+];
+const AST_UNARYOP_NODES: &[&str] = &["Invert", "Not", "UAdd", "USub"];
+const AST_CMPOP_NODES: &[&str] = &[
+    "Eq", "NotEq", "Lt", "LtE", "Gt", "GtE", "Is", "IsNot", "In", "NotIn",
+];
+const AST_EXCEPTHANDLER_NODES: &[&str] = &["ExceptHandler"];
+const AST_PATTERN_NODES: &[&str] = &[
+    "MatchValue",
+    "MatchSingleton",
+    "MatchSequence",
+    "MatchMapping",
+    "MatchClass",
+    "MatchStar",
+    "MatchAs",
+    "MatchOr",
+];
+const AST_SLICE_NODES: &[&str] = &["ExtSlice", "Index"];
+const AST_TYPE_IGNORE_NODES: &[&str] = &["TypeIgnore"];
+const AST_TYPE_PARAM_NODES: &[&str] = &["TypeVar", "ParamSpec", "TypeVarTuple"];
+const AST_CONSTANT_COMPAT_NODES: &[&str] = &["Num", "Str", "Bytes", "NameConstant", "Ellipsis"];
+
+fn ast_base_class_name(node_type: &str) -> Option<&'static str> {
+    if node_type == "AST" {
+        None
+    } else if AST_MOD_NODES.contains(&node_type) {
+        Some("mod")
+    } else if AST_STMT_NODES.contains(&node_type) {
+        Some("stmt")
+    } else if AST_EXPR_NODES.contains(&node_type) {
+        Some("expr")
+    } else if AST_EXPR_CONTEXT_NODES.contains(&node_type) {
+        Some("expr_context")
+    } else if AST_BOOLOP_NODES.contains(&node_type) {
+        Some("boolop")
+    } else if AST_OPERATOR_NODES.contains(&node_type) {
+        Some("operator")
+    } else if AST_UNARYOP_NODES.contains(&node_type) {
+        Some("unaryop")
+    } else if AST_CMPOP_NODES.contains(&node_type) {
+        Some("cmpop")
+    } else if AST_EXCEPTHANDLER_NODES.contains(&node_type) {
+        Some("excepthandler")
+    } else if AST_PATTERN_NODES.contains(&node_type) {
+        Some("pattern")
+    } else if AST_SLICE_NODES.contains(&node_type) {
+        Some("slice")
+    } else if AST_TYPE_IGNORE_NODES.contains(&node_type) {
+        Some("type_ignore")
+    } else if AST_TYPE_PARAM_NODES.contains(&node_type) {
+        Some("type_param")
+    } else if AST_CONSTANT_COMPAT_NODES.contains(&node_type) {
+        Some("Constant")
+    } else {
+        Some("AST")
+    }
+}
+
+fn refresh_ast_class_mros() {
+    for (nodes, base_name) in [
+        (AST_MOD_NODES, "mod"),
+        (AST_STMT_NODES, "stmt"),
+        (AST_EXPR_NODES, "expr"),
+        (AST_EXPR_CONTEXT_NODES, "expr_context"),
+        (AST_BOOLOP_NODES, "boolop"),
+        (AST_OPERATOR_NODES, "operator"),
+        (AST_UNARYOP_NODES, "unaryop"),
+        (AST_CMPOP_NODES, "cmpop"),
+        (AST_EXCEPTHANDLER_NODES, "excepthandler"),
+        (AST_PATTERN_NODES, "pattern"),
+        (AST_SLICE_NODES, "slice"),
+        (AST_TYPE_IGNORE_NODES, "type_ignore"),
+        (AST_TYPE_PARAM_NODES, "type_param"),
+        (AST_CONSTANT_COMPAT_NODES, "Constant"),
+    ] {
+        let base_list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+            MbObject::new_str(base_name.to_string()),
+        )]));
+        for node_type in nodes {
+            super::super::class::mb_class_update_bases(
+                MbValue::from_ptr(MbObject::new_str((*node_type).to_string())),
+                base_list,
+            );
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
