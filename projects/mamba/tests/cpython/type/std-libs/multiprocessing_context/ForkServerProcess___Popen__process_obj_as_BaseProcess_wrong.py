@@ -9,12 +9,11 @@
 # case = "ForkServerProcess___Popen__process_obj_as_BaseProcess_wrong"
 # subject = "multiprocessing.context.ForkServerProcess._Popen(process_obj: BaseProcess)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed process_obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/context.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed process_obj
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.context.ForkServerProcess._Popen(process_obj: BaseProcess); call it with the wrong type.
 
