@@ -1058,6 +1058,19 @@ fn ast_type_error(node_type: &str, field: &AstFieldSpec) -> MbValue {
     MbValue::none()
 }
 
+fn ast_constructor_type_checks_field(node_type: &str) -> bool {
+    // CPython's `ast.arguments` constructor accepts arbitrary positional field
+    // payloads; semantic validation is deferred to later AST validation.
+    node_type != "arguments"
+}
+
+fn ast_constructor_default(node_type: &str, field_name: &str) -> Option<MbValue> {
+    match (node_type, field_name) {
+        ("arguments", "vararg" | "kwarg") => Some(MbValue::none()),
+        _ => None,
+    }
+}
+
 fn ast_arg_type_error(function_name: &str, arg_name: &str) -> MbValue {
     super::super::builtins::raise_type_error(format!(
         "ast.{function_name} argument '{arg_name}' received wrong type"
@@ -1086,7 +1099,7 @@ pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue
     let mut fields = FxHashMap::default();
     for (idx, arg) in pos_args.iter().copied().enumerate() {
         if let Some(spec) = specs.get(idx) {
-            if !ast_field_accepts(spec.kind, arg) {
+            if ast_constructor_type_checks_field(node_type) && !ast_field_accepts(spec.kind, arg) {
                 return Some(ast_type_error(node_type, spec));
             }
             unsafe {
@@ -1105,6 +1118,14 @@ pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue
             super::super::rc::retain_if_ptr(value);
         }
         fields.insert(name, value);
+    }
+    for spec in specs {
+        if fields.contains_key(spec.name) {
+            continue;
+        }
+        if let Some(default) = ast_constructor_default(node_type, spec.name) {
+            fields.insert(spec.name.to_string(), default);
+        }
     }
     Some(make_ast_node(node_type, fields))
 }
@@ -1741,6 +1762,15 @@ fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
         "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => &["value", "kind"],
         "Raise" => &["exc", "cause"],
         "Call" => &["func", "args", "keywords"],
+        "arguments" => &[
+            "posonlyargs",
+            "args",
+            "vararg",
+            "kwonlyargs",
+            "kw_defaults",
+            "kwarg",
+            "defaults",
+        ],
         "keyword" => &["arg", "value"],
         "Import" => &["names"],
         "ImportFrom" => &["module", "names", "level"],
@@ -2816,10 +2846,14 @@ mod tests {
     }
 
     fn ast_field(node: MbValue, name: &str) -> MbValue {
+        ast_field_opt(node, name).expect("ast field")
+    }
+
+    fn ast_field_opt(node: MbValue, name: &str) -> Option<MbValue> {
         let ptr = node.as_ptr().expect("ast node");
         unsafe {
             if let super::super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
-                *fields.read().unwrap().get(name).expect("ast field")
+                fields.read().unwrap().get(name).copied()
             } else {
                 panic!("expected AST instance")
             }
@@ -2917,6 +2951,31 @@ mod tests {
         assert_eq!(ast_field(alias, "end_lineno").as_int(), Some(1));
         assert_eq!(ast_field(alias, "col_offset").as_int(), Some(7));
         assert_eq!(ast_field(alias, "end_col_offset").as_int(), Some(17));
+    }
+
+    #[test]
+    fn test_arguments_constructor_defaults_and_positional_payloads() {
+        let node = mb_ast_construct_marker("mb_ast_node_arguments", &[]).expect("arguments");
+        assert_eq!(ast_class_name(node).as_deref(), Some("arguments"));
+        assert!(ast_field_opt(node, "args").is_none());
+        assert!(ast_field(node, "vararg").is_none());
+        assert!(ast_field(node, "kwarg").is_none());
+
+        let positional = [
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+            MbValue::from_int(4),
+            MbValue::from_int(5),
+            MbValue::from_int(6),
+            MbValue::from_int(7),
+        ];
+        let node =
+            mb_ast_construct_marker("mb_ast_node_arguments", &positional).expect("arguments");
+        assert_eq!(ast_field(node, "posonlyargs").as_int(), Some(1));
+        assert_eq!(ast_field(node, "args").as_int(), Some(2));
+        assert_eq!(ast_field(node, "vararg").as_int(), Some(3));
+        assert_eq!(ast_field(node, "kwarg").as_int(), Some(6));
     }
 
     #[test]
