@@ -21,9 +21,10 @@ typeshed contract: message is str. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import ExceptionGroup
-obj = object.__new__(ExceptionGroup)
 try:
-    obj.__new__(12345, None)  # message: str <- wrong-typed
+    ExceptionGroup.__new__(
+        ExceptionGroup, 12345, [ValueError("x")]
+    )  # message: str <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
