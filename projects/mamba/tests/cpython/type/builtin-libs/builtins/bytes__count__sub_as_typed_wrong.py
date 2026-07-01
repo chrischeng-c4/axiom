@@ -9,7 +9,6 @@
 # case = "bytes__count__sub_as_typed_wrong"
 # subject = "builtins.bytes.count(sub: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

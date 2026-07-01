@@ -9,7 +9,6 @@
 # case = "bytes__rjust__width_as_SupportsIndex_wrong"
 # subject = "builtins.bytes.rjust(width: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "bytes__expandtabs__tabsize_as_SupportsIndex_wrong"
 # subject = "builtins.bytes.expandtabs(tabsize: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "bytes__hex__sep_as_typed_wrong"
 # subject = "builtins.bytes.hex(sep: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

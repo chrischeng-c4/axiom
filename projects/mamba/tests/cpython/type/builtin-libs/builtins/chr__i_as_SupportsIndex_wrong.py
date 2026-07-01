@@ -9,7 +9,6 @@
 # case = "chr__i_as_SupportsIndex_wrong"
 # subject = "builtins.chr(i: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

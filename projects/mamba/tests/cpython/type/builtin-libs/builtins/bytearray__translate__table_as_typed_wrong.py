@@ -9,7 +9,6 @@
 # case = "bytearray__translate__table_as_typed_wrong"
 # subject = "builtins.bytearray.translate(table: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

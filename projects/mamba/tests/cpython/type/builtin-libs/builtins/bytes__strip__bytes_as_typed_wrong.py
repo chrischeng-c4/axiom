@@ -9,7 +9,6 @@
 # case = "bytes__strip__bytes_as_typed_wrong"
 # subject = "builtins.bytes.strip(bytes: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
