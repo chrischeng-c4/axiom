@@ -9,12 +9,10 @@
 # case = "isasyncgenfunction__obj_as_Callable_wrong"
 # subject = "inspect.isasyncgenfunction(obj: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: inspect.isasyncgenfunction(obj: Callable); call it with the wrong type.
 
