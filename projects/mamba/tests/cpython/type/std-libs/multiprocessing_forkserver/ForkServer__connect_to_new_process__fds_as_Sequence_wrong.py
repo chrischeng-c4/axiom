@@ -9,12 +9,11 @@
 # case = "ForkServer__connect_to_new_process__fds_as_Sequence_wrong"
 # subject = "multiprocessing.forkserver.ForkServer.connect_to_new_process(fds: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fds"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/forkserver.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fds
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.forkserver.ForkServer.connect_to_new_process(fds: Sequence); call it with the wrong type.
 
