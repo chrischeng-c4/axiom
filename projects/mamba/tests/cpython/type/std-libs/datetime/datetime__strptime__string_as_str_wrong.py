@@ -9,7 +9,6 @@
 # case = "datetime__strptime__string_as_str_wrong"
 # subject = "datetime.datetime.strptime(string: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

@@ -271,14 +271,7 @@ unsafe extern "C" fn dispatch_today(_args_ptr: *const MbValue, _nargs: usize) ->
         .and_hms_opt(0, 0, 0)
         .map(build_datetime_dict)
         .unwrap_or_else(MbValue::none);
-    if let Some(ptr) = val.as_ptr() {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            if let Ok(mut f) = fields.write() {
-                f.insert("_is_date".into(), MbValue::from_bool(true));
-            }
-        }
-    }
-    val
+    mark_date_instance(val)
 }
 
 unsafe extern "C" fn dispatch_timedelta(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -326,6 +319,30 @@ unsafe extern "C" fn dispatch_strptime(args_ptr: *const MbValue, nargs: usize) -
         a.get(0).copied().unwrap_or_else(MbValue::none),
         a.get(1).copied().unwrap_or_else(MbValue::none),
     )
+}
+
+unsafe extern "C" fn dispatch_date_strptime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let dt = mb_datetime_strptime(
+        a.get(0).copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+    );
+    if dt.is_none() {
+        return dt;
+    }
+    date_part_instance(dt)
+}
+
+unsafe extern "C" fn dispatch_time_strptime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let dt = mb_datetime_strptime(
+        a.get(0).copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+    );
+    if dt.is_none() {
+        return dt;
+    }
+    time_part_instance(dt)
 }
 
 unsafe extern "C" fn dispatch_combine(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -744,21 +761,7 @@ unsafe extern "C" fn dt_method_astimezone(self_: MbValue, target: MbValue) -> Mb
 
 /// `datetime.date()` — project the date part as a date instance.
 unsafe extern "C" fn dt_method_date(self_: MbValue) -> MbValue {
-    let y = inst_int(self_, "year", 1970);
-    let mo = inst_int(self_, "month", 1);
-    let d = inst_int(self_, "day", 1);
-    let val = NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32)
-        .and_then(|nd| nd.and_hms_opt(0, 0, 0))
-        .map(build_datetime_dict)
-        .unwrap_or_else(MbValue::none);
-    if let Some(ptr) = val.as_ptr() {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            if let Ok(mut f) = fields.write() {
-                f.insert("_is_date".into(), MbValue::from_bool(true));
-            }
-        }
-    }
-    val
+    date_part_instance(self_)
 }
 
 /// Total microseconds since the epoch adjusted by utcoffset, plus awareness.
@@ -992,9 +995,14 @@ pub fn register() {
             "fromordinal".to_string(),
             MbValue::from_func(dispatch_fromordinal as *const () as usize),
         );
+        date_methods.insert(
+            "strptime".to_string(),
+            MbValue::from_func(dispatch_date_strptime as *const () as usize),
+        );
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-            s.borrow_mut()
-                .insert(dispatch_fromordinal as *const () as usize as u64);
+            let mut addrs = s.borrow_mut();
+            addrs.insert(dispatch_fromordinal as *const () as usize as u64);
+            addrs.insert(dispatch_date_strptime as *const () as usize as u64);
         });
         super::super::class::mb_class_register("date", vec![], date_methods);
 
@@ -1168,9 +1176,14 @@ pub fn register() {
             "fromisoformat".into(),
             MbValue::from_func(dispatch_time_fromisoformat as *const () as usize),
         );
+        time_inst.insert(
+            "strptime".into(),
+            MbValue::from_func(dispatch_time_strptime as *const () as usize),
+        );
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-            s.borrow_mut()
-                .insert(dispatch_time_fromisoformat as *const () as usize as u64);
+            let mut addrs = s.borrow_mut();
+            addrs.insert(dispatch_time_fromisoformat as *const () as usize as u64);
+            addrs.insert(dispatch_time_strptime as *const () as usize as u64);
         });
         super::super::class::mb_class_register("datetime.time", vec![], time_inst);
 
@@ -1281,14 +1294,40 @@ pub unsafe extern "C" fn dispatch_date(args_ptr: *const MbValue, nargs: usize) -
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let args_list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
     let val = mb_datetime_new(args_list);
+    mark_date_instance(val)
+}
+
+fn mark_date_instance(val: MbValue) -> MbValue {
     if let Some(ptr) = val.as_ptr() {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            if let Ok(mut f) = fields.write() {
-                f.insert("_is_date".into(), MbValue::from_bool(true));
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Ok(mut f) = fields.write() {
+                    f.insert("_is_date".into(), MbValue::from_bool(true));
+                }
             }
         }
     }
     val
+}
+
+fn date_part_instance(val: MbValue) -> MbValue {
+    let y = inst_int(val, "year", 1970);
+    let mo = inst_int(val, "month", 1);
+    let d = inst_int(val, "day", 1);
+    NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32)
+        .and_then(|nd| nd.and_hms_opt(0, 0, 0))
+        .map(build_datetime_dict)
+        .map(mark_date_instance)
+        .unwrap_or_else(MbValue::none)
+}
+
+fn time_part_instance(val: MbValue) -> MbValue {
+    build_time_instance(
+        inst_int(val, "hour", 0),
+        inst_int(val, "minute", 0),
+        inst_int(val, "second", 0),
+        inst_int(val, "microsecond", 0),
+    )
 }
 
 // ── Instance-method helpers (bound `self`-first ABI) ──

@@ -9,7 +9,6 @@
 # case = "tzinfo__tzname__dt_as_typed_wrong"
 # subject = "datetime.tzinfo.tzname(dt: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

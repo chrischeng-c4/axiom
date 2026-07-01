@@ -9,12 +9,10 @@
 # case = "timedelta____truediv____value_as_float_wrong"
 # subject = "datetime.timedelta.__truediv__(value: float)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: datetime.timedelta.__truediv__(value: float); call it with the wrong type.
 

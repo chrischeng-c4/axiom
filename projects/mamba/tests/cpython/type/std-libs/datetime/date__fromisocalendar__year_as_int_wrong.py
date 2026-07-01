@@ -9,7 +9,6 @@
 # case = "date__fromisocalendar__year_as_int_wrong"
 # subject = "datetime.date.fromisocalendar(year: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

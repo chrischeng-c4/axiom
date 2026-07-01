@@ -9,7 +9,6 @@
 # case = "tzinfo__utcoffset__dt_as_typed_wrong"
 # subject = "datetime.tzinfo.utcoffset(dt: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

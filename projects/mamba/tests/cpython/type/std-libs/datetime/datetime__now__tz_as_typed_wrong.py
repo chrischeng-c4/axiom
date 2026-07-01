@@ -9,7 +9,6 @@
 # case = "datetime__now__tz_as_typed_wrong"
 # subject = "datetime.datetime.now(tz: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

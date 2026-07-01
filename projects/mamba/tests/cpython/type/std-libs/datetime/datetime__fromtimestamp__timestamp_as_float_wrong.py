@@ -9,7 +9,6 @@
 # case = "datetime__fromtimestamp__timestamp_as_float_wrong"
 # subject = "datetime.datetime.fromtimestamp(timestamp: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

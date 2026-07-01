@@ -9,7 +9,6 @@
 # case = "date____sub____value_as_Self_wrong"
 # subject = "datetime.date.__sub__(value: Self)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "time____ge____value_as_time_wrong"
 # subject = "datetime.time.__ge__(value: time)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

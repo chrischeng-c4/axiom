@@ -9,7 +9,6 @@
 # case = "date____gt____value_as_date_wrong"
 # subject = "datetime.date.__gt__(value: date)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

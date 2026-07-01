@@ -9,7 +9,6 @@
 # case = "timedelta____gt____value_as_timedelta_wrong"
 # subject = "datetime.timedelta.__gt__(value: timedelta)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

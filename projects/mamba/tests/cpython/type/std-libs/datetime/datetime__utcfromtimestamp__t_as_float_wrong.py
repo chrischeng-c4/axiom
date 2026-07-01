@@ -9,7 +9,6 @@
 # case = "datetime__utcfromtimestamp__t_as_float_wrong"
 # subject = "datetime.datetime.utcfromtimestamp(t: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

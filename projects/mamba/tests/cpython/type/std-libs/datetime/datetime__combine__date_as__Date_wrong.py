@@ -9,7 +9,6 @@
 # case = "datetime__combine__date_as__Date_wrong"
 # subject = "datetime.datetime.combine(date: _Date)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"
