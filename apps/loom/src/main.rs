@@ -8,6 +8,8 @@
 //! CLI convention, via the shared `cli-std` lib, #475). Agents start at
 //! `loom llm outline`.
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -33,6 +35,9 @@ enum Command {
     JobController,
     /// Schema layer: worker-facing bidi edge over the relay work-queue (#432).
     SchemaLayer,
+    /// Print loom's OpenAPI control-API contract offline (the `/openapi.json`
+    /// twin), or `spec gen` a typed client (ts/py/rust) from it. No server.
+    Spec(SpecArgs),
     /// Print agent-facing LLM topics — offline, no server. `outline` (default)
     /// maps the topics; pass a topic id for detail (`--format json` for a
     /// machine-readable form).
@@ -47,6 +52,65 @@ enum Command {
     /// diagnostics-rich issue tagged `project:loom` (via `GITHUB_TOKEN`, or a
     /// pre-filled `issues/new` URL when no token is set).
     Issue(IssueArgs),
+}
+
+/// `loom spec [--format ...]` / `loom spec gen ...` flags.
+#[derive(clap::Args)]
+struct SpecArgs {
+    /// Generate a typed client from the spec instead of printing it.
+    #[command(subcommand)]
+    gen: Option<SpecSub>,
+    /// Schema format to print (ignored when `gen` is used).
+    #[arg(long, value_enum, default_value_t = SpecFormat::Openapi)]
+    format: SpecFormat,
+}
+
+/// `loom spec` subcommands.
+#[derive(Subcommand)]
+enum SpecSub {
+    /// Generate a typed API client (TypeScript / Python / Rust) from loom's
+    /// OpenAPI document, written into `--out`.
+    Gen(SpecGenArgs),
+}
+
+#[derive(clap::Args)]
+struct SpecGenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Output directory for the generated files.
+    #[arg(long)]
+    out: PathBuf,
+    /// HTTP backend for the TypeScript client (ignored for py/rust).
+    #[arg(long, value_enum, default_value_t = GenHttp::Fetch)]
+    http: GenHttp,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum SpecFormat {
+    /// OpenAPI 3 as JSON — the offline twin of `/openapi.json`.
+    Openapi,
+    /// OpenAPI 3 as YAML.
+    #[value(alias = "yaml", alias = "openapi.yaml")]
+    OpenapiYaml,
+    /// Just the component schemas (request/response data types).
+    JsonSchema,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum GenLang {
+    /// TypeScript: types + fetch/axios client + TanStack Query hooks.
+    Ts,
+    /// Python: pydantic models + a generated sync/async HTTP/2 runtime.
+    Py,
+    /// Rust: serde models + a reqwest client.
+    Rust,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum GenHttp {
+    Fetch,
+    Axios,
 }
 
 /// `loom llm` flags.
@@ -199,8 +263,11 @@ const TOPICS: &[cli_std::llm::Topic] = &[
             - `POST /runs/{id}/nodes/{node}/complete` — report a node completion \
             (`result_ref`/`result_inline`, `attempt`, `failed`, and runtime `fan_out` children). \
             Workers normally reach this indirectly: they ack relay and loom folds the completion \
-            off the `loom.completions` subject — but the endpoint also drives manual completion.\n\
-            - `GET  /healthz` — liveness.\n\n\
+            off the `loom.completions` subject — but the endpoint also drives manual completion.\n\n\
+            Standard archetype surface on the same port (via `service-http`): \
+            `GET /healthz` (liveness), `GET /readyz` (readiness — 503 while draining), \
+            `GET /metrics` (Prometheus), `GET /openapi.json` (machine OpenAPI), `GET /docs` \
+            (Swagger UI). The OpenAPI is also emitted offline by `loom spec`.\n\n\
             Dynamic fan-out (#116): a completing node may carry `fan_out` children that loom \
             splices into the DAG; the fan-in barrier waits for all siblings before readying the \
             join. At-least-once completions are idempotent (deduped by run/node/attempt, #437).\n",
@@ -214,6 +281,8 @@ fn main() -> anyhow::Result<()> {
         Command::RunTask => loom::runtask::run(),
         Command::JobController => loom::jobcontroller::run(),
         Command::SchemaLayer => loom::schema_layer::run(),
+        // Offline: emit the OpenAPI contract (or a typed client), no server.
+        Command::Spec(args) => spec(args),
         // Offline: render the in-code topics, no runtime/server/I/O beyond stdout.
         Command::Llm(args) => {
             let out = cli_std::llm::render(
@@ -288,6 +357,64 @@ async fn issue(args: IssueArgs) -> anyhow::Result<()> {
             .await
         }
     }
+}
+
+/// `loom spec` — print the control-API OpenAPI offline (the `/openapi.json`
+/// twin the controller also serves), or `spec gen` a typed client. Offline: the
+/// document is built from the in-binary `utoipa` derive; no server or network.
+fn spec(args: SpecArgs) -> anyhow::Result<()> {
+    if let Some(SpecSub::Gen(gen)) = args.gen {
+        return spec_gen(gen);
+    }
+    let doc = loom::controller::openapi();
+    let out = match args.format {
+        SpecFormat::Openapi => doc.to_pretty_json()?,
+        SpecFormat::OpenapiYaml => serde_yaml::to_string(&doc)?,
+        SpecFormat::JsonSchema => {
+            let v = serde_json::to_value(&doc)?;
+            let schemas = v
+                .get("components")
+                .and_then(|c| c.get("schemas"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            serde_json::to_string_pretty(&schemas)?
+        }
+    };
+    println!("{out}");
+    Ok(())
+}
+
+/// `loom spec gen` — emit a typed client (ts/py/rust) from loom's own OpenAPI via
+/// the shared `cclab-openapi-codegen` polyglot core. No external codegen step.
+fn spec_gen(args: SpecGenArgs) -> anyhow::Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let opts = GenOptions {
+        lang,
+        spec_path: PathBuf::new(),
+        out_dir: args.out.clone(),
+        client_name: "createClient".to_string(),
+        http_client: match args.http {
+            GenHttp::Fetch => HttpClient::Fetch,
+            GenHttp::Axios => HttpClient::Axios,
+        },
+        emit_types: true,
+        emit_client: true,
+        // TanStack Query hooks are a TypeScript-only concern.
+        emit_hooks: matches!(lang, Lang::Ts),
+    };
+    let output = generate(&loom::controller::openapi().to_pretty_json()?, &opts)?;
+    std::fs::create_dir_all(&args.out)?;
+    for file in &output.files {
+        let path = args.out.join(&file.rel_path);
+        std::fs::write(&path, &file.contents)?;
+        println!("generated {}", path.display());
+    }
+    Ok(())
 }
 
 /// Run a future to completion on a fresh runtime. The standard CLI ops

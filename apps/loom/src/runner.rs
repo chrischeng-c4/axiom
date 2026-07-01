@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Where a task runs. Stored as task/stage metadata, not a worker-global setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub enum RunnerClass {
     /// Long-running pull-loop worker (Celery-style); IO-bound tasks.
     #[default]
