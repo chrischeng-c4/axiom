@@ -4922,6 +4922,24 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("s", CoreTy::Str)],
         enforceable: false,
     },
+    // ipaddress network constructors have overload-heavy address parameters,
+    // but `strict` is always a bool wall in typeshed.
+    StdlibSig {
+        module: "ipaddress",
+        qualifier: "IPv4Network",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("address", CoreTy::Unknown), p("strict", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ipaddress",
+        qualifier: "IPv6Network",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("address", CoreTy::Unknown), p("strict", CoreTy::Bool)],
+        enforceable: true,
+    },
     // fractions.Fraction arithmetic partners are generated from overloaded
     // numeric aliases and collapse to Unknown. For strict-type fixtures, use
     // Complex as the broad numeric wall: int/float/bool remain compatible, while
@@ -7163,6 +7181,8 @@ mod tests {
             ("inspect", "", "markcoroutinefunction", 0, "func", CoreTy::Typed),
             ("inspect", "", "unwrap", 0, "func", CoreTy::Typed),
             ("inspect", "", "walktree", 0, "classes", CoreTy::List),
+            ("ipaddress", "IPv4Network", "__init__", 1, "strict", CoreTy::Bool),
+            ("ipaddress", "IPv6Network", "__init__", 1, "strict", CoreTy::Bool),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
