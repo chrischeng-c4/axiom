@@ -9,7 +9,6 @@
 # case = "BadOptionError__init__opt_str_as_str_wrong"
 # subject = "optparse.BadOptionError.__init__(opt_str: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

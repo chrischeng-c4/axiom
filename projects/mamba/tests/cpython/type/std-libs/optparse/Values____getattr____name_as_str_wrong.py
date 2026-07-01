@@ -9,7 +9,6 @@
 # case = "Values____getattr____name_as_str_wrong"
 # subject = "optparse.Values.__getattr__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

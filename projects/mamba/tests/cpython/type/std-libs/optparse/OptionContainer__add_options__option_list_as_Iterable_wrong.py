@@ -9,7 +9,6 @@
 # case = "OptionContainer__add_options__option_list_as_Iterable_wrong"
 # subject = "optparse.OptionContainer.add_options(option_list: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

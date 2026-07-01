@@ -9,7 +9,6 @@
 # case = "TitledHelpFormatter__format_heading__heading_as_str_wrong"
 # subject = "optparse.TitledHelpFormatter.format_heading(heading: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
