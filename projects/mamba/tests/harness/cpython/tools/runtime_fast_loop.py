@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -50,16 +51,41 @@ def run(
     cwd: Path = WORKSPACE_DIR,
     env: dict[str, str] | None = None,
     env_note: str | None = None,
+    timeout: int | None = None,
 ) -> StepResult:
     print(f"\n== {name}")
     print("+ " + " ".join(argv))
     if env_note:
         print(f"  env: {env_note}")
+    if timeout:
+        print(f"  timeout: {timeout}s")
     start = time.monotonic()
-    proc = subprocess.run(argv, cwd=cwd, env=env)
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, start_new_session=bool(timeout))
+    try:
+        code = proc.wait(timeout=timeout if timeout else None)
+    except subprocess.TimeoutExpired:
+        if timeout:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                code = proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                code = proc.wait()
+        else:
+            raise
+        if code == 0:
+            code = 124
+        elif code < 0:
+            code = 124
     seconds = time.monotonic() - start
-    print(f"== {name}: exit={proc.returncode} wall={seconds:.2f}s")
-    return StepResult(name=name, code=proc.returncode, seconds=seconds)
+    print(f"== {name}: exit={code} wall={seconds:.2f}s")
+    return StepResult(name=name, code=code, seconds=seconds)
 
 
 def git_changed(paths: list[str]) -> list[str]:
@@ -192,6 +218,7 @@ def build_once(args: argparse.Namespace) -> StepResult:
             name="cargo build",
             env=env,
             env_note=", ".join(notes) if notes else None,
+            timeout=args.build_timeout or None,
         )
 
 
@@ -213,6 +240,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-cluster", dest="cluster", action="store_false", help="do not add whole lib clusters for selected fixtures")
     parser.set_defaults(cluster=True)
     parser.add_argument("--build", action="store_true", help="run one guarded cargo build before validation")
+    parser.add_argument(
+        "--build-timeout",
+        type=int,
+        default=int(os.environ.get("MAMBA_FAST_LOOP_BUILD_TIMEOUT", "240")),
+        help="seconds before --build is terminated; use 0 to disable",
+    )
     parser.add_argument(
         "--cargo-incremental",
         action="store_true",
