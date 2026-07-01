@@ -9,12 +9,11 @@
 # case = "format__percent_as__str_wrong"
 # subject = "locale.format(percent: _str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed percent"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/locale.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed percent
 # mamba-strict-type: TypeError
 """Type wall: locale.format(percent: _str); call it with the wrong type.
 
