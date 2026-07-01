@@ -407,6 +407,83 @@ fn pack_nested_workspace_rewrites_workspace_protocols_in_package_json() {
 }
 
 #[tokio::test]
+async fn publish_dry_run_previews_without_uploading_to_registry() {
+    let (base_url, store) = spawn_mock_registry().await;
+
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let pkg_name = "@acme/dry-run";
+
+    std::fs::create_dir_all(root.join("dist")).unwrap();
+    std::fs::write(root.join("dist/index.js"), "export const dryRun = true;\n").unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        format!(
+            r#"{{
+  "name": "{pkg_name}",
+  "version": "2.0.0",
+  "main": "./dist/index.js",
+  "files": ["dist"]
+}}"#
+        ),
+    )
+    .unwrap();
+
+    let registry_host = base_url.trim_start_matches("http://");
+    std::fs::write(
+        root.join(".npmrc"),
+        format!("@acme:registry={base_url}/\n//{registry_host}/:_authToken=dry-token\n"),
+    )
+    .unwrap();
+
+    let preview = Publisher::new(root.to_path_buf())
+        .dry_run("beta", Some("restricted"))
+        .expect("dry-run preview");
+
+    assert_eq!(preview.name, pkg_name);
+    assert_eq!(preview.version, "2.0.0");
+    assert_eq!(preview.tag, "beta");
+    assert_eq!(preview.access, "restricted");
+    assert!(
+        preview.registry.starts_with(&base_url),
+        "dry-run must resolve scoped registry to the mock URL, got {}",
+        preview.registry
+    );
+    assert_eq!(preview.tarball_file, "@acme/dry-run-2.0.0.tgz");
+    assert!(
+        preview.tarball_bytes > 0,
+        "dry-run must create tarball bytes for preview"
+    );
+    assert!(
+        preview.files.iter().any(|p| p == "package/package.json"),
+        "preview must list package.json: {:?}",
+        preview.files
+    );
+    assert!(
+        preview.files.iter().any(|p| p == "package/dist/index.js"),
+        "preview must list dist entry: {:?}",
+        preview.files
+    );
+    assert_eq!(
+        preview.package_json["main"].as_str(),
+        Some("./dist/index.js"),
+        "preview must expose the transformed package.json"
+    );
+
+    let report = preview.report();
+    assert!(report.contains("jet publish --dry-run"), "{report}");
+    assert!(report.contains("registry:"), "{report}");
+    assert!(report.contains("package.json:"), "{report}");
+
+    let guard = store.lock().unwrap();
+    assert!(
+        guard.is_empty(),
+        "dry-run must not PUT anything to the mock registry: {:?}",
+        guard.keys().collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
 async fn publish_built_library_to_mock_registry_and_resolve_back() {
     // 1. Spawn the mock registry.
     let (base_url, store) = spawn_mock_registry().await;

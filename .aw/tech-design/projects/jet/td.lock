@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-07-01T13:54:22.253186+00:00"
-digest = "sha256:24434fa9a352e225d042478f9e2c59a1cd7e20ef8a4776938c8ff9941eface40"
-source_digest = "sha256:24434fa9a352e225d042478f9e2c59a1cd7e20ef8a4776938c8ff9941eface40"
-ir_digest = "sha256:3c01320f545e8d4aa89e92b43c42b4c19a379504a6fca5dddd6be285351f24cb"
+generated_at = "2026-07-01T14:11:49.620281+00:00"
+digest = "sha256:9a7dadffcce83f42d6c78af8abf7a0e9b6fb4eca1c4c979c096f6f987abe4cf9"
+source_digest = "sha256:9a7dadffcce83f42d6c78af8abf7a0e9b6fb4eca1c4c979c096f6f987abe4cf9"
+ir_digest = "sha256:6702bf8531e10234bbf2d138149e9f3d170c58d225f2c83781d679c45db8bb1e"
 
 [[files]]
 path = "config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md"
@@ -294,6 +294,12 @@ path = "logic/jet-publish-library-and-private-registry.md"
 digest = "sha256:c686a168208f7f7998eba19b74853096e849f05a55390897b2cd0a920ecad639"
 ir_digest = "sha256:fc0af277c3fab094774ec50cc75ad781ed0dcd871621dd705292afce9ca74bfd"
 section_count = 2
+
+[[files]]
+path = "logic/jet-publish-no-dry-run-option-to-preview-a-publish-without-actua.md"
+digest = "sha256:6a2c82f7860d0c3af544a4c1a7eddf0e33daab6f96e4386f5864ccd789fbd44a"
+ir_digest = "sha256:a1df2c4ec31a18ea6ae6c4ce5f10e7674e77b915c78b40a53fb4f572fbfb2483"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md"
