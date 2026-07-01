@@ -9,12 +9,11 @@
 # case = "mmap____release_buffer____buffer_as_memoryview_wrong"
 # subject = "mmap.mmap.__release_buffer__(buffer: memoryview)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mmap.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer
 # mamba-strict-type: TypeError
 """Type wall: mmap.mmap.__release_buffer__(buffer: memoryview); call it with the wrong type.
 
