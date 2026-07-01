@@ -9,7 +9,6 @@
 # case = "gethostbyname_ex__hostname_as_str_wrong"
 # subject = "_socket.gethostbyname_ex(hostname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

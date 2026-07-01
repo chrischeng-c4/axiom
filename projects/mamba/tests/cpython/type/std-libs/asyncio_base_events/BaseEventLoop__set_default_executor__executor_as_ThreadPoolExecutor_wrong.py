@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__set_default_executor__executor_as_ThreadPoolExecutor_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.set_default_executor(executor: ThreadPoolExecutor)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

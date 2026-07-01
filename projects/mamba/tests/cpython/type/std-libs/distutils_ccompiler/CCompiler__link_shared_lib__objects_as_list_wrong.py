@@ -9,12 +9,10 @@
 # case = "CCompiler__link_shared_lib__objects_as_list_wrong"
 # subject = "distutils.ccompiler.CCompiler.link_shared_lib(objects: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed objects"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed objects
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.CCompiler.link_shared_lib(objects: list); call it with the wrong type.
 

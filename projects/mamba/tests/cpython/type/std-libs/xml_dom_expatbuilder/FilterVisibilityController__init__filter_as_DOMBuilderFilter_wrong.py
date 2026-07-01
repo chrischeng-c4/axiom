@@ -9,7 +9,6 @@
 # case = "FilterVisibilityController__init__filter_as_DOMBuilderFilter_wrong"
 # subject = "xml.dom.expatbuilder.FilterVisibilityController.__init__(filter: DOMBuilderFilter)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

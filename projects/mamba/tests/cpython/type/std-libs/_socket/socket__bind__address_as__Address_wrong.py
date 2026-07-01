@@ -9,7 +9,6 @@
 # case = "socket__bind__address_as__Address_wrong"
 # subject = "_socket.socket.bind(address: _Address)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

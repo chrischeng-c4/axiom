@@ -9,7 +9,6 @@
 # case = "FilterVisibilityController__acceptNode__node_as_Node_wrong"
 # subject = "xml.dom.expatbuilder.FilterVisibilityController.acceptNode(node: Node)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

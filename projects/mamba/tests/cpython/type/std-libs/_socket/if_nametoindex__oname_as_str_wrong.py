@@ -9,7 +9,6 @@
 # case = "if_nametoindex__oname_as_str_wrong"
 # subject = "_socket.if_nametoindex(oname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__default_exception_handler__context_as__Context_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.default_exception_handler(context: _Context)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

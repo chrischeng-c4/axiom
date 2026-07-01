@@ -9,7 +9,6 @@
 # case = "CCompiler__spawn__cmd_as_Iterable_wrong"
 # subject = "distutils.ccompiler.CCompiler.spawn(cmd: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

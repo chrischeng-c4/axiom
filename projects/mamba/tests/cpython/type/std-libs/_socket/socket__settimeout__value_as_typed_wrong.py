@@ -9,7 +9,6 @@
 # case = "socket__settimeout__value_as_typed_wrong"
 # subject = "_socket.socket.settimeout(value: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

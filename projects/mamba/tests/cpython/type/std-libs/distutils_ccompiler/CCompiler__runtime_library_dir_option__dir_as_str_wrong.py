@@ -9,7 +9,6 @@
 # case = "CCompiler__runtime_library_dir_option__dir_as_str_wrong"
 # subject = "distutils.ccompiler.CCompiler.runtime_library_dir_option(dir: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

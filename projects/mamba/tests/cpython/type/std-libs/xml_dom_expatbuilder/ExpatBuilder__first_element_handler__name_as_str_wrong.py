@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__first_element_handler__name_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.first_element_handler(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

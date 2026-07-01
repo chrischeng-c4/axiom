@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__start_tls__transport_as_BaseTransport_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.start_tls(transport: BaseTransport)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

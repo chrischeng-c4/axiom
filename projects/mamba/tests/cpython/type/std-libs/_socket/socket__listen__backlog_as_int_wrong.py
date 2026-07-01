@@ -9,7 +9,6 @@
 # case = "socket__listen__backlog_as_int_wrong"
 # subject = "_socket.socket.listen(backlog: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

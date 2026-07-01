@@ -9,7 +9,6 @@
 # case = "socket__recv_into__buffer_as_WriteableBuffer_wrong"
 # subject = "_socket.socket.recv_into(buffer: WriteableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "inet_ntoa__packed_ip_as_ReadableBuffer_wrong"
 # subject = "_socket.inet_ntoa(packed_ip: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

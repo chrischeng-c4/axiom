@@ -9,7 +9,6 @@
 # case = "socket__recvfrom__bufsize_as_int_wrong"
 # subject = "_socket.socket.recvfrom(bufsize: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__parseFile__file_as_SupportsRead_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.parseFile(file: SupportsRead)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

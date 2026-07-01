@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__pi_handler__target_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.pi_handler(target: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "socket__share__process_id_as_int_wrong"
 # subject = "_socket.socket.share(process_id: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

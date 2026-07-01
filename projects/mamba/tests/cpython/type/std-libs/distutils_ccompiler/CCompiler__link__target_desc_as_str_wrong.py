@@ -9,7 +9,6 @@
 # case = "CCompiler__link__target_desc_as_str_wrong"
 # subject = "distutils.ccompiler.CCompiler.link(target_desc: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

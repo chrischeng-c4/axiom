@@ -9,7 +9,6 @@
 # case = "CCompiler__warn__msg_as_str_wrong"
 # subject = "distutils.ccompiler.CCompiler.warn(msg: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

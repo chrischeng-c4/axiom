@@ -9,7 +9,6 @@
 # case = "gethostbyaddr__ip_address_as_str_wrong"
 # subject = "_socket.gethostbyaddr(ip_address: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

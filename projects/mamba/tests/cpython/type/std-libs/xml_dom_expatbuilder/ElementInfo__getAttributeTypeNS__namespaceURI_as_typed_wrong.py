@@ -9,7 +9,6 @@
 # case = "ElementInfo__getAttributeTypeNS__namespaceURI_as_typed_wrong"
 # subject = "xml.dom.expatbuilder.ElementInfo.getAttributeTypeNS(namespaceURI: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

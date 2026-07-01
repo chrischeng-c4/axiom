@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__character_data_handler__data_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.character_data_handler(data: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

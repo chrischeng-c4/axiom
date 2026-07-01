@@ -9,7 +9,6 @@
 # case = "gen_preprocess_options__macros_as_list_wrong"
 # subject = "distutils.ccompiler.gen_preprocess_options(macros: list)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "FilterCrutch__init__builder_as_ExpatBuilder_wrong"
 # subject = "xml.dom.expatbuilder.FilterCrutch.__init__(builder: ExpatBuilder)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"
