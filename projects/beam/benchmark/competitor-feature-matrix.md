@@ -36,8 +36,8 @@ None target Apple Silicon / Metal. That gap is beam's wedge (see Positioning).
 | IVF-PQ (ADC) | ✅ (GPU) | ✅ | ✅ | ✅ | ❌ | ❌ | done |
 | **HNSW** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | **F3** |
 | CAGRA / GPU graph | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | later |
-| **Metadata filtered search** | 🟡 (F1 in flight) | 🟡 | 🟡 | ✅ | ✅ | ✅ | **F1** |
-| **CRUD (delete/update/upsert)** | ❌ (add only) | 🟡 | 🟡 | ✅ | ✅ | ✅ | **F2** |
+| **Metadata filtered search** | ✅ (GPU+CPU) | 🟡 | 🟡 | ✅ | ✅ | ✅ | done (F1) |
+| **CRUD (delete/update/upsert)** | 🟡 (F2 in flight) | 🟡 | 🟡 | ✅ | ✅ | ✅ | **F2** |
 | **Persistence / durable** | ❌ (in-mem) | ✅ (file) | ✅ | ✅ | ✅ | ✅ | **F4** |
 | Collection mgmt (create/drop/list) | ❌ (CLI stubs) | n/a | n/a | ✅ | ✅ | ✅ (DDL) | **F5** |
 | HTTP/gRPC query API | ❌ | ❌ (lib) | ❌ (lib) | ✅ | ✅ | ✅ (SQL) | service slice |
