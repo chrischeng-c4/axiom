@@ -38,9 +38,9 @@ None target Apple Silicon / Metal. That gap is beam's wedge (see Positioning).
 | CAGRA / GPU graph | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | later |
 | **Metadata filtered search** | ✅ (GPU+CPU) | 🟡 | 🟡 | ✅ | ✅ | ✅ | done (F1) |
 | **CRUD (delete/update/upsert)** | ✅ (tombstones) | 🟡 | 🟡 | ✅ | ✅ | ✅ | done (F2) |
-| **Persistence / durable** | ❌ (in-mem) | ✅ (file) | ✅ | ✅ | ✅ | ✅ | **F4** |
-| Collection mgmt (create/drop/list) | ❌ (CLI stubs) | n/a | n/a | ✅ | ✅ | ✅ (DDL) | **F5** |
-| HTTP/gRPC query API | ❌ | ❌ (lib) | ❌ (lib) | ✅ | ✅ | ✅ (SQL) | service slice |
+| **Persistence / durable** | ✅ (serde/bincode) | ✅ (file) | ✅ | ✅ | ✅ | ✅ | done (F4) |
+| Collection mgmt (create/drop/list) | 🟡 (service in flight) | n/a | n/a | ✅ | ✅ | ✅ (DDL) | **service** |
+| HTTP/gRPC query API | 🟡 (service in flight) | ❌ (lib) | ❌ (lib) | ✅ | ✅ | ✅ (SQL) | **service** |
 | OPQ (rotation) | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | P/OPQ |
 | Scalar quantization | 🟡 (flat SQ) | ✅ | ✅ | ✅ | ✅ | ❌ | — |
 | Distributed / sharding | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | later |
