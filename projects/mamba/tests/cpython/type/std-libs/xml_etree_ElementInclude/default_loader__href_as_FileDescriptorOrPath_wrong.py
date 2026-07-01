@@ -9,12 +9,10 @@
 # case = "default_loader__href_as_FileDescriptorOrPath_wrong"
 # subject = "xml.etree.ElementInclude.default_loader(href: FileDescriptorOrPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed href"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/etree/ElementInclude.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed href
 # mamba-strict-type: TypeError
 """Type wall: xml.etree.ElementInclude.default_loader(href: FileDescriptorOrPath); call it with the wrong type.
 

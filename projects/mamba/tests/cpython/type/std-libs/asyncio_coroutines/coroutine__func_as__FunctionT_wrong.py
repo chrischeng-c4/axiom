@@ -9,12 +9,10 @@
 # case = "coroutine__func_as__FunctionT_wrong"
 # subject = "asyncio.coroutines.coroutine(func: _FunctionT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/coroutines.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: asyncio.coroutines.coroutine(func: _FunctionT); call it with the wrong type.
 
