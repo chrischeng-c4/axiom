@@ -4985,6 +4985,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("encoding", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "importlib.readers",
+        qualifier: "MultiplexedPath",
+        name: "joinpath",
+        kind: SigKind::Method,
+        params: &[p("child", CoreTy::Str)],
+        enforceable: true,
+    },
     // fractions.Fraction arithmetic partners are generated from overloaded
     // numeric aliases and collapse to Unknown. For strict-type fixtures, use
     // Complex as the broad numeric wall: int/float/bool remain compatible, while
@@ -7239,6 +7247,14 @@ mod tests {
                 0,
                 "encoding",
                 CoreTy::Typed,
+            ),
+            (
+                "importlib.readers",
+                "MultiplexedPath",
+                "joinpath",
+                0,
+                "child",
+                CoreTy::Str,
             ),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (

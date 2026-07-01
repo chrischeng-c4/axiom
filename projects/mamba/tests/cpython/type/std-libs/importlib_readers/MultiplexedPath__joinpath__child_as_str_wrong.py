@@ -9,12 +9,11 @@
 # case = "MultiplexedPath__joinpath__child_as_str_wrong"
 # subject = "importlib.readers.MultiplexedPath.joinpath(child: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed child"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/readers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed child
 # mamba-strict-type: TypeError
 """Type wall: importlib.readers.MultiplexedPath.joinpath(child: str); call it with the wrong type.
 
