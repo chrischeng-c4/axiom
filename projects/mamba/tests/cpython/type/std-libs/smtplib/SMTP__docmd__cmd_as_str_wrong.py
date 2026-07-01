@@ -9,7 +9,6 @@
 # case = "SMTP__docmd__cmd_as_str_wrong"
 # subject = "smtplib.SMTP.docmd(cmd: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "SMTP__send__s_as_typed_wrong"
 # subject = "smtplib.SMTP.send(s: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

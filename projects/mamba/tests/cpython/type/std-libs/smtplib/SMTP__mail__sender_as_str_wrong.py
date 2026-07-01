@@ -9,7 +9,6 @@
 # case = "SMTP__mail__sender_as_str_wrong"
 # subject = "smtplib.SMTP.mail(sender: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

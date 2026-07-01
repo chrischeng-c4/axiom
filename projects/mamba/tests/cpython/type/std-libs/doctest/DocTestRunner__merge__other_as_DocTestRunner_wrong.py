@@ -9,7 +9,6 @@
 # case = "DocTestRunner__merge__other_as_DocTestRunner_wrong"
 # subject = "doctest.DocTestRunner.merge(other: DocTestRunner)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

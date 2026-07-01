@@ -9,7 +9,6 @@
 # case = "register_optionflag__name_as_str_wrong"
 # subject = "doctest.register_optionflag(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

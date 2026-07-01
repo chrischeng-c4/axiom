@@ -9,7 +9,6 @@
 # case = "DocTestFinder__find__name_as_typed_wrong"
 # subject = "doctest.DocTestFinder.find(name: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

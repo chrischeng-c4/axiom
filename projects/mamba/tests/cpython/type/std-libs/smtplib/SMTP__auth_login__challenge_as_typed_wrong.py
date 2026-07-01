@@ -9,7 +9,6 @@
 # case = "SMTP__auth_login__challenge_as_typed_wrong"
 # subject = "smtplib.SMTP.auth_login(challenge: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

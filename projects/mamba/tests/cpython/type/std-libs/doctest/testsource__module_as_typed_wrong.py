@@ -9,7 +9,6 @@
 # case = "testsource__module_as_typed_wrong"
 # subject = "doctest.testsource(module: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

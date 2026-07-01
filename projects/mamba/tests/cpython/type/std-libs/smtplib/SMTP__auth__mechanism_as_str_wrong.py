@@ -9,7 +9,6 @@
 # case = "SMTP__auth__mechanism_as_str_wrong"
 # subject = "smtplib.SMTP.auth(mechanism: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

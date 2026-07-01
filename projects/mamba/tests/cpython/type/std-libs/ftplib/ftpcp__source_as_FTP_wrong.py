@@ -9,7 +9,6 @@
 # case = "ftpcp__source_as_FTP_wrong"
 # subject = "ftplib.ftpcp(source: FTP)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

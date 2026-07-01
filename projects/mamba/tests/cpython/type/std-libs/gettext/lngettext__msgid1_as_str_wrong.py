@@ -9,7 +9,6 @@
 # case = "lngettext__msgid1_as_str_wrong"
 # subject = "gettext.lngettext(msgid1: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

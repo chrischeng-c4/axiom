@@ -9,7 +9,6 @@
 # case = "NullTranslations__npgettext__context_as_str_wrong"
 # subject = "gettext.NullTranslations.npgettext(context: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

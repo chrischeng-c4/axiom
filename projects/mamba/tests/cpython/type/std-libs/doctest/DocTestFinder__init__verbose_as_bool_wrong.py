@@ -9,7 +9,6 @@
 # case = "DocTestFinder__init__verbose_as_bool_wrong"
 # subject = "doctest.DocTestFinder.__init__(verbose: bool)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

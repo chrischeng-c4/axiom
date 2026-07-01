@@ -9,7 +9,6 @@
 # case = "Bdb__runeval__expr_as_typed_wrong"
 # subject = "bdb.Bdb.runeval(expr: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"
