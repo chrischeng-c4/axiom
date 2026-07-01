@@ -9,7 +9,6 @@
 # case = "bytearray__remove__value_as_int_wrong"
 # subject = "builtins.bytearray.remove(value: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

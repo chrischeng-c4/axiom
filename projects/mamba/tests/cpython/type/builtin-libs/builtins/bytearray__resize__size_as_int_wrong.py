@@ -9,7 +9,6 @@
 # case = "bytearray__resize__size_as_int_wrong"
 # subject = "builtins.bytearray.resize(size: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

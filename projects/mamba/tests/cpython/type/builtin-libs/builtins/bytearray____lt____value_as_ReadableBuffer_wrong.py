@@ -9,7 +9,6 @@
 # case = "bytearray____lt____value_as_ReadableBuffer_wrong"
 # subject = "builtins.bytearray.__lt__(value: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
