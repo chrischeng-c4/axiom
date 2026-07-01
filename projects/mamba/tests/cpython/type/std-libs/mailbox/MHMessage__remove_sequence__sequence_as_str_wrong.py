@@ -9,7 +9,6 @@
 # case = "MHMessage__remove_sequence__sequence_as_str_wrong"
 # subject = "mailbox.MHMessage.remove_sequence(sequence: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"
