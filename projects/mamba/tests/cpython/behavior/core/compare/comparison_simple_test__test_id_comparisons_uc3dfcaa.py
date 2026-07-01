@@ -9,15 +9,22 @@
 # case = "comparison_simple_test__test_id_comparisons_uc3dfcaa"
 # subject = "cpython.test_compare.ComparisonSimpleTest.test_id_comparisons"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_compare.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
-import unittest, io
-from test import test_compare
-_suite = unittest.defaultTestLoader.loadTestsFromName("ComparisonSimpleTest.test_id_comparisons", test_compare)
-_result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(_suite)
-assert _result.wasSuccessful(), "CPython ComparisonSimpleTest.test_id_comparisons did not pass"
+class Empty:
+    def __repr__(self):
+        return "<Empty>"
+
+
+items = []
+for i in range(10):
+    items.insert(len(items) // 2, Empty())
+
+for a in items:
+    for b in items:
+        assert (a == b) == (a is b), "a=%r, b=%r" % (a, b)
+
 print("ComparisonSimpleTest::test_id_comparisons: ok")
