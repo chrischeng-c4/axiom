@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:ff759770" tracker="pending-tracker" reason="New module gated #[cfg(feature = 'backup')]: run_backup(base_url, token, dest, retention) fetches {base_url}/admin/backup via reqwest (Bearer auth when token is Some), then hands the response bytes to service_backup::run_backup_once against sink_from_destination(dest) and the given RetentionPolicy, returning a BackupRunResult; unit tests use wiremock to stand in for the admin API and a tempdir + file:// destination for the sink."
+// TODO: hand-write content for `projects/lumen/src/backup.rs`.
+// HANDWRITE-END
