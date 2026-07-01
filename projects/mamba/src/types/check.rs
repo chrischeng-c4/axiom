@@ -902,6 +902,7 @@ impl TypeChecker {
             CoreTy::Bytes
             | CoreTy::MemoryView
             | CoreTy::Complex
+            | CoreTy::IntOrStr
             | CoreTy::List
             | CoreTy::Tuple
             | CoreTy::Dict

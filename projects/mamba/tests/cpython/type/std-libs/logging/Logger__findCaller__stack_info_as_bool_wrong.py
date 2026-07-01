@@ -9,12 +9,11 @@
 # case = "Logger__findCaller__stack_info_as_bool_wrong"
 # subject = "logging.Logger.findCaller(stack_info: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stack_info"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stack_info
 # mamba-strict-type: TypeError
 """Type wall: logging.Logger.findCaller(stack_info: bool); call it with the wrong type.
 
