@@ -866,15 +866,19 @@ impl TypeChecker {
         }
     }
 
-    /// ① Type-wall PoC: does the hardcoded sig table contain a `Method` whose
-    /// owning class is `class_name` in `module`? Used at import time to mark a
-    /// from-imported class binding so its instances can resolve method sigs.
+    /// ① Type-wall PoC: does the sig table contain a `Method` whose owning class
+    /// is `class_name` in `module`? Used at import time to mark a from-imported
+    /// class binding so its instances can resolve method sigs.
     pub(crate) fn is_known_stdlib_class(module: &str, class_name: &str) -> bool {
-        super::stdlib_sigs::STDLIB_SIGS.iter().any(|s| {
+        let owns_class = |s: &super::stdlib_sigs::StdlibSig| {
             matches!(s.kind, super::stdlib_sigs::SigKind::Method)
                 && s.module == module
                 && s.qualifier == class_name
-        })
+        };
+        super::stdlib_sigs::STDLIB_SIGS.iter().any(owns_class)
+            || super::stdlib_sigs_generated::STDLIB_SIGS_GENERATED
+                .iter()
+                .any(owns_class)
     }
 
     /// ① Type-wall PoC: map a [`CoreTy`] to a concrete scalar [`TypeId`], or

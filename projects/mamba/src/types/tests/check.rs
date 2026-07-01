@@ -1493,6 +1493,31 @@ fn test_stdlib_method_wrong_scalar_rejected() {
 }
 
 #[test]
+fn test_stdlib_unbound_method_explicit_receiver_keeps_param_alignment() {
+    let errors = check(
+        "class _W:\n    pass\nfrom importlib.metadata import DistributionFinder\nDistributionFinder.find_distributions(object(), _W())\n",
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "DistributionFinder.find_distributions(object(), _W()) should reject the context arg, got: {errors:?}"
+    );
+
+    let errors = check(
+        "class _W:\n    pass\nfrom importlib.metadata import MetadataPathFinder\nMetadataPathFinder.find_distributions(_W())\n",
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "MetadataPathFinder.find_distributions(_W()) should still reject the first arg, got: {errors:?}"
+    );
+
+    let errors = check("from datetime import date\ndate.fromtimestamp(\"not_a_float\")\n");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "date.fromtimestamp(str) should not be treated as an unbound receiver call, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_constructor_wrong_scalar_rejected() {
     let errors = check("from builtins import SyntaxError\nSyntaxError(12345, None)\n");
     assert!(

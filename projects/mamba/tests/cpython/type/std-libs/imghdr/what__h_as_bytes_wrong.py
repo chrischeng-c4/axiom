@@ -9,12 +9,10 @@
 # case = "what__h_as_bytes_wrong"
 # subject = "imghdr.what(h: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed h"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imghdr.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed h
 # mamba-strict-type: TypeError
 """Type wall: imghdr.what(h: bytes); call it with the wrong type.
 
