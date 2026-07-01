@@ -9,7 +9,6 @@
 # case = "NormalDist__pdf__x_as_float_wrong"
 # subject = "statistics.NormalDist.pdf(x: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "NormalDist__init__mu_as_float_wrong"
 # subject = "statistics.NormalDist.__init__(mu: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

@@ -4981,6 +4981,60 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("defaults", CoreTy::Typed)],
         enforceable: true,
     },
+    // statistics sequence/protocol parameters collapse to Unknown in the
+    // generated table. Keep strict-mode wrong-type probes from falling through
+    // to runtime StatisticsError or missing-function ImportError.
+    StdlibSig {
+        module: "statistics",
+        qualifier: "",
+        name: "correlation",
+        kind: SigKind::ModuleFn,
+        params: &[p("x", CoreTy::Typed), p("y", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "statistics",
+        qualifier: "",
+        name: "covariance",
+        kind: SigKind::ModuleFn,
+        params: &[p("x", CoreTy::Typed), p("y", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "statistics",
+        qualifier: "",
+        name: "kde",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("data", CoreTy::Typed),
+            p("h", CoreTy::Float),
+            p("kernel", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "statistics",
+        qualifier: "",
+        name: "kde_random",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("data", CoreTy::Typed),
+            p("h", CoreTy::Float),
+            p("kernel", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "statistics",
+        qualifier: "",
+        name: "linear_regression",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("regressor", CoreTy::Typed),
+            p("dependent_variable", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // pathlib generated rows intentionally collapse type variables, overload
     // literals, and Optional exception state to Unknown/Typed. Keep strict-mode
     // fixture walls enforceable while still skipping correct None sentinels and
@@ -6264,6 +6318,26 @@ mod tests {
         assert!(values.enforceable);
         assert_eq!(values.params[0].name, "defaults");
         assert_eq!(values.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_statistics_sequence_walls_override_unknown_generated_rows() {
+        for (name, first_param) in [
+            ("correlation", "x"),
+            ("covariance", "x"),
+            ("kde", "data"),
+            ("kde_random", "data"),
+            ("linear_regression", "regressor"),
+        ] {
+            let sig = get("statistics", "", name).expect("statistics row present");
+            assert!(sig.enforceable, "statistics.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        let kde = get("statistics", "", "kde").expect("statistics.kde present");
+        assert_eq!(kde.params[1].name, "h");
+        assert_eq!(kde.params[1].ty, CoreTy::Float);
     }
 
     #[test]

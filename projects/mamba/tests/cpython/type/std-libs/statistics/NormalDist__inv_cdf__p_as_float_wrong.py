@@ -9,7 +9,6 @@
 # case = "NormalDist__inv_cdf__p_as_float_wrong"
 # subject = "statistics.NormalDist.inv_cdf(p: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

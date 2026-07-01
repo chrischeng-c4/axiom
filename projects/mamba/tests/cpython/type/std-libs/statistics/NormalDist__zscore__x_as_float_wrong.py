@@ -9,7 +9,6 @@
 # case = "NormalDist__zscore__x_as_float_wrong"
 # subject = "statistics.NormalDist.zscore(x: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"
