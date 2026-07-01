@@ -1216,6 +1216,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
     };
     let mode = extract_str(mode).unwrap_or_else(|| "exec".to_string());
     if mode == "eval" {
+        if let Some(expr) = parse_eval_call_expression(&src) {
+            return expr;
+        }
         if let Some(expr) = parse_eval_expression(&src) {
             return expr;
         }
@@ -1527,68 +1530,34 @@ fn parse_eval_expression(src: &str) -> Option<MbValue> {
     Some(make_ast_node("Expression", expr_fields))
 }
 
+fn parse_eval_call_expression(src: &str) -> Option<MbValue> {
+    let trimmed = src.trim();
+    let base_col = src.find(trimmed).unwrap_or(0);
+    let body = parse_simple_call_node(trimmed, base_col)?;
+
+    let mut expr_fields = FxHashMap::default();
+    expr_fields.insert("body".to_string(), body);
+    expr_fields.insert(
+        "_source".to_string(),
+        MbValue::from_ptr(MbObject::new_str(src.to_string())),
+    );
+    Some(make_ast_node("Expression", expr_fields))
+}
+
 fn parse_exec_call_module(src: &str) -> Option<MbValue> {
     let trimmed = src.trim();
     if trimmed.is_empty() || trimmed.contains('\n') {
         return None;
     }
-    let open_idx = trimmed.find('(')?;
-    let close_idx = trimmed.rfind(')')?;
-    if close_idx != trimmed.len() - 1 {
-        return None;
-    }
-    let func_text = trimmed[..open_idx].trim();
-    if !is_identifier_text(func_text) {
-        return None;
-    }
     let base_col = src.find(trimmed).unwrap_or(0);
-    let func_col = base_col + trimmed[..open_idx].find(func_text).unwrap_or(0);
-    let call_end_col = base_col + close_idx + 1;
-    let args_text = &trimmed[open_idx + 1..close_idx];
-    let args_base_col = base_col + open_idx + 1;
-
-    let func = make_name_node(func_text, func_col, func_col + func_text.len());
-    let mut args = Vec::new();
-    for (arg_text, rel_start) in split_simple_call_args(args_text)? {
-        let col = args_base_col + rel_start;
-        let end_col = col + arg_text.len();
-        if let Some(value) = quoted_string_literal(arg_text) {
-            args.push(make_string_constant_node(value, col, end_col));
-        } else if is_identifier_text(arg_text) {
-            args.push(make_name_node(arg_text, col, end_col));
-        } else {
-            return None;
-        }
-    }
-
-    let mut call_fields = FxHashMap::default();
-    call_fields.insert("func".to_string(), func);
-    call_fields.insert(
-        "args".to_string(),
-        MbValue::from_ptr(MbObject::new_list(args)),
-    );
-    call_fields.insert(
-        "keywords".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vec![])),
-    );
-    call_fields.insert("lineno".to_string(), MbValue::from_int(1));
-    call_fields.insert("col_offset".to_string(), MbValue::from_int(func_col as i64));
-    call_fields.insert("end_lineno".to_string(), MbValue::from_int(1));
-    call_fields.insert(
-        "end_col_offset".to_string(),
-        MbValue::from_int(call_end_col as i64),
-    );
-    let call = make_ast_node("Call", call_fields);
+    let call = parse_simple_call_node(trimmed, base_col)?;
+    let end_col = ast_attr_value(call, "end_col_offset")
+        .and_then(|v| v.as_int())
+        .unwrap_or((base_col + trimmed.len()) as i64);
 
     let mut expr_fields = FxHashMap::default();
     expr_fields.insert("value".to_string(), call);
-    expr_fields.insert("lineno".to_string(), MbValue::from_int(1));
-    expr_fields.insert("col_offset".to_string(), MbValue::from_int(func_col as i64));
-    expr_fields.insert("end_lineno".to_string(), MbValue::from_int(1));
-    expr_fields.insert(
-        "end_col_offset".to_string(),
-        MbValue::from_int(call_end_col as i64),
-    );
+    insert_location_attrs(&mut expr_fields, 1, base_col as i64, 1, end_col);
     let expr = make_ast_node("Expr", expr_fields);
 
     let mut module_fields = FxHashMap::default();
@@ -1605,6 +1574,91 @@ fn parse_exec_call_module(src: &str) -> Option<MbValue> {
         MbValue::from_ptr(MbObject::new_str(src.to_string())),
     );
     Some(make_ast_node("Module", module_fields))
+}
+
+fn parse_simple_call_node(trimmed: &str, base_col: usize) -> Option<MbValue> {
+    let open_idx = trimmed.find('(')?;
+    let close_idx = trimmed.rfind(')')?;
+    if close_idx != trimmed.len() - 1 {
+        return None;
+    }
+    let func_text = trimmed[..open_idx].trim();
+    if !is_identifier_text(func_text) {
+        return None;
+    }
+    let func_col = base_col + trimmed[..open_idx].find(func_text).unwrap_or(0);
+    let call_end_col = base_col + close_idx + 1;
+    let args_text = &trimmed[open_idx + 1..close_idx];
+    let args_base_col = base_col + open_idx + 1;
+
+    let func = make_name_node(func_text, func_col, func_col + func_text.len());
+    let mut args = Vec::new();
+    let mut keywords = Vec::new();
+    for (arg_text, rel_start) in split_simple_call_args(args_text)? {
+        let col = args_base_col + rel_start;
+        let end_col = col + arg_text.len();
+        if let Some((name, value_text)) = split_simple_keyword_arg(arg_text) {
+            let value_col = col + arg_text.find(value_text).unwrap_or(0);
+            let value_end_col = value_col + value_text.len();
+            keywords.push(make_keyword_node(
+                name,
+                parse_simple_expr_atom(value_text, value_col, value_end_col)?,
+            ));
+        } else if is_identifier_text(arg_text) {
+            args.push(make_name_node(arg_text, col, end_col));
+        } else {
+            args.push(parse_simple_expr_atom(arg_text, col, end_col)?);
+        }
+    }
+
+    let mut call_fields = FxHashMap::default();
+    call_fields.insert("func".to_string(), func);
+    call_fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_list(args)),
+    );
+    call_fields.insert(
+        "keywords".to_string(),
+        MbValue::from_ptr(MbObject::new_list(keywords)),
+    );
+    insert_location_attrs(
+        &mut call_fields,
+        1,
+        func_col as i64,
+        1,
+        call_end_col as i64,
+    );
+    Some(make_ast_node("Call", call_fields))
+}
+
+fn split_simple_keyword_arg(text: &str) -> Option<(&str, &str)> {
+    let (name, value) = text.split_once('=')?;
+    let name = name.trim();
+    let value = value.trim();
+    (!name.is_empty() && is_identifier_text(name) && !value.is_empty()).then_some((name, value))
+}
+
+fn parse_simple_expr_atom(text: &str, col: usize, end_col: usize) -> Option<MbValue> {
+    if let Some(value) = quoted_string_literal(text) {
+        return Some(make_string_constant_node(value, col, end_col));
+    }
+    if let Ok(value) = text.parse::<i64>() {
+        return Some(make_constant_node(value, col, end_col));
+    }
+    if is_identifier_text(text) {
+        return Some(make_name_node(text, col, end_col));
+    }
+    None
+}
+
+fn make_keyword_node(arg: &str, value: MbValue) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "arg".to_string(),
+        MbValue::from_ptr(MbObject::new_str(arg.to_string())),
+    );
+    fields.insert("value".to_string(), value);
+    make_ast_node("keyword", fields)
 }
 
 fn split_simple_call_args(args_text: &str) -> Option<Vec<(&str, usize)>> {
@@ -2894,29 +2948,48 @@ fn ast_child_nodes(node: MbValue) -> Vec<MbValue> {
     let mut children = Vec::new();
     if let Some(ptr) = node.as_ptr() {
         unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*ptr).data
+            {
                 let guard = fields.read().unwrap();
+                for field in ast_dump_field_order(class_name) {
+                    if let Some(val) = guard.get(*field).copied() {
+                        push_ast_child_values(val, &mut children);
+                    }
+                }
                 for (name, val) in guard.iter() {
-                    if is_internal_field(name) {
+                    if is_internal_field(name)
+                        || ast_dump_field_order(class_name).contains(&name.as_str())
+                    {
                         continue;
                     }
-                    if is_ast_node_value(*val) {
-                        children.push(*val);
-                    } else if let Some(list_ptr) = val.as_ptr() {
-                        if let ObjData::List(ref lock) = (*list_ptr).data {
-                            let list = lock.read().unwrap();
-                            for item in list.iter() {
-                                if is_ast_node_value(*item) {
-                                    children.push(*item);
-                                }
-                            }
-                        }
-                    }
+                    push_ast_child_values(*val, &mut children);
                 }
             }
         }
     }
     children
+}
+
+fn push_ast_child_values(value: MbValue, children: &mut Vec<MbValue>) {
+    use super::super::rc::ObjData;
+    if is_ast_node_value(value) {
+        children.push(value);
+    } else if let Some(list_ptr) = value.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*list_ptr).data {
+                let list = lock.read().unwrap();
+                for item in list.iter() {
+                    if is_ast_node_value(*item) {
+                        children.push(*item);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// ast.walk(node) -> iterator of all nodes
@@ -2964,30 +3037,45 @@ pub fn mb_ast_iter_fields(node: MbValue) -> MbValue {
     let mut out: Vec<MbValue> = Vec::new();
     if let Some(ptr) = node.as_ptr() {
         unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*ptr).data
+            {
                 let guard = fields.read().unwrap();
+                for field in ast_dump_field_order(class_name) {
+                    if let Some(val) = guard.get(*field).copied() {
+                        push_ast_iter_field_pair(field, val, &mut out);
+                    }
+                }
                 for (name, val) in guard.iter() {
-                    if is_internal_field(name) {
+                    if is_internal_field(name)
+                        || ast_dump_field_order(class_name).contains(&name.as_str())
+                    {
                         continue;
                     }
-                    let key = MbValue::from_ptr(MbObject::new_str(name.clone()));
-                    // `key` is freshly created (rc=1, owned, transferred into the
-                    // tuple). `*val` is a borrowed alias of the node's field, so it
-                    // must be retained before being stored — otherwise the tuple's
-                    // release would decrement a refcount we never owned, causing a
-                    // premature free / use-after-free. Retain only the borrowed
-                    // element, then use non-borrowing `new_tuple` (which would
-                    // over-retain the owned `key`).
-                    super::super::rc::retain_if_ptr(*val);
-                    let pair = MbObject::new_tuple(vec![key, *val]);
-                    out.push(MbValue::from_ptr(pair));
+                    push_ast_iter_field_pair(name, *val, &mut out);
                 }
             }
         }
     }
     // Each tuple in `out` was created here with rc=1 (owned); the outer list takes
     // ownership of those references, so `new_list` (non-borrowing) is correct.
-    MbValue::from_ptr(MbObject::new_list(out))
+    let list = MbValue::from_ptr(MbObject::new_list(out));
+    super::super::iter::mb_iter(list)
+}
+
+fn push_ast_iter_field_pair(name: &str, value: MbValue, out: &mut Vec<MbValue>) {
+    let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    // `key` is freshly created (rc=1, owned, transferred into the tuple).
+    // `value` is a borrowed alias of the node's field, so retain it before
+    // storing it in the tuple.
+    unsafe {
+        super::super::rc::retain_if_ptr(value);
+    }
+    let pair = MbObject::new_tuple(vec![key, value]);
+    out.push(MbValue::from_ptr(pair));
 }
 
 /// ast.iter_child_nodes(node) -> iterator of direct child AST nodes.
@@ -3004,24 +3092,25 @@ pub fn mb_ast_iter_child_nodes(node: MbValue) -> MbValue {
     let mut out: Vec<MbValue> = Vec::new();
     if let Some(ptr) = node.as_ptr() {
         unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*ptr).data
+            {
                 let guard = fields.read().unwrap();
+                for field in ast_dump_field_order(class_name) {
+                    if let Some(val) = guard.get(*field).copied() {
+                        push_ast_iter_child_value(val, &is_ast_node, &mut out);
+                    }
+                }
                 for (name, val) in guard.iter() {
-                    if is_internal_field(name) {
+                    if is_internal_field(name)
+                        || ast_dump_field_order(class_name).contains(&name.as_str())
+                    {
                         continue;
                     }
-                    if is_ast_node(val) {
-                        out.push(*val);
-                    } else if let Some(lp) = val.as_ptr() {
-                        if let ObjData::List(ref lock) = (*lp).data {
-                            let list = lock.read().unwrap();
-                            for item in list.iter() {
-                                if is_ast_node(item) {
-                                    out.push(*item);
-                                }
-                            }
-                        }
-                    }
+                    push_ast_iter_child_value(*val, &is_ast_node, &mut out);
                 }
             }
         }
@@ -3030,7 +3119,30 @@ pub fn mb_ast_iter_child_nodes(node: MbValue) -> MbValue {
     // owned by the parent's fields / a list-valued field. `new_list_borrowed`
     // retains each pointer so the list's release does not over-decrement and free
     // a node we never owned (use-after-free).
-    MbValue::from_ptr(MbObject::new_list_borrowed(out))
+    let list = MbValue::from_ptr(MbObject::new_list_borrowed(out));
+    super::super::iter::mb_iter(list)
+}
+
+fn push_ast_iter_child_value(
+    value: MbValue,
+    is_ast_node: &impl Fn(&MbValue) -> bool,
+    out: &mut Vec<MbValue>,
+) {
+    use super::super::rc::ObjData;
+    if is_ast_node(&value) {
+        out.push(value);
+    } else if let Some(lp) = value.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*lp).data {
+                let list = lock.read().unwrap();
+                for item in list.iter() {
+                    if is_ast_node(item) {
+                        out.push(*item);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// ast.get_source_segment(source, node, *, padded=False) -> str | None.
