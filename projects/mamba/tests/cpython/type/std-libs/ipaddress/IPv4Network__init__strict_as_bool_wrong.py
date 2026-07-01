@@ -9,12 +9,11 @@
 # case = "IPv4Network__init__strict_as_bool_wrong"
 # subject = "ipaddress.IPv4Network.__init__(strict: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed strict"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ipaddress.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed strict
 # mamba-strict-type: TypeError
 """Type wall: ipaddress.IPv4Network.__init__(strict: bool); call it with the wrong type.
 
