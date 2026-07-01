@@ -1212,6 +1212,23 @@ fn insert_default_location_attrs(fields: &mut FxHashMap<String, MbValue>) {
     insert_location_attrs(fields, 1, 0, 1, 0);
 }
 
+fn insert_source_line_location_attrs(
+    fields: &mut FxHashMap<String, MbValue>,
+    lineno: usize,
+    line: &str,
+) {
+    let trimmed_start = line.trim_start();
+    let col_offset = line.len() - trimmed_start.len();
+    let end_col_offset = line.trim_end().len();
+    insert_location_attrs(
+        fields,
+        lineno as i64,
+        col_offset as i64,
+        lineno as i64,
+        end_col_offset as i64,
+    );
+}
+
 fn insert_location_attrs(
     fields: &mut FxHashMap<String, MbValue>,
     lineno: i64,
@@ -1323,7 +1340,7 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
             MbValue::from_ptr(MbObject::new_list(vec![])),
         );
         if ast_node_type_has_location_attrs(kind) {
-            insert_default_location_attrs(&mut nf);
+            insert_source_line_location_attrs(&mut nf, line_idx + 1, line);
         }
         body_nodes.push(make_ast_node(kind, nf));
     }
@@ -1343,6 +1360,18 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
 }
 
 fn source_logical_lines(src: &str) -> Vec<&str> {
+    source_logical_line_segments(src)
+        .into_iter()
+        .map(|line| line.text)
+        .collect()
+}
+
+struct SourceLineSegment<'a> {
+    text: &'a str,
+    sep: &'a str,
+}
+
+fn source_logical_line_segments(src: &str) -> Vec<SourceLineSegment<'_>> {
     let bytes = src.as_bytes();
     let mut lines = Vec::new();
     let mut start = 0usize;
@@ -1350,23 +1379,33 @@ fn source_logical_lines(src: &str) -> Vec<&str> {
     while idx < bytes.len() {
         match bytes[idx] {
             b'\n' => {
-                lines.push(&src[start..idx]);
+                lines.push(SourceLineSegment {
+                    text: &src[start..idx],
+                    sep: &src[idx..idx + 1],
+                });
                 idx += 1;
                 start = idx;
             }
             b'\r' => {
-                lines.push(&src[start..idx]);
+                let sep_start = idx;
                 idx += 1;
                 if idx < bytes.len() && bytes[idx] == b'\n' {
                     idx += 1;
                 }
+                lines.push(SourceLineSegment {
+                    text: &src[start..sep_start],
+                    sep: &src[sep_start..idx],
+                });
                 start = idx;
             }
             _ => idx += 1,
         }
     }
     if start < src.len() {
-        lines.push(&src[start..]);
+        lines.push(SourceLineSegment {
+            text: &src[start..],
+            sep: "",
+        });
     }
     lines
 }
@@ -3770,13 +3809,13 @@ pub fn mb_ast_get_source_segment(source: MbValue, node: MbValue) -> MbValue {
         (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
         _ => return MbValue::none(),
     };
-    let lines: Vec<&str> = src.split('\n').collect();
+    let lines = source_logical_line_segments(&src);
     if lineno < 1 || end_lineno < 1 || (end_lineno as usize) > lines.len() {
         return MbValue::none();
     }
     let (l0, l1) = ((lineno - 1) as usize, (end_lineno - 1) as usize);
     let segment = if l0 == l1 {
-        let line = lines[l0];
+        let line = lines[l0].text;
         let s = col.max(0) as usize;
         let e = end_col.max(0) as usize;
         if s > line.len() || e > line.len() || s > e {
@@ -3784,23 +3823,25 @@ pub fn mb_ast_get_source_segment(source: MbValue, node: MbValue) -> MbValue {
         }
         line[s..e].to_string()
     } else {
-        let mut parts: Vec<String> = Vec::new();
-        let first = lines[l0];
+        let mut segment = String::new();
+        let first = &lines[l0];
         let s = col.max(0) as usize;
-        if s > first.len() {
+        if s > first.text.len() {
             return MbValue::none();
         }
-        parts.push(first[s..].to_string());
+        segment.push_str(&first.text[s..]);
+        segment.push_str(first.sep);
         for line in &lines[l0 + 1..l1] {
-            parts.push((*line).to_string());
+            segment.push_str(line.text);
+            segment.push_str(line.sep);
         }
-        let last = lines[l1];
+        let last = &lines[l1];
         let e = end_col.max(0) as usize;
-        if e > last.len() {
+        if e > last.text.len() {
             return MbValue::none();
         }
-        parts.push(last[..e].to_string());
-        parts.join("\n")
+        segment.push_str(&last.text[..e]);
+        segment
     };
     MbValue::from_ptr(MbObject::new_str(segment))
 }
