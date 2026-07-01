@@ -9,12 +9,10 @@
 # case = "set_loader__fxn_as_Callable_wrong"
 # subject = "importlib.util.set_loader(fxn: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fxn"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fxn
 # mamba-strict-type: TypeError
 """Type wall: importlib.util.set_loader(fxn: Callable); call it with the wrong type.
 
