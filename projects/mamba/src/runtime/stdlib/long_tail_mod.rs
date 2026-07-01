@@ -83,6 +83,10 @@ unsafe extern "C" fn telnet_write(_self_v: MbValue, args: MbValue) -> MbValue {
     MbValue::none()
 }
 
+unsafe extern "C" fn imap_idler_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(false)
+}
+
 fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usize) {
     super::super::module::register_variadic_func(addr as u64);
     let mut methods = HashMap::new();
@@ -254,7 +258,7 @@ fn register_poplib() {
 }
 
 fn register_imaplib() {
-    let attrs = build_attrs(
+    let mut attrs = build_attrs(
         &[
             "IMAP4",
             "IMAP4_SSL",
@@ -272,6 +276,8 @@ fn register_imaplib() {
         ],
         &[("CRLF", "\r\n"), ("Debug", "")],
     );
+    attrs.insert("Idler".into(), make_type_obj("Idler", "imaplib"));
+    register_variadic_method_class("Idler", "__exit__", imap_idler_exit as *const () as usize);
     super::register_module("imaplib", attrs);
 }
 

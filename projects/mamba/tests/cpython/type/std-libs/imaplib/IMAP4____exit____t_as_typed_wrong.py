@@ -9,12 +9,10 @@
 # case = "IMAP4____exit____t_as_typed_wrong"
 # subject = "imaplib.IMAP4.__exit__(t: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed t"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed t
 # mamba-strict-type: TypeError
 """Type wall: imaplib.IMAP4.__exit__(t: typed); call it with the wrong type.
 

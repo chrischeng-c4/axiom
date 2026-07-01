@@ -9,7 +9,6 @@
 # case = "Time2Internaldate__date_time_as__TimeLike_wrong"
 # subject = "imaplib.Time2Internaldate(date_time: _TimeLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

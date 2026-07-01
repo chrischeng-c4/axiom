@@ -9,7 +9,6 @@
 # case = "IMAP4__status__mailbox_as_str_wrong"
 # subject = "imaplib.IMAP4.status(mailbox: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

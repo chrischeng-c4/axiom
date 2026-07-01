@@ -9,7 +9,6 @@
 # case = "IMAP4__enable__capability_as_str_wrong"
 # subject = "imaplib.IMAP4.enable(capability: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

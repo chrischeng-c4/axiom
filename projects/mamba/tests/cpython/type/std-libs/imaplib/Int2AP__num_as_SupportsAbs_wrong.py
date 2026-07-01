@@ -9,7 +9,6 @@
 # case = "Int2AP__num_as_SupportsAbs_wrong"
 # subject = "imaplib.Int2AP(num: SupportsAbs)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

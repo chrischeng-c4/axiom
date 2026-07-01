@@ -9,7 +9,6 @@
 # case = "IMAP4__send__data_as_ReadableBuffer_wrong"
 # subject = "imaplib.IMAP4.send(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

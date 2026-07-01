@@ -9,12 +9,10 @@
 # case = "IMAP4__starttls__ssl_context_as_typed_wrong"
 # subject = "imaplib.IMAP4.starttls(ssl_context: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ssl_context"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ssl_context
 # mamba-strict-type: TypeError
 """Type wall: imaplib.IMAP4.starttls(ssl_context: typed); call it with the wrong type.
 
