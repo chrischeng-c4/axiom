@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/loom/external-contracts/competitor-performance/efficiency/perf-gate.md#loom-meter-performance
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cd projects/loom && ../../target/debug/vat run meter-efficiency"
+project = "loom"
+source_contract = "loom-competitor-performance-meter-gate"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END
