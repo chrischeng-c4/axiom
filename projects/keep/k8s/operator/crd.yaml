@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:25778d28" tracker="pending-tracker" reason="Generated Keep CustomResourceDefinition, checked in so `keep k8s crd render` works without the operator feature (include_str fallback)."
+// TODO: hand-write content for `projects/keep/k8s/operator/crd.yaml`.
+// HANDWRITE-END

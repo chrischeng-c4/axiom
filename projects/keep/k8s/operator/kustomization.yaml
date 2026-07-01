@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:0f013212" tracker="pending-tracker" reason="Kustomization installing crd.yaml + rbac.yaml + deployment.yaml for the operator control plane."
+// TODO: hand-write content for `projects/keep/k8s/operator/kustomization.yaml`.
+// HANDWRITE-END

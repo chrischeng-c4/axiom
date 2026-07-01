@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:ac151540" tracker="pending-tracker" reason="Operator controller Deployment running `keep k8s operator run` from the keep image with downward-API POD_NAME/POD_NAMESPACE for leader election."
+// TODO: hand-write content for `projects/keep/k8s/operator/deployment.yaml`.
+// HANDWRITE-END
