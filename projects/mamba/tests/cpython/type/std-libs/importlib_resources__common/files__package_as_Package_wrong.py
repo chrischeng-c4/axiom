@@ -9,12 +9,11 @@
 # case = "files__package_as_Package_wrong"
 # subject = "importlib.resources._common.files(package: Package)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed package"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/resources/_common.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed package
 # mamba-strict-type: TypeError
 """Type wall: importlib.resources._common.files(package: Package); call it with the wrong type.
 
