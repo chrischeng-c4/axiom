@@ -1324,6 +1324,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         }
     }
     if mode == "exec" {
+        if let Some(module) = parse_simple_class_header_module(&src) {
+            return module;
+        }
         if let Some(module) = parse_simple_class_method_module(&src) {
             return module;
         }
@@ -1827,6 +1830,126 @@ fn parse_docstring_module(src: &str) -> Option<MbValue> {
     );
     insert_default_location_attrs(&mut fields);
     Some(make_module_with_body(src, vec![make_ast_node(kind, fields)]))
+}
+
+fn parse_simple_class_header_module(src: &str) -> Option<MbValue> {
+    let lines = source_logical_lines(src);
+    let first = lines.first().copied()?;
+    let trimmed = first.trim_start();
+    let class_col = first.len() - trimmed.len();
+    let rest = trimmed.strip_prefix("class ")?;
+    let colon_idx = rest.find(':')?;
+    let header_args = rest[..colon_idx].trim();
+    let same_line_body = rest[colon_idx + 1..].trim();
+    let open_idx = header_args.find('(')?;
+    let close_idx = header_args.rfind(')')?;
+    if close_idx != header_args.len() - 1 {
+        return None;
+    }
+    let class_name = header_args[..open_idx].trim();
+    if !is_identifier_text(class_name) {
+        return None;
+    }
+    let args_text = &header_args[open_idx + 1..close_idx];
+    let args_base_col = class_col + "class ".len() + open_idx + 1;
+    let mut bases = Vec::new();
+    let mut keywords = Vec::new();
+    for (arg_text, rel_start) in split_simple_call_args(args_text)? {
+        let col = args_base_col + rel_start;
+        let end_col = col + arg_text.len();
+        if let Some((name, value_text)) = split_simple_keyword_arg(arg_text) {
+            let value_col = col + arg_text.find(value_text).unwrap_or(0);
+            keywords.push(make_keyword_node(
+                name,
+                parse_simple_expr_atom(value_text, value_col, value_col + value_text.len())?,
+            ));
+        } else {
+            bases.push(parse_simple_expr_atom(arg_text, col, end_col)?);
+        }
+    }
+
+    let mut body = Vec::new();
+    let (end_lineno, end_col) = if lines.len() == 1 {
+        if !same_line_body.is_empty() && same_line_body != "pass" {
+            return None;
+        }
+        (1, first.trim_end().len())
+    } else {
+        let body_line = lines.get(1).copied()?;
+        body.push(parse_simple_ann_assign_node(body_line, 2)?);
+        (2, body_line.trim_end().len())
+    };
+
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+    );
+    fields.insert(
+        "bases".to_string(),
+        MbValue::from_ptr(MbObject::new_list(bases)),
+    );
+    fields.insert(
+        "keywords".to_string(),
+        MbValue::from_ptr(MbObject::new_list(keywords)),
+    );
+    fields.insert("body".to_string(), MbValue::from_ptr(MbObject::new_list(body)));
+    fields.insert(
+        "decorator_list".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    insert_location_attrs(
+        &mut fields,
+        1,
+        class_col as i64,
+        end_lineno as i64,
+        end_col as i64,
+    );
+    Some(make_module_with_body(src, vec![make_ast_node("ClassDef", fields)]))
+}
+
+fn parse_simple_ann_assign_node(line: &str, lineno: usize) -> Option<MbValue> {
+    let trimmed = line.trim_start();
+    let col = line.len() - trimmed.len();
+    let (target_text, rest) = trimmed.split_once(':')?;
+    let target_text = target_text.trim();
+    let (annotation_text, value_text) = rest.split_once('=')?;
+    let annotation_text = annotation_text.trim();
+    let value_text = value_text.trim();
+    if !is_identifier_text(target_text) || !is_identifier_text(annotation_text) {
+        return None;
+    }
+    let target_col = col + trimmed.find(target_text).unwrap_or(0);
+    let annotation_col = col + trimmed.find(annotation_text).unwrap_or(0);
+    let value_col = col + trimmed.find(value_text).unwrap_or(0);
+
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "target".to_string(),
+        make_store_name_node_at(target_text, lineno, target_col, target_col + target_text.len()),
+    );
+    fields.insert(
+        "annotation".to_string(),
+        make_name_node_at(
+            annotation_text,
+            lineno,
+            annotation_col,
+            annotation_col + annotation_text.len(),
+        ),
+    );
+    fields.insert(
+        "value".to_string(),
+        parse_simple_expr_atom_at(value_text, lineno, value_col, value_col + value_text.len())?,
+    );
+    fields.insert("simple".to_string(), MbValue::from_int(1));
+    insert_location_attrs(
+        &mut fields,
+        lineno as i64,
+        col as i64,
+        lineno as i64,
+        line.trim_end().len() as i64,
+    );
+    Some(make_ast_node("AnnAssign", fields))
 }
 
 fn parse_simple_class_method_module(src: &str) -> Option<MbValue> {
@@ -2425,10 +2548,44 @@ fn parse_simple_expr_atom_at(
     if let Ok(value) = text.parse::<i64>() {
         return Some(make_constant_node_at(value, lineno, col, end_col));
     }
+    if let Some(value) = parse_simple_attribute_node_at(text, lineno, col, end_col) {
+        return Some(value);
+    }
     if is_identifier_text(text) {
         return Some(make_name_node_at(text, lineno, col, end_col));
     }
     None
+}
+
+fn parse_simple_attribute_node_at(
+    text: &str,
+    lineno: usize,
+    col: usize,
+    end_col: usize,
+) -> Option<MbValue> {
+    let (value_text, attr_text) = text.rsplit_once('.')?;
+    if !is_identifier_text(value_text) || !is_identifier_text(attr_text) {
+        return None;
+    }
+    let value = make_name_node_at(value_text, lineno, col, col + value_text.len());
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), value);
+    fields.insert(
+        "attr".to_string(),
+        MbValue::from_ptr(MbObject::new_str(attr_text.to_string())),
+    );
+    fields.insert(
+        "ctx".to_string(),
+        make_ast_node("Load", FxHashMap::default()),
+    );
+    insert_location_attrs(
+        &mut fields,
+        lineno as i64,
+        col as i64,
+        lineno as i64,
+        end_col as i64,
+    );
+    Some(make_ast_node("Attribute", fields))
 }
 
 fn make_keyword_node(arg: &str, value: MbValue) -> MbValue {
@@ -2605,7 +2762,11 @@ fn make_name_node_at(name: &str, lineno: usize, col: usize, end_col: usize) -> M
 }
 
 fn make_store_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
-    make_name_node_with_ctx_at(name, 1, col, end_col, "Store")
+    make_store_name_node_at(name, 1, col, end_col)
+}
+
+fn make_store_name_node_at(name: &str, lineno: usize, col: usize, end_col: usize) -> MbValue {
+    make_name_node_with_ctx_at(name, lineno, col, end_col, "Store")
 }
 
 fn make_name_node_with_ctx_at(
