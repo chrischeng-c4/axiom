@@ -9,12 +9,11 @@
 # case = "getdefaultlocale__envvars_as_tuple_wrong"
 # subject = "locale.getdefaultlocale(envvars: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed envvars"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/locale.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed envvars
 # mamba-strict-type: TypeError
 """Type wall: locale.getdefaultlocale(envvars: tuple); call it with the wrong type.
 

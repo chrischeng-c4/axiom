@@ -4888,6 +4888,33 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("category", CoreTy::Unknown), p("locale", CoreTy::Unknown)],
         enforceable: false,
     },
+    // POSITIVE: locale has several generated rows weakened by aliases,
+    // deprecated helpers, or callable stubs. Keep strict fixtures in front of
+    // those stubs without changing the broader runtime surface yet.
+    StdlibSig {
+        module: "locale",
+        qualifier: "",
+        name: "format",
+        kind: SigKind::ModuleFn,
+        params: &[p("percent", CoreTy::Typed), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "locale",
+        qualifier: "",
+        name: "getdefaultlocale",
+        kind: SigKind::ModuleFn,
+        params: &[p("envvars", CoreTy::Tuple)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "locale",
+        qualifier: "",
+        name: "getpreferredencoding",
+        kind: SigKind::ModuleFn,
+        params: &[p("do_setlocale", CoreTy::Bool)],
+        enforceable: true,
+    },
     // NEGATIVE: signal.setitimer(which, seconds, interval=0.0) — a non-int
     // `which` (`setitimer("not_int", 1.0)`) is a RUNTIME TypeError; the
     // dispatcher raises it.
@@ -7758,6 +7785,23 @@ mod tests {
                 "refactor_stdin",
                 0,
                 "doctests_only",
+                CoreTy::Bool,
+            ),
+            ("locale", "", "format", 0, "percent", CoreTy::Typed),
+            (
+                "locale",
+                "",
+                "getdefaultlocale",
+                0,
+                "envvars",
+                CoreTy::Tuple,
+            ),
+            (
+                "locale",
+                "",
+                "getpreferredencoding",
+                0,
+                "do_setlocale",
                 CoreTy::Bool,
             ),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
