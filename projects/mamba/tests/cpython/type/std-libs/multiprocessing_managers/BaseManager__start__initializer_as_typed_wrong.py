@@ -9,12 +9,11 @@
 # case = "BaseManager__start__initializer_as_typed_wrong"
 # subject = "multiprocessing.managers.BaseManager.start(initializer: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed initializer"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed initializer
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.BaseManager.start(initializer: typed); call it with the wrong type.
 

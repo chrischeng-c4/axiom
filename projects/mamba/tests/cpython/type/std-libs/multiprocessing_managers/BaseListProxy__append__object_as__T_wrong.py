@@ -9,12 +9,11 @@
 # case = "BaseListProxy__append__object_as__T_wrong"
 # subject = "multiprocessing.managers.BaseListProxy.append(object: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.BaseListProxy.append(object: _T); call it with the wrong type.
 
