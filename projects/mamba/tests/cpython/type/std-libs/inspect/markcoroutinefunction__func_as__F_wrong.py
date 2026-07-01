@@ -9,12 +9,10 @@
 # case = "markcoroutinefunction__func_as__F_wrong"
 # subject = "inspect.markcoroutinefunction(func: _F)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: inspect.markcoroutinefunction(func: _F); call it with the wrong type.
 
