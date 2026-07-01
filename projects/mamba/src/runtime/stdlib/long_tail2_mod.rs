@@ -884,6 +884,22 @@ pub fn register() {
         &[],
     );
     register_with(
+        "multiprocessing.reduction",
+        &["AbstractReducer", "DupHandle", "ForkingPickler"],
+        &[
+            ("DupFd", dispatch_int_zero as *const () as usize),
+            ("dump", dispatch_noop as *const () as usize),
+            ("duplicate", dispatch_int_zero as *const () as usize),
+            ("recv_handle", dispatch_int_zero as *const () as usize),
+            ("recvfds", dispatch_empty_list as *const () as usize),
+            ("send_handle", dispatch_noop as *const () as usize),
+            ("sendfds", dispatch_noop as *const () as usize),
+            ("steal_handle", dispatch_int_zero as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "multiprocessing.shared_memory",
         &["SharedMemory", "ShareableList"],
         &[],

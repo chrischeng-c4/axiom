@@ -132,6 +132,26 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("handle", CoreTy::Int)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "multiprocessing.reduction",
+        qualifier: "",
+        name: "recv_handle",
+        kind: SigKind::ModuleFn,
+        params: &[p("conn", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "multiprocessing.reduction",
+        qualifier: "",
+        name: "send_handle",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("conn", CoreTy::Typed),
+            p("handle", CoreTy::Int),
+            p("destination_pid", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // POSITIVE: html.parser.HTMLParser.handle_entityref(name: str) — method.
     StdlibSig {
         module: "html.parser",
@@ -8678,6 +8698,22 @@ mod tests {
                 "deliver_challenge",
                 0,
                 "connection",
+                CoreTy::Typed,
+            ),
+            (
+                "multiprocessing.reduction",
+                "",
+                "recv_handle",
+                0,
+                "conn",
+                CoreTy::Typed,
+            ),
+            (
+                "multiprocessing.reduction",
+                "",
+                "send_handle",
+                0,
+                "conn",
                 CoreTy::Typed,
             ),
             (
