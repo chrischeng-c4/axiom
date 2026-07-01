@@ -64,13 +64,15 @@ pub struct LumenSpec {
     #[serde(default)]
     pub log_level: Option<String>,
 
-    /// Auth mode: `off` (dev) or `required` (tokens supplied via
+    /// Auth mode: `off` (dev) or `required` (token registry supplied via
     /// `tokensSecret`).
     #[serde(default)]
     pub auth: AuthMode,
 
-    /// Name of a Secret (key `LUMEN_TOKENS`) wired into serving pods when
-    /// `auth: required`. Ignored when `auth: off`.
+    /// Name of a Secret whose `token-registry.json` key is mounted at
+    /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
+    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. Ignored
+    /// when `auth: off`.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
@@ -118,7 +120,7 @@ pub enum AuthMode {
     #[default]
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token required; tokens come from `tokensSecret`.
+    /// Bearer-token required; the token registry file comes from `tokensSecret`.
     Required,
 }
 

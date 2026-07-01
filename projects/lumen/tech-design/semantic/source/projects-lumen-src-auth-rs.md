@@ -51,7 +51,11 @@ Public API manifest for `projects/lumen/src/auth.rs` generated from AST during S
 //!
 //! - `LUMEN_AUTH=off|required` — default `off` (dev). `required` rejects
 //!   requests without a bearer token.
-//! - `LUMEN_TOKENS` — JSON: `{ "<token>": { "subject": "...", "roles":
+//! - `LUMEN_TOKEN_REGISTRY_FILE` — production registry file mounted from a
+//!   Kubernetes Secret / Secret Manager projection. JSON: `{ "<token>":
+//!   { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
+//! - `LUMEN_TOKENS` — legacy inline JSON with the same shape:
+//!   `{ "<token>": { "subject": "...", "roles":
 //!   { "<collection_id>|*": "read|write|admin" } } }`. The wildcard
 //!   collection `*` grants the role on every collection.
 //!
@@ -64,7 +68,7 @@ Public API manifest for `projects/lumen/src/auth.rs` generated from AST during S
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
@@ -77,6 +81,8 @@ use service_auth::{bearer_token, AuthError as ServiceAuthError, Verifier};
 use crate::types::ApiError;
 
 const WILDCARD_COLLECTION: &str = "*";
+const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
+const LEGACY_TOKENS_ENV: &str = "LUMEN_TOKENS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -120,15 +126,35 @@ impl AuthConfig {
     }
 
     pub fn from_env() -> Result<Self> {
-        let required = std::env::var("LUMEN_AUTH")
-            .map(|v| v.eq_ignore_ascii_case("required"))
-            .unwrap_or(false);
-        let tokens = match std::env::var("LUMEN_TOKENS") {
-            Ok(json) if !json.trim().is_empty() => {
-                serde_json::from_str(&json).context("LUMEN_TOKENS must be JSON")?
-            }
-            _ => HashMap::new(),
+        let required = match std::env::var("LUMEN_AUTH") {
+            Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "required" => true,
+                "off" | "disabled" => false,
+                other => bail!(
+                    "LUMEN_AUTH must be `off`, `disabled`, or `required`; got `{other}`"
+                ),
+            },
+            Err(std::env::VarError::NotPresent) => false,
+            Err(e) => bail!("LUMEN_AUTH must be valid UTF-8: {e}"),
         };
+        let tokens = match std::env::var(TOKEN_REGISTRY_FILE_ENV) {
+            Ok(path) if !path.trim().is_empty() => {
+                let json = std::fs::read_to_string(path.trim())
+                    .with_context(|| format!("read {TOKEN_REGISTRY_FILE_ENV} `{}`", path.trim()))?;
+                serde_json::from_str(&json)
+                    .with_context(|| format!("{TOKEN_REGISTRY_FILE_ENV} must contain JSON"))?
+            }
+            _ => match std::env::var(LEGACY_TOKENS_ENV) {
+                Ok(json) if !json.trim().is_empty() => serde_json::from_str(&json)
+                    .with_context(|| format!("{LEGACY_TOKENS_ENV} must be JSON"))?,
+                _ => HashMap::new(),
+            },
+        };
+        if required && tokens.is_empty() {
+            bail!(
+                "LUMEN_AUTH=required requires a non-empty {TOKEN_REGISTRY_FILE_ENV} or {LEGACY_TOKENS_ENV}"
+            );
+        }
         Ok(Self { required, tokens })
     }
 
@@ -332,9 +358,17 @@ mod tests {
         assert_eq!(AuthContext::Open.subject(), None);
     }
 
-    // Process-global env mutex shared across the three env-mutating tests.
+    // Process-global env mutex shared across the env-mutating tests.
     use std::sync::Mutex;
     static AUTH_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn clear_auth_env() {
+        unsafe {
+            std::env::remove_var("LUMEN_AUTH");
+            std::env::remove_var(TOKEN_REGISTRY_FILE_ENV);
+            std::env::remove_var(LEGACY_TOKENS_ENV);
+        }
+    }
 
     #[test]
     fn role_compare_total_order() {
@@ -412,22 +446,47 @@ mod tests {
     #[test]
     fn auth_config_from_env_open_when_unset() {
         let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            std::env::remove_var("LUMEN_AUTH");
-            std::env::remove_var("LUMEN_TOKENS");
-        }
+        clear_auth_env();
         let cfg = AuthConfig::from_env().unwrap();
         assert!(!cfg.required);
         assert!(cfg.tokens.is_empty());
     }
 
     #[test]
+    fn auth_config_from_env_with_registry_file() {
+        let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_auth_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token-registry.json");
+        std::fs::write(
+            &path,
+            r#"{"file-token": {"subject": "alice", "roles": {"u": "write"}}}"#,
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("LUMEN_AUTH", "required");
+            std::env::set_var(TOKEN_REGISTRY_FILE_ENV, &path);
+            std::env::set_var(
+                LEGACY_TOKENS_ENV,
+                r#"{"env-token": {"subject": "env", "roles": {"*": "admin"}}}"#,
+            );
+        }
+        let cfg = AuthConfig::from_env().unwrap();
+        assert!(cfg.required);
+        assert_eq!(cfg.tokens.len(), 1);
+        assert_eq!(cfg.lookup("file-token").unwrap().subject, "alice");
+        assert!(cfg.lookup("env-token").is_none());
+        clear_auth_env();
+    }
+
+    #[test]
     fn auth_config_from_env_with_tokens() {
         let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_auth_env();
         unsafe {
             std::env::set_var("LUMEN_AUTH", "required");
             std::env::set_var(
-                "LUMEN_TOKENS",
+                LEGACY_TOKENS_ENV,
                 r#"{"t1": {"subject": "alice", "roles": {"u": "write"}}}"#,
             );
         }
@@ -435,23 +494,43 @@ mod tests {
         assert!(cfg.required);
         assert_eq!(cfg.tokens.len(), 1);
         assert_eq!(cfg.lookup("t1").unwrap().subject, "alice");
+        clear_auth_env();
+    }
+
+    #[test]
+    fn auth_config_required_without_tokens_fails_fast() {
+        let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_auth_env();
         unsafe {
-            std::env::remove_var("LUMEN_AUTH");
-            std::env::remove_var("LUMEN_TOKENS");
+            std::env::set_var("LUMEN_AUTH", "required");
         }
+        let err = AuthConfig::from_env().unwrap_err();
+        assert!(err.to_string().contains(TOKEN_REGISTRY_FILE_ENV));
+        clear_auth_env();
+    }
+
+    #[test]
+    fn auth_config_from_env_rejects_unknown_auth_mode() {
+        let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_auth_env();
+        unsafe {
+            std::env::set_var("LUMEN_AUTH", "require");
+        }
+        let err = AuthConfig::from_env().unwrap_err();
+        assert!(err.to_string().contains("LUMEN_AUTH"));
+        clear_auth_env();
     }
 
     #[test]
     fn auth_config_from_env_rejects_bad_json() {
         let _g = AUTH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_auth_env();
         unsafe {
-            std::env::set_var("LUMEN_TOKENS", "not-json");
+            std::env::set_var(LEGACY_TOKENS_ENV, "not-json");
         }
         let err = AuthConfig::from_env().unwrap_err();
-        assert!(err.to_string().contains("LUMEN_TOKENS"));
-        unsafe {
-            std::env::remove_var("LUMEN_TOKENS");
-        }
+        assert!(err.to_string().contains(LEGACY_TOKENS_ENV));
+        clear_auth_env();
     }
 }
 // CODEGEN-END

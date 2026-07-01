@@ -820,6 +820,31 @@ three setups, in order of preference:
 | Go `net/http` | ✅ | needs `x/net/http2` h2c transport | ✅ ALPN |
 | browser (Swagger `/docs`) | ✅ | ✗ (browsers require TLS) | ✅ ALPN |
 
+### Auth
+
+Production deployments should run the server with:
+
+```env
+LUMEN_AUTH=required
+LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
+```
+
+The registry file is a JSON map of bearer token to subject/roles, mounted from a
+Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
+materialize that file through External Secrets Operator or Secret Store CSI.
+Lumen reads the registry at startup; token rotation should roll the serving pods
+or use a Secret reloader controller.
+Clients only need:
+
+```env
+LUMEN_URL=http://lumen.<namespace>.svc.cluster.local:7373
+LUMEN_TOKEN=<token>
+```
+
+and send `Authorization: Bearer <token>` on API requests. Probe/spec/scrape
+routes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`) stay
+auth-exempt.
+
 ## OpenAPI
 
 | Artefact              | When to use                                                  |

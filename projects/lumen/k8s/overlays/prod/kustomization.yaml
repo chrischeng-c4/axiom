@@ -56,8 +56,11 @@ patches:
       - op: replace
         path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable
         value: "DoNotSchedule"
-      # Strict auth: LUMEN_TOKENS must be supplied out-of-band (e.g. a Secret
-      # patched in by the platform layer). Wire LUMEN_AUTH from the ConfigMap.
+      # Strict auth: a Secret named `lumen-tokens` with key
+      # `token-registry.json` must be supplied out-of-band, commonly from GCP
+      # Secret Manager via External Secrets Operator / Secret Store CSI. Lumen
+      # reads only the mounted file path at startup, so rotate by rolling pods
+      # or running a Secret reloader controller.
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
@@ -66,6 +69,26 @@ patches:
             configMapKeyRef:
               name: lumen-config
               key: LUMEN_AUTH
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LUMEN_TOKEN_REGISTRY_FILE
+          value: /var/run/secrets/lumen/token-registry.json
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: lumen-token-registry
+          mountPath: /var/run/secrets/lumen
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: lumen-token-registry
+          secret:
+            secretName: lumen-tokens
+            items:
+              - key: token-registry.json
+                path: token-registry.json
   # Direct kustomize stays single-node. Use the operator for raft HA/scaling.
   - target:
       kind: HorizontalPodAutoscaler

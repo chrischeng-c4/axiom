@@ -8,7 +8,7 @@ use lumen::spec::{
     field_catalog, json_schema_json, llm_integration_md, llm_outline_md, llm_quickstart_md,
     llm_recipes_md, llm_workflow_md, openapi_json, openapi_yaml, query_shapes,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 
 #[test]
@@ -24,6 +24,20 @@ fn openapi_is_valid_json_with_search_path() {
         paths.keys().any(|p| p.contains("/search")),
         "exposes a search path: {:?}",
         paths.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        v["components"]["securitySchemes"]["bearerAuth"]["scheme"], "bearer",
+        "OpenAPI advertises the Authorization: Bearer token scheme"
+    );
+    assert_eq!(
+        v["security"][0]["bearerAuth"],
+        json!([]),
+        "OpenAPI globally requires bearer auth for data-plane routes"
+    );
+    assert_eq!(
+        v["paths"]["/healthz"]["get"]["security"],
+        json!([{}]),
+        "auth-exempt admin/probe routes override the global bearer requirement"
     );
 }
 
@@ -217,7 +231,9 @@ fn llm_workflow_covers_the_integration_model() {
         "Which \"find\"",      // flavor decision guide
         "parent-field `sort`", // has_child + parent-field sort support
         ":7373",               // connection
-        "Do NOT",              // non-goals
+        "Authorization: Bearer",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+        "Do NOT", // non-goals
     ] {
         assert!(g.contains(needle), "workflow missing `{needle}`");
     }
@@ -234,7 +250,7 @@ fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
         "Recommended Postgres / AlloyDB integration",
         "outbox",
         "ACK/retry/DLQ",
-        "Do not publish directly to lumen's broker stream",
+        "Do not publish directly to lumen's internal WAL",
         "Ownership boundary",
     ] {
         assert!(
@@ -249,6 +265,10 @@ fn llm_quickstart_is_a_copy_paste_end_to_end() {
     let q = llm_quickstart_md();
     assert!(!q.trim().is_empty(), "quickstart is non-empty");
     assert!(q.contains("curl"), "quickstart has runnable curl");
+    assert!(
+        q.contains("LUMEN_TOKEN_REGISTRY_FILE"),
+        "quickstart documents production auth env"
+    );
     for path in ["/collections/products", "/index", "/search"] {
         assert!(q.contains(path), "quickstart exercises `{path}`");
     }

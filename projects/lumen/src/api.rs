@@ -25,7 +25,13 @@ use axum::{
 };
 use serde::Deserialize;
 use service_http::{MetricsProvider, ReadinessHook};
-use utoipa::OpenApi;
+use utoipa::{
+    openapi::{
+        self,
+        security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
+    },
+    Modify, OpenApi,
+};
 
 use axum::http::HeaderMap;
 
@@ -335,10 +341,34 @@ impl AppState {
         crate::raft::ClusterStateView,
         crate::raft::PeerAddr,
         crate::raft::RaftRole,
-    ))
+    )),
+    modifiers(&SecurityAddon),
+    security(("bearerAuth" = []))
 )]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub struct ApiDoc;
+
+struct SecurityAddon;
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearerAuth",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .bearer_format("opaque")
+                        .description(Some(
+                            "Send `Authorization: Bearer <LUMEN_TOKEN>` when `LUMEN_AUTH=required`.",
+                        ))
+                        .build(),
+                ),
+            );
+        }
+    }
+}
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl ReadinessHook for Engine {
@@ -411,6 +441,7 @@ pub fn router(state: AppState) -> Router {
     get,
     path = "/metrics",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Prometheus text-format metrics", body = String))
 )]
 /// OpenAPI metadata for the shared `/metrics` implementation in service-http.
@@ -430,6 +461,7 @@ async fn metrics(
     get,
     path = "/debug/cluster",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Cluster state snapshot", body = ClusterStateView))
 )]
 async fn debug_cluster(State(state): State<AppState>) -> Json<ClusterStateView> {
@@ -465,6 +497,7 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
     get,
     path = "/healthz",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Process is alive", body = String))
 )]
 /// OpenAPI metadata for the shared `/healthz` implementation in service-http.
@@ -477,6 +510,7 @@ async fn healthz() -> &'static str {
     get,
     path = "/version",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Build provenance: version, git sha, build time", body = serde_json::Value))
 )]
 /// Build provenance. `version` is the crate version; `git_sha` and `built_at`
@@ -493,6 +527,7 @@ async fn version() -> Json<serde_json::Value> {
     get,
     path = "/readyz",
     tag = "Admin",
+    security(()),
     responses(
         (status = 200, description = "Engine ready"),
         (status = 503, description = "Not ready")

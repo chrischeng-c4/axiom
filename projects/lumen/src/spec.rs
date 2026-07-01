@@ -191,8 +191,12 @@ hydrate the hits against your own store.
 
 ## Connection
 HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. When the
-node runs with `LUMEN_AUTH=required`, send `Authorization: Bearer <token>`.
-Sharded deployments route on the client: `crc32(collection_id) % shard_count`.
+node runs with `LUMEN_AUTH=required`, send `Authorization: Bearer <LUMEN_TOKEN>`.
+Production server pods load the token registry from
+`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; on GKE
+that file should be materialized from GCP Secret Manager through Kubernetes
+Secret projection, External Secrets Operator, or Secret Store CSI. Sharded
+deployments route on the client: `crc32(collection_id) % shard_count`.
 
 ## Do NOT ask lumen to
 - store or return documents — it returns `external_id`s; hydrate them yourself
@@ -251,7 +255,10 @@ pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
 Assumes a node at `http://localhost:7373` (`lumen serve`). Add
-`-H 'authorization: Bearer <token>'` when `LUMEN_AUTH=required`.
+`-H 'authorization: Bearer <LUMEN_TOKEN>'` when `LUMEN_AUTH=required`. In
+production the server-side `.env` contract is `LUMEN_AUTH=required` plus
+`LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; clients
+only need `LUMEN_URL` and `LUMEN_TOKEN`.
 
 ## 1. Declare a collection
 ```bash

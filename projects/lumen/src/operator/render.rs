@@ -20,6 +20,10 @@ const APP: &str = "lumen";
 const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
 const CLIENT_PORT: i32 = 7373;
+const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
+const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
+const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
+const TOKEN_REGISTRY_FILE: &str = "/var/run/secrets/lumen/token-registry.json";
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -72,6 +76,14 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
     let uid = lumen.metadata.uid.clone()?;
     let name = lumen.metadata.name.clone()?;
     Some(operator::render::owner_ref(API_VERSION, KIND, &name, &uid))
+}
+
+fn token_registry_secret(lumen: &Lumen) -> Option<&str> {
+    if matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
+        lumen.spec.tokens_secret.as_deref()
+    } else {
+        None
+    }
 }
 
 /// Assemble an object's `metadata` block.
@@ -236,14 +248,12 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     if lumen.spec.log_level.is_some() {
         env.push(from_cfg("LUMEN_LOG_LEVEL"));
     }
-    // Strict auth: pull the bearer tokens from a Secret out-of-band.
-    if matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
-        if let Some(secret) = &lumen.spec.tokens_secret {
-            env.push(json!({
-                "name": "LUMEN_TOKENS",
-                "valueFrom": { "secretKeyRef": { "name": secret, "key": "LUMEN_TOKENS" } }
-            }));
-        }
+    // Strict auth: the registry is mounted from a Secret/SecretManager projection.
+    if token_registry_secret(lumen).is_some() {
+        env.push(json!({
+            "name": "LUMEN_TOKEN_REGISTRY_FILE",
+            "value": TOKEN_REGISTRY_FILE,
+        }));
     }
     env
 }
@@ -255,6 +265,22 @@ fn serving_deployment(lumen: &Lumen) -> Value {
         "requests": { "cpu": s.cpu, "memory": s.memory },
         "limits": { "cpu": s.cpu, "memory": s.memory },
     });
+    let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
+    let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
+    if let Some(secret) = token_registry_secret(lumen) {
+        volume_mounts.push(json!({
+            "name": TOKEN_REGISTRY_VOLUME,
+            "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
+            "readOnly": true,
+        }));
+        volumes.push(json!({
+            "name": TOKEN_REGISTRY_VOLUME,
+            "secret": {
+                "secretName": secret,
+                "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
+            },
+        }));
+    }
     let spread = |key: &str| {
         json!({
             "maxSkew": 1,
@@ -329,9 +355,9 @@ fn serving_deployment(lumen: &Lumen) -> Value {
                             "readOnlyRootFilesystem": true,
                             "capabilities": { "drop": ["ALL"] },
                         },
-                        "volumeMounts": [{ "name": "tmp", "mountPath": "/tmp" }],
+                        "volumeMounts": volume_mounts,
                     }],
-                    "volumes": [{ "name": "tmp", "emptyDir": {} }],
+                    "volumes": volumes,
                 },
             },
         },
