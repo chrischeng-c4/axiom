@@ -9,12 +9,10 @@
 # case = "getblock__lines_as_tuple_wrong"
 # subject = "inspect.getblock(lines: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed lines"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed lines
 # mamba-strict-type: TypeError
 """Type wall: inspect.getblock(lines: tuple); call it with the wrong type.
 
