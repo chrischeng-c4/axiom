@@ -9,12 +9,10 @@
 # case = "OptionContainer__set_conflict_handler__handler_as_Literal_wrong"
 # subject = "optparse.OptionContainer.set_conflict_handler(handler: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed handler"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed handler
 # mamba-strict-type: TypeError
 """Type wall: optparse.OptionContainer.set_conflict_handler(handler: Literal); call it with the wrong type.
 

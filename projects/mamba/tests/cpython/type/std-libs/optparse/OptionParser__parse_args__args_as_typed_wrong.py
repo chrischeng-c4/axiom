@@ -9,12 +9,10 @@
 # case = "OptionParser__parse_args__args_as_typed_wrong"
 # subject = "optparse.OptionParser.parse_args(args: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed args
 # mamba-strict-type: TypeError
 """Type wall: optparse.OptionParser.parse_args(args: typed); call it with the wrong type.
 

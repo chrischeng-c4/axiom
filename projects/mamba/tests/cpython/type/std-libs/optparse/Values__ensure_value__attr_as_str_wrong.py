@@ -9,7 +9,6 @@
 # case = "Values__ensure_value__attr_as_str_wrong"
 # subject = "optparse.Values.ensure_value(attr: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

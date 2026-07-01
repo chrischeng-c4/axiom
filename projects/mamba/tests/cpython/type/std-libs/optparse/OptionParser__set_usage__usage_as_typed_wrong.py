@@ -9,7 +9,6 @@
 # case = "OptionParser__set_usage__usage_as_typed_wrong"
 # subject = "optparse.OptionParser.set_usage(usage: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

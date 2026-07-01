@@ -9,7 +9,6 @@
 # case = "HelpFormatter__set_short_opt_delimiter__delim_as_str_wrong"
 # subject = "optparse.HelpFormatter.set_short_opt_delimiter(delim: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
