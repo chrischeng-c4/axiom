@@ -9,12 +9,10 @@
 # case = "ABCMeta__register__subclass_as_type_wrong"
 # subject = "_py_abc.ABCMeta.register(subclass: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subclass"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_py_abc.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subclass
 # mamba-strict-type: TypeError
 """Type wall: _py_abc.ABCMeta.register(subclass: type); call it with the wrong type.
 

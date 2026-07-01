@@ -9,7 +9,6 @@
 # case = "Profiler__init__timer_as_typed_wrong"
 # subject = "_lsprof.Profiler.__init__(timer: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lsprof.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "LZMADecompressor__decompress__data_as_ReadableBuffer_wrong"
 # subject = "_lzma.LZMADecompressor.decompress(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lzma.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "getrusage__who_as_int_wrong"
 # subject = "resource.getrusage(who: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/resource.pyi"
 # status = "filled"

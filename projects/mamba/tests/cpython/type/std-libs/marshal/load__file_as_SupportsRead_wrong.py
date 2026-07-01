@@ -9,7 +9,6 @@
 # case = "load__file_as_SupportsRead_wrong"
 # subject = "marshal.load(file: SupportsRead)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/marshal.pyi"
 # status = "filled"

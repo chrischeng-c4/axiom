@@ -9,7 +9,6 @@
 # case = "collect__generation_as_int_wrong"
 # subject = "gc.collect(generation: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gc.pyi"
 # status = "filled"

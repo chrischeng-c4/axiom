@@ -9,7 +9,6 @@
 # case = "get_objects__generation_as_typed_wrong"
 # subject = "gc.get_objects(generation: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gc.pyi"
 # status = "filled"

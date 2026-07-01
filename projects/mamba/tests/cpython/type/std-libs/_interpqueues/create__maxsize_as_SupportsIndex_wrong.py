@@ -9,7 +9,6 @@
 # case = "create__maxsize_as_SupportsIndex_wrong"
 # subject = "_interpqueues.create(maxsize: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_interpqueues.pyi"
 # status = "filled"

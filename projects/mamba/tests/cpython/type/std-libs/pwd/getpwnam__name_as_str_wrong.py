@@ -9,7 +9,6 @@
 # case = "getpwnam__name_as_str_wrong"
 # subject = "pwd.getpwnam(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pwd.pyi"
 # status = "filled"

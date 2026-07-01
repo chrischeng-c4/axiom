@@ -9,7 +9,6 @@
 # case = "Profile__dump_stats__file_as_StrOrBytesPath_wrong"
 # subject = "cProfile.Profile.dump_stats(file: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cProfile.pyi"
 # status = "filled"

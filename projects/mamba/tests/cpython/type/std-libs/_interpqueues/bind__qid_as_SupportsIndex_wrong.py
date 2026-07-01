@@ -9,7 +9,6 @@
 # case = "bind__qid_as_SupportsIndex_wrong"
 # subject = "_interpqueues.bind(qid: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_interpqueues.pyi"
 # status = "filled"

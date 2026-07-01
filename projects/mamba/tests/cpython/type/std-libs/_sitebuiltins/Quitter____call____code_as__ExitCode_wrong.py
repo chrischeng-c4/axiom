@@ -9,7 +9,6 @@
 # case = "Quitter____call____code_as__ExitCode_wrong"
 # subject = "_sitebuiltins.Quitter.__call__(code: _ExitCode)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sitebuiltins.pyi"
 # status = "filled"

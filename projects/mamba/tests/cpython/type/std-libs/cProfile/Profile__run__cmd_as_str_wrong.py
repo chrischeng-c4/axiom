@@ -9,7 +9,6 @@
 # case = "Profile__run__cmd_as_str_wrong"
 # subject = "cProfile.Profile.run(cmd: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cProfile.pyi"
 # status = "filled"

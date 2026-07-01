@@ -9,7 +9,6 @@
 # case = "mksalt__method_as_typed_wrong"
 # subject = "crypt.mksalt(method: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/crypt.pyi"
 # status = "filled"

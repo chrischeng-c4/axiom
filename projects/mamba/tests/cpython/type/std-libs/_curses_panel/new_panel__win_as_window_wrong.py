@@ -9,7 +9,6 @@
 # case = "new_panel__win_as_window_wrong"
 # subject = "_curses_panel.new_panel(win: window)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_curses_panel.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "DecompressReader__readinto__b_as_WriteableBuffer_wrong"
 # subject = "_compression.DecompressReader.readinto(b: WriteableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_compression.pyi"
 # status = "filled"

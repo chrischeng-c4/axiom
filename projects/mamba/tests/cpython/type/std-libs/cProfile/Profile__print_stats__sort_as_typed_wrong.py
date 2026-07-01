@@ -9,7 +9,6 @@
 # case = "Profile__print_stats__sort_as_typed_wrong"
 # subject = "cProfile.Profile.print_stats(sort: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cProfile.pyi"
 # status = "filled"

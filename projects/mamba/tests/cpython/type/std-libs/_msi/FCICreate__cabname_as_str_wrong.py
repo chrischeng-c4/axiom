@@ -9,7 +9,6 @@
 # case = "FCICreate__cabname_as_str_wrong"
 # subject = "_msi.FCICreate(cabname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_msi.pyi"
 # status = "filled"

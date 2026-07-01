@@ -9,7 +9,6 @@
 # case = "customize_config_vars___config_vars_as_dict_wrong"
 # subject = "_osx_support.customize_config_vars(_config_vars: dict)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_osx_support.pyi"
 # status = "filled"

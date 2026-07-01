@@ -9,7 +9,6 @@
 # case = "CreateRecord__count_as_int_wrong"
 # subject = "_msi.CreateRecord(count: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_msi.pyi"
 # status = "filled"

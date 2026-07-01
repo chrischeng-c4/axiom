@@ -9,7 +9,6 @@
 # case = "runctx__statement_as_str_wrong"
 # subject = "cProfile.runctx(statement: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cProfile.pyi"
 # status = "filled"
