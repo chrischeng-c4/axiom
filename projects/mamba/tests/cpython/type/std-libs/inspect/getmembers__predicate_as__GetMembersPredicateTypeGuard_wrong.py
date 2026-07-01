@@ -9,12 +9,10 @@
 # case = "getmembers__predicate_as__GetMembersPredicateTypeGuard_wrong"
 # subject = "inspect.getmembers(predicate: _GetMembersPredicateTypeGuard)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed predicate"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed predicate
 # mamba-strict-type: TypeError
 """Type wall: inspect.getmembers(predicate: _GetMembersPredicateTypeGuard); call it with the wrong type.
 
