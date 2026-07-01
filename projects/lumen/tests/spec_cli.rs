@@ -5,8 +5,8 @@
 //! JSON with the expected top-level shape (no server, no I/O).
 
 use lumen::spec::{
-    field_catalog, json_schema_json, llm_integration_md, llm_outline_md, llm_quickstart_md,
-    llm_recipes_md, llm_workflow_md, openapi_json, openapi_yaml, query_shapes,
+    field_catalog, json_schema_json, llm_auth_md, llm_integration_md, llm_outline_md,
+    llm_quickstart_md, llm_recipes_md, llm_workflow_md, openapi_json, openapi_yaml, query_shapes,
 };
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
@@ -73,6 +73,25 @@ fn json_schema_emits_component_schemas() {
     assert!(
         v["components"]["schemas"].is_object(),
         "components.schemas present (the request/response data types): {v}"
+    );
+}
+
+#[test]
+fn json_schema_emits_token_registry_operational_schema() {
+    let v: Value = serde_json::from_str(&json_schema_json()).expect("json-schema is valid JSON");
+    let schema = &v["operationalSchemas"]["TokenRegistry"];
+    assert_eq!(
+        schema["type"], "object",
+        "TokenRegistry is an object schema"
+    );
+    assert_eq!(
+        schema["additionalProperties"]["properties"]["roles"]["additionalProperties"]["enum"],
+        json!(["read", "write", "admin"]),
+        "TokenRegistry publishes the exact role enum"
+    );
+    assert!(
+        schema["examples"][0]["admin-token"]["roles"]["*"] == "admin",
+        "TokenRegistry example includes wildcard admin role: {schema}"
     );
 }
 
@@ -207,11 +226,35 @@ fn llm_outline_maps_agent_topics() {
         "lumen llm workflow",
         "lumen llm integration",
         "lumen llm quickstart",
+        "lumen llm auth",
         "lumen llm recipes",
         "lumen spec --format openapi-yaml",
         "lumen spec",
     ] {
         assert!(outline.contains(needle), "outline missing `{needle}`");
+    }
+}
+
+#[test]
+fn llm_auth_publishes_token_registry_shape() {
+    let auth = llm_auth_md();
+    assert!(!auth.trim().is_empty(), "auth topic is non-empty");
+    for needle in [
+        "LUMEN_AUTH=required",
+        "LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json",
+        "LUMEN_TOKEN=<token>",
+        "Authorization: Bearer <LUMEN_TOKEN>",
+        "\"admin-token\"",
+        "\"roles\"",
+        "\"*\": \"admin\"",
+        "\"products\": \"read\"",
+        "tokensSecret",
+        "Secret Manager",
+        "Client",
+        "auth_token",
+        "default_headers",
+    ] {
+        assert!(auth.contains(needle), "auth topic missing `{needle}`");
     }
 }
 

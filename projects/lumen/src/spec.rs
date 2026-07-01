@@ -29,8 +29,80 @@ pub fn openapi_yaml() -> String {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
-    serde_json::to_string_pretty(&json!({ "components": api.components }))
-        .expect("components serialize to JSON")
+    serde_json::to_string_pretty(&json!({
+        "components": api.components,
+        "operationalSchemas": {
+            "TokenRegistry": token_registry_schema()
+        }
+    }))
+    .expect("components serialize to JSON")
+}
+
+/// The deployment-side token registry file schema. This is not an HTTP request
+/// body, so it lives under `operationalSchemas` in `lumen spec --format
+/// json-schema` and in `lumen llm auth`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn token_registry_schema() -> Value {
+    json!({
+        "description": "JSON object mounted as token-registry.json; each property name is the bearer token string.",
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "required": ["subject"],
+            "additionalProperties": false,
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "description": "Human-readable or service-account identity attached to requests authenticated with this token."
+                },
+                "roles": {
+                    "type": "object",
+                    "description": "Map collection id to the maximum role. The literal key `*` grants the role across all collections.",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": ["read", "write", "admin"]
+                    },
+                    "default": {}
+                }
+            }
+        },
+        "examples": [
+            {
+                "admin-token": {
+                    "subject": "platform-admin",
+                    "roles": { "*": "admin" }
+                },
+                "product-reader-token": {
+                    "subject": "products-reader",
+                    "roles": { "products": "read" }
+                },
+                "product-writer-token": {
+                    "subject": "products-writer",
+                    "roles": { "products": "write" }
+                }
+            }
+        ]
+    })
+}
+
+/// Pretty JSON example for `token-registry.json`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn token_registry_example_json() -> String {
+    serde_json::to_string_pretty(&json!({
+        "admin-token": {
+            "subject": "platform-admin",
+            "roles": { "*": "admin" }
+        },
+        "product-reader-token": {
+            "subject": "products-reader",
+            "roles": { "products": "read" }
+        },
+        "product-writer-token": {
+            "subject": "products-writer",
+            "roles": { "products": "write" }
+        }
+    }))
+    .expect("token registry example serializes")
 }
 
 /// A cookbook of canonical query shapes. Each entry is a ready-to-POST
@@ -139,12 +211,79 @@ Use the smallest topic that answers the task:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
 - `lumen llm quickstart` — copy-paste local create → index → search flow.
+- `lumen llm auth` — bearer-token auth contract, token-registry.json schema,
+  Secret Manager / Kubernetes Secret projection, and client header wiring.
 - `lumen llm recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
 "#
     .to_string()
+}
+
+/// Bearer-token auth + deployment secret contract (`lumen llm auth`) as
+/// Markdown.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn llm_auth_md() -> String {
+    format!(
+        r#"# lumen auth
+
+## Runtime contract
+Production servers should run with:
+
+```env
+LUMEN_AUTH=required
+LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
+```
+
+Clients only need:
+
+```env
+LUMEN_URL=http://lumen.<namespace>.svc.cluster.local:7373
+LUMEN_TOKEN=<token>
+```
+
+Send the token on data/admin API calls:
+
+```http
+Authorization: Bearer <LUMEN_TOKEN>
+```
+
+Probe/spec/scrape routes stay auth-exempt: `/healthz`, `/readyz`, `/metrics`,
+`/openapi.json`, and `/docs`.
+
+## token-registry.json
+The registry file is a JSON object. Each top-level key is the exact bearer token
+string. Each value declares the authenticated subject and optional collection
+roles:
+
+```json
+{}
+```
+
+Role values are `read`, `write`, or `admin`; `admin` covers `write` and `read`,
+and `write` covers `read`. Role keys are collection ids. The literal key `*`
+grants the role across all collections. A missing collection role rejects that
+request with 403.
+
+## Kubernetes / cloud secret ownership
+The Lumen CRD field `spec.tokensSecret` names a Kubernetes Secret containing a
+`token-registry.json` key. The operator mounts that key at
+`/var/run/secrets/lumen/token-registry.json` and sets
+`LUMEN_TOKEN_REGISTRY_FILE` for serving pods when `auth: required`.
+
+On GKE, keep GCP Secret Manager as the source of truth and materialize the file
+through External Secrets Operator, Secret Store CSI, or a platform-approved
+Secret sync. Lumen reads the registry at startup; token rotation should roll the
+serving pods or use a Secret reloader controller.
+
+## Generated clients
+Generated Python clients accept either `auth_token="<token>"` or
+`default_headers={{"Authorization": "Bearer <token>"}}` in `Client` and
+`AsyncClient`. Other clients send the same `Authorization: Bearer` header.
+"#,
+        token_registry_example_json()
+    )
 }
 
 /// The agent workflow model (`lumen llm workflow`) as Markdown — the mental
