@@ -9,7 +9,6 @@
 # case = "Counter____iand____other_as_SupportsItems_wrong"
 # subject = "collections.Counter.__iand__(other: SupportsItems)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "invert__a_as__SupportsInversion_wrong"
 # subject = "_operator.invert(a: _SupportsInversion)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

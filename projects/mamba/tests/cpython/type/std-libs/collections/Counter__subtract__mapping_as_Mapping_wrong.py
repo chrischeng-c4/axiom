@@ -9,7 +9,6 @@
 # case = "Counter__subtract__mapping_as_Mapping_wrong"
 # subject = "collections.Counter.subtract(mapping: Mapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "register__search_function_as__SearchFunction_wrong"
 # subject = "_codecs.register(search_function: _SearchFunction)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

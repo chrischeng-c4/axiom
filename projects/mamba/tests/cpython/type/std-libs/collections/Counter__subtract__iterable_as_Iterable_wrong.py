@@ -9,7 +9,6 @@
 # case = "Counter__subtract__iterable_as_Iterable_wrong"
 # subject = "collections.Counter.subtract(iterable: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

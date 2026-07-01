@@ -9,7 +9,6 @@
 # case = "Counter__fromkeys__v_as_typed_wrong"
 # subject = "collections.Counter.fromkeys(v: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

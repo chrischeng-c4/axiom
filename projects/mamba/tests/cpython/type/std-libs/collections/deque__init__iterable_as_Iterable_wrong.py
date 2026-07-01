@@ -9,7 +9,6 @@
 # case = "deque__init__iterable_as_Iterable_wrong"
 # subject = "collections.deque.__init__(iterable: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

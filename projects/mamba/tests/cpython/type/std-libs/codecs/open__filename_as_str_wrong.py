@@ -9,7 +9,6 @@
 # case = "open__filename_as_str_wrong"
 # subject = "codecs.open(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

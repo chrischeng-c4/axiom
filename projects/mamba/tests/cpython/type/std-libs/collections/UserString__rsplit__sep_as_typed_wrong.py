@@ -9,7 +9,6 @@
 # case = "UserString__rsplit__sep_as_typed_wrong"
 # subject = "collections.UserString.rsplit(sep: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "LocaleHTMLCalendar__formatmonthname__theyear_as_int_wrong"
 # subject = "calendar.LocaleHTMLCalendar.formatmonthname(theyear: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

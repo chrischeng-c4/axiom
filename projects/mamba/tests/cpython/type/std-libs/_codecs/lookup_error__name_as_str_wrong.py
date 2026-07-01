@@ -9,7 +9,6 @@
 # case = "lookup_error__name_as_str_wrong"
 # subject = "_codecs.lookup_error(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

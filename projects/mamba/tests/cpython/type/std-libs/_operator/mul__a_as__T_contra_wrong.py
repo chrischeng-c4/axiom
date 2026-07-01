@@ -9,7 +9,6 @@
 # case = "mul__a_as__T_contra_wrong"
 # subject = "_operator.mul(a: _T_contra)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

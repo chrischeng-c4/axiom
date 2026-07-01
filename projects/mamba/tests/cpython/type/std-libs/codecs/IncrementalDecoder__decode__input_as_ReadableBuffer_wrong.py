@@ -9,7 +9,6 @@
 # case = "IncrementalDecoder__decode__input_as_ReadableBuffer_wrong"
 # subject = "codecs.IncrementalDecoder.decode(input: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

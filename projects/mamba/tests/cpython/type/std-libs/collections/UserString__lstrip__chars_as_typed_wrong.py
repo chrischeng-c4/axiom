@@ -9,7 +9,6 @@
 # case = "UserString__lstrip__chars_as_typed_wrong"
 # subject = "collections.UserString.lstrip(chars: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

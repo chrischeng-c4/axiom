@@ -9,7 +9,6 @@
 # case = "Counter__update__m_as_Mapping_wrong"
 # subject = "collections.Counter.update(m: Mapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

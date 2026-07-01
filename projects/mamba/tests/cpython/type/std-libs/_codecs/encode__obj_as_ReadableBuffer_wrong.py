@@ -9,7 +9,6 @@
 # case = "encode__obj_as_ReadableBuffer_wrong"
 # subject = "_codecs.encode(obj: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "index__a_as_SupportsIndex_wrong"
 # subject = "_operator.index(a: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

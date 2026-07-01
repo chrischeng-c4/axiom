@@ -9,7 +9,6 @@
 # case = "readbuffer_encode__data_as_typed_wrong"
 # subject = "_codecs.readbuffer_encode(data: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

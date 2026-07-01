@@ -9,7 +9,6 @@
 # case = "formatstring__cols_as_Iterable_wrong"
 # subject = "calendar.formatstring(cols: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

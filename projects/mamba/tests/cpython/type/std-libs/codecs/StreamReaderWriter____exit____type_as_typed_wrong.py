@@ -9,12 +9,10 @@
 # case = "StreamReaderWriter____exit____type_as_typed_wrong"
 # subject = "codecs.StreamReaderWriter.__exit__(type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
 """Type wall: codecs.StreamReaderWriter.__exit__(type: typed); call it with the wrong type.
 

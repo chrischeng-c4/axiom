@@ -9,7 +9,6 @@
 # case = "monthcalendar__year_as_int_wrong"
 # subject = "calendar.monthcalendar(year: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

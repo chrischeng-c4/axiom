@@ -9,7 +9,6 @@
 # case = "iterdecode__iterator_as_Iterable_wrong"
 # subject = "codecs.iterdecode(iterator: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "lookup__encoding_as_str_wrong"
 # subject = "_codecs.lookup(encoding: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

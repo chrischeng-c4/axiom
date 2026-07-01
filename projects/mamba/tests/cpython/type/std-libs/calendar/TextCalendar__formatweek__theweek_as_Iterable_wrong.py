@@ -9,7 +9,6 @@
 # case = "TextCalendar__formatweek__theweek_as_Iterable_wrong"
 # subject = "calendar.TextCalendar.formatweek(theweek: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

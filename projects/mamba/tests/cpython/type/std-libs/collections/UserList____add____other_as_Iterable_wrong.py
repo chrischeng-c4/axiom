@@ -9,7 +9,6 @@
 # case = "UserList____add____other_as_Iterable_wrong"
 # subject = "collections.UserList.__add__(other: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

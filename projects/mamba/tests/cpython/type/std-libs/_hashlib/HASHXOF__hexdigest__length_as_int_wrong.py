@@ -9,7 +9,6 @@
 # case = "HASHXOF__hexdigest__length_as_int_wrong"
 # subject = "_hashlib.HASHXOF.hexdigest(length: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"
