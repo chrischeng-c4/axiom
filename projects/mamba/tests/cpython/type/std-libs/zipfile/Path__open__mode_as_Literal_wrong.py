@@ -9,12 +9,10 @@
 # case = "Path__open__mode_as_Literal_wrong"
 # subject = "zipfile.Path.open(mode: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode
 # mamba-strict-type: TypeError
 """Type wall: zipfile.Path.open(mode: Literal); call it with the wrong type.
 

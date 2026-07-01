@@ -9,7 +9,6 @@
 # case = "Path__read_text__encoding_as_typed_wrong"
 # subject = "zipfile.Path.read_text(encoding: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

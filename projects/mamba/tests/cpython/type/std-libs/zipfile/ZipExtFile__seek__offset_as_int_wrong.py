@@ -9,7 +9,6 @@
 # case = "ZipExtFile__seek__offset_as_int_wrong"
 # subject = "zipfile.ZipExtFile.seek(offset: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

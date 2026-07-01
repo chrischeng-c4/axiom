@@ -9,7 +9,6 @@
 # case = "ZipFile__mkdir__zinfo_or_directory_name_as_typed_wrong"
 # subject = "zipfile.ZipFile.mkdir(zinfo_or_directory_name: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

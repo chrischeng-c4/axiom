@@ -9,7 +9,6 @@
 # case = "PyZipFile__init__file_as_typed_wrong"
 # subject = "zipfile.PyZipFile.__init__(file: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

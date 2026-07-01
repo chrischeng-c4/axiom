@@ -9,12 +9,10 @@
 # case = "ZipExtFile__init__fileobj_as__ClosableZipStream_wrong"
 # subject = "zipfile.ZipExtFile.__init__(fileobj: _ClosableZipStream)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fileobj"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fileobj
 # mamba-strict-type: TypeError
 """Type wall: zipfile.ZipExtFile.__init__(fileobj: _ClosableZipStream); call it with the wrong type.
 

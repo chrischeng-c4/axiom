@@ -9,12 +9,10 @@
 # case = "ZipFile____exit____type_as_typed_wrong"
 # subject = "zipfile.ZipFile.__exit__(type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
 """Type wall: zipfile.ZipFile.__exit__(type: typed); call it with the wrong type.
 
