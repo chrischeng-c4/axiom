@@ -9,12 +9,11 @@
 # case = "Pool__starmap__func_as_Callable_wrong"
 # subject = "multiprocessing.pool.Pool.starmap(func: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/pool.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed func
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.pool.Pool.starmap(func: Callable); call it with the wrong type.
 
