@@ -9,7 +9,6 @@
 # case = "compile__source_as_typed_wrong"
 # subject = "builtins.compile(source: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

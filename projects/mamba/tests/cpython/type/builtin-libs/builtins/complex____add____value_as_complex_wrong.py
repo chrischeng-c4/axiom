@@ -9,12 +9,10 @@
 # case = "complex____add____value_as_complex_wrong"
 # subject = "builtins.complex.__add__(value: complex)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: builtins.complex.__add__(value: complex); call it with the wrong type.
 

@@ -9,12 +9,10 @@
 # case = "bytes____le____value_as_bytes_wrong"
 # subject = "builtins.bytes.__le__(value: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: builtins.bytes.__le__(value: bytes); call it with the wrong type.
 

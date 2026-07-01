@@ -9,7 +9,6 @@
 # case = "bytes____contains____key_as_typed_wrong"
 # subject = "builtins.bytes.__contains__(key: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
