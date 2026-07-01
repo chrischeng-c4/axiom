@@ -9,12 +9,10 @@
 # case = "Struct__pack_into__buffer_as_WriteableBuffer_wrong"
 # subject = "_struct.Struct.pack_into(buffer: WriteableBuffer)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_struct.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer
 # mamba-strict-type: TypeError
 """Type wall: _struct.Struct.pack_into(buffer: WriteableBuffer); call it with the wrong type.
 

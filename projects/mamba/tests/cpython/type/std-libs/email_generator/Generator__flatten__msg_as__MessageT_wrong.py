@@ -9,12 +9,10 @@
 # case = "Generator__flatten__msg_as__MessageT_wrong"
 # subject = "email.generator.Generator.flatten(msg: _MessageT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/generator.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed msg
 # mamba-strict-type: TypeError
 """Type wall: email.generator.Generator.flatten(msg: _MessageT); call it with the wrong type.
 

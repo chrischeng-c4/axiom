@@ -9,12 +9,10 @@
 # case = "Hook____call____etype_as_typed_wrong"
 # subject = "cgitb.Hook.__call__(etype: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed etype"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/cgitb.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed etype
 # mamba-strict-type: TypeError
 """Type wall: cgitb.Hook.__call__(etype: typed); call it with the wrong type.
 
