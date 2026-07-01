@@ -28,6 +28,9 @@
 //!   [`gpu::ivfpq::GpuIvfScanner`] GPU IVF-PQ candidate scan — all matched to the
 //!   oracle.
 //! - [`dataset`] — deterministic (fixed-seed LCG) synthetic corpora + queries.
+//! - [`persist`] — durable save/load: the collection segment + trained IVF-PQ
+//!   model persist to disk (GPU buffers are rebuilt on load, never persisted), so
+//!   a cold start reproduces identical search results without retraining.
 //! - [`bench`] — the `beam bench` GPU-vs-CPU parity + timing demo.
 
 pub mod bench;
@@ -36,6 +39,7 @@ pub mod dataset;
 pub mod gpu;
 pub mod index;
 pub mod payload;
+pub mod persist;
 
 /// One-line statement of the Beam/Lumen boundary, surfaced in `beam llm`.
 pub const LUMEN_BOUNDARY: &str =

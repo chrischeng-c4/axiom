@@ -37,6 +37,16 @@ bytemuck = { version = "1", features = ["derive"] }
 # Block on wgpu's async `request_adapter` / `request_device` from sync code.
 pollster = "0.4"
 
+# --- Durable persistence (save/load) -------------------------------------
+# Serialize the CPU-side source-of-truth (collection segment + trained IVF-PQ
+# model) to disk so a cold load reproduces identical search results without
+# retraining. GPU buffers are ephemeral and rebuilt on load, never persisted.
+# `serde` is the workspace-pinned 1.0 (derive on the persisted structs);
+# `bincode` 1.3 is the compact, non-self-describing codec already used by keep /
+# compass / cclab-grid, so the shared Cargo.lock resolves the SAME 1.3.3.
+serde = { workspace = true }
+bincode = "1.3"
+
 [features]
 default = []
 # Online (HTTPS) paths of the standard CLI ops: `upgrade` self-install and

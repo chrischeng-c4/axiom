@@ -45,15 +45,19 @@
 //! [`compact`]: Collection::compact
 
 use std::collections::HashMap;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
 
 use crate::payload::Payload;
+use crate::persist::{load_framed, save_framed, COLLECTION_MAGIC};
 
 /// Distance / similarity metric a collection is scored under.
 ///
 /// The numeric [`Metric::code`] is the convention shared verbatim by the CPU
 /// oracle and the GPU WGSL kernel, so their per-row scores — and therefore their
 /// top-k — agree bit-for-bit in intent (float rounding aside).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Metric {
     /// Squared Euclidean distance. Smaller score = closer = better.
     L2,
@@ -115,8 +119,15 @@ pub fn l2_normalize(v: &[f32]) -> Vec<f32> {
     v.iter().map(|x| x * inv).collect()
 }
 
-/// A named, in-memory vector collection with a fixed dimension and metric.
-#[derive(Debug, Clone)]
+/// A named vector collection with a fixed dimension and metric.
+///
+/// In memory it is the storage substrate every index reads; on disk (via
+/// [`Collection::save`] / [`Collection::load`]) it is a durable **segment** — the
+/// row-major vectors, payloads, external ids, and `live` tombstone bits. The
+/// `id_map` / `n_live` acceleration fields are NOT serialized (`#[serde(skip)]`):
+/// they are rebuilt from `external_ids` + `live` on load, so the format stays the
+/// minimal source-of-truth and can never disagree with itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collection {
     /// Human/external identifier for the collection itself.
     pub id: String,
@@ -138,8 +149,13 @@ pub struct Collection {
     live: Vec<bool>,
     /// `external_id -> live physical row`. Only live ids are present, so an id
     /// resolves to at most one row; a delete removes the key, an update re-points it.
+    /// Rebuilt from `external_ids` + `live` on [`Collection::load`], so it is not
+    /// part of the on-disk format.
+    #[serde(skip)]
     id_map: HashMap<String, u32>,
     /// Cached live-row count (`== id_map.len()`), so [`Collection::len`] is O(1).
+    /// Recomputed alongside `id_map` on load, so it is not persisted.
+    #[serde(skip)]
     n_live: usize,
 }
 
@@ -420,6 +436,44 @@ impl Collection {
     /// Cosine).
     pub fn row(&self, i: usize) -> &[f32] {
         &self.data[i * self.dim..(i + 1) * self.dim]
+    }
+
+    /// Persist this collection segment to `path`: the row-major vectors, payloads,
+    /// external ids, and `live` tombstone bits, behind beam's magic + version
+    /// header (see [`crate::persist`]). The `id_map` / `n_live` accelerators are
+    /// omitted — they are rebuilt on [`Collection::load`], so the file is the
+    /// minimal source-of-truth. A cold [`Collection::load`] reproduces this exact
+    /// collection (same rows, tombstones, and search results) with no rebuild cost.
+    pub fn save(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        save_framed(path.as_ref(), COLLECTION_MAGIC, self)
+    }
+
+    /// Load a collection segment previously written by [`Collection::save`],
+    /// rebuilding the `id_map` (external id -> live row) and the cached live count
+    /// from the persisted `external_ids` + `live` bits. Errors on a missing file, a
+    /// wrong magic (not a collection file), or an unknown format version.
+    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let mut collection: Collection = load_framed(path.as_ref(), COLLECTION_MAGIC)?;
+        collection.rebuild_id_map();
+        Ok(collection)
+    }
+
+    /// Rebuild the `id_map` and `n_live` cache from `external_ids` + `live` — the
+    /// post-load fixup for the `#[serde(skip)]` acceleration fields. Every live row
+    /// claims its external id (an id resolves to at most one live row by
+    /// construction, since `update`/`delete` retire the prior row's live bit), so
+    /// this reproduces the exact map the in-memory collection held at save time.
+    fn rebuild_id_map(&mut self) {
+        let mut id_map = HashMap::with_capacity(self.external_ids.len());
+        let mut n_live = 0usize;
+        for row in 0..self.external_ids.len() {
+            if self.live[row] {
+                id_map.insert(self.external_ids[row].clone(), row as u32);
+                n_live += 1;
+            }
+        }
+        self.id_map = id_map;
+        self.n_live = n_live;
     }
 }
 

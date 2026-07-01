@@ -14,10 +14,12 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 /// A single typed scalar attribute value: a 64-bit integer or a short string
 /// (used as an enum-like "tag"). Comparison for [`Clause::Eq`] is exact and
 /// type-aware — an `Int(3)` never equals a `Str("3")`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttrValue {
     /// A 64-bit signed integer attribute (e.g. `bucket`, `year`, `count`).
     Int(i64),
@@ -72,8 +74,10 @@ impl From<String> for AttrValue {
 }
 
 /// The scalar attributes attached to one vector row. An empty payload (the
-/// default given to rows added without one) matches only the empty filter.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// default given to rows added without one) matches only the empty filter. Stored
+/// row-aligned in a [`Collection`](crate::collection::Collection) and persisted
+/// with it, so filtered search survives a save/load round-trip.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Payload {
     /// Named attributes for this row. Missing keys make any clause referencing
     /// them fail (a row without a `category` never matches `category == 3`).

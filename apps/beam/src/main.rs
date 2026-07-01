@@ -196,6 +196,14 @@ struct BenchArgs {
     /// oracle. `0` (default) leaves the corpus untouched.
     #[arg(long, default_value_t = 0.0)]
     churn: f64,
+    /// Persistence round-trip demo: build the index, SAVE it to this path, LOAD it
+    /// back into a fresh index, and assert the loaded top-k is identical (rows +
+    /// scores) to the original — printing `persist round-trip OK: results
+    /// identical`. Proves durable save/load with no retrain. Writes `<path>` (the
+    /// trained IVF model, for the ivf backends) and `<path>.col` (the collection
+    /// segment); both are removed afterward.
+    #[arg(long = "persist")]
+    persist: Option<String>,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
@@ -313,6 +321,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 rank: args.rank,
                 filter_category: args.filter,
                 churn: args.churn,
+                persist: args.persist,
             })
         }
         // Report the resolved GPU backend + device — the dual-platform proof.

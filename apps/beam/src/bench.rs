@@ -15,7 +15,7 @@
 //! If no GPU adapter is available it prints `no GPU adapter available` and
 //! returns a non-zero [`ExitCode`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -96,6 +96,13 @@ pub struct BenchConfig {
     /// the original bench. Proves search still equals the live oracle after
     /// mutation.
     pub churn: f64,
+    /// When `Some(path)`, run the durable **persistence round-trip** demo instead
+    /// of the normal timing bench: build the index, save it to `path`, load it into
+    /// a fresh index, and assert the loaded top-k is identical to the original
+    /// (rows + scores), printing `persist round-trip OK: results identical`. The
+    /// CPU round-trip runs with no GPU; the GPU paths are also checked when an
+    /// adapter is present. `None` (default) runs the normal bench.
+    pub persist: Option<String>,
 }
 
 /// Number of distinct `category` buckets the `--filter` bench assigns
@@ -117,6 +124,7 @@ impl Default for BenchConfig {
             rank: 0,
             filter_category: None,
             churn: 0.0,
+            persist: None,
         }
     }
 }
@@ -166,6 +174,13 @@ fn assign_category_payloads(collection: &mut crate::collection::Collection) {
 /// Run the bench. Returns `ExitCode::SUCCESS` on a completed run,
 /// `ExitCode::FAILURE` when no GPU adapter is available (message already printed).
 pub fn run(cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
+    // The persistence round-trip demo is GPU-optional (the identity proof runs on
+    // the CPU path; the GPU paths are also checked when an adapter is present), so
+    // it is handled before the GPU requirement below.
+    if let Some(path) = cfg.persist.clone() {
+        return run_persist(cfg, &path);
+    }
+
     let Some(gpu) = GpuContext::new() else {
         println!("no GPU adapter available");
         return Ok(ExitCode::FAILURE);
@@ -513,5 +528,176 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
             per(shared_scan),
         );
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Durable persistence round-trip demo (`beam bench --persist <path>`): build the
+/// configured index over a deterministic corpus with payloads + deletes, SAVE it
+/// to disk, LOAD it into a fresh index, and assert the loaded top-k is identical
+/// (same rows, per-row scores within 1e-3) to the original — proving durable
+/// save/load with no retrain. GPU buffers are rebuilt on load, never persisted, so
+/// the identity proof runs on the CPU path with no GPU; the GPU paths are also
+/// checked when an adapter is present. Writes `<path>` (the trained IVF model, for
+/// the ivf backends) and `<path>.col` (the collection segment), then removes them.
+fn run_persist(cfg: &BenchConfig, path: &str) -> anyhow::Result<ExitCode> {
+    use crate::collection::Collection;
+    use crate::index::Neighbor;
+    use crate::payload::Payload;
+
+    if cfg.metric != Metric::L2 {
+        anyhow::bail!(
+            "--persist runs on Metric::L2 (the IVF-PQ metric); got {:?}",
+            cfg.metric
+        );
+    }
+    if cfg.index == IndexKind::IvfPq && (cfg.m == 0 || !cfg.dim.is_multiple_of(cfg.m)) {
+        anyhow::bail!("ivfpq needs dim ({}) divisible by m ({})", cfg.dim, cfg.m);
+    }
+
+    let col_path = format!("{path}.col");
+    let num_clusters = cfg.nlist.clamp(1, cfg.n.max(1));
+
+    // Deterministic corpus for the chosen backend: uniform for flat, clustered for
+    // the IVF backends (where pruning is meaningful).
+    let (mut collection, queries) = match cfg.index {
+        IndexKind::Flat => (
+            dataset::random_collection("persist", cfg.n, cfg.dim, Metric::L2, DATASET_SEED),
+            dataset::random_queries(cfg.queries, cfg.dim, QUERY_SEED),
+        ),
+        IndexKind::IvfFlat | IndexKind::IvfPq => (
+            dataset::clustered_collection(
+                "persist",
+                cfg.n,
+                cfg.dim,
+                Metric::L2,
+                num_clusters,
+                CLUSTER_JITTER,
+                DATASET_SEED,
+            ),
+            dataset::clustered_queries(cfg.queries, cfg.dim, num_clusters, CLUSTER_JITTER, QUERY_SEED),
+        ),
+    };
+    // Per-row payloads + a deterministic delete set so payloads AND tombstones are
+    // exercised across the round-trip.
+    for i in 0..collection.capacity() {
+        collection.set_payload(i, Payload::new().with("category", i as i64 % FILTER_CATEGORIES));
+    }
+    for i in (0..collection.capacity()).step_by(13) {
+        collection.delete(&format!("id-{i}"));
+    }
+
+    let kind = match cfg.index {
+        IndexKind::Flat => "flat",
+        IndexKind::IvfFlat => "ivfflat",
+        IndexKind::IvfPq => "ivfpq",
+    };
+    println!(
+        "index={kind} persist demo: n={} dim={} k={} queries={} ({} live, {} tombstoned, payloads on)",
+        cfg.n,
+        cfg.dim,
+        cfg.k,
+        cfg.queries,
+        collection.len(),
+        collection.tombstoned(),
+    );
+
+    // Identity: same result length, same rows, per-row scores within 1e-3.
+    let identical = |a: &[Neighbor], b: &[Neighbor]| -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let by_row: HashMap<u32, f32> = a.iter().map(|n| (n.row, n.score)).collect();
+        b.iter()
+            .all(|nb| by_row.get(&nb.row).is_some_and(|s| (s - nb.score).abs() <= 1e-3))
+    };
+
+    // Always persist + reload the collection segment (the flat index's source-of-
+    // truth, and the corpus every IVF result external-id resolves against).
+    collection.save(&col_path)?;
+    let loaded_collection = Collection::load(&col_path)?;
+
+    let gpu = GpuContext::new();
+    match gpu.as_ref().map(|g| g.adapter_info()) {
+        Some((backend, name)) => {
+            println!("GPU present ({name}, {backend}): also verifying the GPU paths rebuild from the loaded state")
+        }
+        None => println!("no GPU adapter: verifying the CPU path (GPU buffers rebuild on load when present)"),
+    }
+
+    let mut checked = 0usize;
+    match cfg.index {
+        IndexKind::Flat => {
+            let orig = CpuFlatIndex::new(&collection);
+            let reloaded = CpuFlatIndex::new(&loaded_collection);
+            for q in &queries {
+                if !identical(&orig.search_knn(q, cfg.k), &reloaded.search_knn(q, cfg.k)) {
+                    anyhow::bail!("flat CPU round-trip mismatch");
+                }
+                checked += 1;
+            }
+            if let Some(gpu) = gpu.as_ref() {
+                let ga = GpuFlatIndex::new(gpu, &collection);
+                let gb = GpuFlatIndex::new(gpu, &loaded_collection);
+                for q in &queries {
+                    if !identical(&ga.search_knn(q, cfg.k), &gb.search_knn(q, cfg.k)) {
+                        anyhow::bail!("flat GPU round-trip mismatch");
+                    }
+                }
+            }
+        }
+        IndexKind::IvfFlat | IndexKind::IvfPq => {
+            let refine = match cfg.index {
+                IndexKind::IvfFlat => Refine::Flat,
+                IndexKind::IvfPq => Refine::Pq { m: cfg.m },
+                IndexKind::Flat => unreachable!(),
+            };
+            let config = IvfPqConfig {
+                nlist: cfg.nlist,
+                kmeans_iters: 20,
+                nbits: 8,
+                refine,
+                train_sample: 0,
+                seed: DATASET_SEED,
+            };
+            let index = IvfPqIndex::train(&collection, config)?;
+            index.save(path)?;
+            let loaded = IvfPqIndex::load(path)?;
+
+            // No retrain: the coarse centroids + PQ codebooks reload byte-for-byte
+            // (k-means was NOT re-run on load).
+            if index.coarse_centroids() != loaded.coarse_centroids()
+                || index.codebooks() != loaded.codebooks()
+            {
+                anyhow::bail!("IVF model changed across load (retrain detected)");
+            }
+            println!("no-retrain: coarse centroids + PQ codebooks reload byte-for-byte");
+
+            for q in &queries {
+                let a = index.search_cpu(q, cfg.k, cfg.nprobe);
+                let b = loaded.search_cpu(q, cfg.k, cfg.nprobe);
+                if !identical(&a, &b) {
+                    anyhow::bail!("IVF CPU round-trip mismatch");
+                }
+                checked += 1;
+            }
+            if let Some(gpu) = gpu.as_ref() {
+                let scanner = GpuIvfScanner::new(gpu);
+                for q in &queries {
+                    let a = scanner.search(&index, q, cfg.k, cfg.nprobe);
+                    let b = scanner.search(&loaded, q, cfg.k, cfg.nprobe);
+                    if !identical(&a, &b) {
+                        anyhow::bail!("IVF GPU round-trip mismatch");
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    let _ = std::fs::remove_file(&col_path);
+    println!(
+        "persist round-trip OK: results identical (over {checked} queries, CPU{})",
+        if gpu.is_some() { " + GPU" } else { "" }
+    );
     Ok(ExitCode::SUCCESS)
 }

@@ -33,16 +33,21 @@
 //! and consumes the [`QueryPlan`] this module produces, so the GPU and the
 //! [`QueryPlan::cpu_scan`] reference compute the same candidate distances.
 
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
 use crate::collection::{Collection, Metric};
 use crate::index::{Neighbor, VectorIndex};
 use crate::payload::{Filter, Payload};
+use crate::persist::{load_framed, save_framed, INDEX_MAGIC};
 
 /// Number of PQ centroids per subspace. `nbits = 8` is the only supported width,
 /// giving `2^8 = 256` codebook entries and one `u8` code byte per subspace.
 pub const PQ_KSUB: usize = 256;
 
 /// How a cell stores its members, trading exactness for compression.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Refine {
     /// Store each member's full residual vector (`dim` f32). Distance within a
     /// probed cell is exact; `nprobe == nlist` reproduces the flat oracle.
@@ -95,6 +100,13 @@ impl Default for IvfPqConfig {
 /// reference) and the GPU path (via [`IvfPqIndex::plan`] +
 /// [`crate::gpu::ivfpq::GpuIvfScanner`]) answer `k`-NN queries. Owns its coarse
 /// centroids, PQ codebooks, and the inverted lists.
+///
+/// Every field is plain CPU-side data (no GPU handles), so the whole trained
+/// model serializes directly via [`IvfPqIndex::save`] and reloads via
+/// [`IvfPqIndex::load`] **without re-running k-means** — the coarse centroids and
+/// PQ codebooks come back byte-for-byte. The GPU scan buffers are rebuilt from a
+/// loaded index exactly as for a freshly-trained one, so they are never persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IvfPqIndex {
     dim: usize,
     nlist: usize,
@@ -415,6 +427,48 @@ impl IvfPqIndex {
     /// The refine mode this index was trained with.
     pub fn refine(&self) -> Refine {
         self.refine
+    }
+
+    /// The trained coarse quantizer centroids, row-major `nlist * dim`. Exposed so
+    /// a save/load round-trip can prove the model reloads **unchanged** (no k-means
+    /// re-run): a loaded index's centroids equal the pre-save index's byte-for-byte.
+    pub fn coarse_centroids(&self) -> &[f32] {
+        &self.coarse
+    }
+
+    /// The trained PQ codebooks, `m * PQ_KSUB * dsub` f32 (empty for
+    /// [`Refine::Flat`]). Like [`Self::coarse_centroids`], exposed so a round-trip
+    /// can assert the codebooks survive load unchanged (training was not re-run).
+    pub fn codebooks(&self) -> &[f32] {
+        &self.codebooks
+    }
+
+    /// Per physical indexed-row liveness bits (`live[i] == false` ⇒ tombstoned).
+    /// Persisted with the index, so the live-set — and therefore which rows are
+    /// excluded from search — survives a save/load round-trip.
+    pub fn live(&self) -> &[bool] {
+        &self.live
+    }
+
+    /// Persist this trained IVF-PQ model to `path`: coarse centroids, PQ codebooks,
+    /// inverted lists (rows + codes/residuals), the row-aligned payloads + `live`
+    /// bits, and the config-derived shape (`dim`/`nlist`/`m`/`refine`), behind
+    /// beam's magic + version header (see [`crate::persist`]). No GPU state is
+    /// written — the GPU scan buffers are rebuilt on load from this CPU-side model.
+    /// A cold [`IvfPqIndex::load`] reproduces identical search results with **no
+    /// retraining**.
+    pub fn save(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        save_framed(path.as_ref(), INDEX_MAGIC, self)
+    }
+
+    /// Load a trained IVF-PQ model previously written by [`IvfPqIndex::save`]. The
+    /// index is self-contained (it snapshots external ids / payloads / live bits at
+    /// train time), so no collection is needed to reconstruct it. Errors on a
+    /// missing file, a wrong magic (not an index file), or an unknown format
+    /// version. k-means is **not** re-run: the centroids/codebooks are the exact
+    /// trained ones, so the loaded index scores queries identically to the original.
+    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        load_framed(path.as_ref(), INDEX_MAGIC)
     }
 
     /// The dominant per-vector memory footprint, in bytes — the number that makes
