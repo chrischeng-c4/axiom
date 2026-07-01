@@ -8,6 +8,12 @@ capability_refs:
     claim: stories-preview-hmr
     coverage: partial
     rationale: "Hook-state-preserving React Refresh in the isolated story preview completes the live-edit loop of the component workbench."
+  - id: component-workbench
+    role: primary
+    gap: component-workbench-readiness
+    claim: hook-state-preserving-refresh
+    coverage: partial
+    rationale: "This TD verifies that compatible preview edits preserve hook state through React Refresh."
 ---
 
 # jet stories preview: Full Hook-State-Preserving React Refresh
@@ -41,6 +47,25 @@ flowchart TD
     boundary -->|incompatible| reload[full preview-frame reload]
     refresh --> done([preview updated])
     reload --> done
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: stories_preview_hmr
+    capability_id: component-workbench
+    claim_id: stories-preview-hmr
+    name: "Stories preview HMR"
+    command: "cargo test -p jet --test preview_hmr -- --nocapture"
+    proves: "Preview HMR updates the isolated preview while the manager shell remains untouched."
+  - id: hook_state_preserving_refresh
+    capability_id: component-workbench
+    claim_id: hook-state-preserving-refresh
+    name: "Hook-state-preserving refresh"
+    command: "cargo test -p jet --test preview_hmr -- --nocapture"
+    proves: "Compatible React Refresh preview edits preserve hook state and incompatible edits fall back to reload."
 ```
 
 ## Changes

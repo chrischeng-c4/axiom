@@ -1,8 +1,8 @@
 version = 1
 project = "jet"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-06-26T21:01:57.959481+00:00"
-digest = "sha256:59d589e023f1fb3781116667c4ad4ef2e013ff1bba3144a1b366ae4b688c89ac"
+generated_at = "2026-06-30T15:45:00.074+00:00"
+digest = "sha256:ba5c29059d438e0af4555059a534881a6ae2bdc7e15bb3ca101769791282b2f9"
 
 [[files]]
 path = "config/jet-config-validation.md"
@@ -14,7 +14,7 @@ digest = "sha256:5f7535812a7b3beb97e16eb0962e1dd552c23cc4341b4e0eda272750bc4d107
 
 [[files]]
 path = "interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md"
-digest = "sha256:f165b34589eed37f8afeda56c0f44aadaaa06119d699317226a80cbbbf7d1871"
+digest = "sha256:22c2a514a609d8bc148a64e03ca60b23e52f77ae34e08f6125f0323479846503"
 
 [[files]]
 path = "interfaces/cli/select-http-client-backend-fetch-axios-for-openapi-codegen.md"
@@ -137,6 +137,10 @@ path = "logic/jet-build-lib-d-ts-class-member-signature-reduction-remaining-ex.m
 digest = "sha256:c5219ea54b64635689e6bb2b8f5edba37f2ad0132d56348eecb85640236ec072"
 
 [[files]]
+path = "logic/jet-build-lib-dts-broken-lossy-d-ts-for-barrel-re-exports-silent.md"
+digest = "sha256:292a7a6d92c1ec93aaf81264498943b128b39f808a7ec8fadfcc0f85643c2356"
+
+[[files]]
 path = "logic/jet-build-lib-dts-emission.md"
 digest = "sha256:28fb2684a699e482560c810ef17586fe5db4201932dd5aef3d723e54251fe69c"
 
@@ -162,31 +166,31 @@ digest = "sha256:c686a168208f7f7998eba19b74853096e849f05a55390897b2cd0a920ecad63
 
 [[files]]
 path = "logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md"
-digest = "sha256:097864422c2fe89d8172156f741894c40ea0986905a991d84265ce5d048348f4"
+digest = "sha256:fcabccc303d1be801ef1642adf040d4c65e92de6bf5bb8e02a5bb8e495bf44a9"
 
 [[files]]
 path = "logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md"
-digest = "sha256:50ab15eef7f8c360e4d3e0c37bb4e12a985f1ed3217d205f3baf76efa951b503"
+digest = "sha256:406e5b5920f146aaf609c7997f311435eee6a07ecedcef38002fe44579992fdc"
 
 [[files]]
 path = "logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md"
-digest = "sha256:2601cf6874498d7afc9d7625e9135eea1244dab53263fbf5a1777e51d8e107ed"
+digest = "sha256:7ac09c8171ef15fdc09e28edea5f8c8801905035b8353c81e119c36783e47d0f"
 
 [[files]]
 path = "logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md"
-digest = "sha256:2730df02bba893238b4611b309c5362873261be824ba11c4ede3e7d1f70f4378"
+digest = "sha256:4b2acfd0a47449d9bd006b6a08ba15e9b823f32e9d9b7ebadc4fa177cfe967be"
 
 [[files]]
 path = "logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md"
-digest = "sha256:16529bdefc58565ff73b4325966b517eec4baa2d2253c248db46e1481a82884d"
+digest = "sha256:77f62f13d7efe8cc4310586f316cf57660ce0dd4ac5caada9aaeb54f93fc95de"
 
 [[files]]
 path = "logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md"
-digest = "sha256:1d356b6f1f4f014be60b63875ec1a15a26bd18ae433ceb5bc3cfab5679c43fe2"
+digest = "sha256:f15de30e0468feca8c7778d97c7f99206ecb120bc31ffb4c19a71a3d95199d6d"
 
 [[files]]
 path = "logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md"
-digest = "sha256:624ada408660bcd5764327c02653dd56c9359c53d8550f5383282ed7c5b62fbc"
+digest = "sha256:f0abbda105f61e86c4244529c493f1996a9c9e8256cc2ffa4d69b8831e467788"
 
 [[files]]
 path = "logic/jet-stories-hmr-state-preserving-react-refresh-for-the-story-pre.md"
@@ -194,7 +198,7 @@ digest = "sha256:8acd6d0566680fc7a81aeacbf9f99f3b3cc2567e9e38da6ef32c16a0af1883f
 
 [[files]]
 path = "logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md"
-digest = "sha256:1f3edc5de9137d27bf291b8bd1ee35c43bb5c26e95feff31cc8dc94e884c5bbe"
+digest = "sha256:e8b4769b0bc49551fd9eb6924010f53484ec357ba075f21e8bb27b00fa598f68"
 
 [[files]]
 path = "logic/jit-runner.md"
@@ -1006,7 +1010,7 @@ digest = "sha256:ed52eba01075c1701025aa217b13ac844fbfe71c9d01d724444011c2a34c815
 
 [[files]]
 path = "semantic/jet-browser-cli.md"
-digest = "sha256:fddce565acab3ae9a5cd8f1b2e093c2f171fd5c36d2080fd49f81a72c9a9378e"
+digest = "sha256:b338ca4c53b77a82884dfca2a66e6bced6b2d75307bd32cfdfc1d3f9437014da"
 
 [[files]]
 path = "semantic/jet-browser.md"
@@ -1030,7 +1034,7 @@ digest = "sha256:9a7ba38d539abbe714196b66f4b3ebc7a1dd2c6802e6a9819d35b18c88e7405
 
 [[files]]
 path = "semantic/jet-css.md"
-digest = "sha256:2bc6199ef43bf7db55350c3cfeba13848bd0c6ece67626ef2fe696e37a523702"
+digest = "sha256:d8003a462068cb5e6609f90810d96b8be1058414c38f02c477beddf85cbecc71"
 
 [[files]]
 path = "semantic/jet-data-runtime-test.md"
@@ -1137,6 +1141,10 @@ path = "semantic/jet-pm-report.md"
 digest = "sha256:e911fb27aca124c2e143eeb72e71e4fac9ff88953fb2bf846b93e7960817d7b1"
 
 [[files]]
+path = "semantic/jet-projects-jet.md"
+digest = "sha256:7daa02c643c893596f043eff268b36fe6b422578f7127821d36c5755eb19f5ea"
+
+[[files]]
 path = "semantic/jet-reporter.md"
 digest = "sha256:a6b14a56558e8fcf7a5b5c13b8886a58c01d0b6f61187c05577e7ecc5e35d39a"
 
@@ -1149,8 +1157,16 @@ path = "semantic/jet-runner.md"
 digest = "sha256:ff40801517f6268d0d9f941a7f37c1b59a7c73a1383d7ba81e731defbbb7757e"
 
 [[files]]
+path = "semantic/jet-scripts.md"
+digest = "sha256:4a2f48d0c11754cb697593c44948c5325ec7b6672b34fd430a4dee46b6c6ad7f"
+
+[[files]]
 path = "semantic/jet-src.md"
-digest = "sha256:968d341083a912e3ca149bb8dd8a668d6858b05c597f63f13b2b395d1cfa581a"
+digest = "sha256:e23f5b76c38b51be0c2e3f94e59669da6427518e09e170185f78cb6f0eff4ecc"
+
+[[files]]
+path = "semantic/jet-stories.md"
+digest = "sha256:3ff24b7609a61318642c47e49aee8cc037d65871e96877aae92eb8a7bfe5ca16"
 
 [[files]]
 path = "semantic/jet-task-runner.md"
@@ -1165,8 +1181,40 @@ path = "semantic/jet-test-runner.md"
 digest = "sha256:3078e52eac17c9f713f90bea5f278d6798667a6cc2cb22cd84aadbc7edb6da10"
 
 [[files]]
+path = "semantic/jet-tests-browser-bridge.md"
+digest = "sha256:9c89379cdb865b576a567af5534fefe477f8b54b16c9838cbac2927cadfc2d3d"
+
+[[files]]
 path = "semantic/jet-tests-common.md"
 digest = "sha256:7bad457a37051bc17990058a9ba88d986b14b4327b66a0253327c4a78ff39d4b"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-dom-production-build-antd-visual.md"
+digest = "sha256:8a2721e59ef9aefaa9421541f2cc052c7b4d4fa05d9871ff266884d263016596"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-dom-production-build-dom-production-assets.md"
+digest = "sha256:7ddfdff1ee83563c1d84c837b54abbb53c7ededd31fc9e3a9d8c67589b2a9032"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-dom-production-build-mui-visual.md"
+digest = "sha256:c435d2bfcad15177f8938d9d7e528468a608a5615a0c9b00b4d1fc04b36ceb6d"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-dom-production-build-react-bench.md"
+digest = "sha256:67e829e6dcab3d7c8b68f90d666a5d2ee8e1de308936bf8ccb7c4ca0e25e911a"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-dom-production-build-styled-components-visual.md"
+digest = "sha256:9f3ce9571feb5e3439ecab7c05b8e1761ba4bce3061049442ff54c074b0b4efb"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-dom-production-build-tailwind-visual.md"
+digest = "sha256:d118d7a5e5ccadf7b2ee108671e4c97bee933b57d64d4e0fef184ffa48320065"
+
+[[files]]
+path = "semantic/jet-tests-fixtures-dom-production-build.md"
+digest = "sha256:4c9236a2c882b85b72c17793223285de4228de0131cd8351601a630194b3bcee"
 
 [[files]]
 path = "semantic/jet-tests-fixtures-jet-test-api-compat.md"
@@ -1181,8 +1229,24 @@ path = "semantic/jet-tests-fixtures.md"
 digest = "sha256:92f9a4ab15721fb4aa9e214b6b7d0ff1a9f9791b65693691b6444c5f970a4f13"
 
 [[files]]
+path = "semantic/jet-tests-harness.md"
+digest = "sha256:e86e846449223c1062735c371a5b8ea44a4813d1311bc0f25971c5246bc3a686"
+
+[[files]]
+path = "semantic/jet-tests-pkg-mgmt.md"
+digest = "sha256:abe4ffd257de0de6b6e5b538601335390d61bad9609918331532793aaaa7ae70"
+
+[[files]]
+path = "semantic/jet-tests-snapshots-codegen.md"
+digest = "sha256:f0134dbfbaf9c5edbe3b9aef03ceb77a207d3cba1d9b46adcac19b5df1476bf1"
+
+[[files]]
+path = "semantic/jet-tests-wasm.md"
+digest = "sha256:20342d4bfe5727d89ea8cc199289d3ac1a00a7f71051d867ed8f32ae2eed8bf0"
+
+[[files]]
 path = "semantic/jet-tests.md"
-digest = "sha256:fd1b17b9ed863f290bbab914949b90064c3c7d61bdf1597e9763449819eeb65f"
+digest = "sha256:d3ea322bdf6aad6a4965000d143590db527ff8536f1d4add7e145da0887f6e79"
 
 [[files]]
 path = "semantic/jet-tools-conformance-src.md"
@@ -1246,7 +1310,7 @@ digest = "sha256:059e60325a58abe8aa12353628ce150b58cc6345b6fa1143329b7a00e93752c
 
 [[files]]
 path = "semantic/jet-wasm-tests.md"
-digest = "sha256:5a0fc0bfe1ccc879320dd3ba0c0d09d28c2f2dc0fd0e873be77a1d605ee966b0"
+digest = "sha256:ef4574e2058ce70fd6d7f11c69c1b14b57e834f12157c63fdbb1fe51503ac388"
 
 [[files]]
 path = "specs/1235.md"
@@ -1402,7 +1466,7 @@ digest = "sha256:6b2a6adf1b706a422d374ee824e47ddee849e2f482aa337ebd0c23198e49859
 
 [[files]]
 path = "specs/3786.md"
-digest = "sha256:464c13401ceaf8717f1f5bdda32b9dbea830cf1afc14626370c41afd611a0a5f"
+digest = "sha256:5fe21aa94d70119fdc8f9dab82b8823aaccbbadd3b51ca2c5f609901bcf212a0"
 
 [[files]]
 path = "specs/3941.md"

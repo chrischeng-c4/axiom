@@ -72,10 +72,25 @@ pub fn command() -> Command {
                         ),
                 )
                 .arg(
+                    Arg::new("prebundle")
+                        .long("prebundle")
+                        .conflicts_with("no-prebundle")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Run dev-server dependency prebundle after installing \
+                             dependencies. Default install is fast and defers \
+                             prebundle to the first `jet dev`.",
+                        ),
+                )
+                .arg(
                     Arg::new("no-prebundle")
                         .long("no-prebundle")
+                        .conflicts_with("prebundle")
                         .action(ArgAction::SetTrue)
-                        .help("Skip dev-server prebundle after dependency installation"),
+                        .help(
+                            "Compatibility no-op: install skips dev-server \
+                             prebundle by default.",
+                        ),
                 )
                 .arg(
                     Arg::new("nx")
@@ -454,14 +469,14 @@ pub fn command() -> Command {
                     // jet build --lib --preserve-modules — emit one output
                     // file per source module (mirroring the source tree)
                     // instead of bundling each entry into a single file.
-                    // ESM only. Overrides [lib].preserve_modules of jet.toml.
+                    // Supports ESM/CJS. Overrides [lib].preserve_modules of jet.toml.
                     Arg::new("preserve-modules")
                         .long("preserve-modules")
                         .action(ArgAction::SetTrue)
                         .help(
                             "Emit one output file per source module (mirroring \
                              the source tree) instead of bundling each entry. \
-                             ESM only. Overrides [lib].preserve_modules.",
+                             Supports ESM/CJS. Overrides [lib].preserve_modules.",
                         ),
                 )
                 .arg(
@@ -1921,7 +1936,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             let auto_ci_frozen = !m.get_flag("no-frozen-lockfile");
             let no_cache = m.get_flag("no-cache");
             let no_install = m.get_flag("no-install");
-            let prebundle = !m.get_flag("no-prebundle");
+            let prebundle = install_should_prebundle(m);
             let force_nx = m.get_flag("nx");
 
             // Detect workspace mode (Nx > Jet > Single).
@@ -4741,6 +4756,10 @@ async fn prebundle_after_install(root_dir: PathBuf) -> Result<()> {
         .map(|_| ())
 }
 
+fn install_should_prebundle(m: &ArgMatches) -> bool {
+    m.get_flag("prebundle")
+}
+
 #[cfg(test)]
 mod build_index_html_tests {
     use super::*;
@@ -5003,6 +5022,60 @@ mod e2e_command_contract_tests {
             help.contains("frontend unit, component, and integration-style tests"),
             "test help must keep frontend-test boundary: {help}"
         );
+    }
+
+    #[test]
+    fn install_help_marks_prebundle_as_opt_in_and_no_prebundle_as_compat() {
+        let help = help_text(&["jet", "install", "--help"]);
+        assert!(
+            help.contains("--prebundle"),
+            "install help must expose opt-in prebundle flag: {help}"
+        );
+        assert!(
+            help.contains("Default install is fast")
+                && help.contains("first `jet dev`")
+                && help.contains("Compatibility no-op"),
+            "install help must document fast default + no-prebundle compatibility: {help}"
+        );
+        assert!(
+            !help.contains("Skip dev-server prebundle after dependency installation"),
+            "install help must not describe prebundle as default-on anymore: {help}"
+        );
+    }
+
+    #[test]
+    fn install_prebundle_flag_is_opt_in_and_no_prebundle_is_noop_alias() {
+        let default_matches = command()
+            .try_get_matches_from(["jet", "install"])
+            .expect("default install parses");
+        let (_, default_install) = default_matches.subcommand().unwrap();
+        assert!(
+            !install_should_prebundle(default_install),
+            "plain `jet install` must use the fast no-prebundle default"
+        );
+
+        let opt_in_matches = command()
+            .try_get_matches_from(["jet", "install", "--prebundle"])
+            .expect("--prebundle parses");
+        let (_, opt_in_install) = opt_in_matches.subcommand().unwrap();
+        assert!(
+            install_should_prebundle(opt_in_install),
+            "`jet install --prebundle` must run post-install prebundle"
+        );
+
+        let compat_matches = command()
+            .try_get_matches_from(["jet", "install", "--no-prebundle"])
+            .expect("--no-prebundle compatibility alias parses");
+        let (_, compat_install) = compat_matches.subcommand().unwrap();
+        assert!(
+            !install_should_prebundle(compat_install),
+            "`--no-prebundle` remains accepted but is a no-op under the new default"
+        );
+
+        let err = command()
+            .try_get_matches_from(["jet", "install", "--prebundle", "--no-prebundle"])
+            .expect_err("prebundle and no-prebundle are mutually exclusive");
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
     #[test]
