@@ -9,7 +9,6 @@
 # case = "NormalDist____mul____x2_as_float_wrong"
 # subject = "statistics.NormalDist.__mul__(x2: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

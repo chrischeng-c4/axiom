@@ -9,7 +9,6 @@
 # case = "harmonic_mean__data_as_Iterable_wrong"
 # subject = "statistics.harmonic_mean(data: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

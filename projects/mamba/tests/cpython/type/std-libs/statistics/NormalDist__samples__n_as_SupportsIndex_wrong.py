@@ -9,7 +9,6 @@
 # case = "NormalDist__samples__n_as_SupportsIndex_wrong"
 # subject = "statistics.NormalDist.samples(n: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"
