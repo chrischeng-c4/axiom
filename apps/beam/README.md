@@ -26,9 +26,9 @@ indexes and GPU memory tiers.
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | GPU Vector Index | #769 | partial | verified | conformance | not_ready | GPU flat + IVF-flat + IVF-PQ ANN on wgpu/Metal, recall verified vs oracle; durable segments/memory-tiers/rebuild pending |
-| Batch Ingest And Rebuild | #769 | planned | planned | none | not_ready | vector ingest, compaction, and offline rebuild |
-| Vector Query API | #769 | planned | planned | none | not_ready | nearest-neighbor search with filters and recall gates |
-| HTTP/2 API List | #769 | planned | planned | none | not_ready | h2c/OpenAPI endpoint inventory |
+| Batch Ingest And Rebuild | #769 | partial | conformance | none | not_ready | batch upsert + CRUD + persistence (save/load); compaction present; offline rebuild pending |
+| Vector Query API | #769 | partial | conformance | none | not_ready | kNN + metadata filters over REST (`/v1/collections/{c}/query`); recall gates via ivf_recall |
+| HTTP/2 API List | #769 | partial | conformance | none | not_ready | h2c REST live (`beam serve`): health/collections/vectors/query; OpenAPI pending |
 | Kubernetes-Native Deployment | #769 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape with GPU scheduling |
 | Primary Replicas | #769 | planned | planned | none | not_ready | raft-backed metadata and index lifecycle ownership |
 | CLI Interface | #772 | partial | smoke | conformance | not_ready | shell + std verbs (llm/upgrade/issue) landed; vector verbs pending |
