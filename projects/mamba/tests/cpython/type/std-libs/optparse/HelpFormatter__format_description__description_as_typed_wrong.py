@@ -9,7 +9,6 @@
 # case = "HelpFormatter__format_description__description_as_typed_wrong"
 # subject = "optparse.HelpFormatter.format_description(description: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

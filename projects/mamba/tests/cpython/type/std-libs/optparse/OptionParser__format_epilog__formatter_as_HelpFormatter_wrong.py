@@ -9,7 +9,6 @@
 # case = "OptionParser__format_epilog__formatter_as_HelpFormatter_wrong"
 # subject = "optparse.OptionParser.format_epilog(formatter: HelpFormatter)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

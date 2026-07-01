@@ -9,7 +9,6 @@
 # case = "OptionParser__expand_prog_name__s_as_str_wrong"
 # subject = "optparse.OptionParser.expand_prog_name(s: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

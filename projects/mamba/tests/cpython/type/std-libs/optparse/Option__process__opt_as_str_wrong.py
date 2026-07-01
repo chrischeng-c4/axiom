@@ -9,7 +9,6 @@
 # case = "Option__process__opt_as_str_wrong"
 # subject = "optparse.Option.process(opt: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "OptionContainer__init__option_class_as_type_wrong"
 # subject = "optparse.OptionContainer.__init__(option_class: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed option_class"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed option_class
 # mamba-strict-type: TypeError
 """Type wall: optparse.OptionContainer.__init__(option_class: type); call it with the wrong type.
 

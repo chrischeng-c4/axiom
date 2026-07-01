@@ -9,12 +9,10 @@
 # case = "OptionParser__add_option_group__title_as_str_wrong"
 # subject = "optparse.OptionParser.add_option_group(title: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed title"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed title
 # mamba-strict-type: TypeError
 """Type wall: optparse.OptionParser.add_option_group(title: str); call it with the wrong type.
 

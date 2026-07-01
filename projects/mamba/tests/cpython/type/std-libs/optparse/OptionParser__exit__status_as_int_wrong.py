@@ -9,7 +9,6 @@
 # case = "OptionParser__exit__status_as_int_wrong"
 # subject = "optparse.OptionParser.exit(status: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

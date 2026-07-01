@@ -9,7 +9,6 @@
 # case = "OptionContainer__set_description__description_as_typed_wrong"
 # subject = "optparse.OptionContainer.set_description(description: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

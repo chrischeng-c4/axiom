@@ -9,7 +9,6 @@
 # case = "OptionParser__check_values__values_as_Values_wrong"
 # subject = "optparse.OptionParser.check_values(values: Values)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

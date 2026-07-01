@@ -9,7 +9,6 @@
 # case = "OptionContainer__get_option__opt_str_as_str_wrong"
 # subject = "optparse.OptionContainer.get_option(opt_str: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "HelpFormatter__store_option_strings__parser_as_OptionParser_wrong"
 # subject = "optparse.HelpFormatter.store_option_strings(parser: OptionParser)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

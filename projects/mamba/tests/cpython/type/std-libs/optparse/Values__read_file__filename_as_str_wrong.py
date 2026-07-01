@@ -9,7 +9,6 @@
 # case = "Values__read_file__filename_as_str_wrong"
 # subject = "optparse.Values.read_file(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

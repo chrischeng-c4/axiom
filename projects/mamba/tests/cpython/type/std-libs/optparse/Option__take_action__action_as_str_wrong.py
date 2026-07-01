@@ -9,7 +9,6 @@
 # case = "Option__take_action__action_as_str_wrong"
 # subject = "optparse.Option.take_action(action: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

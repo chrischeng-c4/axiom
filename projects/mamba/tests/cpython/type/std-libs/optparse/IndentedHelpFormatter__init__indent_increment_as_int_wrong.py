@@ -9,7 +9,6 @@
 # case = "IndentedHelpFormatter__init__indent_increment_as_int_wrong"
 # subject = "optparse.IndentedHelpFormatter.__init__(indent_increment: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "check_builtin__option_as_Option_wrong"
 # subject = "optparse.check_builtin(option: Option)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

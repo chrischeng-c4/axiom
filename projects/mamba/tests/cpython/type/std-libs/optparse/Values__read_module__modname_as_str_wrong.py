@@ -9,7 +9,6 @@
 # case = "Values__read_module__modname_as_str_wrong"
 # subject = "optparse.Values.read_module(modname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Option__convert_value__opt_as_str_wrong"
 # subject = "optparse.Option.convert_value(opt: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"

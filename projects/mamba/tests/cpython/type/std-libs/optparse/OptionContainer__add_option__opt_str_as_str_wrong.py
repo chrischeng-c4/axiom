@@ -9,12 +9,10 @@
 # case = "OptionContainer__add_option__opt_str_as_str_wrong"
 # subject = "optparse.OptionContainer.add_option(opt_str: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed opt_str"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/optparse.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed opt_str
 # mamba-strict-type: TypeError
 """Type wall: optparse.OptionContainer.add_option(opt_str: str); call it with the wrong type.
 
