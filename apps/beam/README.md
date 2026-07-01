@@ -35,7 +35,7 @@ indexes and GPU memory tiers.
 | Long-Running Stability | #769 | planned | planned | none | not_ready | GPU index soak, rebuild, failover, and recovery gates |
 | Security Hardening | #769 | planned | planned | none | not_ready | collection authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #769 | partial | conformance | none | not_ready | matrix landed (parity checklist vs Milvus/Qdrant/Faiss/cuVS/pgvector); features tracked F1-F5 |
-| Competitor Performance | #769 | planned | planned | none | not_ready | pinned vector recall/latency baseline, rerun only on scope change |
+| Competitor Performance | #769 | partial | dogfood | conformance | not_ready | pinned baseline: beam-GPU beats faiss-CPU batched flat at n>=100k (1.06-2.3x, recall 1.000); loses single-query latency |
 
 ### CLI Interface
 
@@ -127,7 +127,7 @@ Promise:
 Beam maintains a pinned competitor performance baseline and reruns external
 benchmarks only when the comparison scope changes or a human explicitly asks.
 Gate Inventory:
-- pending: apps/beam/benchmark/competitor-performance-baseline.md
+- landed: apps/beam/benchmark/competitor-performance-baseline.md (beam-GPU beats faiss-CPU batched flat at n>=100k; independently re-verified)
 - pending: apps/beam/meter-beam-query.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |

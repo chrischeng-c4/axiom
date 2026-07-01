@@ -52,15 +52,18 @@ None target Apple Silicon / Metal. That gap is beam's wedge (see Positioning).
 Beating cuVS/CAGRA on NVIDIA is out of near-term scope (and needs NVIDIA hardware).
 The **honest, measurable** performance wins for beam:
 
-1. **MEASURED, and it's not a latency win (see `competitor-performance-baseline.md`).**
-   The "faster on this machine" hypothesis was **falsified**: on M1 Max, **faiss-CPU-flat
-   beats beam-GPU-flat at every size** (10.1× / 5.0× / 2.2× slower at 10k/100k/1M,
-   both recall 1.000). Apple's **AMX/Accelerate** makes the CPU competitor extremely
-   fast — there is no "weak CPU fallback" to exploit — and beam pays a ~1.7 ms
-   per-query GPU dispatch/readback floor with **no query batching**. Claim retracted.
-2. **Where beam's GPU honestly shows:** the gap **narrows with n** (10.1×→2.2×), so
-   GPU scan scales better than AMX-CPU; a crossover needs n≫1M **and/or a batched GPU
-   query path** (the concrete lever, tracked as **P2**).
+1. **BATCHED THROUGHPUT: beam WINS at scale (measured + re-verified, see
+   `competitor-performance-baseline.md`).** After a GEMM-tiled + vec4 batched flat
+   kernel, **beam-GPU beats faiss-CPU batched at n ≥ 100k** — **1.06× @100k, ~2×
+   @1M, ~2.3× @1M–4M**, exact flat, both recall 1.000, same M1 Max. This is a real
+   goal-2 win on the throughput axis. (The journey: serial was 9× slower →
+   GPU-side top-k → tiled DB-reuse + vec4 crossed over. Tiling + vec4 *together*
+   beat AMX; neither alone did.)
+2. **SINGLE-QUERY LATENCY: beam does NOT win** — Apple's AMX/Accelerate BLAS is too
+   strong for one-query-at-a-time, and beam has a ~1.7 ms per-query GPU dispatch
+   floor. beam also loses batched at tiny n=10k (dispatch-bound). The earlier
+   blanket "faster on this machine" claim was **falsified then narrowed**: beam wins
+   *batched throughput at scale*, not single-query latency.
 3. **Memory at scale (real win):** IVF-PQ codes are ~`dim·4/m`× smaller than full
    vectors — **32× smaller at 1M/dim128/m16** (measured) — so beam indexes corpora
    that don't fit as full vectors.
