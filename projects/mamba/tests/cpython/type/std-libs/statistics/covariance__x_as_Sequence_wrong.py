@@ -9,12 +9,10 @@
 # case = "covariance__x_as_Sequence_wrong"
 # subject = "statistics.covariance(x: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x
 # mamba-strict-type: TypeError
 """Type wall: statistics.covariance(x: Sequence); call it with the wrong type.
 
