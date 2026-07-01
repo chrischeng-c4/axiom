@@ -9,12 +9,10 @@
 # case = "TestCase__assertRegex__text_as_AnyStr_wrong"
 # subject = "unittest.case.TestCase.assertRegex(text: AnyStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed text"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed text
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertRegex(text: AnyStr); call it with the wrong type.
 

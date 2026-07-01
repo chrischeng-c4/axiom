@@ -9,12 +9,10 @@
 # case = "FunctionTestCase__init__testFunc_as_Callable_wrong"
 # subject = "unittest.case.FunctionTestCase.__init__(testFunc: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed testFunc"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed testFunc
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.FunctionTestCase.__init__(testFunc: Callable); call it with the wrong type.
 

@@ -9,7 +9,6 @@
 # case = "TestCase__init__methodName_as_str_wrong"
 # subject = "unittest.case.TestCase.__init__(methodName: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"

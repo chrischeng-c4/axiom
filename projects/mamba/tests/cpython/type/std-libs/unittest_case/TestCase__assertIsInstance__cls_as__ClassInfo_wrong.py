@@ -9,12 +9,10 @@
 # case = "TestCase__assertIsInstance__cls_as__ClassInfo_wrong"
 # subject = "unittest.case.TestCase.assertIsInstance(cls: _ClassInfo)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertIsInstance(cls: _ClassInfo); call it with the wrong type.
 

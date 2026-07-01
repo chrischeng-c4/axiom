@@ -9,12 +9,10 @@
 # case = "TestCase__assertNotAlmostEqual__first_as_SupportsSub_wrong"
 # subject = "unittest.case.TestCase.assertNotAlmostEqual(first: SupportsSub)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed first"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed first
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertNotAlmostEqual(first: SupportsSub); call it with the wrong type.
 

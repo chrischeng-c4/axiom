@@ -9,12 +9,10 @@
 # case = "enterModuleContext__cm_as_AbstractContextManager_wrong"
 # subject = "unittest.case.enterModuleContext(cm: AbstractContextManager)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cm"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cm
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.enterModuleContext(cm: AbstractContextManager); call it with the wrong type.
 

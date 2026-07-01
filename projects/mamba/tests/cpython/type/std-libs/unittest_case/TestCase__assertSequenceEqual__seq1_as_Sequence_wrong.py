@@ -9,12 +9,10 @@
 # case = "TestCase__assertSequenceEqual__seq1_as_Sequence_wrong"
 # subject = "unittest.case.TestCase.assertSequenceEqual(seq1: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed seq1"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed seq1
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertSequenceEqual(seq1: Sequence); call it with the wrong type.
 

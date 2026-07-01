@@ -9,7 +9,6 @@
 # case = "TestCase__assertLogs__logger_as_typed_wrong"
 # subject = "unittest.case.TestCase.assertLogs(logger: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"

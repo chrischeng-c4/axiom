@@ -9,7 +9,6 @@
 # case = "TestCase__assertCountEqual__first_as_Iterable_wrong"
 # subject = "unittest.case.TestCase.assertCountEqual(first: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
