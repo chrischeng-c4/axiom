@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-07-01T11:06:26.594137+00:00"
-digest = "sha256:1e1af87c5c299bbf26c41b9759cfe0f055b76160ab944d4a2f820cda4a70e28e"
-source_digest = "sha256:1e1af87c5c299bbf26c41b9759cfe0f055b76160ab944d4a2f820cda4a70e28e"
-ir_digest = "sha256:58b23275d2fa83b23d4432c8cc9a4bae6c3f7cbb34fc1586730ae4374e38d8a0"
+generated_at = "2026-07-01T13:34:34.455130+00:00"
+digest = "sha256:95457a934ee1fc1e55a9c63ce222a920772cce785a08b90ddf7fc62fe9c4d7d0"
+source_digest = "sha256:95457a934ee1fc1e55a9c63ce222a920772cce785a08b90ddf7fc62fe9c4d7d0"
+ir_digest = "sha256:5e8e96b77d2c65211ec71e3a01ead7aef2b76b04c608e7143725bc7b8131e30c"
 
 [[files]]
 path = "config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md"
@@ -293,6 +293,12 @@ section_count = 2
 path = "logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md"
 digest = "sha256:fcabccc303d1be801ef1642adf040d4c65e92de6bf5bb8e02a5bb8e495bf44a9"
 ir_digest = "sha256:716430592fd83bdb85805a14350ead6e06b9a8c9e0932ac2a18897fc09c6f54e"
+section_count = 3
+
+[[files]]
+path = "logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md"
+digest = "sha256:479ec7b3b729f787055a973b118a11e9ba066b37d6b2f695be215cccdb41f3c3"
+ir_digest = "sha256:86dd49464efc46b36803523473703934851845bc753bdc3147ee7a5bbc7b7417"
 section_count = 3
 
 [[files]]
