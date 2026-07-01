@@ -103,19 +103,19 @@ changes:
     action: modify
     section: logic
     description: |
-      Discover workspace context by walking ancestors from the publishing
-      package directory, then rewrite workspace protocol ranges in
-      dependencies, devDependencies, peerDependencies, and
-      optionalDependencies before package.json is written into the tarball or
-      publish body.
+      Add a small workspace-discovery helper for publish packaging that checks
+      the package root and each ancestor until WorkspaceManager can load a
+      workspace containing the published package. Reuse the existing
+      resolve_workspace_protocol semantics and extend field rewriting to
+      peerDependencies and optionalDependencies.
     impl_mode: hand-written
   - path: "projects/jet/tests/publish/library_publish_e2e.rs"
     action: modify
     section: unit-test
     description: |
-      Add a pack regression with a package nested under a pnpm workspace root.
-      Assert the packed package.json rewrites workspace:*, workspace:^, and
-      workspace:~ ranges across publish-relevant dependency fields and contains
-      no workspace: protocol literals.
+      Add tarball inspection for a nested workspace package. The fixture packs
+      one package with workspace:*, workspace:^, and workspace:~ dependencies
+      on sibling packages, then asserts package/package.json contains exact,
+      caret, and tilde semver ranges with no workspace: literals.
     impl_mode: hand-written
 ```
