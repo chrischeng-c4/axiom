@@ -9,12 +9,10 @@
 # case = "HTMLParser__goahead__end_as_bool_wrong"
 # subject = "html.parser.HTMLParser.goahead(end: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed end"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/html/parser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed end
 # mamba-strict-type: TypeError
 """Type wall: html.parser.HTMLParser.goahead(end: bool); call it with the wrong type.
 

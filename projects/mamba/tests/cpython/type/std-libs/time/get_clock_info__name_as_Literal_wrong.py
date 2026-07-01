@@ -9,12 +9,10 @@
 # case = "get_clock_info__name_as_Literal_wrong"
 # subject = "time.get_clock_info(name: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/time.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: time.get_clock_info(name: Literal); call it with the wrong type.
 

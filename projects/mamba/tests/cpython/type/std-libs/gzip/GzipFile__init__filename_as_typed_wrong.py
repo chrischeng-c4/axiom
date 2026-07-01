@@ -9,12 +9,10 @@
 # case = "GzipFile__init__filename_as_typed_wrong"
 # subject = "gzip.GzipFile.__init__(filename: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gzip.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename
 # mamba-strict-type: TypeError
 """Type wall: gzip.GzipFile.__init__(filename: typed); call it with the wrong type.
 

@@ -4912,6 +4912,83 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("numerator", CoreTy::Typed)],
         enforceable: true,
     },
+    // Misc stdlib strict-wall probes where generated rows collapse protocols,
+    // literals, or overload-heavy constructor shapes to Unknown/Typed. Keep the
+    // probed leading wall precise and leave the rest skip-safe.
+    StdlibSig {
+        module: "genericpath",
+        qualifier: "",
+        name: "commonprefix",
+        kind: SigKind::ModuleFn,
+        params: &[p("m", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "gzip",
+        qualifier: "GzipFile",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "html.parser",
+        qualifier: "HTMLParser",
+        name: "goahead",
+        kind: SigKind::Method,
+        params: &[p("end", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pkgutil",
+        qualifier: "",
+        name: "extend_path",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed), p("name", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "platform",
+        qualifier: "",
+        name: "platform",
+        kind: SigKind::ModuleFn,
+        params: &[p("aliased", CoreTy::Bool), p("terse", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pprint",
+        qualifier: "PrettyPrinter",
+        name: "format",
+        kind: SigKind::Method,
+        params: &[
+            p("object", CoreTy::Unknown),
+            p("context", CoreTy::Dict),
+            p("maxlevels", CoreTy::Int),
+            p("level", CoreTy::Int),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "py_compile",
+        qualifier: "PyCompileError",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("exc_type", CoreTy::Type),
+            p("exc_value", CoreTy::Typed),
+            p("file", CoreTy::Str),
+            p("msg", CoreTy::Str),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "time",
+        qualifier: "",
+        name: "get_clock_info",
+        kind: SigKind::ModuleFn,
+        params: &[p("name", CoreTy::Str)],
+        enforceable: true,
+    },
     // imaplib.Idler.__exit__ uses Unused/Optional exception-state overload
     // pieces that the generated table collapses to Unknown. Keep the probed
     // exception-value slot as a strict typed wall while skipping None sentinels.
@@ -6432,6 +6509,32 @@ mod tests {
         let walk = get("pathlib", "Path", "walk").expect("Path.walk row present");
         assert_eq!(walk.params[2].name, "follow_symlinks");
         assert_eq!(walk.params[2].ty, CoreTy::Bool);
+    }
+
+    #[test]
+    fn curated_misc_stdlib_single_walls_override_generated_rows() {
+        for (module, qualifier, name, param_idx, param_name, param_ty) in [
+            ("genericpath", "", "commonprefix", 0, "m", CoreTy::Typed),
+            ("gzip", "GzipFile", "__init__", 0, "filename", CoreTy::Typed),
+            ("html.parser", "HTMLParser", "goahead", 0, "end", CoreTy::Bool),
+            ("pkgutil", "", "extend_path", 0, "path", CoreTy::Typed),
+            ("platform", "", "platform", 0, "aliased", CoreTy::Bool),
+            ("pprint", "PrettyPrinter", "format", 1, "context", CoreTy::Dict),
+            (
+                "py_compile",
+                "PyCompileError",
+                "__init__",
+                0,
+                "exc_type",
+                CoreTy::Type,
+            ),
+            ("time", "", "get_clock_info", 0, "name", CoreTy::Str),
+        ] {
+            let sig = get(module, qualifier, name).expect("curated row present");
+            assert!(sig.enforceable, "{module}.{qualifier}.{name}");
+            assert_eq!(sig.params[param_idx].name, param_name);
+            assert_eq!(sig.params[param_idx].ty, param_ty);
+        }
     }
 
     #[test]
