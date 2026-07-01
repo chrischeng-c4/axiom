@@ -9,15 +9,15 @@
 # case = "a_s_t__tests__test_field_attr_writable"
 # subject = "cpython.test_ast.AST_Tests.test_field_attr_writable"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
-import unittest, io
-from test.test_ast import test_ast
-_suite = unittest.defaultTestLoader.loadTestsFromName("AST_Tests.test_field_attr_writable", test_ast)
-_result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(_suite)
-assert _result.wasSuccessful(), "CPython AST_Tests.test_field_attr_writable did not pass"
+import ast
+
+x = ast.Constant()
+x._fields = 666
+assert x._fields == 666
+
 print("AST_Tests::test_field_attr_writable: ok")
