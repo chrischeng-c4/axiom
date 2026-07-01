@@ -184,6 +184,12 @@ pub fn command() -> Command {
                         .long("build")
                         .action(clap::ArgAction::SetTrue)
                         .help("Run `jet build --lib` before publishing (build-before-publish)"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .action(clap::ArgAction::SetTrue)
+                        .help("Preview publish metadata and tarball contents without uploading"),
                 ),
         )
         .subcommand(
@@ -2056,9 +2062,16 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             let access = m.get_one::<String>("access").map(|s| s.as_str());
             // #172 — `--build` runs `jet build --lib` before packing.
             let build_first = m.get_flag("build");
+            let dry_run = m.get_flag("dry-run");
             let publisher =
                 crate::pkg_manager::publish::Publisher::new(root_dir).with_build(build_first);
-            publisher.publish(tag, access).await
+            if dry_run {
+                let preview = publisher.dry_run(tag, access)?;
+                println!("{}", preview.report());
+                Ok(())
+            } else {
+                publisher.publish(tag, access).await
+            }
         }
 
         Some(("pack", m)) => {
@@ -5076,6 +5089,40 @@ mod e2e_command_contract_tests {
             .try_get_matches_from(["jet", "install", "--prebundle", "--no-prebundle"])
             .expect_err("prebundle and no-prebundle are mutually exclusive");
         assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn publish_dry_run_parser_accepts_existing_publish_options() {
+        let matches = command()
+            .try_get_matches_from([
+                "jet",
+                "publish",
+                "--dry-run",
+                "--tag",
+                "beta",
+                "--access",
+                "restricted",
+                "--build",
+            ])
+            .expect("publish --dry-run parses");
+        let (name, publish) = matches.subcommand().expect("top-level subcommand");
+        assert_eq!(name, "publish");
+        assert!(
+            publish.get_flag("dry-run"),
+            "publish --dry-run must set the dry-run flag"
+        );
+        assert!(
+            publish.get_flag("build"),
+            "publish --dry-run must compose with --build"
+        );
+        assert_eq!(
+            publish.get_one::<String>("tag").map(String::as_str),
+            Some("beta")
+        );
+        assert_eq!(
+            publish.get_one::<String>("access").map(String::as_str),
+            Some("restricted")
+        );
     }
 
     #[test]
