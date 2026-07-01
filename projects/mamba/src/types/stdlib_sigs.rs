@@ -4975,6 +4975,16 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("first", CoreTy::Typed), p("last", CoreTy::Unknown)],
         enforceable: true,
     },
+    // importlib.metadata._meta.SimplePath.read_text has optional encoding in
+    // typeshed, but the generated row collapses to no params.
+    StdlibSig {
+        module: "importlib.metadata._meta",
+        qualifier: "SimplePath",
+        name: "read_text",
+        kind: SigKind::Method,
+        params: &[p("encoding", CoreTy::Typed)],
+        enforceable: true,
+    },
     // fractions.Fraction arithmetic partners are generated from overloaded
     // numeric aliases and collapse to Unknown. For strict-type fixtures, use
     // Complex as the broad numeric wall: int/float/bool remain compatible, while
@@ -7222,6 +7232,14 @@ mod tests {
             ("ipaddress", "", "ip_interface", 0, "address", CoreTy::Typed),
             ("ipaddress", "", "ip_network", 0, "address", CoreTy::Typed),
             ("ipaddress", "", "summarize_address_range", 0, "first", CoreTy::Typed),
+            (
+                "importlib.metadata._meta",
+                "SimplePath",
+                "read_text",
+                0,
+                "encoding",
+                CoreTy::Typed,
+            ),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
