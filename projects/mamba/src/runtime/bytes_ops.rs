@@ -111,6 +111,21 @@ fn str_from_value(val: MbValue) -> Option<String> {
     })
 }
 
+fn is_str_value(val: MbValue) -> bool {
+    str_from_value(val).is_some()
+}
+
+fn bytes_width_arg(width: MbValue) -> Option<usize> {
+    let Some(w) = width.as_int() else {
+        raise_type_error(&format!(
+            "'{}' object cannot be interpreted as an integer",
+            super::builtins::value_type_name(width)
+        ));
+        return None;
+    };
+    Some(w.max(0) as usize)
+}
+
 fn encode_str_with_encoding(s: &str, encoding: &str) -> Option<Vec<u8>> {
     let normalized = encoding.to_ascii_lowercase().replace('_', "-");
     match normalized.as_str() {
@@ -2126,6 +2141,8 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             // trailing kwargs Dict.
             let mut encoding = MbValue::none();
             let mut errors = MbValue::none();
+            let mut encoding_provided = false;
+            let mut errors_provided = false;
             let last_is_kwargs = if argc() > 0 {
                 unsafe {
                     if let Some(ptr) = arg(argc() - 1).as_ptr() {
@@ -2140,9 +2157,11 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             let positional_count = if last_is_kwargs { argc() - 1 } else { argc() };
             if positional_count >= 1 {
                 encoding = arg(0);
+                encoding_provided = true;
             }
             if positional_count >= 2 {
                 errors = arg(1);
+                errors_provided = true;
             }
             if last_is_kwargs {
                 unsafe {
@@ -2154,6 +2173,7 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
                                     guard.get(&super::dict_ops::DictKey::Str("encoding".into()))
                                 {
                                     encoding = v;
+                                    encoding_provided = true;
                                 }
                             }
                             if errors.is_none() {
@@ -2161,11 +2181,26 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
                                     guard.get(&super::dict_ops::DictKey::Str("errors".into()))
                                 {
                                     errors = v;
+                                    errors_provided = true;
                                 }
                             }
                         }
                     }
                 }
+            }
+            if encoding_provided && !is_str_value(encoding) {
+                raise_type_error(&format!(
+                    "decode() argument 'encoding' must be str, not {}",
+                    super::builtins::value_type_name(encoding)
+                ));
+                return MbValue::none();
+            }
+            if errors_provided && !is_str_value(errors) {
+                raise_type_error(&format!(
+                    "decode() argument 'errors' must be str, not {}",
+                    super::builtins::value_type_name(errors)
+                ));
+                return MbValue::none();
             }
             mb_bytes_decode_with(receiver, encoding, errors)
         }
@@ -2506,7 +2541,9 @@ pub fn mb_bytes_rindex(
 
 pub fn mb_bytes_center(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let w = width.as_int().unwrap_or(0).max(0) as usize;
+    let Some(w) = bytes_width_arg(width) else {
+        return MbValue::none();
+    };
     // CPython: the fill argument must be a byte string of length 1.
     if let Some(v) = extract_bytes(fill) {
         if v.len() != 1 {
@@ -2537,7 +2574,9 @@ pub fn mb_bytes_center(receiver: MbValue, width: MbValue, fill: MbValue) -> MbVa
 
 pub fn mb_bytes_ljust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let w = width.as_int().unwrap_or(0).max(0) as usize;
+    let Some(w) = bytes_width_arg(width) else {
+        return MbValue::none();
+    };
     if data.len() >= w {
         return bytes_to_value(receiver, data);
     }
@@ -2549,7 +2588,9 @@ pub fn mb_bytes_ljust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbVal
 
 pub fn mb_bytes_rjust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let w = width.as_int().unwrap_or(0).max(0) as usize;
+    let Some(w) = bytes_width_arg(width) else {
+        return MbValue::none();
+    };
     if data.len() >= w {
         return bytes_to_value(receiver, data);
     }
@@ -2632,7 +2673,9 @@ pub fn mb_bytes_via_str<F: Fn(&str) -> String>(receiver: MbValue, f: F) -> MbVal
 
 pub fn mb_bytes_zfill(receiver: MbValue, width: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let w = width.as_int().unwrap_or(0).max(0) as usize;
+    let Some(w) = bytes_width_arg(width) else {
+        return MbValue::none();
+    };
     if data.len() >= w {
         return bytes_to_value(receiver, data);
     }
@@ -3085,9 +3128,23 @@ mod tests {
     #[test]
     fn test_dispatch_decode() {
         let b = MbValue::from_ptr(MbObject::new_bytes(vec![65]));
-        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::none()]));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let r = dispatch_bytes_method("decode", b, args);
         assert!(r.is_ptr());
+    }
+
+    #[test]
+    fn test_dispatch_decode_explicit_none_encoding_rejected() {
+        crate::runtime::exception::mb_clear_exception();
+        let b = MbValue::from_ptr(MbObject::new_bytes(vec![65]));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::none()]));
+        let r = dispatch_bytes_method("decode", b, args);
+        assert!(r.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
