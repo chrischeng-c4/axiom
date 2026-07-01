@@ -38,6 +38,9 @@ enum Command {
     /// Print loom's OpenAPI control-API contract offline (the `/openapi.json`
     /// twin), or `spec gen` a typed client (ts/py/rust) from it. No server.
     Spec(SpecArgs),
+    /// Render loom's container image Dockerfile — `--variant source` (dev/CI
+    /// from-source build) or `release` (fetch a published binary). Offline.
+    Dockerfile(DockerfileArgs),
     /// Print agent-facing LLM topics — offline, no server. `outline` (default)
     /// maps the topics; pass a topic id for detail (`--format json` for a
     /// machine-readable form).
@@ -111,6 +114,38 @@ enum GenLang {
 enum GenHttp {
     Fetch,
     Axios,
+}
+
+/// `loom dockerfile render …` flags.
+#[derive(clap::Args)]
+struct DockerfileArgs {
+    #[command(subcommand)]
+    cmd: DockerfileCmd,
+}
+
+#[derive(Subcommand)]
+enum DockerfileCmd {
+    /// Print (or write with `--out`) the Dockerfile for a build variant.
+    Render(DockerfileRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct DockerfileRenderArgs {
+    /// `source` (from-source dev/CI build) or `release` (fetch published binary).
+    #[arg(long, value_enum, default_value_t = DockerfileVariant::Source)]
+    variant: DockerfileVariant,
+    /// Pin the release image to this version (`0.4.3` or `loom@0.4.3`).
+    #[arg(long)]
+    version: Option<String>,
+    /// Write to this path or directory instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum DockerfileVariant {
+    Source,
+    Release,
 }
 
 /// `loom llm` flags.
@@ -283,6 +318,8 @@ fn main() -> anyhow::Result<()> {
         Command::SchemaLayer => loom::schema_layer::run(),
         // Offline: emit the OpenAPI contract (or a typed client), no server.
         Command::Spec(args) => spec(args),
+        // Offline: emit a container image Dockerfile, no server.
+        Command::Dockerfile(args) => dockerfile(args),
         // Offline: render the in-code topics, no runtime/server/I/O beyond stdout.
         Command::Llm(args) => {
             let out = cli_std::llm::render(
@@ -415,6 +452,74 @@ fn spec_gen(args: SpecGenArgs) -> anyhow::Result<()> {
         println!("generated {}", path.display());
     }
     Ok(())
+}
+
+/// `loom dockerfile render` — emit the checked-in Dockerfile for a build
+/// variant (the checked-in files are the fixtures; `--version` rebinds the
+/// release image tag). Offline: the templates are baked into the binary.
+fn dockerfile(args: DockerfileArgs) -> anyhow::Result<()> {
+    match args.cmd {
+        DockerfileCmd::Render(args) => {
+            let (name, body) = match args.variant {
+                DockerfileVariant::Source => {
+                    ("Dockerfile".to_string(), include_str!("../Dockerfile").to_string())
+                }
+                DockerfileVariant::Release => (
+                    "Dockerfile.release".to_string(),
+                    render_release_dockerfile(args.version.as_deref()),
+                ),
+            };
+            write_or_print(args.out.as_deref(), &name, &body)
+        }
+    }
+}
+
+/// Rebind the `LOOM_VERSION` build-arg (and the example `docker build` line) in
+/// the release Dockerfile to `version` (defaults to the checked-in tag).
+fn render_release_dockerfile(version: Option<&str>) -> String {
+    let template = include_str!("../Dockerfile.release");
+    let Some(version) = version else {
+        return template.to_string();
+    };
+    let tag = if version.starts_with("loom@") {
+        version.to_string()
+    } else {
+        format!("loom@{version}")
+    };
+    let bare = tag.trim_start_matches("loom@");
+    let mut out = String::new();
+    for line in template.lines() {
+        if line.starts_with("ARG LOOM_VERSION=") {
+            out.push_str(&format!("ARG LOOM_VERSION={tag}"));
+        } else if line.starts_with("#   docker build -f projects/loom/Dockerfile.release -t loom:") {
+            out.push_str(&format!(
+                "#   docker build -f projects/loom/Dockerfile.release -t loom:{bare} \\"
+            ));
+        } else if line.starts_with("#     --build-arg LOOM_VERSION=") {
+            out.push_str(&format!("#     --build-arg LOOM_VERSION={tag} ."));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Write `body` to `out` (a file, or `<dir>/<name>` when `out` is a directory),
+/// or print it to stdout when `out` is `None`. Shared by the render verbs.
+fn write_or_print(out: Option<&std::path::Path>, name: &str, body: &str) -> anyhow::Result<()> {
+    match out {
+        None => {
+            print!("{body}");
+            Ok(())
+        }
+        Some(p) => {
+            let path = if p.is_dir() { p.join(name) } else { p.to_path_buf() };
+            std::fs::write(&path, body)?;
+            println!("wrote {}", path.display());
+            Ok(())
+        }
+    }
 }
 
 /// Run a future to completion on a fresh runtime. The standard CLI ops
