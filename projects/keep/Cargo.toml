@@ -45,6 +45,10 @@ axum.workspace = true
 tower = { workspace = true, features = ["util"] }
 tower-http.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
+# Shared polyglot OpenAPI client codegen (libs/openapi-codegen). `keep spec gen`
+# composes its `generate(...)` on keep's own OpenAPI — one codegen path, no
+# external tool. Always linked (pure Rust, no network).
+cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 # Shared k8s-native HTTP service shell (#751) — standard probes, request
 # tracing, h2c serve, and graceful drain. Composes libs/h2c for HTTP/2 cleartext
 # + HTTP/1.1 on one port, so keep no longer hand-rolls the hyper-util auto-server.
@@ -82,7 +86,10 @@ kube = { version = "0.98", features = ["runtime", "derive", "client"], optional 
 k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 schemars = { version = "0.8", optional = true }
 operator = { path = "../../libs/operator", optional = true }
-serde_yaml = { workspace = true, optional = true }
+# YAML serialization. Non-optional: `keep spec --format openapi-yaml` (offline)
+# emits the OpenAPI document as YAML in every build; the operator feature also
+# uses it to render manifests.
+serde_yaml = { workspace = true }
 # Process-level rustls crypto provider install (operator/kube, raft-host peer
 # transport, and the online CLI ops all link rustls). Optional so the default
 # build stays rustls-free and fast.
@@ -117,7 +124,6 @@ operator = [
     "dep:k8s-openapi",
     "dep:schemars",
     "dep:operator",
-    "dep:serde_yaml",
     "rustls-provider",
 ]
 # Private: link rustls + install its process-level crypto provider at startup.

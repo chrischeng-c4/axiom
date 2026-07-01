@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -66,6 +66,19 @@ enum Command {
     /// `gs://` route to the shared placeholder sink until a cloud adapter
     /// feature is linked), applying optional age retention.
     Backup(BackupArgs),
+    /// Print keep's machine-readable integration spec — offline, no server. The
+    /// default emits the OpenAPI 3 JSON document (the offline twin of
+    /// `/openapi.json`); `--format openapi-yaml` for LLM-readable YAML,
+    /// `--format json-schema` for the data types, `--shapes` for the request
+    /// cookbook, `--fields` for the value-type catalog. `spec gen --lang
+    /// ts|py|rust --out <dir>` generates a typed client instead.
+    // @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+    Spec(SpecArgs),
+    /// Render keep's runtime image Dockerfiles — offline, no server. Image
+    /// construction is owned here (not by `k8s`) because the same artifact feeds
+    /// compose, kind, and real registries.
+    // @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+    Dockerfile(DockerfileArgs),
 }
 
 /// `keep k8s <crd|operator|instance>` — cluster artifacts split by lifecycle
@@ -278,6 +291,111 @@ struct BackupArgs {
     retention_secs: Option<u64>,
 }
 
+/// `keep spec [--format ...] [--shapes] [--fields]` or `keep spec gen ...`.
+/// Positional slots are reserved for the `gen` subcommand; everything else is a
+/// flag (the CLI convention).
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+#[derive(clap::Args, Debug)]
+struct SpecArgs {
+    /// Generate a typed client from the spec instead of printing it.
+    #[command(subcommand)]
+    gen: Option<SpecSub>,
+    /// Schema format to emit when neither `--shapes` nor `--fields` is set.
+    #[arg(long, value_enum, default_value_t = SpecFormat::Openapi)]
+    format: SpecFormat,
+    /// Emit the request-shape cookbook (canonical request bodies) instead.
+    #[arg(long)]
+    shapes: bool,
+    /// Emit the value-type catalog (the KvValue kinds keep stores) instead.
+    #[arg(long)]
+    fields: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum SpecSub {
+    /// Generate a typed API client (TypeScript / Python / Rust) from keep's
+    /// OpenAPI document, written into `--out`.
+    Gen(GenArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct GenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Output directory for the generated files.
+    #[arg(long)]
+    out: PathBuf,
+    /// HTTP backend for the TypeScript client (ignored for py/rust).
+    #[arg(long, value_enum, default_value_t = GenHttp::Fetch)]
+    http: GenHttp,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenLang {
+    /// TypeScript: types + fetch/axios client + TanStack Query hooks.
+    Ts,
+    /// Python: pydantic models + a generated sync/async HTTP/2 runtime.
+    Py,
+    /// Rust: serde models + a reqwest client.
+    Rust,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenHttp {
+    Fetch,
+    Axios,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SpecFormat {
+    /// Full OpenAPI 3 document as JSON (default).
+    Openapi,
+    /// Full OpenAPI 3 document as YAML for LLM/agent reading.
+    #[value(alias = "yaml", alias = "openapi.yaml")]
+    OpenapiYaml,
+    /// Just the component schemas (request/response data types).
+    JsonSchema,
+}
+
+/// `keep dockerfile <render>` — render keep's runtime image Dockerfiles.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+#[derive(clap::Args, Debug)]
+struct DockerfileArgs {
+    #[command(subcommand)]
+    cmd: DockerfileCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum DockerfileCmd {
+    /// Render a Dockerfile to stdout or `--out`.
+    Render(DockerfileRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct DockerfileRenderArgs {
+    /// Which runtime image contract to render.
+    #[arg(long, value_enum, default_value_t = DockerfileVariant::Source)]
+    variant: DockerfileVariant,
+    /// Release tag used by `--variant release`; accepts `0.4.3` or `keep@0.4.3`.
+    #[arg(long)]
+    version: Option<String>,
+    /// Write to this path instead of stdout. A directory receives `Dockerfile`
+    /// or `Dockerfile.release`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DockerfileVariant {
+    /// Build from the workspace source tree.
+    Source,
+    /// Fetch and verify a published `keep@<version>` release binary.
+    Release,
+}
+
 #[derive(clap::Args, Debug)]
 struct ServeArgs {
     /// Bind host. k8s passes 0.0.0.0.
@@ -430,7 +548,148 @@ async fn dispatch(cmd: Command) -> Result<()> {
         Command::Issue(args) => dispatch_issue(args).await,
         Command::K8s(args) => k8s(args).await,
         Command::Backup(args) => dispatch_backup(args),
+        Command::Spec(args) => spec(args),
+        Command::Dockerfile(args) => dockerfile(args),
     }
+}
+
+/// `keep spec` — offline OpenAPI / JSON-Schema / cookbook, or `spec gen` to
+/// generate a typed client. No engine, no server, no I/O beyond stdout / `--out`.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+fn spec(args: SpecArgs) -> Result<()> {
+    // `spec gen` writes a typed client; everything else prints to stdout.
+    if let Some(SpecSub::Gen(gen)) = args.gen {
+        return spec_gen(gen);
+    }
+    let out = if args.shapes {
+        serde_json::to_string_pretty(&keep::spec::request_shapes())?
+    } else if args.fields {
+        serde_json::to_string_pretty(&keep::spec::value_catalog())?
+    } else {
+        match args.format {
+            SpecFormat::Openapi => keep::spec::openapi_json(),
+            SpecFormat::OpenapiYaml => keep::spec::openapi_yaml(),
+            SpecFormat::JsonSchema => keep::spec::json_schema_json(),
+        }
+    };
+    println!("{out}");
+    Ok(())
+}
+
+/// `keep spec gen` — generate a typed client from keep's own OpenAPI document
+/// (offline; no engine or server) via the shared `libs/openapi-codegen`, written
+/// into `--out`. One codegen path, no external tool.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+fn spec_gen(args: GenArgs) -> Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let opts = GenOptions {
+        lang,
+        spec_path: PathBuf::new(),
+        out_dir: args.out.clone(),
+        client_name: "createClient".to_string(),
+        http_client: match args.http {
+            GenHttp::Fetch => HttpClient::Fetch,
+            GenHttp::Axios => HttpClient::Axios,
+        },
+        emit_types: true,
+        emit_client: true,
+        // TanStack Query hooks are a TypeScript-only concern.
+        emit_hooks: matches!(lang, Lang::Ts),
+    };
+    let output = generate(&keep::spec::openapi_json(), &opts)?;
+    std::fs::create_dir_all(&args.out)?;
+    for file in &output.files {
+        let path = args.out.join(&file.rel_path);
+        std::fs::write(&path, &file.contents)?;
+        println!("generated {}", path.display());
+    }
+    Ok(())
+}
+
+/// `keep dockerfile render` — render keep's runtime image Dockerfiles. The
+/// checked-in Dockerfiles are the fixtures; the CLI is their in-binary form
+/// (marker stripping + `keep@version` substitution), so `render` stays the
+/// source of truth.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+fn dockerfile(args: DockerfileArgs) -> Result<()> {
+    match args.cmd {
+        DockerfileCmd::Render(a) => {
+            let (file_name, body) = match a.variant {
+                DockerfileVariant::Source => ("Dockerfile", render_source_dockerfile()),
+                DockerfileVariant::Release => (
+                    "Dockerfile.release",
+                    render_release_dockerfile(a.version.as_deref()),
+                ),
+            };
+            write_or_print(a.out.as_deref(), file_name, &body)
+        }
+    }
+}
+
+fn render_source_dockerfile() -> String {
+    strip_ownership_markers(include_str!("../../Dockerfile"))
+}
+
+fn render_release_dockerfile(version: Option<&str>) -> String {
+    let tag = normalize_keep_tag(version);
+    let version = tag.trim_start_matches("keep@");
+    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let mut out = String::new();
+    for line in template.lines() {
+        if line.starts_with("#   docker build -f projects/keep/Dockerfile.release -t keep:") {
+            out.push_str(&format!(
+                "#   docker build -f projects/keep/Dockerfile.release -t keep:{version} \\"
+            ));
+        } else if line.starts_with("#     --build-arg KEEP_VERSION=") {
+            out.push_str(&format!("#     --build-arg KEEP_VERSION={tag} ."));
+        } else if line.starts_with("ARG KEEP_VERSION=") {
+            out.push_str(&format!("ARG KEEP_VERSION={tag}"));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Normalize a version input into a `keep@<version>` release tag, defaulting to
+/// the compiled crate version.
+fn normalize_keep_tag(version: Option<&str>) -> String {
+    let raw = version
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .trim();
+    if raw.starts_with("keep@") {
+        raw.to_string()
+    } else {
+        format!("keep@{raw}")
+    }
+}
+
+/// Strip AW source-ownership markers so the rendered Dockerfile is the one users
+/// build (a no-op for keep's marker-free fixtures; kept for parity + future use).
+fn strip_ownership_markers(input: &str) -> String {
+    let mut out = String::new();
+    for line in input.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("# SPEC-MANAGED:")
+            || trimmed == "# CODEGEN-BEGIN"
+            || trimmed == "# CODEGEN-END"
+        {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// `keep backup` — recover a consistent snapshot from the data dir and write it
@@ -891,6 +1150,54 @@ mod tests {
                 cmd: K8sCmd::Operator(K8sOperatorArgs { cmd }),
             })) => assert!(cmd.is_none()),
             other => panic!("expected k8s operator, got {other:?}"),
+        }
+    }
+
+    /// `keep spec` / `keep spec gen` / `keep dockerfile render` parse with their
+    /// convention flags (#777). Positionals name subcommands; format / lang /
+    /// variant / version / out are flags.
+    #[test]
+    fn spec_and_dockerfile_verbs_parse() {
+        // spec print variants.
+        Cli::try_parse_from(["keep", "spec"]).expect("spec default");
+        Cli::try_parse_from(["keep", "spec", "--format", "openapi-yaml"]).expect("spec yaml");
+        Cli::try_parse_from(["keep", "spec", "--format", "json-schema"]).expect("spec json-schema");
+        Cli::try_parse_from(["keep", "spec", "--shapes"]).expect("spec shapes");
+        Cli::try_parse_from(["keep", "spec", "--fields"]).expect("spec fields");
+
+        // spec gen.
+        let cli = Cli::try_parse_from(["keep", "spec", "gen", "--lang", "ts", "--out", "/tmp/x"])
+            .expect("spec gen should parse");
+        match cli.cmd {
+            Some(Command::Spec(SpecArgs {
+                gen: Some(SpecSub::Gen(a)),
+                ..
+            })) => {
+                assert!(matches!(a.lang, GenLang::Ts));
+                assert_eq!(a.out, PathBuf::from("/tmp/x"));
+            }
+            other => panic!("expected spec gen, got {other:?}"),
+        }
+
+        // dockerfile render.
+        let cli = Cli::try_parse_from([
+            "keep",
+            "dockerfile",
+            "render",
+            "--variant",
+            "release",
+            "--version",
+            "1.2.3",
+        ])
+        .expect("dockerfile render should parse");
+        match cli.cmd {
+            Some(Command::Dockerfile(DockerfileArgs {
+                cmd: DockerfileCmd::Render(a),
+            })) => {
+                assert!(matches!(a.variant, DockerfileVariant::Release));
+                assert_eq!(a.version.as_deref(), Some("1.2.3"));
+            }
+            other => panic!("expected dockerfile render, got {other:?}"),
         }
     }
 }

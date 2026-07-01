@@ -25,6 +25,7 @@ pub mod operator;
 pub mod persistence;
 #[cfg(feature = "raft")]
 pub mod raft;
+pub mod spec;
 pub mod tls;
 pub mod types;
 
