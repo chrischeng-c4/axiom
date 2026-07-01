@@ -16,7 +16,44 @@ capability_refs:
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
-(fill)
+---
+id: jet-lib-dts-arrow-const-flow
+entry: start
+nodes:
+  start: { kind: start, label: "Start exported value declaration emit" }
+  binding_type: { kind: decision, label: "Const binding has explicit type annotation?" }
+  emit_binding: { kind: process, label: "Emit binding annotation as before" }
+  initializer: { kind: decision, label: "Initializer is arrow function?" }
+  arrow_typed: { kind: decision, label: "Arrow has typed params and explicit return type?" }
+  synthesize: { kind: process, label: "Synthesize `(params) => ReturnType` const type" }
+  other_infer: { kind: process, label: "Use existing object-literal inference" }
+  diagnostic: { kind: terminal, label: "Keep isolatedDeclarations diagnostic" }
+  done: { kind: terminal, label: "Declaration emitted" }
+edges:
+  - { from: start, to: binding_type }
+  - { from: binding_type, to: emit_binding, label: "yes" }
+  - { from: emit_binding, to: done }
+  - { from: binding_type, to: initializer, label: "no" }
+  - { from: initializer, to: arrow_typed, label: "yes" }
+  - { from: arrow_typed, to: synthesize, label: "yes" }
+  - { from: synthesize, to: done }
+  - { from: arrow_typed, to: diagnostic, label: "no" }
+  - { from: initializer, to: other_infer, label: "no" }
+  - { from: other_infer, to: done, label: "supported" }
+  - { from: other_infer, to: diagnostic, label: "unsupported" }
+---
+flowchart TD
+    start([Exported value declaration]) --> binding_type{Binding type annotation?}
+    binding_type -->|yes| emit_binding[Emit binding annotation]
+    emit_binding --> done([Declaration emitted])
+    binding_type -->|no| initializer{Arrow initializer?}
+    initializer -->|yes| arrow_typed{Typed params + return?}
+    arrow_typed -->|yes| synthesize[Synthesize arrow function type]
+    synthesize --> done
+    arrow_typed -->|no| diagnostic([isolatedDeclarations diagnostic])
+    initializer -->|no| other_infer[Existing initializer inference]
+    other_infer -->|supported| done
+    other_infer -->|unsupported| diagnostic
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
