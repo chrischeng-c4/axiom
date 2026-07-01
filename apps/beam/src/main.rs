@@ -46,9 +46,11 @@ const TOPICS: &[cli_std::llm::Topic] = &[
             service (exact, lexical, semantic, perceptual, and duplicate search) and \
             owns ranking and dedup. Beam is the GPU vector engine underneath vector \
             retrieval — it never claims mixed search, ranking, or dedup.\n\n\
-            This slice is the CLI shell only: no HTTP, storage, or GPU runtime yet, \
-            and no CUDA/Metal/wgpu/vector dependency. Capability roots live in \
-            projects/beam/README.md (epic #769).\n",
+            Engine today: an in-memory vector collection with an exact CPU oracle \
+            and a GPU flat (brute-force) k-NN index on wgpu — Metal on Apple Silicon, \
+            Vulkan on Linux/NVIDIA. `beam bench` runs a GPU-vs-CPU parity + timing demo. \
+            Still to come: durable segments, ANN (IVF-PQ), an HTTP/2 query API, and k8s. \
+            Capability roots live in projects/beam/README.md (epic #769).\n",
     },
     cli_std::llm::Topic {
         id: "boundaries",
@@ -109,6 +111,10 @@ enum Command {
         #[command(subcommand)]
         action: IssueCmd,
     },
+    /// Run the GPU vector-search benchmark: build a deterministic in-memory
+    /// collection, search it on both the GPU (Metal via wgpu) and the exact CPU
+    /// oracle, and print the GPU adapter, GPU-vs-CPU recall, and query timing.
+    Bench(BenchArgs),
     /// (Placeholder) HTTP service shell — not implemented yet in this slice.
     Serve,
     /// (Placeholder) Vector collection lifecycle — not implemented yet.
@@ -133,6 +139,26 @@ struct LlmArgs {
     /// Output format: `md` (default) or `json`.
     #[arg(long, value_parser = ["md", "json"], default_value = "md")]
     format: String,
+}
+
+/// `beam bench` flags — deterministic GPU-vs-CPU vector-search demo.
+#[derive(Args)]
+struct BenchArgs {
+    /// Number of database vectors to generate.
+    #[arg(long, default_value_t = 100_000)]
+    n: usize,
+    /// Vector dimension.
+    #[arg(long, default_value_t = 128)]
+    dim: usize,
+    /// Neighbors per query (top-k).
+    #[arg(long, default_value_t = 10)]
+    k: usize,
+    /// Number of queries to run.
+    #[arg(long, default_value_t = 20)]
+    queries: usize,
+    /// Distance metric.
+    #[arg(long, value_parser = ["l2", "dot", "cosine"], default_value = "l2")]
+    metric: String,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
@@ -229,6 +255,19 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         Command::Issue { action } => {
             block_on(handle_issue(action))?;
             Ok(ExitCode::SUCCESS)
+        }
+        // Real GPU vector-search demo. Prints the Metal adapter, GPU-vs-CPU
+        // recall, and timing; exits non-zero if no GPU adapter is available.
+        Command::Bench(args) => {
+            let metric = beam::collection::Metric::parse(&args.metric)
+                .ok_or_else(|| anyhow::anyhow!("unknown metric: {}", args.metric))?;
+            beam::bench::run(&beam::bench::BenchConfig {
+                n: args.n,
+                dim: args.dim,
+                k: args.k,
+                queries: args.queries,
+                metric,
+            })
         }
         // Placeholder service verbs — a consistent, tracked "not built yet" exit.
         Command::Serve => Ok(placeholder("HTTP service shell")),

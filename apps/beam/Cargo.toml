@@ -24,9 +24,18 @@ clap = { workspace = true }
 tokio = { workspace = true }
 # Standard agent-facing CLI ops — llm/upgrade/issue (the CONTRIBUTING.md CLI
 # convention). Offline paths always build; the network paths are gated behind
-# beam's online features below. This first slice stays CPU/GPU-neutral: no
-# CUDA/Metal/wgpu/vector/ANN dependency.
+# beam's online features below.
 cli-std = { path = "../../libs/cli-std", default-features = false }
+
+# --- Real GPU vector-search engine ---------------------------------------
+# GPU compute via wgpu (Metal on macOS). Pinned to the SAME major already in
+# the workspace lock (24.x) as `crates/cclab-grid-render-webgpu`, so the shared
+# Cargo.lock resolves without a second wgpu copy.
+wgpu = "24"
+# f32 <-> bytes for GPU buffer uploads/readback (`Pod`/`Zeroable` derives).
+bytemuck = { version = "1", features = ["derive"] }
+# Block on wgpu's async `request_adapter` / `request_device` from sync code.
+pollster = "0.4"
 
 [features]
 default = []

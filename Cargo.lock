@@ -1663,9 +1663,12 @@ name = "beam"
 version = "0.4.3"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "clap",
  "cli-std",
+ "pollster",
  "tokio",
+ "wgpu",
 ]
 
 [[package]]

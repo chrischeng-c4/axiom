@@ -6,10 +6,27 @@
 //! the GPU-native vector service optimized for ANN indexes and GPU memory
 //! tiers (see `README.md`, epic #769).
 //!
-//! This first slice is the CLI shell only — no HTTP, storage, or GPU runtime —
-//! so the crate stays CPU/GPU-neutral (no CUDA/Metal/wgpu/vector/ANN deps). The
-//! binary (`src/main.rs`) wires the standard `llm`/`upgrade`/`issue` verbs
-//! through shared `cli-std` and exposes placeholder service verbs.
+//! The binary (`src/main.rs`) wires the standard `llm`/`upgrade`/`issue` verbs
+//! through shared `cli-std`, the placeholder service verbs, and the real
+//! `beam bench` verb.
+//!
+//! ## Vector-search engine
+//!
+//! The first real vector-search engine lives here:
+//!
+//! - [`collection`] — the in-memory row-major vector store + [`collection::Metric`].
+//! - [`index`] — the [`index::VectorIndex`] contract + shared top-k, and the
+//!   [`index::cpu_flat::CpuFlatIndex`] exact CPU oracle.
+//! - [`gpu`] — [`gpu::GpuContext`] (wgpu / Metal) and the
+//!   [`gpu::GpuFlatIndex`] GPU brute-force index whose results match the oracle.
+//! - [`dataset`] — deterministic (fixed-seed LCG) synthetic corpora + queries.
+//! - [`bench`] — the `beam bench` GPU-vs-CPU parity + timing demo.
+
+pub mod bench;
+pub mod collection;
+pub mod dataset;
+pub mod gpu;
+pub mod index;
 
 /// One-line statement of the Beam/Lumen boundary, surfaced in `beam llm`.
 pub const LUMEN_BOUNDARY: &str =

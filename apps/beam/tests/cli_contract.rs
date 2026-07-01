@@ -90,10 +90,12 @@ fn r5_issue_is_project_beam_scoped() {
     );
 }
 
-/// R6: the slice builds and runs on a plain host with no CUDA/Metal/GPU runtime.
-/// If any GPU/vector dependency had crept in, this test binary would not build
-/// or link on this CPU-only host; a clean `beam llm` render is that proof.
+/// R6 (superseded): the shell slice was GPU-neutral, but beam now ships a real
+/// wgpu/Metal GPU flat k-NN index (see `beam bench`). This asserts the
+/// architecture topic tells that truth — it names the wgpu/Metal GPU engine.
 #[test]
-fn r6_no_gpu_dependency_plain_host_runs() {
-    assert!(stdout_of(&["llm", "--topic", "architecture"]).contains("no CUDA/Metal/wgpu/vector"));
+fn r6_architecture_topic_names_gpu_engine() {
+    let arch = stdout_of(&["llm", "--topic", "architecture"]);
+    assert!(arch.contains("wgpu"), "architecture topic must name the wgpu backend");
+    assert!(arch.contains("Metal"), "architecture topic must name the Metal (Apple) backend");
 }
