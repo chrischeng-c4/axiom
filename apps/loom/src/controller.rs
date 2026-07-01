@@ -488,8 +488,19 @@ pub fn run() -> anyhow::Result<()> {
             // peers from the StatefulSet downward API. `LOOM_PEERS` overrides the
             // peer DNS to run a multi-node group on one host.
             let dir = std::env::var("LOOM_RAFT_DIR").unwrap_or_else(|_| "/data/raft".to_string());
+            // The StatefulSet name is POD_NAME without the `-<ordinal>` suffix;
+            // the headless service DNS suffix comes from the injected env. Both
+            // default to the `loom` static-tree names, but derive from the CR
+            // name for operator-managed instances.
+            let pod = std::env::var("POD_NAME").unwrap_or_else(|_| "loom-0".to_string());
+            let prefix = pod
+                .rsplit_once('-')
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_else(|| "loom".to_string());
+            let headless = std::env::var("LOOM_HEADLESS_SERVICE")
+                .unwrap_or_else(|_| format!("{prefix}-headless"));
             let topo =
-                raft_host::ClusterTopology::from_env("loom", "loom-headless", 7474, "LOOM_PEERS")?;
+                raft_host::ClusterTopology::from_env(&prefix, &headless, 7474, "LOOM_PEERS")?;
             eprintln!(
                 "loom: raft REPLICA mode — node {}, {} peer(s), dir {dir}",
                 topo.node_id,
