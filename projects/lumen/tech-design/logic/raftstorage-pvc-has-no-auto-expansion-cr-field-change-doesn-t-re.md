@@ -163,7 +163,6 @@ requirementDiagram
     resize_pure_unit_tests - satisfies -> R3
     resize_pure_unit_tests - satisfies -> R4
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
