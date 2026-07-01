@@ -9,7 +9,6 @@
 # case = "upload__upload_file__command_as_str_wrong"
 # subject = "distutils.command.upload.upload.upload_file(command: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/command/upload.pyi"
 # status = "filled"

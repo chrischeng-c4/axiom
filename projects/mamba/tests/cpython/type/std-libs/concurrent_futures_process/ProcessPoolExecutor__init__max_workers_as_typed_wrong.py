@@ -9,7 +9,6 @@
 # case = "ProcessPoolExecutor__init__max_workers_as_typed_wrong"
 # subject = "concurrent.futures.process.ProcessPoolExecutor.__init__(max_workers: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/concurrent/futures/process.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "load_tests__loader_as_TestLoader_wrong"
 # subject = "unittest.load_tests(loader: TestLoader)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest.pyi"
 # status = "filled"

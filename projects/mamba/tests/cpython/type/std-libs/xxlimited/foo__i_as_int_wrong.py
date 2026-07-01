@@ -9,7 +9,6 @@
 # case = "foo__i_as_int_wrong"
 # subject = "xxlimited.foo(i: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xxlimited.pyi"
 # status = "filled"

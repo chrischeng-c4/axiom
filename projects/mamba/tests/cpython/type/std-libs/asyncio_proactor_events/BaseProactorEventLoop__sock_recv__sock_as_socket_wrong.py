@@ -9,7 +9,6 @@
 # case = "BaseProactorEventLoop__sock_recv__sock_as_socket_wrong"
 # subject = "asyncio.proactor_events.BaseProactorEventLoop.sock_recv(sock: socket)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/proactor_events.pyi"
 # status = "filled"

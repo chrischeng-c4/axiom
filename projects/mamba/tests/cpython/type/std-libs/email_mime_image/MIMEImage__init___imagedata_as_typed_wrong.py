@@ -9,7 +9,6 @@
 # case = "MIMEImage__init___imagedata_as_typed_wrong"
 # subject = "email.mime.image.MIMEImage.__init__(_imagedata: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/image.pyi"
 # status = "filled"

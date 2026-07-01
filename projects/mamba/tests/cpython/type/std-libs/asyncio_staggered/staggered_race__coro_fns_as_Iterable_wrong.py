@@ -9,7 +9,6 @@
 # case = "staggered_race__coro_fns_as_Iterable_wrong"
 # subject = "asyncio.staggered.staggered_race(coro_fns: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/staggered.pyi"
 # status = "filled"

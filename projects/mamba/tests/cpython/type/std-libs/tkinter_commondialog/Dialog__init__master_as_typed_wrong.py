@@ -9,7 +9,6 @@
 # case = "Dialog__init__master_as_typed_wrong"
 # subject = "tkinter.commondialog.Dialog.__init__(master: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tkinter/commondialog.pyi"
 # status = "filled"

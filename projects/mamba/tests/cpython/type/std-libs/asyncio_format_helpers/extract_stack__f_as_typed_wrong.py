@@ -9,7 +9,6 @@
 # case = "extract_stack__f_as_typed_wrong"
 # subject = "asyncio.format_helpers.extract_stack(f: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/format_helpers.pyi"
 # status = "filled"
