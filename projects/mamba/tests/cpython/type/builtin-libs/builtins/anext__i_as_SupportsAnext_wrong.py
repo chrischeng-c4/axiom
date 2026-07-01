@@ -9,7 +9,6 @@
 # case = "anext__i_as_SupportsAnext_wrong"
 # subject = "builtins.anext(i: SupportsAnext)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

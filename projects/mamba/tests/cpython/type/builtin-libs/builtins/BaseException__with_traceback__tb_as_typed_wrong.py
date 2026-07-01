@@ -9,7 +9,6 @@
 # case = "BaseException__with_traceback__tb_as_typed_wrong"
 # subject = "builtins.BaseException.with_traceback(tb: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

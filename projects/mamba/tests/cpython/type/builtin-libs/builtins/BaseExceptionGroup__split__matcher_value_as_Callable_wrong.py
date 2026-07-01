@@ -9,7 +9,6 @@
 # case = "BaseExceptionGroup__split__matcher_value_as_Callable_wrong"
 # subject = "builtins.BaseExceptionGroup.split(matcher_value: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
