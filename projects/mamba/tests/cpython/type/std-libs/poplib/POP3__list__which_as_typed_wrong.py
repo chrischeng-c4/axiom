@@ -9,12 +9,10 @@
 # case = "POP3__list__which_as_typed_wrong"
 # subject = "poplib.POP3.list(which: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed which"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/poplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed which
 # mamba-strict-type: TypeError
 """Type wall: poplib.POP3.list(which: typed); call it with the wrong type.
 

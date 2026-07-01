@@ -9,12 +9,10 @@
 # case = "NNTP__over__message_spec_as_typed_wrong"
 # subject = "nntplib.NNTP.over(message_spec: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed message_spec"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/nntplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed message_spec
 # mamba-strict-type: TypeError
 """Type wall: nntplib.NNTP.over(message_spec: typed); call it with the wrong type.
 

@@ -9,12 +9,10 @@
 # case = "MimeTypes__read_windows_registry__strict_as_bool_wrong"
 # subject = "mimetypes.MimeTypes.read_windows_registry(strict: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed strict"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mimetypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed strict
 # mamba-strict-type: TypeError
 """Type wall: mimetypes.MimeTypes.read_windows_registry(strict: bool); call it with the wrong type.
 

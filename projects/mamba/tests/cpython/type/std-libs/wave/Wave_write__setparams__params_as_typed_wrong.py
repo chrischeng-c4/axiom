@@ -9,12 +9,10 @@
 # case = "Wave_write__setparams__params_as_typed_wrong"
 # subject = "wave.Wave_write.setparams(params: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed params"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/wave.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed params
 # mamba-strict-type: TypeError
 """Type wall: wave.Wave_write.setparams(params: typed); call it with the wrong type.
 
