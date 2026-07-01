@@ -308,6 +308,8 @@ enum LlmTopic {
     Integration,
     /// A copy-paste create → index → search walkthrough.
     Quickstart,
+    /// Bearer-token auth, token registry schema, and Secret projection.
+    Auth,
     /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
     Recipes,
 }
@@ -550,6 +552,7 @@ async fn main() -> Result<()> {
                 LlmTopic::Workflow => lumen::spec::llm_workflow_md(),
                 LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
+                LlmTopic::Auth => lumen::spec::llm_auth_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
             let out = match args.format {
@@ -571,6 +574,9 @@ async fn main() -> Result<()> {
                     )?,
                     LlmTopic::Quickstart => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "quickstart", "markdown": md }),
+                    )?,
+                    LlmTopic::Auth => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "auth", "markdown": md }),
                     )?,
                 },
             };

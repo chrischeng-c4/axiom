@@ -245,11 +245,20 @@ QueryNode.model_json_schema()
         assert!(client.contains("from .h2c_runtime import AsyncH2CClient, H2CClient"));
         assert!(client.contains("class Client:"));
         assert!(client.contains("client: Optional[SupportsRequest] = None"));
+        assert!(client.contains("default_headers: Optional[Mapping[str, Any]] = None"));
+        assert!(client.contains("auth_token: Optional[str] = None"));
         assert!(client.contains("self._client = client or H2CClient()"));
+        assert!(
+            client.contains("self._default_headers: dict[str, Any] = dict(default_headers or {})")
+        );
+        assert!(
+            client.contains("self._default_headers[\"Authorization\"] = f\"Bearer {auth_token}\"")
+        );
         assert!(client.contains("def __enter__(self) -> \"Client\":"));
         assert!(client.contains("def close(self) -> None:"));
         assert!(client.contains("def get_pet_by_id(self, *, pet_id: int) -> Pet:"));
         assert!(client.contains("_path = f\"/pets/{pet_id}\""));
+        assert!(client.contains("_headers: dict[str, Any] = dict(self._default_headers)"));
         assert!(client.contains("self._client.request(\"GET\""));
         assert!(client.contains("return Pet.model_validate(_resp.json())"));
         assert!(client.contains("class AsyncSupportsRequest(Protocol):"));
@@ -267,6 +276,65 @@ QueryNode.model_json_schema()
     }
 
     #[test]
+    fn generated_python_client_merges_auth_defaults_into_method_headers() {
+        let out = generate(SPEC, &opts()).unwrap();
+        let dir = write_generated_python_package(&out);
+        let script = format!(
+            r#"
+import asyncio
+import sys
+sys.path.insert(0, {dir:?})
+from generated_api.client import AsyncClient, Client
+
+class Response:
+    def raise_for_status(self):
+        pass
+    def json(self):
+        return {{"id": 1, "name": "n"}}
+
+class Fake:
+    def __init__(self):
+        self.calls = []
+    def request(self, method, url, *, params, headers, json=None, data=None, content=None, timeout=None):
+        self.calls.append((method, url, dict(headers)))
+        return Response()
+
+class AsyncFake:
+    def __init__(self):
+        self.calls = []
+    async def request(self, method, url, *, params, headers, json=None, data=None, content=None, timeout=None):
+        self.calls.append((method, url, dict(headers)))
+        return Response()
+
+sync = Fake()
+Client("http://example", client=sync, default_headers={{"X-Trace": "t"}}, auth_token="tok").get_pet_by_id(pet_id=1)
+assert sync.calls[0][2]["Authorization"] == "Bearer tok", sync.calls
+assert sync.calls[0][2]["X-Trace"] == "t", sync.calls
+
+async def main():
+    transport = AsyncFake()
+    await AsyncClient("http://example", client=transport, default_headers={{"Authorization": "Bearer explicit"}}).get_pet_by_id(pet_id=2)
+    assert transport.calls[0][2]["Authorization"] == "Bearer explicit", transport.calls
+
+asyncio.run(main())
+"#,
+            dir = dir.display().to_string(),
+        );
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .expect("run generated Python client auth-default smoke");
+        assert!(
+            output.status.success(),
+            "generated Python client auth-default smoke failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn runtime_exposes_unary_and_bidi_surfaces() {
         let out = generate(SPEC, &opts()).unwrap();
         let runtime = file(&out, "h2c_runtime.py");
@@ -280,6 +348,12 @@ QueryNode.model_json_schema()
         assert!(runtime.contains("def get("));
         assert!(runtime.contains("def stream("));
         assert!(runtime.contains("max_connections_per_origin"));
+        assert!(runtime.contains(
+            "default_headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None"
+        ));
+        assert!(
+            runtime.contains("self._default_headers[\"Authorization\"] = f\"Bearer {auth_token}\"")
+        );
         assert!(runtime.contains("_DEFAULT_TIMEOUT = 5.0"));
         assert!(runtime.contains("_DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024"));
         assert!(runtime.contains("class H2CStream:"));

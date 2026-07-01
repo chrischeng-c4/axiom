@@ -551,6 +551,8 @@ class H2CClient:
         max_connections_per_origin: int = 1,
         max_response_bytes: Optional[int] = _DEFAULT_MAX_RESPONSE_BYTES,
         ssl_context: Optional[ssl.SSLContext] = None,
+        default_headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
+        auth_token: Optional[str] = None,
     ) -> None:
         if max_response_bytes is not None and max_response_bytes < 0:
             raise ValueError("max_response_bytes must be non-negative or None")
@@ -558,6 +560,9 @@ class H2CClient:
         self._max_connections_per_origin = max(1, max_connections_per_origin)
         self._max_response_bytes = max_response_bytes
         self._ssl_context = ssl_context
+        self._default_headers: dict[str, Any] = dict(_without_none(default_headers))
+        if auth_token is not None:
+            self._default_headers["Authorization"] = f"Bearer {auth_token}"
         self._connections: dict[tuple[str, str, int], list[H2CConnection]] = {}
         self._lock = threading.RLock()
         self._closed = False
@@ -581,7 +586,7 @@ class H2CClient:
         timeout: Optional[float] = None,
     ) -> H2CResponse:
         body, body_headers = _body_bytes(json, data, content)
-        merged_headers = {**body_headers, **dict(_without_none(headers))}
+        merged_headers = {**self._default_headers, **body_headers, **dict(_without_none(headers))}
         stream = self.open_stream(
             method,
             url,
@@ -621,7 +626,8 @@ class H2CClient:
         headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
         timeout: Optional[float] = None,
     ) -> "H2CStream":
-        return self.open_stream(method, url, params=params, headers=headers, timeout=timeout, end_stream=False)
+        merged_headers = {**self._default_headers, **dict(_without_none(headers))}
+        return self.open_stream(method, url, params=params, headers=merged_headers, timeout=timeout, end_stream=False)
 
     def open_stream(
         self,
@@ -1243,6 +1249,8 @@ class AsyncH2CClient:
         max_connections_per_origin: int = 1,
         max_response_bytes: Optional[int] = _DEFAULT_MAX_RESPONSE_BYTES,
         ssl_context: Optional[ssl.SSLContext] = None,
+        default_headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
+        auth_token: Optional[str] = None,
     ) -> None:
         if max_response_bytes is not None and max_response_bytes < 0:
             raise ValueError("max_response_bytes must be non-negative or None")
@@ -1250,6 +1258,9 @@ class AsyncH2CClient:
         self._max_connections_per_origin = max(1, max_connections_per_origin)
         self._max_response_bytes = max_response_bytes
         self._ssl_context = ssl_context
+        self._default_headers: dict[str, Any] = dict(_without_none(default_headers))
+        if auth_token is not None:
+            self._default_headers["Authorization"] = f"Bearer {auth_token}"
         self._connections: dict[tuple[str, str, int], list[AsyncH2CConnection]] = {}
         self._lock = asyncio.Lock()
         self._closed = False
@@ -1273,7 +1284,7 @@ class AsyncH2CClient:
         timeout: Optional[float] = None,
     ) -> H2CResponse:
         body, body_headers = _body_bytes(json, data, content)
-        merged_headers = {**body_headers, **dict(_without_none(headers))}
+        merged_headers = {**self._default_headers, **body_headers, **dict(_without_none(headers))}
         stream = await self.open_stream(
             method,
             url,
@@ -1313,7 +1324,8 @@ class AsyncH2CClient:
         headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
         timeout: Optional[float] = None,
     ) -> "_AsyncH2CStreamContext":
-        return _AsyncH2CStreamContext(self, method, url, params=params, headers=headers, timeout=timeout)
+        merged_headers = {**self._default_headers, **dict(_without_none(headers))}
+        return _AsyncH2CStreamContext(self, method, url, params=params, headers=merged_headers, timeout=timeout)
 
     async def open_stream(
         self,

@@ -834,6 +834,23 @@ Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
 materialize that file through External Secrets Operator or Secret Store CSI.
 Lumen reads the registry at startup; token rotation should roll the serving pods
 or use a Secret reloader controller.
+
+`token-registry.json` shape:
+
+```json
+{
+  "admin-token": {
+    "subject": "platform-admin",
+    "roles": { "*": "admin" }
+  },
+  "product-reader-token": {
+    "subject": "products-reader",
+    "roles": { "products": "read" }
+  }
+}
+```
+
+Role values are `read`, `write`, and `admin`; `*` grants across all collections.
 Clients only need:
 
 ```env
@@ -851,15 +868,26 @@ auth-exempt.
 |-----------------------|--------------------------------------------------------------|
 | `GET /openapi.json`   | Live spec from a running pod — codegen against an actual env |
 | `GET /docs`           | Interactive Swagger UI ("Try it out")                        |
-| `lumen-openapi-dump`  | Offline dump — codegen / review without a running server     |
+| `lumen spec`          | Offline OpenAPI JSON from the installed binary               |
+| `lumen spec --format openapi-yaml` | Offline OpenAPI YAML for agent review         |
+| `lumen spec --format json-schema` | Component schemas plus operational schemas such as `TokenRegistry` |
+| `lumen spec gen --lang ts\|py\|rust --out <dir>` | In-tree typed client generation |
 
-The dump binary generates from the same Rust code as the live endpoint
-(`#[derive(utoipa::OpenApi)]` on `api::ApiDoc`):
+`lumen spec` and the live endpoint generate from the same Rust code
+(`#[derive(utoipa::OpenApi)]` on `api::ApiDoc`). There is no committed OpenAPI
+snapshot; the binary and live endpoint are the source of truth.
 
-```bash
-cargo run -q -p lumen --bin lumen-openapi-dump > /tmp/lumen-openapi.json
+Generated Python clients include pydantic models plus a stdlib HTTP/2 runtime.
+For auth-enabled deployments:
+
+```python
+from generated_api import Client
+
+client = Client("http://lumen.default.svc.cluster.local:7373", auth_token="...")
 ```
 
-Pipe that into your codegen tool of choice. There is no in-tree
-snapshot — the live endpoint and the dump binary are the single source
-of truth.
+`default_headers={"Authorization": "Bearer ..."}` is also supported. The
+generated `h2c_runtime.py` exposes unary `request()` and bidirectional
+`stream()` APIs; Lumen's current OpenAPI routes are unary, so generated
+`client.py` uses `request()` today and the streaming surface is forward-looking
+runtime capacity for services that add streaming operations.

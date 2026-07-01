@@ -12,7 +12,7 @@
 
 // Contract: lumen spec emits valid OpenAPI JSON, OpenAPI YAML, and JSON-schema output offline.
 // Contract: lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.
-// Contract: lumen llm outline, workflow, integration, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals.
+// Contract: lumen llm outline, workflow, integration, quickstart, auth, and recipes preserve the ingest-search-hydrate agent workflow, deployment auth contract, and non-goals.
 // Contract: lumen llm integration recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

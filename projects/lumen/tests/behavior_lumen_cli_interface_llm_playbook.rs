@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --test spec_cli -- --nocapture
 // AW-EC-END
 
-// Contract: lumen llm outline, workflow, integration, quickstart, and recipes preserve the agent-facing topic set.
+// Contract: lumen llm outline, workflow, integration, quickstart, auth, and recipes preserve the agent-facing topic set.
 // Contract: lumen llm integration preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.
 // Contract: agent-facing playbook output remains deterministic and offline.
 #[test]
