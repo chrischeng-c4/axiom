@@ -9,12 +9,10 @@
 # case = "TaskGroup____aexit____et_as_typed_wrong"
 # subject = "asyncio.taskgroups.TaskGroup.__aexit__(et: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed et"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/taskgroups.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed et
 # mamba-strict-type: TypeError
 """Type wall: asyncio.taskgroups.TaskGroup.__aexit__(et: typed); call it with the wrong type.
 

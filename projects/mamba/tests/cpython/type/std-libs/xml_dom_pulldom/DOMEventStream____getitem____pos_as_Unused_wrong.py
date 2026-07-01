@@ -9,12 +9,10 @@
 # case = "DOMEventStream____getitem____pos_as_Unused_wrong"
 # subject = "xml.dom.pulldom.DOMEventStream.__getitem__(pos: Unused)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pos"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/pulldom.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pos
 # mamba-strict-type: TypeError
 """Type wall: xml.dom.pulldom.DOMEventStream.__getitem__(pos: Unused); call it with the wrong type.
 

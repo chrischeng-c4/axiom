@@ -9,12 +9,10 @@
 # case = "SMTPChannel__collect_incoming_data__data_as_bytes_wrong"
 # subject = "smtpd.SMTPChannel.collect_incoming_data(data: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtpd.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: smtpd.SMTPChannel.collect_incoming_data(data: bytes); call it with the wrong type.
 

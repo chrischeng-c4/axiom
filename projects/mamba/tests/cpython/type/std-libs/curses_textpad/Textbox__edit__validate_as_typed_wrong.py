@@ -9,12 +9,10 @@
 # case = "Textbox__edit__validate_as_typed_wrong"
 # subject = "curses.textpad.Textbox.edit(validate: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed validate"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/curses/textpad.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed validate
 # mamba-strict-type: TypeError
 """Type wall: curses.textpad.Textbox.edit(validate: typed); call it with the wrong type.
 

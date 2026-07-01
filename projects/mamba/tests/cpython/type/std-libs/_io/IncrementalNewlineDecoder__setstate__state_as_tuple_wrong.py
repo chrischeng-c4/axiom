@@ -9,12 +9,10 @@
 # case = "IncrementalNewlineDecoder__setstate__state_as_tuple_wrong"
 # subject = "_io.IncrementalNewlineDecoder.setstate(state: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed state"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_io.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed state
 # mamba-strict-type: TypeError
 """Type wall: _io.IncrementalNewlineDecoder.setstate(state: tuple); call it with the wrong type.
 
