@@ -49,6 +49,7 @@ Two distinct denominators — do not conflate:
 
 - [tests/harness/cpython/runner.rs](tests/harness/cpython/runner.rs): top-level conformance runner
 - [tests/harness/cpython/status.rs](tests/harness/cpython/status.rs): fast CPython fixture/perf/oracle readiness summary — `cargo test -p mamba --test cpython_status -- --json`; fill baseline gaps with `python3 tests/cpython/tools/perf_baseline.py record --missing-only --ready-only --limit 10 --keep-going`
+- [tests/harness/cpython/tools/runtime_fast_loop.py](tests/harness/cpython/tools/runtime_fast_loop.py): runtime fix inner loop — one guarded debug build when needed, then changed-fixture/lib-cluster `sweep.py` validation in seconds
 - [tests/cpython_compat.rs](tests/cpython_compat.rs): CPython behaviour parity fixtures
 - [tests/generator_conformance_tests.rs](tests/generator_conformance_tests.rs), [iterator_conformance_tests.rs](tests/iterator_conformance_tests.rs)
 - [tests/behavioral_builtins_tests.rs](tests/behavioral_builtins_tests.rs), [behavioral_lang_tests.rs](tests/behavioral_lang_tests.rs), [behavioral_stdlib_tests.rs](tests/behavioral_stdlib_tests.rs)

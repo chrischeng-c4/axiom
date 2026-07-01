@@ -172,6 +172,21 @@ ensured `tests/cpython/.cache/oracle-env/bin/python3` before falling back to
 PATH `python3`. The ensured interpreter must be a CPython 3.12.x build with
 `ntpath.ALLOW_MISSING`, because current ntpath fixtures import that sentinel.
 
+Runtime fix fast loop:
+
+```bash
+python3.12 tests/harness/cpython/tools/runtime_fast_loop.py --changed --build --watch-rust src/runtime/stdlib/ast_mod.rs --jobs 8 --timeout 10
+python3.12 tests/harness/cpython/tools/runtime_fast_loop.py --changed --watch-rust src/runtime/stdlib/ast_mod.rs --jobs 8 --timeout 10 --lint --promotion --oracle
+python3.12 tests/harness/cpython/tools/runtime_fast_loop.py behavior/std-libs/ast --jobs 8 --timeout 10
+```
+
+Use this loop while hand-writing runtime fixes. It runs at most one guarded
+debug `cargo build`, refuses to validate with a stale `target/debug/mamba`
+unless `--allow-stale` is explicit, and then delegates fixture execution to
+`sweep.py` so changed-fixture and lib-cluster checks stay seconds-scale. Do not
+replace this with `replacement_readiness.py` or full Cargo conformance runs in
+the inner loop; those are milestone gates after a batch of runtime changes.
+
 CPython source-suite inventory is a separate reference denominator:
 
 ```bash
