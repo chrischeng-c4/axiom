@@ -9,12 +9,11 @@
 # case = "BaseException____setstate____state_as_typed_wrong"
 # subject = "builtins.BaseException.__setstate__(state: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed state"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed state
 # mamba-strict-type: TypeError
 """Type wall: builtins.BaseException.__setstate__(state: typed); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from builtins import BaseException
-obj = object.__new__(BaseException)
+obj = BaseException()
 try:
     obj.__setstate__(_W())  # state: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise

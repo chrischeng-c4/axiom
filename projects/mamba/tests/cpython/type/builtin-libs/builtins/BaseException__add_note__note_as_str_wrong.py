@@ -21,7 +21,7 @@ typeshed contract: note is str. mamba is force-typed, so a wrong-typed
 argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
 
 from builtins import BaseException
-obj = object.__new__(BaseException)
+obj = BaseException()
 try:
     obj.add_note(12345)  # note: str <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
