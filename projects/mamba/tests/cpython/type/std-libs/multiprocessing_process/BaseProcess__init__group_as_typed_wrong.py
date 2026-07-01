@@ -9,12 +9,10 @@
 # case = "BaseProcess__init__group_as_typed_wrong"
 # subject = "multiprocessing.process.BaseProcess.__init__(group: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed group"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/process.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed group
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.process.BaseProcess.__init__(group: typed); call it with the wrong type.
 

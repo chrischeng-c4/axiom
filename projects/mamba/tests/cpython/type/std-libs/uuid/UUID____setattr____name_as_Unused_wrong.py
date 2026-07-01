@@ -9,12 +9,10 @@
 # case = "UUID____setattr____name_as_Unused_wrong"
 # subject = "uuid.UUID.__setattr__(name: Unused)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/uuid.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: uuid.UUID.__setattr__(name: Unused); call it with the wrong type.
 

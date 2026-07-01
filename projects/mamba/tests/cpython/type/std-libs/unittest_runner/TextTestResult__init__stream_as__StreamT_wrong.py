@@ -9,12 +9,10 @@
 # case = "TextTestResult__init__stream_as__StreamT_wrong"
 # subject = "unittest.runner.TextTestResult.__init__(stream: _StreamT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stream"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/runner.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stream
 # mamba-strict-type: TypeError
 """Type wall: unittest.runner.TextTestResult.__init__(stream: _StreamT); call it with the wrong type.
 

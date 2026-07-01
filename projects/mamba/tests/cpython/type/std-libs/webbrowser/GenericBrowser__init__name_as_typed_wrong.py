@@ -9,12 +9,10 @@
 # case = "GenericBrowser__init__name_as_typed_wrong"
 # subject = "webbrowser.GenericBrowser.__init__(name: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/webbrowser.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: webbrowser.GenericBrowser.__init__(name: typed); call it with the wrong type.
 
