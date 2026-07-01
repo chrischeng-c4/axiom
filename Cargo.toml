@@ -100,6 +100,7 @@ members = [
     "apps/lumen",
     "apps/keep",
     "examples/client-transport-policy",
+    "apps/beam",
 ]
 resolver = "2"
 

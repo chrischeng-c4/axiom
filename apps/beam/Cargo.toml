@@ -1,0 +1,38 @@
+[package]
+name = "beam"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "beam — GPU-native vector database. Owns GPU ANN vector storage, index lifecycle, batch ingest, and vector query execution; distinct from lumen (mixed search / ranking / dedup)."
+# Stamp git sha / build time / target for the standard CLI ops (llm/upgrade/issue).
+build = "build.rs"
+
+[lib]
+name = "beam"
+path = "src/lib.rs"
+
+[[bin]]
+name = "beam"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+# The async standard-CLI ops (`upgrade`/`issue`) are driven from a minimal
+# block_on runtime, exactly like loom — main stays sync.
+tokio = { workspace = true }
+# Standard agent-facing CLI ops — llm/upgrade/issue (the CONTRIBUTING.md CLI
+# convention). Offline paths always build; the network paths are gated behind
+# beam's online features below. This first slice stays CPU/GPU-neutral: no
+# CUDA/Metal/wgpu/vector/ANN dependency.
+cli-std = { path = "../../libs/cli-std", default-features = false }
+
+[features]
+default = []
+# Online (HTTPS) paths of the standard CLI ops: `upgrade` self-install and
+# `issue` search/view/create submit. Offline paths (llm, `upgrade --check`,
+# `issue create --dry-run` / pre-filled-URL fallback) always build; release
+# builds enable these.
+self-update = ["cli-std/online"]
+issue-online = ["cli-std/online"]

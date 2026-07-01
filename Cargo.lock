@@ -1659,6 +1659,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "beam"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cli-std",
+ "tokio",
+]
+
+[[package]]
 name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
