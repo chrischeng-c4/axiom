@@ -300,9 +300,111 @@ fn tarball_entry_paths(tarball: &[u8]) -> Vec<String> {
     paths
 }
 
+/// Decompress a gzipped tar and return package/package.json as JSON.
+fn tarball_package_json(tarball: &[u8]) -> serde_json::Value {
+    use flate2::read::GzDecoder;
+    let gz = GzDecoder::new(tarball);
+    let mut archive = tar::Archive::new(gz);
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().unwrap().to_string_lossy() == "package/package.json" {
+            return serde_json::from_reader(entry).unwrap();
+        }
+    }
+    panic!("tarball did not contain package/package.json");
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // E2E test
 // ──────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn pack_nested_workspace_rewrites_workspace_protocols_in_package_json() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("pnpm-workspace.yaml"),
+        "packages:\n  - packages/*\n",
+    )
+    .unwrap();
+
+    for (rel, name, version) in [
+        ("packages/core", "@acme/core", "3.2.0-beta.0"),
+        ("packages/devkit", "@acme/devkit", "0.4.0"),
+        ("packages/forms", "@acme/forms", "2.1.0"),
+        ("packages/theme", "@acme/theme", "5.0.1"),
+    ] {
+        let pkg_dir = root.join(rel);
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            format!(r#"{{"name":"{name}","version":"{version}"}}"#),
+        )
+        .unwrap();
+    }
+
+    let widget = root.join("packages/widget");
+    std::fs::create_dir_all(widget.join("dist")).unwrap();
+    std::fs::write(
+        widget.join("dist/index.js"),
+        "export const widget = true;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        widget.join("package.json"),
+        r#"{
+  "name": "@acme/widget",
+  "version": "1.0.0",
+  "files": ["dist"],
+  "dependencies": {
+    "@acme/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@acme/devkit": "workspace:*"
+  },
+  "peerDependencies": {
+    "@acme/forms": "workspace:^"
+  },
+  "optionalDependencies": {
+    "@acme/theme": "workspace:~"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let tarball_path = Publisher::new(widget.clone())
+        .pack()
+        .expect("pack nested workspace package");
+    let manifest = tarball_package_json(&std::fs::read(tarball_path).unwrap());
+
+    assert_eq!(
+        manifest["dependencies"]["@acme/core"].as_str(),
+        Some("3.2.0-beta.0"),
+        "workspace:* dependency must rewrite to the sibling's exact version"
+    );
+    assert_eq!(
+        manifest["devDependencies"]["@acme/devkit"].as_str(),
+        Some("0.4.0"),
+        "devDependencies must be rewritten too because package.json is published as-is"
+    );
+    assert_eq!(
+        manifest["peerDependencies"]["@acme/forms"].as_str(),
+        Some("^2.1.0"),
+        "workspace:^ peer dependency must rewrite to a caret semver range"
+    );
+    assert_eq!(
+        manifest["optionalDependencies"]["@acme/theme"].as_str(),
+        Some("~5.0.1"),
+        "workspace:~ optional dependency must rewrite to a tilde semver range"
+    );
+
+    let packed_manifest = serde_json::to_string(&manifest).unwrap();
+    assert!(
+        !packed_manifest.contains("workspace:"),
+        "packed package.json must not leak workspace protocol ranges: {packed_manifest}"
+    );
+}
 
 #[tokio::test]
 async fn publish_built_library_to_mock_registry_and_resolve_back() {
