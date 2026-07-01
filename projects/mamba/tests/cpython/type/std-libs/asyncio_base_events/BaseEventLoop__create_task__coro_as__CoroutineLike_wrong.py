@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__create_task__coro_as__CoroutineLike_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.create_task(coro: _CoroutineLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

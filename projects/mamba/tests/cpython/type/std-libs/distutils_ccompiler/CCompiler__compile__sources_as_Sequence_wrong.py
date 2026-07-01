@@ -9,12 +9,10 @@
 # case = "CCompiler__compile__sources_as_Sequence_wrong"
 # subject = "distutils.ccompiler.CCompiler.compile(sources: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sources"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sources
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.CCompiler.compile(sources: Sequence); call it with the wrong type.
 

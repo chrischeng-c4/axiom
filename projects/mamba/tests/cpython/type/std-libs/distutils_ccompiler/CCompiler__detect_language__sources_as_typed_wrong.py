@@ -9,12 +9,10 @@
 # case = "CCompiler__detect_language__sources_as_typed_wrong"
 # subject = "distutils.ccompiler.CCompiler.detect_language(sources: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sources"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sources
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.CCompiler.detect_language(sources: typed); call it with the wrong type.
 

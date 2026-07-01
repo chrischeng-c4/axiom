@@ -9,7 +9,6 @@
 # case = "getaddrinfo__host_as_typed_wrong"
 # subject = "_socket.getaddrinfo(host: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

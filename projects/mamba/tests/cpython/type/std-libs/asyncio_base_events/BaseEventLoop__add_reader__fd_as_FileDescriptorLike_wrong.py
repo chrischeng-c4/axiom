@@ -9,12 +9,10 @@
 # case = "BaseEventLoop__add_reader__fd_as_FileDescriptorLike_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.add_reader(fd: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fd"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fd
 # mamba-strict-type: TypeError
 """Type wall: asyncio.base_events.BaseEventLoop.add_reader(fd: FileDescriptorLike); call it with the wrong type.
 

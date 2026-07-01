@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__init__options_as_typed_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.__init__(options: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

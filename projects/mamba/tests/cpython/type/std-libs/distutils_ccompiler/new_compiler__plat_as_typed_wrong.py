@@ -9,7 +9,6 @@
 # case = "new_compiler__plat_as_typed_wrong"
 # subject = "distutils.ccompiler.new_compiler(plat: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

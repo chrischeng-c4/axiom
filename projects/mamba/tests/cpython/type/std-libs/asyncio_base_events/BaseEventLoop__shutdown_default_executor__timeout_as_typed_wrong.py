@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__shutdown_default_executor__timeout_as_typed_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.shutdown_default_executor(timeout: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

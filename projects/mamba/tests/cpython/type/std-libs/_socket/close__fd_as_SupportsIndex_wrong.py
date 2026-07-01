@@ -9,7 +9,6 @@
 # case = "close__fd_as_SupportsIndex_wrong"
 # subject = "_socket.close(fd: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

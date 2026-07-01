@@ -9,7 +9,6 @@
 # case = "setdefaulttimeout__timeout_as_typed_wrong"
 # subject = "_socket.setdefaulttimeout(timeout: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

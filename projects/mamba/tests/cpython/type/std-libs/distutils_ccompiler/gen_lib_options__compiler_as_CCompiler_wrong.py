@@ -9,7 +9,6 @@
 # case = "gen_lib_options__compiler_as_CCompiler_wrong"
 # subject = "distutils.ccompiler.gen_lib_options(compiler: CCompiler)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

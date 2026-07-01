@@ -9,7 +9,6 @@
 # case = "socket__recvmsg_into__buffers_as_Iterable_wrong"
 # subject = "_socket.socket.recvmsg_into(buffers: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

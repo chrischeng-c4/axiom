@@ -9,7 +9,6 @@
 # case = "inet_ntop__address_family_as_int_wrong"
 # subject = "_socket.inet_ntop(address_family: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "socket__sendall__data_as_ReadableBuffer_wrong"
 # subject = "_socket.socket.sendall(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

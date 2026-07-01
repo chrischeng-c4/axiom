@@ -9,7 +9,6 @@
 # case = "inet_aton__ip_addr_as_str_wrong"
 # subject = "_socket.inet_aton(ip_addr: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

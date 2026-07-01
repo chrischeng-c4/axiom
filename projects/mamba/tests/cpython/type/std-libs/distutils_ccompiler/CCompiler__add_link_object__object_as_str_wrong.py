@@ -9,7 +9,6 @@
 # case = "CCompiler__add_link_object__object_as_str_wrong"
 # subject = "distutils.ccompiler.CCompiler.add_link_object(object: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

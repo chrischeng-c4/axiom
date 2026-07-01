@@ -9,7 +9,6 @@
 # case = "socket__sendmsg_afalg__msg_as_Iterable_wrong"
 # subject = "_socket.socket.sendmsg_afalg(msg: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

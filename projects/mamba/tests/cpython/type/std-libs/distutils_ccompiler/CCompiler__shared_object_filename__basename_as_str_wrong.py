@@ -9,12 +9,10 @@
 # case = "CCompiler__shared_object_filename__basename_as_str_wrong"
 # subject = "distutils.ccompiler.CCompiler.shared_object_filename(basename: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed basename"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed basename
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.CCompiler.shared_object_filename(basename: str); call it with the wrong type.
 

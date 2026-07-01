@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__xml_decl_handler__version_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.xml_decl_handler(version: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

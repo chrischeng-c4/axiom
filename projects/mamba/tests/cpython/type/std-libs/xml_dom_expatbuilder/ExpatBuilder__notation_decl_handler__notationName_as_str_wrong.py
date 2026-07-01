@@ -9,7 +9,6 @@
 # case = "ExpatBuilder__notation_decl_handler__notationName_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ExpatBuilder.notation_decl_handler(notationName: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

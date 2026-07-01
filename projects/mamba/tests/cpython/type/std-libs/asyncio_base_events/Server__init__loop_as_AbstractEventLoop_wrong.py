@@ -9,7 +9,6 @@
 # case = "Server__init__loop_as_AbstractEventLoop_wrong"
 # subject = "asyncio.base_events.Server.__init__(loop: AbstractEventLoop)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ElementInfo__init__tagName_as_str_wrong"
 # subject = "xml.dom.expatbuilder.ElementInfo.__init__(tagName: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

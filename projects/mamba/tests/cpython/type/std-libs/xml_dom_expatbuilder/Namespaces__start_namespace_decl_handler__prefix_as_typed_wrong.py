@@ -9,7 +9,6 @@
 # case = "Namespaces__start_namespace_decl_handler__prefix_as_typed_wrong"
 # subject = "xml.dom.expatbuilder.Namespaces.start_namespace_decl_handler(prefix: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

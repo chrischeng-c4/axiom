@@ -9,7 +9,6 @@
 # case = "socketpair__family_as_int_wrong"
 # subject = "_socket.socketpair(family: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "socket__setblocking__flag_as_bool_wrong"
 # subject = "_socket.socket.setblocking(flag: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed flag"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed flag
 # mamba-strict-type: TypeError
 """Type wall: _socket.socket.setblocking(flag: bool); call it with the wrong type.
 

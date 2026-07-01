@@ -9,7 +9,6 @@
 # case = "dup__fd_as_SupportsIndex_wrong"
 # subject = "_socket.dup(fd: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

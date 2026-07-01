@@ -9,7 +9,6 @@
 # case = "socket__init__family_as_int_wrong"
 # subject = "_socket.socket.__init__(family: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__getaddrinfo__host_as_typed_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.getaddrinfo(host: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "getservbyname__servicename_as_str_wrong"
 # subject = "_socket.getservbyname(servicename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"
