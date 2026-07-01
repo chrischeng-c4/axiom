@@ -9,12 +9,10 @@
 # case = "getasyncgenlocals__agen_as_AsyncGeneratorType_wrong"
 # subject = "inspect.getasyncgenlocals(agen: AsyncGeneratorType)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed agen"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed agen
 # mamba-strict-type: TypeError
 """Type wall: inspect.getasyncgenlocals(agen: AsyncGeneratorType); call it with the wrong type.
 
