@@ -9,12 +9,10 @@
 # case = "int____pow____x_as_Literal_wrong"
 # subject = "builtins.int.__pow__(x: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed x
 # mamba-strict-type: TypeError
 """Type wall: builtins.int.__pow__(x: Literal); call it with the wrong type.
 

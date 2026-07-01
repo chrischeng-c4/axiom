@@ -9,12 +9,10 @@
 # case = "memoryview__tobytes__order_as_typed_wrong"
 # subject = "builtins.memoryview.tobytes(order: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed order"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed order
 # mamba-strict-type: TypeError
 """Type wall: builtins.memoryview.tobytes(order: typed); call it with the wrong type.
 

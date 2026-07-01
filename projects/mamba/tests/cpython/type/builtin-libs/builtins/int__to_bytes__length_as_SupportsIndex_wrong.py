@@ -9,7 +9,6 @@
 # case = "int__to_bytes__length_as_SupportsIndex_wrong"
 # subject = "builtins.int.to_bytes(length: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "next__i_as_SupportsNext_wrong"
 # subject = "builtins.next(i: SupportsNext)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

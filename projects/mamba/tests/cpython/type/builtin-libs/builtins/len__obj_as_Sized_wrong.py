@@ -9,12 +9,10 @@
 # case = "len__obj_as_Sized_wrong"
 # subject = "builtins.len(obj: Sized)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: builtins.len(obj: Sized); call it with the wrong type.
 

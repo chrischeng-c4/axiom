@@ -9,12 +9,10 @@
 # case = "list__append__object_as__T_wrong"
 # subject = "builtins.list.append(object: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed object
 # mamba-strict-type: TypeError
 """Type wall: builtins.list.append(object: _T); call it with the wrong type.
 

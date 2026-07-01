@@ -9,7 +9,6 @@
 # case = "object____reduce_ex____protocol_as_SupportsIndex_wrong"
 # subject = "builtins.object.__reduce_ex__(protocol: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
