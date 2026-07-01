@@ -1259,6 +1259,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         }
     }
     if mode == "exec" {
+        if let Some(module) = parse_continued_string_assign_module(&src) {
+            return module;
+        }
         if let Some(module) = parse_exec_parenthesized_plus_module(&src) {
             return module;
         }
@@ -1363,6 +1366,49 @@ fn source_logical_lines(src: &str) -> Vec<&str> {
         lines.push(&src[start..]);
     }
     lines
+}
+
+fn parse_continued_string_assign_module(src: &str) -> Option<MbValue> {
+    let lines = source_logical_lines(src);
+    if lines.len() != 2 {
+        return None;
+    }
+    let first = lines[0];
+    let second = lines[1];
+    let first_trimmed = first.trim_end();
+    let first_without_slash = first_trimmed.strip_suffix('\\')?.trim_end();
+    let (target_text, first_value_text) = first_without_slash.split_once('=')?;
+    let target_text = target_text.trim();
+    if !is_identifier_text(target_text) {
+        return None;
+    }
+    let first_value_text = first_value_text.trim();
+    let first_value = string_literal_value(first_value_text)?;
+    let second_value_text = second.trim_start();
+    let second_value = string_literal_value(second_value_text)?;
+    let first_value_col = first.find(first_value_text).unwrap_or(0);
+    let second_value_col = second.find(second_value_text).unwrap_or(0);
+    let end_col = second_value_col + second_value_text.len();
+
+    let target_col = first.find(target_text).unwrap_or(0);
+    let target = make_store_name_node(target_text, target_col, target_col + target_text.len());
+    let value = make_string_constant_node_span(
+        format!("{first_value}{second_value}"),
+        1,
+        first_value_col,
+        2,
+        end_col,
+    );
+
+    let mut assign_fields = FxHashMap::default();
+    assign_fields.insert(
+        "targets".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![target])),
+    );
+    assign_fields.insert("value".to_string(), value);
+    assign_fields.insert("type_comment".to_string(), MbValue::none());
+    insert_location_attrs(&mut assign_fields, 1, target_col as i64, 2, end_col as i64);
+    Some(make_module_with_body(src, vec![make_ast_node("Assign", assign_fields)]))
 }
 
 fn parse_from_import_statement(stmt: &str) -> Option<MbValue> {
@@ -2121,15 +2167,20 @@ fn make_string_constant_node_span(
 }
 
 fn make_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
+    make_name_node_with_ctx(name, col, end_col, "Load")
+}
+
+fn make_store_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
+    make_name_node_with_ctx(name, col, end_col, "Store")
+}
+
+fn make_name_node_with_ctx(name: &str, col: usize, end_col: usize, ctx: &str) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert(
         "id".to_string(),
         MbValue::from_ptr(MbObject::new_str(name.to_string())),
     );
-    fields.insert(
-        "ctx".to_string(),
-        make_ast_node("Load", FxHashMap::default()),
-    );
+    fields.insert("ctx".to_string(), make_ast_node(ctx, FxHashMap::default()));
     fields.insert("lineno".to_string(), MbValue::from_int(1));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
     fields.insert("end_lineno".to_string(), MbValue::from_int(1));
