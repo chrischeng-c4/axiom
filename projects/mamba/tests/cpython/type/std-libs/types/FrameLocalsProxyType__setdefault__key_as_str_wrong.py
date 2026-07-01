@@ -9,7 +9,6 @@
 # case = "FrameLocalsProxyType__setdefault__key_as_str_wrong"
 # subject = "types.FrameLocalsProxyType.setdefault(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

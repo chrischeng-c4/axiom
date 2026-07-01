@@ -9,12 +9,10 @@
 # case = "AsyncGeneratorType__asend__val_as__SendT_contra_wrong"
 # subject = "types.AsyncGeneratorType.asend(val: _SendT_contra)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed val"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed val
 # mamba-strict-type: TypeError
 """Type wall: types.AsyncGeneratorType.asend(val: _SendT_contra); call it with the wrong type.
 

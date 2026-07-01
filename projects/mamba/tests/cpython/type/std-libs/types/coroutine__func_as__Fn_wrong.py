@@ -9,7 +9,6 @@
 # case = "coroutine__func_as__Fn_wrong"
 # subject = "types.coroutine(func: _Fn)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

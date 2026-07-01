@@ -9,12 +9,10 @@
 # case = "DynamicClassAttribute____get____ownerclass_as_typed_wrong"
 # subject = "types.DynamicClassAttribute.__get__(ownerclass: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ownerclass"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ownerclass
 # mamba-strict-type: TypeError
 """Type wall: types.DynamicClassAttribute.__get__(ownerclass: typed); call it with the wrong type.
 

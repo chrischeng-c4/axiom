@@ -9,12 +9,10 @@
 # case = "MappingProxyType__get__key_as__KT_co_wrong"
 # subject = "types.MappingProxyType.get(key: _KT_co)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key
 # mamba-strict-type: TypeError
 """Type wall: types.MappingProxyType.get(key: _KT_co); call it with the wrong type.
 

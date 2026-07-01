@@ -9,7 +9,6 @@
 # case = "FrameLocalsProxyType__update__object_as_typed_wrong"
 # subject = "types.FrameLocalsProxyType.update(object: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

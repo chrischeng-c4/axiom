@@ -9,7 +9,6 @@
 # case = "GenericAlias____getattr____name_as_str_wrong"
 # subject = "types.GenericAlias.__getattr__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

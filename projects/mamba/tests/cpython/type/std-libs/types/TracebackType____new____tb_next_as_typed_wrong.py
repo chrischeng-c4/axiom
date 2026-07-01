@@ -9,7 +9,6 @@
 # case = "TracebackType____new____tb_next_as_typed_wrong"
 # subject = "types.TracebackType.__new__(tb_next: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ModuleType__init__name_as_str_wrong"
 # subject = "types.ModuleType.__init__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

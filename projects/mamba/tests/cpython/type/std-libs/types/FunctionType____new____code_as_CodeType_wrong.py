@@ -9,7 +9,6 @@
 # case = "FunctionType____new____code_as_CodeType_wrong"
 # subject = "types.FunctionType.__new__(code: CodeType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

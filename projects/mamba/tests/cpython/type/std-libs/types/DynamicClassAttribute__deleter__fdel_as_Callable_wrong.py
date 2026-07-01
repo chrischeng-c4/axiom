@@ -9,12 +9,10 @@
 # case = "DynamicClassAttribute__deleter__fdel_as_Callable_wrong"
 # subject = "types.DynamicClassAttribute.deleter(fdel: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fdel"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fdel
 # mamba-strict-type: TypeError
 """Type wall: types.DynamicClassAttribute.deleter(fdel: Callable); call it with the wrong type.
 

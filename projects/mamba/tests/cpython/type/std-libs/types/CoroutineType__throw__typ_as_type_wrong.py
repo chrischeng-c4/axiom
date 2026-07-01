@@ -9,12 +9,10 @@
 # case = "CoroutineType__throw__typ_as_type_wrong"
 # subject = "types.CoroutineType.throw(typ: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typ"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typ
 # mamba-strict-type: TypeError
 """Type wall: types.CoroutineType.throw(typ: type); call it with the wrong type.
 
