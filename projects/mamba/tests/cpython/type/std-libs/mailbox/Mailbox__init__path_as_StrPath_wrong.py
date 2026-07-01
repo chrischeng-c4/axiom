@@ -9,12 +9,10 @@
 # case = "Mailbox__init__path_as_StrPath_wrong"
 # subject = "mailbox.Mailbox.__init__(path: StrPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: mailbox.Mailbox.__init__(path: StrPath); call it with the wrong type.
 

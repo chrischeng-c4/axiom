@@ -9,7 +9,6 @@
 # case = "MH__add_folder__folder_as_StrPath_wrong"
 # subject = "mailbox.MH.add_folder(folder: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

@@ -4927,6 +4927,37 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // mailbox generated rows collapse StrPath/Literal/Mapping contracts that
+    // matter for strict fixture walls. Keep these constructor and mutator walls
+    // enforceable without restoring the heavyweight filesystem mailbox classes.
+    StdlibSig {
+        module: "mailbox",
+        qualifier: "Mailbox",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("path", CoreTy::Typed),
+            p("factory", CoreTy::Unknown),
+            p("create", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "mailbox",
+        qualifier: "MaildirMessage",
+        name: "set_subdir",
+        kind: SigKind::Method,
+        params: &[p("subdir", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "mailbox",
+        qualifier: "MH",
+        name: "set_sequences",
+        kind: SigKind::Method,
+        params: &[p("sequences", CoreTy::Typed)],
+        enforceable: true,
+    },
     // optparse generated rows collapse class objects and defaults mappings to
     // Unknown. Keep strict fixture walls enforceable while still skipping richer
     // runtime objects once the type model cannot prove them wrong.
@@ -6198,6 +6229,25 @@ mod tests {
         assert!(sig.enforceable);
         assert_eq!(sig.params[1].name, "exc_val");
         assert_eq!(sig.params[1].ty, CoreTy::Typed);
+    }
+
+    #[test]
+    fn curated_mailbox_walls_override_unknown_generated_rows() {
+        let mailbox = get("mailbox", "Mailbox", "__init__").expect("Mailbox.__init__ present");
+        assert!(mailbox.enforceable);
+        assert_eq!(mailbox.params[0].name, "path");
+        assert_eq!(mailbox.params[0].ty, CoreTy::Typed);
+
+        let subdir =
+            get("mailbox", "MaildirMessage", "set_subdir").expect("set_subdir present");
+        assert!(subdir.enforceable);
+        assert_eq!(subdir.params[0].name, "subdir");
+        assert_eq!(subdir.params[0].ty, CoreTy::Str);
+
+        let sequences = get("mailbox", "MH", "set_sequences").expect("MH.set_sequences present");
+        assert!(sequences.enforceable);
+        assert_eq!(sequences.params[0].name, "sequences");
+        assert_eq!(sequences.params[0].ty, CoreTy::Typed);
     }
 
     #[test]

@@ -9,7 +9,6 @@
 # case = "MaildirMessage__set_flags__flags_as_Iterable_wrong"
 # subject = "mailbox.MaildirMessage.set_flags(flags: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Message__init__message_as_typed_wrong"
 # subject = "mailbox.Message.__init__(message: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "BabylMessage__set_labels__labels_as_Iterable_wrong"
 # subject = "mailbox.BabylMessage.set_labels(labels: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

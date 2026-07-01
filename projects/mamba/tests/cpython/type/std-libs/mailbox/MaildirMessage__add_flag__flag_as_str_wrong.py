@@ -9,7 +9,6 @@
 # case = "MaildirMessage__add_flag__flag_as_str_wrong"
 # subject = "mailbox.MaildirMessage.add_flag(flag: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "MaildirMessage__set_subdir__subdir_as_Literal_wrong"
 # subject = "mailbox.MaildirMessage.set_subdir(subdir: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subdir"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed subdir
 # mamba-strict-type: TypeError
 """Type wall: mailbox.MaildirMessage.set_subdir(subdir: Literal); call it with the wrong type.
 

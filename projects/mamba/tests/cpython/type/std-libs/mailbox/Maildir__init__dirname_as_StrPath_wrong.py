@@ -9,7 +9,6 @@
 # case = "Maildir__init__dirname_as_StrPath_wrong"
 # subject = "mailbox.Maildir.__init__(dirname: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"
