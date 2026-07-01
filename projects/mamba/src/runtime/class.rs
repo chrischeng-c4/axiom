@@ -14842,6 +14842,13 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
             }
         }
         let result = mb_call_method1(method, obj);
+        // The with-lowering keeps the context manager value for the later
+        // __exit__ call and explicitly releases temporary context expressions
+        // after exit. Native method calls can consume the argument VReg, so the
+        // context object needs its own retain for that with-lifetime.
+        unsafe {
+            super::rc::retain_if_ptr(obj);
+        }
         // If __enter__ returned self (same pointer), add a retain to compensate:
         // the JIT holds TWO VRegs (ctx_vreg and enter_dest) that both point to
         // the same object, but only one refcount was present from the original
