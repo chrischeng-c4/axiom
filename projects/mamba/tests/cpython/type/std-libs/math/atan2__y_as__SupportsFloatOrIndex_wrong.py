@@ -9,7 +9,6 @@
 # case = "atan2__y_as__SupportsFloatOrIndex_wrong"
 # subject = "math.atan2(y: _SupportsFloatOrIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

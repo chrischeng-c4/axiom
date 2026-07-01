@@ -9,7 +9,6 @@
 # case = "expm1__x_as__SupportsFloatOrIndex_wrong"
 # subject = "math.expm1(x: _SupportsFloatOrIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

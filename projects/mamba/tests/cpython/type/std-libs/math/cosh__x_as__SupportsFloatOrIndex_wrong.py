@@ -9,7 +9,6 @@
 # case = "cosh__x_as__SupportsFloatOrIndex_wrong"
 # subject = "math.cosh(x: _SupportsFloatOrIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"
