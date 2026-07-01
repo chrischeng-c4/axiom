@@ -936,6 +936,20 @@ pub fn register() {
         &[],
     );
     register_with(
+        "multiprocessing.dummy",
+        &["DummyProcess", "Namespace", "Value"],
+        &[
+            ("Array", dispatch_class_shell as *const () as usize),
+            ("Manager", dispatch_class_shell as *const () as usize),
+            ("Pool", dispatch_class_shell as *const () as usize),
+            ("active_children", dispatch_empty_list as *const () as usize),
+            ("freeze_support", dispatch_noop as *const () as usize),
+            ("shutdown", dispatch_noop as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "multiprocessing.managers",
         &[
             "BaseManager",
