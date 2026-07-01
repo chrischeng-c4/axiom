@@ -26,6 +26,8 @@ patches:
           spec:
             containers:
               - name: loom
+                securityContext:
+                  runAsNonRoot: true
                 env:
                   - name: REPLICAS_PER_SHARD
                     value: "3"

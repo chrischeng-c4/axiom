@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && chmod +x /usr/local/bin/kubectl \
     && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
     && useradd -u 65532 -M -s /usr/sbin/nologin nonroot
-COPY --from=fetch /tmp/loom /usr/local/bin/loom
+COPY --chown=65532:65532 --from=fetch /tmp/loom /usr/local/bin/loom
 USER 65532
 # 7474 = controller control API; 7475 = schema-layer bidi edge (both h2c+HTTP/1).
 EXPOSE 7474 7475

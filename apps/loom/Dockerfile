@@ -16,7 +16,7 @@ FROM rust:1.92-slim-bookworm AS builder
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY . .
+COPY --chown=root:root . .
 # BuildKit cache mounts keep the cargo registry + target dir warm across builds;
 # target/ is a cache mount (not persisted into the layer), so copy the binaries
 # out in the same RUN. Add `--features operator` to also bake in the k8s
@@ -36,9 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.3/bin/linux/${ARCH}/kubectl" \
     && chmod +x /usr/local/bin/kubectl \
     && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/bin/loom /usr/local/bin/loom
-COPY --from=builder /usr/local/bin/relay-server /usr/local/bin/relay-server
-COPY --from=builder /usr/local/bin/keep /usr/local/bin/keep
+COPY --chown=65532:65532 --from=builder /usr/local/bin/loom /usr/local/bin/loom
+COPY --chown=65532:65532 --from=builder /usr/local/bin/relay-server /usr/local/bin/relay-server
+COPY --chown=65532:65532 --from=builder /usr/local/bin/keep /usr/local/bin/keep
 # 7474 = controller control API; 7475 = schema-layer bidi edge (both h2c+HTTP/1).
 EXPOSE 7474 7475
 ENTRYPOINT ["loom"]

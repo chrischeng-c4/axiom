@@ -31,7 +31,9 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
-          image: loom:latest
+          # Pin to a released tag (K8003). Bump per loom release, or override via
+          # `loom k8s operator render` / kustomize `images:` in your overlay.
+          image: loom:0.4.3
           imagePullPolicy: IfNotPresent
           command: ["loom", "k8s", "operator", "run"]
           env:
