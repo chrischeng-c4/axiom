@@ -5,8 +5,8 @@
 //! @spec `.aw/tech-design/projects/jet/config/jet-config-validation.md`
 //!     §"Slice 5 — `schemas/jet.schema.json` export".
 //! @issue #1233 — Slice 5 (this commit). Derives the schema from
-//!     [`crate::wasm_build::config::WasmConfig`]'s `schemars::JsonSchema`
-//!     so the on-disk artifact stays in lockstep with the Rust source
+//!     [`crate::task_runner::config::JetConfig`]'s `schemars::JsonSchema`
+//!     so the on-disk artifact stays in lockstep with the full Rust source
 //!     of truth (R1). CI gate: `jet config schema --check` exits
 //!     non-zero on drift.
 //!
@@ -18,14 +18,13 @@
 //!   differs from a fresh generation. Exit codes: 0 = up-to-date,
 //!   1 = drift, 2 = on-disk file missing or malformed.
 //!
-//! The schema wraps [`crate::wasm_build::config::WasmConfig`] under a
-//! top-level `wasm` key so editors validate the same shape the loader
-//! deserializes (`ConfigFile.wasm: Option<WasmConfig>`). Future
-//! `[dev]` / `[mfe]` sections plug in here as additional sibling
-//! properties.
+//! The schema is derived from [`crate::task_runner::config::JetConfig`], the
+//! full `jet.toml` shape used by `jet dev`, `jet build`, task runner config,
+//! and library mode. WASM-specific loading still consumes `[wasm]` through
+//! `wasm_build::config`, but the public schema must describe the whole file.
 
-use crate::wasm_build::config::WasmConfig;
-use schemars::schema::{InstanceType, ObjectValidation, RootSchema, Schema, SchemaObject};
+use crate::task_runner::config::JetConfig;
+use schemars::schema::RootSchema;
 use schemars::schema_for;
 use std::path::Path;
 
@@ -62,63 +61,21 @@ pub const SCHEMA_REL_PATH: &str = "schemas/jet.schema.json";
 
 /// Build the JSON Schema for the full `jet.toml` file.
 ///
-/// Wraps [`WasmConfig`]'s derived schema under a top-level `wasm`
-/// property so the artifact validates the on-disk file shape (with
-/// `[wasm]` as a TOML section). Returns the [`RootSchema`] so callers
-/// can either serialize it themselves or hand it to [`render`].
+/// Derives the public schema from [`JetConfig`] so the artifact validates the
+/// whole on-disk file shape. Returns the [`RootSchema`] so callers can either
+/// serialize it themselves or hand it to [`render`].
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
+/// @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#logic
 pub fn build_schema() -> RootSchema {
-    let mut wasm_schema = schema_for!(WasmConfig);
-    // Title at the top level is more useful as "jet.toml" than
-    // the inner type name.
-    wasm_schema.schema.metadata().title = Some("jet.toml".into());
-    wasm_schema.schema.metadata().description = Some(
+    let mut schema = schema_for!(JetConfig);
+    schema.schema.metadata().title = Some("jet.toml".into());
+    schema.schema.metadata().description = Some(
         "Schema for the `jet.toml` file. Generated from the Rust \
-         source of truth in `projects/jet/src/wasm_build/config.rs`. Run \
+         source of truth in `projects/jet/src/task_runner/config.rs`. Run \
          `jet config schema --write` to regenerate."
             .into(),
     );
-
-    // Wrap WasmConfig under the `wasm` section. We build a fresh root
-    // SchemaObject and move the original WasmConfig schema into the
-    // `definitions` table so $ref points at it.
-    let wasm_inner_schema: Schema = Schema::Object(wasm_schema.schema.clone());
-    let mut definitions = wasm_schema.definitions.clone();
-    definitions.insert("WasmConfig".into(), wasm_inner_schema);
-
-    let mut object = ObjectValidation::default();
-    object.properties.insert(
-        "wasm".into(),
-        Schema::Object(SchemaObject {
-            reference: Some("#/definitions/WasmConfig".into()),
-            ..Default::default()
-        }),
-    );
-    // [wasm] is required at the file level — the loader bails with
-    // ConfigError::MissingWasmSection when it's absent.
-    object.required.insert("wasm".into());
-    // No extra top-level keys are accepted yet; this mirrors the
-    // ConfigFile struct's `deny_unknown_fields`. When [dev] / [mfe]
-    // land they get added here as additional properties + the
-    // additional_properties: false stays in place.
-    object.additional_properties = Some(Box::new(Schema::Bool(false)));
-
-    let mut root = SchemaObject::default();
-    root.metadata().title = Some("jet.toml".into());
-    root.metadata().description = Some(
-        "Schema for the `jet.toml` file. Generated from the Rust \
-         source of truth in `projects/jet/src/wasm_build/config.rs`. Run \
-         `jet config schema --write` to regenerate."
-            .into(),
-    );
-    root.instance_type = Some(InstanceType::Object.into());
-    root.object = Some(Box::new(object));
-
-    RootSchema {
-        meta_schema: Some("http://json-schema.org/draft-07/schema#".into()),
-        schema: root,
-        definitions,
-    }
+    schema
 }
 
 /// Render the schema as a stable, pretty-printed JSON string with a
@@ -227,36 +184,39 @@ mod tests {
     }
 
     #[test]
-    fn build_schema_pins_top_level_required_wasm_with_no_extras() {
+    fn build_schema_exposes_full_jet_config_with_optional_wasm() {
         let schema = build_schema();
         let json = serde_json::to_value(&schema).unwrap();
 
         assert_eq!(json["$schema"], "http://json-schema.org/draft-07/schema#");
         assert_eq!(json["type"], "object");
-        // `wasm` is required.
         assert!(
-            json["required"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|v| v == "wasm"),
-            "expected 'wasm' in required, got {}",
-            json["required"]
+            json.get("required")
+                .and_then(|v| v.as_array())
+                .map_or(true, |required| !required.iter().any(|v| v == "wasm")),
+            "`wasm` must be optional in the full jet.toml schema, got {}",
+            json.get("required").unwrap_or(&serde_json::Value::Null)
         );
-        // No additional top-level properties.
         assert_eq!(json["additionalProperties"], false);
-        // The wasm property is a $ref pointing into definitions.
-        assert_eq!(
-            json["properties"]["wasm"]["$ref"],
-            "#/definitions/WasmConfig"
+
+        let props = json["properties"].as_object().unwrap();
+        for expected in [
+            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen",
+        ] {
+            assert!(
+                props.contains_key(expected),
+                "expected top-level property `{expected}` in schema, got {props:?}",
+            );
+        }
+        let schema_text = serde_json::to_string(&json).unwrap();
+        assert!(
+            schema_text.contains("css_merge"),
+            "`[lib].css_merge` must be present in schema"
         );
-        // The definition itself exists and lists the three known fields.
-        let wasm_def = &json["definitions"]["WasmConfig"];
-        assert_eq!(wasm_def["type"], "object");
-        let props = wasm_def["properties"].as_object().unwrap();
-        assert!(props.contains_key("entry"));
-        assert!(props.contains_key("root_component"));
-        assert!(props.contains_key("root_props"));
+        assert!(
+            schema_text.contains("raw_copy"),
+            "`[lib].raw_copy` must be present in schema"
+        );
     }
 
     #[test]

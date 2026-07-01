@@ -63,8 +63,9 @@ const WASM_SECTION_KEYS: &[&str] = &["entry", "root_component", "renderer", "roo
 /// neither re-validates them nor depends on the `JetConfig` schema.
 ///
 /// Keep in lockstep with `task_runner::config::JET_TOP_LEVEL_KEYS`.
+/// @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#logic
 const TOP_LEVEL_KEYS: &[&str] = &[
-    "wasm", "pipeline", "dev", "alias", "build", "resolve", "test",
+    "wasm", "pipeline", "dev", "alias", "build", "resolve", "test", "lib", "codegen",
 ];
 
 /// Shared config sections accepted by the WASM loader as raw TOML so
@@ -180,7 +181,7 @@ impl std::fmt::Display for RootPropValue {
 /// In-memory shape of `jet.toml` as seen by the WASM loader.
 /// `wasm` is the only field consumed downstream; the remaining
 /// sections mirror the non-WASM `JetConfig` schema (`pipeline`,
-/// `dev`, `alias`, `build`, `resolve`, `test`) and are accepted as
+/// `dev`, `alias`, `build`, `resolve`, `test`, `lib`, `codegen`) and are accepted as
 /// raw `toml::Value` so projects can keep a single config file for
 /// both pipelines.
 ///
@@ -212,6 +213,12 @@ struct ConfigFile {
     #[allow(dead_code)]
     #[serde(default)]
     test: Option<toml::Value>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    lib: Option<toml::Value>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    codegen: Option<toml::Value>,
 }
 
 /// Span where an offending key appeared in the source file. `(0, 0)`
@@ -1048,7 +1055,7 @@ out_dir = "../be/static"
     }
 
     #[test]
-    fn accepts_pipeline_resolve_test_sections() {
+    fn accepts_pipeline_resolve_test_lib_and_codegen_sections() {
         // Every section in JET_TOP_LEVEL_KEYS must round-trip
         // through the WASM loader, not just the Cue subset.
         let src = r#"
@@ -1064,6 +1071,12 @@ conditions = ["browser"]
 
 [test]
 include = ["tests/**"]
+
+[lib]
+css_merge = ["dist/style.css"]
+
+[codegen.openapi]
+stack = "typescript"
 "#;
         let cfg = WasmConfig::parse_str(src, &p()).expect("must parse");
         assert_eq!(cfg.entry, "x");
