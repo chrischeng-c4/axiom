@@ -9,26 +9,14 @@
 # case = "a_s_t_helpers__test__test_get_docstring"
 # subject = "cpython.test_ast.ASTHelpers_Test.test_get_docstring"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
-import builtins
-import dis
-import enum
-import os
-import re
-import sys
-import textwrap
-import types
-import warnings
-import weakref
-from functools import partial
-from textwrap import dedent
-maxDiff = None
+
+
 node = ast.parse('"""line one\n  line two"""')
 assert ast.get_docstring(node) == 'line one\nline two'
 node = ast.parse('class foo:\n  """line one\n  line two"""')
