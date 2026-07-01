@@ -83,23 +83,6 @@ impl Default for WorkQueueConfig {
     }
 }
 
-/// Broadcast / fan-out delivery settings (replayable from any retained seq).
-///
-/// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#config
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BroadcastConfig {
-    /// `0` = replay from any retained seq; `>0` caps replay depth.
-    pub max_replay_entries: u64,
-}
-
-impl Default for BroadcastConfig {
-    fn default() -> Self {
-        BroadcastConfig {
-            max_replay_entries: 0,
-        }
-    }
-}
-
 /// Retention of the durable log. relay is delete-on-ack: a segment is reclaimed
 /// once every entry in it is acked (the committed watermark passes it), so
 /// storage tracks **backlog depth**, not total throughput. An un-acked backlog
@@ -144,7 +127,6 @@ pub struct RelayCoreConfig {
     pub default_shards: u32,
     pub dedupe: DedupeConfig,
     pub work_queue: WorkQueueConfig,
-    pub broadcast: BroadcastConfig,
     pub retention: RetentionConfig,
 }
 
@@ -161,7 +143,6 @@ impl Default for RelayCoreConfig {
             default_shards: 1,
             dedupe: DedupeConfig::default(),
             work_queue: WorkQueueConfig::default(),
-            broadcast: BroadcastConfig::default(),
             retention: RetentionConfig::default(),
         }
     }

@@ -82,14 +82,6 @@ pub struct AckResponse {
     pub committed_seq: Option<Seq>,
 }
 
-/// Broadcast tail query; delivery starts at `from_seq`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubscribeQuery {
-    pub from_seq: Seq,
-    #[serde(default)]
-    pub subscriber_id: Option<String>,
-}
-
 /// Lease up to `max` entries in one call (work-queue throughput, #128).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseBatchRequest {
@@ -145,10 +137,8 @@ pub struct PublishBatchResponse {
     pub outcomes: Vec<AppendOutcome>,
 }
 
-/// Content type for the CBOR fast path / stream.
+/// Content type for the CBOR fast path.
 pub const CBOR: &str = "application/cbor";
-/// Content type for the broadcast frame stream.
-pub const CBOR_SEQ: &str = "application/cbor-seq";
 
 /// Serialize `value` to CBOR bytes.
 pub fn to_cbor<T: Serialize>(value: &T) -> Vec<u8> {

@@ -2,11 +2,21 @@
 
 ## Brief
 
-`relay` is the durable ordered-log and queue broker in the Axiom stack. It owns
-append, replay, broadcast fan-out, work-queue leasing, h2c/OpenAPI transport,
-and the raft-backed HA path. Payloads stay opaque JSON so higher-level systems
-such as lumen and worker runtimes can use relay without relay learning their
-domain model.
+`relay` is the online **single-cast work-queue broker** in the Axiom stack
+(RabbitMQ/SQS-shaped): a producer publishes a task, a worker **pulls** (leases)
+it, runs it, and acks — each message is delivered exactly once to one of the
+competing consumers, then reclaimed (**delete-on-ack**). It owns work-queue
+leasing with lease-expiry redelivery, dead-lettering, priority, short delayed
+visibility, h2c/OpenAPI transport, and raft-backed HA. Payloads stay opaque JSON
+so higher-level systems (loom, worker runtimes) use relay without relay learning
+their domain model.
+
+Relay is deliberately **not** a Kafka/pub-sub platform: durable topic
+replay/retention is [`tape`](../tape)'s job, and push/ETA task dispatch is
+[`defer`](../defer)'s. Concurrency is **client-driven** — more workers = more
+throughput; relay has no server-side rate/concurrency governor (that is `defer`).
+Tenancy is a deployment concern — relay is single-tenant per deployment; run one
+per tenant (k8s namespace). See the boundary notes in the ecosystem docs.
 
 ## Capabilities
 

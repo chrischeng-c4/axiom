@@ -37,26 +37,7 @@ pub type Seq = u64;
 /// idempotency / dedupe key so an at-least-once retry maps to the same entry.
 pub type MessageId = String;
 
-/// How a subject's appended messages are delivered.
-///
-/// `Broadcast`/`Multicast` fan out every message to every (group) subscriber,
-/// replayable from a seq. `WorkQueue` leases each message to exactly one
-/// competing consumer. `Singlecast` is the degenerate one-consumer case of
-/// `WorkQueue`. The relay core supports broadcast and work-queue delivery over
-/// the *same* log simultaneously; this enum is descriptive routing metadata.
-///
-/// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#schema
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeliveryModel {
-    Singlecast,
-    Multicast,
-    Broadcast,
-    WorkQueue,
-}
-
-/// One durable record in the ordered log; the unit of both broadcast replay
-/// and work-queue lease.
+/// One durable record in the ordered log; the unit of work-queue lease.
 ///
 /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -93,24 +74,6 @@ pub struct AppendOutcome {
     pub seq: Seq,
     /// True when the id was already present and no new entry was written.
     pub deduped: bool,
-}
-
-/// Broadcast/fan-out read position; each subscriber advances independently and
-/// may replay from any seq.
-///
-/// `position` is the next seq this subscriber will be delivered (exclusive of
-/// what it has already received).
-///
-/// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#schema
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SubscriberCursor {
-    pub subscriber_id: String,
-    pub subject: Subject,
-    pub shard: ShardId,
-    /// Seq the subscription (re)started replay from.
-    pub from_seq: Seq,
-    /// Next seq to deliver to this subscriber.
-    pub position: Seq,
 }
 
 /// Work-queue grant of one entry to exactly one consumer until it acks or the

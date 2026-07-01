@@ -15,7 +15,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(
         title = "relay HTTP/2 transport",
-        description = "All protocols over HTTP/2 (h2c), no gRPC. JSON contract with an application/cbor fast path for lease/ack and a CBOR frame stream for subscribe."
+        description = "Single-cast work-queue broker over HTTP/2 (h2c), no gRPC. JSON contract with an application/cbor fast path for lease/ack and a length-prefixed frame stream for consume."
     ),
     paths(
         crate::server::publish,
