@@ -9,12 +9,10 @@
 # case = "findmatch__caps_as_Mapping_wrong"
 # subject = "mailcap.findmatch(caps: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed caps"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailcap.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed caps
 # mamba-strict-type: TypeError
 """Type wall: mailcap.findmatch(caps: Mapping); call it with the wrong type.
 

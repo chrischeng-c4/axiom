@@ -9,12 +9,10 @@
 # case = "Dialog__init__cnf_as_Mapping_wrong"
 # subject = "tkinter.dialog.Dialog.__init__(cnf: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cnf"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tkinter/dialog.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cnf
 # mamba-strict-type: TypeError
 """Type wall: tkinter.dialog.Dialog.__init__(cnf: Mapping); call it with the wrong type.
 
