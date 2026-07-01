@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-07-01T13:34:34.455130+00:00"
-digest = "sha256:95457a934ee1fc1e55a9c63ce222a920772cce785a08b90ddf7fc62fe9c4d7d0"
-source_digest = "sha256:95457a934ee1fc1e55a9c63ce222a920772cce785a08b90ddf7fc62fe9c4d7d0"
-ir_digest = "sha256:5e8e96b77d2c65211ec71e3a01ead7aef2b76b04c608e7143725bc7b8131e30c"
+generated_at = "2026-07-01T13:54:22.253186+00:00"
+digest = "sha256:24434fa9a352e225d042478f9e2c59a1cd7e20ef8a4776938c8ff9941eface40"
+source_digest = "sha256:24434fa9a352e225d042478f9e2c59a1cd7e20ef8a4776938c8ff9941eface40"
+ir_digest = "sha256:3c01320f545e8d4aa89e92b43c42b4c19a379504a6fca5dddd6be285351f24cb"
 
 [[files]]
 path = "config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md"
@@ -282,6 +282,12 @@ path = "logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md"
 digest = "sha256:0223c3bc4b61aade6f4e9af917b0b9a429fa8f392ea6b6a3523464a403eaa66e"
 ir_digest = "sha256:c3e80d932337159eca5766a99bfe2a61dcddb7735e843f0cf4ef8ee49dad6711"
 section_count = 2
+
+[[files]]
+path = "logic/jet-pack-publish-workspace-dependencies-are-not-rewritten-to-rea.md"
+digest = "sha256:98b5e5859d10b19f21f6cdbfbbae731ac790da5a287da2b96ef72ede3a1c54e9"
+ir_digest = "sha256:4ed63500d3f4542a76f907fa66bc7aa88dac52086da75776fb0610a1d633dc95"
+section_count = 3
 
 [[files]]
 path = "logic/jet-publish-library-and-private-registry.md"
