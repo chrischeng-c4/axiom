@@ -9,12 +9,10 @@
 # case = "PyCompileError__init__exc_type_as_type_wrong"
 # subject = "py_compile.PyCompileError.__init__(exc_type: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/py_compile.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type
 # mamba-strict-type: TypeError
 """Type wall: py_compile.PyCompileError.__init__(exc_type: type); call it with the wrong type.
 
