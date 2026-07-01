@@ -9,7 +9,6 @@
 # case = "str____contains____key_as_str_wrong"
 # subject = "builtins.str.__contains__(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

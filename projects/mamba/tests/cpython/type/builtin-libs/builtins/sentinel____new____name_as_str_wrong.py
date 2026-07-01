@@ -9,7 +9,6 @@
 # case = "sentinel____new____name_as_str_wrong"
 # subject = "builtins.sentinel.__new__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

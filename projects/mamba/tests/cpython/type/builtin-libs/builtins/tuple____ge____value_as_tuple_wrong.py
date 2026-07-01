@@ -9,7 +9,6 @@
 # case = "tuple____ge____value_as_tuple_wrong"
 # subject = "builtins.tuple.__ge__(value: tuple)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

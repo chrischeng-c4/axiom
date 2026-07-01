@@ -9,7 +9,6 @@
 # case = "sum__iterable_as_Iterable_wrong"
 # subject = "builtins.sum(iterable: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

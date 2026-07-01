@@ -9,12 +9,10 @@
 # case = "slice____new____stop_as__T2_wrong"
 # subject = "builtins.slice.__new__(stop: _T2)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stop"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stop
 # mamba-strict-type: TypeError
 """Type wall: builtins.slice.__new__(stop: _T2); call it with the wrong type.
 

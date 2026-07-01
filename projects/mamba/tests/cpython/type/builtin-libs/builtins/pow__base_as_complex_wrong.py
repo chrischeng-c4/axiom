@@ -9,7 +9,6 @@
 # case = "pow__base_as_complex_wrong"
 # subject = "builtins.pow(base: complex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

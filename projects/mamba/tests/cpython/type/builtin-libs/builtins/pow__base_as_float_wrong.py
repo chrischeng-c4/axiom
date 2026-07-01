@@ -9,7 +9,6 @@
 # case = "pow__base_as_float_wrong"
 # subject = "builtins.pow(base: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

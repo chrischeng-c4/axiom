@@ -9,7 +9,6 @@
 # case = "open__file_as_FileDescriptorOrPath_wrong"
 # subject = "builtins.open(file: FileDescriptorOrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "set__add__element_as__T_wrong"
 # subject = "builtins.set.add(element: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed element"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed element
 # mamba-strict-type: TypeError
 """Type wall: builtins.set.add(element: _T); call it with the wrong type.
 

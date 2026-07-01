@@ -9,7 +9,6 @@
 # case = "set__isdisjoint__s_as_Iterable_wrong"
 # subject = "builtins.set.isdisjoint(s: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

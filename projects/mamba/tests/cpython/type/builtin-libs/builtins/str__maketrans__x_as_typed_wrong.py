@@ -9,7 +9,6 @@
 # case = "str__maketrans__x_as_typed_wrong"
 # subject = "builtins.str.maketrans(x: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

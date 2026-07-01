@@ -9,7 +9,6 @@
 # case = "str__format_map__mapping_as__FormatMapMapping_wrong"
 # subject = "builtins.str.format_map(mapping: _FormatMapMapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

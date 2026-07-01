@@ -9,7 +9,6 @@
 # case = "str__partition__sep_as_LiteralString_wrong"
 # subject = "builtins.str.partition(sep: LiteralString)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

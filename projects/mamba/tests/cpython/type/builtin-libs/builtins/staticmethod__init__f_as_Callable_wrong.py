@@ -9,12 +9,10 @@
 # case = "staticmethod__init__f_as_Callable_wrong"
 # subject = "builtins.staticmethod.__init__(f: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed f"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed f
 # mamba-strict-type: TypeError
 """Type wall: builtins.staticmethod.__init__(f: Callable); call it with the wrong type.
 

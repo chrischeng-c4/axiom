@@ -9,7 +9,6 @@
 # case = "str__strip__chars_as_typed_wrong"
 # subject = "builtins.str.strip(chars: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

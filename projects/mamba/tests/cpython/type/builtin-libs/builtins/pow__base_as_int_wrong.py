@@ -9,12 +9,10 @@
 # case = "pow__base_as_int_wrong"
 # subject = "builtins.pow(base: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed base"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed base
 # mamba-strict-type: TypeError
 """Type wall: builtins.pow(base: int); call it with the wrong type.
 

@@ -9,7 +9,6 @@
 # case = "range__index__value_as_int_wrong"
 # subject = "builtins.range.index(value: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
