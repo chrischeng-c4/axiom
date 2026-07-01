@@ -285,6 +285,7 @@ pub fn register() {
             node_type.to_string(),
             MbValue::from_ptr(MbObject::new_str(format!("mb_ast_node_{}", node_type))),
         );
+        register_ast_class_metadata(node_type);
     }
 
     // Names that CPython's ast module pulls into its namespace from other
@@ -382,6 +383,63 @@ fn split_native_kwargs(args: &[MbValue]) -> (&[MbValue], Option<MbValue>) {
         }
     }
     (args, None)
+}
+
+extern "C" fn ast_node_getattr(obj: MbValue, attr: MbValue) -> MbValue {
+    let attr_name = extract_str(attr).unwrap_or_default();
+    let class_name = obj
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let super::super::rc::ObjData::Instance { class_name, .. } = &(*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "AST".to_string());
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "'{}' object has no attribute '{}'",
+            class_name, attr_name
+        ))),
+    );
+    MbValue::none()
+}
+
+fn register_ast_class_metadata(node_type: &str) {
+    let name = MbValue::from_ptr(MbObject::new_str(node_type.to_string()));
+    let base = if node_type == "AST" {
+        MbValue::none()
+    } else {
+        MbValue::from_ptr(MbObject::new_str("AST".to_string()))
+    };
+    let (method_names, method_values) = if node_type == "AST" {
+        (
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+                MbObject::new_str("__getattr__".to_string()),
+            )])),
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_func(
+                ast_node_getattr as usize,
+            )])),
+        )
+    } else {
+        (
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        )
+    };
+    super::super::class::mb_class_define(name, base, method_names, method_values);
+
+    let fields = ast_dump_field_order(node_type)
+        .iter()
+        .map(|field| MbValue::from_ptr(MbObject::new_str((*field).to_string())))
+        .collect();
+    super::super::class::mb_class_set_class_attr(
+        MbValue::from_ptr(MbObject::new_str(node_type.to_string())),
+        MbValue::from_ptr(MbObject::new_str("_fields".to_string())),
+        MbValue::from_ptr(MbObject::new_tuple(fields)),
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -867,6 +925,12 @@ pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue
     } else {
         (args, Vec::new())
     };
+    if node_type == "AST" && !pos_args.is_empty() {
+        super::super::builtins::raise_type_error(
+            "AST constructor takes at most 0 positional arguments".to_string(),
+        );
+        return Some(MbValue::none());
+    }
     let mut fields = FxHashMap::default();
     for (idx, arg) in pos_args.iter().copied().enumerate() {
         if let Some(spec) = specs.get(idx) {
