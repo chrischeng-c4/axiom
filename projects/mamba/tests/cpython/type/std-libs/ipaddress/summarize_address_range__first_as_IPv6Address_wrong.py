@@ -9,12 +9,11 @@
 # case = "summarize_address_range__first_as_IPv6Address_wrong"
 # subject = "ipaddress.summarize_address_range(first: IPv6Address)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed first"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ipaddress.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed first
 # mamba-strict-type: TypeError
 """Type wall: ipaddress.summarize_address_range(first: IPv6Address); call it with the wrong type.
 
