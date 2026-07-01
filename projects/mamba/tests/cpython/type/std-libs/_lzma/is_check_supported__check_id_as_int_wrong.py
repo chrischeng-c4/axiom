@@ -9,7 +9,6 @@
 # case = "is_check_supported__check_id_as_int_wrong"
 # subject = "_lzma.is_check_supported(check_id: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lzma.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "spawn__argv_as_typed_wrong"
 # subject = "pty.spawn(argv: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pty.pyi"
 # status = "filled"

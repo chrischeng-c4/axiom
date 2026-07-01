@@ -9,7 +9,6 @@
 # case = "dump__value_as__Marshallable_wrong"
 # subject = "marshal.dump(value: _Marshallable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/marshal.pyi"
 # status = "filled"

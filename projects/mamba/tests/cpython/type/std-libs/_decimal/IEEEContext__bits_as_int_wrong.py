@@ -9,7 +9,6 @@
 # case = "IEEEContext__bits_as_int_wrong"
 # subject = "_decimal.IEEEContext(bits: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_decimal.pyi"
 # status = "filled"

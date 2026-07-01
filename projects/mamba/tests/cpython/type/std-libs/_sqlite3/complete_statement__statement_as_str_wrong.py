@@ -9,7 +9,6 @@
 # case = "complete_statement__statement_as_str_wrong"
 # subject = "_sqlite3.complete_statement(statement: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"

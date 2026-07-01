@@ -9,7 +9,6 @@
 # case = "tcdrain__fd_as_FileDescriptorLike_wrong"
 # subject = "termios.tcdrain(fd: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/termios.pyi"
 # status = "filled"

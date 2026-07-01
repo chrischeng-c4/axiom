@@ -9,7 +9,6 @@
 # case = "file_digest__fileobj_as_typed_wrong"
 # subject = "hashlib.file_digest(fileobj: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/hashlib.pyi"
 # status = "filled"

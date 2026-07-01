@@ -9,7 +9,6 @@
 # case = "setcontext__context_as_Context_wrong"
 # subject = "_decimal.setcontext(context: Context)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_decimal.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "getrlimit__resource_as_int_wrong"
 # subject = "resource.getrlimit(resource: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/resource.pyi"
 # status = "filled"

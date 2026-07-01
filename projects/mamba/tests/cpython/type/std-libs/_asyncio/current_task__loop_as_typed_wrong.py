@@ -9,7 +9,6 @@
 # case = "current_task__loop_as_typed_wrong"
 # subject = "_asyncio.current_task(loop: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_asyncio.pyi"
 # status = "filled"

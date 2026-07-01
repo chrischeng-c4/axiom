@@ -9,7 +9,6 @@
 # case = "loads__bytes_as_ReadableBuffer_wrong"
 # subject = "marshal.loads(bytes: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/marshal.pyi"
 # status = "filled"

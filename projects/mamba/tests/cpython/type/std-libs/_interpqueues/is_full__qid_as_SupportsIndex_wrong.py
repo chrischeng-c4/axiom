@@ -9,7 +9,6 @@
 # case = "is_full__qid_as_SupportsIndex_wrong"
 # subject = "_interpqueues.is_full(qid: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_interpqueues.pyi"
 # status = "filled"

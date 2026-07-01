@@ -9,7 +9,6 @@
 # case = "Future__add_done_callback__fn_as_Callable_wrong"
 # subject = "_asyncio.Future.add_done_callback(fn: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_asyncio.pyi"
 # status = "filled"

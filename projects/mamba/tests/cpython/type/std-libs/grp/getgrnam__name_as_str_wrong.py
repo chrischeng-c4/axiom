@@ -9,7 +9,6 @@
 # case = "getgrnam__name_as_str_wrong"
 # subject = "grp.getgrnam(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/grp.pyi"
 # status = "filled"

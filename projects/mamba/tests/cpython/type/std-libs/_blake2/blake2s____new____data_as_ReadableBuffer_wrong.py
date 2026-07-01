@@ -9,7 +9,6 @@
 # case = "blake2s____new____data_as_ReadableBuffer_wrong"
 # subject = "_blake2.blake2s.__new__(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_blake2.pyi"
 # status = "filled"

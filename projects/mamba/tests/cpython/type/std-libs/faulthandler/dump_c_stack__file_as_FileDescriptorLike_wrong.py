@@ -9,7 +9,6 @@
 # case = "dump_c_stack__file_as_FileDescriptorLike_wrong"
 # subject = "faulthandler.dump_c_stack(file: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/faulthandler.pyi"
 # status = "filled"

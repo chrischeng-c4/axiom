@@ -9,7 +9,6 @@
 # case = "setcbreak__fd_as__FD_wrong"
 # subject = "tty.setcbreak(fd: _FD)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tty.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "LZMADecompressor____new____format_as_int_wrong"
 # subject = "_lzma.LZMADecompressor.__new__(format: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_lzma.pyi"
 # status = "filled"

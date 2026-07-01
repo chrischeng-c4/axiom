@@ -9,7 +9,6 @@
 # case = "compiler_fixup__compiler_so_as_Iterable_wrong"
 # subject = "_osx_support.compiler_fixup(compiler_so: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_osx_support.pyi"
 # status = "filled"

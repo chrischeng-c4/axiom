@@ -9,7 +9,6 @@
 # case = "crypt__word_as_str_wrong"
 # subject = "crypt.crypt(word: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/crypt.pyi"
 # status = "filled"
