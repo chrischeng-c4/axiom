@@ -181,11 +181,13 @@ python3.12 tests/harness/cpython/tools/runtime_fast_loop.py behavior/std-libs/as
 ```
 
 Use this loop while hand-writing runtime fixes. It runs at most one guarded
-debug `cargo build`, refuses to validate with a stale `target/debug/mamba`
-unless `--allow-stale` is explicit, and then delegates fixture execution to
-`sweep.py` so changed-fixture and lib-cluster checks stay seconds-scale. Do not
-replace this with `replacement_readiness.py` or full Cargo conformance runs in
-the inner loop; those are milestone gates after a batch of runtime changes.
+debug `cargo build` with `CARGO_INCREMENTAL=0` by default, refuses to validate
+with a stale `target/debug/mamba` unless `--allow-stale` is explicit, and then
+delegates fixture execution to `sweep.py` so changed-fixture and lib-cluster
+checks stay seconds-scale. Use `--cargo-incremental` only when intentionally
+debugging incremental build behavior. Do not replace this with
+`replacement_readiness.py` or full Cargo conformance runs in the inner loop;
+those are milestone gates after a batch of runtime changes.
 
 CPython source-suite inventory is a separate reference denominator:
 

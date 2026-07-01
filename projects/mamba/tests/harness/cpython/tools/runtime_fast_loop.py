@@ -5,7 +5,7 @@ This is the development inner loop, not a replacement readiness gate. It keeps
 runtime work out of the slow Cargo/full-suite path:
 
 * select changed CPython fixtures and their lib clusters,
-* optionally run one guarded debug build,
+* optionally run one guarded non-incremental debug build,
 * validate with sweep.py against target/debug/mamba,
 * optionally run per-cluster lint, promotion inventory, and CPython oracle.
 
@@ -113,18 +113,27 @@ def cluster_for_fixture(rel: str) -> str | None:
     return None
 
 
-def fixture_exists(rel: str) -> bool:
-    return (FIXTURES_DIR / rel).exists()
+def fixture_is_file(rel: str) -> bool:
+    return (FIXTURES_DIR / rel).is_file()
+
+
+def fixture_is_dir(rel: str) -> bool:
+    return (FIXTURES_DIR / rel).is_dir()
 
 
 def selected_paths(args: argparse.Namespace) -> tuple[list[str], list[str]]:
     exact: list[str] = []
     if args.changed:
         exact.extend(changed_fixtures())
-    exact.extend(normalize_fixture_arg(item) for item in args.paths)
-    exact = sorted(dict.fromkeys(item for item in exact if fixture_exists(item)))
 
     clusters: list[str] = []
+    for item in (normalize_fixture_arg(item).rstrip("/") for item in args.paths):
+        if fixture_is_file(item):
+            exact.append(item)
+        elif fixture_is_dir(item):
+            clusters.append(item)
+
+    exact = sorted(dict.fromkeys(item for item in exact if fixture_is_file(item)))
     if args.cluster:
         clusters.extend(cluster for item in exact if (cluster := cluster_for_fixture(item)))
     clusters.extend(normalize_fixture_arg(item).rstrip("/") for item in args.lib)
@@ -168,6 +177,9 @@ def build_once(args: argparse.Namespace) -> StepResult:
         lock.flush()
         env = dict(os.environ)
         notes: list[str] = []
+        if not args.cargo_incremental:
+            env["CARGO_INCREMENTAL"] = "0"
+            notes.append("CARGO_INCREMENTAL=0")
         if args.target_dir:
             env["CARGO_TARGET_DIR"] = args.target_dir
             notes.append(f"CARGO_TARGET_DIR={args.target_dir}")
@@ -201,6 +213,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-cluster", dest="cluster", action="store_false", help="do not add whole lib clusters for selected fixtures")
     parser.set_defaults(cluster=True)
     parser.add_argument("--build", action="store_true", help="run one guarded cargo build before validation")
+    parser.add_argument(
+        "--cargo-incremental",
+        action="store_true",
+        help="allow Cargo incremental during --build; default disables it to avoid stalled dev-loop rebuilds",
+    )
     parser.add_argument("--target-dir", help="CARGO_TARGET_DIR for the optional build and default mamba-bin")
     parser.add_argument("--sccache", action="store_true", help="enable sccache for the optional build when it is usable on this host")
     parser.add_argument("--watch-rust", action="append", help="changed Rust roots that must be reflected in mamba_bin before validating")
