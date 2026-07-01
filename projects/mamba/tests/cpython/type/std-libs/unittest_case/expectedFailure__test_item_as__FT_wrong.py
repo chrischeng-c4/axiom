@@ -9,12 +9,10 @@
 # case = "expectedFailure__test_item_as__FT_wrong"
 # subject = "unittest.case.expectedFailure(test_item: _FT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed test_item"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed test_item
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.expectedFailure(test_item: _FT); call it with the wrong type.
 

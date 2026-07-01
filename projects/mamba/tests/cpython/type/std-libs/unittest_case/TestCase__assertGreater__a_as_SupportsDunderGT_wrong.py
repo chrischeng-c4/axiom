@@ -9,12 +9,10 @@
 # case = "TestCase__assertGreater__a_as_SupportsDunderGT_wrong"
 # subject = "unittest.case.TestCase.assertGreater(a: SupportsDunderGT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertGreater(a: SupportsDunderGT); call it with the wrong type.
 
