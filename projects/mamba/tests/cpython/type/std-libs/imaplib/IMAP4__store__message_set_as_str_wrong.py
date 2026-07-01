@@ -9,7 +9,6 @@
 # case = "IMAP4__store__message_set_as_str_wrong"
 # subject = "imaplib.IMAP4.store(message_set: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "IMAP4__lsub__directory_as_str_wrong"
 # subject = "imaplib.IMAP4.lsub(directory: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

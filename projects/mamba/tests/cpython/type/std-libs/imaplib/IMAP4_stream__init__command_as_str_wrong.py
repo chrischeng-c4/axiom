@@ -9,7 +9,6 @@
 # case = "IMAP4_stream__init__command_as_str_wrong"
 # subject = "imaplib.IMAP4_stream.__init__(command: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

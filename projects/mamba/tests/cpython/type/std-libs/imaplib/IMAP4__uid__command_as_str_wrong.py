@@ -9,12 +9,10 @@
 # case = "IMAP4__uid__command_as_str_wrong"
 # subject = "imaplib.IMAP4.uid(command: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed command"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed command
 # mamba-strict-type: TypeError
 """Type wall: imaplib.IMAP4.uid(command: str); call it with the wrong type.
 

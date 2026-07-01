@@ -9,7 +9,6 @@
 # case = "ParseFlags__resp_as_ReadableBuffer_wrong"
 # subject = "imaplib.ParseFlags(resp: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

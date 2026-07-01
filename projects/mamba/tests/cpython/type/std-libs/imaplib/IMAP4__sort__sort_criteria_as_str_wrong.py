@@ -9,12 +9,10 @@
 # case = "IMAP4__sort__sort_criteria_as_str_wrong"
 # subject = "imaplib.IMAP4.sort(sort_criteria: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sort_criteria"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sort_criteria
 # mamba-strict-type: TypeError
 """Type wall: imaplib.IMAP4.sort(sort_criteria: str); call it with the wrong type.
 

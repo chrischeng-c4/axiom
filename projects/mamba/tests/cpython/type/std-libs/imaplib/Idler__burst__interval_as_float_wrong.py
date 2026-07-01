@@ -9,7 +9,6 @@
 # case = "Idler__burst__interval_as_float_wrong"
 # subject = "imaplib.Idler.burst(interval: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

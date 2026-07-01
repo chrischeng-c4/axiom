@@ -9,7 +9,6 @@
 # case = "IMAP4__read__size_as_int_wrong"
 # subject = "imaplib.IMAP4.read(size: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "IMAP4_stream__open__host_as_typed_wrong"
 # subject = "imaplib.IMAP4_stream.open(host: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

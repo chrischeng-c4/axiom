@@ -9,12 +9,10 @@
 # case = "IMAP4__thread__threading_algorithm_as_str_wrong"
 # subject = "imaplib.IMAP4.thread(threading_algorithm: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed threading_algorithm"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed threading_algorithm
 # mamba-strict-type: TypeError
 """Type wall: imaplib.IMAP4.thread(threading_algorithm: str); call it with the wrong type.
 

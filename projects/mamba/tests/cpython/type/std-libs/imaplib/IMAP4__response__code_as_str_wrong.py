@@ -9,7 +9,6 @@
 # case = "IMAP4__response__code_as_str_wrong"
 # subject = "imaplib.IMAP4.response(code: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

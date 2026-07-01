@@ -9,7 +9,6 @@
 # case = "IMAP4__authenticate__mechanism_as_str_wrong"
 # subject = "imaplib.IMAP4.authenticate(mechanism: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
