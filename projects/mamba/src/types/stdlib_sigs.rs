@@ -5483,6 +5483,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "multiprocessing.shared_memory",
+        qualifier: "ShareableList",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("sequence", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "multiprocessing.dummy",
         qualifier: "",
         name: "Array",
@@ -8898,6 +8906,14 @@ mod tests {
                 "Process",
                 0,
                 "ctx",
+                CoreTy::Typed,
+            ),
+            (
+                "multiprocessing.shared_memory",
+                "ShareableList",
+                "__init__",
+                0,
+                "sequence",
                 CoreTy::Typed,
             ),
             (
