@@ -9,12 +9,10 @@
 # case = "PrettyPrinter__format__context_as_dict_wrong"
 # subject = "pprint.PrettyPrinter.format(context: dict)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed context"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pprint.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed context
 # mamba-strict-type: TypeError
 """Type wall: pprint.PrettyPrinter.format(context: dict); call it with the wrong type.
 

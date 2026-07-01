@@ -9,12 +9,10 @@
 # case = "platform__aliased_as_bool_wrong"
 # subject = "platform.platform(aliased: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed aliased"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/platform.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed aliased
 # mamba-strict-type: TypeError
 """Type wall: platform.platform(aliased: bool); call it with the wrong type.
 

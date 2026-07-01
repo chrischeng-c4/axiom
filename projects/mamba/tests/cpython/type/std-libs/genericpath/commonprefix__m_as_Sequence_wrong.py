@@ -9,12 +9,10 @@
 # case = "commonprefix__m_as_Sequence_wrong"
 # subject = "genericpath.commonprefix(m: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed m"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/genericpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed m
 # mamba-strict-type: TypeError
 """Type wall: genericpath.commonprefix(m: Sequence); call it with the wrong type.
 
