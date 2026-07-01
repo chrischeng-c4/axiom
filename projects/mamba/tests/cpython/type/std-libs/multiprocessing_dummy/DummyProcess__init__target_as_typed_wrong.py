@@ -9,12 +9,11 @@
 # case = "DummyProcess__init__target_as_typed_wrong"
 # subject = "multiprocessing.dummy.DummyProcess.__init__(target: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/dummy.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.dummy.DummyProcess.__init__(target: typed); call it with the wrong type.
 
