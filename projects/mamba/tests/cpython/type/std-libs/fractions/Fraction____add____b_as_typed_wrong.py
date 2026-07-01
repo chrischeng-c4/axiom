@@ -9,12 +9,10 @@
 # case = "Fraction____add____b_as_typed_wrong"
 # subject = "fractions.Fraction.__add__(b: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed b"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed b
 # mamba-strict-type: TypeError
 """Type wall: fractions.Fraction.__add__(b: typed); call it with the wrong type.
 

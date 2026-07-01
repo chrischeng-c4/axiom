@@ -246,6 +246,40 @@ fn coerce(val: MbValue) -> FractionState {
     FractionState::new(0, 1)
 }
 
+fn coerce_checked(val: MbValue) -> Result<FractionState, MbValue> {
+    if let Some(id) = val.as_int() {
+        let id_u = id as u64;
+        if let Some(s) = FRACTIONS.with(|m| m.borrow().get(&id_u).cloned()) {
+            return Ok(s);
+        }
+        return Ok(FractionState::new(id, 1));
+    }
+    if let Some(b) = val.as_bool() {
+        return Ok(FractionState::new(b as i64, 1));
+    }
+    if let Some((value, class_name)) = int_subclass_value(val) {
+        return Ok(FractionState::new_with_component(
+            value,
+            1,
+            Some(class_name),
+        ));
+    }
+    if let Some((num, den)) = rational_components(val) {
+        let n = coerce_checked(num)?;
+        let d = coerce_checked(den)?;
+        let component = n
+            .component_class
+            .clone()
+            .or_else(|| d.component_class.clone());
+        return Ok(FractionState::new_with_component(
+            n.num.saturating_mul(d.den),
+            n.den.saturating_mul(d.num),
+            component,
+        ));
+    }
+    Err(raise_fraction_type_error(val))
+}
+
 fn unsupported_fraction_arg(val: MbValue) -> bool {
     val.as_ptr().is_some_and(|p| {
         matches!(
@@ -270,6 +304,29 @@ fn raise_fraction_type_error(val: MbValue) -> MbValue {
         ))),
     );
     MbValue::none()
+}
+
+fn raise_type_error_msg(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn ensure_no_args(method: &str, args: &[MbValue]) -> Option<MbValue> {
+    if args.is_empty() {
+        None
+    } else {
+        Some(raise_type_error_msg(&format!(
+            "Fraction.{method}() takes no arguments"
+        )))
+    }
+}
+
+fn require_int_arg(val: MbValue, name: &str) -> Result<i64, MbValue> {
+    val.as_int()
+        .ok_or_else(|| raise_type_error_msg(&format!("{name} must be an integer")))
 }
 
 fn int_subclass_value(val: MbValue) -> Option<(i64, String)> {
@@ -456,24 +513,31 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
     //    on `!den.is_none()` so a single-arg `Fraction(n)` (den omitted ->
     //    None) never trips this; only an actually-supplied zero denominator
     //    (int 0 or a zero-valued Fraction handle) raises.
-    if !den.is_none() && coerce(den).num == 0 {
-        return raise_zero_division_error("Fraction(n, 0)");
-    }
+    let b = if den.is_none() {
+        FractionState::new(1, 1)
+    } else {
+        let b = match coerce_checked(den) {
+            Ok(value) => value,
+            Err(err) => return err,
+        };
+        if b.num == 0 {
+            return raise_zero_division_error("Fraction(n, 0)");
+        }
+        b
+    };
     // An argument that is not a number / string / Rational (e.g. a list)
     // has no Fraction conversion: CPython raises TypeError rather than
     // silently coercing to Fraction(0).
     if unsupported_fraction_arg(num) {
         return raise_fraction_type_error(num);
     }
-    let a = coerce(num);
+    let a = match coerce_checked(num) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
     // Single-argument form: `Fraction(5)` (den omitted → None) means
     // denominator 1, NOT `coerce(None)` (which is 0/1 and collapsed every
     // single-arg integer Fraction to zero).
-    let b = if den.is_none() {
-        FractionState::new(1, 1)
-    } else {
-        coerce(den)
-    };
     // (a_n / a_d) / (b_n / b_d)  =  a_n * b_d / (a_d * b_n)
     let n = a.num.saturating_mul(b.den);
     let d = a.den.saturating_mul(b.num);
@@ -486,7 +550,9 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
 /// both fit i64; falls back to a 10^9 scaling for extreme magnitudes
 /// (mamba's fraction state is i64-only).
 pub fn mb_fraction_from_float(f: MbValue) -> MbValue {
-    let v = f.as_float().unwrap_or(0.0);
+    let Some(v) = f.as_float() else {
+        return raise_type_error_msg("Fraction.from_float() argument must be float");
+    };
     if !v.is_finite() {
         return make_handle(FractionState::new(0, 1));
     }
@@ -560,7 +626,14 @@ pub fn mb_fraction_as_integer_ratio(handle: MbValue) -> MbValue {
 /// approximation under denominator cap.
 pub fn mb_fraction_limit_denominator(handle: MbValue, max_den: MbValue) -> MbValue {
     let s = load(handle);
-    let m = max_den.as_int().unwrap_or(1_000_000).max(1);
+    let m = if max_den.is_none() {
+        1_000_000
+    } else {
+        match require_int_arg(max_den, "max_denominator") {
+            Ok(value) => value.max(1),
+            Err(err) => return err,
+        }
+    };
     if s.den <= m {
         return handle;
     }
@@ -626,45 +699,91 @@ fn div_states(a: FractionState, b: FractionState) -> FractionState {
 }
 
 pub fn mb_fraction_add(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(add_states(coerce(a), coerce(b)))
+    let av = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let bv = match coerce_checked(b) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    make_handle(add_states(av, bv))
 }
 pub fn mb_fraction_sub(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(sub_states(coerce(a), coerce(b)))
+    let av = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let bv = match coerce_checked(b) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    make_handle(sub_states(av, bv))
 }
 pub fn mb_fraction_rsub(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(sub_states(coerce(b), coerce(a)))
+    mb_fraction_sub(b, a)
 }
 pub fn mb_fraction_mul(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(mul_states(coerce(a), coerce(b)))
+    let av = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let bv = match coerce_checked(b) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    make_handle(mul_states(av, bv))
 }
 pub fn mb_fraction_truediv(a: MbValue, b: MbValue) -> MbValue {
-    let bv = coerce(b);
+    let av = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let bv = match coerce_checked(b) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
     if bv.num == 0 {
         return raise_zero_division_error("Fraction(1, 0)");
     }
-    make_handle(div_states(coerce(a), bv))
+    make_handle(div_states(av, bv))
 }
 pub fn mb_fraction_rtruediv(a: MbValue, b: MbValue) -> MbValue {
-    let av = coerce(a);
-    if av.num == 0 {
-        return raise_zero_division_error("Fraction(1, 0)");
-    }
-    make_handle(div_states(coerce(b), av))
+    mb_fraction_truediv(b, a)
 }
 
 pub fn mb_fraction_floordiv(a: MbValue, b: MbValue) -> MbValue {
-    let q = div_states(coerce(a), coerce(b));
+    let av = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let bv = match coerce_checked(b) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    if bv.num == 0 {
+        return raise_zero_division_error("Fraction(1, 0)");
+    }
+    let q = div_states(av, bv);
     int_mb(q.num.div_euclid(q.den))
 }
 pub fn mb_fraction_rfloordiv(a: MbValue, b: MbValue) -> MbValue {
-    let q = div_states(coerce(b), coerce(a));
-    int_mb(q.num.div_euclid(q.den))
+    mb_fraction_floordiv(b, a)
 }
 
 pub fn mb_fraction_mod(a: MbValue, b: MbValue) -> MbValue {
     // a mod b  =  a - (a // b) * b
-    let av = coerce(a);
-    let bv = coerce(b);
+    let av = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let bv = match coerce_checked(b) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    if bv.num == 0 {
+        return raise_zero_division_error("Fraction(1, 0)");
+    }
     let q = div_states(av.clone(), bv.clone());
     let floor = q.num.div_euclid(q.den);
     let prod = mul_states(FractionState::new(floor, 1), bv);
@@ -677,15 +796,35 @@ pub fn mb_fraction_rmod(a: MbValue, b: MbValue) -> MbValue {
 /// `__divmod__(a, b)` — returns `(a // b, a % b)`. Tuple-return path
 /// hits #2128.
 pub fn mb_fraction_divmod(a: MbValue, b: MbValue) -> MbValue {
-    let q = mb_fraction_floordiv(a, b);
-    let r = mb_fraction_mod(a, b);
+    let av = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let bv = match coerce_checked(b) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    if bv.num == 0 {
+        return raise_zero_division_error("Fraction(1, 0)");
+    }
+    let div = div_states(av.clone(), bv.clone());
+    let floor = div.num.div_euclid(div.den);
+    let q = int_mb(floor);
+    let prod = mul_states(FractionState::new(floor, 1), bv);
+    let r = make_handle(sub_states(av, prod));
     MbValue::from_ptr(MbObject::new_tuple(vec![q, r]))
 }
 
 /// `__pow__(a, n)` — integer exponent only; carve `__pow__(complex)`.
 pub fn mb_fraction_pow(a: MbValue, n: MbValue) -> MbValue {
-    let base = coerce(a);
-    let exp = n.as_int().unwrap_or(0);
+    let base = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let exp = match require_int_arg(n, "exponent") {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
     if exp == 0 {
         return make_handle(FractionState::new(1, 1));
     }
@@ -700,6 +839,17 @@ pub fn mb_fraction_pow(a: MbValue, n: MbValue) -> MbValue {
         std::mem::swap(&mut num, &mut den);
     }
     make_handle(FractionState::new(num, den))
+}
+
+pub fn mb_fraction_rpow(a: MbValue, b: MbValue) -> MbValue {
+    let exp_state = match coerce_checked(a) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    if exp_state.den != 1 {
+        return raise_type_error_msg("exponent must be an integer");
+    }
+    mb_fraction_pow(b, int_mb(exp_state.num))
 }
 
 // ── Unary
@@ -745,7 +895,14 @@ pub fn mb_fraction_ceil(handle: MbValue) -> MbValue {
 }
 pub fn mb_fraction_round(handle: MbValue, ndigits: MbValue) -> MbValue {
     let s = load(handle);
-    let nd = ndigits.as_int().unwrap_or(0);
+    let nd = if ndigits.is_none() {
+        0
+    } else {
+        match require_int_arg(ndigits, "ndigits") {
+            Ok(value) => value,
+            Err(err) => return err,
+        }
+    };
     if nd == 0 {
         // Banker's rounding to nearest int (half-to-even, like CPython).
         let q = s.num.div_euclid(s.den);
@@ -952,13 +1109,45 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> MbVal
         "__mod__" => mb_fraction_mod(handle, a0),
         "__rmod__" => mb_fraction_rmod(handle, a0),
         "__divmod__" => mb_fraction_divmod(handle, a0),
+        "__rdivmod__" => mb_fraction_divmod(a0, handle),
         "__pow__" => mb_fraction_pow(handle, a0),
-        "__pos__" => mb_fraction_pos(handle),
-        "__neg__" => mb_fraction_neg(handle),
-        "__abs__" => mb_fraction_abs(handle),
-        "__trunc__" => mb_fraction_trunc(handle),
-        "__floor__" => mb_fraction_floor(handle),
-        "__ceil__" => mb_fraction_ceil(handle),
+        "__rpow__" => mb_fraction_rpow(handle, a0),
+        "__pos__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_pos(handle)
+        }
+        "__neg__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_neg(handle)
+        }
+        "__abs__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_abs(handle)
+        }
+        "__trunc__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_trunc(handle)
+        }
+        "__floor__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_floor(handle)
+        }
+        "__ceil__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_ceil(handle)
+        }
         "__round__" => mb_fraction_round(handle, a0),
         "__eq__" => mb_fraction_eq(handle, a0),
         "__ne__" => mb_fraction_ne(handle, a0),
@@ -966,12 +1155,42 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> MbVal
         "__le__" => mb_fraction_le(handle, a0),
         "__gt__" => mb_fraction_gt(handle, a0),
         "__ge__" => mb_fraction_ge(handle, a0),
-        "__bool__" => mb_fraction_bool(handle),
-        "__hash__" => mb_fraction_hash(handle),
-        "__int__" => mb_fraction_int(handle),
-        "__float__" => mb_fraction_float(handle),
-        "__str__" => mb_fraction_str(handle),
-        "__repr__" => mb_fraction_repr(handle),
+        "__bool__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_bool(handle)
+        }
+        "__hash__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_hash(handle)
+        }
+        "__int__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_int(handle)
+        }
+        "__float__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_float(handle)
+        }
+        "__str__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_str(handle)
+        }
+        "__repr__" => {
+            if let Some(err) = ensure_no_args(method, args) {
+                return err;
+            }
+            mb_fraction_repr(handle)
+        }
         "__copy__" | "__deepcopy__" => mb_fraction_copy(handle),
         _ => {
             let _ = a1;
