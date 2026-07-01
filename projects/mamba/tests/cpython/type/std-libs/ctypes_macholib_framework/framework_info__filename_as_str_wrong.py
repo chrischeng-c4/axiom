@@ -9,7 +9,6 @@
 # case = "framework_info__filename_as_str_wrong"
 # subject = "ctypes.macholib.framework.framework_info(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ctypes/macholib/framework.pyi"
 # status = "filled"

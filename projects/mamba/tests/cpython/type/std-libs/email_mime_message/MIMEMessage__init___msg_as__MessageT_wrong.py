@@ -9,7 +9,6 @@
 # case = "MIMEMessage__init___msg_as__MessageT_wrong"
 # subject = "email.mime.message.MIMEMessage.__init__(_msg: _MessageT)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/message.pyi"
 # status = "filled"

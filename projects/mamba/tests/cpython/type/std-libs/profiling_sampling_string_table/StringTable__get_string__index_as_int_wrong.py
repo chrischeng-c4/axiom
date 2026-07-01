@@ -9,7 +9,6 @@
 # case = "StringTable__get_string__index_as_int_wrong"
 # subject = "profiling.sampling.string_table.StringTable.get_string(index: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/profiling/sampling/string_table.pyi"
 # status = "filled"

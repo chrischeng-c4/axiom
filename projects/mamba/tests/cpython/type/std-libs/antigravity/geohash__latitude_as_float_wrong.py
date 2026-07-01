@@ -9,7 +9,6 @@
 # case = "geohash__latitude_as_float_wrong"
 # subject = "antigravity.geohash(latitude: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/antigravity.pyi"
 # status = "filled"

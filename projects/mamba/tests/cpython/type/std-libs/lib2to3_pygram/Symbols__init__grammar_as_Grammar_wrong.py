@@ -9,7 +9,6 @@
 # case = "Symbols__init__grammar_as_Grammar_wrong"
 # subject = "lib2to3.pygram.Symbols.__init__(grammar: Grammar)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/pygram.pyi"
 # status = "filled"

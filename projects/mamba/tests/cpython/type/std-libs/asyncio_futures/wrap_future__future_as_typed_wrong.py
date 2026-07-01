@@ -9,7 +9,6 @@
 # case = "wrap_future__future_as_typed_wrong"
 # subject = "asyncio.futures.wrap_future(future: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/futures.pyi"
 # status = "filled"

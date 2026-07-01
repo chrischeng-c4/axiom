@@ -9,7 +9,6 @@
 # case = "MIMEText__init___text_as_str_wrong"
 # subject = "email.mime.text.MIMEText.__init__(_text: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/text.pyi"
 # status = "filled"

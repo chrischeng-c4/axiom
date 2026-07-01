@@ -9,7 +9,6 @@
 # case = "MIMEBase__init___maintype_as_str_wrong"
 # subject = "email.mime.base.MIMEBase.__init__(_maintype: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/base.pyi"
 # status = "filled"

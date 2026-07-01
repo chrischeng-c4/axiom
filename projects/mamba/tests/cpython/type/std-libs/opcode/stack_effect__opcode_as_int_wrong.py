@@ -9,7 +9,6 @@
 # case = "stack_effect__opcode_as_int_wrong"
 # subject = "opcode.stack_effect(opcode: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/opcode.pyi"
 # status = "filled"

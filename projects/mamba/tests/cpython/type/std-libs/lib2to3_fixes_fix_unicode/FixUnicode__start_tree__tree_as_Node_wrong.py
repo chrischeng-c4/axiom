@@ -9,7 +9,6 @@
 # case = "FixUnicode__start_tree__tree_as_Node_wrong"
 # subject = "lib2to3.fixes.fix_unicode.FixUnicode.start_tree(tree: Node)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/fixes/fix_unicode.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ScrolledText__init__master_as_typed_wrong"
 # subject = "tkinter.scrolledtext.ScrolledText.__init__(master: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tkinter/scrolledtext.pyi"
 # status = "filled"

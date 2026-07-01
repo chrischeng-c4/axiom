@@ -9,7 +9,6 @@
 # case = "find_excepts__nodes_as_Iterable_wrong"
 # subject = "lib2to3.fixes.fix_except.find_excepts(nodes: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/fixes/fix_except.pyi"
 # status = "filled"

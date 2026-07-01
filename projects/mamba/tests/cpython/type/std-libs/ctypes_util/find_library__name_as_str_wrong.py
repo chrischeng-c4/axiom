@@ -9,7 +9,6 @@
 # case = "find_library__name_as_str_wrong"
 # subject = "ctypes.util.find_library(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ctypes/util.pyi"
 # status = "filled"

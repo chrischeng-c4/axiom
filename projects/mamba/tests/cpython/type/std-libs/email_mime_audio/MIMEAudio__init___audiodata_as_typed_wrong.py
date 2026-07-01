@@ -9,7 +9,6 @@
 # case = "MIMEAudio__init___audiodata_as_typed_wrong"
 # subject = "email.mime.audio.MIMEAudio.__init__(_audiodata: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/audio.pyi"
 # status = "filled"
