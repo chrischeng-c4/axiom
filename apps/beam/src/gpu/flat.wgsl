@@ -190,3 +190,209 @@ fn main_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 }
+
+// ---- Batched flat scan + GPU-side per-query top-k (entry `main_batch_topk`) --
+//
+// The throughput lever. The `main_batch` kernel above still streams back the full
+// `num_q * n` distance matrix and selects the top-k on the CPU — that readback +
+// single-threaded selection is the measured batched bottleneck. This kernel keeps
+// the whole top-k ON the GPU and reads back only `num_q * want` (id, score) pairs
+// (a ~n/want reduction; ~100000x at n=1M/k=10), so the batched path becomes
+// (near-)compute-bound instead of readback-bound.
+//
+// Layout: ONE WORKGROUP PER QUERY in the tile (`workgroup_id.x == query`). The
+// workgroup's `WG_TOPK` threads cooperatively scan all `n` DB rows grid-strided
+// (thread `tid` handles rows tid, tid+WG_TOPK, tid+2*WG_TOPK, ...); each thread
+// keeps a PRIVATE sorted top-`want` in registers (insertion into a small array,
+// capped at MAX_K). Non-live rows (`keep_topk[row] == 0`) are simply SKIPPED — the
+// live/tombstone mask folded in exactly like `main_filtered`/`main_batch`, but by
+// omission rather than a sentinel, so a tombstoned row never enters any local list.
+//
+// Reduce: each thread publishes its local top-`want` into `var<workgroup>` shared
+// memory, then a log2(WG_TOPK)-step TREE MERGE pairwise-merges the sorted lists
+// (thread `tid` merges list `tid` with list `tid+stride`, keeping the best `want`)
+// until thread 0 holds the query's global top-`want`, which it writes out as
+// `(score_bits, row)` pairs. A partial list (a thread that saw fewer than `want`
+// live rows, or none) is padded with the metric's worst sentinel so it loses every
+// merge; because `want <= n_live`, the final `want` are always real rows (each
+// global-top row is within its own scanning thread's top-`want`, so it survives).
+//
+// Distances use the SAME per-metric summation (and j-order) as `main`/`main_batch`,
+// so a top-k row's score is bit-for-intent identical to the serial scan and the
+// selected row SET equals the CPU oracle's (exact flat).
+//
+//   metric == 0 (L2)         -> sum of squared diffs, SMALLER is better
+//   metric != 0 (Dot/Cosine) -> dot product,          LARGER  is better
+
+// Workgroup width and the compile-time cap on k for this kernel. Shared memory is
+// `WG_TOPK * MAX_K * (4 + 4)` bytes = 64*32*8 = 16 KB (half Metal's 32 KB
+// threadgroup ceiling). `@workgroup_size` below MUST equal WG_TOPK. The host
+// (`GpuFlatIndex::MAX_TOPK`) mirrors MAX_K and falls back to the `main_batch` +
+// CPU-topk path for k > MAX_K, so large-k queries still work.
+const WG_TOPK: u32 = 64u;
+const MAX_K: u32 = 32u;
+const SH_TOPK_LEN: u32 = 2048u; // WG_TOPK * MAX_K
+
+struct TopkParams {
+    n: u32,
+    dim: u32,
+    metric: u32,
+    num_q: u32,
+    want: u32, // min(k, n_live), <= MAX_K
+    _p0: u32,
+    _p1: u32,
+    _p2: u32,
+};
+
+@group(0) @binding(14) var<storage, read> db_topk: array<f32>;
+@group(0) @binding(15) var<storage, read> queries_topk: array<f32>;
+@group(0) @binding(16) var<uniform> params_topk: TopkParams;
+// Output: query-major `num_q * want` entries, each two u32s: [bitcast<u32>(score), row].
+@group(0) @binding(17) var<storage, read_write> out_topk: array<u32>;
+@group(0) @binding(18) var<storage, read> keep_topk: array<u32>;
+
+// Each thread publishes its local sorted top-`want` here (region `tid*MAX_K`).
+var<workgroup> sh_score: array<f32, SH_TOPK_LEN>;
+var<workgroup> sh_row: array<u32, SH_TOPK_LEN>;
+
+@compute @workgroup_size(64)
+fn main_batch_topk(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let q: u32 = wid.x; // one workgroup per query in the tile (q is uniform)
+    if (q >= params_topk.num_q) {
+        return;
+    }
+    let tid: u32 = lid.x;
+    let n: u32 = params_topk.n;
+    let dim: u32 = params_topk.dim;
+    let want: u32 = params_topk.want;
+    let larger_better: bool = params_topk.metric != 0u;
+    let qbase: u32 = q * dim;
+
+    // Private sorted top-`want` (best-first), length `cnt` (<= want <= MAX_K).
+    var best_s: array<f32, MAX_K>;
+    var best_r: array<u32, MAX_K>;
+    var cnt: u32 = 0u;
+
+    // Grid-stride scan: this thread scores rows tid, tid+WG_TOPK, ... skipping
+    // non-live rows, and keeps only its own top-`want`.
+    var row: u32 = tid;
+    loop {
+        if (row >= n) {
+            break;
+        }
+        if (keep_topk[row] != 0u) {
+            let dbase: u32 = row * dim;
+            var acc: f32 = 0.0;
+            if (larger_better) {
+                for (var j: u32 = 0u; j < dim; j = j + 1u) {
+                    acc = acc + db_topk[dbase + j] * queries_topk[qbase + j];
+                }
+            } else {
+                for (var j: u32 = 0u; j < dim; j = j + 1u) {
+                    let d: f32 = db_topk[dbase + j] - queries_topk[qbase + j];
+                    acc = acc + d * d;
+                }
+            }
+            // Qualifies if the local list is not yet full, or `acc` beats the
+            // current worst kept score.
+            var qualifies: bool = cnt < want;
+            if (!qualifies) {
+                let worst: f32 = best_s[cnt - 1u];
+                qualifies = select(acc < worst, acc > worst, larger_better);
+            }
+            if (qualifies) {
+                if (cnt < want) {
+                    cnt = cnt + 1u;
+                }
+                // Insertion sort: shift worse entries right, drop off the end.
+                var p: u32 = cnt - 1u;
+                loop {
+                    if (p == 0u) {
+                        break;
+                    }
+                    let prev: f32 = best_s[p - 1u];
+                    let better: bool = select(acc < prev, acc > prev, larger_better);
+                    if (better) {
+                        best_s[p] = best_s[p - 1u];
+                        best_r[p] = best_r[p - 1u];
+                        p = p - 1u;
+                    } else {
+                        break;
+                    }
+                }
+                best_s[p] = acc;
+                best_r[p] = row;
+            }
+        }
+        row = row + WG_TOPK;
+    }
+
+    // Publish local top-`want` to shared, padding unfilled slots with the metric's
+    // worst sentinel so they lose every merge.
+    let sbase: u32 = tid * MAX_K;
+    let sentinel: f32 = select(3.0e38, -3.0e38, larger_better);
+    for (var j: u32 = 0u; j < want; j = j + 1u) {
+        if (j < cnt) {
+            sh_score[sbase + j] = best_s[j];
+            sh_row[sbase + j] = best_r[j];
+        } else {
+            sh_score[sbase + j] = sentinel;
+            sh_row[sbase + j] = 0u;
+        }
+    }
+    workgroupBarrier();
+
+    // Tree merge of the WG_TOPK sorted lists down to thread 0. Each active thread
+    // merges its list with the one `stride` away, keeping the best `want`.
+    var stride: u32 = WG_TOPK >> 1u;
+    loop {
+        if (stride == 0u) {
+            break;
+        }
+        if (tid < stride) {
+            let abase: u32 = tid * MAX_K;
+            let bbase: u32 = (tid + stride) * MAX_K;
+            var ia: u32 = 0u;
+            var ib: u32 = 0u;
+            var out_j: u32 = 0u;
+            // Merge the two sorted length-`want` lists into registers (ia+ib==out_j
+            // stays < want at every read, so both reads are within [0, want)).
+            loop {
+                if (out_j >= want) {
+                    break;
+                }
+                let sa: f32 = sh_score[abase + ia];
+                let sb: f32 = sh_score[bbase + ib];
+                let take_a: bool = select(sa <= sb, sa >= sb, larger_better);
+                if (take_a) {
+                    best_s[out_j] = sa;
+                    best_r[out_j] = sh_row[abase + ia];
+                    ia = ia + 1u;
+                } else {
+                    best_s[out_j] = sb;
+                    best_r[out_j] = sh_row[bbase + ib];
+                    ib = ib + 1u;
+                }
+                out_j = out_j + 1u;
+            }
+            for (var j: u32 = 0u; j < want; j = j + 1u) {
+                sh_score[abase + j] = best_s[j];
+                sh_row[abase + j] = best_r[j];
+            }
+        }
+        workgroupBarrier();
+        stride = stride >> 1u;
+    }
+
+    // Thread 0 emits this query's global top-`want` as (score_bits, row) pairs.
+    if (tid == 0u) {
+        let obase: u32 = q * want * 2u;
+        for (var j: u32 = 0u; j < want; j = j + 1u) {
+            out_topk[obase + j * 2u + 0u] = bitcast<u32>(sh_score[j]);
+            out_topk[obase + j * 2u + 1u] = sh_row[j];
+        }
+    }
+}

@@ -114,11 +114,14 @@ also scales sublinearly: beam-GPU-flat goes 1.77 → 5.04 → 25.2 ms for a 100�
 data increase, and **beam-GPU-ivfflat stays exact (recall 1.000) while scanning
 only ~8% of vectors** (100k in 2.56 ms). Extrapolating the trend, a crossover
 would need n well beyond 1M **and/or** a batched GPU query path + elimination of
-the per-query readback. That batched path is now **built and measured** (see
-**[Batched query](#batched-query-the-throughput-lever-now-measured)**): it is a
-large gain over beam's own serial path (up to 7.1× at 10k) but, honestly, still
-does **not** beat faiss's *batched* throughput at any tested n — the crossover
-would need GPU-side top-k to kill the `T × n` readback, which remains future work.
+the per-query readback. Both are now **built and measured** (see
+**[Batched query](#batched-query-the-throughput-lever-now-measured)**): the
+batched path with **GPU-side per-query top-k** — the top-k is selected on the GPU
+and the readback shrinks from the `T × n` distance matrix to just `T × k`
+(id, score) pairs — is a large gain over beam's own serial path (up to ~18× at
+10k) and narrows the gap to faiss's *batched* throughput to **3.5× / 2.6× / 1.4×**
+at 10k / 100k / 1M. Honestly, it still does **not** cross over at any tested n
+(closest is **1.4×** at n = 1M), but the readback bottleneck is gone.
 
 ### Beam's actual, defensible advantages (not raw same-machine latency)
 
@@ -145,65 +148,83 @@ flat search on this hardware** and is corrected by this pinned baseline.
 
 The pinned rows above are **single-query** — one GPU dispatch per query, so the
 ~1.7 ms dispatch+readback floor dominates and beam cannot match faiss's *batched*
-BLAS call. The interpretation above named the fix: **batch the queries into one
-dispatch** so the fixed overhead amortizes. That path now exists
-([`GpuFlatIndex::search_knn_batch`], `beam bench --index flat --batch <B>`): the
-batch is tiled, each tile scores its `T × n` distance sub-matrix in **one**
-dispatch (one GPU thread per DB row, looping the tile's queries), reads back
-`T × n` f32, and does exact top-k per query on the CPU. Recall stays **1.000**
-(same exact distances as the serial scan). Same machine, same dataset shape
-(`dim=128`, `k=10`, `queries=200`, uniform seeded), measured with
-`--batch 200` (all 200 queries in one batched call, directly comparable to
-faiss's all-200-in-one-call batched throughput).
+BLAS call. The fix has two stages, both now built into
+[`GpuFlatIndex::search_knn_batch`] (`beam bench --index flat --batch <B>`):
 
-**Batched throughput — beam-GPU vs faiss-CPU, head-to-head (both batched):**
+1. **Batch the queries** so the fixed dispatch overhead amortizes (the earlier
+   result, superseded below): each tile scored its `T × n` distance sub-matrix in
+   one dispatch, read back `T × n` f32, and did exact top-k per query on the CPU.
+2. **GPU-side per-query top-k** (the throughput lever, this update): a new WGSL
+   kernel (`main_batch_topk`) runs **one workgroup per query** — the workgroup's
+   threads cooperatively scan all `n` rows (grid-strided, folding in the live
+   mask), each keeps a private register top-k, and a workgroup tree-merge reduces
+   them to the query's global top-k. Only **`T × k` (id, score) pairs** are read
+   back (a ~`n/k` cut — ~100_000× at n=1M/k=10), and the single-threaded CPU
+   selection over the `T × n` matrix is gone. `search_knn_batch` auto-selects this
+   path for `k ≤ MAX_TOPK` (=32) and falls back to the stage-1 distance-matrix
+   path for larger `k`.
 
-| n | beam-GPU-batched q/s | faiss-CPU-batched q/s | beam vs faiss batched |
+Recall stays **1.000** (same exact distances as the serial scan; the GPU selects
+the same rows as the CPU oracle — verified exact in `tests/batched_query.rs`).
+Same machine, same dataset shape (`dim=128`, `k=10`, `queries=200`, uniform
+seeded), measured with `--batch 200` (all 200 queries in one batched call,
+directly comparable to faiss's all-200-in-one-call batched throughput).
+
+**Batched throughput — beam-GPU (GPU-side top-k) vs faiss-CPU, head-to-head
+(both batched):**
+
+| n | beam-GPU-topk q/s | faiss-CPU-batched q/s | beam vs faiss batched |
 |---:|---:|---:|---|
-| 10_000 | ~4_050 | 37_174 | **9.2× slower** |
-| 100_000 | ~467 | 3_483 | **7.5× slower** |
-| 1_000_000 | ~52 | 234 | **4.5× slower** |
+| 10_000 | ~10_500 | 37_174 | **3.5× slower** |
+| 100_000 | ~1_350 | 3_483 | **2.6× slower** |
+| 1_000_000 | ~170 | 234 | **1.4× slower** |
 
-**What batching bought beam (its own serial → batched, same binary):**
+**What GPU-side top-k bought (same binary, same methodology):**
 
-| n | beam serial q/s (single) | beam batched q/s | batched speedup |
-|---:|---:|---:|---:|
-| 10_000 | 571 | ~4_050 | **7.1×** |
-| 100_000 | 199 | ~467 | **2.4×** |
-| 1_000_000 | 37.5 | ~52 | **1.4×** |
+| n | beam serial q/s | beam batched (dist-matrix, CPU top-k) q/s | **beam GPU-top-k q/s** | topk vs serial | topk vs dist-matrix |
+|---:|---:|---:|---:|---:|---:|
+| 10_000 | 571 | ~4_050 | **~10_500** | **18×** | **2.6×** |
+| 100_000 | 199 | ~467 | **~1_350** | **6.8×** | **2.9×** |
+| 1_000_000 | 37.5 | ~52 | **~170** | **4.5×** | **3.3×** |
 
-(beam-batched amortized latency: 0.25 / 2.14 / 19.2 ms/query at 10k / 100k / 1M.
-Numbers are ±10% run-to-run; representative values shown.)
+(beam-GPU-topk amortized latency: 0.095 / 0.74 / 5.9 ms/query at 10k / 100k / 1M.
+Numbers are ±10–15% run-to-run at small n; representative values shown. The
+dist-matrix column is the previous pinned batched path, retained for contrast.)
 
-### Honest verdict: batched beam-GPU still does NOT beat faiss batched
+### Honest verdict: GPU-top-k closes most of the gap, but still does NOT beat faiss batched
 
-At **every** tested size, batched beam-GPU-flat loses to batched faiss-CPU-flat —
-by **~9.2× / 7.5× / 4.5×** at 10k / 100k / 1M. So the "batched path turns the
-loss into a win" hope is **not** realized on this M1 Max: it is a real,
-large improvement over beam's *own* serial path (up to **7.1×** at 10k), and the
-gap to faiss narrows monotonically with n (9.2× → 4.5×, the same
-GPU-scales-better-than-AMX trend the single-query rows show) — but no crossover
-at n ≤ 1M. Do not claim a batched throughput win.
+GPU-side top-k worked as predicted — it removed the `T × n` readback + CPU
+selection that was the measured batched bottleneck, giving a **2.6× / 2.9× / 3.3×**
+gain over beam's *own* previous batched path and an **18× / 6.8× / 4.5×** gain
+over serial. The gap to faiss's batched flat scan narrows to **3.5× / 2.6× /
+1.4×** at 10k / 100k / 1M — from the previous **9.2× / 7.5× / 4.5×** — and keeps
+the same monotonic *GPU-scales-better-than-AMX-with-n* trend. **At n = 1M beam is
+now within 1.4×** (~170 vs 234 q/s), a near-crossover.
 
-Two honest reasons batching helped less than hoped, especially at large n:
+But honestly: **beam-GPU-topk still loses to faiss-CPU-batched at every tested
+n.** Do not claim a batched throughput win. Two reasons it does not cross over:
 
-1. **faiss's batched mode also speeds up a lot.** Its all-queries-in-one-call
-   flat scan is a single big BLAS GEMM, so faiss jumps 990 → 3_483 q/s (3.5×) at
-   100k and 87 → 234 q/s (2.7×) at 1M going serial → batched — outrunning beam's
-   batched gain there. beam is chasing a moving target, not a static one.
-2. **beam's batched bottleneck moved off the dispatch floor onto the readback +
-   CPU top-k.** With one dispatch per tile the ~1.7 ms floor is amortized away,
-   but the kernel now streams back the full `T × n` distance matrix (e.g. 800 MB
-   total at n=1M for 200 queries) and the host does single-threaded exact top-k
-   over it. That transport + selection — not GPU compute — dominates at large n
-   (measured: swapping the naive per-(query,row) kernel for the DB-traffic-light
-   per-row kernel changed throughput by <10%, confirming compute is not the
-   limiter). The next lever is **GPU-side per-query top-k**, which shrinks the
-   readback from `T × n` to `T × k` (a ~n/k reduction, ~100_000× at n=1M/k=10)
-   and offloads the selection — that is where a crossover would come from, and it
-   is the recommended follow-up. It is deliberately out of scope here (the CPU
-   top-k keeps the batched path exact and simple), so this section reports the
-   simple-batched result honestly rather than the projected one.
+1. **faiss batched is a single big BLAS GEMM** — still extraordinarily fast on
+   M1's AMX/Accelerate matrix units, and it also amortizes its call across all 200
+   queries. beam is chasing a strong, moving target.
+2. **beam's bottleneck moved from readback onto GPU compute/occupancy.** With the
+   readback gone, the batched path is now (near-)compute-bound: one workgroup per
+   query pins each query's `n × dim` scan to a single GPU core, so with 200 queries
+   the work spreads over ~32 cores at ~64 threads/query. The remaining ~1.4× at
+   1M would come from **more GPU parallelism per query** (split-k: multiple
+   workgroups per query scanning row ranges, then a merge) or lower per-row memory
+   traffic (fp16 DB / register-blocked scan) — not from further readback cuts.
+   That is the recommended next lever; it is out of scope for this exact,
+   one-workgroup-per-query kernel, so this section reports the measured result
+   honestly rather than a projected crossover.
+
+**Design + correctness (for reproducers):** the kernel is
+`src/gpu/flat.wgsl :: main_batch_topk` (workgroup size 64, `MAX_TOPK = 32`
+per-thread register top-k, log-step workgroup tree-merge, readback `T × k`
+(id, score) pairs). It is exercised in `tests/batched_query.rs`: GPU-top-k ==
+CPU oracle for k ∈ {1, 10, 32} on L2 and Dot, == the previous distance-matrix
+path, tombstones excluded, and `k > MAX_TOPK` falls back to the distance-matrix
+path and stays exact.
 
 [`GpuFlatIndex::search_knn_batch`]: ../src/gpu/mod.rs
 
@@ -224,7 +245,8 @@ Two honest reasons batching helped less than hoped, especially at large n:
   ```bash
   beam bench --index flat    --n <N> --dim 128 --k 10 --queries 200
   beam bench --index ivfflat --n <N> --dim 128 --k 10 --queries 200 --nlist 256 --nprobe 16
-  # batched throughput (the "Batched query" section): all 200 queries in one call
+  # batched throughput (the "Batched query" section): all 200 queries in one call.
+  # k=10 ≤ MAX_TOPK, so this runs the GPU-side per-query top-k path (readback T×k).
   beam bench --index flat    --n <N> --dim 128 --k 10 --queries 200 --batch 200
   ```
 

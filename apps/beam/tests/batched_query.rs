@@ -1,19 +1,26 @@
 //! Batched GPU flat query correctness gate.
 //!
 //! [`GpuFlatIndex::search_knn_batch`] processes a whole query set in as few GPU
-//! dispatches as possible (tiling the batch and scoring each tile's `T × n`
-//! distance sub-matrix in one dispatch) — the throughput lever. These tests pin
-//! the correctness contract: a batched query returns, per query, **exactly** what
-//! the serial [`search_knn`](beam::index::VectorIndex::search_knn) returns.
+//! dispatches as possible — the throughput lever. For `k <= `[`beam::gpu::MAX_TOPK`]
+//! it runs the **GPU-side per-query top-k** kernel (one workgroup per query selects
+//! the top-k on the GPU; readback is only `num_q * k` (id, score) pairs); for larger
+//! `k` it falls back to the `num_q * n` distance-matrix + CPU top-k path. These tests
+//! pin the correctness contract: a batched query returns, per query, **exactly** what
+//! the serial [`search_knn`](beam::index::VectorIndex::search_knn) — and the exact
+//! CPU oracle — returns, on both paths.
 //!
 //!   1. Batched == serial: for a deterministic corpus + a batch of queries, the
 //!      per-query batched result equals the serial GPU result (row sets + per-row
 //!      scores within 1e-3), for L2 and Dot.
 //!   2. Tombstones: after deleting some rows, the batched query excludes them and
-//!      still equals the live serial result (the same live-mask/sentinel path).
+//!      still equals the live serial result (the same live-mask path).
 //!   3. Batch-size / tiling invariance: tile=1, a small tile, and a tile smaller
 //!      than the query count (so the batch spans multiple tiles) all produce
 //!      identical results — exercising the internal tiling boundary.
+//!   4. GPU top-k == CPU oracle across k ∈ {1, 10, 32}, L2 and Dot (the exact
+//!      selection is on the GPU).
+//!   5. GPU top-k == the previous distance-matrix + CPU-top-k path (both batched).
+//!   6. `k > MAX_TOPK` falls back to the distance-matrix path and stays exact.
 //!
 //! Every test skips gracefully (prints, returns) when no GPU adapter is present,
 //! so GPU-less CI stays green; on this Mac they PRINT the Metal adapter and PASS.
@@ -22,7 +29,8 @@ use std::collections::{HashMap, HashSet};
 
 use beam::collection::Metric;
 use beam::dataset;
-use beam::gpu::{GpuContext, GpuFlatIndex};
+use beam::gpu::{GpuContext, GpuFlatIndex, MAX_TOPK};
+use beam::index::cpu_flat::CpuFlatIndex;
 use beam::index::{Neighbor, VectorIndex};
 
 const N: usize = 2000;
@@ -202,4 +210,90 @@ fn batched_wrong_dim_query_is_empty_slot() {
     assert_same("good slot 0", &res[0], &index.search_knn(&good, K));
     assert_same("good slot 2", &res[2], &index.search_knn(&good, K));
     eprintln!("  wrong-dim slot handled OK");
+}
+
+/// GPU-side top-k batched result == the exact CPU oracle
+/// ([`CpuFlatIndex::search_knn`]) per query, for k ∈ {1, 10, 32} (all ≤ MAX_TOPK,
+/// so the GPU-top-k kernel does the selection), on L2 and Dot. This is the goal:
+/// the top-k is computed ON the GPU and equals ground truth (row set + scores).
+#[test]
+fn gpu_topk_matches_cpu_oracle() {
+    let Some(gpu) = GpuContext::new() else {
+        eprintln!("no GPU adapter; skipping gpu_topk_matches_cpu_oracle");
+        return;
+    };
+    let (backend, name) = gpu.adapter_info();
+    eprintln!("GPU adapter: {name} ({backend})");
+
+    for metric in [Metric::L2, Metric::Dot] {
+        let collection = dataset::random_collection("topk", N, DIM, metric, DATASET_SEED);
+        let queries = dataset::random_queries(N_QUERIES, DIM, QUERY_SEED);
+        let cpu = CpuFlatIndex::new(&collection);
+        let index = GpuFlatIndex::new(&gpu, &collection);
+
+        for &k in &[1usize, 10, 32] {
+            assert!(k <= MAX_TOPK, "test k must stay on the GPU-top-k path");
+            let batched = index.search_knn_batch(&queries, k);
+            assert_eq!(batched.len(), queries.len());
+            for (qi, q) in queries.iter().enumerate() {
+                let oracle = cpu.search_knn(q, k);
+                assert_eq!(oracle.len(), k, "{metric:?} k={k} q{qi}: oracle len");
+                assert_eq!(batched[qi].len(), k, "{metric:?} k={k} q{qi}: gpu-topk len");
+                assert_same(&format!("{metric:?} k={k} q{qi} vs oracle"), &batched[qi], &oracle);
+            }
+        }
+        eprintln!("  GPU top-k == CPU oracle OK for {metric:?} (k ∈ 1,10,32)");
+    }
+}
+
+/// GPU-side top-k == the previous distance-matrix + CPU-top-k batched path, per
+/// query (row set + scores). Guards that swapping the readback from `T × n`
+/// distances to `T × k` (id, score) pairs did not change the result.
+#[test]
+fn gpu_topk_matches_distmatrix_path() {
+    let Some(gpu) = GpuContext::new() else {
+        eprintln!("no GPU adapter; skipping gpu_topk_matches_distmatrix_path");
+        return;
+    };
+    let collection = dataset::random_collection("topk-dm", N, DIM, Metric::L2, DATASET_SEED);
+    let queries = dataset::random_queries(N_QUERIES, DIM, QUERY_SEED);
+    let index = GpuFlatIndex::new(&gpu, &collection);
+
+    for &k in &[1usize, 10, 32] {
+        let topk = index.search_knn_batch(&queries, k); // GPU top-k (k ≤ MAX_TOPK)
+        let distmatrix = index.search_knn_batch_distmatrix(&queries, k); // forced T×n path
+        assert_eq!(topk.len(), distmatrix.len());
+        for qi in 0..queries.len() {
+            assert_same(&format!("k={k} q{qi} topk vs distmatrix"), &topk[qi], &distmatrix[qi]);
+        }
+    }
+    eprintln!("  GPU top-k == distance-matrix path OK (k ∈ 1,10,32)");
+}
+
+/// `k > MAX_TOPK` falls back to the distance-matrix + CPU-top-k path (the GPU
+/// register/shared top-k is capped at MAX_TOPK) and stays exact vs the CPU oracle,
+/// so large-k batched queries still work.
+#[test]
+fn gpu_topk_falls_back_above_max_k() {
+    let Some(gpu) = GpuContext::new() else {
+        eprintln!("no GPU adapter; skipping gpu_topk_falls_back_above_max_k");
+        return;
+    };
+    let k = MAX_TOPK + 8; // above the GPU-top-k cap → distance-matrix fallback
+    let collection = dataset::random_collection("topk-fb", N, DIM, Metric::L2, DATASET_SEED);
+    let queries = dataset::random_queries(N_QUERIES, DIM, QUERY_SEED);
+    let cpu = CpuFlatIndex::new(&collection);
+    let index = GpuFlatIndex::new(&gpu, &collection);
+
+    let batched = index.search_knn_batch(&queries, k);
+    // The fallback and the explicit distance-matrix path must agree, and both must
+    // equal the exact CPU oracle.
+    let distmatrix = index.search_knn_batch_distmatrix(&queries, k);
+    for (qi, q) in queries.iter().enumerate() {
+        let oracle = cpu.search_knn(q, k);
+        assert_eq!(batched[qi].len(), k, "q{qi}: fallback should return k={k}");
+        assert_same(&format!("fallback k={k} q{qi} vs oracle"), &batched[qi], &oracle);
+        assert_same(&format!("fallback k={k} q{qi} vs distmatrix"), &batched[qi], &distmatrix[qi]);
+    }
+    eprintln!("  k > MAX_TOPK ({k}) falls back to distance-matrix path + stays exact OK");
 }

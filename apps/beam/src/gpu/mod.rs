@@ -109,6 +109,30 @@ struct BatchParams {
     num_q: u32,
 }
 
+/// The `TopkParams` uniform handed to the `main_batch_topk` kernel. Adds `want`
+/// (`min(k, n_live)`, the per-query result length the kernel emits) to the batch
+/// params; padded to 32 bytes (uniform alignment).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct TopkParams {
+    n: u32,
+    dim: u32,
+    metric: u32,
+    num_q: u32,
+    want: u32,
+    _p0: u32,
+    _p1: u32,
+    _p2: u32,
+}
+
+/// Compile-time cap on `k` for the GPU-side per-query top-k kernel
+/// (`main_batch_topk`) — it MUST equal `MAX_K` in `flat.wgsl` (the per-thread
+/// register top-k / shared-memory list length). A batched query with `k` at or
+/// below this runs the GPU-top-k path (readback is `num_q * k`, tiny); a larger
+/// `k` falls back to the `main_batch` `num_q * n` distance-matrix path + CPU
+/// top-k, so large-k queries still work (just without the readback win).
+pub const MAX_TOPK: usize = 32;
+
 /// Cap on the per-tile readback: at most this many f32 distances (`tile × n`) are
 /// computed + read back in one `main_batch` dispatch, so the batch is tiled into
 /// chunks of `T = clamp(MAX_BATCH_TILE_FLOATS / n, 1, batch_len)` queries. ~8M
@@ -158,6 +182,11 @@ pub struct GpuFlatIndex {
     /// queries against every row in one dispatch; the batched-throughput path).
     batch_bind_group_layout: wgpu::BindGroupLayout,
     batch_pipeline: wgpu::ComputePipeline,
+    /// Bind-group layout + pipeline for the `main_batch_topk` kernel (one workgroup
+    /// per query, GPU-side per-query top-k; reads back only `num_q * k` (id, score)
+    /// pairs — the readback-killing batched-throughput path).
+    topk_bind_group_layout: wgpu::BindGroupLayout,
+    topk_pipeline: wgpu::ComputePipeline,
 }
 
 impl GpuFlatIndex {
@@ -301,6 +330,45 @@ impl GpuFlatIndex {
             cache: None,
         });
 
+        // GPU-side per-query top-k kernel: db/queries/params/out at disjoint
+        // bindings 14..18 plus the per-row keep bitmask at binding 18. One
+        // workgroup per query; reads back only `num_q * k` (id, score) pairs.
+        let topk_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("beam_flat_topk_bgl"),
+                entries: &[
+                    storage_entry(14, true), // db vectors
+                    storage_entry(15, true), // packed tile queries
+                    // params (uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 16,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    storage_entry(17, false), // out (id, score) pairs (read_write)
+                    storage_entry(18, true),  // keep bitmask (read-only)
+                ],
+            });
+        let topk_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("beam_flat_topk_pipeline_layout"),
+                bind_group_layouts: &[&topk_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let topk_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("beam_flat_topk_pipeline"),
+            layout: Some(&topk_pipeline_layout),
+            module: &shader,
+            entry_point: Some("main_batch_topk"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
         Self {
             device,
             queue,
@@ -318,6 +386,8 @@ impl GpuFlatIndex {
             filtered_pipeline,
             batch_bind_group_layout,
             batch_pipeline,
+            topk_bind_group_layout,
+            topk_pipeline,
         }
     }
 
@@ -587,13 +657,22 @@ impl GpuFlatIndex {
     /// as possible, so the fixed per-dispatch + blocking-readback overhead
     /// amortizes across the batch instead of being paid once per query.
     ///
-    /// The batch is tiled into chunks of `T` queries; each chunk is ONE
-    /// `main_batch` dispatch that computes the `T × n` distance sub-matrix into a
-    /// storage buffer (2D grid: one invocation per (query, DB row)), reads back
-    /// `T × n` f32, and runs the shared CPU top-k per query. `T` is auto-picked
-    /// (`clamp(MAX_BATCH_TILE_FLOATS / n, 1, batch_len)`, and never above
-    /// [`MAX_BATCH_TILE_QUERIES`]) so the readback stays bounded. The collection's
-    /// live mask is folded into the same keep-bitmask/sentinel path filtered +
+    /// Two GPU paths, auto-selected by `k`:
+    ///
+    /// - `k <= `[`MAX_TOPK`] — the **GPU top-k** path
+    ///   ([`Self::search_knn_batch_topk_tiled`]): ONE workgroup per query scans all
+    ///   rows and selects the top-k on the GPU, so only `num_q * k` (id, score)
+    ///   pairs are read back (a ~`n/k` cut vs the distance matrix). This is the
+    ///   throughput lever — it removes the `num_q * n` readback + single-threaded
+    ///   CPU top-k that dominated the distance-matrix path.
+    /// - `k > `[`MAX_TOPK`] — the **distance-matrix** fallback
+    ///   ([`Self::search_knn_batch_distmatrix`]): each tile scores its `T × n`
+    ///   distance sub-matrix in one `main_batch` dispatch, reads back `T × n` f32,
+    ///   and runs the shared CPU top-k — so large-k queries still work (without the
+    ///   readback win, since the GPU kernel's register/shared top-k is capped at
+    ///   `MAX_TOPK`).
+    ///
+    /// Both fold the collection's live mask into the SAME keep-bitmask filtered +
     /// deleted single-query search uses, so a batched query excludes tombstoned
     /// rows and returns, per query, **exactly** what serial [`Self::search_knn`]
     /// returns (same row set, per-row scores bit-for-intent identical).
@@ -603,22 +682,128 @@ impl GpuFlatIndex {
     /// at its position (matching the serial dimension-mismatch contract); an empty
     /// batch, `k == 0`, or an empty/all-tombstoned index yields all-empty results.
     pub fn search_knn_batch<Q: AsRef<[f32]>>(&self, queries: &[Q], k: usize) -> Vec<Vec<Neighbor>> {
-        // Auto-pick the tile size so one dispatch reads back at most
-        // MAX_BATCH_TILE_FLOATS distances, and never exceeds the workgroup-Y
-        // ceiling (one query per unit of workgroups.y).
-        let tile = (MAX_BATCH_TILE_FLOATS / self.n.max(1)).clamp(1, MAX_BATCH_TILE_QUERIES);
-        self.search_knn_batch_tiled(queries, k, tile)
+        if k <= MAX_TOPK {
+            // GPU top-k: readback is `num_q * k`, so the whole batch can share one
+            // dispatch (one workgroup per query, capped at the workgroup-count ceiling).
+            let tile = queries.len().clamp(1, MAX_BATCH_TILE_QUERIES);
+            self.search_knn_batch_topk_tiled(queries, k, tile)
+        } else {
+            self.search_knn_batch_distmatrix(queries, k)
+        }
     }
 
     /// [`Self::search_knn_batch`] with an explicit query-tile size — the batch is
     /// processed in dispatches of at most `tile` queries each (`tile` is clamped to
-    /// `1..=MAX_BATCH_TILE_QUERIES`). The auto path picks `tile` from the readback
-    /// cap; this hook lets a caller force a specific tile (used by the batched
-    /// tests to cross the tiling boundary on a small corpus, and available for
-    /// memory tuning). Results are identical to [`Self::search_knn_batch`] for any
-    /// valid `tile`, since tiling only changes how many queries share one dispatch.
+    /// `1..=MAX_BATCH_TILE_QUERIES`). Routes to the same `k`-selected path as
+    /// [`Self::search_knn_batch`]; the auto path picks `tile` itself, this hook lets
+    /// a caller force a specific tile (used by the batched tests to cross the tiling
+    /// boundary on a small corpus). Results are identical for any valid `tile`,
+    /// since tiling only changes how many queries share one dispatch.
     #[doc(hidden)]
     pub fn search_knn_batch_tiled<Q: AsRef<[f32]>>(
+        &self,
+        queries: &[Q],
+        k: usize,
+        tile: usize,
+    ) -> Vec<Vec<Neighbor>> {
+        if k <= MAX_TOPK {
+            self.search_knn_batch_topk_tiled(queries, k, tile)
+        } else {
+            self.search_knn_batch_distmatrix_tiled(queries, k, tile)
+        }
+    }
+
+    /// GPU-side per-query top-k batched path: one `main_batch_topk` dispatch per
+    /// tile (ONE workgroup per query), reading back only `num_q * want` (id, score)
+    /// pairs — the throughput lever that removes the `num_q * n` readback + CPU
+    /// top-k. `want = min(k, n_live)` (the same result length the serial path
+    /// returns) and MUST be `<= `[`MAX_TOPK`]; callers route here only for
+    /// `k <= MAX_TOPK`. Edge cases match [`Self::search_knn_batch`] (empty batch /
+    /// `k == 0` / empty-or-all-tombstoned index → all-empty; wrong-dim query → empty
+    /// slot). Result rows are already GPU-sorted best-first; the host only attaches
+    /// each row's external id.
+    #[doc(hidden)]
+    pub fn search_knn_batch_topk_tiled<Q: AsRef<[f32]>>(
+        &self,
+        queries: &[Q],
+        k: usize,
+        tile: usize,
+    ) -> Vec<Vec<Neighbor>> {
+        let mut results: Vec<Vec<Neighbor>> = vec![Vec::new(); queries.len()];
+        if queries.is_empty() || k == 0 || self.n == 0 || self.n_live == 0 {
+            return results;
+        }
+        // The kernel emits exactly `want` real rows per query (want <= n_live), so
+        // the result length matches the serial path's `min(k, n_live)`.
+        let want = k.min(self.n_live).min(MAX_TOPK);
+        let tile = tile.clamp(1, MAX_BATCH_TILE_QUERIES);
+
+        let valid: Vec<usize> = (0..queries.len())
+            .filter(|&i| queries[i].as_ref().len() == self.dim)
+            .collect();
+        if valid.is_empty() {
+            return results;
+        }
+
+        // The keep-bitmask (collection live bits) is identical across every tile,
+        // so upload it once and reuse it for all dispatches in this batch.
+        let mask_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_topk_keep_mask"),
+                contents: bytemuck::cast_slice(&self.live),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
+        for chunk in valid.chunks(tile) {
+            // Pack this tile's (host-normalized) queries contiguously in `chunk` order.
+            let mut packed = Vec::with_capacity(chunk.len() * self.dim);
+            for &qi in chunk {
+                match self.metric {
+                    Metric::Cosine => packed.extend_from_slice(&l2_normalize(queries[qi].as_ref())),
+                    _ => packed.extend_from_slice(queries[qi].as_ref()),
+                }
+            }
+            // One dispatch → `chunk.len() * want` (row, score) pairs, query-major and
+            // already sorted best-first.
+            let pairs = self.dispatch_batch_topk(&packed, chunk.len(), want, &mask_buffer);
+            for (local, &qi) in chunk.iter().enumerate() {
+                let base = local * want;
+                results[qi] = pairs[base..base + want]
+                    .iter()
+                    .map(|&(row, score)| Neighbor {
+                        row,
+                        external_id: self.external_ids[row as usize].clone(),
+                        score,
+                    })
+                    .collect();
+            }
+        }
+        results
+    }
+
+    /// [`Self::search_knn_batch`]'s **distance-matrix** path, forced regardless of
+    /// `k` — the `T × n` distance sub-matrix per tile + CPU top-k (the pre-GPU-top-k
+    /// batched path). Exposed so a test can compare the GPU-top-k path against it
+    /// directly, and used as the `k > `[`MAX_TOPK`] fallback.
+    #[doc(hidden)]
+    pub fn search_knn_batch_distmatrix<Q: AsRef<[f32]>>(
+        &self,
+        queries: &[Q],
+        k: usize,
+    ) -> Vec<Vec<Neighbor>> {
+        // Auto-pick the tile size so one dispatch reads back at most
+        // MAX_BATCH_TILE_FLOATS distances.
+        let tile = (MAX_BATCH_TILE_FLOATS / self.n.max(1)).clamp(1, MAX_BATCH_TILE_QUERIES);
+        self.search_knn_batch_distmatrix_tiled(queries, k, tile)
+    }
+
+    /// [`Self::search_knn_batch_distmatrix`] with an explicit query-tile size. Each
+    /// chunk is ONE `main_batch` dispatch that computes the `chunk.len() × n`
+    /// distance sub-matrix (query-major), reads back `chunk.len() × n` f32, and runs
+    /// the shared CPU top-k per query.
+    #[doc(hidden)]
+    pub fn search_knn_batch_distmatrix_tiled<Q: AsRef<[f32]>>(
         &self,
         queries: &[Q],
         k: usize,
@@ -779,6 +964,128 @@ impl GpuFlatIndex {
         drop(data);
         readback.unmap();
         scores
+    }
+
+    /// One `main_batch_topk` dispatch: upload the packed `num_q` tile queries +
+    /// params, run ONE workgroup per query (each cooperatively scans the resident
+    /// DB against the reused keep `mask_buffer` and selects its top-`want` on the
+    /// GPU), and read back only the `num_q * want` (row, score) pairs — query-major,
+    /// already sorted best-first. Readback is `num_q * want * 8` bytes (vs the
+    /// distance matrix's `num_q * n * 4`), the throughput lever.
+    fn dispatch_batch_topk(
+        &self,
+        packed_q: &[f32],
+        num_q: usize,
+        want: usize,
+        mask_buffer: &wgpu::Buffer,
+    ) -> Vec<(u32, f32)> {
+        let query_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_topk_queries"),
+                contents: bytemuck::cast_slice(packed_q),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
+        let params = TopkParams {
+            n: self.n as u32,
+            dim: self.dim as u32,
+            metric: self.metric.code(),
+            num_q: num_q as u32,
+            want: want as u32,
+            _p0: 0,
+            _p1: 0,
+            _p2: 0,
+        };
+        let params_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("beam_topk_params"),
+                    contents: bytemuck::bytes_of(&params),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+        // Output: num_q * want entries, each two u32s [score_bits, row].
+        let out_u32 = num_q * want * 2;
+        let out_bytes = (out_u32 * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
+        let out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_topk_out"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_topk_readback"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("beam_flat_topk_bind_group"),
+            layout: &self.topk_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: self.db_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: query_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: out_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: mask_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("beam_flat_topk_encoder"),
+            });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("beam_flat_topk_pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.topk_pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            // One workgroup per query: workgroup `q` selects query `q`'s top-k.
+            cpass.dispatch_workgroups(num_q as u32, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out_buffer, 0, &readback, 0, out_bytes);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .expect("map_async callback dropped")
+            .expect("gpu buffer map failed");
+
+        let data = slice.get_mapped_range();
+        let raw: &[u32] = bytemuck::cast_slice(&data);
+        // Decode [score_bits, row] pairs into (row, score).
+        let pairs: Vec<(u32, f32)> = raw
+            .chunks_exact(2)
+            .map(|c| (c[1], f32::from_bits(c[0])))
+            .collect();
+        drop(data);
+        readback.unmap();
+        pairs
     }
 }
 
