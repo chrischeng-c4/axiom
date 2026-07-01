@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-01T13:51:18.747972+00:00"
-digest = "sha256:dc4604602254a197e1b17a16156006898c7deeb2404bb7e6fb5fb466890e41d2"
-source_digest = "sha256:dc4604602254a197e1b17a16156006898c7deeb2404bb7e6fb5fb466890e41d2"
-ir_digest = "sha256:3ac62a3b06adadd5837c6fb01aa1be56ad86504787c2436017d6eff6f211ec6c"
+generated_at = "2026-07-01T14:24:00.140697+00:00"
+digest = "sha256:4c0514cdba090d8ce3e7e4fee02f3aa1b8ec32c87f959d4fd41df0b4ef86728f"
+source_digest = "sha256:4c0514cdba090d8ce3e7e4fee02f3aa1b8ec32c87f959d4fd41df0b4ef86728f"
+ir_digest = "sha256:55e97996abd97045a0f0daa967a111760c4a3008a468fcf260d0c765d6dbb4ba"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-consolidation-single-binary-serve-spec-llm-k8s-operato.md"
@@ -90,6 +90,12 @@ path = "logic/native-ids-query-node-filter-by-external-id-set.md"
 digest = "sha256:fd29b78caaaf3f3c7075028ad714b47508cb620069031ca70083f5d0d5cb14b2"
 ir_digest = "sha256:2d2368801bfadf4307a557f77fe7e40339f69fe8443f7d119f65b83f795ed762"
 section_count = 4
+
+[[files]]
+path = "logic/no-snapshot-backup-mechanism-for-lumen-s-wal-any-replicaspershar.md"
+digest = "sha256:15a87a5616c775e540a8274d5b03fdd94def214ce4b73a0bfbd1bad283adb693"
+ir_digest = "sha256:194438d288b4727db31cbe496b097863899c1811d78b6ab5bef0c923c9ec531e"
+section_count = 3
 
 [[files]]
 path = "logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md"
