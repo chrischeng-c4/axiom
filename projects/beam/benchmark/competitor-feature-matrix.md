@@ -39,8 +39,8 @@ None target Apple Silicon / Metal. That gap is beam's wedge (see Positioning).
 | **Metadata filtered search** | ✅ (GPU+CPU) | 🟡 | 🟡 | ✅ | ✅ | ✅ | done (F1) |
 | **CRUD (delete/update/upsert)** | ✅ (tombstones) | 🟡 | 🟡 | ✅ | ✅ | ✅ | done (F2) |
 | **Persistence / durable** | ✅ (serde/bincode) | ✅ (file) | ✅ | ✅ | ✅ | ✅ | done (F4) |
-| Collection mgmt (create/drop/list) | 🟡 (service in flight) | n/a | n/a | ✅ | ✅ | ✅ (DDL) | **service** |
-| HTTP/gRPC query API | 🟡 (service in flight) | ❌ (lib) | ❌ (lib) | ✅ | ✅ | ✅ (SQL) | **service** |
+| Collection mgmt (create/drop/list) | ✅ (`beam serve`) | n/a | n/a | ✅ | ✅ | ✅ (DDL) | done (service) |
+| HTTP/gRPC query API | ✅ (h2c REST) | ❌ (lib) | ❌ (lib) | ✅ | ✅ | ✅ (SQL) | done (service) |
 | OPQ (rotation) | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | P/OPQ |
 | Scalar quantization | 🟡 (flat SQ) | ✅ | ✅ | ✅ | ✅ | ❌ | — |
 | Distributed / sharding | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | later |
