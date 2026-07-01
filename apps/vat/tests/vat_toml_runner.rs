@@ -70,6 +70,84 @@ fn vat_capabilities_json_reports_effective_backends() {
 }
 
 #[test]
+fn vat_gc_dry_run_and_execute_prunes_successful_vats_safely() {
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("input.txt"), "seed").unwrap();
+
+    let ok = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--json", "--", "sh", "-c", "true"])
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let ok_state: Value = serde_json::from_slice(&ok.stdout).unwrap();
+    let ok_id = ok_state["id"].as_str().unwrap().to_string();
+
+    let failed = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .args(["run", "--json", "--", "sh", "-c", "exit 7"])
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(7));
+    let failed_state: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    let failed_id = failed_state["id"].as_str().unwrap().to_string();
+
+    let dry_run = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args(["gc", "--keep-last", "0", "--apparent", "--json"])
+        .output()
+        .unwrap();
+    assert!(dry_run.status.success());
+    let dry_json: Value = serde_json::from_slice(&dry_run.stdout).unwrap();
+    assert_eq!(dry_json["dry_run"], true);
+    assert_gc_entry(&dry_json, &ok_id, true, "candidate", false);
+    assert_gc_entry(&dry_json, &failed_id, false, "failed_retained", false);
+    assert!(vat_home.path().join("vats").join(&ok_id).exists());
+    assert!(vat_home.path().join("vats").join(&failed_id).exists());
+
+    let execute = Command::new(vat_bin())
+        .env("VAT_HOME", vat_home.path())
+        .args([
+            "gc",
+            "--keep-last",
+            "0",
+            "--execute",
+            "--apparent",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(execute.status.success());
+    let execute_json: Value = serde_json::from_slice(&execute.stdout).unwrap();
+    assert_eq!(execute_json["dry_run"], false);
+    assert_gc_entry(&execute_json, &ok_id, true, "candidate", true);
+    assert_gc_entry(&execute_json, &failed_id, false, "failed_retained", false);
+    assert!(!vat_home.path().join("vats").join(&ok_id).exists());
+    assert!(vat_home.path().join("vats").join(&failed_id).exists());
+}
+
+fn assert_gc_entry(json: &Value, id: &str, candidate: bool, reason: &str, deleted: bool) {
+    let entry = json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == id)
+        .unwrap_or_else(|| panic!("missing gc entry for {id}: {json}"));
+    assert_eq!(entry["candidate"], candidate);
+    assert_eq!(entry["reason"], reason);
+    assert_eq!(entry["deleted"], deleted);
+    assert!(entry["apparent_size_bytes"].as_u64().is_some());
+}
+
+#[test]
 fn scenario_run_starts_app_dependency_and_runner() {
     if !python3_available() {
         return;

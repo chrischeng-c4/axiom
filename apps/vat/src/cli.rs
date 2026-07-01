@@ -129,6 +129,33 @@ enum Cmd {
     },
     /// Delete a vat and its workspace.
     Rm { id: String },
+    /// Garbage-collect retained vats. Dry-run by default; use --execute to delete.
+    Gc {
+        /// Actually delete selected vats. Omit for a dry-run report.
+        #[arg(long)]
+        execute: bool,
+        /// Keep this many newest vats regardless of status.
+        #[arg(long, default_value_t = 10)]
+        keep_last: usize,
+        /// Include failed runs in deletion candidates.
+        #[arg(long)]
+        include_failed: bool,
+        /// Include snapshots in deletion candidates.
+        #[arg(long)]
+        include_snapshots: bool,
+        /// Only select vats last updated at least this many days ago.
+        #[arg(long)]
+        older_than_days: Option<i64>,
+        /// Measure disk size with du. Slower on large stores.
+        #[arg(long)]
+        measure: bool,
+        /// Also compute apparent file size by walking every retained rootfs. Implies --measure.
+        #[arg(long)]
+        apparent: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print captured logs from a vat.toml runner invocation.
     Logs { id: String, source: Option<String> },
     /// Print agent-facing docs for driving vat — offline, no network.
@@ -382,6 +409,25 @@ pub fn run() -> Result<ExitCode> {
         Cmd::Fork { id, name } => commands::snapshot::fork(id, name),
         Cmd::Snapshot { id, name } => commands::snapshot::snapshot(id, name),
         Cmd::Rm { id } => commands::rm::exec(id),
+        Cmd::Gc {
+            execute,
+            keep_last,
+            include_failed,
+            include_snapshots,
+            older_than_days,
+            measure,
+            apparent,
+            json,
+        } => commands::gc::exec(commands::gc::Args {
+            execute,
+            keep_last,
+            include_failed,
+            include_snapshots,
+            older_than_days,
+            measure,
+            apparent,
+            json,
+        }),
         Cmd::Logs { id, source } => commands::logs::exec(id, source),
         Cmd::Llm { topic, format } => commands::llm::exec(&topic, format.into()),
         Cmd::Upgrade {

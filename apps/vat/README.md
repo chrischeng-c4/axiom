@@ -217,8 +217,31 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat fork <id>` | Copy-on-write a new **runnable** working copy. |
 | `vat snapshot <id>` | Copy-on-write a **frozen** restore point. |
 | `vat rm <id>` | Delete a vat and its workspace. |
+| `vat gc [--execute]` | Report retained vat disk usage and prune old workspaces. Dry-run by default; protects running/snapshot/failed/newest vats unless explicit flags opt in. |
 | `vat gpu` | Report the GPU every vat on this host can reach. |
 | `vat cluster create\|ls\|delete\|kubeconfig` | Manage standalone local Kubernetes clusters (kind/k3d/minikube), independent of a run. |
+
+### Disk cleanup
+
+Retained vats can accumulate large copy-on-write workspaces. Use `vat gc` to
+inspect disk pressure before deleting anything:
+
+```bash
+vat gc --json                         # dry-run, machine-readable metadata report
+vat gc --measure --json               # also run du -sk for disk sizes
+vat gc --keep-last 5                  # dry-run: keep the newest 5 vats
+vat gc --execute --keep-last 5        # delete non-running, non-snapshot,
+                                      # non-failed candidates
+vat gc --execute --include-failed --keep-last 5
+                                      # also prune failed retained runs
+vat gc --apparent --json              # also walk files for apparent size
+```
+
+The default GC report avoids walking large rootfs trees, so it stays usable when
+hundreds of vats exist. Add `--measure` when you need `disk_size_bytes` from
+`du -sk`. Add `--apparent` only when you need file-length totals; it walks every
+retained rootfs and is slower on large stores. APFS/reflink clones can make
+apparent size much larger than physical blocks.
 
 ## vat.toml
 

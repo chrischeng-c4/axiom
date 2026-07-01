@@ -239,6 +239,12 @@ network = "hermetic"       # open | hermetic
 - `vat logs <id> <service-id>`: print retained service stdout/stderr.
 - `vat state <id>`: read the agent-legible JSON state.
 - `vat diff <id> --json`: read filesystem changes vs. the vat base.
+- `vat gc --json`: dry-run retained workspace cleanup and report candidates
+  without deleting anything.
+- `vat gc --measure --json`: include `du -sk` disk sizes; omit it for fast
+  metadata-only cleanup planning on huge stores.
+- `vat gc --execute --keep-last 5`: prune old successful/created vats while
+  preserving running, snapshot, failed, and newest retained vats.
 - `vat cluster create [--backend auto|kind|k3d|minikube] [--name N]`: create a
   standalone local Kubernetes cluster (outlives a run); `vat cluster ls --json`,
   `vat cluster kubeconfig <name>`, and `vat cluster delete <name>` manage it.
@@ -249,6 +255,11 @@ Default `keep = "failed"` means successful configured runs clean up after
 emitting JSON, while failed runs keep workspace state and logs for inspection.
 Use `vat run --keep always ...` to retain one passing configured run without
 editing `vat.toml`; use `--keep never` to force cleanup.
+If retained vats accumulate, run `vat gc --json` first. GC is dry-run by
+default, reads metadata only, and requires `--execute` before deleting. Add
+`--measure` when `du -sk` disk sizes are needed. Add `--apparent` only when
+file-length totals are needed; it walks every retained rootfs. Add
+`--include-failed` only when failed debug workspaces are no longer needed.
 
 ## Boundaries
 
