@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-07-01T10:53:31.068925+00:00"
-digest = "sha256:dac17bf9889b3199d9e358c907163e3ab64e561e9e7c84ce7bd99fb4c8da136e"
-source_digest = "sha256:dac17bf9889b3199d9e358c907163e3ab64e561e9e7c84ce7bd99fb4c8da136e"
-ir_digest = "sha256:872ad2d9825663a6acc5fb71a2af1a7fb324b4d2bddfe03a4779edca3192d779"
+generated_at = "2026-07-01T11:06:26.594137+00:00"
+digest = "sha256:1e1af87c5c299bbf26c41b9759cfe0f055b76160ab944d4a2f820cda4a70e28e"
+source_digest = "sha256:1e1af87c5c299bbf26c41b9759cfe0f055b76160ab944d4a2f820cda4a70e28e"
+ir_digest = "sha256:58b23275d2fa83b23d4432c8cc9a4bae6c3f7cbb34fc1586730ae4374e38d8a0"
 
 [[files]]
 path = "config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md"
@@ -264,6 +264,12 @@ path = "logic/jet-build-lib-preserve-modules-iife-library-output-modes.md"
 digest = "sha256:c4ec343be259977b0805768fee97d7b64f2bbde98dcd058a232a116894fbb106"
 ir_digest = "sha256:6e5e5ce3304b4c45546a24c03d538af8a1bce3dcc8192e8c66fdba6d94379b2a"
 section_count = 2
+
+[[files]]
+path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md"
+digest = "sha256:211593b4b22e1960b731f6623b651ae921e81a15a4dff741c70424a35c8c18b9"
+ir_digest = "sha256:9c887e2df24d5b2a093bcc422dd16bfd2e8e796b18e71569250c57b41933d44a"
+section_count = 3
 
 [[files]]
 path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-plain-string.md"
