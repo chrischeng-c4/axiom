@@ -369,6 +369,71 @@ fn lib_build_fails_loudly_for_unsupported_local_asset_imports() {
     );
 }
 
+#[test]
+// @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#unit-test
+fn lib_build_skips_configured_css_export_and_merges_once() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "css-export-lib",
+            "version": "1.0.0",
+            "type": "module",
+            "exports": {
+                ".": {
+                    "types": "./dist/index.d.ts",
+                    "import": "./dist/index.js",
+                    "require": "./dist/index.cjs"
+                },
+                "./style.css": "./dist/style.css"
+            }
+        }"#,
+    );
+    write_file(root, "src/index.js", "export const Button = 'button';\n");
+    write_file(root, "dist/style.css", ".button { color: red; }\n");
+
+    let options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: Vec::new(),
+        css_merge: vec!["dist/style.css".to_string()],
+        raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
+    };
+
+    let result = build_library(options)
+        .expect("configured CSS export must be handled by css_merge, not as a JS entry");
+    assert_eq!(result.entries.len(), 1, "only the JS entry should build");
+    assert_eq!(result.entries[0].subpath, ".");
+    assert!(
+        result.entries[0].code.contains("Button"),
+        "JS source entry should be built, got:\n{}",
+        result.entries[0].code
+    );
+    assert!(
+        result
+            .assets
+            .iter()
+            .any(|asset| asset.path.ends_with("style.css")),
+        "merged style.css should be reported as an asset, got {:?}",
+        result.assets
+    );
+    let css = std::fs::read_to_string(root.join("dist/style.css")).unwrap();
+    assert_eq!(
+        css, ".button { color: red; }\n",
+        "css_merge should not duplicate the source when out_dir/style.css is also the configured CSS source"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (d) App-mode build is unchanged (no regression)
 // ──────────────────────────────────────────────────────────────────────────

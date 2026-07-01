@@ -16,6 +16,7 @@
 //!   - 1 — warnings present and `--strict-warn` set
 //!   - 2 — errors
 
+use crate::task_runner::config::JetConfig;
 use crate::wasm_build::config::{ConfigError, ConfigSpan, DeprecatedKeyWarning, WasmConfig};
 use std::path::{Path, PathBuf};
 
@@ -63,6 +64,7 @@ pub fn run(project_root: &Path, format: &str, strict_warn: bool) -> i32 {
 
 /// Internal: lint a specific config path (test entry too).
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
+/// @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#logic
 pub fn lint_path(path: &Path) -> LintReport {
     let body = match std::fs::read_to_string(path) {
         Ok(b) => b,
@@ -88,18 +90,104 @@ pub fn lint_path(path: &Path) -> LintReport {
             };
         }
     };
-    match WasmConfig::parse_str_with_warnings(&body, path) {
-        Ok((_cfg, warnings)) => LintReport {
+    let warnings = if has_top_level_section(&body, "wasm") {
+        match WasmConfig::parse_str_with_warnings(&body, path) {
+            Ok((_cfg, warnings)) => warnings,
+            Err(err) => {
+                return LintReport {
+                    path: path.to_path_buf(),
+                    error: Some(err),
+                    warnings: Vec::new(),
+                };
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    let effective = normalize_deprecated_keys_for_full_config(&body, !warnings.is_empty());
+    match toml::from_str::<JetConfig>(&effective) {
+        Ok(_cfg) => LintReport {
             path: path.to_path_buf(),
             error: None,
             warnings,
         },
         Err(err) => LintReport {
             path: path.to_path_buf(),
-            error: Some(err),
-            warnings: Vec::new(),
+            error: Some(classify_full_config_error(err, path, &effective)),
+            warnings,
         },
     }
+}
+
+fn has_top_level_section(body: &str, key: &str) -> bool {
+    toml::from_str::<toml::Value>(body)
+        .ok()
+        .and_then(|value| value.as_table().map(|table| table.contains_key(key)))
+        .unwrap_or_else(|| body.lines().any(|line| line.trim() == format!("[{key}]")))
+}
+
+fn normalize_deprecated_keys_for_full_config(body: &str, has_wasm_warnings: bool) -> String {
+    if !has_wasm_warnings || !body.contains("dev-port") {
+        return body.to_string();
+    }
+
+    let Ok(mut value) = toml::from_str::<toml::Value>(body) else {
+        return body.to_string();
+    };
+    let Some(root) = value.as_table_mut() else {
+        return body.to_string();
+    };
+    let Some(port) = root.remove("dev-port") else {
+        return body.to_string();
+    };
+    let dev = root
+        .entry("dev".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    if let Some(dev_table) = dev.as_table_mut() {
+        dev_table.entry("port".to_string()).or_insert(port);
+    }
+    toml::to_string(&value).unwrap_or_else(|_| body.to_string())
+}
+
+fn classify_full_config_error(err: toml::de::Error, path: &Path, body: &str) -> ConfigError {
+    let msg = err.message().to_string();
+    let span = err
+        .span()
+        .map(|range| span_for_byte_offset(body, range.start))
+        .unwrap_or_default();
+    if let Some(key) = extract_unknown_field(&msg) {
+        return ConfigError::UnknownKey {
+            path: path.to_path_buf(),
+            key,
+            suggestion: None,
+            span,
+        };
+    }
+    ConfigError::InvalidValue {
+        path: path.to_path_buf(),
+        message: msg,
+        span,
+    }
+}
+
+fn extract_unknown_field(msg: &str) -> Option<String> {
+    let prefix = "unknown field `";
+    let start = msg.find(prefix)? + prefix.len();
+    let rest = &msg[start..];
+    let end = rest.find('`')?;
+    Some(rest[..end].to_string())
+}
+
+fn span_for_byte_offset(body: &str, byte_offset: usize) -> ConfigSpan {
+    if byte_offset > body.len() {
+        return ConfigSpan::default();
+    }
+    let prefix = &body[..byte_offset];
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+    let last_nl = prefix.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let column = body[last_nl..byte_offset].chars().count() + 1;
+    ConfigSpan { line, column }
 }
 
 /// All diagnostics from one lint pass. The CLI converts this into
@@ -317,6 +405,45 @@ mod tests {
         match report.error.as_ref().unwrap() {
             ConfigError::NotFound(_) => {}
             other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lint_path_accepts_lib_only_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = write(
+            tmp.path(),
+            r#"
+[lib]
+formats = ["esm", "cjs"]
+css_merge = ["dist/style.css"]
+
+[[lib.raw_copy]]
+from = "assets"
+to = "assets"
+"#,
+        );
+        let report = lint_path(&p);
+        assert_eq!(
+            report.outcome(),
+            LintOutcome::Ok,
+            "lib-only jet.toml should lint cleanly, got {:?}",
+            report.error
+        );
+    }
+
+    #[test]
+    fn lint_path_rejects_unknown_lib_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = write(tmp.path(), "[lib]\ncss_merg = []\n");
+        let report = lint_path(&p);
+        assert_eq!(report.outcome(), LintOutcome::Errors);
+        match report.error.as_ref().unwrap() {
+            ConfigError::UnknownKey { key, span, .. } => {
+                assert_eq!(key, "css_merg");
+                assert_eq!(span.line, 2);
+            }
+            other => panic!("expected UnknownKey for malformed [lib], got {other:?}"),
         }
     }
 
