@@ -9,12 +9,11 @@
 # case = "Pool__Process__ctx_as_DefaultContext_wrong"
 # subject = "multiprocessing.pool.Pool.Process(ctx: DefaultContext)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ctx"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/pool.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ctx
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.pool.Pool.Process(ctx: DefaultContext); call it with the wrong type.
 

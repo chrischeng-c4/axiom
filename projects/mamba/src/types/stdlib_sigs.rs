@@ -5455,6 +5455,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "multiprocessing.pool",
+        qualifier: "Pool",
+        name: "Process",
+        kind: SigKind::Method,
+        params: &[p("ctx", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "multiprocessing.dummy",
         qualifier: "",
         name: "Array",
@@ -8846,6 +8854,14 @@ mod tests {
                 "set",
                 0,
                 "value",
+                CoreTy::Typed,
+            ),
+            (
+                "multiprocessing.pool",
+                "Pool",
+                "Process",
+                0,
+                "ctx",
                 CoreTy::Typed,
             ),
             (
