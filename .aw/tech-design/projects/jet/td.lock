@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-07-01T10:36:02.653484+00:00"
-digest = "sha256:5910268cdf408970fdf3d5710816cf0b327643e20af2da4da3f9a1c6ce9b41e1"
-source_digest = "sha256:5910268cdf408970fdf3d5710816cf0b327643e20af2da4da3f9a1c6ce9b41e1"
-ir_digest = "sha256:c89667c0a7c5787d53651e5a83a4f66d3c36b533040f619b477ce4b85c5ee2e7"
+generated_at = "2026-07-01T10:53:31.068925+00:00"
+digest = "sha256:dac17bf9889b3199d9e358c907163e3ab64e561e9e7c84ce7bd99fb4c8da136e"
+source_digest = "sha256:dac17bf9889b3199d9e358c907163e3ab64e561e9e7c84ce7bd99fb4c8da136e"
+ir_digest = "sha256:872ad2d9825663a6acc5fb71a2af1a7fb324b4d2bddfe03a4779edca3192d779"
 
 [[files]]
 path = "config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md"
@@ -228,6 +228,12 @@ path = "logic/jet-build-lib-dts-isolateddeclarations-check-and-d-ts-correctnes.m
 digest = "sha256:0b4e5b7c12aa74949e264d650c680c6df1193473e23a9606db71ad625e56c1b8"
 ir_digest = "sha256:b27c80e1b1c53812ecc1789831b47b0676622e465c9504d7f2e8b626bae00d47"
 section_count = 2
+
+[[files]]
+path = "logic/jet-build-lib-dts-preserve-modules-dts-silently-emits-no-d-ts-fi.md"
+digest = "sha256:4385ef9c44f21a0983c7ca785251a01e3f7bcdd2299ad0077ab8c1c4e9fdcbd8"
+ir_digest = "sha256:294138d0e3ecf66811b2247e997ccf0ce80c798433e5cd20b60568e64427960b"
+section_count = 3
 
 [[files]]
 path = "logic/jet-build-lib-dts-stops-at-first-isolateddeclarations-violation.md"
