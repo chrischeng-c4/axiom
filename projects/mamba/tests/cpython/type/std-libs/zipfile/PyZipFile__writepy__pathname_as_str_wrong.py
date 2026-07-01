@@ -9,7 +9,6 @@
 # case = "PyZipFile__writepy__pathname_as_str_wrong"
 # subject = "zipfile.PyZipFile.writepy(pathname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

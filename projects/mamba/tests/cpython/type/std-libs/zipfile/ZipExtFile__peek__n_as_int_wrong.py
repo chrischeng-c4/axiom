@@ -9,7 +9,6 @@
 # case = "ZipExtFile__peek__n_as_int_wrong"
 # subject = "zipfile.ZipExtFile.peek(n: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

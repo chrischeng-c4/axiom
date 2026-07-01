@@ -9,7 +9,6 @@
 # case = "Path____truediv____add_as_StrPath_wrong"
 # subject = "zipfile.Path.__truediv__(add: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
