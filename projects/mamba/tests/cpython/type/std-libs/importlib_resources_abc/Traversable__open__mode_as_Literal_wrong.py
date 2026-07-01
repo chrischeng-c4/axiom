@@ -9,12 +9,11 @@
 # case = "Traversable__open__mode_as_Literal_wrong"
 # subject = "importlib.resources.abc.Traversable.open(mode: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/resources/abc.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode
 # mamba-strict-type: TypeError
 """Type wall: importlib.resources.abc.Traversable.open(mode: Literal); call it with the wrong type.
 

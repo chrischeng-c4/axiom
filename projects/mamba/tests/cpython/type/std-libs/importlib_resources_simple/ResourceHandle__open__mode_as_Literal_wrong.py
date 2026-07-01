@@ -9,12 +9,11 @@
 # case = "ResourceHandle__open__mode_as_Literal_wrong"
 # subject = "importlib.resources.simple.ResourceHandle.open(mode: Literal)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/resources/simple.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mode
 # mamba-strict-type: TypeError
 """Type wall: importlib.resources.simple.ResourceHandle.open(mode: Literal); call it with the wrong type.
 
