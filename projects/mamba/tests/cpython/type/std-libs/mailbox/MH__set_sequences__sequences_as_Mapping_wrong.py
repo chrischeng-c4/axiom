@@ -9,12 +9,10 @@
 # case = "MH__set_sequences__sequences_as_Mapping_wrong"
 # subject = "mailbox.MH.set_sequences(sequences: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequences"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sequences
 # mamba-strict-type: TypeError
 """Type wall: mailbox.MH.set_sequences(sequences: Mapping); call it with the wrong type.
 

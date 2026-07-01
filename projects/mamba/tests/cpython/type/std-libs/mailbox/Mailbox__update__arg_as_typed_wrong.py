@@ -9,7 +9,6 @@
 # case = "Mailbox__update__arg_as_typed_wrong"
 # subject = "mailbox.Mailbox.update(arg: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "BabylMessage__set_visible__visible_as__MessageData_wrong"
 # subject = "mailbox.BabylMessage.set_visible(visible: _MessageData)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

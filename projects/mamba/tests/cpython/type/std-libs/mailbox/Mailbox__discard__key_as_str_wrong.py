@@ -9,7 +9,6 @@
 # case = "Mailbox__discard__key_as_str_wrong"
 # subject = "mailbox.Mailbox.discard(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

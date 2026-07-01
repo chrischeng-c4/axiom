@@ -9,7 +9,6 @@
 # case = "MaildirMessage__set_info__info_as_str_wrong"
 # subject = "mailbox.MaildirMessage.set_info(info: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

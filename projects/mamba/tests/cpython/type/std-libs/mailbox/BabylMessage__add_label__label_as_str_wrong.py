@@ -9,7 +9,6 @@
 # case = "BabylMessage__add_label__label_as_str_wrong"
 # subject = "mailbox.BabylMessage.add_label(label: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

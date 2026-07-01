@@ -9,7 +9,6 @@
 # case = "Mailbox__add__message_as__MessageData_wrong"
 # subject = "mailbox.Mailbox.add(message: _MessageData)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

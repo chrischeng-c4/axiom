@@ -9,7 +9,6 @@
 # case = "MHMessage__set_sequences__sequences_as_Iterable_wrong"
 # subject = "mailbox.MHMessage.set_sequences(sequences: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

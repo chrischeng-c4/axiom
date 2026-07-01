@@ -9,7 +9,6 @@
 # case = "MMDF__init__path_as_StrPath_wrong"
 # subject = "mailbox.MMDF.__init__(path: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

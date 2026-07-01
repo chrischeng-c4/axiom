@@ -9,7 +9,6 @@
 # case = "Mailbox____contains____key_as_str_wrong"
 # subject = "mailbox.Mailbox.__contains__(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Babyl__get_bytes__key_as_str_wrong"
 # subject = "mailbox.Babyl.get_bytes(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"
