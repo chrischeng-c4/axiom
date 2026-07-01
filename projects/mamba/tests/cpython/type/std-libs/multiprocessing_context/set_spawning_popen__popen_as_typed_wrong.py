@@ -9,12 +9,11 @@
 # case = "set_spawning_popen__popen_as_typed_wrong"
 # subject = "multiprocessing.context.set_spawning_popen(popen: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed popen"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/context.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed popen
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.context.set_spawning_popen(popen: typed); call it with the wrong type.
 
