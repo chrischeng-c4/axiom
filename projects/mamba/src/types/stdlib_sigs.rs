@@ -5305,6 +5305,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "inspect",
+        qualifier: "",
+        name: "isasyncgenfunction",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "inspect",
+        qualifier: "",
+        name: "iscoroutinefunction",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "http.client",
         qualifier: "",
         name: "parse_headers",
@@ -7105,6 +7121,8 @@ mod tests {
             ("inspect", "", "getmembers", 1, "predicate", CoreTy::Typed),
             ("inspect", "", "getmembers_static", 1, "predicate", CoreTy::Typed),
             ("inspect", "", "getmro", 0, "cls", CoreTy::Type),
+            ("inspect", "", "isasyncgenfunction", 0, "obj", CoreTy::Typed),
+            ("inspect", "", "iscoroutinefunction", 0, "obj", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
