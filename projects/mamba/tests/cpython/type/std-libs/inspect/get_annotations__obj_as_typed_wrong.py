@@ -9,12 +9,10 @@
 # case = "get_annotations__obj_as_typed_wrong"
 # subject = "inspect.get_annotations(obj: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: inspect.get_annotations(obj: typed); call it with the wrong type.
 
