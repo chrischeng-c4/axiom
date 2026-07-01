@@ -15,9 +15,9 @@ use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 
-use crate::config::{FsyncPolicy, RelayCoreConfig, RetentionMode};
+use crate::config::{FsyncPolicy, RelayCoreConfig};
 use crate::types::{AppendOutcome, LogEntry, MessageId, Payload, Seq, ShardId, Subject};
 
 /// One on-disk NDJSON segment holding seqs `[base_seq, next segment's base_seq)`.
@@ -51,11 +51,6 @@ pub struct Log {
     // ---- disk (None fields => RAM-only) ----
     dir: Option<PathBuf>,
     segment_bytes: u64,
-    max_bytes: u64,
-    max_age: i64,
-    /// Storage reclaim strategy: `Age` prunes by age/size on append; `Ack`
-    /// disables that and truncates the fully-acked prefix on the ack path.
-    retention_mode: RetentionMode,
     segments: Vec<Segment>,
     writer: Option<BufWriter<File>>,
     /// Bytes in the active (last) segment.
@@ -115,9 +110,6 @@ impl Log {
             dedupe_cap: cap_or_unbounded(config.dedupe.window_entries),
             dir: None,
             segment_bytes: config.segment_bytes.max(1),
-            max_bytes: config.retention.max_bytes_per_shard,
-            max_age: config.retention.max_age_secs as i64,
-            retention_mode: config.retention.mode,
             segments: Vec::new(),
             writer: None,
             active_bytes: 0,
@@ -394,18 +386,6 @@ impl Log {
         Ok(())
     }
 
-    /// Override the storage reclaim strategy after open (per-subject mode set by
-    /// the engine). `Ack` mode disables age/size pruning and switches to
-    /// delete-on-ack truncation driven by the committed watermark.
-    pub fn set_retention_mode(&mut self, mode: RetentionMode) {
-        self.retention_mode = mode;
-    }
-
-    /// The active storage reclaim strategy for this log.
-    pub fn retention_mode(&self) -> RetentionMode {
-        self.retention_mode
-    }
-
     /// Remove the oldest whole segment, advancing `start_seq` and dropping the
     /// sparse index below the new start. Caller guarantees `segments.len() > 1`
     /// (the active/last segment is never removed).
@@ -417,31 +397,6 @@ impl Log {
         let drop_n = self.index.partition_point(|&(s, _)| s < new_start);
         self.index.drain(0..drop_n);
         self.start_seq = new_start;
-    }
-
-    /// Prune the oldest whole segments by total bytes / age, advancing `start_seq`.
-    /// Never prunes the active (last) segment. No-op in `Ack` retention mode,
-    /// where storage is reclaimed by [`Log::truncate_below_acked`] instead so an
-    /// un-acked backlog is never deleted by wall-clock/size.
-    fn prune(&mut self, now: DateTime<Utc>) -> io::Result<()> {
-        if self.retention_mode != RetentionMode::Age {
-            return Ok(());
-        }
-        loop {
-            if self.segments.len() <= 1 {
-                break;
-            }
-            let total: u64 = self.segments.iter().map(|s| s.bytes).sum();
-            let oldest = &self.segments[0];
-            let over_bytes = self.max_bytes > 0 && total > self.max_bytes;
-            let too_old =
-                self.max_age > 0 && oldest.last_ts < now - Duration::seconds(self.max_age);
-            if !over_bytes && !too_old {
-                break;
-            }
-            self.drop_oldest_segment();
-        }
-        Ok(())
     }
 
     /// Delete-on-ack head truncation: drop every oldest whole segment whose
@@ -525,7 +480,6 @@ impl Log {
         self.dedupe_insert(message_id.to_string(), seq);
         self.ring_push(entry, disk);
         self.len += 1;
-        self.prune(now)?;
         Ok(AppendOutcome {
             seq,
             deduped: false,
@@ -574,7 +528,6 @@ impl Log {
         if self.fsync != FsyncPolicy::Os {
             self.fsync_active()?;
         }
-        self.prune(now)?;
         Ok(outcomes)
     }
 

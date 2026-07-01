@@ -51,9 +51,7 @@ pub mod types;
 pub mod wire;
 pub mod workqueue;
 
-pub use config::{
-    DedupeConfig, FsyncPolicy, RelayCoreConfig, RetentionConfig, RetentionMode, WorkQueueConfig,
-};
+pub use config::{DedupeConfig, FsyncPolicy, RelayCoreConfig, RetentionConfig, WorkQueueConfig};
 pub use engine::Relay;
 pub use log::Log;
 pub use raft::{

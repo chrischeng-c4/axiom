@@ -100,43 +100,19 @@ impl Default for BroadcastConfig {
     }
 }
 
-/// How a subject's durable log reclaims storage.
-///
-/// `Age` is the Kafka-style log substrate (retain-then-prune by wall-clock /
-/// size, independent of consumption) and is what broadcast/replay subjects
-/// (e.g. lumen) need. `Ack` is the celery/airflow task-queue substrate
-/// (delete-on-ack): segments are reclaimed as the work-queue committed
-/// watermark advances past them, so storage tracks **backlog depth**, not total
-/// throughput. `Ack` mode disables age/size pruning so an un-acked backlog is
-/// never silently deleted (the broker owns task durability until ack).
-///
-/// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#config
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RetentionMode {
-    Age,
-    Ack,
-}
-
-impl Default for RetentionMode {
-    fn default() -> Self {
-        RetentionMode::Age
-    }
-}
-
-/// Retention / pruning of the durable log.
+/// Retention of the durable log. relay is delete-on-ack: a segment is reclaimed
+/// once every entry in it is acked (the committed watermark passes it), so
+/// storage tracks **backlog depth**, not total throughput. An un-acked backlog
+/// is never deleted — the broker owns task durability until ack. (`max_*` below
+/// are reserved for a future hard-cap/backpressure knob; they do not prune.)
 ///
 /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#config
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetentionConfig {
-    /// Prune fully-acked / aged segments after this many seconds (`Age` mode).
+    /// Reserved (future hard cap); does not prune un-acked entries.
     pub max_age_secs: u64,
-    /// `0` = unbounded; else prune oldest segments past this size (`Age` mode).
+    /// Reserved (future hard cap); does not prune un-acked entries.
     pub max_bytes_per_shard: u64,
-    /// Storage reclaim strategy. `Age` (default) prunes by age/size; `Ack`
-    /// reclaims segments as the committed watermark advances (delete-on-ack).
-    #[serde(default)]
-    pub mode: RetentionMode,
 }
 
 impl Default for RetentionConfig {
@@ -144,7 +120,6 @@ impl Default for RetentionConfig {
         RetentionConfig {
             max_age_secs: 604_800,
             max_bytes_per_shard: 0,
-            mode: RetentionMode::Age,
         }
     }
 }

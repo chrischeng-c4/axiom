@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use chrono::Utc;
 
-use relay::{FsyncPolicy, Relay, RelayCoreConfig, RetentionMode};
+use relay::{FsyncPolicy, Relay, RelayCoreConfig};
 
 fn item(id: &str) -> (String, serde_json::Value, BTreeMap<String, String>) {
     (
@@ -143,7 +143,6 @@ fn ack_retention_reclaims_acked_segments() {
     let dir = tempfile::tempdir().unwrap();
     let now = Utc::now();
     let r = Relay::new(segmented_config(dir.path(), 200));
-    r.set_retention_mode("q", RetentionMode::Ack).unwrap();
     r.publish_batch("q", (0..20).map(|i| item(&format!("m{i}"))).collect(), now)
         .unwrap();
     let before = count_subject_segments(dir.path(), "q");
@@ -185,7 +184,6 @@ fn ack_truncation_recovers_consistently() {
     let now = Utc::now();
     {
         let r = Relay::new(segmented_config(dir.path(), 200));
-        r.set_retention_mode("q", RetentionMode::Ack).unwrap();
         r.publish_batch("q", (0..20).map(|i| item(&format!("m{i}"))).collect(), now)
             .unwrap();
         let leases = r.lease_batch("q", "c", 15, now).unwrap();
