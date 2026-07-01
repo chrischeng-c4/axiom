@@ -9,7 +9,6 @@
 # case = "glob_escape_rejects_int_argument"
 # subject = "glob.escape"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

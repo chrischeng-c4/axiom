@@ -9,7 +9,6 @@
 # case = "sum_rejects_non_iterable_argument"
 # subject = "sum"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

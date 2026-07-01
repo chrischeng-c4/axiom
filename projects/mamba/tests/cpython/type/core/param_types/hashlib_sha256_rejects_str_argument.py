@@ -9,7 +9,6 @@
 # case = "hashlib_sha256_rejects_str_argument"
 # subject = "hashlib.sha256"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

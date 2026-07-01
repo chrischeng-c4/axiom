@@ -9,7 +9,6 @@
 # case = "sorted_rejects_non_iterable_argument"
 # subject = "sorted"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

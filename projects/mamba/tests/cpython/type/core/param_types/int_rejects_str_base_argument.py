@@ -9,7 +9,6 @@
 # case = "int_rejects_str_base_argument"
 # subject = "int"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

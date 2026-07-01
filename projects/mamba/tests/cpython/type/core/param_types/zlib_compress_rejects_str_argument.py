@@ -9,7 +9,6 @@
 # case = "zlib_compress_rejects_str_argument"
 # subject = "zlib.compress"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "math_sqrt_rejects_str_argument"
 # subject = "math.sqrt"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
