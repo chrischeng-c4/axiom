@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/loom/external-contracts/security-hardening/security/security-evidence.md#loom-guard-security
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cd projects/loom && ../../target/debug/vat run guard-security"
+project = "loom"
+source_contract = "loom-security-hardening-guard-scan"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

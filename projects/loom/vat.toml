@@ -1,0 +1,59 @@
+version = 1
+name = "loom-ec"
+default_runner = "meter-efficiency"
+
+# loom's evidence-contract runner (CONTRIBUTING "EC gates"): backs the gates with
+# the real meter/guard tools and keeps report artifacts + transient state out of
+# the host checkout. The performance gate is meter-owned; the security gate is
+# guard-owned. Competitor comparison (Celery / Temporal, see `benchmark/`) is
+# dogfood until it is a required gate.
+
+[workspace]
+base = "../.."
+workdir = "projects/loom"
+keep = "always"
+
+[env]
+PATH = "/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/chrischeng/.cargo/bin"
+
+[[setup]]
+id = "build-aw-tools"
+cmd = ["cargo", "build", "-p", "meter-cli", "-p", "guard-cli"]
+
+[[setup]]
+id = "build-loom-ec-tests"
+cmd = ["cargo", "test", "-p", "loom", "--lib", "--no-run"]
+
+[[runners]]
+id = "meter-efficiency"
+# Efficiency gate: loom's control-plane behaviour suite (scheduler / raft / DAG /
+# API idempotency) run under meter so a CPU / RSS regression is a finding.
+cmd = [
+  "../../target/debug/meter",
+  "test",
+  "--",
+  "-p",
+  "loom",
+  "--lib",
+  "--",
+  "--nocapture",
+]
+timeout_s = 600
+
+[[runners]]
+id = "guard-security"
+# Security gate: guard scans loom's source (HTTP/k8s/container surface) and
+# attaches meter evidence for the behaviour suite so request-boundary security
+# cannot be marked complete without runtime proof.
+cmd = [
+  "../../target/debug/guard",
+  "scan",
+  ".",
+  "--profile",
+  "security-lint",
+  "--compact",
+  "--no-persist",
+  "--meter-command",
+  "../../target/debug/meter test -- -p loom --lib -- --nocapture",
+]
+timeout_s = 600
