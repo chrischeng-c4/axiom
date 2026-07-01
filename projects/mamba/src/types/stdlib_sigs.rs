@@ -5138,6 +5138,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "importlib.util",
+        qualifier: "",
+        name: "module_for_loader",
+        kind: SigKind::ModuleFn,
+        params: &[p("fxn", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "importlib.util",
+        qualifier: "",
+        name: "set_loader",
+        kind: SigKind::ModuleFn,
+        params: &[p("fxn", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "http.client",
         qualifier: "",
         name: "parse_headers",
@@ -6920,6 +6936,8 @@ mod tests {
             ("gzip", "GzipFile", "__init__", 0, "filename", CoreTy::Typed),
             ("imghdr", "", "what", 0, "file", CoreTy::Typed),
             ("imghdr", "", "what", 1, "h", CoreTy::Bytes),
+            ("importlib.util", "", "module_for_loader", 0, "fxn", CoreTy::Typed),
+            ("importlib.util", "", "set_loader", 0, "fxn", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
