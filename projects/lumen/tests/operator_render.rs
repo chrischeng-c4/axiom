@@ -238,6 +238,14 @@ fn statefulset_wires_serving_contract_single_member() {
             .any(|m| m["name"] == "raft" && m["mountPath"] == "/var/lib/lumen"),
         "missing raft volumeMount; have {mounts:?}"
     );
+    // (#809) StatefulSet names the resulting per-pod PVCs
+    // `raft-<statefulset-name>-<ordinal>` (e.g. `raft-search-0`); this is the
+    // exact `raft-<name>-` prefix `operator::resize::resize_instance` filters
+    // on when detecting/patching live PVCs, and the "raft" template name +
+    // `resources.requests.storage` field below are what it reads back to
+    // compare against `spec.serving.raftStorage`. render() itself is
+    // unchanged by #809 — resize tooling only reads what's already rendered
+    // here.
     let vcts = sts["spec"]["volumeClaimTemplates"].as_array().unwrap();
     assert_eq!(vcts.len(), 1);
     assert_eq!(vcts[0]["metadata"]["name"], "raft");
@@ -378,7 +386,9 @@ fn raft_ha_renders_serving_statefulset() {
     }
 
     // The raft PVC shape is unchanged by #812 — it was already unconditional
-    // in the raft-HA regime.
+    // in the raft-HA regime. Still unchanged by #809: `operator::resize`
+    // only reads this rendered `raft-<name>-<ordinal>` PVC shape, it never
+    // alters render()'s output.
     let vcts = sts["spec"]["volumeClaimTemplates"].as_array().unwrap();
     assert_eq!(vcts.len(), 1);
     assert_eq!(vcts[0]["metadata"]["name"], "raft");

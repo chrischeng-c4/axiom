@@ -615,11 +615,52 @@ bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
 by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
 JSON. It needs the `backup` Cargo feature (pulled in transitively by
 `operator`; the published image includes both).
+
+## Resizing `raftStorage` (#809)
+`spec.serving.raftStorage` is baked into the StatefulSet's
+`volumeClaimTemplates` at first apply. Kubernetes treats
+`volumeClaimTemplates` as **immutable** after creation, so editing
+`spec.serving.raftStorage` on a live CR and letting the operator reconcile
+does **not** resize anything — the StatefulSet `apply` is a silent no-op for
+that field, and the pods' existing PVCs stay at their original size. This is
+true for every `replicasPerShard` value, including the default
+`replicasPerShard: 1` single-member topology.
+
+Growing storage requires patching each per-pod PVC directly:
+
+```
+kubectl patch pvc raft-<name>-<n> --type merge \
+  -p '{"spec":{"resources":{"requests":{"storage":"<new size>"}}}}'
+```
+
+This only succeeds if the PVC's bound `StorageClass` has
+`allowVolumeExpansion: true`; otherwise the API server rejects the patch.
+Kubernetes does not support shrinking a bound PVC — a smaller
+`raftStorage` value only affects newly created PVCs (a fresh instance or a
+recreated pod), never an existing one.
+
+### `lumen k8s operator resize-storage` CLI verb
+Rather than patching PVCs by hand, run the automated form of the same
+procedure:
+
+```
+lumen k8s operator resize-storage --namespace <ns> --name <name> [--dry-run]
+```
+
+This fetches the named `Lumen` CR's declared `spec.serving.raftStorage`,
+lists that instance's live `raft-<name>-<n>` PVCs, and for each PVC whose
+current size is smaller: checks the bound `StorageClass.allowVolumeExpansion`
+and, when it's `true`, patches only `spec.resources.requests.storage`
+(`Patch::Merge`, no other PVC field touched) — unless `--dry-run` is given,
+in which case it reports what it would do without patching anything. PVCs
+already at the desired size, PVCs whose `StorageClass` does not allow
+expansion, and shrink requests are reported but never mutated. It needs the
+`operator` Cargo feature (`--features operator`), the same feature gate as
+`lumen k8s operator run`.
 "#
     .to_string()
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
@@ -630,8 +671,11 @@ changes:
   - path: projects/lumen/src/spec.rs
     action: modify
     section: rust-source-unit
-    impl_mode: codegen
+    impl_mode: hand-written
     description: |
-      rust-source-unit (td_ast) source for `projects/lumen/src/spec.rs` captured during lumen
-      standardization onto the per-file codegen ladder.
+      #809: add a "Resizing `raftStorage`" section to `llm_storage_md()`
+      documenting StatefulSet `volumeClaimTemplates` immutability, the manual
+      `kubectl patch pvc` procedure and its `allowVolumeExpansion: true`
+      precondition, that PVC shrink is unsupported, and the new
+      `lumen k8s operator resize-storage` CLI verb.
 ```

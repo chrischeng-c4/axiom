@@ -307,6 +307,30 @@ fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
     }
 }
 
+/// #809: a `spec.serving.raftStorage` CR edit does not, by itself, resize
+/// existing per-pod PVCs (StatefulSet `volumeClaimTemplates` are immutable
+/// after creation) — the manual patch procedure, its `StorageClass`
+/// precondition, the shrink limitation, and the `resize-storage` CLI helper
+/// must all be discoverable offline via `lumen llm storage`.
+/// @spec projects/lumen/tech-design/logic/raftstorage-pvc-has-no-auto-expansion-cr-field-change-doesn-t-re.md
+#[test]
+fn llm_storage_documents_resize_gap() {
+    let storage = llm_storage_md();
+    for needle in [
+        "Resizing",
+        "volumeClaimTemplates",
+        "immutable",
+        "kubectl patch pvc",
+        "allowVolumeExpansion: true",
+        "does not support shrinking",
+        "lumen k8s operator resize-storage",
+        "--namespace",
+        "--dry-run",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
 #[test]
 fn llm_workflow_covers_the_integration_model() {
     let g = llm_workflow_md();
