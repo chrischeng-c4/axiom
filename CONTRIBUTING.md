@@ -243,6 +243,7 @@ project.
 | **`libs/operator`** | the **k8s operator scaffold + render toolkit**: `ManagedService`, `ClusterSpec`, `ResourceSpec`, owner refs, labels/selectors, ServiceAccount, client/headless Services, PDB, CronJob, and `sharded_statefulset` with the exact downward-API env that `raft-host` reads. |
 | **`libs/h2c`** | the **transport**: `h2c::serve` (server, feature `server`) + `h2c_client`/`H2cPool` (client). |
 | **`libs/service-http`** | the **HTTP service shell**: standard probe/admin routes, tracing init, graceful drain, metrics/readiness hooks, and h2c serving composition. |
+| **`libs/service-auth`** | the **request-auth shell**: shared `Authorization: Bearer` extraction, reject/inject middleware, and the `Verifier` trait every service implements. Token crypto belongs in **`libs/claimtoken`** when signed tokens are needed; per-resource RBAC/tenant policy stays in the service handlers. |
 | **`libs/service-backup`** | the **backup contract**: destination/policy schema, `BackupSink`, local sink, and a runner primitive. Services produce consistent snapshot bytes; runners upload them; operators schedule/manage the runner. |
 | **`libs/cli-std`** | the **standard CLI** commands (`llm` / `upgrade` / `issue`). |
 
@@ -273,6 +274,7 @@ A service is not "done" until it satisfies every row:
 | **Shape** | Workspace member that is **both `lib` and `bin`** — embeddable as a crate, runnable as a server. Metadata via `version/edition/authors/license = .workspace`. | every service `Cargo.toml` |
 | **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Compose **`libs/service-http`** and **`libs/h2c`** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
 | **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | Prefer **`libs/service-http`** standard probe/admin route helpers. `lumen` is the reference for the full surface. The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
+| **Auth** | Every service uses the same bearer-token shape: server env `<SVC>_AUTH=off|required` plus `<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json`; clients use `<SVC>_URL` + `<SVC>_TOKEN` and send `Authorization: Bearer <token>`. | Compose **`libs/service-auth`** for middleware and **`libs/claimtoken`** for signed-token verification when needed. In k8s/cloud, the registry file is mounted from a Kubernetes Secret, CSI Secret Store, or cloud Secret Manager sync. Do not add one-off auth headers, per-service token env names, or inline server token lists as the production path. |
 | **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
 | **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
 | **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. The operator may render a CronJob/Job and secrets/IAM wiring, but it never serializes service data itself. | `raft-host` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to local/S3/GCS; the operator schedules and reports status. |
@@ -445,6 +447,35 @@ different access path:
 So `spec` belongs to **this** archetype (a service has an OpenAPI to emit), **not**
 `cli-std` — which carries only the universal `llm`/`upgrade`/`issue` that *every*
 CLI ships, services and non-services alike. `lumen` is the reference for all of it.
+
+### Service auth — one Bearer-token contract
+
+Service auth is shared infrastructure, not a per-project design space. Every
+long-running service uses `libs/service-auth` for request authentication:
+extract `Authorization: Bearer <token>`, verify it through a service-supplied
+`Verifier`, reject with the shared JSON error shape, and inject the authenticated
+principal into handlers. Services may use a simple token-registry verifier or
+signed tokens through `libs/claimtoken`, but the HTTP contract and middleware
+shape stay the same.
+
+Production server config follows one env pattern:
+
+```
+<SVC>_AUTH=required
+<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json
+```
+
+Local/dev may use `<SVC>_AUTH=off`. Production must not depend on inline token
+lists as the primary path. In Kubernetes or cloud-native deployments, the
+operator/render layer mounts the registry file from a Kubernetes Secret, CSI
+Secret Store, or cloud Secret Manager sync, and owns the env wiring. Clients do
+not need connection strings for auth; they use `<SVC>_URL` for routing and
+`<SVC>_TOKEN` for credentials, then send `Authorization: Bearer <token>`.
+
+Keep the boundary explicit: `libs/service-auth` authenticates callers;
+service handlers authorize per resource, tenant, collection, queue, workflow, or
+admin action. Standard probe/spec/scrape endpoints stay auth-exempt according to
+the standard-endpoint contract above.
 
 ### HA — `raft-core`, sharded and strongly consistent
 
