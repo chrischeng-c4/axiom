@@ -50,8 +50,15 @@ serde_yaml = { workspace = true }
 # `loom spec gen --lang ts|py|rust` — typed clients from loom's own OpenAPI via
 # the shared polyglot core (never a second codegen path).
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
-# Shared Raft consensus engine for replicated workflow state (#110).
+# Shared Raft consensus engine for replicated workflow state (#110). The
+# in-process cluster tests drive `raft_core` directly; production goes through
+# the `raft-host` driver below.
 raft-core = { path = "../../libs/raft-core" }
+# Shared raft HOST (#546): the tick/pump loop, h2c peer transport,
+# snapshot + log compaction, read-your-write propose, and k8s auto-mode. loom
+# supplies a `RaftStateMachine` (LoomSm) and gets HA + the backup layer for
+# free — replacing loom's two hand-rolled raft stacks.
+raft-host = { path = "../../libs/raft-host" }
 # Scoped claim-check tokens the schema layer signs for workers (#444).
 claim-token = { path = "../../libs/claim-token" }
 # Standard agent-facing CLI ops — llm/upgrade/issue (#475). Offline paths
