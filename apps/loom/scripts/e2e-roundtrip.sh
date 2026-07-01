@@ -47,11 +47,11 @@ curl -s -X POST "$LOOM/runs" -H 'content-type: application/json' \
 await chord
 
 echo "3) data claim-check round-trip"
-curl -s -X PUT "$KEEPB/v1/inputs/payload" -H 'content-type: application/octet-stream' --data-binary 'REAL-PAYLOAD' >/dev/null
+curl -s -X PUT "$KEEPB/inputs/payload" -H 'content-type: application/octet-stream' --data-binary 'REAL-PAYLOAD' >/dev/null
 curl -s -X POST "$LOOM/runs" -H 'content-type: application/json' \
   -d '{"run_id":"data","nodes":[{"id":"t","task_name":"echo","input_refs":["payload"]}]}' >/dev/null
 await data
-got=$(curl -s "$KEEPB/v1/results/data:t:result")
+got=$(curl -s "$KEEPB/results/data:t:result")
 [ "$got" = "REAL-PAYLOAD" ] && echo "  data path verified: client read back '$got'" || { echo "  data MISMATCH: '$got'"; exit 1; }
 
 echo "ALL E2E PASSED"

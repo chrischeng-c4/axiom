@@ -16,9 +16,9 @@ for i in $(seq 1 40); do curl -sf $LOOM/healthz>/dev/null 2>&1 && curl -sf $SL/h
 # Rust bidi worker (reqwest h2c) → connects to the schema layer
 LOOM_SCHEMA_LAYER=$SL LOOM_KEEP=$KEEP LOOM_RUNNER=resident ./target/release/loom worker >$d/worker.log 2>&1 &
 sleep 1
-printf 'hi ns' | curl -s -X PUT $KEEP/v1/inputs/g -H 'content-type: application/octet-stream' --data-binary @- >/dev/null
+printf 'hi ns' | curl -s -X PUT $KEEP/inputs/g -H 'content-type: application/octet-stream' --data-binary @- >/dev/null
 curl -s -X POST $LOOM/runs -H 'content-type: application/json' -d '{"run_id":"n1","nodes":[{"id":"a","task_name":"echo","input_refs":["g"]}]}' -w ' submit[%{http_code}]'; echo
 ok=0; for i in $(seq 1 25); do s=$(curl -s $LOOM/runs/n1 | python3 -c 'import json,sys;print(json.load(sys.stdin).get("status",""))' 2>/dev/null); [ "$s" = succeeded ] && { ok=1; break; }; [ "$s" = failed ] && break; sleep 1; done
-echo "bare resident len:     $(curl -s $RELAY/v1/resident/len)"
-echo "tenant1::resident len: $(curl -s $RELAY/v1/tenant1::resident/len)"
+echo "bare resident len:     $(curl -s $RELAY/resident/len)"
+echo "tenant1::resident len: $(curl -s $RELAY/tenant1::resident/len)"
 [ "$ok" = 1 ] && echo "PASS: run completed through namespaced (tenant1) relay subjects" || echo "FAIL ($s)"

@@ -1,6 +1,6 @@
 //! relay client (#14) — loom → relay publish.
 //!
-//! Implements [`Dispatcher`] over relay's HTTP/2 (h2c) `POST /v1/{subject}/publish`
+//! Implements [`Dispatcher`] over relay's HTTP/2 (h2c) `POST /{subject}/publish`
 //! API: the subject is the runner-class route, the body is relay's
 //! `PublishRequest` ({ message_id, payload, headers }) with the JSON
 //! [`TaskMessage`] as the opaque `payload` and a per-(run,node,attempt)
@@ -64,11 +64,8 @@ impl RelayDispatcher {
 #[async_trait]
 impl Dispatcher for RelayDispatcher {
     async fn dispatch(&self, route: &str, msg: TaskMessage) -> anyhow::Result<()> {
-        let url = format!("{}/v1/{}/publish", self.base, route);
-        let body = PublishBody {
-            message_id: msg.message_id(),
-            payload: &msg,
-        };
+        let url = format!("{}/{}/publish", self.base, route);
+        let body = PublishBody { message_id: msg.message_id(), payload: &msg };
         let resp = self.client.post(&url).json(&body).send().await?;
         anyhow::ensure!(
             resp.status().is_success(),
@@ -117,7 +114,7 @@ impl RelayWorkConsumer {
 #[async_trait]
 impl RelayConsumer for RelayWorkConsumer {
     async fn lease(&self, consumer_id: &str) -> anyhow::Result<Option<LeasedTask>> {
-        let url = format!("{}/v1/{}/lease", self.base, self.subject);
+        let url = format!("{}/{}/lease", self.base, self.subject);
         let resp = self
             .client
             .post(&url)
@@ -142,7 +139,7 @@ impl RelayConsumer for RelayWorkConsumer {
     }
 
     async fn ack(&self, lease_id: &str, epoch: u64) -> anyhow::Result<()> {
-        let url = format!("{}/v1/{}/ack", self.base, self.subject);
+        let url = format!("{}/{}/ack", self.base, self.subject);
         let resp = self
             .client
             .post(&url)
@@ -227,7 +224,7 @@ impl CompletionSink for RelayCompletionSink {
         } else {
             format!("{}.{}", self.subject, shard_of(run_id, self.shards))
         };
-        let url = format!("{}/v1/{}/publish", self.base, subject);
+        let url = format!("{}/{}/publish", self.base, subject);
         let body = serde_json::json!({
             "message_id": format!("{run_id}:{node_id}:{attempt}:done"),
             "payload": msg,
