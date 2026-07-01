@@ -1,25 +1,33 @@
-//! raft_core-backed consensus (HA phase C). keep's engine is wired as a Raft
-//! state machine so writes go through the log (propose → commit → apply) using
-//! the shared [`raft_core`] crate (`libs/raft-core`) — the same verified engine
-//! relay uses, replacing the earlier openraft integration.
+//! raft-host-backed consensus (HA phase C). keep's engine is wired as a
+//! [`raft_host::RaftStateMachine`] so writes go through the shared driver
+//! (propose → commit → apply); adopting [`RaftHost`] gives keep the proven h2c
+//! peer transport + sole-applier read-your-write it previously lacked.
 //!
-//! - [`RaftKv`] is **one** Raft group fronting the engine. For a single node it
-//!   is a sole voter that commits locally; the command is a [`WalOp`] (the same
-//!   type the WAL + recovery already use) and apply reuses the WAL-replay path.
-//! - [`ShardedRaft`] runs **one group per owned shard** (HA phase A's keyspace
-//!   split, now each shard independently replicated), routing a write to its
-//!   key's shard.
+//! - [`KvStateMachine`] is the engine fronting **one shard's** raft group: the
+//!   command is a [`WalOp`] (the same type the WAL + recovery already use) and
+//!   apply reuses the WAL-replay path ([`RecoveryManager::apply_one`]).
+//!   `snapshot`/`restore` ride `dump_values`/`load_values`, filtered to the
+//!   shard's keyspace so each per-shard snapshot carries only its own keys.
+//! - [`ShardHosts`] runs **one [`RaftHost`] per owned shard** — keep's
+//!   distinguishing complexity vs the single-host services (lumen/relay). A
+//!   write routes to its key's shard host; each host's peer router mounts under
+//!   `/shard/{id}` so the Vote/Append/InstallSnapshot RPCs ride the serve port.
 //!
-//! Multi-node networking (an h2c driver feeding `handle`/`take_outgoing` across
-//! pods, mirroring relay's driver) is the remaining slice; the consensus core,
-//! per-shard structure, snapshot/compaction and apply path are all here. See
-//! HA.md.
+//! This replaces the earlier hand-rolled `RaftKv`/`ShardedRaft` glue (a
+//! single-node-only `raft_core` group with no transport); the routing shell
+//! ([`ClusterConfig`]) is unchanged. See HA.md.
 
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use parking_lot::Mutex;
-use raft_core::{Membership, NodeId, RaftNode};
+use anyhow::Result;
+use axum::Router;
+use raft_host::{
+    FsyncPolicy, HostConfig, Index, Membership, NodeId, RaftHost, RaftStateMachine, RaftStore,
+    SnapshotPolicy,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::cluster::ClusterConfig;
@@ -28,126 +36,179 @@ use crate::persistence::format::WalOp;
 use crate::persistence::recovery::RecoveryManager;
 use crate::types::KvValue;
 
-/// App response for a committed command (the engine result isn't threaded back —
-/// the command's own HTTP handler already has it).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Response {
-    pub applied: bool,
+/// How many committed entries a shard's host applies before it captures a
+/// snapshot and compacts the raft log (bounds the log; arms InstallSnapshot for
+/// a lagging/fresh replica).
+const SNAPSHOT_EVERY: u64 = 1024;
+
+/// A shard's keyspace snapshot: the live values whose key hashes to this shard,
+/// tagged with the raft index they are current as of (so `restore` can set the
+/// applied index, per the [`RaftStateMachine`] contract).
+#[derive(Serialize, Deserialize)]
+struct ShardSnapshot {
+    up_to: Index,
+    values: Vec<(String, KvValue)>,
 }
 
-/// A one-member voter set for a single-node group.
-fn solo(node_id: NodeId) -> Membership {
-    Membership {
-        voters: vec![node_id],
-        learners: vec![],
-    }
+/// keep's [`KvEngine`] driven as a [`RaftStateMachine`] for one shard's group.
+///
+/// Every shard on a node shares the **one** engine; the state machine is scoped
+/// to a `shard` so its snapshot/restore touch only that shard's keys (apply only
+/// ever receives that shard's ops, because writes are routed by key). `applied`
+/// is this shard group's own raft head — each group has an independent log.
+pub struct KvStateMachine {
+    engine: Arc<KvEngine>,
+    cluster: ClusterConfig,
+    shard: u32,
+    applied: AtomicU64,
 }
 
-/// Tick a node until it wins its (sole-voter) election.
-fn drive_to_leader(node: &mut RaftNode) {
-    for _ in 0..1000 {
-        if node.is_leader() {
-            return;
-        }
-        node.tick();
-        let _ = node.take_outgoing();
-    }
-}
-
-/// Apply any received snapshot, then newly committed commands, to the engine.
-fn apply(node: &mut RaftNode, engine: &KvEngine) {
-    if let Some(snap) = node.take_installed_snapshot() {
-        if let Ok(dump) = serde_json::from_slice::<Vec<(String, KvValue)>>(&snap) {
-            engine.load_values(dump);
-        }
-    }
-    for e in node.take_committed() {
-        if let Ok(op) = serde_json::from_slice::<WalOp>(&e.command) {
-            // Reuse the exact WAL-replay apply path.
-            let _ = RecoveryManager::apply_one(engine, &op);
-        }
-    }
-}
-
-/// A single raft_core group fronting a keep engine; writes go through consensus.
-pub struct RaftKv {
-    node: Mutex<RaftNode>,
-    pub engine: Arc<KvEngine>,
-}
-
-impl RaftKv {
-    /// Build a single-node group and elect it (a one-member cluster).
-    pub async fn single_node(node_id: NodeId, engine: Arc<KvEngine>) -> anyhow::Result<Self> {
-        let mut node = RaftNode::new(node_id, &solo(node_id));
-        drive_to_leader(&mut node);
-        if !node.is_leader() {
-            anyhow::bail!("single-node group failed to elect a leader");
-        }
-        Ok(Self {
-            node: Mutex::new(node),
+impl KvStateMachine {
+    /// Wrap `engine` as the state machine for `shard` of `cluster`.
+    pub fn new(engine: Arc<KvEngine>, cluster: ClusterConfig, shard: u32) -> Arc<Self> {
+        Arc::new(Self {
             engine,
+            cluster,
+            shard,
+            applied: AtomicU64::new(0),
         })
     }
+}
 
-    /// Propose a mutation through Raft; resolves once committed + applied.
-    pub async fn write(&self, op: WalOp) -> anyhow::Result<Response> {
-        let bytes = serde_json::to_vec(&op)?;
-        let mut node = self.node.lock();
-        let idx = node
-            .propose(bytes)
-            .ok_or_else(|| anyhow::anyhow!("not the leader"))?;
-        // A sole voter commits immediately; apply what committed.
-        apply(&mut node, &self.engine);
-        Ok(Response {
-            applied: node.commit_index() >= idx,
-        })
-    }
-
-    /// Snapshot the engine into the Raft log, compacting entries up to the
-    /// commit point (so a lagging/new replica is shipped state, not full history).
-    pub async fn snapshot(&self) -> anyhow::Result<()> {
-        let dump = self.engine.dump_values();
-        let data = serde_json::to_vec(&dump)?;
-        let mut node = self.node.lock();
-        let up_to = node.commit_index();
-        node.compact(up_to, data);
+impl RaftStateMachine for KvStateMachine {
+    fn apply(&self, index: Index, command: &[u8]) -> Result<()> {
+        // Decode the committed command and replay it through the exact WAL
+        // recovery path. A bad decode / engine error no-ops the entry (logged)
+        // but still advances `applied` so the log keeps moving (sole applier).
+        match serde_json::from_slice::<WalOp>(command) {
+            Ok(op) => {
+                if let Err(e) = RecoveryManager::apply_one(&self.engine, &op) {
+                    tracing::warn!(index, error = %e, "raft: apply_one error (entry no-ops)");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(index, error = %e, "raft: undecodable command (entry no-ops)")
+            }
+        }
+        self.applied.store(index, Ordering::Release);
         Ok(())
     }
 
-    pub fn is_leader(&self) -> bool {
-        self.node.lock().is_leader()
+    fn snapshot(&self) -> Result<Vec<u8>> {
+        let values = self
+            .engine
+            .dump_values()
+            .into_iter()
+            .filter(|(k, _)| self.cluster.shard_for(k) == self.shard)
+            .collect();
+        Ok(serde_json::to_vec(&ShardSnapshot {
+            up_to: self.applied_index(),
+            values,
+        })?)
+    }
+
+    fn restore(&self, snapshot: &[u8]) -> Result<()> {
+        let snap: ShardSnapshot = serde_json::from_slice(snapshot)?;
+        self.engine.load_values(snap.values);
+        self.applied.store(snap.up_to, Ordering::Release);
+        Ok(())
+    }
+
+    fn applied_index(&self) -> Index {
+        self.applied.load(Ordering::Acquire)
     }
 }
 
-/// One Raft group per owned shard; a write routes to its key's shard.
-pub struct ShardedRaft {
+/// One [`RaftHost`] per owned shard; a write routes to its key's shard host.
+pub struct ShardHosts {
     cluster: ClusterConfig,
-    groups: HashMap<u32, RaftKv>,
+    hosts: HashMap<u32, Arc<RaftHost>>,
     pub engine: Arc<KvEngine>,
 }
 
-impl ShardedRaft {
-    /// Spin up one group per shard this node owns (`cluster.owned_shards()`).
-    pub async fn new(cluster: ClusterConfig, engine: Arc<KvEngine>) -> anyhow::Result<Self> {
-        let mut groups = HashMap::new();
+impl ShardHosts {
+    /// Spawn one host per `cluster.owned_shards()` shard, persisting each group's
+    /// hard state under `{data_dir}/raft/shard-{id}`. `replicas_per_shard <= 1`
+    /// runs each shard as a sole-voter single-node group (read-your-write, no
+    /// peers); `> 1` derives the shard's replica membership + `/shard/{id}` peer
+    /// URLs for the shared h2c transport.
+    pub async fn new(
+        cluster: ClusterConfig,
+        engine: Arc<KvEngine>,
+        data_dir: &Path,
+        replicas_per_shard: u32,
+    ) -> Result<Self> {
+        Self::with_snapshot_every(
+            cluster,
+            engine,
+            data_dir,
+            replicas_per_shard,
+            SNAPSHOT_EVERY,
+        )
+        .await
+    }
+
+    /// As [`new`](Self::new), with the snapshot/compaction cadence overridden
+    /// (the snapshot-catch-up test drives a small threshold so InstallSnapshot
+    /// fires quickly).
+    pub async fn with_snapshot_every(
+        cluster: ClusterConfig,
+        engine: Arc<KvEngine>,
+        data_dir: &Path,
+        replicas_per_shard: u32,
+        snapshot_every: u64,
+    ) -> Result<Self> {
+        let mut hosts = HashMap::new();
         for shard in cluster.owned_shards() {
-            let group = RaftKv::single_node(cluster.node_id as NodeId, engine.clone()).await?;
-            groups.insert(shard, group);
+            let (node_id, membership, peers) = shard_topology(&cluster, shard, replicas_per_shard);
+            let dir = data_dir.join("raft").join(format!("shard-{shard}"));
+            std::fs::create_dir_all(&dir)?;
+            let store = RaftStore::open(
+                dir.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("raft data dir is not valid UTF-8"))?,
+                node_id,
+                FsyncPolicy::Always,
+            )?;
+            let sm = KvStateMachine::new(engine.clone(), cluster.clone(), shard);
+            let host = RaftHost::spawn(
+                node_id,
+                membership,
+                peers,
+                store,
+                sm as Arc<dyn RaftStateMachine>,
+                HostConfig {
+                    snapshot: SnapshotPolicy::EveryEntries(snapshot_every),
+                    ..Default::default()
+                },
+            );
+            hosts.insert(shard, Arc::new(host));
         }
         Ok(Self {
             cluster,
-            groups,
+            hosts,
             engine,
         })
     }
 
-    /// Route `op` to the group owning `key`'s shard, proposing it through Raft.
-    pub async fn write(&self, key: &str, op: WalOp) -> anyhow::Result<Response> {
-        let shard = self.cluster.shard_for(key);
-        let group = self.groups.get(&shard).ok_or_else(|| {
-            anyhow::anyhow!("shard {shard} for key '{key}' not owned by this node")
-        })?;
-        group.write(op).await
+    /// Route `op` to the host owning `key`'s shard and propose it through Raft;
+    /// resolves with the assigned raft index once **this node's** engine has
+    /// applied it (read-your-write). Errors if `key`'s shard is not owned here.
+    pub async fn write(&self, key: &str, op: WalOp) -> Result<Index> {
+        let host = self
+            .host_for(key)
+            .ok_or_else(|| anyhow::anyhow!("shard for key '{key}' not owned by this node"))?;
+        host.propose(serde_json::to_vec(&op)?).await
+    }
+
+    /// Merge every shard host's peer router, each nested under `/shard/{id}`, so
+    /// the Vote/Append/InstallSnapshot + leader-redirect RPCs ride the service's
+    /// h2c serve port. Peer base URLs carry the matching `/shard/{id}` prefix.
+    pub fn router(&self) -> Router {
+        let mut app = Router::new();
+        for (shard, host) in &self.hosts {
+            app = app.merge(Router::new().nest(&format!("/shard/{shard}"), host.router()));
+        }
+        app
     }
 
     /// Whether this node owns `key`'s shard.
@@ -155,8 +216,57 @@ impl ShardedRaft {
         self.cluster.owns(key)
     }
 
-    /// Number of per-shard groups this node runs.
-    pub fn group_count(&self) -> usize {
-        self.groups.len()
+    /// Number of per-shard hosts this node runs.
+    pub fn host_count(&self) -> usize {
+        self.hosts.len()
     }
+
+    /// The host driving `key`'s shard group (for status / direct propose).
+    pub fn host_for(&self, key: &str) -> Option<&Arc<RaftHost>> {
+        self.hosts.get(&self.cluster.shard_for(key))
+    }
+}
+
+/// Derive a shard group's raft node id, membership, and peer URLs.
+///
+/// Single-node (`replicas_per_shard <= 1`): a sole voter (`node 0`, no peers) —
+/// the group commits locally (read-your-write with no transport). HA (`> 1`):
+/// shard `S`'s replicas are the nodes `(owner + r) % node_count` for
+/// `r in 0..replicas`; this node's raft id is its replica index `r`, every
+/// replica is a voter, and each peer URL is the peer node's base address with a
+/// `/shard/{S}` suffix so it matches the nested peer router.
+fn shard_topology(
+    cluster: &ClusterConfig,
+    shard: u32,
+    replicas_per_shard: u32,
+) -> (NodeId, Membership, HashMap<NodeId, String>) {
+    if replicas_per_shard <= 1 {
+        return (
+            0,
+            Membership {
+                voters: vec![0],
+                learners: vec![],
+            },
+            HashMap::new(),
+        );
+    }
+    let node_count = cluster.node_count.max(1) as u32;
+    let replicas = replicas_per_shard.min(node_count);
+    let owner = cluster.owner_of_shard(shard) as u32;
+    let mut node_id: NodeId = 0;
+    let mut peers = HashMap::new();
+    for r in 0..replicas {
+        let node = ((owner + r) % node_count) as usize;
+        let rid = r as NodeId;
+        if node == cluster.node_id {
+            node_id = rid;
+        } else if let Some(base) = cluster.peers.get(node) {
+            peers.insert(rid, format!("{}/shard/{shard}", base.trim_end_matches('/')));
+        }
+    }
+    let membership = Membership {
+        voters: (0..replicas as NodeId).collect(),
+        learners: vec![],
+    };
+    (node_id, membership, peers)
 }

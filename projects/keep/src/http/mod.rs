@@ -4,6 +4,7 @@
 //! The engine and persistence layers are transport-agnostic; everything here
 //! is a thin, typed adapter onto [`crate::engine::KvEngine`].
 
+pub mod auth;
 pub mod error;
 pub mod handlers;
 pub mod hash;
@@ -37,10 +38,11 @@ pub struct AppState {
     pub waiters: Arc<waiters::ListWaiters>,
     /// Cluster topology / sharding (single-node by default).
     pub cluster: crate::cluster::Cluster,
-    /// Optional HMAC secret for scoped claim-check tokens (#446). When set, worker
-    /// ops (GET input / PUT result) require a valid in-scope token; when `None`,
-    /// claim-check is open (backward compatible).
-    pub token_secret: Option<Arc<Vec<u8>>>,
+    /// Optional claim-check token verifier (#446, #746). Wraps the scoped HMAC
+    /// secret in keep's [`auth::KeepVerifier`] (a `service_auth::Verifier`). When
+    /// `Some`, worker ops (GET input / PUT result) require a valid in-scope
+    /// token; when `None`, claim-check is open (backward compatible).
+    pub verifier: Option<Arc<auth::KeepVerifier>>,
     draining: Arc<AtomicBool>,
 }
 
@@ -52,7 +54,7 @@ impl AppState {
             metrics: Arc::new(metrics::HttpMetrics::default()),
             waiters: Arc::new(waiters::ListWaiters::default()),
             cluster: Arc::new(crate::cluster::ClusterConfig::default()),
-            token_secret: None,
+            verifier: None,
             draining: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -62,9 +64,12 @@ impl AppState {
         self
     }
 
-    /// Enable scoped claim-check token enforcement with `secret` (#446).
+    /// Enable scoped claim-check token enforcement with `secret` (#446). Builds
+    /// keep's [`auth::KeepVerifier`] so the shared `service_auth::Verifier`
+    /// composes `libs/claimtoken` while the per-handler scope decision stays in
+    /// keep (#746).
     pub fn with_token_secret(mut self, secret: Vec<u8>) -> Self {
-        self.token_secret = Some(Arc::new(secret));
+        self.verifier = Some(Arc::new(auth::KeepVerifier::new(Arc::new(secret))));
         self
     }
 
@@ -80,6 +85,37 @@ impl AppState {
 
     pub fn is_draining(&self) -> bool {
         self.draining.load(Ordering::SeqCst)
+    }
+}
+
+/// Readiness source for the shared probe router (`service_http`): `/readyz`
+/// reports 503 once SIGTERM flips `start_drain`.
+impl service_http::ReadinessHook for AppState {
+    fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+}
+
+/// Prometheus exposition for the shared `/metrics` route: engine gauges plus the
+/// per-route HTTP request metrics. This is the body the local `handlers::metrics`
+/// produced before keep adopted the shared probe router.
+impl service_http::MetricsProvider for AppState {
+    fn render_metrics(&self) -> String {
+        let keys = self.engine.len();
+        let shards = self.engine.num_shards();
+        let mem = self.engine.estimate_memory();
+        format!(
+            "# HELP keep_keys_total Number of keys across all shards.\n\
+             # TYPE keep_keys_total gauge\n\
+             keep_keys_total {keys}\n\
+             # HELP keep_shards Number of engine shards.\n\
+             # TYPE keep_shards gauge\n\
+             keep_shards {shards}\n\
+             # HELP keep_memory_bytes Estimated resident bytes of stored data.\n\
+             # TYPE keep_memory_bytes gauge\n\
+             keep_memory_bytes {mem}\n{}",
+            self.metrics.render()
+        )
     }
 }
 
