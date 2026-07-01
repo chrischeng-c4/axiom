@@ -34,7 +34,7 @@ None target Apple Silicon / Metal. That gap is beam's wedge (see Positioning).
 | Flat / brute-force kNN | ✅ (GPU) | ✅ | ✅ | ✅ | ✅ | ✅ | done |
 | IVF-flat | ✅ (GPU) | ✅ | ✅ | ✅ | ❌ | ✅ | done |
 | IVF-PQ (ADC) | ✅ (GPU) | ✅ | ✅ | ✅ | ❌ | ❌ | done |
-| **HNSW** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | **F3** |
+| **HNSW** | ✅ (hnsw_rs) | ✅ | ✅ | ✅ | ✅ | ✅ | done (F3) |
 | CAGRA / GPU graph | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | later |
 | **Metadata filtered search** | ✅ (GPU+CPU) | 🟡 | 🟡 | ✅ | ✅ | ✅ | done (F1) |
 | **CRUD (delete/update/upsert)** | ✅ (tombstones) | 🟡 | 🟡 | ✅ | ✅ | ✅ | done (F2) |
