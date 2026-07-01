@@ -17,6 +17,7 @@
 //! @issue #796
 //! @issue #797
 //! @issue #798
+//! @issue #799
 
 use jet::bundler::types::OutputFormat;
 use jet::bundler::types::SourceMapOption;
@@ -719,6 +720,33 @@ fn exported_function_infers_number_return_type() {
     assert!(
         dts.contains("export declare function add(a: number, b: number): number;"),
         "inferred numeric return type must be emitted, got:\n{dts}"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#unit-test
+fn arrow_function_const_with_explicit_return_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "arrow-const-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const delay = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("typed arrow const must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare const delay: (ms: number) => Promise<void>;"),
+        "typed arrow const declaration must match TypeScript isolatedDeclarations output, got:\n{dts}"
     );
 }
 

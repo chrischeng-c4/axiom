@@ -30,6 +30,7 @@
 //! @issue #784
 //! @issue #796
 //! @issue #797
+//! @issue #799
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -365,7 +366,64 @@ fn infer_variable_declarator_type(node: Node, source: &str) -> Option<String> {
     let value = node
         .child_by_field_name("value")
         .or_else(|| last_named_child(node))?;
+    if let Some(inferred) = infer_arrow_function_type(value, source) {
+        return Some(inferred);
+    }
     infer_object_literal_type(value, source)
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#logic
+fn infer_arrow_function_type(node: Node, source: &str) -> Option<String> {
+    if node.kind() != "arrow_function" {
+        return None;
+    }
+
+    let params_node = node
+        .child_by_field_name("parameters")
+        .or_else(|| find_child_by_kind(node, "formal_parameters"))?;
+    let params = node_text(params_node, source).trim();
+    if !arrow_parameters_are_explicitly_typed(params) {
+        return None;
+    }
+
+    let ret_node = node.child_by_field_name("return_type")?;
+    let ret = node_text(ret_node, source);
+    let ret = ret.trim().trim_start_matches(':').trim();
+    if ret.is_empty() {
+        return None;
+    }
+
+    let type_params = node
+        .child_by_field_name("type_parameters")
+        .map(|n| node_text(n, source).trim().to_string())
+        .unwrap_or_default();
+    Some(format!("{type_params}{params} => {ret}"))
+}
+
+fn arrow_parameters_are_explicitly_typed(params: &str) -> bool {
+    let inner = params
+        .trim()
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(params)
+        .trim();
+    if inner.is_empty() {
+        return true;
+    }
+
+    for raw_param in split_top_level(inner, ',') {
+        let param_head = split_once_top_level(&raw_param, '=')
+            .map(|(left, _)| left)
+            .unwrap_or(raw_param.as_str());
+        let param = param_head.trim().trim_start_matches("...").trim();
+        if param.is_empty() {
+            continue;
+        }
+        if split_once_top_level(param, ':').is_none() {
+            return false;
+        }
+    }
+    true
 }
 
 fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
@@ -1293,6 +1351,46 @@ mod tests {
         assert!(
             !dts.contains("image/jpeg"),
             "object literal values must not leak into .d.ts, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_function_type() {
+        let src = "export const delay = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const delay: (ms: number) => Promise<void>;"),
+            "typed arrow const should synthesize a callable declaration type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_generic_const_arrow_function_type() {
+        let src = "export const identity = <T>(value: T): T => value;\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const identity: <T>(value: T) => T;"),
+            "generic typed arrow const should preserve type parameters, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn untyped_exported_const_arrow_param_errors() {
+        let src = "export const delay = (ms): Promise<void> => Promise.resolve();\n";
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "untyped arrow params must stay fail-loud, got: {err}"
+        );
+    }
+
+    #[test]
+    fn exported_const_arrow_without_return_type_errors() {
+        let src = "export const delay = (ms: number) => Promise.resolve();\n";
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "arrow const without return type must stay fail-loud, got: {err}"
         );
     }
 
