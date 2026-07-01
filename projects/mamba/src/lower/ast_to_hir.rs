@@ -1663,24 +1663,24 @@ fn infer_return_type_from_ast_inner(
 }
 
 /// Collect the names of unannotated params that must keep boxed value semantics:
-/// direct operands of `==`, `!=`, `in`, or `not in` (including chained
+/// direct operands of rich comparisons or membership tests (including chained
 /// comparisons), and direct arguments to runtime type checks such as
 /// `isinstance` / `issubclass`, and `match` subjects whose patterns require
 /// boxed runtime shape/type tests.
 ///
 /// Unannotated params default to the raw-int (`int_ty`) calling convention so
 /// genuine integer params keep the fast native ABI. But when a param is the
-/// direct operand of an equality/membership comparison, the int-typed lowering
-/// emits a pointer-identity `icmp` instead of the value-comparing runtime
-/// dispatch (`mb_eq`/`mb_list_contains`). For heap operands (list/str/tuple/
-/// dict/set/bytes) that silently compares by identity, which is wrong. Promoting
-/// just those params to `any` routes their `==`/`in` through the NaN-aware
-/// runtime so value comparison is correct.
+/// direct operand of a rich comparison or membership test, the int-typed
+/// lowering emits a raw `icmp` instead of the value-comparing runtime dispatch
+/// (`mb_dispatch_binop`/`mb_list_contains`). For heap operands (list/str/tuple/
+/// dict/set/bytes/bytearray) that compares pointer bits, which is wrong.
+/// Promoting just those params to `any` routes their comparison through the
+/// NaN-aware runtime so CPython value comparison is correct.
 ///
-/// This is intentionally narrow: only equality/membership operand positions,
-/// runtime type-check arguments, and boxed-shape `match` subjects trigger
-/// promotion. Params used only in arithmetic, indexing, or as kwargs to native
-/// calls (e.g. `datetime(..., hour=h)`, `int(x, base=16)`,
+/// This is intentionally narrow: only rich-comparison/membership operand
+/// positions, runtime type-check arguments, and boxed-shape `match` subjects
+/// trigger promotion. Params used only in arithmetic, indexing, or as kwargs to
+/// native calls (e.g. `datetime(..., hour=h)`, `int(x, base=16)`,
 /// `round(x, ndigits=2)`) keep `int_ty`, preserving both the raw-int fast path
 /// and the native kwargs ABI.
 fn collect_value_compared_params(
@@ -1699,7 +1699,7 @@ fn stmt_collect_value_compared_params(
     out: &mut std::collections::HashSet<String>,
 ) {
     use ast::Stmt::*;
-    let mut scan = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
+    let scan = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
         expr_collect_value_compared_params(&e.node, params, out);
     };
     match stmt {
@@ -1854,14 +1854,30 @@ fn pattern_needs_boxed_match_subject(pattern: &Spanned<ast::Pattern>) -> bool {
     }
 }
 
+fn is_numeric_literal_expr(expr: &Spanned<ast::Expr>) -> bool {
+    match &expr.node {
+        ast::Expr::IntLit(_)
+        | ast::Expr::BigIntLit(_)
+        | ast::Expr::FloatLit(_)
+        | ast::Expr::ComplexLit(_)
+        | ast::Expr::BoolLit(_) => true,
+        ast::Expr::UnaryOp { op, operand }
+            if matches!(op, ast::UnaryOp::Pos | ast::UnaryOp::Neg) =>
+        {
+            is_numeric_literal_expr(operand)
+        }
+        _ => false,
+    }
+}
+
 fn expr_collect_value_compared_params(
     expr: &ast::Expr,
     params: &std::collections::HashSet<String>,
     out: &mut std::collections::HashSet<String>,
 ) {
     use ast::Expr::*;
-    // If this is an equality/membership comparison, record any direct
-    // Ident operand that names a param.
+    // If this is a rich comparison/membership comparison, record any direct
+    // Ident operand that names a param and is not clearly numeric-literal-bound.
     let mark = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
         if let ast::Expr::Ident(n) = &e.node {
             if params.contains(n) {
@@ -1869,26 +1885,41 @@ fn expr_collect_value_compared_params(
             }
         }
     };
+    let mark_order_pair =
+        |lhs: &Spanned<ast::Expr>,
+         rhs: &Spanned<ast::Expr>,
+         out: &mut std::collections::HashSet<String>| {
+            if !is_numeric_literal_expr(rhs) {
+                mark(lhs, out);
+            }
+            if !is_numeric_literal_expr(lhs) {
+                mark(rhs, out);
+            }
+        };
     if let BinOp { op, lhs, rhs } = expr {
-        if matches!(
-            op,
-            ast::BinOp::Eq | ast::BinOp::NotEq | ast::BinOp::In | ast::BinOp::NotIn
-        ) {
-            mark(lhs, out);
-            mark(rhs, out);
+        match op {
+            ast::BinOp::Eq | ast::BinOp::NotEq | ast::BinOp::In | ast::BinOp::NotIn => {
+                mark(lhs, out);
+                mark(rhs, out);
+            }
+            ast::BinOp::Lt | ast::BinOp::Gt | ast::BinOp::LtEq | ast::BinOp::GtEq => {
+                mark_order_pair(lhs, rhs, out);
+            }
+            _ => {}
         }
     }
     if let ChainedCompare { operands, ops } = expr {
         for (i, op) in ops.iter().enumerate() {
-            if matches!(
-                op,
-                ast::BinOp::Eq | ast::BinOp::NotEq | ast::BinOp::In | ast::BinOp::NotIn
-            ) {
-                if let Some(l) = operands.get(i) {
-                    mark(l, out);
-                }
-                if let Some(r) = operands.get(i + 1) {
-                    mark(r, out);
+            if let (Some(l), Some(r)) = (operands.get(i), operands.get(i + 1)) {
+                match op {
+                    ast::BinOp::Eq | ast::BinOp::NotEq | ast::BinOp::In | ast::BinOp::NotIn => {
+                        mark(l, out);
+                        mark(r, out);
+                    }
+                    ast::BinOp::Lt | ast::BinOp::Gt | ast::BinOp::LtEq | ast::BinOp::GtEq => {
+                        mark_order_pair(l, r, out);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1907,7 +1938,7 @@ fn expr_collect_value_compared_params(
         }
     }
     // Recurse into all sub-expressions so nested comparisons are seen.
-    let mut rec = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
+    let rec = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
         expr_collect_value_compared_params(&e.node, params, out);
     };
     match expr {
@@ -2035,7 +2066,7 @@ fn expr_collect_value_compared_params(
 }
 
 /// Collect the names of params used in a NUMERIC position — as an operand of
-/// arithmetic / bitwise / ordering ops, as a unary-arith operand, as the target
+/// arithmetic / bitwise ops, as a unary-arith operand, as the target
 /// of an augmented arithmetic assignment, or as an argument to a numeric builtin
 /// (`abs`, `round`, `pow`, `divmod`, `min`, `max`, `sum`, `math.*`, `int`,
 /// `float`, etc.).
@@ -2244,7 +2275,9 @@ fn expr_collect_numeric_used_params(
             }
         }
     };
-    // Arithmetic / bitwise / ordering binops mark direct Ident operands numeric.
+    // Arithmetic / bitwise binops mark direct Ident operands numeric. Ordering
+    // comparisons are rich comparisons in Python, so an unannotated param used
+    // only in `<`/`<=`/`>`/`>=` must keep boxed semantics.
     if let BinOp { op, lhs, rhs } = expr {
         if matches!(
             op,
@@ -2261,28 +2294,9 @@ fn expr_collect_numeric_used_params(
                 | ast::BinOp::BitXor
                 | ast::BinOp::LShift
                 | ast::BinOp::RShift
-                | ast::BinOp::Lt
-                | ast::BinOp::Gt
-                | ast::BinOp::LtEq
-                | ast::BinOp::GtEq
         ) {
             mark(lhs, out);
             mark(rhs, out);
-        }
-    }
-    if let ChainedCompare { operands, ops } = expr {
-        for (i, op) in ops.iter().enumerate() {
-            if matches!(
-                op,
-                ast::BinOp::Lt | ast::BinOp::Gt | ast::BinOp::LtEq | ast::BinOp::GtEq
-            ) {
-                if let Some(l) = operands.get(i) {
-                    mark(l, out);
-                }
-                if let Some(r) = operands.get(i + 1) {
-                    mark(r, out);
-                }
-            }
         }
     }
     // Unary +/-/~ operand is numeric.
@@ -11610,6 +11624,57 @@ mod tests {
         let hir = lower_module(&module, &checker).expect("lower failed");
         assert_eq!(hir.functions.len(), 1);
         assert_eq!(hir.functions[0].params[0].1, checker.tcx.any());
+    }
+
+    #[test]
+    fn test_lower_ordering_comparison_promotes_unknown_unannotated_params() {
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("ordered".to_string(), crate::resolve::SymbolKind::Function);
+        let module = Module {
+            stmts: vec![sp(Stmt::FnDef {
+                decorators: vec![],
+                name: "ordered".to_string(),
+                type_params: vec![],
+                params: vec![make_param("a"), make_param("b")],
+                return_ty: None,
+                body: vec![sp(Stmt::Return(Some(sp(Expr::BinOp {
+                    op: BinOp::Lt,
+                    lhs: Box::new(sp(Expr::Ident("a".to_string()))),
+                    rhs: Box::new(sp(Expr::Ident("b".to_string()))),
+                }))))],
+            })],
+        };
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        assert_eq!(hir.functions.len(), 1);
+        assert_eq!(hir.functions[0].params[0].1, checker.tcx.any());
+        assert_eq!(hir.functions[0].params[1].1, checker.tcx.any());
+    }
+
+    #[test]
+    fn test_lower_ordering_against_numeric_literal_keeps_raw_int_param() {
+        let mut checker = TypeChecker::new();
+        checker
+            .symbols
+            .define("positive".to_string(), crate::resolve::SymbolKind::Function);
+        let module = Module {
+            stmts: vec![sp(Stmt::FnDef {
+                decorators: vec![],
+                name: "positive".to_string(),
+                type_params: vec![],
+                params: vec![make_param("n")],
+                return_ty: None,
+                body: vec![sp(Stmt::Return(Some(sp(Expr::BinOp {
+                    op: BinOp::Gt,
+                    lhs: Box::new(sp(Expr::Ident("n".to_string()))),
+                    rhs: Box::new(sp(Expr::IntLit(0))),
+                }))))],
+            })],
+        };
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        assert_eq!(hir.functions.len(), 1);
+        assert_eq!(hir.functions[0].params[0].1, checker.tcx.int());
     }
 
     // -------------------------------------------------------------------------
