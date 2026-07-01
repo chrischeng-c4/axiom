@@ -9,7 +9,6 @@
 # case = "bytearray__fromhex__string_as_str_wrong"
 # subject = "builtins.bytearray.fromhex(string: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
