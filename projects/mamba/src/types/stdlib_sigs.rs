@@ -5233,6 +5233,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "inspect",
+        qualifier: "",
+        name: "getasyncgenstate",
+        kind: SigKind::ModuleFn,
+        params: &[p("agen", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "inspect",
+        qualifier: "",
+        name: "getblock",
+        kind: SigKind::ModuleFn,
+        params: &[p("lines", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "http.client",
         qualifier: "",
         name: "parse_headers",
@@ -7024,6 +7040,8 @@ mod tests {
             ("inspect", "", "formatargvalues", 0, "args", CoreTy::List),
             ("inspect", "", "get_annotations", 0, "obj", CoreTy::Typed),
             ("inspect", "", "getasyncgenlocals", 0, "agen", CoreTy::Typed),
+            ("inspect", "", "getasyncgenstate", 0, "agen", CoreTy::Typed),
+            ("inspect", "", "getblock", 0, "lines", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
