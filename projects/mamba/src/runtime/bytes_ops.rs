@@ -67,6 +67,13 @@ fn raise_value_error(msg: &str) {
     );
 }
 
+fn raise_buffer_error(msg: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("BufferError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+}
+
 fn raise_unicode_decode_error(encoding: &str, data: &[u8], pos: usize, reason: &str) {
     let byte = data.get(pos).copied().unwrap_or_default();
     super::exception::mb_raise(
@@ -1422,6 +1429,30 @@ pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
     }
 }
 
+/// bytes.__buffer__(flags) / bytearray.__buffer__(flags) -> memoryview.
+pub fn mb_bytes_buffer(bytes: MbValue, flags: MbValue, flags_provided: bool) -> MbValue {
+    if !flags_provided {
+        raise_type_error("expected 1 argument, got 0");
+        return MbValue::none();
+    }
+    let Some(flags) = flags.as_int_pyint() else {
+        raise_type_error(&format!(
+            "'{}' object cannot be interpreted as an integer",
+            super::builtins::value_type_name(flags)
+        ));
+        return MbValue::none();
+    };
+    let is_bytearray = bytes
+        .as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::ByteArray(_)) })
+        .unwrap_or(false);
+    if flags & 1 != 0 && !is_bytearray {
+        raise_buffer_error("Object is not writable");
+        return MbValue::none();
+    }
+    super::builtins::mb_memoryview(bytes)
+}
+
 // ── ByteArray mutations ──
 
 /// bytearray.append(int)
@@ -2250,6 +2281,8 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         "__add__" => mb_bytes_concat(receiver, arg(0)),
         "__mul__" => super::builtins::mb_mul(receiver, arg(0)),
         "__rmul__" => super::builtins::mb_mul(arg(0), receiver),
+        "__contains__" => mb_bytes_contains(receiver, arg(0)),
+        "__buffer__" => mb_bytes_buffer(receiver, arg(0), argc() > 0),
         "find" => {
             let s = if argc() > 1 { arg(1) } else { MbValue::none() };
             let e = if argc() > 2 { arg(2) } else { MbValue::none() };
