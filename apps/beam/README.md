@@ -34,7 +34,7 @@ indexes and GPU memory tiers.
 | CLI Interface | #772 | partial | smoke | conformance | not_ready | shell + std verbs (llm/upgrade/issue) landed; vector verbs pending |
 | Long-Running Stability | #769 | planned | planned | none | not_ready | GPU index soak, rebuild, failover, and recovery gates |
 | Security Hardening | #769 | planned | planned | none | not_ready | collection authz, tenant isolation, audit, and secret rotation |
-| Competitor Feature Parity | #769 | planned | planned | none | not_ready | Milvus/Qdrant/Faiss-style GPU vector feature matrix |
+| Competitor Feature Parity | #769 | partial | conformance | none | not_ready | matrix landed (parity checklist vs Milvus/Qdrant/Faiss/cuVS/pgvector); features tracked F1-F5 |
 | Competitor Performance | #769 | planned | planned | none | not_ready | pinned vector recall/latency baseline, rerun only on scope change |
 
 ### CLI Interface
@@ -108,7 +108,7 @@ Promise:
 Beam keeps an explicit GPU/vector feature matrix against established vector
 systems, with comparison scope changed only when product requirements change.
 Gate Inventory:
-- pending: apps/beam/benchmark/competitor-feature-matrix.md
+- landed: apps/beam/benchmark/competitor-feature-matrix.md (parity checklist + gaps)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
