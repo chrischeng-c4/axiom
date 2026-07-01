@@ -9,7 +9,6 @@
 # case = "time__fromisoformat__time_string_as_str_wrong"
 # subject = "datetime.time.fromisoformat(time_string: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

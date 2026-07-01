@@ -9,7 +9,6 @@
 # case = "date__fromordinal__n_as_int_wrong"
 # subject = "datetime.date.fromordinal(n: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

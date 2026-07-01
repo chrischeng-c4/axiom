@@ -9,7 +9,6 @@
 # case = "tzinfo__fromutc__dt_as_datetime_wrong"
 # subject = "datetime.tzinfo.fromutc(dt: datetime)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

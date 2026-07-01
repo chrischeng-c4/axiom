@@ -9,7 +9,6 @@
 # case = "date__replace__year_as_SupportsIndex_wrong"
 # subject = "datetime.date.replace(year: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

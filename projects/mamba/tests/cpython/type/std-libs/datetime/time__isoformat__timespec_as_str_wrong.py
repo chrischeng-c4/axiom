@@ -9,7 +9,6 @@
 # case = "time__isoformat__timespec_as_str_wrong"
 # subject = "datetime.time.isoformat(timespec: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

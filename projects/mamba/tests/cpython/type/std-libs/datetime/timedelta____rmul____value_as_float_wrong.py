@@ -9,7 +9,6 @@
 # case = "timedelta____rmul____value_as_float_wrong"
 # subject = "datetime.timedelta.__rmul__(value: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"

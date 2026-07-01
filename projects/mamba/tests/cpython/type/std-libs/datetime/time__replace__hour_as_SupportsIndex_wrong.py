@@ -9,7 +9,6 @@
 # case = "time__replace__hour_as_SupportsIndex_wrong"
 # subject = "datetime.time.replace(hour: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/datetime.pyi"
 # status = "filled"
