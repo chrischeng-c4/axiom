@@ -9,7 +9,6 @@
 # case = "TestCase____call____result_as_typed_wrong"
 # subject = "unittest.case.TestCase.__call__(result: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"

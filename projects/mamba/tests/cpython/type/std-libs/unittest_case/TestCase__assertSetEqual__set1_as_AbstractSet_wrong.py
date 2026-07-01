@@ -9,12 +9,10 @@
 # case = "TestCase__assertSetEqual__set1_as_AbstractSet_wrong"
 # subject = "unittest.case.TestCase.assertSetEqual(set1: AbstractSet)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed set1"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed set1
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertSetEqual(set1: AbstractSet); call it with the wrong type.
 

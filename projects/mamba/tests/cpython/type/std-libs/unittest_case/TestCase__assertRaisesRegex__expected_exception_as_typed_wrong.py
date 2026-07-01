@@ -9,12 +9,10 @@
 # case = "TestCase__assertRaisesRegex__expected_exception_as_typed_wrong"
 # subject = "unittest.case.TestCase.assertRaisesRegex(expected_exception: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed expected_exception"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed expected_exception
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertRaisesRegex(expected_exception: typed); call it with the wrong type.
 

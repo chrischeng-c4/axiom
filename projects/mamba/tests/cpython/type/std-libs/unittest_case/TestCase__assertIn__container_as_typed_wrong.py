@@ -9,7 +9,6 @@
 # case = "TestCase__assertIn__container_as_typed_wrong"
 # subject = "unittest.case.TestCase.assertIn(container: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"

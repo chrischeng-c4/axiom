@@ -9,12 +9,10 @@
 # case = "TestCase__addTypeEqualityFunc__typeobj_as_type_wrong"
 # subject = "unittest.case.TestCase.addTypeEqualityFunc(typeobj: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typeobj"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typeobj
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.addTypeEqualityFunc(typeobj: type); call it with the wrong type.
 

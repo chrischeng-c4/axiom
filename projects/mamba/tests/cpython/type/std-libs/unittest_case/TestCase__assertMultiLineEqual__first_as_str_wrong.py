@@ -9,7 +9,6 @@
 # case = "TestCase__assertMultiLineEqual__first_as_str_wrong"
 # subject = "unittest.case.TestCase.assertMultiLineEqual(first: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"

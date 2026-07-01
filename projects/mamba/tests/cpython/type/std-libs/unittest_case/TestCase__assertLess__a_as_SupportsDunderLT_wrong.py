@@ -9,12 +9,10 @@
 # case = "TestCase__assertLess__a_as_SupportsDunderLT_wrong"
 # subject = "unittest.case.TestCase.assertLess(a: SupportsDunderLT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertLess(a: SupportsDunderLT); call it with the wrong type.
 

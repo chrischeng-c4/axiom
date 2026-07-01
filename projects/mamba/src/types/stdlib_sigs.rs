@@ -5035,6 +5035,62 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // unittest.case callable/context-manager/typevar parameters collapse to
+    // Unknown. Treat bare user instances as strict wrong-type probes while
+    // leaving callable/protocol-shaped objects skip-safe.
+    StdlibSig {
+        module: "unittest.case",
+        qualifier: "",
+        name: "addModuleCleanup",
+        kind: SigKind::ModuleFn,
+        params: &[p("function", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "unittest.case",
+        qualifier: "",
+        name: "enterModuleContext",
+        kind: SigKind::ModuleFn,
+        params: &[p("cm", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "unittest.case",
+        qualifier: "",
+        name: "expectedFailure",
+        kind: SigKind::ModuleFn,
+        params: &[p("test_item", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "unittest.case",
+        qualifier: "FunctionTestCase",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("testFunc", CoreTy::Typed),
+            p("setUp", CoreTy::Unknown),
+            p("tearDown", CoreTy::Unknown),
+            p("description", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "unittest.case",
+        qualifier: "TestCase",
+        name: "addClassCleanup",
+        kind: SigKind::Method,
+        params: &[p("function", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "unittest.case",
+        qualifier: "TestCase",
+        name: "enterClassContext",
+        kind: SigKind::Method,
+        params: &[p("cm", CoreTy::Typed)],
+        enforceable: true,
+    },
     // pathlib generated rows intentionally collapse type variables, overload
     // literals, and Optional exception state to Unknown/Typed. Keep strict-mode
     // fixture walls enforceable while still skipping correct None sentinels and
@@ -6338,6 +6394,23 @@ mod tests {
         let kde = get("statistics", "", "kde").expect("statistics.kde present");
         assert_eq!(kde.params[1].name, "h");
         assert_eq!(kde.params[1].ty, CoreTy::Float);
+    }
+
+    #[test]
+    fn curated_unittest_case_protocol_walls_override_unknown_generated_rows() {
+        for (qualifier, name, first_param) in [
+            ("", "addModuleCleanup", "function"),
+            ("", "enterModuleContext", "cm"),
+            ("", "expectedFailure", "test_item"),
+            ("FunctionTestCase", "__init__", "testFunc"),
+            ("TestCase", "addClassCleanup", "function"),
+            ("TestCase", "enterClassContext", "cm"),
+        ] {
+            let sig = get("unittest.case", qualifier, name).expect("unittest.case row present");
+            assert!(sig.enforceable, "unittest.case.{qualifier}.{name}");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
     }
 
     #[test]

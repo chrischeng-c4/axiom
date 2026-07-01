@@ -9,7 +9,6 @@
 # case = "TestCase__assertNotHasAttr__name_as_str_wrong"
 # subject = "unittest.case.TestCase.assertNotHasAttr(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
