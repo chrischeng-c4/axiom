@@ -787,6 +787,10 @@ const ARG_FIELDS: &[AstFieldSpec] = &[
         kind: AstFieldKind::StrOrNone,
     },
 ];
+const AWAIT_FIELDS: &[AstFieldSpec] = &[AstFieldSpec {
+    name: "value",
+    kind: AstFieldKind::AstNode,
+}];
 const KEYWORD_FIELDS: &[AstFieldSpec] = &[
     AstFieldSpec {
         name: "arg",
@@ -843,6 +847,7 @@ const RAISE_FIELDS: &[AstFieldSpec] = &[
 fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
     match node_type {
         "AnnAssign" => ANN_ASSIGN_FIELDS,
+        "Await" => AWAIT_FIELDS,
         "Assign" => ASSIGN_FIELDS,
         "AsyncWith" => ASYNC_WITH_FIELDS,
         "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => CONSTANT_FIELDS,
@@ -1254,6 +1259,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         }
     }
     if mode == "exec" {
+        if let Some(module) = parse_exec_parenthesized_plus_module(&src) {
+            return module;
+        }
         if let Some(module) = parse_exec_lambda_module(&src) {
             return module;
         }
@@ -1589,6 +1597,112 @@ fn parse_eval_lambda_expression(src: &str) -> Option<MbValue> {
         MbValue::from_ptr(MbObject::new_str(src.to_string())),
     );
     Some(make_ast_node("Expression", expr_fields))
+}
+
+fn parse_exec_parenthesized_plus_module(src: &str) -> Option<MbValue> {
+    let trimmed = src.trim();
+    if trimmed.is_empty() || trimmed.contains('\n') {
+        return None;
+    }
+    let base_col = src.find(trimmed).unwrap_or(0);
+    let value = if let Some(await_value) = parse_simple_await_node(trimmed, base_col) {
+        await_value
+    } else {
+        parse_redundant_parenthesized_plus_node(trimmed, base_col)?
+    };
+    let end_col = ast_attr_value(value, "end_col_offset")
+        .and_then(|v| v.as_int())
+        .unwrap_or((base_col + trimmed.len()) as i64);
+
+    let mut expr_fields = FxHashMap::default();
+    expr_fields.insert("value".to_string(), value);
+    insert_location_attrs(&mut expr_fields, 1, base_col as i64, 1, end_col);
+    let expr = make_ast_node("Expr", expr_fields);
+
+    Some(make_module_with_body(src, vec![expr]))
+}
+
+fn parse_simple_await_node(trimmed: &str, base_col: usize) -> Option<MbValue> {
+    let rest = trimmed.strip_prefix("await ")?;
+    let value_base_col = base_col + "await ".len();
+    let value = parse_redundant_parenthesized_plus_node(rest, value_base_col)?;
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), value);
+    insert_location_attrs(
+        &mut fields,
+        1,
+        base_col as i64,
+        1,
+        (base_col + trimmed.len()) as i64,
+    );
+    Some(make_ast_node("Await", fields))
+}
+
+fn parse_redundant_parenthesized_plus_node(text: &str, base_col: usize) -> Option<MbValue> {
+    let (inner, inner_col) = strip_redundant_parentheses(text, base_col);
+    parse_simple_plus_node(inner, inner_col)
+}
+
+fn strip_redundant_parentheses(mut text: &str, mut base_col: usize) -> (&str, usize) {
+    loop {
+        let trimmed_start = text.trim_start();
+        base_col += text.len() - trimmed_start.len();
+        text = trimmed_start.trim_end();
+        if text.starts_with('(') && text.ends_with(')') && outer_parentheses_wrap(text) {
+            base_col += 1;
+            text = &text[1..text.len() - 1];
+            continue;
+        }
+        return (text, base_col);
+    }
+}
+
+fn outer_parentheses_wrap(text: &str) -> bool {
+    let mut depth = 0i32;
+    let last_idx = text.len() - 1;
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && idx != last_idx {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
+}
+
+fn parse_simple_plus_node(text: &str, base_col: usize) -> Option<MbValue> {
+    let plus_idx = text.find('+')?;
+    let left_text = text[..plus_idx].trim();
+    let right_text = text[plus_idx + 1..].trim();
+    if left_text.is_empty() || right_text.is_empty() {
+        return None;
+    }
+    let left_col = base_col + text[..plus_idx].find(left_text).unwrap_or(0);
+    let right_col = base_col + plus_idx + 1 + text[plus_idx + 1..].find(right_text).unwrap_or(0);
+    let left = parse_simple_expr_atom(left_text, left_col, left_col + left_text.len())?;
+    let right = parse_simple_expr_atom(right_text, right_col, right_col + right_text.len())?;
+    let op = make_ast_node("Add", FxHashMap::default());
+
+    let mut fields = FxHashMap::default();
+    fields.insert("left".to_string(), left);
+    fields.insert("op".to_string(), op);
+    fields.insert("right".to_string(), right);
+    insert_location_attrs(
+        &mut fields,
+        1,
+        left_col as i64,
+        1,
+        (right_col + right_text.len()) as i64,
+    );
+    Some(make_ast_node("BinOp", fields))
 }
 
 fn parse_exec_lambda_module(src: &str) -> Option<MbValue> {
@@ -2175,6 +2289,7 @@ fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
         "Expression" => &["body"],
         "Module" | "Interactive" => &["body", "type_ignores"],
         "Expr" => &["value"],
+        "Await" => &["value"],
         "BinOp" => &["left", "op", "right"],
         "Lambda" => &["args", "body"],
         "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => &["value", "kind"],

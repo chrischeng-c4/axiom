@@ -9,25 +9,12 @@
 # case = "end_position_tests__test_redundant_parenthesis"
 # subject = "cpython.test_ast.EndPositionTests.test_redundant_parenthesis"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
-import builtins
-import dis
-import enum
-import os
-import re
-import sys
-import textwrap
-import types
-import warnings
-import weakref
-from functools import partial
-from textwrap import dedent
 
 def _check_end_pos(ast_node, end_lineno, end_col_offset):
     assert ast_node.end_lineno == end_lineno
