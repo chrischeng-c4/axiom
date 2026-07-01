@@ -9,7 +9,6 @@
 # case = "getprotobyname__protocolname_as_str_wrong"
 # subject = "_socket.getprotobyname(protocolname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

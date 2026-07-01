@@ -9,12 +9,10 @@
 # case = "BaseEventLoop__create_server__protocol_factory_as__ProtocolFactory_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.create_server(protocol_factory: _ProtocolFactory)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed protocol_factory"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed protocol_factory
 # mamba-strict-type: TypeError
 """Type wall: asyncio.base_events.BaseEventLoop.create_server(protocol_factory: _ProtocolFactory); call it with the wrong type.
 

@@ -9,12 +9,10 @@
 # case = "BaseEventLoop__call_soon__callback_as_Callable_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.call_soon(callback: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callback"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callback
 # mamba-strict-type: TypeError
 """Type wall: asyncio.base_events.BaseEventLoop.call_soon(callback: Callable); call it with the wrong type.
 

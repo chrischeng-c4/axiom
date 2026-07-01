@@ -9,7 +9,6 @@
 # case = "CCompiler__library_option__lib_as_str_wrong"
 # subject = "distutils.ccompiler.CCompiler.library_option(lib: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

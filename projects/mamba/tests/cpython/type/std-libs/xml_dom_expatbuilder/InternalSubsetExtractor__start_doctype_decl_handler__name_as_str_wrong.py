@@ -9,7 +9,6 @@
 # case = "InternalSubsetExtractor__start_doctype_decl_handler__name_as_str_wrong"
 # subject = "xml.dom.expatbuilder.InternalSubsetExtractor.start_doctype_decl_handler(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "socket__getsockopt__level_as_int_wrong"
 # subject = "_socket.socket.getsockopt(level: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

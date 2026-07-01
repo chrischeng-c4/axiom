@@ -9,7 +9,6 @@
 # case = "BaseEventLoop__sendfile__transport_as_WriteTransport_wrong"
 # subject = "asyncio.base_events.BaseEventLoop.sendfile(transport: WriteTransport)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/base_events.pyi"
 # status = "filled"

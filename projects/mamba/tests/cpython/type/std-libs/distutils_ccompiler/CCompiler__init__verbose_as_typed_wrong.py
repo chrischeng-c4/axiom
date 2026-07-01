@@ -9,7 +9,6 @@
 # case = "CCompiler__init__verbose_as_typed_wrong"
 # subject = "distutils.ccompiler.CCompiler.__init__(verbose: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

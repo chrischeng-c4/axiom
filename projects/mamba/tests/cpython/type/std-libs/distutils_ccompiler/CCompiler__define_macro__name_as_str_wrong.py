@@ -9,7 +9,6 @@
 # case = "CCompiler__define_macro__name_as_str_wrong"
 # subject = "distutils.ccompiler.CCompiler.define_macro(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"

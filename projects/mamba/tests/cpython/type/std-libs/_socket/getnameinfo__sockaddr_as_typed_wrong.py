@@ -9,7 +9,6 @@
 # case = "getnameinfo__sockaddr_as_typed_wrong"
 # subject = "_socket.getnameinfo(sockaddr: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_socket.pyi"
 # status = "filled"

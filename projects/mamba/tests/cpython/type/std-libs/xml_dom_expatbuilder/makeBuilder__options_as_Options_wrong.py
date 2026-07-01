@@ -9,7 +9,6 @@
 # case = "makeBuilder__options_as_Options_wrong"
 # subject = "xml.dom.expatbuilder.makeBuilder(options: Options)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/expatbuilder.pyi"
 # status = "filled"

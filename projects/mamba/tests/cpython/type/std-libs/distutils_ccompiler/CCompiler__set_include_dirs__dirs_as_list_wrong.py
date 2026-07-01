@@ -9,12 +9,10 @@
 # case = "CCompiler__set_include_dirs__dirs_as_list_wrong"
 # subject = "distutils.ccompiler.CCompiler.set_include_dirs(dirs: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dirs"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/ccompiler.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dirs
 # mamba-strict-type: TypeError
 """Type wall: distutils.ccompiler.CCompiler.set_include_dirs(dirs: list); call it with the wrong type.
 
