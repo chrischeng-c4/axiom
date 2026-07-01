@@ -228,6 +228,29 @@ path and stays exact.
 
 [`GpuFlatIndex::search_knn_batch`]: ../src/gpu/mod.rs
 
+### Large-n crossover check (empirical): the gap plateaus, no crossover
+
+The near-parity at 1M (1.4×) raised the question of whether beam simply crosses
+over at larger n. Measured at n = 2M and 4M (beam GPU-top-k batched vs faiss
+batched, same M1 Max, batch 200, recall 1.000):
+
+| n | beam-GPU-topk q/s | faiss batched q/s | beam is |
+|---:|---:|---:|---|
+| 1_000_000 | 170 | 234 | 1.4× slower |
+| 2_000_000 | 97 | 120 | 1.2× slower |
+| 4_000_000 | 43 | 60 | 1.4× slower |
+
+**No crossover.** Both are O(n) at scale, so once the fixed overheads are
+amortized the ratio stabilizes at beam's ~1.2–1.4× constant-factor disadvantage —
+it does not vanish with more data. The 9.2×→1.4× collapse (serial→GPU-top-k) was
+overhead amortization; the residual ~1.3× is beam's naive per-query DB re-read vs
+faiss's cache-tiled BLAS GEMM. Closing it needs a **GEMM-tiled distance kernel**
+(reuse a DB-row tile across a query tile in shared memory), not more scale — a
+real but larger lever with uncertain payoff against AMX. **Conclusion: on exact
+flat search, beam-GPU does not beat faiss-CPU on Apple Silicon at any tested
+scale (10k–4M).** beam's honest wins are ANN pruning (IVF-flat, lossless, ~8%
+scan), IVF-PQ memory (32×), and portability (Metal at all) — not flat raw speed.
+
 ## Reproducer
 
 - **Competitor (CPU):** `projects/beam/benchmark/competitor_bench.py` — seeded
