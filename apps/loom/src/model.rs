@@ -38,7 +38,7 @@ string_id!(/// Identifies one stage (a fan-out group of sibling nodes) within a 
 
 /// Claim-check reference to a payload stored in keep. loom passes refs, never
 /// bytes — input/result data moves client↔keep and worker↔keep directly.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct KeepRef(pub String);
 
 /// The task a node runs. Small args inline; large inputs by keep ref.
@@ -77,7 +77,7 @@ impl TaskSpec {
 }
 
 /// Lifecycle of a single node, owned by loom's persistent DAG state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeState {
     /// Dependencies not yet satisfied.
@@ -141,7 +141,7 @@ pub struct Stage {
 }
 
 /// Terminal-or-running status of a whole run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunStatus {
     Pending,

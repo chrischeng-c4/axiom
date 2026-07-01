@@ -85,7 +85,7 @@ pub enum Completion {
 
 /// A runtime-discovered fan-out child (#116): a task a completing node splices
 /// into the DAG (e.g. a CSV reader emitting one node per chunk).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FanOutSpec {
     pub id: String,
     pub task_name: String,

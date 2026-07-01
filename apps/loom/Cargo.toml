@@ -36,6 +36,20 @@ futures = { workspace = true }
 async-stream = { workspace = true }
 # relay/keep clients (h2c, no TLS — same as lumen's relay client).
 reqwest = { workspace = true }
+# Shared HTTP-service shell (archetype): the standard probe routes
+# (/healthz /readyz /metrics /openapi.json /docs), the h2c serve loop, and
+# SIGTERM-aware graceful drain — composed, not hand-rolled. Pulls h2c (server)
+# + utoipa transitively; loom stops hand-rolling the hyper-util accept loop.
+service-http = { path = "../../libs/service-http" }
+# OpenAPI derive on the control-API DTOs — the /openapi.json + /docs source
+# and the `loom spec` offline twin.
+utoipa = { workspace = true }
+# `loom spec --format openapi-yaml` renders the OpenAPI as YAML (utoipa "4" has
+# no yaml feature; same path lumen uses).
+serde_yaml = { workspace = true }
+# `loom spec gen --lang ts|py|rust` — typed clients from loom's own OpenAPI via
+# the shared polyglot core (never a second codegen path).
+cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 # Shared Raft consensus engine for replicated workflow state (#110).
 raft-core = { path = "../../libs/raft-core" }
 # Scoped claim-check tokens the schema layer signs for workers (#444).
