@@ -12588,6 +12588,15 @@ fn is_known_class_name(name: &str) -> bool {
     super::exception::is_subclass_of(name, "BaseException")
 }
 
+fn normalize_issubclass_class_name(name: String) -> String {
+    if let Some(node_type) = name.strip_prefix("mb_ast_node_") {
+        if CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(node_type)) {
+            return node_type.to_string();
+        }
+    }
+    name
+}
+
 pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     // Tuple of types: issubclass(C, (A, B, ...)) — true iff any element matches.
     if let Some(ptr) = parent.as_ptr() {
@@ -12632,8 +12641,9 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     // Resolve type objects (Instance with class_name="type" and __name__ field)
     // in addition to plain strings. This matches the resolution logic in mb_isinstance
     // so that issubclass(type_obj, base_type_obj) works correctly (#974).
-    let child_name = resolve_class_name(child).unwrap_or_default();
-    let parent_name = resolve_class_name(parent).unwrap_or_default();
+    let child_name = normalize_issubclass_class_name(resolve_class_name(child).unwrap_or_default());
+    let parent_name =
+        normalize_issubclass_class_name(resolve_class_name(parent).unwrap_or_default());
     if let Some(result) = numbers_abc_issubclass_result(&child_name, &parent_name) {
         return MbValue::from_bool(result);
     }

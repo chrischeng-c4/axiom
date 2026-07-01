@@ -9,15 +9,24 @@
 # case = "a_s_t__tests__test_base_classes"
 # subject = "cpython.test_ast.AST_Tests.test_base_classes"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
-import unittest, io
-from test.test_ast import test_ast
-_suite = unittest.defaultTestLoader.loadTestsFromName("AST_Tests.test_base_classes", test_ast)
-_result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(_suite)
-assert _result.wasSuccessful(), "CPython AST_Tests.test_base_classes did not pass"
+import ast
+
+checks = [
+    ("For_stmt", ast.For, ast.stmt),
+    ("Name_expr", ast.Name, ast.expr),
+    ("stmt_AST", ast.stmt, ast.AST),
+    ("expr_AST", ast.expr, ast.AST),
+    ("comprehension_AST", ast.comprehension, ast.AST),
+    ("Gt_AST", ast.Gt, ast.AST),
+]
+
+for label, child, parent in checks:
+    result = issubclass(child, parent)
+    if not result:
+        raise AssertionError(label)
 print("AST_Tests::test_base_classes: ok")
