@@ -9,12 +9,11 @@
 # case = "Connection____exit____exc_type_as_typed_wrong"
 # subject = "multiprocessing.dummy.connection.Connection.__exit__(exc_type: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/dummy/connection.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed exc_type
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.dummy.connection.Connection.__exit__(exc_type: typed); call it with the wrong type.
 
