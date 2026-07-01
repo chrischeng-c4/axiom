@@ -9,12 +9,11 @@
 # case = "BaseListProxy____setitem____i_as_SupportsIndex_wrong"
 # subject = "multiprocessing.managers.BaseListProxy.__setitem__(i: SupportsIndex)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed i"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed i
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.BaseListProxy.__setitem__(i: SupportsIndex); call it with the wrong type.
 

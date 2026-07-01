@@ -9,12 +9,11 @@
 # case = "Server__init__registry_as_dict_wrong"
 # subject = "multiprocessing.managers.Server.__init__(registry: dict)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed registry"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed registry
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.Server.__init__(registry: dict); call it with the wrong type.
 

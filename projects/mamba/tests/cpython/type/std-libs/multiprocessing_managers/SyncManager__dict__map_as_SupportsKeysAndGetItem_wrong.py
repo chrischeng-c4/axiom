@@ -9,12 +9,11 @@
 # case = "SyncManager__dict__map_as_SupportsKeysAndGetItem_wrong"
 # subject = "multiprocessing.managers.SyncManager.dict(map: SupportsKeysAndGetItem)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed map"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/managers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed map
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.managers.SyncManager.dict(map: SupportsKeysAndGetItem); call it with the wrong type.
 
