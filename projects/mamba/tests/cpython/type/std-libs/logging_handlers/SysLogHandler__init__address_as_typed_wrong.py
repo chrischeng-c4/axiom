@@ -9,12 +9,11 @@
 # case = "SysLogHandler__init__address_as_typed_wrong"
 # subject = "logging.handlers.SysLogHandler.__init__(address: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging/handlers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address
 # mamba-strict-type: TypeError
 """Type wall: logging.handlers.SysLogHandler.__init__(address: typed); call it with the wrong type.
 

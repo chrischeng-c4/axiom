@@ -9,12 +9,11 @@
 # case = "QueueListener__dequeue__block_as_bool_wrong"
 # subject = "logging.handlers.QueueListener.dequeue(block: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed block"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging/handlers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed block
 # mamba-strict-type: TypeError
 """Type wall: logging.handlers.QueueListener.dequeue(block: bool); call it with the wrong type.
 

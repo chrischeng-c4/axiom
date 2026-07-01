@@ -9,12 +9,11 @@
 # case = "SMTPHandler__init__mailhost_as_typed_wrong"
 # subject = "logging.handlers.SMTPHandler.__init__(mailhost: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mailhost"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging/handlers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed mailhost
 # mamba-strict-type: TypeError
 """Type wall: logging.handlers.SMTPHandler.__init__(mailhost: typed); call it with the wrong type.
 
