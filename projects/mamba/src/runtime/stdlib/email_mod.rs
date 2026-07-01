@@ -1751,6 +1751,16 @@ unsafe extern "C" fn dispatch_formatdate(a: *const MbValue, n: usize) -> MbValue
     new_str("Thu, 01 Jan 1970 00:00:00 -0000")
 }
 
+unsafe extern "C" fn dispatch_localtime(a: *const MbValue, n: usize) -> MbValue {
+    let items = args_slice(a, n);
+    let pos = positional(items);
+    if let Some(dt) = pos.first().copied().filter(|v| !v.is_none()) {
+        retain(dt);
+        return dt;
+    }
+    super::datetime_mod::mb_datetime_now()
+}
+
 unsafe extern "C" fn dispatch_parsedate(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
@@ -2687,6 +2697,11 @@ fn register_email_utils() {
         &mut attrs,
         "format_datetime",
         dispatch_empty_str as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "localtime",
+        dispatch_localtime as *const () as usize,
     );
     register_func(
         &mut attrs,
