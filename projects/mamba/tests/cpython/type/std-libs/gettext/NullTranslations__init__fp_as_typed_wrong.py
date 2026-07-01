@@ -9,7 +9,6 @@
 # case = "NullTranslations__init__fp_as_typed_wrong"
 # subject = "gettext.NullTranslations.__init__(fp: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "FTP_TLS__login__user_as_str_wrong"
 # subject = "ftplib.FTP_TLS.login(user: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

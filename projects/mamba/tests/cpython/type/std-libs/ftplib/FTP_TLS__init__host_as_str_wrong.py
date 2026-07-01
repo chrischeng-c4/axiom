@@ -9,7 +9,6 @@
 # case = "FTP_TLS__init__host_as_str_wrong"
 # subject = "ftplib.FTP_TLS.__init__(host: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

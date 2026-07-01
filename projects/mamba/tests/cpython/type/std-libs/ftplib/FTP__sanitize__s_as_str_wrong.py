@@ -9,7 +9,6 @@
 # case = "FTP__sanitize__s_as_str_wrong"
 # subject = "ftplib.FTP.sanitize(s: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

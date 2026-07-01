@@ -9,7 +9,6 @@
 # case = "quotedata__data_as_str_wrong"
 # subject = "smtplib.quotedata(data: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

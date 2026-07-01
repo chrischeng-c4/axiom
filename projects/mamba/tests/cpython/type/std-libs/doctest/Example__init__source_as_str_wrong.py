@@ -9,7 +9,6 @@
 # case = "Example__init__source_as_str_wrong"
 # subject = "doctest.Example.__init__(source: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

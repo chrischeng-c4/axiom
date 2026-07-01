@@ -9,7 +9,6 @@
 # case = "translation__domain_as_str_wrong"
 # subject = "gettext.translation(domain: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

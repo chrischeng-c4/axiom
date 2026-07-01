@@ -9,7 +9,6 @@
 # case = "testfile__filename_as_str_wrong"
 # subject = "doctest.testfile(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

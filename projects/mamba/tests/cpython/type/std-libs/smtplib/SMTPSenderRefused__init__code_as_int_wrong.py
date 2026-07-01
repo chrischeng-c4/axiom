@@ -9,7 +9,6 @@
 # case = "SMTPSenderRefused__init__code_as_int_wrong"
 # subject = "smtplib.SMTPSenderRefused.__init__(code: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

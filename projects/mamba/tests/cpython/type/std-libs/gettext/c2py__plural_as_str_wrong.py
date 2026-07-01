@@ -9,7 +9,6 @@
 # case = "c2py__plural_as_str_wrong"
 # subject = "gettext.c2py(plural: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "DocTestRunner__summarize__verbose_as_typed_wrong"
 # subject = "doctest.DocTestRunner.summarize(verbose: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "DocTest____lt____other_as_DocTest_wrong"
 # subject = "doctest.DocTest.__lt__(other: DocTest)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

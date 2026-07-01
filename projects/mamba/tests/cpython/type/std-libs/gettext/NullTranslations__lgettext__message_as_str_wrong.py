@@ -9,7 +9,6 @@
 # case = "NullTranslations__lgettext__message_as_str_wrong"
 # subject = "gettext.NullTranslations.lgettext(message: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

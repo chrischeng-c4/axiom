@@ -9,7 +9,6 @@
 # case = "Breakpoint__bpprint__out_as_typed_wrong"
 # subject = "bdb.Breakpoint.bpprint(out: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

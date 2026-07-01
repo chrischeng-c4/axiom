@@ -9,7 +9,6 @@
 # case = "Bdb__runcall__func_as_Callable_wrong"
 # subject = "bdb.Bdb.runcall(func: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

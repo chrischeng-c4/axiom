@@ -9,7 +9,6 @@
 # case = "SMTP__sendmail__from_addr_as_str_wrong"
 # subject = "smtplib.SMTP.sendmail(from_addr: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

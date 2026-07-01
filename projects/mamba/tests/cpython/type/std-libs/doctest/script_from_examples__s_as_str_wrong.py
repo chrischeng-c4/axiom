@@ -9,7 +9,6 @@
 # case = "script_from_examples__s_as_str_wrong"
 # subject = "doctest.script_from_examples(s: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

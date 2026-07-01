@@ -9,7 +9,6 @@
 # case = "Bdb__get_stack__f_as_typed_wrong"
 # subject = "bdb.Bdb.get_stack(f: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

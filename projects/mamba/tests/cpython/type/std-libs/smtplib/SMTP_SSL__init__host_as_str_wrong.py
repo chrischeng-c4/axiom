@@ -9,7 +9,6 @@
 # case = "SMTP_SSL__init__host_as_str_wrong"
 # subject = "smtplib.SMTP_SSL.__init__(host: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "run_docstring_examples__globs_as_dict_wrong"
 # subject = "doctest.run_docstring_examples(globs: dict)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

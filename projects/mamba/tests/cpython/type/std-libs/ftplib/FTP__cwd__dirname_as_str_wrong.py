@@ -9,7 +9,6 @@
 # case = "FTP__cwd__dirname_as_str_wrong"
 # subject = "ftplib.FTP.cwd(dirname: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

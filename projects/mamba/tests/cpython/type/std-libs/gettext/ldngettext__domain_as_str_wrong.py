@@ -9,7 +9,6 @@
 # case = "ldngettext__domain_as_str_wrong"
 # subject = "gettext.ldngettext(domain: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

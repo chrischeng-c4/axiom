@@ -9,7 +9,6 @@
 # case = "FTP__sendeprt__host_as_str_wrong"
 # subject = "ftplib.FTP.sendeprt(host: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

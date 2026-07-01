@@ -9,7 +9,6 @@
 # case = "FTP__connect__host_as_str_wrong"
 # subject = "ftplib.FTP.connect(host: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

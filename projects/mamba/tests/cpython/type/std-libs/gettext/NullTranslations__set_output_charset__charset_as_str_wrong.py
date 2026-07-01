@@ -9,7 +9,6 @@
 # case = "NullTranslations__set_output_charset__charset_as_str_wrong"
 # subject = "gettext.NullTranslations.set_output_charset(charset: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Bdb__run__cmd_as_typed_wrong"
 # subject = "bdb.Bdb.run(cmd: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "DocTestParser__get_examples__string_as_str_wrong"
 # subject = "doctest.DocTestParser.get_examples(string: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

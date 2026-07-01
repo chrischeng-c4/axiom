@@ -9,7 +9,6 @@
 # case = "SMTP__send_message__msg_as__Message_wrong"
 # subject = "smtplib.SMTP.send_message(msg: _Message)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

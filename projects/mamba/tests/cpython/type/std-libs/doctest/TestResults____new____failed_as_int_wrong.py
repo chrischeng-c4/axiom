@@ -9,7 +9,6 @@
 # case = "TestResults____new____failed_as_int_wrong"
 # subject = "doctest.TestResults.__new__(failed: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

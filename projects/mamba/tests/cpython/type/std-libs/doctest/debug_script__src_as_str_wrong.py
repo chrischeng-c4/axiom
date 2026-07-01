@@ -9,7 +9,6 @@
 # case = "debug_script__src_as_str_wrong"
 # subject = "doctest.debug_script(src: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Bdb__canonic__filename_as_str_wrong"
 # subject = "bdb.Bdb.canonic(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

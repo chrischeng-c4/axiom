@@ -9,7 +9,6 @@
 # case = "dgettext__domain_as_str_wrong"
 # subject = "gettext.dgettext(domain: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

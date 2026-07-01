@@ -9,7 +9,6 @@
 # case = "FTP__delete__filename_as_str_wrong"
 # subject = "ftplib.FTP.delete(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

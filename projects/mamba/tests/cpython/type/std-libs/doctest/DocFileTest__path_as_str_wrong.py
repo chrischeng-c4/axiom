@@ -9,7 +9,6 @@
 # case = "DocFileTest__path_as_str_wrong"
 # subject = "doctest.DocFileTest(path: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

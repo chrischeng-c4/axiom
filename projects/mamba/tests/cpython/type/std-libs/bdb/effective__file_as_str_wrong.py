@@ -9,7 +9,6 @@
 # case = "effective__file_as_str_wrong"
 # subject = "bdb.effective(file: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"
