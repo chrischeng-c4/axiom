@@ -670,6 +670,10 @@ const DELETE_FIELDS: &[AstFieldSpec] = &[AstFieldSpec {
     name: "targets",
     kind: AstFieldKind::List,
 }];
+const EXPR_FIELDS: &[AstFieldSpec] = &[AstFieldSpec {
+    name: "value",
+    kind: AstFieldKind::AstNodeOrNone,
+}];
 const DICT_FIELDS: &[AstFieldSpec] = &[
     AstFieldSpec {
         name: "keys",
@@ -809,6 +813,7 @@ fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
         "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => CONSTANT_FIELDS,
         "Delete" => DELETE_FIELDS,
         "Dict" => DICT_FIELDS,
+        "Expr" => EXPR_FIELDS,
         "ExceptHandler" => EXCEPT_HANDLER_FIELDS,
         "FunctionType" => FUNCTION_TYPE_FIELDS,
         "ImportFrom" => IMPORT_FROM_FIELDS,
@@ -1034,7 +1039,9 @@ fn is_constant_value(value: MbValue) -> bool {
     value.as_ptr().is_some_and(|ptr| unsafe {
         matches!(
             &(*ptr).data,
-            super::super::rc::ObjData::Str(_) | super::super::rc::ObjData::Bytes(_)
+            super::super::rc::ObjData::Str(_)
+                | super::super::rc::ObjData::Bytes(_)
+                | super::super::rc::ObjData::Complex(_, _)
         )
     })
 }
@@ -1107,13 +1114,20 @@ pub fn mb_ast_construct_marker(marker: &str, args: &[MbValue]) -> Option<MbValue
             }
             fields.insert(spec.name.to_string(), arg);
         } else {
-            unsafe {
-                super::super::rc::retain_if_ptr(arg);
-            }
-            fields.insert(format!("_arg{idx}"), arg);
+            super::super::builtins::raise_type_error(format!(
+                "{node_type} constructor takes at most {} positional arguments",
+                specs.len()
+            ));
+            return Some(MbValue::none());
         }
     }
     for (name, value) in kwargs {
+        if fields.contains_key(&name) && specs.iter().any(|spec| spec.name == name) {
+            super::super::builtins::raise_type_error(format!(
+                "{node_type} got multiple values for argument '{name}'"
+            ));
+            return Some(MbValue::none());
+        }
         unsafe {
             super::super::rc::retain_if_ptr(value);
         }

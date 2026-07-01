@@ -49,6 +49,7 @@ Two distinct denominators — do not conflate:
 
 - [tests/harness/cpython/runner.rs](tests/harness/cpython/runner.rs): top-level conformance runner
 - [tests/harness/cpython/status.rs](tests/harness/cpython/status.rs): fast CPython fixture/perf/oracle readiness summary — `cargo test -p mamba --test cpython_status -- --json`; fill baseline gaps with `python3 tests/cpython/tools/perf_baseline.py record --missing-only --ready-only --limit 10 --keep-going`
+- [tests/harness/cpython/tools/runtime_fast_loop.py](tests/harness/cpython/tools/runtime_fast_loop.py): runtime fix inner loop — one guarded debug build when needed, then changed-fixture/lib-cluster `sweep.py` validation in seconds
 - [tests/cpython_compat.rs](tests/cpython_compat.rs): CPython behaviour parity fixtures
 - [tests/generator_conformance_tests.rs](tests/generator_conformance_tests.rs), [iterator_conformance_tests.rs](tests/iterator_conformance_tests.rs)
 - [tests/behavioral_builtins_tests.rs](tests/behavioral_builtins_tests.rs), [behavioral_lang_tests.rs](tests/behavioral_lang_tests.rs), [behavioral_stdlib_tests.rs](tests/behavioral_stdlib_tests.rs)
@@ -102,7 +103,7 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 - [../../crates/cclab-fetch-mamba/](../../crates/cclab-fetch-mamba/): canonical first-party binding example (async HTTP client)
 - [mambalibs/httpkit/binding/](mambalibs/httpkit/binding/): higher-level binding example (FastAPI-style router)
 - [../../CLAUDE.md](../../CLAUDE.md): repo-wide working-tree, SDD, and CRRR rules
-- [../../README.md](../../README.md): repo project and shared-library inventory
+- [../../ECOSYSTEM.md](../../ECOSYSTEM.md): 4-layer ecosystem map (runtime / libraries / framework / agkit)
 
 ## Build & install
 
@@ -113,7 +114,7 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 
 ## Issue tracking
 
-Issues live on GitHub under `chrischeng-c4/cclab` with the `app:mamba` label. Three monitoring angles:
+Issues live on GitHub under `chrischeng-c4/cclab` with the `project:mamba` label. Three monitoring angles:
 
 - **Angle A — Conformance** (Goal 1): titles prefixed `conformance(mamba):`
 - **Angle B — Tests** (Goal 3): titles prefixed `test(mamba):`
