@@ -9,12 +9,11 @@
 # case = "Writer__write__data_as__T_contra_wrong"
 # subject = "io.Writer.write(data: _T_contra)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/io.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: io.Writer.write(data: _T_contra); call it with the wrong type.
 
