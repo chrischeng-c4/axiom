@@ -189,3 +189,90 @@ requirementDiagram
     backup_unit_tests - satisfies -> R5
     backup_unit_tests - satisfies -> R6
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/operator/crd.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add ServingSpec.backup: Option<ServingBackupSpec> (default None, skip_serializing_if none) plus a new ServingBackupSpec struct with schedule: String, destination: String, retention_secs: Option<u64>, admin_token_secret: Option<String>, JsonSchema-derived like the rest of the CRD; no changes to unrelated ServingSpec/LumenSpec fields."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Sync the SPEC-MANAGED Source block byte-for-byte with the edited crd.rs."
+  - path: projects/lumen/src/operator/render.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add a backup_cron_job(lumen) -> Option<Value> function using the shared operator::render::cron_job helper; when spec.serving.backup is set it renders a batch/v1 CronJob named '<name>-backup' on the configured schedule with a container invoking `lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 --dest <destination> [--retention-secs <n>]`, adding a LUMEN_BACKUP_TOKEN env sourced via secretKeyRef when admin_token_secret is set; render() pushes this object (via .into_iter().chain / conditional push) only when Some."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Sync the SPEC-MANAGED Source block byte-for-byte with the edited render.rs."
+  - path: projects/lumen/src/backup.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "New module gated #[cfg(feature = \"backup\")]: run_backup(base_url, token, dest, retention) fetches {base_url}/admin/backup via reqwest (Bearer auth when token is Some), then hands the response bytes to service_backup::run_backup_once against sink_from_destination(dest) and the given RetentionPolicy, returning a BackupRunResult; unit tests use wiremock to stand in for the admin API and a tempdir + file:// destination for the sink."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-backup-rs.md
+    action: create
+    section: source
+    impl_mode: hand-written
+    description: "New SPEC-MANAGED tech-design doc for the new backup.rs module (rust-source-unit), mirroring the format of the other projects-lumen-src-operator-*-rs.md docs."
+  - path: projects/lumen/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add `#[cfg(feature = \"backup\")] pub mod backup;` alongside the existing `#[cfg(feature = \"operator\")] pub mod operator;` line."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-lib-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Sync the SPEC-MANAGED Source block byte-for-byte with the edited lib.rs."
+  - path: projects/lumen/Cargo.toml
+    action: modify
+    section: manifest
+    impl_mode: hand-written
+    description: "Add a `backup = [\"dep:reqwest\"]` feature and extend `operator = [...]` to also pull in `backup`, so every build that already ships the operator (and therefore reqwest via raft-wal in production images) also ships the backup CLI verb; the default (no-feature) build still links no HTTP client."
+  - path: projects/lumen/src/spec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Extend llm_storage_md() with a Snapshot / backup section documenting GET /admin/backup, POST /admin/backup/local, and POST /admin/restore (auth: admin role on \"*\", and that Engine::snapshot()/restore() is the same quiesce-free call the raft snapshotter itself uses -- no separate flush/quiesce step), plus the optional spec.serving.backup CRD field and the `lumen backup` CLI verb it schedules; replaces the current dead forward-reference to a non-existent operator backup surface."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Sync the SPEC-MANAGED Source block byte-for-byte with the edited spec.rs."
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add Command::Backup(BackupArgs) with --url, --dest, --token (env LUMEN_BACKUP_TOKEN), --retention-secs; add a dispatch_backup twin-impl (#[cfg(feature = \"backup\")] real impl calling lumen::backup::run_backup and printing the BackupRunResult as JSON; #[cfg(not(feature = \"backup\"))] fallback that bails with a message to rebuild with --features backup, matching the run_operator/crd_yaml pattern); wire a new match arm in main()."
+  - path: projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Sync the SPEC-MANAGED Source block byte-for-byte with the edited bin/lumen.rs."
+  - path: projects/lumen/tests/operator_render.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Add tests asserting no CronJob is rendered when serving.backup is None (existing fixtures), and that setting serving.backup renders exactly one batch/v1 CronJob named '<name>-backup' with the configured schedule, --dest/--retention-secs args, and a LUMEN_BACKUP_TOKEN env from secretKeyRef when adminTokenSecret is set."
+  - path: projects/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Extend the llm storage doc test to assert the new backup/snapshot content (admin/backup routes, admin-role auth, no-quiesce-needed guarantee, and the serving.backup CRD field / lumen backup verb)."
+  - path: projects/lumen/tech-design/semantic/lumen-tests.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: "Sync the SPEC-MANAGED Source block byte-for-byte with the edited operator_render.rs and spec_cli.rs."
+```
