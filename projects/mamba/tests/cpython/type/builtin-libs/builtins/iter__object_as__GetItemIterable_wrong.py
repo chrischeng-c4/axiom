@@ -9,7 +9,6 @@
 # case = "iter__object_as__GetItemIterable_wrong"
 # subject = "builtins.iter(object: _GetItemIterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "list____getitem____s_as_slice_wrong"
 # subject = "builtins.list.__getitem__(s: slice)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s
 # mamba-strict-type: TypeError
 """Type wall: builtins.list.__getitem__(s: slice); call it with the wrong type.
 

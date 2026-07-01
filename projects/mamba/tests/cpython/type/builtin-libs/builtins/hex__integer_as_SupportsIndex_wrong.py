@@ -9,7 +9,6 @@
 # case = "hex__integer_as_SupportsIndex_wrong"
 # subject = "builtins.hex(integer: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

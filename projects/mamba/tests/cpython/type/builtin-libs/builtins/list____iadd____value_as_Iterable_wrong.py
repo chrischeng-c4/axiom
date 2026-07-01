@@ -9,7 +9,6 @@
 # case = "list____iadd____value_as_Iterable_wrong"
 # subject = "builtins.list.__iadd__(value: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

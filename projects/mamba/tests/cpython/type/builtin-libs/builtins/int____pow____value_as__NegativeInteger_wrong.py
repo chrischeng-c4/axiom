@@ -9,12 +9,10 @@
 # case = "int____pow____value_as__NegativeInteger_wrong"
 # subject = "builtins.int.__pow__(value: _NegativeInteger)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: builtins.int.__pow__(value: _NegativeInteger); call it with the wrong type.
 

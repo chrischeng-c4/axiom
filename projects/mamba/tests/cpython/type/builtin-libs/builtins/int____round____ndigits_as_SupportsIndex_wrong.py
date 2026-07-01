@@ -9,7 +9,6 @@
 # case = "int____round____ndigits_as_SupportsIndex_wrong"
 # subject = "builtins.int.__round__(ndigits: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

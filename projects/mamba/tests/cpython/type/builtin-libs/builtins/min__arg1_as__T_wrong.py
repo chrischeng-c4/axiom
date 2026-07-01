@@ -9,12 +9,10 @@
 # case = "min__arg1_as__T_wrong"
 # subject = "builtins.min(arg1: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg1"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed arg1
 # mamba-strict-type: TypeError
 """Type wall: builtins.min(arg1: _T); call it with the wrong type.
 
