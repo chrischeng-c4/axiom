@@ -286,6 +286,62 @@ fn build_emits_resolved_node_modules_dep_with_relative_url() {
     );
 }
 
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md#unit-test
+fn build_compiles_scss_side_effect_imports_to_static_css() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("src/components/Button.stories.tsx"),
+        "import { Button } from './Button';\nexport default { title: 'Components/Button', component: Button };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Button.tsx"),
+        "import './Button.scss';\nexport const Button = () => null;\n",
+    );
+    write(
+        root.join("src/components/Button.scss"),
+        "$radius: 4px;\n.button { &--primary { border-radius: $radius; } }\n",
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    let css_rel = Path::new("modules/src/components/Button.css");
+    let css_path = out.join(css_rel);
+    assert!(
+        css_path.is_file(),
+        "SCSS side-effect import must emit a CSS asset"
+    );
+    assert!(result.emitted.iter().any(|p| p == css_rel));
+
+    let css = fs::read_to_string(&css_path).expect("read css");
+    assert!(
+        css.contains(".button--primary") && css.contains("border-radius") && css.contains("4px"),
+        "SCSS nesting and variables should be compiled, got:\n{css}"
+    );
+    assert!(
+        !out.join("modules/src/components/Button.scss.js").exists(),
+        "SCSS must not be emitted as a fake JS module"
+    );
+
+    let component_js =
+        fs::read_to_string(out.join("modules/src/components/Button.js")).expect("read component");
+    assert!(
+        !component_js.contains("Button.scss"),
+        "emitted JS should not import SCSS as a JS module: {component_js}"
+    );
+
+    let preview = fs::read_to_string(out.join("preview/components-button--primary.html"))
+        .expect("read preview");
+    assert!(
+        preview
+            .contains(r#"<link rel="stylesheet" href="../modules/src/components/Button.css" />"#),
+        "preview should link emitted CSS with a relative URL: {preview}"
+    );
+}
+
 /// (d) The dev renderers' default output is unchanged (no absolute→relative
 /// regression for the dev server).
 #[test]

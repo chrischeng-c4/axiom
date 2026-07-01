@@ -31,13 +31,15 @@
 //!   preview/<story_id>.html            # one isolated preview per story
 //!   modules/<rel-path-with-.js>        # transformed JS for every project module
 //!   deps/<node_modules-rel-with-.js>   # transformed JS for every resolved dep
+//!   modules/<rel-path-with-.css>       # compiled CSS/SCSS/Sass side-effect imports
 //! ```
 //! A preview at `preview/<id>.html` imports its module as
 //! `../modules/<rel>.js`; inside a module, a relative import `./Button` is
 //! rewritten to `./Button.js` (extension normalized to the emitted `.js`), and a
 //! resolvable bare import `clsx` is rewritten to e.g.
 //! `../../../deps/clsx/dist/clsx.js`, so the emitted tree is internally
-//! consistent and resolves on any static host.
+//! consistent and resolves on any static host. Relative `.css`/`.scss`/`.sass`
+//! imports are compiled to real `.css` assets and linked from static previews.
 //!
 //! ## Deferred (#197)
 //! Advanced conditional-`exports` edge cases and CommonJS interop are out of
@@ -109,26 +111,35 @@ pub fn build_stories_static(root: &Path, out_dir: &Path) -> Result<BuildStaticRe
     let manager_html = manager_relative_html(&index);
     write_emitted(out_dir, Path::new("index.html"), &manager_html, &mut result)?;
 
-    // 2. Per story: a relative preview + its transitively-imported modules.
-    //    A module is emitted at most once across all stories (modules dedupe by
-    //    their root-relative URL).
+    // 2. Per story: emit transitively-imported modules first, collecting any
+    //    CSS assets they reference. Previews are written after the graph walk so
+    //    every static preview can link the final stylesheet set.
     let mut emitted_modules: BTreeSet<String> = BTreeSet::new();
+    let mut emitted_styles: BTreeSet<String> = BTreeSet::new();
+    let mut previews: Vec<(PathBuf, StoryEntry, String)> = Vec::new();
     for story in &index.stories {
         let module_url = story_module_root_url(root, &story.file);
-        let preview_html = preview_relative_html(story, &module_url);
         let preview_rel = PathBuf::from("preview").join(format!("{}.html", story.id));
-        write_emitted(out_dir, &preview_rel, &preview_html, &mut result)?;
-        result.story_count += 1;
+        previews.push((preview_rel, story.clone(), module_url.clone()));
 
         // Emit the story module + everything it transitively imports (local
-        // relative modules only; bare specifiers stay for the importmap/browser).
+        // relative modules, style assets, and locally-resolved deps).
         emit_module_graph(
             root,
             &module_url,
             out_dir,
             &mut emitted_modules,
+            &mut emitted_styles,
             &mut result,
         );
+    }
+
+    let stylesheet_paths: Vec<String> = emitted_styles.into_iter().collect();
+    for (preview_rel, story, module_url) in previews {
+        let preview_html =
+            preview_relative_html_with_styles(&story, &module_url, &stylesheet_paths);
+        write_emitted(out_dir, &preview_rel, &preview_html, &mut result)?;
+        result.story_count += 1;
     }
 
     result.emitted.sort();
@@ -153,8 +164,42 @@ pub fn manager_relative_html(index: &StoryIndex) -> String {
 /// preview lives at `preview/<id>.html`, so it imports the emitted module as
 /// `../modules/src/x.js`.
 pub fn preview_relative_html(story: &StoryEntry, module_root_url: &str) -> String {
+    preview_relative_html_with_styles(story, module_root_url, &[])
+}
+
+fn preview_relative_html_with_styles(
+    story: &StoryEntry,
+    module_root_url: &str,
+    stylesheet_paths: &[String],
+) -> String {
     let import_url = preview_module_import_url(module_root_url);
-    manager::render_preview_html_with_mode(story, &import_url, UrlMode::Static)
+    let html = manager::render_preview_html_with_mode(story, &import_url, UrlMode::Static);
+    inject_static_stylesheet_links(&html, stylesheet_paths)
+}
+
+fn inject_static_stylesheet_links(html: &str, stylesheet_paths: &[String]) -> String {
+    if stylesheet_paths.is_empty() {
+        return html.to_string();
+    }
+    let links = stylesheet_paths
+        .iter()
+        .map(|path| format!(r#"    <link rel="stylesheet" href="../{path}" />"#))
+        .collect::<Vec<_>>()
+        .join("\n");
+    inject_before_head_end(html, &format!("{links}\n"))
+}
+
+fn inject_before_head_end(html: &str, snippet: &str) -> String {
+    let lower = html.to_lowercase();
+    if let Some(pos) = lower.find("</head>") {
+        let mut out = String::with_capacity(html.len() + snippet.len());
+        out.push_str(&html[..pos]);
+        out.push_str(snippet);
+        out.push_str(&html[pos..]);
+        out
+    } else {
+        format!("{snippet}{html}")
+    }
 }
 
 /// The `../modules/...js` URL a preview document uses to import a module given
@@ -174,6 +219,12 @@ enum EmitItem {
     /// A resolved dep, identified by its on-disk file under `node_modules`.
     /// Emitted at `deps/<node_modules-relative-with-.js>`.
     Dep(PathBuf),
+}
+
+#[derive(Clone)]
+struct StyleAsset {
+    source_file: PathBuf,
+    emitted_path: String,
 }
 
 impl EmitItem {
@@ -202,6 +253,7 @@ fn emit_module_graph(
     module_url: &str,
     out_dir: &Path,
     emitted: &mut BTreeSet<String>,
+    emitted_styles: &mut BTreeSet<String>,
     result: &mut BuildStaticResult,
 ) {
     let mut queue: Vec<EmitItem> = vec![EmitItem::Module(module_url.to_string())];
@@ -215,6 +267,17 @@ fn emit_module_graph(
         match emit_item(root, &item, out_dir) {
             Ok(emit) => {
                 result.emitted.push(emit.rel_path);
+                for style in emit.styles {
+                    if !emitted_styles.insert(style.emitted_path.clone()) {
+                        continue;
+                    }
+                    match emit_style_asset(root, &style, out_dir) {
+                        Ok(rel_path) => result.emitted.push(rel_path),
+                        Err(err) => {
+                            result.diagnostics.push(format!("style {err}"));
+                        }
+                    }
+                }
                 queue.extend(emit.imports);
             }
             Err(err) => {
@@ -230,6 +293,8 @@ struct EmittedItem {
     rel_path: PathBuf,
     /// Further items to walk (resolved relative modules + resolved deps).
     imports: Vec<EmitItem>,
+    /// CSS/SCSS/Sass assets referenced by this module.
+    styles: Vec<StyleAsset>,
 }
 
 /// Transform one emit item to browser JS, rewrite its relative + resolvable bare
@@ -255,7 +320,7 @@ fn emit_item(root: &Path, item: &EmitItem, out_dir: &Path) -> Result<EmittedItem
     let code = transform_source(&source, &source_file)
         .with_context(|| format!("transforming {}", source_file.display()))?;
 
-    let (rewritten, imports) = rewrite_imports(&code, &source_file, &self_emitted, root);
+    let rewrite = rewrite_imports(&code, &source_file, &self_emitted, root);
 
     let out_rel = PathBuf::from(&self_emitted);
     let out_path = out_dir.join(&out_rel);
@@ -263,13 +328,43 @@ fn emit_item(root: &Path, item: &EmitItem, out_dir: &Path) -> Result<EmittedItem
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating dir {}", parent.display()))?;
     }
-    std::fs::write(&out_path, rewritten)
+    std::fs::write(&out_path, rewrite.code)
         .with_context(|| format!("writing {}", out_path.display()))?;
 
     Ok(EmittedItem {
         rel_path: out_rel,
-        imports,
+        imports: rewrite.imports,
+        styles: rewrite.styles,
     })
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md#logic
+fn emit_style_asset(root: &Path, style: &StyleAsset, out_dir: &Path) -> Result<PathBuf> {
+    // Stories static export reuses the normal CSS pipeline so Sass, @import,
+    // Tailwind directives, and lightningcss transforms behave like `jet build`.
+    // A malformed Tailwind config should not prevent plain SCSS from compiling
+    // in stories output; this matches the main build's fallback behavior.
+    let config = crate::css::TailwindConfig::load(root).unwrap_or_default();
+    let pipeline = crate::css::CssPipeline::new(root.to_path_buf(), config, false);
+    let output = pipeline
+        .process(&style.source_file)
+        .with_context(|| format!("processing {}", style.source_file.display()))?;
+
+    let out_rel = PathBuf::from(&style.emitted_path);
+    let out_path = out_dir.join(&out_rel);
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating dir {}", parent.display()))?;
+    }
+    std::fs::write(&out_path, output.css)
+        .with_context(|| format!("writing {}", out_path.display()))?;
+    Ok(out_rel)
+}
+
+struct RewriteResult {
+    code: String,
+    imports: Vec<EmitItem>,
+    styles: Vec<StyleAsset>,
 }
 
 /// Rewrite the import specifiers in transformed JS so they resolve to the
@@ -287,8 +382,10 @@ fn rewrite_imports(
     importer_file: &Path,
     importer_emitted: &str,
     root: &Path,
-) -> (String, Vec<EmitItem>) {
+) -> RewriteResult {
     let mut imports: Vec<EmitItem> = Vec::new();
+    let mut styles: Vec<StyleAsset> = Vec::new();
+    let mut style_specs: Vec<String> = Vec::new();
     let mut rewrites: BTreeMap<String, String> = BTreeMap::new();
 
     for spec in super::deps::extract_all_import_specifiers(code) {
@@ -297,6 +394,11 @@ fn rewrite_imports(
             let Some(target_file) = resolve_relative_file(importer_file, &spec) else {
                 continue; // unresolvable — leave the original specifier in place
             };
+            if is_style_path(&target_file) {
+                styles.push(style_asset_for_file(root, &target_file));
+                style_specs.push(spec.clone());
+                continue;
+            }
             // A relative import inside a dep file resolves to another file in the
             // SAME node_modules package → keep it a dep; a relative import inside
             // a project module resolves to another project module.
@@ -323,9 +425,13 @@ fn rewrite_imports(
         imports.push(item);
     }
 
+    let mut out = code.to_string();
+    for spec in &style_specs {
+        out = remove_static_import_for_spec(&out, spec);
+    }
+
     // Apply the rewrites textually. Only quoted forms are rewritten so we never
     // touch an identifier that merely shares the specifier's spelling.
-    let mut out = code.to_string();
     for (old, new) in &rewrites {
         if old == new {
             continue;
@@ -334,7 +440,54 @@ fn rewrite_imports(
             .replace(&format!("\"{old}\""), &format!("\"{new}\""))
             .replace(&format!("'{old}'"), &format!("'{new}'"));
     }
-    (out, imports)
+    RewriteResult {
+        code: out,
+        imports,
+        styles,
+    }
+}
+
+fn style_asset_for_file(root: &Path, file: &Path) -> StyleAsset {
+    let emitted_path = if path_has_node_modules(file) {
+        format!("deps/{}", to_css_path(&super::deps::dep_key(file)))
+    } else {
+        let url = file_to_root_url(root, file);
+        format!("modules/{}", to_css_path(url.trim_start_matches('/')))
+    };
+    StyleAsset {
+        source_file: file.to_path_buf(),
+        emitted_path,
+    }
+}
+
+fn is_style_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("css")
+                || ext.eq_ignore_ascii_case("scss")
+                || ext.eq_ignore_ascii_case("sass")
+    )
+}
+
+fn remove_static_import_for_spec(code: &str, spec: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    for line in code.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if is_static_import_for_spec(trimmed, spec) {
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+fn is_static_import_for_spec(trimmed_line: &str, spec: &str) -> bool {
+    (trimmed_line.starts_with("import ")
+        || trimmed_line.starts_with("import\"")
+        || trimmed_line.starts_with("import'"))
+        && (trimmed_line.contains(&format!("\"{spec}\""))
+            || trimmed_line.contains(&format!("'{spec}'")))
 }
 
 /// Resolve a relative specifier (`./Button`, `../lib/x.tsx`) against the
@@ -348,7 +501,9 @@ fn resolve_relative_file(importer_file: &Path, spec: &str) -> Option<PathBuf> {
     if joined.is_file() {
         return Some(joined);
     }
-    const EXTS: &[&str] = &["tsx", "ts", "jsx", "js", "mjs", "cjs", "json"];
+    const EXTS: &[&str] = &[
+        "tsx", "ts", "jsx", "js", "mjs", "cjs", "json", "css", "scss", "sass",
+    ];
     for ext in EXTS {
         let candidate = joined.with_extension(ext);
         if candidate.is_file() {
@@ -501,6 +656,16 @@ fn to_js_path(path: &str) -> String {
         }
     }
     format!("{path}.js")
+}
+
+fn to_css_path(path: &str) -> String {
+    const STYLE_EXTS: &[&str] = &[".css", ".scss", ".sass"];
+    for ext in STYLE_EXTS {
+        if let Some(stem) = path.strip_suffix(ext) {
+            return format!("{stem}.css");
+        }
+    }
+    format!("{path}.css")
 }
 
 /// Write `contents` to `out_dir/rel`, creating parents, and record the relative
