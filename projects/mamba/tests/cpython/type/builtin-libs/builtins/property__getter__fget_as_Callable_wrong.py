@@ -9,12 +9,10 @@
 # case = "property__getter__fget_as_Callable_wrong"
 # subject = "builtins.property.getter(fget: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fget"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fget
 # mamba-strict-type: TypeError
 """Type wall: builtins.property.getter(fget: Callable); call it with the wrong type.
 

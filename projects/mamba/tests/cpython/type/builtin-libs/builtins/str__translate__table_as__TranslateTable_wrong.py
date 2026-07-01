@@ -9,7 +9,6 @@
 # case = "str__translate__table_as__TranslateTable_wrong"
 # subject = "builtins.str.translate(table: _TranslateTable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

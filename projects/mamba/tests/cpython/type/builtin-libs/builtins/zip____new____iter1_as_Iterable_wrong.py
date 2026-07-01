@@ -9,7 +9,6 @@
 # case = "zip____new____iter1_as_Iterable_wrong"
 # subject = "builtins.zip.__new__(iter1: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

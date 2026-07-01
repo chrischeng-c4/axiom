@@ -9,7 +9,6 @@
 # case = "str__replace__old_as_LiteralString_wrong"
 # subject = "builtins.str.replace(old: LiteralString)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

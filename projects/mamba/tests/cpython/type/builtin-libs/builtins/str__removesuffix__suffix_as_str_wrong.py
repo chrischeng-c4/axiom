@@ -9,7 +9,6 @@
 # case = "str__removesuffix__suffix_as_str_wrong"
 # subject = "builtins.str.removesuffix(suffix: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

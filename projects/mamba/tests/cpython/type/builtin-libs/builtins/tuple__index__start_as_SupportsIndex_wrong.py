@@ -9,7 +9,6 @@
 # case = "tuple__index__start_as_SupportsIndex_wrong"
 # subject = "builtins.tuple.index(start: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

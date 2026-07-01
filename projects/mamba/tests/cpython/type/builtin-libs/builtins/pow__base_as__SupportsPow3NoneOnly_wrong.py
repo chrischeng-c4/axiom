@@ -9,7 +9,6 @@
 # case = "pow__base_as__SupportsPow3NoneOnly_wrong"
 # subject = "builtins.pow(base: _SupportsPow3NoneOnly)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

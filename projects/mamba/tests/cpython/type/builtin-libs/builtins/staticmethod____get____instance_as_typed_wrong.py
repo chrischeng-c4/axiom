@@ -9,12 +9,10 @@
 # case = "staticmethod____get____instance_as_typed_wrong"
 # subject = "builtins.staticmethod.__get__(instance: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed instance"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed instance
 # mamba-strict-type: TypeError
 """Type wall: builtins.staticmethod.__get__(instance: typed); call it with the wrong type.
 
