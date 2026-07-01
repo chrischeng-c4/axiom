@@ -243,7 +243,7 @@ ID: client-control-api
 Type: RuntimeTool
 Root WI: #165
 Status: confirmed
-Surfaces: HTTP: `/v1/workflows`, `/v1/runs/{run_id}`, `/v1/runs/{run_id}/result-ref`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`.
+Surfaces: HTTP: `POST /runs`, `GET /runs/{id}`, `POST /runs/{id}/nodes/{node}/complete`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`.
 EC Dimensions: behavior: pending h2c/OpenAPI API gate - submit, status, result-ref, validation, probes, metrics, and OpenAPI
 Required Verification: smoke, conformance
 Promise:
