@@ -2,15 +2,21 @@ version = 2
 project = "keep"
 ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-07-01T03:08:41.757766+00:00"
-digest = "sha256:83fefb0fe861a569e23cf884e2e100e418867aacf3122c337db29522061be501"
-source_digest = "sha256:83fefb0fe861a569e23cf884e2e100e418867aacf3122c337db29522061be501"
-ir_digest = "sha256:22095d93176974d6ffc5c34626e19e5a94203dfa613f047af0e8489f1182d2f3"
+generated_at = "2026-07-01T03:17:31.323003+00:00"
+digest = "sha256:76c8f40f9941d29056ff28a58ff3c20de9849af38c6815fdc1ac0ba99b6745da"
+source_digest = "sha256:76c8f40f9941d29056ff28a58ff3c20de9849af38c6815fdc1ac0ba99b6745da"
+ir_digest = "sha256:78f4549f8a92bfa70ac0e6b7844506b5f5b8eab9475ba4eb7b663c4f33cf24e8"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-keep-k8s-crd-operator-instance-cli.md"
 digest = "sha256:687e463825eb57d76189c2bf53fda15bf0515643a8c06b88e534d5f68f347aa9"
 ir_digest = "sha256:ab32a214b684ce43cee8cf9ea7e98c80923a845342993756cc9c83a670ff0f3f"
+section_count = 3
+
+[[files]]
+path = "interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md"
+digest = "sha256:ec69497841321761892e3b3ea231a251e8573d4b40a87cf60aafaa549d414197"
+ir_digest = "sha256:7440944c88d2b8fd60b6a5b2e815592615a08f00f1ed5b5942885cf201c36ad0"
 section_count = 3
 
 [[files]]
