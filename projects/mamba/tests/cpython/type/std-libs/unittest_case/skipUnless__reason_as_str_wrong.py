@@ -9,7 +9,6 @@
 # case = "skipUnless__reason_as_str_wrong"
 # subject = "unittest.case.skipUnless(reason: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"

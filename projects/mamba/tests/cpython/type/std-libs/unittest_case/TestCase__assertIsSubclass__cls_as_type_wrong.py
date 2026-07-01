@@ -9,12 +9,10 @@
 # case = "TestCase__assertIsSubclass__cls_as_type_wrong"
 # subject = "unittest.case.TestCase.assertIsSubclass(cls: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertIsSubclass(cls: type); call it with the wrong type.
 

@@ -9,12 +9,10 @@
 # case = "TestCase__assertListEqual__list1_as_list_wrong"
 # subject = "unittest.case.TestCase.assertListEqual(list1: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed list1"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed list1
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertListEqual(list1: list); call it with the wrong type.
 

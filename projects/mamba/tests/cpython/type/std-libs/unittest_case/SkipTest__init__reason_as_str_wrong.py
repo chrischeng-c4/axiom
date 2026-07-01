@@ -9,7 +9,6 @@
 # case = "SkipTest__init__reason_as_str_wrong"
 # subject = "unittest.case.SkipTest.__init__(reason: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"

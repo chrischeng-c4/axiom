@@ -9,12 +9,10 @@
 # case = "TestCase__assertTupleEqual__tuple1_as_tuple_wrong"
 # subject = "unittest.case.TestCase.assertTupleEqual(tuple1: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed tuple1"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/unittest/case.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed tuple1
 # mamba-strict-type: TypeError
 """Type wall: unittest.case.TestCase.assertTupleEqual(tuple1: tuple); call it with the wrong type.
 
