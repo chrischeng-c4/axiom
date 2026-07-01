@@ -483,15 +483,30 @@ pub fn run() -> anyhow::Result<()> {
         // single-voter raft (LOOM_RAFT_DIR) > file crash-recovery (LOOM_DATA_DIR)
         // > in-memory. The cluster store also exposes a raft router peers reach.
         let mut raft_router: Option<Router> = None;
-        let store: Arc<dyn RunStore> = if let Ok(peers_env) = std::env::var("LOOM_CLUSTER_PEERS") {
+        let store: Arc<dyn RunStore> = if raft_host::replica_mode() {
+            // k8s scale-out (REPLICAS_PER_SHARD > 1): derive node id / voters /
+            // peers from the StatefulSet downward API. `LOOM_PEERS` overrides the
+            // peer DNS to run a multi-node group on one host.
+            let dir = std::env::var("LOOM_RAFT_DIR").unwrap_or_else(|_| "/data/raft".to_string());
+            let topo =
+                raft_host::ClusterTopology::from_env("loom", "loom-headless", 7474, "LOOM_PEERS")?;
+            eprintln!(
+                "loom: raft REPLICA mode — node {}, {} peer(s), dir {dir}",
+                topo.node_id,
+                topo.peers.len()
+            );
+            let rs = crate::raft::RaftRunStore::from_topology(topo, &dir)?;
+            raft_router = Some(rs.router());
+            Arc::new(rs)
+        } else if let Ok(peers_env) = std::env::var("LOOM_CLUSTER_PEERS") {
+            // Local multi-node testing: an explicit `0=url,1=url,…` peer map (all
+            // members incl. self); build the peer map excluding self.
             let id = std::env::var("LOOM_NODE_ID")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
             let dir =
                 std::env::var("LOOM_RAFT_DIR").unwrap_or_else(|_| format!("/tmp/loom-raft-{id}"));
-            // LOOM_CLUSTER_PEERS = "0=http://h0,1=http://h1,2=http://h2" (all
-            // members incl. self); build the peer map excluding self.
             let mut peers = std::collections::HashMap::new();
             for part in peers_env.split(',') {
                 if let Some((nid, url)) = part.split_once('=') {
@@ -504,12 +519,15 @@ pub fn run() -> anyhow::Result<()> {
             }
             let n_voters = peers.len() as u64 + 1;
             eprintln!("loom: raft CLUSTER node {id}/{n_voters}, peers {peers:?}, dir {dir}");
-            let cs = crate::cluster::RaftClusterStore::spawn(id, n_voters, peers, &dir)?;
-            raft_router = Some(cs.router());
-            Arc::new(cs)
+            let rs = crate::raft::RaftRunStore::cluster(id, n_voters, peers, &dir)?;
+            raft_router = Some(rs.router());
+            Arc::new(rs)
         } else if let Ok(dir) = std::env::var("LOOM_RAFT_DIR") {
-            eprintln!("loom: raft-backed durable store (single-voter) under {dir}");
-            Arc::new(crate::raft::RaftRunStore::open(0, &dir)?)
+            // Single-node durable raft (its own majority) — the archetype default.
+            eprintln!("loom: raft-backed durable store (single-node) under {dir}");
+            let rs = crate::raft::RaftRunStore::single_node(&dir)?;
+            raft_router = Some(rs.router());
+            Arc::new(rs)
         } else if let Ok(dir) = std::env::var("LOOM_DATA_DIR") {
             eprintln!("loom: persisting runs under {dir}");
             Arc::new(crate::store::FileStore::open(&dir)?)

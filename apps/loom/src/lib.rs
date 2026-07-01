@@ -15,7 +15,6 @@
 //! parties transfer directly (claim-check).
 
 pub mod canvas;
-pub mod cluster;
 pub mod deadline;
 pub mod fairness;
 pub mod gc;
