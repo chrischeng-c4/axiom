@@ -17,38 +17,42 @@ capability_refs:
 
 ```mermaid
 ---
-id: jet-pack-publish-workspace-deps-flow
-entry: start
+id: jet-pack-publish-workspace-deps-contract
+entry: read_manifest
 nodes:
-  start: { kind: start, label: "Start pack/publish manifest transform" }
-  read_pkg: { kind: process, label: "Read package.json from package root" }
-  find_root: { kind: process, label: "Walk ancestors to find workspace root" }
-  workspace_found: { kind: decision, label: "Workspace discovered?" }
-  rewrite_fields: { kind: process, label: "Rewrite workspace: specs in dependency fields" }
-  validate: { kind: process, label: "Validate package metadata before tarball/publish" }
-  pack: { kind: process, label: "Write transformed package.json into tarball/publish body" }
-  done: { kind: terminal, label: "Published package has registry-safe dependency ranges" }
+  read_manifest: { kind: start, label: "Read publish package.json" }
+  scan_ancestor: { kind: process, label: "Try WorkspaceManager::discover on package dir and ancestors" }
+  usable_ws: { kind: decision, label: "Ancestor contains this package and dependency targets?" }
+  no_ws: { kind: process, label: "Leave manifest unchanged when no workspace exists" }
+  field_loop: { kind: process, label: "Visit dependencies/devDependencies/peerDependencies/optionalDependencies" }
+  workspace_spec: { kind: decision, label: "String value starts with workspace:?" }
+  resolve: { kind: process, label: "Resolve target package version and range operator" }
+  replace: { kind: process, label: "Replace workspace spec with npm-compatible range" }
+  emit: { kind: terminal, label: "Emit transformed manifest to tarball and publish JSON" }
 edges:
-  - { from: start, to: read_pkg }
-  - { from: read_pkg, to: find_root }
-  - { from: find_root, to: workspace_found }
-  - { from: workspace_found, to: rewrite_fields, label: "yes" }
-  - { from: workspace_found, to: validate, label: "no" }
-  - { from: rewrite_fields, to: validate }
-  - { from: validate, to: pack }
-  - { from: pack, to: done }
+  - { from: read_manifest, to: scan_ancestor }
+  - { from: scan_ancestor, to: usable_ws }
+  - { from: usable_ws, to: field_loop, label: "yes" }
+  - { from: usable_ws, to: no_ws, label: "no" }
+  - { from: no_ws, to: emit }
+  - { from: field_loop, to: workspace_spec }
+  - { from: workspace_spec, to: resolve, label: "yes" }
+  - { from: workspace_spec, to: emit, label: "no more matches" }
+  - { from: resolve, to: replace }
+  - { from: replace, to: field_loop }
 ---
 flowchart TD
-    start([pack/publish]) --> read_pkg[Read package.json from package root]
-    read_pkg --> find_root[Walk ancestors to locate jet/pnpm/package workspaces root]
-    find_root --> workspace_found{Workspace discovered?}
-    workspace_found -->|yes| rewrite_fields[Rewrite workspace specs in dependencies/dev/peer/optional]
-    workspace_found -->|no| validate[Validate publish metadata as before]
-    rewrite_fields --> validate
-    validate --> pack[Write transformed package.json to tarball and publish body]
-    pack --> done([No workspace: ranges leave the package])
+    read_manifest([Read package.json]) --> scan_ancestor[Discover workspace from package dir and ancestors]
+    scan_ancestor --> usable_ws{Workspace can resolve this package's deps?}
+    usable_ws -->|no| no_ws[No workspace transform]
+    no_ws --> emit([Emit manifest])
+    usable_ws -->|yes| field_loop[Visit dependencies, devDependencies, peerDependencies, optionalDependencies]
+    field_loop --> workspace_spec{workspace: string?}
+    workspace_spec -->|yes| resolve[Resolve target package version/range]
+    resolve --> replace[Replace with registry-compatible semver range]
+    replace --> field_loop
+    workspace_spec -->|no more matches| emit
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
