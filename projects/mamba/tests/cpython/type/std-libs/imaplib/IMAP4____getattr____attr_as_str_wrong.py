@@ -9,7 +9,6 @@
 # case = "IMAP4____getattr____attr_as_str_wrong"
 # subject = "imaplib.IMAP4.__getattr__(attr: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "IMAP4__login_cram_md5__user_as_str_wrong"
 # subject = "imaplib.IMAP4.login_cram_md5(user: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

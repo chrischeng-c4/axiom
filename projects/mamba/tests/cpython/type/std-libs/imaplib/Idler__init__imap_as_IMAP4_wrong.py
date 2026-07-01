@@ -9,7 +9,6 @@
 # case = "Idler__init__imap_as_IMAP4_wrong"
 # subject = "imaplib.Idler.__init__(imap: IMAP4)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"

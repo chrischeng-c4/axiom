@@ -9,7 +9,6 @@
 # case = "IMAP4__copy__message_set_as_str_wrong"
 # subject = "imaplib.IMAP4.copy(message_set: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/imaplib.pyi"
 # status = "filled"
