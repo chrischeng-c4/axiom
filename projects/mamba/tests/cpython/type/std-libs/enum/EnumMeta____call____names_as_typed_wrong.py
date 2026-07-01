@@ -9,12 +9,11 @@
 # case = "EnumMeta____call____names_as_typed_wrong"
 # subject = "enum.EnumMeta.__call__(names: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed names"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/enum.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed names
 # mamba-strict-type: TypeError
 """Type wall: enum.EnumMeta.__call__(names: typed); call it with the wrong type.
 

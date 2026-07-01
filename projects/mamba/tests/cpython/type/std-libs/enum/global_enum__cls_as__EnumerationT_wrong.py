@@ -9,12 +9,11 @@
 # case = "global_enum__cls_as__EnumerationT_wrong"
 # subject = "enum.global_enum(cls: _EnumerationT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/enum.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls
 # mamba-strict-type: TypeError
 """Type wall: enum.global_enum(cls: _EnumerationT); call it with the wrong type.
 

@@ -9,12 +9,11 @@
 # case = "unique__enumeration_as__EnumerationT_wrong"
 # subject = "enum.unique(enumeration: _EnumerationT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enumeration"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/enum.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed enumeration
 # mamba-strict-type: TypeError
 """Type wall: enum.unique(enumeration: _EnumerationT); call it with the wrong type.
 
