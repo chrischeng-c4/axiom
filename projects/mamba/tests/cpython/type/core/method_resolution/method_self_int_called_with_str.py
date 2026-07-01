@@ -9,7 +9,6 @@
 # case = "method_self_int_called_with_str"
 # subject = "unbound method receiver contract"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

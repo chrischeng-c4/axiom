@@ -9,7 +9,6 @@
 # case = "func_list_arg_called_with_int"
 # subject = "function positional parameter annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

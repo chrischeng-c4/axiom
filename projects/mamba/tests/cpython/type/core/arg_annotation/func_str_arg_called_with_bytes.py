@@ -9,7 +9,6 @@
 # case = "func_str_arg_called_with_bytes"
 # subject = "function positional parameter annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

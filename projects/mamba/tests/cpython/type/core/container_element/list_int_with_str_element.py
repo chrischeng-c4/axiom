@@ -9,7 +9,6 @@
 # case = "list_int_with_str_element"
 # subject = "list element annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

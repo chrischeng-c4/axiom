@@ -9,7 +9,6 @@
 # case = "func_none_return_returns_int"
 # subject = "function None return annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
