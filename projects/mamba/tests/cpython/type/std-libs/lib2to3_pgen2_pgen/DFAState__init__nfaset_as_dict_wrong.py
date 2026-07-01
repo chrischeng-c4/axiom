@@ -9,12 +9,11 @@
 # case = "DFAState__init__nfaset_as_dict_wrong"
 # subject = "lib2to3.pgen2.pgen.DFAState.__init__(nfaset: dict)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed nfaset"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/pgen2/pgen.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed nfaset
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.pgen2.pgen.DFAState.__init__(nfaset: dict); call it with the wrong type.
 

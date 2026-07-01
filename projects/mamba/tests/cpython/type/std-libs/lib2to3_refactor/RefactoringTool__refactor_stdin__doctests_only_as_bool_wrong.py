@@ -9,12 +9,11 @@
 # case = "RefactoringTool__refactor_stdin__doctests_only_as_bool_wrong"
 # subject = "lib2to3.refactor.RefactoringTool.refactor_stdin(doctests_only: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed doctests_only"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/refactor.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed doctests_only
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.refactor.RefactoringTool.refactor_stdin(doctests_only: bool); call it with the wrong type.
 

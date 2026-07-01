@@ -9,12 +9,11 @@
 # case = "RefactoringTool__refactor_doctest__block_as_list_wrong"
 # subject = "lib2to3.refactor.RefactoringTool.refactor_doctest(block: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed block"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/refactor.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed block
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.refactor.RefactoringTool.refactor_doctest(block: list); call it with the wrong type.
 

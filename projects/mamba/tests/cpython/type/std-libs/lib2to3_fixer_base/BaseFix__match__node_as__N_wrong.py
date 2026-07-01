@@ -9,12 +9,11 @@
 # case = "BaseFix__match__node_as__N_wrong"
 # subject = "lib2to3.fixer_base.BaseFix.match(node: _N)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed node"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/fixer_base.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed node
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.fixer_base.BaseFix.match(node: _N); call it with the wrong type.
 
