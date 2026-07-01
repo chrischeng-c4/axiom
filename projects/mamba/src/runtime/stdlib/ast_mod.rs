@@ -979,10 +979,23 @@ fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue
 }
 
 fn insert_default_location_attrs(fields: &mut FxHashMap<String, MbValue>) {
-    fields.insert("lineno".to_string(), MbValue::from_int(1));
-    fields.insert("col_offset".to_string(), MbValue::from_int(0));
-    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
-    fields.insert("end_col_offset".to_string(), MbValue::from_int(0));
+    insert_location_attrs(fields, 1, 0, 1, 0);
+}
+
+fn insert_location_attrs(
+    fields: &mut FxHashMap<String, MbValue>,
+    lineno: i64,
+    col_offset: i64,
+    end_lineno: i64,
+    end_col_offset: i64,
+) {
+    fields.insert("lineno".to_string(), MbValue::from_int(lineno));
+    fields.insert("col_offset".to_string(), MbValue::from_int(col_offset));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(end_lineno));
+    fields.insert(
+        "end_col_offset".to_string(),
+        MbValue::from_int(end_col_offset),
+    );
 }
 
 /// ast.parse(source, filename='<unknown>', mode='exec') -> AST
@@ -1032,6 +1045,10 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
             body_nodes.push(node);
             continue;
         }
+        if let Some(node) = parse_import_statement(t) {
+            body_nodes.push(node);
+            continue;
+        }
         let kind = if t.starts_with("def ") {
             "FunctionDef"
         } else if t.starts_with("async def ") {
@@ -1078,6 +1095,7 @@ fn parse_from_import_statement(stmt: &str) -> Option<MbValue> {
     if names_part.is_empty() {
         return None;
     }
+    let names_start_col = "from ".len() + import_idx + " import ".len();
 
     let level = module_part.chars().take_while(|ch| *ch == '.').count();
     let module_name = module_part[level..].trim();
@@ -1087,30 +1105,7 @@ fn parse_from_import_statement(stmt: &str) -> Option<MbValue> {
         MbValue::from_ptr(MbObject::new_str(module_name.to_string()))
     };
 
-    let mut aliases = Vec::new();
-    for raw_name in names_part.split(',') {
-        let raw_name = raw_name.trim();
-        if raw_name.is_empty() {
-            continue;
-        }
-        let (name, asname) = raw_name
-            .split_once(" as ")
-            .map(|(name, asname)| (name.trim(), Some(asname.trim())))
-            .unwrap_or((raw_name, None));
-        let mut alias_fields = FxHashMap::default();
-        alias_fields.insert(
-            "name".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())),
-        );
-        alias_fields.insert(
-            "asname".to_string(),
-            asname
-                .filter(|value| !value.is_empty())
-                .map(|value| MbValue::from_ptr(MbObject::new_str(value.to_string())))
-                .unwrap_or_else(MbValue::none),
-        );
-        aliases.push(make_ast_node("alias", alias_fields));
-    }
+    let aliases = parse_alias_nodes(names_part, names_start_col);
     if aliases.is_empty() {
         return None;
     }
@@ -1124,6 +1119,68 @@ fn parse_from_import_statement(stmt: &str) -> Option<MbValue> {
     fields.insert("level".to_string(), MbValue::from_int(level as i64));
     insert_default_location_attrs(&mut fields);
     Some(make_ast_node("ImportFrom", fields))
+}
+
+fn parse_import_statement(stmt: &str) -> Option<MbValue> {
+    let names_part = stmt.strip_prefix("import ")?.trim();
+    if names_part.is_empty() {
+        return None;
+    }
+
+    let aliases = parse_alias_nodes(names_part, "import ".len());
+    if aliases.is_empty() {
+        return None;
+    }
+
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "names".to_string(),
+        MbValue::from_ptr(MbObject::new_list(aliases)),
+    );
+    insert_default_location_attrs(&mut fields);
+    Some(make_ast_node("Import", fields))
+}
+
+fn parse_alias_nodes(names_part: &str, names_start_col: usize) -> Vec<MbValue> {
+    let mut aliases = Vec::new();
+    let mut segment_start = 0usize;
+    for raw_segment in names_part.split(',') {
+        let leading = raw_segment.len() - raw_segment.trim_start().len();
+        let raw_name = raw_segment.trim();
+        if raw_name.is_empty() {
+            segment_start += raw_segment.len() + 1;
+            continue;
+        }
+        let (name, asname) = raw_name
+            .split_once(" as ")
+            .map(|(name, asname)| (name.trim(), Some(asname.trim())))
+            .unwrap_or((raw_name, None));
+        let col_offset = names_start_col + segment_start + leading;
+        let end_col_offset = col_offset + raw_name.len();
+
+        let mut alias_fields = FxHashMap::default();
+        alias_fields.insert(
+            "name".to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        );
+        alias_fields.insert(
+            "asname".to_string(),
+            asname
+                .filter(|value| !value.is_empty())
+                .map(|value| MbValue::from_ptr(MbObject::new_str(value.to_string())))
+                .unwrap_or_else(MbValue::none),
+        );
+        insert_location_attrs(
+            &mut alias_fields,
+            1,
+            col_offset as i64,
+            1,
+            end_col_offset as i64,
+        );
+        aliases.push(make_ast_node("alias", alias_fields));
+        segment_start += raw_segment.len() + 1;
+    }
+    aliases
 }
 
 fn parse_eval_expression(src: &str) -> Option<MbValue> {
@@ -1533,6 +1590,7 @@ fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
         "Raise" => &["exc", "cause"],
         "Call" => &["func", "args", "keywords"],
         "keyword" => &["arg", "value"],
+        "Import" => &["names"],
         "ImportFrom" => &["module", "names", "level"],
         "alias" => &["name", "asname"],
         "Name" => &["id", "ctx"],
@@ -2595,6 +2653,38 @@ pub fn mb_ast_main() -> MbValue {
 mod tests {
     use super::*;
 
+    fn ast_class_name(node: MbValue) -> Option<String> {
+        node.as_ptr().and_then(|ptr| unsafe {
+            if let super::super::super::rc::ObjData::Instance { class_name, .. } = &(*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn ast_field(node: MbValue, name: &str) -> MbValue {
+        let ptr = node.as_ptr().expect("ast node");
+        unsafe {
+            if let super::super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
+                *fields.read().unwrap().get(name).expect("ast field")
+            } else {
+                panic!("expected AST instance")
+            }
+        }
+    }
+
+    fn list_item(list: MbValue, index: usize) -> MbValue {
+        let ptr = list.as_ptr().expect("list object");
+        unsafe {
+            if let super::super::super::rc::ObjData::List(ref items) = (*ptr).data {
+                items.read().unwrap()[index]
+            } else {
+                panic!("expected list")
+            }
+        }
+    }
+
     #[test]
     fn test_parse_returns_module() {
         let src = MbValue::from_ptr(MbObject::new_str("x = 1".to_string()));
@@ -2604,39 +2694,6 @@ mod tests {
 
     #[test]
     fn test_parse_relative_from_import_module_none() {
-        fn ast_class_name(node: MbValue) -> Option<String> {
-            node.as_ptr().and_then(|ptr| unsafe {
-                if let super::super::super::rc::ObjData::Instance { class_name, .. } = &(*ptr).data
-                {
-                    Some(class_name.clone())
-                } else {
-                    None
-                }
-            })
-        }
-
-        fn ast_field(node: MbValue, name: &str) -> MbValue {
-            let ptr = node.as_ptr().expect("ast node");
-            unsafe {
-                if let super::super::super::rc::ObjData::Instance { ref fields, .. } = (*ptr).data {
-                    *fields.read().unwrap().get(name).expect("ast field")
-                } else {
-                    panic!("expected AST instance")
-                }
-            }
-        }
-
-        fn list_item(list: MbValue, index: usize) -> MbValue {
-            let ptr = list.as_ptr().expect("list object");
-            unsafe {
-                if let super::super::super::rc::ObjData::List(ref items) = (*ptr).data {
-                    items.read().unwrap()[index]
-                } else {
-                    panic!("expected list")
-                }
-            }
-        }
-
         let src = MbValue::from_ptr(MbObject::new_str("from . import y".to_string()));
         let tree = mb_ast_parse(src);
         let import = list_item(ast_field(tree, "body"), 0);
@@ -2648,6 +2705,66 @@ mod tests {
         assert_eq!(ast_class_name(alias).as_deref(), Some("alias"));
         assert_eq!(extract_str(ast_field(alias, "name")).as_deref(), Some("y"));
         assert!(ast_field(alias, "asname").is_none());
+    }
+
+    #[test]
+    fn test_parse_import_alias_locations() {
+        let tree = mb_ast_parse(MbValue::from_ptr(MbObject::new_str(
+            "from bar import y".to_string(),
+        )));
+        let import_from = list_item(ast_field(tree, "body"), 0);
+        assert_eq!(ast_class_name(import_from).as_deref(), Some("ImportFrom"));
+        assert_eq!(
+            extract_str(ast_field(import_from, "module")).as_deref(),
+            Some("bar")
+        );
+        let alias = list_item(ast_field(import_from, "names"), 0);
+        assert_eq!(extract_str(ast_field(alias, "name")).as_deref(), Some("y"));
+        assert!(ast_field(alias, "asname").is_none());
+        assert_eq!(ast_field(alias, "lineno").as_int(), Some(1));
+        assert_eq!(ast_field(alias, "end_lineno").as_int(), Some(1));
+        assert_eq!(ast_field(alias, "col_offset").as_int(), Some(16));
+        assert_eq!(ast_field(alias, "end_col_offset").as_int(), Some(17));
+
+        let tree = mb_ast_parse(MbValue::from_ptr(MbObject::new_str(
+            "from bar import *".to_string(),
+        )));
+        let alias = list_item(ast_field(list_item(ast_field(tree, "body"), 0), "names"), 0);
+        assert_eq!(extract_str(ast_field(alias, "name")).as_deref(), Some("*"));
+        assert!(ast_field(alias, "asname").is_none());
+        assert_eq!(ast_field(alias, "col_offset").as_int(), Some(16));
+        assert_eq!(ast_field(alias, "end_col_offset").as_int(), Some(17));
+
+        let tree = mb_ast_parse(MbValue::from_ptr(MbObject::new_str(
+            "from bar import y as z".to_string(),
+        )));
+        let alias = list_item(ast_field(list_item(ast_field(tree, "body"), 0), "names"), 0);
+        assert_eq!(extract_str(ast_field(alias, "name")).as_deref(), Some("y"));
+        assert_eq!(
+            extract_str(ast_field(alias, "asname")).as_deref(),
+            Some("z")
+        );
+        assert_eq!(ast_field(alias, "col_offset").as_int(), Some(16));
+        assert_eq!(ast_field(alias, "end_col_offset").as_int(), Some(22));
+
+        let tree = mb_ast_parse(MbValue::from_ptr(MbObject::new_str(
+            "import bar as foo".to_string(),
+        )));
+        let import = list_item(ast_field(tree, "body"), 0);
+        assert_eq!(ast_class_name(import).as_deref(), Some("Import"));
+        let alias = list_item(ast_field(import, "names"), 0);
+        assert_eq!(
+            extract_str(ast_field(alias, "name")).as_deref(),
+            Some("bar")
+        );
+        assert_eq!(
+            extract_str(ast_field(alias, "asname")).as_deref(),
+            Some("foo")
+        );
+        assert_eq!(ast_field(alias, "lineno").as_int(), Some(1));
+        assert_eq!(ast_field(alias, "end_lineno").as_int(), Some(1));
+        assert_eq!(ast_field(alias, "col_offset").as_int(), Some(7));
+        assert_eq!(ast_field(alias, "end_col_offset").as_int(), Some(17));
     }
 
     #[test]
