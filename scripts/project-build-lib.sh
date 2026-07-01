@@ -48,13 +48,13 @@ project_build_set_version() {
 
 project_build_remote_tag_exists() {
   local tag="$1"
-  local output
+  local output status
 
   if output="$(git ls-remote --exit-code --tags origin "refs/tags/${tag}" 2>&1)"; then
     return 0
+  else
+    status=$?
   fi
-
-  local status=$?
   if [[ "$status" -eq 2 ]]; then
     return 1
   fi
