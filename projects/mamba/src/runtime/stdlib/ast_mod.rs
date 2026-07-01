@@ -2071,15 +2071,12 @@ fn parse_simple_call_node(trimmed: &str, base_col: usize) -> Option<MbValue> {
         return None;
     }
     let func_text = trimmed[..open_idx].trim();
-    if !is_identifier_text(func_text) {
-        return None;
-    }
     let func_col = base_col + trimmed[..open_idx].find(func_text).unwrap_or(0);
     let call_end_col = base_col + close_idx + 1;
     let args_text = &trimmed[open_idx + 1..close_idx];
     let args_base_col = base_col + open_idx + 1;
 
-    let func = make_name_node(func_text, func_col, func_col + func_text.len());
+    let func = parse_simple_call_func_node(func_text, func_col)?;
     let mut args = Vec::new();
     let mut keywords = Vec::new();
     for (arg_text, rel_start) in split_simple_call_args(args_text)? {
@@ -2126,6 +2123,41 @@ fn parse_simple_call_node(trimmed: &str, base_col: usize) -> Option<MbValue> {
         call_end_col as i64,
     );
     Some(make_ast_node("Call", call_fields))
+}
+
+fn parse_simple_call_func_node(text: &str, col: usize) -> Option<MbValue> {
+    if is_identifier_text(text) {
+        return Some(make_name_node(text, col, col + text.len()));
+    }
+    parse_simple_subscript_node(text, col)
+}
+
+fn parse_simple_subscript_node(text: &str, col: usize) -> Option<MbValue> {
+    let open_idx = text.find('[')?;
+    let close_idx = text.rfind(']')?;
+    if close_idx != text.len() - 1 {
+        return None;
+    }
+    let value_text = text[..open_idx].trim();
+    let slice_text = text[open_idx + 1..close_idx].trim();
+    if !is_identifier_text(value_text) || slice_text.is_empty() {
+        return None;
+    }
+    let value_col = col + text[..open_idx].find(value_text).unwrap_or(0);
+    let slice_col =
+        col + open_idx + 1 + text[open_idx + 1..close_idx].find(slice_text).unwrap_or(0);
+    let value = make_name_node(value_text, value_col, value_col + value_text.len());
+    let slice = parse_simple_expr_atom(slice_text, slice_col, slice_col + slice_text.len())?;
+
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), value);
+    fields.insert("slice".to_string(), slice);
+    fields.insert(
+        "ctx".to_string(),
+        make_ast_node("Load", FxHashMap::default()),
+    );
+    insert_location_attrs(&mut fields, 1, col as i64, 1, (col + text.len()) as i64);
+    Some(make_ast_node("Subscript", fields))
 }
 
 fn split_simple_keyword_arg(text: &str) -> Option<(&str, &str)> {
