@@ -76,7 +76,11 @@ unsafe extern "C" fn d_dump(args_ptr: *const MbValue, nargs: usize) -> MbValue {
         .or_else(|| pos.get(2).copied())
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    mb_ast_dump_with_options(node, annotate_fields, include_attributes)
+    let indent = kwargs
+        .and_then(|kw| kwargs_get(kw, "indent"))
+        .or_else(|| pos.get(3).copied())
+        .and_then(ast_dump_indent_step);
+    mb_ast_dump_with_options(node, annotate_fields, include_attributes, indent.as_deref())
 }
 
 unsafe extern "C" fn d_increment_lineno(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -1071,7 +1075,10 @@ fn parse_exec_call_module(src: &str) -> Option<MbValue> {
 
     let mut call_fields = FxHashMap::default();
     call_fields.insert("func".to_string(), func);
-    call_fields.insert("args".to_string(), MbValue::from_ptr(MbObject::new_list(args)));
+    call_fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_list(args)),
+    );
     call_fields.insert(
         "keywords".to_string(),
         MbValue::from_ptr(MbObject::new_list(vec![])),
@@ -1188,17 +1195,26 @@ fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
     fields.insert("lineno".to_string(), MbValue::from_int(1));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
     fields.insert("end_lineno".to_string(), MbValue::from_int(1));
-    fields.insert("end_col_offset".to_string(), MbValue::from_int(end_col as i64));
+    fields.insert(
+        "end_col_offset".to_string(),
+        MbValue::from_int(end_col as i64),
+    );
     make_ast_node("Constant", fields)
 }
 
 fn make_string_constant_node(value: String, col: usize, end_col: usize) -> MbValue {
     let mut fields = FxHashMap::default();
-    fields.insert("value".to_string(), MbValue::from_ptr(MbObject::new_str(value)));
+    fields.insert(
+        "value".to_string(),
+        MbValue::from_ptr(MbObject::new_str(value)),
+    );
     fields.insert("lineno".to_string(), MbValue::from_int(1));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
     fields.insert("end_lineno".to_string(), MbValue::from_int(1));
-    fields.insert("end_col_offset".to_string(), MbValue::from_int(end_col as i64));
+    fields.insert(
+        "end_col_offset".to_string(),
+        MbValue::from_int(end_col as i64),
+    );
     make_ast_node("Constant", fields)
 }
 
@@ -1208,33 +1224,63 @@ fn make_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
         "id".to_string(),
         MbValue::from_ptr(MbObject::new_str(name.to_string())),
     );
-    fields.insert("ctx".to_string(), make_ast_node("Load", FxHashMap::default()));
+    fields.insert(
+        "ctx".to_string(),
+        make_ast_node("Load", FxHashMap::default()),
+    );
     fields.insert("lineno".to_string(), MbValue::from_int(1));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
     fields.insert("end_lineno".to_string(), MbValue::from_int(1));
-    fields.insert("end_col_offset".to_string(), MbValue::from_int(end_col as i64));
+    fields.insert(
+        "end_col_offset".to_string(),
+        MbValue::from_int(end_col as i64),
+    );
     make_ast_node("Name", fields)
 }
 
 /// ast.dump(node, annotate_fields=True, include_attributes=False,
 ///          indent=None) -> str
 pub fn mb_ast_dump(node: MbValue) -> MbValue {
-    mb_ast_dump_with_options(node, true, false)
+    mb_ast_dump_with_options(node, true, false, None)
 }
 
 pub fn mb_ast_dump_with_options(
     node: MbValue,
     annotate_fields: bool,
     include_attributes: bool,
+    indent: Option<&str>,
 ) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(ast_dump_string(
         node,
         annotate_fields,
         include_attributes,
+        indent,
     )))
 }
 
-fn ast_dump_string(node: MbValue, annotate_fields: bool, include_attributes: bool) -> String {
+fn ast_dump_indent_step(value: MbValue) -> Option<String> {
+    if value.is_none() {
+        return None;
+    }
+    if let Some(width) = value.as_int() {
+        return Some(" ".repeat(width.max(0) as usize));
+    }
+    extract_str(value)
+}
+
+fn ast_dump_string(
+    node: MbValue,
+    annotate_fields: bool,
+    include_attributes: bool,
+    indent: Option<&str>,
+) -> String {
+    if let Some(step) = indent {
+        return ast_dump_string_pretty(node, annotate_fields, include_attributes, step, 0);
+    }
+    ast_dump_string_flat(node, annotate_fields, include_attributes)
+}
+
+fn ast_dump_string_flat(node: MbValue, annotate_fields: bool, include_attributes: bool) -> String {
     use super::super::rc::ObjData;
     let Some(ptr) = node.as_ptr() else {
         return ast_dump_value(node);
@@ -1248,8 +1294,13 @@ fn ast_dump_string(node: MbValue, annotate_fields: bool, include_attributes: boo
         let mut missing_prior_field = false;
         for field in ast_dump_field_order(class_name) {
             if let Some(value) = guard.get(*field).copied() {
-                let rendered =
-                    ast_dump_value_with_options(value, annotate_fields, include_attributes);
+                let rendered = ast_dump_value_with_options(
+                    value,
+                    annotate_fields,
+                    include_attributes,
+                    None,
+                    0,
+                );
                 if annotate_fields || missing_prior_field {
                     parts.push(format!("{field}={rendered}"));
                 } else {
@@ -1268,6 +1319,84 @@ fn ast_dump_string(node: MbValue, annotate_fields: bool, include_attributes: boo
         }
         format!("{}({})", class_name, parts.join(", "))
     }
+}
+
+fn ast_dump_string_pretty(
+    node: MbValue,
+    annotate_fields: bool,
+    include_attributes: bool,
+    step: &str,
+    level: usize,
+) -> String {
+    use super::super::rc::ObjData;
+    let Some(ptr) = node.as_ptr() else {
+        return ast_dump_value(node);
+    };
+    unsafe {
+        let ObjData::Instance { class_name, fields } = &(*ptr).data else {
+            return ast_dump_value(node);
+        };
+        let guard = fields.read().unwrap();
+        if ast_dump_pretty_inline_node(class_name, include_attributes, &guard) {
+            return ast_dump_string_flat(node, annotate_fields, include_attributes);
+        }
+        let mut parts: Vec<String> = Vec::new();
+        let mut missing_prior_field = false;
+        for field in ast_dump_field_order(class_name) {
+            if let Some(value) = guard.get(*field).copied() {
+                let rendered = ast_dump_value_with_options(
+                    value,
+                    annotate_fields,
+                    include_attributes,
+                    Some(step),
+                    level + 1,
+                );
+                if annotate_fields || missing_prior_field {
+                    parts.push(format!("{field}={rendered}"));
+                } else {
+                    parts.push(rendered);
+                }
+            } else {
+                missing_prior_field = true;
+            }
+        }
+        if include_attributes && ast_dump_has_location_attrs(class_name) {
+            for attr in ["lineno", "col_offset", "end_lineno", "end_col_offset"] {
+                if let Some(value) = guard.get(attr).copied() {
+                    parts.push(format!("{attr}={}", ast_dump_value(value)));
+                }
+            }
+        }
+        if parts.is_empty() {
+            return format!("{class_name}()");
+        }
+        let child_prefix = step.repeat(level + 1);
+        format!(
+            "{}(\n{}{})",
+            class_name,
+            child_prefix,
+            parts.join(&format!(",\n{child_prefix}"))
+        )
+    }
+}
+
+fn ast_dump_pretty_inline_node(
+    class_name: &str,
+    include_attributes: bool,
+    fields: &FxHashMap<String, MbValue>,
+) -> bool {
+    if include_attributes
+        && ast_dump_has_location_attrs(class_name)
+        && ["lineno", "col_offset", "end_lineno", "end_col_offset"]
+            .iter()
+            .any(|attr| fields.contains_key(*attr))
+    {
+        return false;
+    }
+    matches!(
+        class_name,
+        "Load" | "Store" | "Del" | "Add" | "Name" | "Constant"
+    )
 }
 
 fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
@@ -1345,51 +1474,83 @@ fn ast_dump_value_with_options(
     value: MbValue,
     annotate_fields: bool,
     include_attributes: bool,
+    indent: Option<&str>,
+    level: usize,
 ) -> String {
     if is_ast_node_value(value) {
-        ast_dump_string(value, annotate_fields, include_attributes)
-    } else {
-        if let Some(ptr) = value.as_ptr() {
-            unsafe {
-                match &(*ptr).data {
-                    super::super::rc::ObjData::List(lock) => {
-                        let items = lock.read().unwrap();
-                        let rendered: Vec<String> = items
-                            .iter()
-                            .copied()
-                            .map(|item| {
-                                ast_dump_value_with_options(
-                                    item,
-                                    annotate_fields,
-                                    include_attributes,
-                                )
-                            })
-                            .collect();
-                        return format!("[{}]", rendered.join(", "));
-                    }
-                    super::super::rc::ObjData::Tuple(items) => {
-                        let rendered: Vec<String> = items
-                            .iter()
-                            .copied()
-                            .map(|item| {
-                                ast_dump_value_with_options(
-                                    item,
-                                    annotate_fields,
-                                    include_attributes,
-                                )
-                            })
-                            .collect();
-                        if rendered.len() == 1 {
-                            return format!("({},)", rendered[0]);
+        return match indent {
+            Some(step) => {
+                ast_dump_string_pretty(value, annotate_fields, include_attributes, step, level)
+            }
+            None => ast_dump_string_flat(value, annotate_fields, include_attributes),
+        };
+    }
+
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                super::super::rc::ObjData::List(lock) => {
+                    let items = lock.read().unwrap();
+                    let rendered: Vec<String> = items
+                        .iter()
+                        .copied()
+                        .map(|item| {
+                            ast_dump_value_with_options(
+                                item,
+                                annotate_fields,
+                                include_attributes,
+                                indent,
+                                level + 1,
+                            )
+                        })
+                        .collect();
+                    if let Some(step) = indent {
+                        if rendered.is_empty() {
+                            return "[]".to_string();
                         }
-                        return format!("({})", rendered.join(", "));
+                        let prefix = step.repeat(level + 1);
+                        return format!("[\n{}{}]", prefix, rendered.join(&format!(",\n{prefix}")));
                     }
-                    _ => {}
+                    return format!("[{}]", rendered.join(", "));
                 }
+                super::super::rc::ObjData::Tuple(items) => {
+                    let rendered: Vec<String> = items
+                        .iter()
+                        .copied()
+                        .map(|item| {
+                            ast_dump_value_with_options(
+                                item,
+                                annotate_fields,
+                                include_attributes,
+                                indent,
+                                level + 1,
+                            )
+                        })
+                        .collect();
+                    if let Some(step) = indent {
+                        if rendered.is_empty() {
+                            return "()".to_string();
+                        }
+                        let prefix = step.repeat(level + 1);
+                        let suffix = if rendered.len() == 1 { "," } else { "" };
+                        return format!(
+                            "(\n{}{}{})",
+                            prefix,
+                            rendered.join(&format!(",\n{prefix}")),
+                            suffix
+                        );
+                    }
+                    if rendered.len() == 1 {
+                        return format!("({},)", rendered[0]);
+                    }
+                    return format!("({})", rendered.join(", "));
+                }
+                _ => {}
             }
         }
-        ast_dump_value(value)
     }
+
+    ast_dump_value(value)
 }
 
 fn ast_dump_value(value: MbValue) -> String {
@@ -1413,20 +1574,18 @@ fn ast_dump_value(value: MbValue) -> String {
                 ObjData::Bytes(bytes) => return format!("{bytes:?}"),
                 ObjData::List(lock) => {
                     let items = lock.read().unwrap();
-                    let rendered: Vec<String> =
-                        items.iter().copied().map(ast_dump_value).collect();
+                    let rendered: Vec<String> = items.iter().copied().map(ast_dump_value).collect();
                     return format!("[{}]", rendered.join(", "));
                 }
                 ObjData::Tuple(items) => {
-                    let rendered: Vec<String> =
-                        items.iter().copied().map(ast_dump_value).collect();
+                    let rendered: Vec<String> = items.iter().copied().map(ast_dump_value).collect();
                     if rendered.len() == 1 {
                         return format!("({},)", rendered[0]);
                     }
                     return format!("({})", rendered.join(", "));
                 }
                 ObjData::Instance { .. } => {
-                    return ast_dump_string(value, true, false);
+                    return ast_dump_string(value, true, false, None);
                 }
                 _ => {}
             }
@@ -2328,11 +2487,27 @@ mod tests {
                 "Module(body=[Expr(value=Call(func=Name(id='spam', ctx=Load()), args=[Name(id='eggs', ctx=Load()), Constant(value='and cheese')], keywords=[]))], type_ignores=[])"
             )
         );
+        let indented = mb_ast_dump_with_options(tree, true, false, Some("   "));
+        assert_eq!(
+            extract_str(indented).as_deref(),
+            Some(concat!(
+                "Module(\n",
+                "   body=[\n",
+                "      Expr(\n",
+                "         value=Call(\n",
+                "            func=Name(id='spam', ctx=Load()),\n",
+                "            args=[\n",
+                "               Name(id='eggs', ctx=Load()),\n",
+                "               Constant(value='and cheese')],\n",
+                "            keywords=[]))],\n",
+                "   type_ignores=[])",
+            ))
+        );
 
         let mut raise_fields = FxHashMap::default();
         raise_fields.insert("cause".to_string(), make_name_node("e", 0, 1));
         let raise = make_ast_node("Raise", raise_fields);
-        let dumped = mb_ast_dump_with_options(raise, false, false);
+        let dumped = mb_ast_dump_with_options(raise, false, false, None);
         assert_eq!(
             extract_str(dumped).as_deref(),
             Some("Raise(cause=Name('e', Load()))")
