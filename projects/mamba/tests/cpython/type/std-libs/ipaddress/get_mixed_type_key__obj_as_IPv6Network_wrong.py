@@ -9,12 +9,11 @@
 # case = "get_mixed_type_key__obj_as_IPv6Network_wrong"
 # subject = "ipaddress.get_mixed_type_key(obj: IPv6Network)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ipaddress.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: ipaddress.get_mixed_type_key(obj: IPv6Network); call it with the wrong type.
 
