@@ -9,12 +9,11 @@
 # case = "member__init__value_as__EnumMemberT_wrong"
 # subject = "enum.member.__init__(value: _EnumMemberT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/enum.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: enum.member.__init__(value: _EnumMemberT); call it with the wrong type.
 

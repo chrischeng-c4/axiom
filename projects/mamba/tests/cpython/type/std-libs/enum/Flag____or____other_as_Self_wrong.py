@@ -9,12 +9,11 @@
 # case = "Flag____or____other_as_Self_wrong"
 # subject = "enum.Flag.__or__(other: Self)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/enum.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other
 # mamba-strict-type: TypeError
 """Type wall: enum.Flag.__or__(other: Self); call it with the wrong type.
 
