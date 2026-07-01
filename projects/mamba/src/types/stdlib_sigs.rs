@@ -5162,6 +5162,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "inspect",
+        qualifier: "",
+        name: "classify_class_attrs",
+        kind: SigKind::ModuleFn,
+        params: &[p("cls", CoreTy::Type)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "inspect",
+        qualifier: "Signature",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("parameters", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "http.client",
         qualifier: "",
         name: "parse_headers",
@@ -6947,6 +6963,8 @@ mod tests {
             ("importlib.util", "", "module_for_loader", 0, "fxn", CoreTy::Typed),
             ("importlib.util", "", "set_loader", 0, "fxn", CoreTy::Typed),
             ("importlib.util", "", "set_package", 0, "fxn", CoreTy::Typed),
+            ("inspect", "", "classify_class_attrs", 0, "cls", CoreTy::Type),
+            ("inspect", "Signature", "__init__", 0, "parameters", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
