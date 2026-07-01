@@ -5089,6 +5089,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("mode", CoreTy::Str)],
         enforceable: true,
     },
+    // io.Writer.write is a contravariant typevar in typeshed, which generated
+    // rows collapse to Unknown. Preserve the strict wall for bare invalid user
+    // objects without over-specializing the accepted buffer/text shape yet.
+    StdlibSig {
+        module: "io",
+        qualifier: "Writer",
+        name: "write",
+        kind: SigKind::Method,
+        params: &[p("data", CoreTy::Typed)],
+        enforceable: true,
+    },
     // fractions.Fraction arithmetic partners are generated from overloaded
     // numeric aliases and collapse to Unknown. For strict-type fixtures, use
     // Complex as the broad numeric wall: int/float/bool remain compatible, while
@@ -7448,6 +7459,7 @@ mod tests {
                 "mode",
                 CoreTy::Str,
             ),
+            ("io", "Writer", "write", 0, "data", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
