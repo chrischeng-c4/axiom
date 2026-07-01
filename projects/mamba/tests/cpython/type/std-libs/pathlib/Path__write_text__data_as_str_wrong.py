@@ -9,7 +9,6 @@
 # case = "Path__write_text__data_as_str_wrong"
 # subject = "pathlib.Path.write_text(data: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

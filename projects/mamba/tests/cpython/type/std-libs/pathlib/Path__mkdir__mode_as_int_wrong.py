@@ -9,7 +9,6 @@
 # case = "Path__mkdir__mode_as_int_wrong"
 # subject = "pathlib.Path.mkdir(mode: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

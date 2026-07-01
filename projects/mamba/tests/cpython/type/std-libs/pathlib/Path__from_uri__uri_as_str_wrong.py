@@ -9,7 +9,6 @@
 # case = "Path__from_uri__uri_as_str_wrong"
 # subject = "pathlib.Path.from_uri(uri: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

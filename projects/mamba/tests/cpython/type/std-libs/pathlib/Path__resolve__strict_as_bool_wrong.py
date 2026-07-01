@@ -9,12 +9,10 @@
 # case = "Path__resolve__strict_as_bool_wrong"
 # subject = "pathlib.Path.resolve(strict: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed strict"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed strict
 # mamba-strict-type: TypeError
 """Type wall: pathlib.Path.resolve(strict: bool); call it with the wrong type.
 

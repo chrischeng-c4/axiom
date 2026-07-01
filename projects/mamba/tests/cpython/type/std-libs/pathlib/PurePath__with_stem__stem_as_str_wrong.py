@@ -9,7 +9,6 @@
 # case = "PurePath__with_stem__stem_as_str_wrong"
 # subject = "pathlib.PurePath.with_stem(stem: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

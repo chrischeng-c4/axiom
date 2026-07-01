@@ -4912,6 +4912,104 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("numerator", CoreTy::Typed)],
         enforceable: true,
     },
+    // pathlib generated rows intentionally collapse type variables, overload
+    // literals, and Optional exception state to Unknown/Typed. Keep strict-mode
+    // fixture walls enforceable while still skipping correct None sentinels and
+    // richer PathLike objects.
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[
+            p("t", CoreTy::Type),
+            p("v", CoreTy::Typed),
+            p("tb", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "copy",
+        kind: SigKind::Method,
+        params: &[p("target", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "copy_into",
+        kind: SigKind::Method,
+        params: &[p("target_dir", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "move",
+        kind: SigKind::Method,
+        params: &[p("target", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "move_into",
+        kind: SigKind::Method,
+        params: &[p("target_dir", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "open",
+        kind: SigKind::Method,
+        params: &[
+            p("mode", CoreTy::Str),
+            p("buffering", CoreTy::Unknown),
+            p("encoding", CoreTy::Unknown),
+            p("errors", CoreTy::Unknown),
+            p("newline", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "resolve",
+        kind: SigKind::Method,
+        params: &[p("strict", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "unlink",
+        kind: SigKind::Method,
+        params: &[p("missing_ok", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "Path",
+        name: "walk",
+        kind: SigKind::Method,
+        params: &[
+            p("top_down", CoreTy::Bool),
+            p("on_error", CoreTy::Unknown),
+            p("follow_symlinks", CoreTy::Bool),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "pathlib",
+        qualifier: "PurePath",
+        name: "is_relative_to",
+        kind: SigKind::Method,
+        params: &[p("other", CoreTy::Typed)],
+        enforceable: true,
+    },
     // types module runtime exposes many descriptor/generator objects as stubs.
     // Generated rows are Unknown for these protocol-heavy contracts, so strict
     // type-wall fixtures need curated nominal/callable/type walls here.
@@ -6029,6 +6127,31 @@ mod tests {
                 .any(|s| s.module == "os" && s.qualifier.is_empty()),
             "generated table should contain os module fns",
         );
+    }
+
+    #[test]
+    fn curated_pathlib_walls_override_unknown_generated_rows() {
+        for (qualifier, name, first_param, first_ty) in [
+            ("Path", "__exit__", "t", CoreTy::Type),
+            ("Path", "copy", "target", CoreTy::Typed),
+            ("Path", "copy_into", "target_dir", CoreTy::Typed),
+            ("Path", "move", "target", CoreTy::Typed),
+            ("Path", "move_into", "target_dir", CoreTy::Typed),
+            ("Path", "open", "mode", CoreTy::Str),
+            ("Path", "resolve", "strict", CoreTy::Bool),
+            ("Path", "unlink", "missing_ok", CoreTy::Bool),
+            ("Path", "walk", "top_down", CoreTy::Bool),
+            ("PurePath", "is_relative_to", "other", CoreTy::Typed),
+        ] {
+            let sig = get("pathlib", qualifier, name).expect("pathlib row present");
+            assert!(sig.enforceable, "pathlib.{qualifier}.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, first_ty);
+        }
+
+        let walk = get("pathlib", "Path", "walk").expect("Path.walk row present");
+        assert_eq!(walk.params[2].name, "follow_symlinks");
+        assert_eq!(walk.params[2].ty, CoreTy::Bool);
     }
 
     #[test]

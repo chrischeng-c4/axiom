@@ -9,12 +9,10 @@
 # case = "PurePath__is_relative_to__other_as_StrPath_wrong"
 # subject = "pathlib.PurePath.is_relative_to(other: StrPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed other
 # mamba-strict-type: TypeError
 """Type wall: pathlib.PurePath.is_relative_to(other: StrPath); call it with the wrong type.
 

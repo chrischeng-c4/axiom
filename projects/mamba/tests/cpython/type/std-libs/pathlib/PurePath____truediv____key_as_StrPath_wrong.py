@@ -9,7 +9,6 @@
 # case = "PurePath____truediv____key_as_StrPath_wrong"
 # subject = "pathlib.PurePath.__truediv__(key: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
