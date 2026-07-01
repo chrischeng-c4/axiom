@@ -9,7 +9,6 @@
 # case = "bytearray_rejects_str_without_encoding"
 # subject = "bytearray"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "configparser_read_string_rejects_int_argument"
 # subject = "configparser.ConfigParser.read_string"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

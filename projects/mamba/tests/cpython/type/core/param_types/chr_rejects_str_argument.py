@@ -9,7 +9,6 @@
 # case = "chr_rejects_str_argument"
 # subject = "chr"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

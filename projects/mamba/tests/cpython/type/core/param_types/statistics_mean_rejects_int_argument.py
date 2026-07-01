@@ -9,7 +9,6 @@
 # case = "statistics_mean_rejects_int_argument"
 # subject = "statistics.mean"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

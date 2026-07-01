@@ -9,7 +9,6 @@
 # case = "issubclass_rejects_str_classinfo_argument"
 # subject = "issubclass"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

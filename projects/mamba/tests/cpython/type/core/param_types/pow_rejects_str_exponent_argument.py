@@ -9,7 +9,6 @@
 # case = "pow_rejects_str_exponent_argument"
 # subject = "pow"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

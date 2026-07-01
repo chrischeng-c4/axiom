@@ -9,7 +9,6 @@
 # case = "next_rejects_non_iterator_argument"
 # subject = "next"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

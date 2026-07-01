@@ -9,7 +9,6 @@
 # case = "base64_b64encode_rejects_str_argument"
 # subject = "base64.b64encode"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

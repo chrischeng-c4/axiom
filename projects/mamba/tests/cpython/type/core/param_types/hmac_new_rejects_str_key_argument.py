@@ -9,7 +9,6 @@
 # case = "hmac_new_rejects_str_key_argument"
 # subject = "hmac.new"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

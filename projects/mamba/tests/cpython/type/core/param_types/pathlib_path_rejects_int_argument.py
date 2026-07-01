@@ -9,7 +9,6 @@
 # case = "pathlib_path_rejects_int_argument"
 # subject = "pathlib.Path"
 # kind = "mechanical"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
