@@ -1220,7 +1220,7 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
     // enough shape that `module.body[0]` resolves to a node (since list
     // subscripts now raise IndexError instead of silently yielding None).
     let mut body_nodes: Vec<MbValue> = Vec::new();
-    for line in src.lines() {
+    for (line_idx, line) in src.lines().enumerate() {
         let t = line.trim_start();
         if t.is_empty() || line.starts_with(|c: char| c.is_whitespace()) {
             continue; // nested lines belong to the previous statement
@@ -1233,6 +1233,10 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
             continue;
         }
         if let Some(node) = parse_import_statement(t) {
+            body_nodes.push(node);
+            continue;
+        }
+        if let Some(node) = parse_string_expr_statement(line, line_idx + 1) {
             body_nodes.push(node);
             continue;
         }
@@ -1326,6 +1330,25 @@ fn parse_import_statement(stmt: &str) -> Option<MbValue> {
     );
     insert_default_location_attrs(&mut fields);
     Some(make_ast_node("Import", fields))
+}
+
+fn parse_string_expr_statement(line: &str, lineno: usize) -> Option<MbValue> {
+    let text = line.trim_start();
+    let col = line.len() - text.len();
+    let value = quoted_string_literal(text)?;
+    let end_col = col + text.len();
+    let constant = make_string_constant_node_at(value, lineno, col, end_col);
+
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), constant);
+    insert_location_attrs(
+        &mut fields,
+        lineno as i64,
+        col as i64,
+        lineno as i64,
+        end_col as i64,
+    );
+    Some(make_ast_node("Expr", fields))
 }
 
 fn parse_alias_nodes(names_part: &str, names_start_col: usize) -> Vec<MbValue> {
@@ -1571,14 +1594,23 @@ fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
 }
 
 fn make_string_constant_node(value: String, col: usize, end_col: usize) -> MbValue {
+    make_string_constant_node_at(value, 1, col, end_col)
+}
+
+fn make_string_constant_node_at(
+    value: String,
+    lineno: usize,
+    col: usize,
+    end_col: usize,
+) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert(
         "value".to_string(),
         MbValue::from_ptr(MbObject::new_str(value)),
     );
-    fields.insert("lineno".to_string(), MbValue::from_int(1));
+    fields.insert("lineno".to_string(), MbValue::from_int(lineno as i64));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
-    fields.insert("end_lineno".to_string(), MbValue::from_int(1));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(lineno as i64));
     fields.insert(
         "end_col_offset".to_string(),
         MbValue::from_int(end_col as i64),
@@ -2386,8 +2418,63 @@ impl<'a> LiteralEvalParser<'a> {
 }
 
 /// ast.get_docstring(node, clean=True) -> str | None
-pub fn mb_ast_get_docstring(_node: MbValue) -> MbValue {
-    MbValue::none()
+pub fn mb_ast_get_docstring(node: MbValue) -> MbValue {
+    if !is_ast_node_value(node) {
+        return ast_arg_type_error("get_docstring", "node");
+    }
+    let Some(first_stmt) = ast_docstring_body_first(node) else {
+        return MbValue::none();
+    };
+    let Some(value) = ast_docstring_expr_value(first_stmt) else {
+        return MbValue::none();
+    };
+    let Some(doc) = ast_docstring_constant_str(value) else {
+        return MbValue::none();
+    };
+    MbValue::from_ptr(MbObject::new_str(doc))
+}
+
+fn ast_docstring_body_first(node: MbValue) -> Option<MbValue> {
+    let class_name = ast_node_class_name(node)?;
+    if !matches!(
+        class_name.as_str(),
+        "Module" | "Interactive" | "FunctionDef" | "AsyncFunctionDef" | "ClassDef"
+    ) {
+        return None;
+    }
+    let body = ast_attr_value(node, "body")?;
+    body.as_ptr().and_then(|ptr| unsafe {
+        if let super::super::rc::ObjData::List(ref items) = (*ptr).data {
+            items.read().unwrap().first().copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn ast_docstring_expr_value(node: MbValue) -> Option<MbValue> {
+    if ast_node_class_name(node)?.as_str() != "Expr" {
+        return None;
+    }
+    ast_attr_value(node, "value")
+}
+
+fn ast_docstring_constant_str(node: MbValue) -> Option<String> {
+    let class_name = ast_node_class_name(node)?;
+    if class_name != "Constant" && class_name != "Str" {
+        return None;
+    }
+    ast_attr_value(node, "value").and_then(extract_str)
+}
+
+fn ast_node_class_name(node: MbValue) -> Option<String> {
+    node.as_ptr().and_then(|ptr| unsafe {
+        if let super::super::rc::ObjData::Instance { class_name, .. } = &(*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
 }
 
 /// ast.fix_missing_locations(node) -> node
