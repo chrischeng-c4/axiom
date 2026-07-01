@@ -9,7 +9,6 @@
 # case = "abstract_method_called_directly"
 # subject = "abstract method instantiation contract"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

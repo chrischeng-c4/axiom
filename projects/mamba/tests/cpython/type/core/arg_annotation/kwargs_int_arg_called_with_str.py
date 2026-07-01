@@ -9,7 +9,6 @@
 # case = "kwargs_int_arg_called_with_str"
 # subject = "function variadic keyword parameter annotation"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
