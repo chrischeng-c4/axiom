@@ -9,12 +9,10 @@
 # case = "bytearray__splitlines__keepends_as_bool_wrong"
 # subject = "builtins.bytearray.splitlines(keepends: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed keepends"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed keepends
 # mamba-strict-type: TypeError
 """Type wall: builtins.bytearray.splitlines(keepends: bool); call it with the wrong type.
 

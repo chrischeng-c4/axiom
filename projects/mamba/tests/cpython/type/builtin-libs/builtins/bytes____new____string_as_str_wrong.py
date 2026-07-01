@@ -9,12 +9,10 @@
 # case = "bytes____new____string_as_str_wrong"
 # subject = "builtins.bytes.__new__(string: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed string"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed string
 # mamba-strict-type: TypeError
 """Type wall: builtins.bytes.__new__(string: str); call it with the wrong type.
 

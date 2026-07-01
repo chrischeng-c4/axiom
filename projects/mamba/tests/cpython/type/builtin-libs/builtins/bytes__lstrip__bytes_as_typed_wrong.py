@@ -9,7 +9,6 @@
 # case = "bytes__lstrip__bytes_as_typed_wrong"
 # subject = "builtins.bytes.lstrip(bytes: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

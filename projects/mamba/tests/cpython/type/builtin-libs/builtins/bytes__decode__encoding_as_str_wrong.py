@@ -9,7 +9,6 @@
 # case = "bytes__decode__encoding_as_str_wrong"
 # subject = "builtins.bytes.decode(encoding: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "bytes____getitem____key_as_SupportsIndex_wrong"
 # subject = "builtins.bytes.__getitem__(key: SupportsIndex)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key
 # mamba-strict-type: TypeError
 """Type wall: builtins.bytes.__getitem__(key: SupportsIndex); call it with the wrong type.
 

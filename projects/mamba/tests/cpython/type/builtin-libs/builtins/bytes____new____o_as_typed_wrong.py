@@ -9,12 +9,10 @@
 # case = "bytes____new____o_as_typed_wrong"
 # subject = "builtins.bytes.__new__(o: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed o"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed o
 # mamba-strict-type: TypeError
 """Type wall: builtins.bytes.__new__(o: typed); call it with the wrong type.
 

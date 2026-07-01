@@ -9,7 +9,6 @@
 # case = "bytes__maketrans__frm_as_ReadableBuffer_wrong"
 # subject = "builtins.bytes.maketrans(frm: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
