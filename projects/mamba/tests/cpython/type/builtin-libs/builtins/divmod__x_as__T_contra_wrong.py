@@ -9,7 +9,6 @@
 # case = "divmod__x_as__T_contra_wrong"
 # subject = "builtins.divmod(x: _T_contra)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

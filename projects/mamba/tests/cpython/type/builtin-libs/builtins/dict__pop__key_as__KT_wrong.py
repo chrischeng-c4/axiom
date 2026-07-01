@@ -9,12 +9,10 @@
 # case = "dict__pop__key_as__KT_wrong"
 # subject = "builtins.dict.pop(key: _KT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed key
 # mamba-strict-type: TypeError
 """Type wall: builtins.dict.pop(key: _KT); call it with the wrong type.
 
