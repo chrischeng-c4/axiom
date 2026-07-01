@@ -96,31 +96,30 @@ changes:
     action: modify
     section: logic
     description: |
-      Add `jet publish --dry-run` to the CLI and route it to the publisher
-      dry-run preview path instead of the registry upload path.
+      Register `publish --dry-run`, parse it with existing publish options, and
+      print the publisher preview report instead of awaiting the upload method
+      when the flag is set.
     impl_mode: hand-written
   - path: "projects/jet/src/pkg_manager/publish.rs"
     action: modify
     section: logic
     description: |
-      Add a publish dry-run preview that performs the existing package
-      transformation, optional build, metadata validation, registry/auth
-      lookup, and in-memory tarball creation, then returns a printable preview
-      without issuing the registry PUT request.
+      Factor common publish preparation into a dry-run-capable path that reads
+      and transforms package.json, runs optional build/metadata validation,
+      resolves registry/auth, creates tarball bytes, lists tarball entries, and
+      formats a deterministic preview without sending an HTTP PUT.
     impl_mode: hand-written
   - path: "projects/jet/tests/publish/library_publish_e2e.rs"
     action: modify
     section: unit-test
     description: |
-      Add a dry-run regression that points publish at the in-process mock
-      registry, asserts the preview shape, and verifies the mock store remains
-      empty because no upload happened.
+      Add mock-registry dry-run coverage: preview fields are populated and the
+      mock registry store remains empty, proving no upload occurred.
     impl_mode: hand-written
   - path: "projects/jet/src/cli.rs"
     action: modify
     section: unit-test
     description: |
-      Add command parser coverage proving `publish --dry-run --tag --access`
-      is accepted and sets the dry-run flag.
+      Add parser-level coverage for `jet publish --dry-run --tag beta --access restricted`.
     impl_mode: hand-written
 ```
