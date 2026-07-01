@@ -68,6 +68,21 @@ anyhow = { workspace = true }
 # hand-rolling a single-node driver.
 raft-host = { path = "../../libs/raft-host", optional = true }
 
+# K8s operator (feature `operator`) — the shared libs/operator scaffold + render
+# toolkit. keep supplies a KeepSpec CRD + ManagedService and gets the reconcile
+# controller for free. Versions mirror the workspace's existing kube-rs users
+# (lumen / mambalibs) so the lockfile stays single-versioned. Optional so the
+# serving image never links kube-rs unless built with `--features operator`.
+kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }
+k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
+schemars = { version = "0.8", optional = true }
+operator = { path = "../../libs/operator", optional = true }
+serde_yaml = { workspace = true, optional = true }
+# Process-level rustls crypto provider install (operator/kube, raft-host peer
+# transport, and the online CLI ops all link rustls). Optional so the default
+# build stays rustls-free and fast.
+rustls = { version = "0.23", optional = true }
+
 # Config
 clap = { workspace = true, features = ["env"] }
 
@@ -75,19 +90,35 @@ clap = { workspace = true, features = ["env"] }
 default = []
 # keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
-client = ["dep:reqwest", "dep:h2c"]
+client = ["dep:reqwest", "dep:h2c", "rustls-provider"]
 # raft — raft-host-backed consensus (HA phase C; per-shard hosts + h2c peer
 # transport; see HA.md). raft-host pulls libs/raft-core transitively.
-raft = ["dep:raft-host"]
+raft = ["dep:raft-host", "rustls-provider"]
 # Online (HTTPS) paths of the standard CLI ops (#471): `upgrade` self-install +
 # `issue` search/view/create. Offline paths (llm, `upgrade --check`, `issue
 # create --dry-run`) always build; release builds enable these.
-self-update = ["cli-std/online"]
-issue = ["cli-std/online"]
+self-update = ["cli-std/online", "rustls-provider"]
+issue = ["cli-std/online", "rustls-provider"]
 # Deprecated build-feature alias kept for release scripts that have not yet
 # renamed their feature set. The CLI command itself is `keep issue`, not
 # `keep report-issue` (#540).
 report-issue = ["issue"]
+# operator — the shared libs/operator scaffold: a KeepSpec CRD + ManagedService
+# render, driven by operator::run. Ships the `keep k8s operator run` controller
+# and the CRD generator; pulls kube-rs, so the serving image stays kube-free
+# unless built with this feature (#775).
+operator = [
+    "dep:kube",
+    "dep:k8s-openapi",
+    "dep:schemars",
+    "dep:operator",
+    "dep:serde_yaml",
+    "rustls-provider",
+]
+# Private: link rustls + install its process-level crypto provider at startup.
+# Enabled by every feature that links a rustls path (operator/raft/client/online
+# CLI ops), so the default build pays nothing.
+rustls-provider = ["dep:rustls"]
 
 [dev-dependencies]
 tokio-test = "0.4"

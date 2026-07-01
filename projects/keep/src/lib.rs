@@ -19,9 +19,12 @@ pub mod engine;
 pub mod error;
 pub mod http;
 pub mod metrics;
+#[cfg(feature = "operator")]
+pub mod operator;
 pub mod persistence;
 #[cfg(feature = "raft")]
 pub mod raft;
+pub mod tls;
 pub mod types;
 
 pub use cluster::{ClusterConfig, ClusterState};

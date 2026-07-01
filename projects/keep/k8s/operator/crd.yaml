@@ -1,3 +1,132 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:25778d28" tracker="pending-tracker" reason="Generated Keep CustomResourceDefinition, checked in so `keep k8s crd render` works without the operator feature (include_str fallback)."
-// TODO: hand-write content for `projects/keep/k8s/operator/crd.yaml`.
-// HANDWRITE-END
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: keeps.keep.dev
+spec:
+  group: keep.dev
+  names:
+    categories: []
+    kind: Keep
+    plural: keeps
+    shortNames:
+    - kp
+    singular: keep
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: integer
+    - jsonPath: .status.shardCount
+      name: Shards
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for KeepSpec via `CustomResource`
+        properties:
+          spec:
+            description: '`keep.dev/v1alpha1` `Keep`. Namespaced: every child object the operator renders lands in this object''s namespace, so independent keep deployments coexist by name.'
+            properties:
+              engineShards:
+                default: 256
+                description: Per-node engine shard count (`KEEP_SHARDS`) for multi-core scaling — distinct from `shardCount` (the cluster-routing fan-out). Defaults to 256.
+                type: integer
+                minimum: 0.0
+              graceSecs:
+                default: 30
+                description: Graceful drain window on SIGTERM (seconds); tracks `terminationGracePeriodSeconds`. Defaults to 30.
+                type: integer
+                minimum: 0.0
+              image:
+                type: string
+              imagePullPolicy:
+                nullable: true
+                type: string
+              logLevel:
+                description: Log level (`trace|debug|info|warn|error`). Defaults to `info`.
+                nullable: true
+                type: string
+              replicasPerShard:
+                default: 1
+                type: integer
+                minimum: 0.0
+              resources:
+                default:
+                  cpu: ''
+                  memory: ''
+                description: CPU/memory request==limit (Guaranteed QoS).
+                properties:
+                  cpu:
+                    default: ''
+                    type: string
+                  memory:
+                    default: ''
+                    type: string
+                type: object
+              shardCount:
+                default: 1
+                type: integer
+                minimum: 0.0
+              storage:
+                default: 10Gi
+                description: Per-pod durable disk-tier (WAL + snapshots) PVC size. Defaults to `10Gi`.
+                type: string
+              storageClass:
+                description: PVC StorageClass for the disk tier. Unset means the cluster default.
+                nullable: true
+                type: string
+              voterCount:
+                default: 1
+                type: integer
+                minimum: 0.0
+            required:
+            - image
+            type: object
+          status:
+            description: Status subresource, written back by the reconcile loop.
+            nullable: true
+            properties:
+              desiredReplicas:
+                default: 0
+                description: Desired store replicas (`shardCount * replicasPerShard`).
+                format: int32
+                type: integer
+              message:
+                default: ''
+                description: Last human-readable reconcile message.
+                type: string
+              observedGeneration:
+                default: 0
+                description: The `.metadata.generation` this status reflects (drift detection).
+                format: int64
+                type: integer
+              phase:
+                default: ''
+                description: '`Pending | Reconciling | Ready`.'
+                type: string
+              readyReplicas:
+                default: 0
+                description: Ready store replicas (from the StatefulSet status).
+                format: int32
+                type: integer
+              shardCount:
+                default: 0
+                description: Effective cluster shard count.
+                type: integer
+                minimum: 0.0
+            type: object
+        required:
+        - spec
+        title: Keep
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

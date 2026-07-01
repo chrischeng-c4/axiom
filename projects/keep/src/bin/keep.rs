@@ -10,7 +10,7 @@
 //! outline`.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,6 +54,117 @@ enum Command {
     /// (`search`/`view`/`create`). `create` bundles a diagnostics block and
     /// auto-tags `project:keep`; `search` is filtered to keep's own issues.
     Issue(IssueArgs),
+    /// Kubernetes artifacts split by layer: the cluster-scoped CRD, the operator
+    /// control plane, and app-namespace Keep instances. Render paths are offline
+    /// (they work from the binary); only `operator run` needs the `operator`
+    /// build feature.
+    K8s(K8sArgs),
+}
+
+/// `keep k8s <crd|operator|instance>` — cluster artifacts split by lifecycle
+/// layer.
+#[derive(clap::Args, Debug)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sCmd {
+    /// Cluster-scoped API layer: render the Keep CRD.
+    Crd(K8sCrdArgs),
+    /// Operator control-plane layer: render assets or run the controller.
+    Operator(K8sOperatorArgs),
+    /// App-namespace declaration: render a Keep custom resource.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    cmd: K8sCrdCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sCrdCmd {
+    /// Render the Keep CustomResourceDefinition YAML.
+    Render(K8sFileOutputArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    cmd: Option<K8sOperatorCmd>,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sOperatorCmd {
+    /// Container entrypoint: run the reconcile controller (needs `--features
+    /// operator`). The default when no subcommand is given.
+    Run,
+    /// Render operator namespace/RBAC/deployment YAML.
+    Render(K8sOperatorRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sOperatorRenderArgs {
+    /// Namespace that owns the operator control plane.
+    #[arg(long, default_value = "keep-system")]
+    namespace: String,
+    /// Write to this path instead of stdout. A directory receives
+    /// `operator.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    cmd: K8sInstanceCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sInstanceCmd {
+    /// Render a namespaced `kind: Keep` custom resource.
+    Render(K8sInstanceRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sInstanceRenderArgs {
+    /// Built-in instance profile.
+    #[arg(long, value_enum, default_value_t = K8sInstanceProfile::Dev)]
+    profile: K8sInstanceProfile,
+    /// Keep CR name.
+    #[arg(long)]
+    name: Option<String>,
+    /// Namespace where the app-facing Keep instance lives.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Store image. Defaults are profile-specific.
+    #[arg(long)]
+    image: Option<String>,
+    /// Write to this path instead of stdout. A directory receives `keep.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum K8sInstanceProfile {
+    /// Small local/kind CR: one store pod, small disk, verbose logs.
+    Dev,
+    /// Pre-prod CR: prod-shaped single node, json-ish info logs, mid disk.
+    Staging,
+    /// Production-shape CR: sharded raft-HA topology, large disk tier.
+    Prod,
+    /// Fill-in-the-blanks CR skeleton for app teams.
+    Template,
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sFileOutputArgs {
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 /// `keep llm` flags.
@@ -248,6 +359,11 @@ const TOPICS: &[cli_std::llm::Topic] = &[
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the process-level rustls crypto provider before anything parses or
+    // dials TLS (the operator/kube, raft-host peer, and online CLI paths all link
+    // rustls, which panics without a default provider). A no-op in the default,
+    // rustls-free build. See `keep::tls`.
+    keep::tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
         // Default (no subcommand): run the server.
@@ -283,6 +399,170 @@ async fn dispatch(cmd: Command) -> Result<()> {
             .await
         }
         Command::Issue(args) => dispatch_issue(args).await,
+        Command::K8s(args) => k8s(args).await,
+    }
+}
+
+/// `keep k8s` — cluster artifacts split by lifecycle layer. Only `operator run`
+/// needs kube-rs at runtime; the render paths are offline and work from the
+/// binary (the generated CRD is embedded, the operator/instance manifests are
+/// string-templated).
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.cmd {
+        K8sCmd::Crd(a) => match a.cmd {
+            K8sCrdCmd::Render(a) => write_or_print(a.out.as_deref(), "crd.yaml", &crd_yaml()),
+        },
+        K8sCmd::Operator(a) => match a.cmd.unwrap_or(K8sOperatorCmd::Run) {
+            K8sOperatorCmd::Run => run_operator().await,
+            K8sOperatorCmd::Render(a) => {
+                let yaml = render_operator_yaml(&a.namespace);
+                write_or_print(a.out.as_deref(), "operator.yaml", &yaml)
+            }
+        },
+        K8sCmd::Instance(a) => match a.cmd {
+            K8sInstanceCmd::Render(a) => {
+                let yaml = render_instance_yaml(&a);
+                write_or_print(a.out.as_deref(), "keep.yaml", &yaml)
+            }
+        },
+    }
+}
+
+#[cfg(feature = "operator")]
+async fn run_operator() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
+    keep::operator::run().await
+}
+
+#[cfg(not(feature = "operator"))]
+async fn run_operator() -> Result<()> {
+    anyhow::bail!(
+        "this keep build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
+}
+
+#[cfg(feature = "operator")]
+fn crd_yaml() -> String {
+    keep::operator::crd_yaml()
+}
+
+#[cfg(not(feature = "operator"))]
+fn crd_yaml() -> String {
+    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+}
+
+/// Render the operator control-plane manifests (RBAC + Deployment) with the
+/// namespace substituted, from the checked-in fixtures.
+fn render_operator_yaml(namespace: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&replace_operator_namespace(
+        include_str!("../../k8s/operator/rbac.yaml"),
+        namespace,
+    ));
+    out.push_str("\n---\n");
+    out.push_str(&replace_operator_namespace(
+        include_str!("../../k8s/operator/deployment.yaml"),
+        namespace,
+    ));
+    ensure_trailing_newline(&out)
+}
+
+fn replace_operator_namespace(input: &str, namespace: &str) -> String {
+    input
+        .replace("name: keep-system", &format!("name: {namespace}"))
+        .replace("namespace: keep-system", &format!("namespace: {namespace}"))
+}
+
+/// Render a `kind: Keep` custom resource for the selected profile.
+fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
+    let default_version = env!("CARGO_PKG_VERSION");
+    let (default_name, default_namespace, default_image, body) = match args.profile {
+        K8sInstanceProfile::Dev => (
+            "keep",
+            "default",
+            "keep:latest".to_string(),
+            InstanceBody::Dev,
+        ),
+        K8sInstanceProfile::Staging => (
+            "keep",
+            "staging",
+            format!("keep:{default_version}"),
+            InstanceBody::Staging,
+        ),
+        K8sInstanceProfile::Prod => (
+            "keep",
+            "production",
+            format!("registry.example.com/keep:{default_version}"),
+            InstanceBody::Prod,
+        ),
+        K8sInstanceProfile::Template => (
+            "REPLACE_ME__KEEP_NAME",
+            "REPLACE_ME__APP_NAMESPACE",
+            "REPLACE_ME__REGISTRY/keep:REPLACE_ME__IMAGE_TAG".to_string(),
+            InstanceBody::Template,
+        ),
+    };
+    let name = args.name.as_deref().unwrap_or(default_name);
+    let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
+    let image = args.image.as_deref().unwrap_or(&default_image);
+
+    let mut yaml = format!(
+        "apiVersion: keep.dev/v1alpha1\nkind: Keep\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
+    );
+    match body {
+        InstanceBody::Dev => {
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  engineShards: 16\n  storage: 2Gi\n  resources:\n    cpu: \"250m\"\n    memory: 256Mi\n");
+        }
+        InstanceBody::Staging => {
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  engineShards: 128\n  storage: 20Gi\n  resources:\n    cpu: \"2\"\n    memory: 4Gi\n");
+        }
+        InstanceBody::Prod => {
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  engineShards: 512\n  storage: 200Gi\n  graceSecs: 45\n  resources:\n    cpu: \"8\"\n    memory: 16Gi\n");
+        }
+        InstanceBody::Template => {
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  engineShards: 256\n  storage: 10Gi\n  resources:\n    cpu: \"2\"\n    memory: 4Gi\n");
+        }
+    }
+    ensure_trailing_newline(&yaml)
+}
+
+enum InstanceBody {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+/// Write `body` to `out` (a file, or `default_file` inside a directory) or print
+/// it to stdout.
+fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
+    if let Some(path) = out {
+        let target = if path.extension().is_some() {
+            path.to_path_buf()
+        } else {
+            path.join(default_file)
+        };
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, body)?;
+        println!("wrote {}", target.display());
+    } else {
+        print!("{body}");
+    }
+    Ok(())
+}
+
+fn ensure_trailing_newline(input: &str) -> String {
+    if input.ends_with('\n') {
+        input.to_string()
+    } else {
+        format!("{input}\n")
     }
 }
 
@@ -516,5 +796,55 @@ mod tests {
     #[test]
     fn report_issue_command_is_gone() {
         assert!(Cli::try_parse_from(["keep", "report-issue", "--title", "x"]).is_err());
+    }
+
+    /// `keep k8s crd/operator/instance` verbs parse with their convention flags
+    /// (#775). Positionals name subcommands; profile/namespace/out are flags.
+    #[test]
+    fn k8s_verbs_parse() {
+        Cli::try_parse_from(["keep", "k8s", "crd", "render"]).expect("crd render");
+        Cli::try_parse_from(["keep", "k8s", "operator", "run"]).expect("operator run");
+        Cli::try_parse_from([
+            "keep",
+            "k8s",
+            "operator",
+            "render",
+            "--namespace",
+            "keep-system",
+        ])
+        .expect("operator render");
+
+        let cli = Cli::try_parse_from([
+            "keep",
+            "k8s",
+            "instance",
+            "render",
+            "--profile",
+            "prod",
+            "--namespace",
+            "production",
+        ])
+        .expect("instance render");
+        match cli.cmd {
+            Some(Command::K8s(K8sArgs {
+                cmd:
+                    K8sCmd::Instance(K8sInstanceArgs {
+                        cmd: K8sInstanceCmd::Render(a),
+                    }),
+            })) => {
+                assert!(matches!(a.profile, K8sInstanceProfile::Prod));
+                assert_eq!(a.namespace.as_deref(), Some("production"));
+            }
+            other => panic!("expected k8s instance render, got {other:?}"),
+        }
+
+        // `operator` with no subcommand defaults to `run`.
+        let cli = Cli::try_parse_from(["keep", "k8s", "operator"]).expect("operator default");
+        match cli.cmd {
+            Some(Command::K8s(K8sArgs {
+                cmd: K8sCmd::Operator(K8sOperatorArgs { cmd }),
+            })) => assert!(cmd.is_none()),
+            other => panic!("expected k8s operator, got {other:?}"),
+        }
     }
 }
