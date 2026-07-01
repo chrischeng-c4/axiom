@@ -58,42 +58,41 @@ flowchart TD
 
 ```mermaid
 ---
-id: jet-pack-publish-workspace-deps-tests
+id: jet-pack-publish-workspace-deps-contract-tests
 requirements:
   R1:
-    text: "pack/publish discovers the workspace root when invoked from a package directory."
+    text: "A Publisher created for packages/widget discovers the pnpm workspace declared at the temp repository root."
     risk: high
     verify: unit
   R2:
-    text: "dependencies, devDependencies, peerDependencies, and optionalDependencies rewrite workspace:* / workspace:^ / workspace:~ to package versions."
+    text: "Publisher::pack writes package/package.json with dependencies exact, peerDependencies caret, and optionalDependencies tilde ranges resolved from sibling package versions."
     risk: high
     verify: unit
   R3:
-    text: "The package.json written into the tarball contains no workspace: protocol ranges."
+    text: "The packed manifest serialization contains no workspace: literal after transformation."
     risk: high
     verify: unit
 ---
 requirementDiagram
 requirement R1 {
   id: R1
-  text: "Ancestor workspace root discovery"
+  text: "Publisher walks to workspace root"
   risk: High
   verifymethod: Test
 }
 requirement R2 {
   id: R2
-  text: "All dependency fields rewrite"
+  text: "Packed manifest rewrites all publish dependency fields"
   risk: High
   verifymethod: Test
 }
 requirement R3 {
   id: R3
-  text: "Packed manifest is registry-safe"
+  text: "No workspace protocol leaks to tarball"
   risk: High
   verifymethod: Test
 }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
