@@ -9,12 +9,11 @@
 # case = "BaseHTTPRequestHandler__log_error__format_as_str_wrong"
 # subject = "http.server.BaseHTTPRequestHandler.log_error(format: str)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed format"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/http/server.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed format
 # mamba-strict-type: TypeError
 """Type wall: http.server.BaseHTTPRequestHandler.log_error(format: str); call it with the wrong type.
 

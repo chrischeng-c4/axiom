@@ -9,12 +9,11 @@
 # case = "HTTPConnection__putheader__header_as_typed_wrong"
 # subject = "http.client.HTTPConnection.putheader(header: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed header"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/http/client.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed header
 # mamba-strict-type: TypeError
 """Type wall: http.client.HTTPConnection.putheader(header: typed); call it with the wrong type.
 
