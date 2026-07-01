@@ -9,12 +9,11 @@
 # case = "comparison_simple_test__test_comparisons"
 # subject = "cpython.test_compare.ComparisonSimpleTest.test_comparisons"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_compare.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_compare.py::ComparisonSimpleTest::test_comparisons
 """Auto-ported test: ComparisonSimpleTest::test_comparisons (CPython 3.12 oracle)."""
 
