@@ -9,7 +9,6 @@
 # case = "Fraction__limit_denominator__max_denominator_as_int_wrong"
 # subject = "fractions.Fraction.limit_denominator(max_denominator: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"

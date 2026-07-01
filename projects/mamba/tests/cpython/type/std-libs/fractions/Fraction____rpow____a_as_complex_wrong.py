@@ -9,12 +9,10 @@
 # case = "Fraction____rpow____a_as_complex_wrong"
 # subject = "fractions.Fraction.__rpow__(a: complex)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: fractions.Fraction.__rpow__(a: complex); call it with the wrong type.
 

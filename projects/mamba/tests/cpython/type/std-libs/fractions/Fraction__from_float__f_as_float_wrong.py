@@ -9,7 +9,6 @@
 # case = "Fraction__from_float__f_as_float_wrong"
 # subject = "fractions.Fraction.from_float(f: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"

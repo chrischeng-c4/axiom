@@ -9,12 +9,10 @@
 # case = "Fraction____int_____index_as_Callable_wrong"
 # subject = "fractions.Fraction.__int__(_index: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _index"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/fractions.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed _index
 # mamba-strict-type: TypeError
 """Type wall: fractions.Fraction.__int__(_index: Callable); call it with the wrong type.
 
