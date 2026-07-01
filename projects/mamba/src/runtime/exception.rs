@@ -857,7 +857,9 @@ pub fn mb_take_uncaught_traceback() -> Option<String> {
 /// except handler has consumed the pending slot.
 pub fn mb_catch_exception() -> MbValue {
     CURRENT_EXCEPTION.with(|cell| match cell.borrow_mut().take() {
-        Some(exc) => {
+        Some(mut exc) => {
+            exc.traceback =
+                super::stdlib::traceback_mod::trim_traceback_to_current_handler(&exc.traceback);
             LAST_HANDLED_EXCEPTION.with(|h| {
                 *h.borrow_mut() = Some(exc.clone());
             });
@@ -934,6 +936,22 @@ pub fn set_current_traceback(entries: Vec<(String, u32, String)>) {
     CURRENT_EXCEPTION.with(|cell| {
         if let Some(exc) = cell.borrow_mut().as_mut() {
             exc.traceback = entries;
+        }
+    });
+}
+
+pub fn update_current_traceback_frame_line(filename: &str, name: &str, lineno: u32) {
+    CURRENT_EXCEPTION.with(|cell| {
+        if let Some(exc) = cell.borrow_mut().as_mut() {
+            if let Some(idx) = exc
+                .traceback
+                .iter()
+                .rposition(|(frame_filename, _line, frame_name)| {
+                    frame_filename == filename && frame_name == name
+                })
+            {
+                exc.traceback[idx].1 = lineno;
+            }
         }
     });
 }

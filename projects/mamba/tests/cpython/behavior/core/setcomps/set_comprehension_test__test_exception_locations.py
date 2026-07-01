@@ -9,12 +9,10 @@
 # case = "set_comprehension_test__test_exception_locations"
 # subject = "cpython.test_setcomps.SetComprehensionTest.test_exception_locations"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_setcomps.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_setcomps.py::SetComprehensionTest::test_exception_locations
 """Auto-ported test: SetComprehensionTest::test_exception_locations."""
 

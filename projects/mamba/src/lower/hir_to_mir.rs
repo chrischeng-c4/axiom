@@ -3807,8 +3807,9 @@ impl<'a> HirToMir<'a> {
                 self.try_handler_stack.push((handler_block, finally_block));
                 self.finally_body_stack.push(finally_body.clone());
                 for s in body {
+                    let propagation_line = self.source_line_for_stmt(s);
                     self.lower_stmt(s);
-                    self.emit_try_exception_guard();
+                    self.emit_try_exception_guard(Some(propagation_line));
                 }
                 self.try_handler_stack.pop();
                 self.finally_body_stack.pop();
@@ -5201,7 +5202,7 @@ impl<'a> HirToMir<'a> {
                         }
                         // A raising decorator (@enum.unique on an aliased
                         // class) must reach an enclosing try's handler.
-                        self.emit_try_exception_guard();
+                        self.emit_try_exception_guard(None);
                         cls_vreg = result_vreg;
                     }
                 }
@@ -11091,6 +11092,33 @@ impl<'a> HirToMir<'a> {
             .unwrap_or_else(|| self.current_func_src_line.unwrap_or(1) as i64)
     }
 
+    fn source_line_for_stmt(&self, stmt: &HirStmt) -> i64 {
+        let span = match stmt {
+            HirStmt::Let { span, .. }
+            | HirStmt::Assign { span, .. }
+            | HirStmt::Return { span, .. }
+            | HirStmt::Expr { span, .. }
+            | HirStmt::If { span, .. }
+            | HirStmt::While { span, .. }
+            | HirStmt::For { span, .. }
+            | HirStmt::AsyncFor { span, .. }
+            | HirStmt::Break { span }
+            | HirStmt::Continue { span }
+            | HirStmt::Try { span, .. }
+            | HirStmt::Raise { span, .. }
+            | HirStmt::Import { span, .. }
+            | HirStmt::With { span, .. }
+            | HirStmt::Assert { span, .. }
+            | HirStmt::Del { span, .. }
+            | HirStmt::Global { span, .. }
+            | HirStmt::Nonlocal { span, .. }
+            | HirStmt::FuncDefPlaceholder { span, .. }
+            | HirStmt::ClassDefPlaceholder { span, .. }
+            | HirStmt::Match { span, .. } => span,
+        };
+        self.source_line_for_span(span)
+    }
+
     fn emit_traceback_push_frame(&mut self, filename: &str, line: i64, name: &str) {
         let filename_vreg = self.emit_str_const(filename);
         let line_vreg = self.emit_boxed_int_const(line.max(1));
@@ -11108,6 +11136,16 @@ impl<'a> HirToMir<'a> {
         self.current_stmts.push(MirInst::CallExtern {
             dest: None,
             name: "mb_traceback_capture_raise".to_string(),
+            args: vec![line_vreg],
+            ty: self.tcx.none(),
+        });
+    }
+
+    fn emit_traceback_note_propagation(&mut self, line: i64) {
+        let line_vreg = self.emit_boxed_int_const(line.max(1));
+        self.current_stmts.push(MirInst::CallExtern {
+            dest: None,
+            name: "mb_traceback_note_propagation".to_string(),
             args: vec![line_vreg],
             ty: self.tcx.none(),
         });
@@ -11240,7 +11278,7 @@ impl<'a> HirToMir<'a> {
     /// Inside a try block, emit `mb_has_exception()` check after a call.
     /// If an exception is pending, branch to the handler immediately
     /// (Python semantics: exceptions propagate at each call site).
-    fn emit_try_exception_guard(&mut self) {
+    fn emit_try_exception_guard(&mut self, propagation_line: Option<i64>) {
         if let Some(&(handler_block, _)) = self.try_handler_stack.last() {
             let exc_check = self.fresh_vreg();
             self.current_stmts.push(MirInst::CallExtern {
@@ -11250,11 +11288,17 @@ impl<'a> HirToMir<'a> {
                 ty: self.tcx.bool(),
             });
             let continue_block = self.fresh_block();
+            let propagate_block = self.fresh_block();
             self.finish_block(Terminator::Branch {
                 cond: exc_check,
-                then_block: handler_block,
+                then_block: propagate_block,
                 else_block: continue_block,
             });
+            self.start_block(propagate_block);
+            if let Some(line) = propagation_line {
+                self.emit_traceback_note_propagation(line);
+            }
+            self.finish_block(Terminator::Goto(handler_block));
             self.start_block(continue_block);
         }
     }
