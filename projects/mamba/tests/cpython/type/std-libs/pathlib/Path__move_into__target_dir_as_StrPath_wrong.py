@@ -9,12 +9,10 @@
 # case = "Path__move_into__target_dir_as_StrPath_wrong"
 # subject = "pathlib.Path.move_into(target_dir: StrPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target_dir"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed target_dir
 # mamba-strict-type: TypeError
 """Type wall: pathlib.Path.move_into(target_dir: StrPath); call it with the wrong type.
 

@@ -9,7 +9,6 @@
 # case = "Path__write_bytes__data_as_ReadableBuffer_wrong"
 # subject = "pathlib.Path.write_bytes(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Path__chmod__mode_as_int_wrong"
 # subject = "pathlib.Path.chmod(mode: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"

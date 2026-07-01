@@ -9,7 +9,6 @@
 # case = "Path__glob__pattern_as_str_wrong"
 # subject = "pathlib.Path.glob(pattern: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pathlib.pyi"
 # status = "filled"
