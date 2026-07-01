@@ -9,12 +9,10 @@
 # case = "extend_path__path_as__PathT_wrong"
 # subject = "pkgutil.extend_path(path: _PathT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pkgutil.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: pkgutil.extend_path(path: _PathT); call it with the wrong type.
 
