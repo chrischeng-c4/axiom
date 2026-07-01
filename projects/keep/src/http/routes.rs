@@ -2,14 +2,24 @@
 //! so k8s probes and Prometheus scrape always reach them; the data plane gets
 //! the configured body limit.
 
+use std::sync::Arc;
+
 use axum::{
     extract::DefaultBodyLimit,
     middleware::from_fn_with_state,
     routing::{get, post},
     Router,
 };
+use service_http::MetricsProvider;
 
 use crate::http::{handlers, hash, lists, meta, metrics, sets, zsets, AppState};
+
+/// The keep OpenAPI document — the accessor the shared `service_http`
+/// `/openapi.json` and `/docs` routes serve.
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    crate::http::openapi::ApiDoc::openapi()
+}
 
 /// Build the full application router.
 pub fn router(state: AppState) -> Router {
@@ -99,20 +109,22 @@ pub fn router(state: AppState) -> Router {
         .route_layer(from_fn_with_state(req_metrics, metrics::track))
         .layer(DefaultBodyLimit::max(body_limit));
 
-    Router::new()
-        .route("/healthz", get(handlers::healthz))
-        .route("/readyz", get(handlers::readyz))
-        .route("/metrics", get(handlers::metrics))
+    // Standard probes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
+    // `/docs`) come from the shared service shell so the operational surface
+    // matches every other service. AppState supplies readiness + Prometheus
+    // metrics; `/readyz` reports 503 while draining.
+    let probe_state = Arc::new(state.clone());
+    let metrics: Arc<dyn MetricsProvider> = probe_state.clone();
+    let probes = service_http::standard_probe_routes(probe_state, Some(metrics), openapi);
+
+    // keep-specific admin routes the shared shell does not own.
+    let admin = Router::new()
         .route("/info", get(handlers::info))
-        .route("/cluster", get(handlers::cluster))
-        .route("/openapi.json", get(handlers::openapi_spec))
-        .route("/docs", get(handlers::docs))
-        .merge(data_plane)
-        // One INFO-level tracing span per request — structured access logs.
-        .layer(
-            tower_http::trace::TraceLayer::new_for_http().make_span_with(
-                tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO),
-            ),
-        )
-        .with_state(state)
+        .route("/cluster", get(handlers::cluster));
+
+    probes
+        .merge(admin.with_state(state.clone()))
+        .merge(data_plane.with_state(state))
+        // One INFO-level tracing span per request — spans probes + data plane.
+        .layer(service_http::trace_layer())
 }

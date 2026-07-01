@@ -45,21 +45,55 @@ axum.workspace = true
 tower = { workspace = true, features = ["util"] }
 tower-http.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
-# Explicit hyper auto-server so we serve HTTP/2 cleartext (h2c) + HTTP/1.1 on
-# one port — axum::serve alone is HTTP/1-only.
-hyper = { version = "1", features = ["server", "http1", "http2"] }
-hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio"] }
+# Shared polyglot OpenAPI client codegen (libs/openapi-codegen). `keep spec gen`
+# composes its `generate(...)` on keep's own OpenAPI — one codegen path, no
+# external tool. Always linked (pure Rust, no network).
+cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
+# Shared k8s-native HTTP service shell (#751) — standard probes, request
+# tracing, h2c serve, and graceful drain. Composes libs/h2c for HTTP/2 cleartext
+# + HTTP/1.1 on one port, so keep no longer hand-rolls the hyper-util auto-server.
+service-http = { path = "../../libs/service-http" }
+# Shared request-auth plumbing (#746) — the Verifier trait + bearer extraction.
+# keep's KeepVerifier composes libs/claimtoken; the per-handler scope decision
+# (claim-check-only, bare-id, 403) stays in keep, not in a blanket middleware.
+service-auth = { path = "../../libs/service-auth" }
+# Shared backup contract (#776) — destination/policy/sink/runner. keep's backup
+# module produces consistent snapshot bytes and wires them through this instead
+# of a bespoke sink; the `operator` feature also embeds BackupPolicy in KeepSpec.
+# Always linked (lightweight: anyhow + serde + schemars).
+service-backup = { path = "../../libs/service-backup" }
 # HTTP client for in-tree Rust consumers (behind the `client` feature).
 reqwest = { workspace = true, optional = true }
 # Shared h2c client construction + ln(concurrency) pool sizing (#467).
 h2c = { path = "../../libs/h2c", optional = true }
-# Standard agent-facing CLI ops — llm/upgrade/report-issue (#471). Offline paths
+# Standard agent-facing CLI ops — llm/upgrade/issue (#471). Offline paths
 # always build; the network paths are gated behind keep's online features below.
 cli-std = { path = "../../libs/cli-std", default-features = false }
 # Error glue for the binary dispatch + the raft module.
 anyhow = { workspace = true }
-# Shared Raft consensus engine (libs/raft-core, serde-only) — replaces openraft.
-raft-core = { path = "../../libs/raft-core", optional = true }
+# Shared Raft host driver (libs/raft-host: tick/pump loop, h2c peer transport,
+# sole-applier apply + snapshot/compaction over libs/raft-core). keep supplies a
+# per-shard RaftStateMachine and gets the HA + backup layer for free, instead of
+# hand-rolling a single-node driver.
+raft-host = { path = "../../libs/raft-host", optional = true }
+
+# K8s operator (feature `operator`) — the shared libs/operator scaffold + render
+# toolkit. keep supplies a KeepSpec CRD + ManagedService and gets the reconcile
+# controller for free. Versions mirror the workspace's existing kube-rs users
+# (lumen / mambalibs) so the lockfile stays single-versioned. Optional so the
+# serving image never links kube-rs unless built with `--features operator`.
+kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }
+k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
+schemars = { version = "0.8", optional = true }
+operator = { path = "../../libs/operator", optional = true }
+# YAML serialization. Non-optional: `keep spec --format openapi-yaml` (offline)
+# emits the OpenAPI document as YAML in every build; the operator feature also
+# uses it to render manifests.
+serde_yaml = { workspace = true }
+# Process-level rustls crypto provider install (operator/kube, raft-host peer
+# transport, and the online CLI ops all link rustls). Optional so the default
+# build stays rustls-free and fast.
+rustls = { version = "0.23", optional = true }
 
 # Config
 clap = { workspace = true, features = ["env"] }
@@ -68,14 +102,34 @@ clap = { workspace = true, features = ["env"] }
 default = []
 # keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
-client = ["dep:reqwest", "dep:h2c"]
-# raft — raft-core-backed consensus (HA phase C; see HA.md).
-raft = ["dep:raft-core"]
+client = ["dep:reqwest", "dep:h2c", "rustls-provider"]
+# raft — raft-host-backed consensus (HA phase C; per-shard hosts + h2c peer
+# transport; see HA.md). raft-host pulls libs/raft-core transitively.
+raft = ["dep:raft-host", "rustls-provider"]
 # Online (HTTPS) paths of the standard CLI ops (#471): `upgrade` self-install +
-# `report-issue` submit. Offline paths (llm, `upgrade --check`, `report-issue
-# --dry-run`) always build; release builds enable these.
-self-update = ["cli-std/online"]
-report-issue = ["cli-std/online"]
+# `issue` search/view/create. Offline paths (llm, `upgrade --check`, `issue
+# create --dry-run`) always build; release builds enable these.
+self-update = ["cli-std/online", "rustls-provider"]
+issue = ["cli-std/online", "rustls-provider"]
+# Deprecated build-feature alias kept for release scripts that have not yet
+# renamed their feature set. The CLI command itself is `keep issue`, not
+# `keep report-issue` (#540).
+report-issue = ["issue"]
+# operator — the shared libs/operator scaffold: a KeepSpec CRD + ManagedService
+# render, driven by operator::run. Ships the `keep k8s operator run` controller
+# and the CRD generator; pulls kube-rs, so the serving image stays kube-free
+# unless built with this feature (#775).
+operator = [
+    "dep:kube",
+    "dep:k8s-openapi",
+    "dep:schemars",
+    "dep:operator",
+    "rustls-provider",
+]
+# Private: link rustls + install its process-level crypto provider at startup.
+# Enabled by every feature that links a rustls path (operator/raft/client/online
+# CLI ops), so the default build pays nothing.
+rustls-provider = ["dep:rustls"]
 
 [dev-dependencies]
 tokio-test = "0.4"
