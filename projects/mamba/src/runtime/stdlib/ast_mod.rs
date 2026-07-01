@@ -763,6 +763,30 @@ const ARGUMENTS_FIELDS: &[AstFieldSpec] = &[
         kind: AstFieldKind::List,
     },
 ];
+const LAMBDA_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "args",
+        kind: AstFieldKind::AstNode,
+    },
+    AstFieldSpec {
+        name: "body",
+        kind: AstFieldKind::AstNode,
+    },
+];
+const ARG_FIELDS: &[AstFieldSpec] = &[
+    AstFieldSpec {
+        name: "arg",
+        kind: AstFieldKind::StrOrNone,
+    },
+    AstFieldSpec {
+        name: "annotation",
+        kind: AstFieldKind::AstNodeOrNone,
+    },
+    AstFieldSpec {
+        name: "type_comment",
+        kind: AstFieldKind::StrOrNone,
+    },
+];
 const KEYWORD_FIELDS: &[AstFieldSpec] = &[
     AstFieldSpec {
         name: "arg",
@@ -840,6 +864,7 @@ fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
             },
         ],
         "JoinedStr" | "TemplateStr" => VALUES_FIELDS,
+        "Lambda" => LAMBDA_FIELDS,
         "List" | "Set" | "Tuple" => LIST_FIELDS,
         "Raise" => RAISE_FIELDS,
         "MatchMapping" => &[
@@ -860,6 +885,7 @@ fn ast_constructor_fields(node_type: &str) -> &'static [AstFieldSpec] {
             name: "patterns",
             kind: AstFieldKind::List,
         }],
+        "arg" => ARG_FIELDS,
         "arguments" => ARGUMENTS_FIELDS,
         "keyword" => KEYWORD_FIELDS,
         "match_case" => MATCH_CASE_FIELDS,
@@ -1084,6 +1110,7 @@ fn ast_constructor_type_checks_field(node_type: &str) -> bool {
 
 fn ast_constructor_default(node_type: &str, field_name: &str) -> Option<MbValue> {
     match (node_type, field_name) {
+        ("arg", "annotation" | "type_comment") => Some(MbValue::none()),
         ("arguments", "vararg" | "kwarg") => Some(MbValue::none()),
         _ => None,
     }
@@ -1216,6 +1243,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
     };
     let mode = extract_str(mode).unwrap_or_else(|| "exec".to_string());
     if mode == "eval" {
+        if let Some(expr) = parse_eval_lambda_expression(&src) {
+            return expr;
+        }
         if let Some(expr) = parse_eval_call_expression(&src) {
             return expr;
         }
@@ -1224,6 +1254,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         }
     }
     if mode == "exec" {
+        if let Some(module) = parse_exec_lambda_module(&src) {
+            return module;
+        }
         if let Some(module) = parse_exec_call_module(&src) {
             return module;
         }
@@ -1544,6 +1577,132 @@ fn parse_eval_call_expression(src: &str) -> Option<MbValue> {
     Some(make_ast_node("Expression", expr_fields))
 }
 
+fn parse_eval_lambda_expression(src: &str) -> Option<MbValue> {
+    let trimmed = src.trim();
+    let base_col = src.find(trimmed).unwrap_or(0);
+    let body = parse_simple_lambda_node(trimmed, base_col)?;
+
+    let mut expr_fields = FxHashMap::default();
+    expr_fields.insert("body".to_string(), body);
+    expr_fields.insert(
+        "_source".to_string(),
+        MbValue::from_ptr(MbObject::new_str(src.to_string())),
+    );
+    Some(make_ast_node("Expression", expr_fields))
+}
+
+fn parse_exec_lambda_module(src: &str) -> Option<MbValue> {
+    let trimmed = src.trim();
+    if trimmed.is_empty() || trimmed.contains('\n') {
+        return None;
+    }
+    let base_col = src.find(trimmed).unwrap_or(0);
+    let lambda = parse_simple_lambda_node(trimmed, base_col)?;
+    let end_col = ast_attr_value(lambda, "end_col_offset")
+        .and_then(|v| v.as_int())
+        .unwrap_or((base_col + trimmed.len()) as i64);
+
+    let mut expr_fields = FxHashMap::default();
+    expr_fields.insert("value".to_string(), lambda);
+    insert_location_attrs(&mut expr_fields, 1, base_col as i64, 1, end_col);
+    let expr = make_ast_node("Expr", expr_fields);
+
+    Some(make_module_with_body(src, vec![expr]))
+}
+
+fn parse_simple_lambda_node(trimmed: &str, base_col: usize) -> Option<MbValue> {
+    let rest = trimmed.strip_prefix("lambda ")?;
+    let colon_idx = rest.find(':')?;
+    let params_text = &rest[..colon_idx];
+    let body_segment = &rest[colon_idx + 1..];
+    let body_text = body_segment.trim();
+    if body_text != "None" {
+        return None;
+    }
+
+    let params_base_col = base_col + "lambda ".len();
+    let (args, vararg) = parse_simple_lambda_args(params_text, params_base_col)?;
+    let body_col =
+        params_base_col + colon_idx + 1 + body_segment.find(body_text).unwrap_or(0);
+    let body_end_col = body_col + body_text.len();
+    let body = make_none_constant_node(body_col, body_end_col);
+    let arguments = make_arguments_node(args, vararg);
+
+    let mut fields = FxHashMap::default();
+    fields.insert("args".to_string(), arguments);
+    fields.insert("body".to_string(), body);
+    insert_location_attrs(
+        &mut fields,
+        1,
+        base_col as i64,
+        1,
+        body_end_col as i64,
+    );
+    Some(make_ast_node("Lambda", fields))
+}
+
+fn parse_simple_lambda_args(
+    params_text: &str,
+    params_base_col: usize,
+) -> Option<(Vec<MbValue>, MbValue)> {
+    let mut args = Vec::new();
+    let mut vararg = None;
+    let mut segment_start = 0usize;
+    for raw_segment in params_text.split(',') {
+        let leading = raw_segment.len() - raw_segment.trim_start().len();
+        let token = raw_segment.trim();
+        if token.is_empty() {
+            segment_start += raw_segment.len() + 1;
+            continue;
+        }
+        if let Some(rest) = token.strip_prefix('*') {
+            if vararg.is_some() {
+                return None;
+            }
+            let name = rest.trim();
+            if !is_identifier_text(name) {
+                return None;
+            }
+            let star_rel = raw_segment.find('*')?;
+            let name_rel = star_rel + 1 + raw_segment[star_rel + 1..].find(name)?;
+            let col = params_base_col + segment_start + name_rel;
+            vararg = Some(make_arg_node(name, col, col + name.len()));
+        } else {
+            if !is_identifier_text(token) {
+                return None;
+            }
+            let col = params_base_col + segment_start + leading;
+            args.push(make_arg_node(token, col, col + token.len()));
+        }
+        segment_start += raw_segment.len() + 1;
+    }
+    Some((args, vararg.unwrap_or_else(MbValue::none)))
+}
+
+fn make_arguments_node(args: Vec<MbValue>, vararg: MbValue) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "posonlyargs".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    fields.insert("args".to_string(), MbValue::from_ptr(MbObject::new_list(args)));
+    fields.insert("vararg".to_string(), vararg);
+    fields.insert(
+        "kwonlyargs".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    fields.insert(
+        "kw_defaults".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    fields.insert("kwarg".to_string(), MbValue::none());
+    fields.insert(
+        "defaults".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    make_ast_node("arguments", fields)
+}
+
 fn parse_exec_call_module(src: &str) -> Option<MbValue> {
     let trimmed = src.trim();
     if trimmed.is_empty() || trimmed.contains('\n') {
@@ -1639,6 +1798,9 @@ fn split_simple_keyword_arg(text: &str) -> Option<(&str, &str)> {
 }
 
 fn parse_simple_expr_atom(text: &str, col: usize, end_col: usize) -> Option<MbValue> {
+    if text == "None" {
+        return Some(make_none_constant_node(col, end_col));
+    }
     if let Some(value) = quoted_string_literal(text) {
         return Some(make_string_constant_node(value, col, end_col));
     }
@@ -1757,6 +1919,13 @@ fn make_constant_node(value: i64, col: usize, end_col: usize) -> MbValue {
     make_ast_node("Constant", fields)
 }
 
+fn make_none_constant_node(col: usize, end_col: usize) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("value".to_string(), MbValue::none());
+    insert_location_attrs(&mut fields, 1, col as i64, 1, end_col as i64);
+    make_ast_node("Constant", fields)
+}
+
 fn make_string_constant_node(value: String, col: usize, end_col: usize) -> MbValue {
     make_string_constant_node_at(value, 1, col, end_col)
 }
@@ -1810,6 +1979,18 @@ fn make_name_node(name: &str, col: usize, end_col: usize) -> MbValue {
         MbValue::from_int(end_col as i64),
     );
     make_ast_node("Name", fields)
+}
+
+fn make_arg_node(name: &str, col: usize, end_col: usize) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "arg".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    fields.insert("annotation".to_string(), MbValue::none());
+    fields.insert("type_comment".to_string(), MbValue::none());
+    insert_location_attrs(&mut fields, 1, col as i64, 1, end_col as i64);
+    make_ast_node("arg", fields)
 }
 
 /// ast.dump(node, annotate_fields=True, include_attributes=False,
@@ -1979,6 +2160,7 @@ fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
         "Module" | "Interactive" => &["body", "type_ignores"],
         "Expr" => &["value"],
         "BinOp" => &["left", "op", "right"],
+        "Lambda" => &["args", "body"],
         "Constant" | "NameConstant" | "Num" | "Str" | "Bytes" => &["value", "kind"],
         "Raise" => &["exc", "cause"],
         "Call" => &["func", "args", "keywords"],
@@ -1992,6 +2174,7 @@ fn ast_dump_field_order(class_name: &str) -> &'static [&'static str] {
             "defaults",
         ],
         "keyword" => &["arg", "value"],
+        "arg" => &["arg", "annotation", "type_comment"],
         "Import" => &["names"],
         "ImportFrom" => &["module", "names", "level"],
         "alias" => &["name", "asname"],
