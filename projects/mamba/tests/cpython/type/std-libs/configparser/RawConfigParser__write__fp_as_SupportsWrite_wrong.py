@@ -9,7 +9,6 @@
 # case = "RawConfigParser__write__fp_as_SupportsWrite_wrong"
 # subject = "configparser.RawConfigParser.write(fp: SupportsWrite)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

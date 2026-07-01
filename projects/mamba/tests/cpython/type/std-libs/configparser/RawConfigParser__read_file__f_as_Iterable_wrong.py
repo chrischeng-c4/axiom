@@ -9,7 +9,6 @@
 # case = "RawConfigParser__read_file__f_as_Iterable_wrong"
 # subject = "configparser.RawConfigParser.read_file(f: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__create_unix_server__protocol_factory_as__ProtocolFactory_wrong"
 # subject = "asyncio.events.AbstractEventLoop.create_unix_server(protocol_factory: _ProtocolFactory)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

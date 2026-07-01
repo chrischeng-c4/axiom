@@ -9,12 +9,10 @@
 # case = "AbstractEventLoop__add_signal_handler__sig_as_int_wrong"
 # subject = "asyncio.events.AbstractEventLoop.add_signal_handler(sig: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sig"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sig
 # mamba-strict-type: TypeError
 """Type wall: asyncio.events.AbstractEventLoop.add_signal_handler(sig: int); call it with the wrong type.
 

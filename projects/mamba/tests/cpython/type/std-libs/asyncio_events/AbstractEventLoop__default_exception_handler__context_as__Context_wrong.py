@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__default_exception_handler__context_as__Context_wrong"
 # subject = "asyncio.events.AbstractEventLoop.default_exception_handler(context: _Context)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

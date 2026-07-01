@@ -9,7 +9,6 @@
 # case = "RawConfigParser__read_dict__dictionary_as_Mapping_wrong"
 # subject = "configparser.RawConfigParser.read_dict(dictionary: Mapping)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

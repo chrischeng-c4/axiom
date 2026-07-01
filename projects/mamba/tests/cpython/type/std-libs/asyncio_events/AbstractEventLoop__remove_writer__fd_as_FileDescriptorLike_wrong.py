@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__remove_writer__fd_as_FileDescriptorLike_wrong"
 # subject = "asyncio.events.AbstractEventLoop.remove_writer(fd: FileDescriptorLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

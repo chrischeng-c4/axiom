@@ -9,7 +9,6 @@
 # case = "set_child_watcher__watcher_as_AbstractChildWatcher_wrong"
 # subject = "asyncio.events.set_child_watcher(watcher: AbstractChildWatcher)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

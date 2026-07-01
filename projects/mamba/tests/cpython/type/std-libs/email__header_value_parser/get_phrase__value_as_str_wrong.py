@@ -9,7 +9,6 @@
 # case = "get_phrase__value_as_str_wrong"
 # subject = "email._header_value_parser.get_phrase(value: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/_header_value_parser.pyi"
 # status = "filled"

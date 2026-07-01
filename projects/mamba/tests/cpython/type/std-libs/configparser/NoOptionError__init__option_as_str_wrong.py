@@ -9,7 +9,6 @@
 # case = "NoOptionError__init__option_as_str_wrong"
 # subject = "configparser.NoOptionError.__init__(option: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

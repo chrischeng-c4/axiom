@@ -9,7 +9,6 @@
 # case = "RawConfigParser__read_string__string_as_str_wrong"
 # subject = "configparser.RawConfigParser.read_string(string: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ParsingError__init__source_as_str_wrong"
 # subject = "configparser.ParsingError.__init__(source: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

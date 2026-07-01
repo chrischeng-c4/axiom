@@ -9,7 +9,6 @@
 # case = "TimerHandle____gt____other_as_TimerHandle_wrong"
 # subject = "asyncio.events.TimerHandle.__gt__(other: TimerHandle)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

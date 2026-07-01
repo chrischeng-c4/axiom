@@ -9,12 +9,10 @@
 # case = "AbstractEventLoop__subprocess_exec__protocol_factory_as_Callable_wrong"
 # subject = "asyncio.events.AbstractEventLoop.subprocess_exec(protocol_factory: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed protocol_factory"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed protocol_factory
 # mamba-strict-type: TypeError
 """Type wall: asyncio.events.AbstractEventLoop.subprocess_exec(protocol_factory: Callable); call it with the wrong type.
 

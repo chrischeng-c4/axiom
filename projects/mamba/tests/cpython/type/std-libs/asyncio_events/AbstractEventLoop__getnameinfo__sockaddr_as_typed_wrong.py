@@ -9,12 +9,10 @@
 # case = "AbstractEventLoop__getnameinfo__sockaddr_as_typed_wrong"
 # subject = "asyncio.events.AbstractEventLoop.getnameinfo(sockaddr: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sockaddr"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed sockaddr
 # mamba-strict-type: TypeError
 """Type wall: asyncio.events.AbstractEventLoop.getnameinfo(sockaddr: typed); call it with the wrong type.
 

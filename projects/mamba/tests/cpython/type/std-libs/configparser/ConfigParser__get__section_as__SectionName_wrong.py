@@ -9,7 +9,6 @@
 # case = "ConfigParser__get__section_as__SectionName_wrong"
 # subject = "configparser.ConfigParser.get(section: _SectionName)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
