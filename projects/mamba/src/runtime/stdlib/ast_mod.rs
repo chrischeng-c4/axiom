@@ -1756,7 +1756,16 @@ fn parse_simple_call_node(trimmed: &str, base_col: usize) -> Option<MbValue> {
     for (arg_text, rel_start) in split_simple_call_args(args_text)? {
         let col = args_base_col + rel_start;
         let end_col = col + arg_text.len();
-        if let Some((name, value_text)) = split_simple_keyword_arg(arg_text) {
+        if let Some(value_text) = arg_text.strip_prefix("**") {
+            let value_text = value_text.trim();
+            if !is_identifier_text(value_text) {
+                return None;
+            }
+            let value_col = col + arg_text.find(value_text).unwrap_or(0);
+            keywords.push(make_keyword_node_none(
+                parse_simple_expr_atom(value_text, value_col, value_col + value_text.len())?,
+            ));
+        } else if let Some((name, value_text)) = split_simple_keyword_arg(arg_text) {
             let value_col = col + arg_text.find(value_text).unwrap_or(0);
             let value_end_col = value_col + value_text.len();
             keywords.push(make_keyword_node(
@@ -1819,6 +1828,13 @@ fn make_keyword_node(arg: &str, value: MbValue) -> MbValue {
         "arg".to_string(),
         MbValue::from_ptr(MbObject::new_str(arg.to_string())),
     );
+    fields.insert("value".to_string(), value);
+    make_ast_node("keyword", fields)
+}
+
+fn make_keyword_node_none(value: MbValue) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("arg".to_string(), MbValue::none());
     fields.insert("value".to_string(), value);
     make_ast_node("keyword", fields)
 }
