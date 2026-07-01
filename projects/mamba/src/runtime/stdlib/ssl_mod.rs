@@ -1417,6 +1417,11 @@ fn register_ssl_classes() {
             MbValue::from_func(public_bytes_addr),
         );
         super::super::class::mb_class_register("Certificate", Vec::new(), methods);
+        super::super::class::mb_class_set_class_attr(
+            new_str("Certificate"),
+            new_str("__module__"),
+            new_str("_ssl"),
+        );
     }
 }
 
