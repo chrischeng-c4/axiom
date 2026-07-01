@@ -56,6 +56,7 @@ const APP: &str = "lumen";
 const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
 const CLIENT_PORT: i32 = 7373;
+const BACKUP_COMPONENT: &str = "backup";
 const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
@@ -156,7 +157,82 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         out.push(service_monitor(lumen));
         out.push(prometheus_rule(lumen));
     }
+    // Optional scheduled backup runner: only when a policy is configured (#808).
+    if let Some(cj) = backup_cron_job(lumen) {
+        out.push(cj);
+    }
     out
+}
+
+/// The optional backup CronJob (#808): rendered only when
+/// `spec.serving.backup` is set. Lumen already produces a consistent
+/// point-in-time snapshot over HTTP (`GET /admin/backup`, see
+/// `projects/lumen/src/api.rs`); this CronJob adds nothing new to the
+/// WAL/snapshot path, it only *schedules and transports* that existing
+/// endpoint's bytes to a destination via `lumen backup`
+/// (`libs/service-backup`). The shared [`operator::render::cron_job`] helper
+/// stays manifest-only.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+fn backup_cron_job(lumen: &Lumen) -> Option<Value> {
+    let policy = lumen.spec.serving.backup.as_ref()?;
+    let name = instance(lumen);
+    let ns = namespace(lumen);
+    let cx = RenderCtx {
+        app: APP,
+        manager: "lumen-operator",
+        api_version: API_VERSION,
+        kind: KIND,
+        name: &name,
+        ns: &ns,
+        owner: owner_ref(lumen),
+    };
+    let cron_name = format!("{name}-backup");
+    // Cluster-DNS FQDN of the serving ClusterIP Service (`serving_service`),
+    // reachable from any namespace's CronJob pod regardless of the operator's
+    // own DNS search suffix.
+    let url = format!("http://{name}.{ns}.svc.cluster.local:{CLIENT_PORT}");
+    let mut args = vec![
+        "backup".to_string(),
+        "--url".to_string(),
+        url,
+        "--dest".to_string(),
+        policy.destination.clone(),
+    ];
+    if let Some(secs) = policy.retention_secs {
+        args.push("--retention-secs".to_string());
+        args.push(secs.to_string());
+    }
+    let mut env = Vec::new();
+    if let Some(secret) = &policy.admin_token_secret {
+        env.push(json!({
+            "name": "LUMEN_BACKUP_TOKEN",
+            "valueFrom": { "secretKeyRef": { "name": secret, "key": "token" } },
+        }));
+    }
+    let image_pull_policy = lumen
+        .spec
+        .image_pull_policy
+        .clone()
+        .unwrap_or_else(|| "IfNotPresent".to_string());
+    Some(operator::render::cron_job(operator::render::CronJob {
+        cx: &cx,
+        name: &cron_name,
+        component: BACKUP_COMPONENT,
+        schedule: &policy.schedule,
+        image: lumen.spec.image.as_str(),
+        image_pull_policy: &image_pull_policy,
+        command: vec!["lumen".into()],
+        args,
+        env,
+        env_from: vec![],
+        volumes: vec![],
+        volume_mounts: vec![],
+        service_account_name: Some(&name),
+        cpu: "100m",
+        memory: "128Mi",
+        successful_jobs_history_limit: 3,
+        failed_jobs_history_limit: 3,
+    }))
 }
 
 /// The downward-API env the raft-HA serving pods carry on top of `serving_env`:
@@ -510,6 +586,7 @@ fn prometheus_rule(lumen: &Lumen) -> Value {
     })
 }
 // CODEGEN-END
+
 ````
 
 ## Changes

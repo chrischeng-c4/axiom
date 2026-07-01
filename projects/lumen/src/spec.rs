@@ -514,10 +514,71 @@ consensus; it never changes whether the WAL is durable.
 - This regime, including the PVC, is unchanged from before `replicasPerShard:
   1` also started getting a StatefulSet.
 
-## Snapshot / backup
-The PVC is the durability boundary; it does not by itself imply an external
-snapshot or backup schedule — see the operator's backup/restore surface
-(`lumen k8s`) for that separate concern.
+## Snapshot / backup (#808)
+The durable `raft` PVC protects against pod reschedule/eviction/node loss,
+but it is not an off-node backup: it does not protect against a bad write, a
+namespace deletion, or a lost PVC/PV. Lumen already exposes a safe,
+consistent, manual snapshot-restore procedure over its admin API; the
+operator can optionally schedule it.
+
+### Manual admin API (always available)
+Every serving node — regardless of `replicasPerShard` — answers three admin
+routes, each requiring `Role::Admin` on `*` (the wildcard subject, not a
+per-collection grant) when `spec.auth: required`:
+
+- `GET /admin/backup` — snapshots the live engine (`Engine::snapshot()`, the
+  same quiesce-free call the raft snapshotter itself uses — no separate
+  flush/quiesce step needed) and returns it as a `SnapshotV1` JSON document.
+  Safe to call against any replica at any time; it does not pause writes.
+- `POST /admin/backup/local` — same snapshot, written directly to a path on
+  the pod's own filesystem via a `LocalFsSink` (`{"path": "...", "prefix":
+  "lumen-backup"}` request body). Useful when the pod already has a mounted
+  destination volume.
+- `POST /admin/restore` — replaces *all* engine state with a `SnapshotV1`
+  document (the same shape `/admin/backup` returns). Destructive; there is no
+  merge or partial-restore mode.
+
+These three routes are the safe procedure for ad hoc or scripted
+snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
+like, push back with `POST /admin/restore` to recover.
+
+### Optional scheduled backup: `spec.serving.backup`
+Set `spec.serving.backup` on the CR to make the operator render a
+`<name>-backup` `batch/v1` CronJob that runs `lumen backup` on a schedule.
+This adds no new snapshot mechanism — it only *schedules and transports* the
+same `GET /admin/backup` bytes above to a destination:
+
+```yaml
+spec:
+  serving:
+    backup:
+      schedule: "0 * * * *"        # CronJob.spec.schedule
+      destination: "s3://my-bucket/lumen-backups"  # file:// | s3:// | gs://
+      retentionSecs: 604800        # optional; drop objects older than this
+      adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
+```
+
+Omitting `spec.serving.backup` renders no CronJob; the admin API above is
+still reachable manually either way.
+
+### `lumen backup` CLI verb
+The CronJob (and any ad hoc invocation) drives the same verb:
+
+```
+lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 \
+  --dest s3://my-bucket/lumen-backups \
+  [--token <admin-bearer-token>] \
+  [--retention-secs 604800]
+```
+
+`--url` points at the serving Service (not a specific pod); `--token` falls
+back to the `LUMEN_BACKUP_TOKEN` env var, which is how the CronJob injects
+`spec.serving.backup.adminTokenSecret` (`secretKeyRef` into that env var —
+skip it when `spec.auth: off`). The verb GETs `/admin/backup`, hands the
+bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
+by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
+JSON. It needs the `backup` Cargo feature (pulled in transitively by
+`operator`; the published image includes both).
 "#
     .to_string()
 }

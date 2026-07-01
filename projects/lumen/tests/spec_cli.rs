@@ -282,6 +282,31 @@ fn llm_storage_documents_unconditional_statefulset_pvc() {
     }
 }
 
+/// #808 R1: the manual admin backup/restore procedure, the optional
+/// `spec.serving.backup` CRD field, and the `lumen backup` CLI verb must all
+/// be discoverable offline via `lumen llm storage`.
+/// @spec projects/lumen/tech-design/logic/no-snapshot-backup-mechanism-for-lumen-s-wal-any-replicaspershar.md
+#[test]
+fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
+    let storage = llm_storage_md();
+    for needle in [
+        "GET /admin/backup",
+        "POST /admin/backup/local",
+        "POST /admin/restore",
+        "Role::Admin",
+        "spec.serving.backup",
+        "schedule",
+        "destination",
+        "retentionSecs",
+        "adminTokenSecret",
+        "lumen backup",
+        "LUMEN_BACKUP_TOKEN",
+        "--retention-secs",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
 #[test]
 fn llm_workflow_covers_the_integration_model() {
     let g = llm_workflow_md();

@@ -170,6 +170,16 @@ pub struct ServingSpec {
     /// cluster default.
     #[serde(default)]
     pub raft_storage_class: Option<String>,
+    /// Optional scheduled backup (#808). When set, the operator renders a
+    /// `<name>-backup` CronJob (see [`super::render::backup_cron_job`]) that
+    /// invokes `lumen backup` on this schedule against the running serving
+    /// fleet's own already-existing `/admin/backup` endpoint — no new
+    /// snapshot mechanism, only scheduling + transport. Absent means no
+    /// CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`,
+    /// `POST /admin/restore`) is still reachable for manual/scripted use
+    /// either way (see `lumen llm storage`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<ServingBackupSpec>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
@@ -182,8 +192,39 @@ impl Default for ServingSpec {
             grace_secs: default_grace_secs(),
             raft_storage: default_raft_storage(),
             raft_storage_class: None,
+            backup: None,
         }
     }
+}
+
+/// Declarative backup policy for the serving fleet (#808).
+///
+/// The runner contract lives in `libs/service-backup`
+/// (`BackupDestination`/`BackupSink`/`run_backup_once`); `lumen backup` parses
+/// `destination` back into a `service_backup::BackupDestination` via
+/// `from_uri`. This CRD-facing shape carries the destination as a URI string
+/// (rather than the shared tagged-union `BackupDestination` schema, which
+/// Kubernetes structural schemas cannot represent — a `prefix` property
+/// shared across variants), mirroring keep's `KeepBackupSpec` (#776).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
+pub struct ServingBackupSpec {
+    /// Cron schedule (`CronJob.spec.schedule`) for the backup runner.
+    pub schedule: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    pub destination: String,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Absent keeps everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_secs: Option<u64>,
+    /// Name of a Secret whose `token` key holds a bearer token with
+    /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
+    /// Needed when `spec.auth: required`; ignored (the admin API needs no
+    /// token) when `spec.auth: off`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_token_secret: Option<String>,
 }
 
 /// HPA bounds for the serving fleet.

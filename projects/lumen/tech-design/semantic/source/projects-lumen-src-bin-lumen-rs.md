@@ -103,6 +103,14 @@ enum Command {
     /// files a diagnostics-rich issue tagged `project:lumen`.
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
+    /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
+    /// and ship it to a destination (`file://`, `s3://`, `gs://`) via
+    /// `libs/service-backup`. No new snapshot mechanism — this only
+    /// schedules and transports the existing admin API. Typically invoked by
+    /// the operator's optional backup CronJob (`spec.serving.backup`, see
+    /// `lumen llm storage`), but works standalone. Requires the `backup`
+    /// feature (pulled in transitively by `operator`).
+    Backup(BackupArgs),
 }
 
 #[derive(clap::Args)]
@@ -321,6 +329,29 @@ struct IssueCreateArgs {
     /// Skip the confirmation prompt.
     #[arg(short = 'y', long)]
     yes: bool,
+}
+
+/// `lumen backup` flags (#808): pulls a snapshot over HTTP from a running
+/// serving fleet and ships it to a destination via `libs/service-backup`.
+#[derive(clap::Args)]
+struct BackupArgs {
+    /// Base URL of a running lumen serving node, e.g.
+    /// `http://<name>.<namespace>.svc.cluster.local:7373` (what the operator's
+    /// backup CronJob passes) or `http://localhost:7373` for ad hoc use.
+    #[arg(long)]
+    url: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    #[arg(long)]
+    dest: String,
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
+    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    token: Option<String>,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Omit to keep everything.
+    #[arg(long)]
+    retention_secs: Option<u64>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -630,6 +661,7 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Issue(args) => issue(args).await,
+        Command::Backup(args) => dispatch_backup(args).await,
     }
 }
 
@@ -800,6 +832,32 @@ fn crd_yaml() -> String {
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
     ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+}
+
+/// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
+/// `dest` via `libs/service-backup`, printing the resulting
+/// `BackupRunResult` as JSON. This is what the operator's optional backup
+/// CronJob (`spec.serving.backup`) invokes on a schedule; it works equally
+/// well ad hoc against any running serving node.
+#[cfg(feature = "backup")]
+async fn dispatch_backup(args: BackupArgs) -> Result<()> {
+    let dest = service_backup::BackupDestination::from_uri(&args.dest)?;
+    let retention = match args.retention_secs {
+        Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
+        None => service_backup::RetentionPolicy::default(),
+    };
+    let result = lumen::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without backup support; rebuild with \
+         `--features backup` (or `operator`, which pulls it in — the published \
+         image includes both)"
+    )
 }
 
 fn render_source_dockerfile() -> String {
@@ -1588,6 +1646,7 @@ fn init_otel_meter(
     Ok(())
 }
 // CODEGEN-END
+
 ````
 
 ## Changes

@@ -22,6 +22,15 @@
 pub mod aof;
 pub mod api;
 pub mod auth;
+/// `lumen backup` (#808): fetches a consistent snapshot from a running
+/// serving fleet's existing `GET /admin/backup` endpoint and hands it to a
+/// `libs/service-backup` destination sink. No new snapshot mechanism — this
+/// is transport/scheduling only, meant to be driven by the operator's
+/// optional backup CronJob (`spec.backup`, see `operator::render`) or ad hoc.
+/// Behind the `backup` feature (pulled in by `operator`) since it needs an
+/// HTTP client; `raft-wal` already links one into every shipped binary.
+#[cfg(feature = "backup")]
+pub mod backup;
 pub mod backup_sink;
 pub mod config;
 pub mod consumer;

@@ -409,4 +409,116 @@ fn crd_yaml_emits_lumen_definition() {
         );
     }
 }
+
+#[test]
+fn no_backup_cronjob_when_unset() {
+    // #808 R2: `spec.serving.backup` absent (the `dev_spec`/`prod_spec`
+    // default, via `ServingSpec::default()`) renders no CronJob at all.
+    for spec in [dev_spec(), prod_spec()] {
+        let l = lumen("search", spec);
+        let objs = render(&l);
+        assert!(
+            !has(&objs, "CronJob", "search-backup"),
+            "unexpected backup CronJob with no serving.backup policy: {:?}",
+            kinds(&objs)
+        );
+    }
+}
+
+#[test]
+fn backup_cronjob_wires_schedule_and_destination() {
+    // #808 R3: `spec.serving.backup` set renders exactly one `batch/v1`
+    // CronJob named `<name>-backup` with the configured schedule and a
+    // `lumen backup --url <cluster-dns-fqdn> --dest <destination>` args list.
+    let mut spec = dev_spec();
+    spec.serving.backup = Some(lumen::operator::crd::ServingBackupSpec {
+        schedule: "0 * * * *".into(),
+        destination: "s3://my-bucket/lumen-backups".into(),
+        retention_secs: None,
+        admin_token_secret: None,
+    });
+    let l = lumen("search", spec);
+    let objs = render(&l);
+
+    assert_eq!(
+        objs.iter().filter(|o| o["kind"] == "CronJob").count(),
+        1,
+        "expected exactly one CronJob; got {:?}",
+        kinds(&objs)
+    );
+    let cj = find(&objs, "CronJob", "search-backup");
+    assert_eq!(cj["apiVersion"], "batch/v1");
+    assert_eq!(cj["spec"]["schedule"], "0 * * * *");
+
+    let c = &cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0];
+    let args: Vec<String> = c["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "backup",
+            "--url",
+            "http://search.acme.svc.cluster.local:7373",
+            "--dest",
+            "s3://my-bucket/lumen-backups",
+        ]
+    );
+
+    // Owner reference + namespace still flow through the shared render toolkit.
+    assert_eq!(cj["metadata"]["namespace"], "acme");
+    let owner = &cj["metadata"]["ownerReferences"][0];
+    assert_eq!(owner["kind"], "Lumen");
+    assert_eq!(owner["uid"], "uid-1234");
+}
+
+#[test]
+fn backup_cronjob_wires_retention_and_admin_token() {
+    // #808 R4: `retentionSecs` becomes `--retention-secs`, and
+    // `adminTokenSecret` becomes a `LUMEN_BACKUP_TOKEN` env var sourced from
+    // that Secret's `token` key.
+    let mut spec = dev_spec();
+    spec.serving.backup = Some(lumen::operator::crd::ServingBackupSpec {
+        schedule: "@daily".into(),
+        destination: "file:///backups/lumen".into(),
+        retention_secs: Some(604800),
+        admin_token_secret: Some("lumen-backup-token".into()),
+    });
+    let l = lumen("search", spec);
+    let objs = render(&l);
+    let cj = find(&objs, "CronJob", "search-backup");
+    let c = &cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0];
+
+    let args: Vec<String> = c["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        args.windows(2)
+            .any(|w| w[0] == "--retention-secs" && w[1] == "604800"),
+        "missing --retention-secs 604800 in {args:?}"
+    );
+
+    let env = env_names(c);
+    assert!(
+        env.contains(&"LUMEN_BACKUP_TOKEN".to_string()),
+        "missing LUMEN_BACKUP_TOKEN in {env:?}"
+    );
+    let token_env = c["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "LUMEN_BACKUP_TOKEN")
+        .unwrap();
+    assert_eq!(
+        token_env["valueFrom"]["secretKeyRef"]["name"],
+        "lumen-backup-token"
+    );
+    assert_eq!(token_env["valueFrom"]["secretKeyRef"]["key"], "token");
+}
 // CODEGEN-END
