@@ -140,6 +140,35 @@ fn bytes_optional_index_arg(value: MbValue, default: i64) -> Option<i64> {
     Some(v)
 }
 
+fn bytes_like_arg(value: MbValue) -> Option<Vec<u8>> {
+    if let Some(bytes) = unsafe { as_bytes_cloned(value) } {
+        return Some(bytes);
+    }
+    raise_type_error(&format!(
+        "a bytes-like object is required, not '{}'",
+        super::builtins::value_type_name(value)
+    ));
+    None
+}
+
+fn optional_bytes_like_arg(value: MbValue) -> Option<Option<Vec<u8>>> {
+    if value.is_none() {
+        return Some(None);
+    }
+    bytes_like_arg(value).map(Some)
+}
+
+fn bytes_search_needle_arg(needle: MbValue) -> Option<Vec<u8>> {
+    if let Some(i) = needle.as_int() {
+        if (0..=255).contains(&i) {
+            return Some(vec![i as u8]);
+        }
+        raise_value_error("byte must be in range(0, 256)");
+        return None;
+    }
+    bytes_like_arg(needle)
+}
+
 fn encode_str_with_encoding(s: &str, encoding: &str) -> Option<Vec<u8>> {
     let normalized = encoding.to_ascii_lowercase().replace('_', "-");
     match normalized.as_str() {
@@ -1071,21 +1100,6 @@ pub fn mb_bytes_find(haystack: MbValue, needle: MbValue) -> MbValue {
     mb_bytes_find_range(haystack, needle, MbValue::none(), MbValue::none())
 }
 
-/// Normalize a bytes search needle. Accepts a bytes-like object OR an integer
-/// in `range(0, 256)` (CPython lets `b.find(105)` search for that byte value).
-/// Returns `None` for non-bytes / out-of-range ints (caller treats as "not
-/// found").
-fn needle_as_bytes(needle: MbValue) -> Option<Vec<u8>> {
-    if let Some(i) = needle.as_int() {
-        return if (0..=255).contains(&i) {
-            Some(vec![i as u8])
-        } else {
-            None
-        };
-    }
-    unsafe { as_bytes_cloned(needle) }
-}
-
 /// `bytes.find(sub, start=0, end=len)` — search a slice from the left.
 /// Mirrors `str.find`'s clamp rules: defaults `0`/`len`, negatives
 /// counted from the end and clamped to 0, positives capped at `len`.
@@ -1097,7 +1111,12 @@ pub fn mb_bytes_find_range(
     end: MbValue,
 ) -> MbValue {
     unsafe {
-        if let (Some(h), Some(n)) = (as_bytes_cloned(haystack), needle_as_bytes(needle)) {
+        let Some(h) = as_bytes_cloned(haystack) else {
+            return MbValue::from_int(-1);
+        };
+        let Some(n) = bytes_search_needle_arg(needle) else {
+            return MbValue::none();
+        };
             let (s, e) = clamp_range(h.len(), start, end);
             if n.is_empty() {
                 // Empty needle matches at `start` if the slice is non-empty
@@ -1111,16 +1130,18 @@ pub fn mb_bytes_find_range(
             let slice = &h[s..e];
             let pos = slice.windows(n.len()).position(|w| w == n.as_slice());
             MbValue::from_int(pos.map(|p| (s + p) as i64).unwrap_or(-1))
-        } else {
-            MbValue::from_int(-1)
-        }
     }
 }
 
 /// `bytes.rfind(sub, start=0, end=len)` — search a slice from the right.
 pub fn mb_bytes_rfind(haystack: MbValue, needle: MbValue, start: MbValue, end: MbValue) -> MbValue {
     unsafe {
-        if let (Some(h), Some(n)) = (as_bytes_cloned(haystack), needle_as_bytes(needle)) {
+        let Some(h) = as_bytes_cloned(haystack) else {
+            return MbValue::from_int(-1);
+        };
+        let Some(n) = bytes_search_needle_arg(needle) else {
+            return MbValue::none();
+        };
             let (s, e) = clamp_range(h.len(), start, end);
             if n.is_empty() {
                 return MbValue::from_int(e as i64);
@@ -1131,9 +1152,6 @@ pub fn mb_bytes_rfind(haystack: MbValue, needle: MbValue, start: MbValue, end: M
             let slice = &h[s..e];
             let pos = slice.windows(n.len()).rposition(|w| w == n.as_slice());
             MbValue::from_int(pos.map(|p| (s + p) as i64).unwrap_or(-1))
-        } else {
-            MbValue::from_int(-1)
-        }
     }
 }
 
@@ -1658,22 +1676,12 @@ pub fn mb_bytes_count_range(
     end: MbValue,
 ) -> MbValue {
     unsafe {
-        // An int needle counts a single byte value (`b"mississippi".count(ord("i"))`).
-        let needle = if let Some(i) = needle.as_int() {
-            if !(0..=255).contains(&i) {
-                super::exception::mb_raise(
-                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        "byte must be in range(0, 256)".to_string(),
-                    )),
-                );
-                return MbValue::none();
-            }
-            MbValue::from_ptr(MbObject::new_bytes(vec![i as u8]))
-        } else {
-            needle
+        let Some(h) = as_bytes_cloned(haystack) else {
+            return MbValue::from_int(0);
         };
-        if let (Some(h), Some(n)) = (as_bytes_cloned(haystack), as_bytes_cloned(needle)) {
+        let Some(n) = bytes_search_needle_arg(needle) else {
+                return MbValue::none();
+        };
             let (s, e) = clamp_range(h.len(), start, end);
             let slice = &h[s..e];
             if n.is_empty() {
@@ -1692,9 +1700,6 @@ pub fn mb_bytes_count_range(
                 }
             }
             MbValue::from_int(count)
-        } else {
-            MbValue::from_int(0)
-        }
     }
 }
 
@@ -1790,11 +1795,15 @@ pub fn mb_bytes_replace_count(
     count: MbValue,
 ) -> MbValue {
     unsafe {
-        if let (Some(h), Some(o), Some(n)) = (
-            as_bytes_cloned(haystack),
-            as_bytes_cloned(old),
-            as_bytes_cloned(new),
-        ) {
+        let Some(h) = as_bytes_cloned(haystack) else {
+            return MbValue::from_ptr(MbObject::new_bytes(Vec::new()));
+        };
+        let Some(o) = bytes_like_arg(old) else {
+            return MbValue::none();
+        };
+        let Some(n) = bytes_like_arg(new) else {
+            return MbValue::none();
+        };
             let max = count.as_int().unwrap_or(-1);
             let unlimited = max < 0;
             let mut remaining = if unlimited { i64::MAX } else { max };
@@ -1828,15 +1837,6 @@ pub fn mb_bytes_replace_count(
                 }
             }
             MbValue::from_ptr(MbObject::new_bytes(result))
-        } else {
-            // Always return a new object so the JIT can release
-            // input and output VRegs independently (avoids double-free).
-            if let Some(h) = as_bytes_cloned(haystack) {
-                MbValue::from_ptr(MbObject::new_bytes(h))
-            } else {
-                MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
-            }
-        }
     }
 }
 
@@ -1950,9 +1950,13 @@ pub fn mb_bytes_split_max(haystack: MbValue, sep: MbValue, maxsplit: MbValue) ->
                     splits_done += 1;
                 }
                 result
-            } else if let Some(s) = as_bytes_cloned(sep) {
+            } else {
+                let Some(s) = bytes_like_arg(sep) else {
+                    return MbValue::none();
+                };
                 if s.is_empty() {
-                    return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                    raise_value_error("empty separator");
+                    return MbValue::none();
                 }
                 let mut result = Vec::new();
                 let mut start = 0usize;
@@ -1974,8 +1978,6 @@ pub fn mb_bytes_split_max(haystack: MbValue, sep: MbValue, maxsplit: MbValue) ->
                     }
                 }
                 result
-            } else {
-                vec![haystack]
             };
             MbValue::from_ptr(MbObject::new_list(parts))
         } else {
@@ -2027,7 +2029,9 @@ pub fn mb_bytes_join(sep: MbValue, parts: MbValue) -> MbValue {
 pub fn mb_bytes_strip(bytes: MbValue, chars: MbValue) -> MbValue {
     unsafe {
         if let Some(data) = as_bytes_cloned(bytes) {
-            let strip_set = as_bytes_cloned(chars);
+            let Some(strip_set) = optional_bytes_like_arg(chars) else {
+                return MbValue::none();
+            };
             let result = strip_bytes(&data, &strip_set, true, true);
             MbValue::from_ptr(MbObject::new_bytes(result))
         } else {
@@ -2041,7 +2045,9 @@ pub fn mb_bytes_strip(bytes: MbValue, chars: MbValue) -> MbValue {
 pub fn mb_bytes_lstrip(bytes: MbValue, chars: MbValue) -> MbValue {
     unsafe {
         if let Some(data) = as_bytes_cloned(bytes) {
-            let strip_set = as_bytes_cloned(chars);
+            let Some(strip_set) = optional_bytes_like_arg(chars) else {
+                return MbValue::none();
+            };
             let result = strip_bytes(&data, &strip_set, true, false);
             MbValue::from_ptr(MbObject::new_bytes(result))
         } else {
@@ -2055,7 +2061,9 @@ pub fn mb_bytes_lstrip(bytes: MbValue, chars: MbValue) -> MbValue {
 pub fn mb_bytes_rstrip(bytes: MbValue, chars: MbValue) -> MbValue {
     unsafe {
         if let Some(data) = as_bytes_cloned(bytes) {
-            let strip_set = as_bytes_cloned(chars);
+            let Some(strip_set) = optional_bytes_like_arg(chars) else {
+                return MbValue::none();
+            };
             let result = strip_bytes(&data, &strip_set, false, true);
             MbValue::from_ptr(MbObject::new_bytes(result))
         } else {
@@ -2068,7 +2076,9 @@ pub fn mb_bytes_rstrip(bytes: MbValue, chars: MbValue) -> MbValue {
 pub fn mb_bytearray_strip(ba: MbValue, chars: MbValue) -> MbValue {
     unsafe {
         if let Some(data) = as_bytes_cloned(ba) {
-            let strip_set = as_bytes_cloned(chars);
+            let Some(strip_set) = optional_bytes_like_arg(chars) else {
+                return MbValue::none();
+            };
             let result = strip_bytes(&data, &strip_set, true, true);
             MbValue::from_ptr(MbObject::new_bytearray(result))
         } else {
@@ -2081,7 +2091,9 @@ pub fn mb_bytearray_strip(ba: MbValue, chars: MbValue) -> MbValue {
 pub fn mb_bytearray_lstrip(ba: MbValue, chars: MbValue) -> MbValue {
     unsafe {
         if let Some(data) = as_bytes_cloned(ba) {
-            let strip_set = as_bytes_cloned(chars);
+            let Some(strip_set) = optional_bytes_like_arg(chars) else {
+                return MbValue::none();
+            };
             let result = strip_bytes(&data, &strip_set, true, false);
             MbValue::from_ptr(MbObject::new_bytearray(result))
         } else {
@@ -2094,7 +2106,9 @@ pub fn mb_bytearray_lstrip(ba: MbValue, chars: MbValue) -> MbValue {
 pub fn mb_bytearray_rstrip(ba: MbValue, chars: MbValue) -> MbValue {
     unsafe {
         if let Some(data) = as_bytes_cloned(ba) {
-            let strip_set = as_bytes_cloned(chars);
+            let Some(strip_set) = optional_bytes_like_arg(chars) else {
+                return MbValue::none();
+            };
             let result = strip_bytes(&data, &strip_set, false, true);
             MbValue::from_ptr(MbObject::new_bytearray(result))
         } else {
@@ -2483,14 +2497,13 @@ fn fill_byte(arg: MbValue) -> u8 {
 
 pub fn mb_bytes_partition(receiver: MbValue, sep: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let sep_b = extract_bytes(sep).unwrap_or_default();
+    let Some(sep_b) = bytes_like_arg(sep) else {
+        return MbValue::none();
+    };
     let make = |d: Vec<u8>| bytes_to_value(receiver, d);
     if sep_b.is_empty() {
-        return MbValue::from_ptr(MbObject::new_tuple(vec![
-            make(data),
-            make(Vec::new()),
-            make(Vec::new()),
-        ]));
+        raise_value_error("empty separator");
+        return MbValue::none();
     }
     if let Some(idx) = data
         .windows(sep_b.len())
@@ -2514,14 +2527,13 @@ pub fn mb_bytes_partition(receiver: MbValue, sep: MbValue) -> MbValue {
 
 pub fn mb_bytes_rpartition(receiver: MbValue, sep: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let sep_b = extract_bytes(sep).unwrap_or_default();
+    let Some(sep_b) = bytes_like_arg(sep) else {
+        return MbValue::none();
+    };
     let make = |d: Vec<u8>| bytes_to_value(receiver, d);
     if sep_b.is_empty() {
-        return MbValue::from_ptr(MbObject::new_tuple(vec![
-            make(Vec::new()),
-            make(Vec::new()),
-            make(data),
-        ]));
+        raise_value_error("empty separator");
+        return MbValue::none();
     }
     if let Some(idx) = data
         .windows(sep_b.len())
@@ -2635,7 +2647,14 @@ pub fn mb_bytes_rjust(receiver: MbValue, width: MbValue, fill: MbValue) -> MbVal
 
 pub fn mb_bytes_translate(receiver: MbValue, table: MbValue, delete: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let table_b = extract_bytes(table);
+    let table_b = if table.is_none() {
+        None
+    } else {
+        let Some(bytes) = bytes_like_arg(table) else {
+            return MbValue::none();
+        };
+        Some(bytes)
+    };
     if let Some(ref t) = table_b {
         if t.len() != 256 {
             raise_value_error("translation table must be 256 characters long");
@@ -2645,8 +2664,7 @@ pub fn mb_bytes_translate(receiver: MbValue, table: MbValue, delete: MbValue) ->
     let delete_b = if delete.is_none() {
         Vec::new()
     } else {
-        let Some(bytes) = extract_bytes(delete) else {
-            raise_type_error("a bytes-like object is required, not 'int'");
+        let Some(bytes) = bytes_like_arg(delete) else {
             return MbValue::none();
         };
         bytes
@@ -2772,7 +2790,9 @@ pub fn mb_bytes_alpha_pred<F: Fn(u8) -> bool>(receiver: MbValue, f: F) -> MbValu
 
 pub fn mb_bytes_removeprefix(receiver: MbValue, prefix: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let p = extract_bytes(prefix).unwrap_or_default();
+    let Some(p) = bytes_like_arg(prefix) else {
+        return MbValue::none();
+    };
     if data.starts_with(&p) {
         bytes_to_value(receiver, data[p.len()..].to_vec())
     } else {
@@ -2782,7 +2802,9 @@ pub fn mb_bytes_removeprefix(receiver: MbValue, prefix: MbValue) -> MbValue {
 
 pub fn mb_bytes_removesuffix(receiver: MbValue, suffix: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let s = extract_bytes(suffix).unwrap_or_default();
+    let Some(s) = bytes_like_arg(suffix) else {
+        return MbValue::none();
+    };
     if !s.is_empty() && data.ends_with(&s) {
         bytes_to_value(receiver, data[..data.len() - s.len()].to_vec())
     } else {
