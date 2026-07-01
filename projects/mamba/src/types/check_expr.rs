@@ -848,14 +848,13 @@ impl TypeChecker {
         // bare stdlib name `Cls(...)` may be either a module function OR a class
         // constructor; we try the module-fn key first and fall back to the
         // class `__init__` key. Skip-when-unsure at every miss.
+        let mut explicit_unbound_receiver = false;
         let sig: Option<&'static super::stdlib_sigs::StdlibSig> = match &func.node {
             // Bare name: a from-imported module function (`strerror(...)`) OR a
             // from-imported stdlib class called as a constructor (`Cls(...)`).
             //
             // The import-time qualifier (recorded in `import_origins`) is only a
-            // hint — `is_known_stdlib_class` consults the curated table, so most
-            // generated stdlib classes are bound with an empty qualifier and
-            // look like module functions here. So we DO NOT trust the qualifier:
+            // hint. We do not trust the qualifier alone:
             // we try the module-fn key `(module, "", name)` first, and on a miss
             // fall back to the constructor key `(module, name, "__init__")`.
             // The `self` receiver is already stripped from `__init__` param rows,
@@ -882,25 +881,34 @@ impl TypeChecker {
                 if let Expr::Ident(base) = &object.node {
                     if let Some((module, qual)) = self.import_origins.get(base) {
                         // `base.attr(...)` is either a module function or a
-                        // class/static method. Most from-imported stdlib classes are
-                        // bound with an EMPTY qualifier (they "look like module
-                        // functions" here, see the Ident branch above), so resolving
-                        // `date.fromtimestamp(...)` needs us to also try `base` itself
-                        // as the class qualifier — `get(module, "date", "fromtimestamp")`.
+                        // class/static method. Resolving `date.fromtimestamp(...)`
+                        // needs us to try `base` itself as the class qualifier —
+                        // `get(module, "date", "fromtimestamp")`.
                         // Try module-fn first, then class-method (base = class name),
                         // then any recorded qualifier. Still gated downstream by
                         // `sig.enforceable` + the concrete-scalar-disjoint check, so
                         // this only ADDS rejections of genuinely wrong-typed scalar
                         // args (it previously leaked `date.fromtimestamp("x")` etc.).
-                        super::stdlib_sigs::get(module, "", attr)
-                            .or_else(|| super::stdlib_sigs::get(module, base, attr))
-                            .or_else(|| {
-                                if qual.is_empty() {
-                                    None
-                                } else {
-                                    super::stdlib_sigs::get(module, qual, attr)
-                                }
-                            })
+                        let module_sig = super::stdlib_sigs::get(module, "", attr);
+                        if module_sig.is_some() {
+                            module_sig
+                        } else {
+                            let class_sig =
+                                super::stdlib_sigs::get(module, base, attr).or_else(|| {
+                                    if qual.is_empty() {
+                                        None
+                                    } else {
+                                        super::stdlib_sigs::get(module, qual, attr)
+                                    }
+                                });
+                            if let Some(sig) = class_sig {
+                                explicit_unbound_receiver =
+                                    matches!(sig.kind, super::stdlib_sigs::SigKind::Method)
+                                        && self
+                                            .stdlib_call_has_explicit_unbound_receiver(base, args);
+                            }
+                            class_sig
+                        }
                     } else if let Some(cls) = self.instance_origins.get(base).cloned() {
                         // `base` is a stdlib instance — recover its module from
                         // the class's import origin, then resolve a method sig.
@@ -948,12 +956,18 @@ impl TypeChecker {
             && matches!(sig.name, "bytes" | "bytearray")
             && matches!(args.get(1), Some(CallArg::Positional(_)));
         let mut param_idx = 0usize;
+        let mut arg_idx = 0usize;
         for arg in args {
             let CallArg::Positional(a) = arg else {
                 // Keyword / *args / **kwargs: stop enforcement entirely. We do
                 // not know how positional alignment continues past these.
                 break;
             };
+            if explicit_unbound_receiver && arg_idx == 0 {
+                self.check_expr(a);
+                arg_idx += 1;
+                continue;
+            }
             let Some(param) = sig.params.get(param_idx) else {
                 break;
             };
@@ -1099,6 +1113,40 @@ impl TypeChecker {
                 }
             }
             param_idx += 1;
+            arg_idx += 1;
+        }
+    }
+
+    fn stdlib_call_has_explicit_unbound_receiver(
+        &self,
+        class_name: &str,
+        args: &[CallArg],
+    ) -> bool {
+        let Some(CallArg::Positional(first)) = args.first() else {
+            return false;
+        };
+        self.stdlib_unbound_receiver_placeholder(class_name, first)
+    }
+
+    fn stdlib_unbound_receiver_placeholder(&self, class_name: &str, expr: &Spanned<Expr>) -> bool {
+        let Expr::Call { func, args } = &expr.node else {
+            return false;
+        };
+        match &func.node {
+            Expr::Ident(name) => name == class_name || (name == "object" && args.is_empty()),
+            Expr::Attr { object, attr } if attr == "__new__" => {
+                let Some(CallArg::Positional(arg0)) = args.first() else {
+                    return false;
+                };
+                let Expr::Ident(cls) = &arg0.node else {
+                    return false;
+                };
+                if cls != class_name {
+                    return false;
+                }
+                matches!(&object.node, Expr::Ident(base) if base == "object" || base == class_name)
+            }
+            _ => false,
         }
     }
 
