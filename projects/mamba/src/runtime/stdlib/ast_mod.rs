@@ -1278,7 +1278,7 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
     // enough shape that `module.body[0]` resolves to a node (since list
     // subscripts now raise IndexError instead of silently yielding None).
     let mut body_nodes: Vec<MbValue> = Vec::new();
-    for (line_idx, line) in src.lines().enumerate() {
+    for (line_idx, line) in source_logical_lines(&src).into_iter().enumerate() {
         let t = line.trim_start();
         if t.is_empty() || line.starts_with(|c: char| c.is_whitespace()) {
             continue; // nested lines belong to the previous statement
@@ -1334,6 +1334,35 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(src)),
     );
     make_ast_node("Module", fields)
+}
+
+fn source_logical_lines(src: &str) -> Vec<&str> {
+    let bytes = src.as_bytes();
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\n' => {
+                lines.push(&src[start..idx]);
+                idx += 1;
+                start = idx;
+            }
+            b'\r' => {
+                lines.push(&src[start..idx]);
+                idx += 1;
+                if idx < bytes.len() && bytes[idx] == b'\n' {
+                    idx += 1;
+                }
+                start = idx;
+            }
+            _ => idx += 1,
+        }
+    }
+    if start < src.len() {
+        lines.push(&src[start..]);
+    }
+    lines
 }
 
 fn parse_from_import_statement(stmt: &str) -> Option<MbValue> {
