@@ -9,7 +9,6 @@
 # case = "RawConfigParser__optionxform__optionstr_as_str_wrong"
 # subject = "configparser.RawConfigParser.optionxform(optionstr: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

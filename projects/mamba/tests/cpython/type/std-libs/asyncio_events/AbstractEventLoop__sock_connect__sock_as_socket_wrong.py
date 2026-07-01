@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__sock_connect__sock_as_socket_wrong"
 # subject = "asyncio.events.AbstractEventLoop.sock_connect(sock: socket)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

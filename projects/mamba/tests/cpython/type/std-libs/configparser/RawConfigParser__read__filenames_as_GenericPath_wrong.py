@@ -9,7 +9,6 @@
 # case = "RawConfigParser__read__filenames_as_GenericPath_wrong"
 # subject = "configparser.RawConfigParser.read(filenames: GenericPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

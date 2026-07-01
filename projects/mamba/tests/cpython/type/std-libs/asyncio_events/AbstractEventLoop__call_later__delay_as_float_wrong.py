@@ -9,12 +9,10 @@
 # case = "AbstractEventLoop__call_later__delay_as_float_wrong"
 # subject = "asyncio.events.AbstractEventLoop.call_later(delay: float)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed delay"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed delay
 # mamba-strict-type: TypeError
 """Type wall: asyncio.events.AbstractEventLoop.call_later(delay: float); call it with the wrong type.
 

@@ -9,7 +9,6 @@
 # case = "TokenList__ppstr__indent_as_str_wrong"
 # subject = "email._header_value_parser.TokenList.ppstr(indent: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/_header_value_parser.pyi"
 # status = "filled"

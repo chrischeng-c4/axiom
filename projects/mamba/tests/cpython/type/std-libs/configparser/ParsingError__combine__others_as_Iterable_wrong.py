@@ -9,7 +9,6 @@
 # case = "ParsingError__combine__others_as_Iterable_wrong"
 # subject = "configparser.ParsingError.combine(others: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

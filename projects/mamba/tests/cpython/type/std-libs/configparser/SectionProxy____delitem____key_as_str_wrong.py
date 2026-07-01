@@ -9,7 +9,6 @@
 # case = "SectionProxy____delitem____key_as_str_wrong"
 # subject = "configparser.SectionProxy.__delitem__(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__set_default_executor__executor_as_Executor_wrong"
 # subject = "asyncio.events.AbstractEventLoop.set_default_executor(executor: Executor)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

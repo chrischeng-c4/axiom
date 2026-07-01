@@ -9,7 +9,6 @@
 # case = "AbstractEventLoop__run_until_complete__future_as__AwaitableLike_wrong"
 # subject = "asyncio.events.AbstractEventLoop.run_until_complete(future: _AwaitableLike)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/events.pyi"
 # status = "filled"

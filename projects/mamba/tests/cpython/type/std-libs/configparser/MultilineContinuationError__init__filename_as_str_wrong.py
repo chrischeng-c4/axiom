@@ -9,7 +9,6 @@
 # case = "MultilineContinuationError__init__filename_as_str_wrong"
 # subject = "configparser.MultilineContinuationError.__init__(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"

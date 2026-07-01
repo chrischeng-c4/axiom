@@ -9,7 +9,6 @@
 # case = "RawConfigParser____setitem____key_as__SectionName_wrong"
 # subject = "configparser.RawConfigParser.__setitem__(key: _SectionName)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/configparser.pyi"
 # status = "filled"
