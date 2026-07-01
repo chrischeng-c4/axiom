@@ -9,12 +9,11 @@
 # case = "tokenize__readline_as_Callable_wrong"
 # subject = "lib2to3.pgen2.tokenize.tokenize(readline: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed readline"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/pgen2/tokenize.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed readline
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.pgen2.tokenize.tokenize(readline: Callable); call it with the wrong type.
 
