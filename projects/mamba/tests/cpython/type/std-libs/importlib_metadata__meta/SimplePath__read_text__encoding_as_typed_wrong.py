@@ -9,12 +9,11 @@
 # case = "SimplePath__read_text__encoding_as_typed_wrong"
 # subject = "importlib.metadata._meta.SimplePath.read_text(encoding: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed encoding"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/metadata/_meta.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed encoding
 # mamba-strict-type: TypeError
 """Type wall: importlib.metadata._meta.SimplePath.read_text(encoding: typed); call it with the wrong type.
 
