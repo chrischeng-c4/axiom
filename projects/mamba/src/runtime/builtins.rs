@@ -2047,7 +2047,10 @@ fn is_complex_obj(val: MbValue) -> bool {
             }
         }
     }
-    matches!(super::class::builtin_data_payload(val), Some(("complex", _)))
+    matches!(
+        super::class::builtin_data_payload(val),
+        Some(("complex", _))
+    )
 }
 
 /// True iff `val` is a number complex comparison can be defined against
@@ -2064,7 +2067,10 @@ fn is_complex_cmp_operand(val: MbValue) -> bool {
             }
         }
     }
-    matches!(super::class::builtin_data_payload(val), Some(("complex", _)))
+    matches!(
+        super::class::builtin_data_payload(val),
+        Some(("complex", _))
+    )
 }
 
 /// Compute an unbound complex comparison dunder `complex.<method>(a, b)`.
@@ -2788,11 +2794,14 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
                     MbValue::none(),
                 );
                 let mut guard = fields.write().unwrap();
-                guard.insert("__qualname__".to_string(), if qualname.is_none() {
-                    MbValue::from_ptr(MbObject::new_str(class_name.clone()))
-                } else {
-                    qualname
-                });
+                guard.insert(
+                    "__qualname__".to_string(),
+                    if qualname.is_none() {
+                        MbValue::from_ptr(MbObject::new_str(class_name.clone()))
+                    } else {
+                        qualname
+                    },
+                );
                 guard.insert("__doc__".to_string(), doc);
                 guard.insert("__mamba_type_namespace__".to_string(), namespace_dict);
             }
@@ -5053,8 +5062,7 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                 (ObjData::List(la), ObjData::List(lb)) => {
                     let a = super::list_ops::retained_list_snapshot(la);
                     let b = super::list_ops::retained_list_snapshot(lb);
-                    a.len() == b.len()
-                        && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
+                    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
                 }
                 (ObjData::Tuple(a), ObjData::Tuple(b)) => {
                     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
@@ -5575,6 +5583,62 @@ fn setlike_items(v: MbValue) -> Option<Vec<MbValue>> {
             _ => None,
         }
     })
+}
+
+fn is_instance_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Instance { .. }) })
+}
+
+fn same_datetime_instances(a: MbValue, b: MbValue) -> bool {
+    match (a.as_ptr(), b.as_ptr()) {
+        (Some(pa), Some(pb)) => unsafe {
+            matches!(
+                (&(*pa).data, &(*pb).data),
+                (
+                    ObjData::Instance { class_name: ca, .. },
+                    ObjData::Instance { class_name: cb, .. },
+                ) if ca == "datetime.datetime" && cb == "datetime.datetime"
+            )
+        },
+        _ => false,
+    }
+}
+
+fn same_ordered_dataclass_instances(a: MbValue, b: MbValue) -> bool {
+    match (a.as_ptr(), b.as_ptr()) {
+        (Some(pa), Some(pb)) => unsafe {
+            matches!(
+                (&(*pa).data, &(*pb).data),
+                (
+                    ObjData::Instance { class_name: ca, .. },
+                    ObjData::Instance { class_name: cb, .. },
+                ) if ca == cb && super::stdlib::dataclasses_mod::dc_order_field_names(ca).is_some()
+            )
+        },
+        _ => false,
+    }
+}
+
+fn can_derive_ordering_from_lt_eq(a: MbValue, b: MbValue) -> bool {
+    if !is_instance_value(a) && !is_instance_value(b) {
+        return true;
+    }
+    if super::stdlib::collections_mod::is_counter_instance(a)
+        && super::stdlib::collections_mod::is_counter_instance(b)
+    {
+        return true;
+    }
+    same_datetime_instances(a, b) || same_ordered_dataclass_instances(a, b)
+}
+
+fn unsupported_ordering_bool(a: MbValue, b: MbValue, op: &str) -> MbValue {
+    raise_type_error(format!(
+        "'{op}' not supported between instances of '{}' and '{}'",
+        value_type_name(a),
+        value_type_name(b)
+    ));
+    MbValue::from_bool(false)
 }
 
 pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
@@ -7817,9 +7881,7 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
                 )
             });
         } else {
-            sorted_items.sort_by(|a, b| {
-                stable_order_for_reverse(mb_value_cmp(*a, *b), do_reverse)
-            });
+            sorted_items.sort_by(|a, b| stable_order_for_reverse(mb_value_cmp(*a, *b), do_reverse));
         }
         // Items borrowed from source container — retain.
         MbValue::from_ptr(MbObject::new_list_borrowed(sorted_items))
@@ -10499,10 +10561,15 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*pb).data {
                 if !super::class::lookup_method(class_name, "__lt__").is_none() {
-                    return MbValue::from_bool(dispatch_richcmp_dunder(b, a, class_name, "__lt__"));
+                    if let Some(r) = dispatch_richcmp_dunder_result(b, a, class_name, "__lt__") {
+                        return MbValue::from_bool(r);
+                    }
                 }
             }
         }
+    }
+    if !can_derive_ordering_from_lt_eq(a, b) {
+        return unsupported_ordering_bool(a, b, ">");
     }
     mb_lt(b, a)
 }
@@ -10554,10 +10621,15 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*pb).data {
                 if !super::class::lookup_method(class_name, "__ge__").is_none() {
-                    return MbValue::from_bool(dispatch_richcmp_dunder(b, a, class_name, "__ge__"));
+                    if let Some(r) = dispatch_richcmp_dunder_result(b, a, class_name, "__ge__") {
+                        return MbValue::from_bool(r);
+                    }
                 }
             }
         }
+    }
+    if !can_derive_ordering_from_lt_eq(a, b) {
+        return unsupported_ordering_bool(a, b, "<=");
     }
     let lt_result = mb_lt(a, b);
     let eq_result = mb_eq(a, b);
@@ -10604,7 +10676,23 @@ pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::from_bool(r);
         }
     }
-    mb_le(b, a)
+    if let Some(pb) = b.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*pb).data {
+                if !super::class::lookup_method(class_name, "__le__").is_none() {
+                    if let Some(r) = dispatch_richcmp_dunder_result(b, a, class_name, "__le__") {
+                        return MbValue::from_bool(r);
+                    }
+                }
+            }
+        }
+    }
+    if !can_derive_ordering_from_lt_eq(a, b) {
+        return unsupported_ordering_bool(a, b, ">=");
+    }
+    let lt_result = mb_lt(b, a);
+    let eq_result = mb_eq(a, b);
+    MbValue::from_bool(lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false))
 }
 
 /// ne comparison: a != b
