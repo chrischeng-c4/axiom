@@ -9,12 +9,11 @@
 # case = "QueueListener__init__queue_as__QueueLike_wrong"
 # subject = "logging.handlers.QueueListener.__init__(queue: _QueueLike)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed queue"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging/handlers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed queue
 # mamba-strict-type: TypeError
 """Type wall: logging.handlers.QueueListener.__init__(queue: _QueueLike); call it with the wrong type.
 
