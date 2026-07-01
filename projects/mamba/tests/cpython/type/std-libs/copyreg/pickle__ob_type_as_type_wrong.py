@@ -9,7 +9,6 @@
 # case = "pickle__ob_type_as_type_wrong"
 # subject = "copyreg.pickle(ob_type: type)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copyreg.pyi"
 # status = "filled"

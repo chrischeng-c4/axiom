@@ -9,7 +9,6 @@
 # case = "replace__obj_as__SupportsReplace_wrong"
 # subject = "copy.replace(obj: _SupportsReplace)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copy.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "reader__iterable_as_Iterable_wrong"
 # subject = "_csv.reader(iterable: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_csv.pyi"
 # status = "filled"

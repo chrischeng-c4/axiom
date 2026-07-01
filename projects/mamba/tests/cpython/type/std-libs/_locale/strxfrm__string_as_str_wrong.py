@@ -9,7 +9,6 @@
 # case = "strxfrm__string_as_str_wrong"
 # subject = "_locale.strxfrm(string: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_locale.pyi"
 # status = "filled"

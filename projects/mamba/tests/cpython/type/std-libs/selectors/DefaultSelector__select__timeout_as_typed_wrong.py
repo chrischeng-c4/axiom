@@ -9,7 +9,6 @@
 # case = "DefaultSelector__select__timeout_as_typed_wrong"
 # subject = "selectors.DefaultSelector.select(timeout: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/selectors.pyi"
 # status = "filled"

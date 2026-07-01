@@ -9,7 +9,6 @@
 # case = "decompressobj__wbits_as_int_wrong"
 # subject = "zlib.decompressobj(wbits: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zlib.pyi"
 # status = "filled"

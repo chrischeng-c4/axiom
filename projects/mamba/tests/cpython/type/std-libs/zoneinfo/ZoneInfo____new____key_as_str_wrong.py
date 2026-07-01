@@ -9,7 +9,6 @@
 # case = "ZoneInfo____new____key_as_str_wrong"
 # subject = "zoneinfo.ZoneInfo.__new__(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zoneinfo.pyi"
 # status = "filled"

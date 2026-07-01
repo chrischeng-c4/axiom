@@ -9,7 +9,6 @@
 # case = "itemgetter____call____obj_as_SupportsGetItem_wrong"
 # subject = "operator.itemgetter.__call__(obj: SupportsGetItem)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/operator.pyi"
 # status = "filled"

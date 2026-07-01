@@ -9,7 +9,6 @@
 # case = "make_encoder____call_____current_indent_level_as_int_wrong"
 # subject = "_json.make_encoder.__call__(_current_indent_level: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_json.pyi"
 # status = "filled"

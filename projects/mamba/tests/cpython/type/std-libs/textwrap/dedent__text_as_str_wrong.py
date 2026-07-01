@@ -9,7 +9,6 @@
 # case = "dedent__text_as_str_wrong"
 # subject = "textwrap.dedent(text: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/textwrap.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "Queue__shutdown__immediate_as_bool_wrong"
 # subject = "queue.Queue.shutdown(immediate: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed immediate"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/queue.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed immediate
 # mamba-strict-type: TypeError
 """Type wall: queue.Queue.shutdown(immediate: bool); call it with the wrong type.
 

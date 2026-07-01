@@ -9,7 +9,6 @@
 # case = "bisect_left__a_as_SupportsLenAndGetItem_wrong"
 # subject = "_bisect.bisect_left(a: SupportsLenAndGetItem)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_bisect.pyi"
 # status = "filled"

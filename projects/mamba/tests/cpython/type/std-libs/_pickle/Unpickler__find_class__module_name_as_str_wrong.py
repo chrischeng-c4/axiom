@@ -9,7 +9,6 @@
 # case = "Unpickler__find_class__module_name_as_str_wrong"
 # subject = "_pickle.Unpickler.find_class(module_name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"

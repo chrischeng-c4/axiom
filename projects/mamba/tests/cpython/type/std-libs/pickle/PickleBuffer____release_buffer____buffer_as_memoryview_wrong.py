@@ -9,12 +9,10 @@
 # case = "PickleBuffer____release_buffer____buffer_as_memoryview_wrong"
 # subject = "pickle.PickleBuffer.__release_buffer__(buffer: memoryview)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pickle.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed buffer
 # mamba-strict-type: TypeError
 """Type wall: pickle.PickleBuffer.__release_buffer__(buffer: memoryview); call it with the wrong type.
 

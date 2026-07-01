@@ -9,7 +9,6 @@
 # case = "crc32__data_as_ReadableBuffer_wrong"
 # subject = "zlib.crc32(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zlib.pyi"
 # status = "filled"

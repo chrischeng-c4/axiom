@@ -9,7 +9,6 @@
 # case = "issoftkeyword__s_as_str_wrong"
 # subject = "keyword.issoftkeyword(s: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/keyword.pyi"
 # status = "filled"
