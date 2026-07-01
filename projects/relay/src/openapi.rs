@@ -26,7 +26,6 @@ use utoipa::OpenApi;
         crate::server::lease_batch,
         crate::server::ack_batch,
         crate::server::heartbeat,
-        crate::server::subscribe,
         crate::server::log_len,
     )
 )]
@@ -51,7 +50,6 @@ mod tests {
             "/v1/{subject}/consume",
             "/v1/{subject}/lease",
             "/v1/{subject}/ack",
-            "/v1/{subject}/subscribe",
             "/v1/{subject}/len",
         ] {
             assert!(doc.contains(path), "OpenAPI doc must list {path}");

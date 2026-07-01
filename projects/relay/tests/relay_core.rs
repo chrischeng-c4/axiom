@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{Duration, Utc};
 
-use relay::{DeliveryModel, Payload, Relay, RelayCoreConfig};
+use relay::{Payload, Relay, RelayCoreConfig};
 
 fn msg(name: &str) -> Payload {
     serde_json::json!({ "task": name })
@@ -81,35 +81,6 @@ fn idempotent_dedupe() {
     assert_eq!(r.log_len("s").unwrap(), 1);
 }
 
-// case: fan-out — every broadcast subscriber receives every message in order.
-#[test]
-fn broadcast_fanout_all_subscribers() {
-    let r = ram();
-    let now = Utc::now();
-    r.subscribe("s", "a", 0).unwrap();
-    r.subscribe("s", "b", 0).unwrap();
-    for id in ["m0", "m1", "m2"] {
-        r.publish("s", id, msg("t"), BTreeMap::new(), now).unwrap();
-    }
-    let seqs = |v: Vec<relay::LogEntry>| v.iter().map(|e| e.seq).collect::<Vec<_>>();
-    assert_eq!(seqs(r.poll("s", "a").unwrap()), vec![0, 1, 2]);
-    assert_eq!(seqs(r.poll("s", "b").unwrap()), vec![0, 1, 2]);
-    // caught up — nothing more until new messages arrive.
-    assert!(r.poll("s", "a").unwrap().is_empty());
-}
-
-// case: replay — subscribing from a seq replays from there in order.
-#[test]
-fn broadcast_replay_from_seq() {
-    let r = ram();
-    let now = Utc::now();
-    for id in ["m0", "m1", "m2", "m3"] {
-        r.publish("s", id, msg("t"), BTreeMap::new(), now).unwrap();
-    }
-    r.subscribe("s", "late", 2).unwrap();
-    let got: Vec<u64> = r.poll("s", "late").unwrap().iter().map(|e| e.seq).collect();
-    assert_eq!(got, vec![2, 3]);
-}
 
 // case: competing — each message is leased to exactly one consumer.
 #[test]
@@ -185,31 +156,17 @@ fn ack_advances_committed_offset() {
     assert_eq!(r.committed_offset("q").unwrap().unwrap().committed_seq, 1);
 }
 
-// acceptance (#122): one broadcast subscriber AND one work-queue consumer over
-// the same subject/log.
+// single-cast work-queue: competing consumers each lease a message exactly once
+// over the durable log, advancing the committed offset.
 #[test]
-fn both_models_over_same_log() {
+fn single_cast_work_queue_drains_once() {
     let r = ram();
     let now = Utc::now();
-    r.set_delivery_model("events", DeliveryModel::Broadcast)
-        .unwrap();
-    r.subscribe("events", "watcher", 0).unwrap();
-
     for id in ["e0", "e1", "e2"] {
         r.publish("events", id, msg("t"), BTreeMap::new(), now)
             .unwrap();
     }
 
-    // broadcast subscriber sees every message
-    let seen: Vec<u64> = r
-        .poll("events", "watcher")
-        .unwrap()
-        .iter()
-        .map(|e| e.seq)
-        .collect();
-    assert_eq!(seen, vec![0, 1, 2]);
-
-    // work-queue consumer leases each exactly once over the SAME log
     let mut acked: BTreeSet<u64> = BTreeSet::new();
     while let Some(l) = r.lease("events", "worker", now).unwrap() {
         assert!(r.ack("events", &l.lease_id, None).unwrap());
@@ -220,7 +177,6 @@ fn both_models_over_same_log() {
         r.committed_offset("events").unwrap().unwrap().committed_seq,
         2
     );
-    assert_eq!(r.delivery_model("events"), Some(DeliveryModel::Broadcast));
 }
 
 // durability — entries and the dedupe index survive reopening from disk.

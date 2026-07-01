@@ -2,19 +2,17 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:a8062fb3" tracker="pending-tracker" reason="axum h2c app over the relay core: publish/lease/ack handlers (JSON + CBOR) and the streaming broadcast subscribe handler."
 //! axum HTTP/2 (h2c) application over the relay core.
 //!
-//! `publish` / `lease` / `ack` / `lease-batch` / `ack-batch` are
+//! `publish` / `lease` / `ack` / `lease-batch` / `ack-batch` / `heartbeat` are
 //! request/response (JSON, plus an `application/cbor` fast path for hot calls);
-//! `subscribe` opens a long-lived HTTP/2 stream of length-prefixed CBOR
-//! [`crate::LogEntry`] frames from a seq. The core is internally synchronized
-//! (per-shard locking, #128), so the server holds it as a plain `Arc<Relay>` —
-//! no global lock.
+//! `consume` is the streaming work-queue path. The core is internally
+//! synchronized (per-shard locking, #128), so the server holds it as a plain
+//! `Arc<Relay>` — no global lock.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::{
-    body::{Body, Bytes},
-    extract::{Path, Query, Request, State},
+    body::Bytes,
+    extract::{Path, Request, State},
     http::{header, HeaderMap, StatusCode, Uri},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -28,7 +26,7 @@ use crate::server_config::RelayServerConfig;
 use crate::wire::{
     self, AckBatchRequest, AckBatchResponse, AckRequest, AckResponse, HeartbeatRequest,
     HeartbeatResponse, LeaseBatchRequest, LeaseBatchResponse, LeaseRequest, LeaseResponse,
-    PublishBatchRequest, PublishBatchResponse, PublishRequest, SubscribeQuery,
+    PublishBatchRequest, PublishBatchResponse, PublishRequest,
 };
 
 /// Shared application state: the relay core plus this shard's config.
@@ -36,7 +34,6 @@ use crate::wire::{
 pub struct AppState {
     relay: Arc<Relay>,
     config: Arc<RelayServerConfig>,
-    next_sub: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -46,7 +43,6 @@ impl AppState {
         AppState {
             relay: Arc::new(relay),
             config: Arc::new(config),
-            next_sub: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -119,7 +115,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/lease-batch", post(lease_batch)) // DEPRECATED → /consume
         .route("/v1/{subject}/ack-batch", post(ack_batch)) // DEPRECATED → /consume
         .route("/v1/{subject}/heartbeat", post(heartbeat)) // DEPRECATED → /consume
-        .route("/v1/{subject}/subscribe", get(subscribe))
         .route("/v1/{subject}/len", get(log_len))
         .route("/healthz", get(healthz))
         .route("/openapi.json", get(openapi_json))
@@ -418,59 +413,6 @@ pub async fn heartbeat(
             expires_at,
         },
     )
-}
-
-/// `GET /v1/{subject}/subscribe?from_seq=` — tail the broadcast stream.
-#[utoipa::path(
-    get,
-    path = "/v1/{subject}/subscribe",
-    params(
-        ("subject" = String, Path, description = "Target subject"),
-        ("from_seq" = u64, Query, description = "Seq to start replay from")
-    ),
-    responses((status = 200, description = "Stream of length-prefixed CBOR log entries"))
-)]
-pub async fn subscribe(
-    State(st): State<AppState>,
-    Path(subject): Path<String>,
-    Query(query): Query<SubscribeQuery>,
-) -> Response {
-    let subscriber_id = query
-        .subscriber_id
-        .clone()
-        .unwrap_or_else(|| format!("sub-{}", st.next_sub.fetch_add(1, Ordering::Relaxed)));
-
-    if let Err(e) = st.relay.subscribe(&subject, &subscriber_id, query.from_seq) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-
-    let wake = st.relay.subscribe_wake(&subject);
-    let stream = futures::stream::unfold(
-        (st, subject, subscriber_id, wake),
-        |(st, subject, subscriber_id, mut wake)| async move {
-            loop {
-                let frames = st.relay.poll(&subject, &subscriber_id).unwrap_or_default();
-                if !frames.is_empty() {
-                    let mut buf = Vec::new();
-                    for entry in &frames {
-                        buf.extend(wire::encode_frame(entry));
-                    }
-                    let item: Result<Bytes, std::convert::Infallible> = Ok(Bytes::from(buf));
-                    return Some((item, (st, subject, subscriber_id, wake)));
-                }
-                if wake.changed().await.is_err() {
-                    return None;
-                }
-            }
-        },
-    );
-
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, wire::CBOR_SEQ)],
-        Body::from_stream(stream),
-    )
-        .into_response()
 }
 
 /// `GET /v1/{subject}/len` — current append count for the subject log.

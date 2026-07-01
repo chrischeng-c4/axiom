@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
 
-use relay::{DeliveryModel, Relay, RelayCoreConfig};
+use relay::{Relay, RelayCoreConfig};
 
 fn relay(shards: u32) -> Relay {
     let mut cfg = RelayCoreConfig::in_memory();
@@ -61,29 +61,11 @@ fn spreads_and_drains_exactly_once() {
     );
 }
 
-// Broadcast subscribe spans all shards: every message is delivered (merged).
-#[test]
-fn broadcast_merges_across_shards() {
-    let r = relay(4);
-    const N: usize = 200;
-    r.subscribe("events", "watcher", 0).unwrap();
-    publish(&r, "events", N);
-
-    let got = r.poll("events", "watcher").unwrap();
-    let ids: BTreeSet<String> = got.iter().map(|e| e.message_id.clone()).collect();
-    let expected: BTreeSet<String> = (0..N).map(|i| format!("m{i}")).collect();
-    assert_eq!(
-        ids, expected,
-        "every message delivered, merged across shards"
-    );
-}
-
 // default_shards = 1 collapses to a single shard 0 — identical to single-shard.
 #[test]
 fn single_shard_parity() {
     let r = relay(1);
     let now = Utc::now();
-    r.set_delivery_model("s", DeliveryModel::Broadcast).unwrap();
     for id in ["m0", "m1", "m2"] {
         r.publish("s", id, serde_json::json!({}), BTreeMap::new(), now)
             .unwrap();
@@ -97,6 +79,5 @@ fn single_shard_parity() {
     }
     assert_eq!(acked, vec![0, 1, 2]);
     assert_eq!(r.committed_offset("s").unwrap().unwrap().committed_seq, 2);
-    assert_eq!(r.delivery_model("s"), Some(DeliveryModel::Broadcast));
 }
 // HANDWRITE-END

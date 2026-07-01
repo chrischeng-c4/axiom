@@ -178,11 +178,9 @@ async fn raft_cluster_elects_replicates_redirects_and_fails_over() {
     for n in c.nodes.iter().filter(|n| !n.killed) {
         let got: Vec<String> = {
             let r = n.driver.relay();
-            r.subscribe("s", "check", 0).unwrap();
-            r.poll("s", "check")
-                .unwrap()
-                .into_iter()
-                .map(|e| e.message_id)
+            let len = r.log_len("s").unwrap();
+            (0..len)
+                .map(|seq| r.entry("s", 0, seq).unwrap().unwrap().message_id)
                 .collect()
         };
         assert!(got.contains(&"a".to_string()), "no committed loss");

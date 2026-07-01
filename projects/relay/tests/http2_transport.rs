@@ -4,13 +4,10 @@
 //!
 //! Each test starts the axum app on a loopback port and drives it with a
 //! reqwest client forced to HTTP/2 prior-knowledge (h2c), covering the #115
-//! acceptance: a worker leases/acks over h2c and a subscriber tails a broadcast
-//! stream from a seq.
+//! acceptance: a worker leases/acks over h2c.
 
 use std::net::SocketAddr;
-use std::time::Duration;
 
-use futures::StreamExt;
 use serde_json::json;
 
 use relay::server::{router, AppState};
@@ -18,7 +15,7 @@ use relay::server_config::RelayServerConfig;
 use relay::wire::{
     from_cbor, to_cbor, AckResponse, LeaseRequest, LeaseResponse, PublishRequest, CBOR,
 };
-use relay::{AppendOutcome, LogEntry};
+use relay::AppendOutcome;
 
 async fn start_server() -> SocketAddr {
     let state = AppState::new(RelayServerConfig::ephemeral());
@@ -177,40 +174,4 @@ async fn lease_cbor_fast_path() {
     assert_eq!(resp.lease.expect("lease").seq, 0);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn subscriber_tails_broadcast_from_seq() {
-    // #115 acceptance: a subscriber tails a broadcast stream from a seq.
-    let addr = start_server().await;
-    let client = h2c_client();
-    for id in ["e0", "e1", "e2"] {
-        publish(&client, addr, "events", id).await;
-    }
-
-    let resp = client
-        .get(url(addr, "/v1/events/subscribe?from_seq=1"))
-        .send()
-        .await
-        .unwrap();
-    let mut stream = resp.bytes_stream();
-
-    let mut buf: Vec<u8> = Vec::new();
-    let mut frames: Vec<LogEntry> = Vec::new();
-    while frames.len() < 2 {
-        let chunk = tokio::time::timeout(Duration::from_secs(5), stream.next())
-            .await
-            .expect("stream did not stall")
-            .expect("a chunk")
-            .expect("chunk ok");
-        buf.extend_from_slice(&chunk);
-        let (decoded, consumed) = relay::wire::decode_frames::<LogEntry>(&buf);
-        if !decoded.is_empty() {
-            frames.extend(decoded);
-            buf.drain(0..consumed);
-        }
-    }
-    drop(stream); // disconnect the tail
-
-    let seqs: Vec<u64> = frames.iter().map(|e| e.seq).collect();
-    assert_eq!(seqs, vec![1, 2], "tail replays from from_seq in order");
-}
 // HANDWRITE-END

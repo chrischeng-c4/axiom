@@ -248,12 +248,9 @@ fn relay_engines_converge_across_failover() {
                 .publish("s", mid, v.clone(), BTreeMap::new(), Utc::now())
                 .unwrap();
         }
-        engine.subscribe("s", "r", 0).unwrap();
-        let ids: Vec<String> = engine
-            .poll("s", "r")
-            .unwrap()
-            .into_iter()
-            .map(|e| e.message_id)
+        let n = engine.log_len("s").unwrap();
+        let ids: Vec<String> = (0..n)
+            .map(|seq| engine.entry("s", 0, seq).unwrap().unwrap().message_id)
             .collect();
         sets.push(ids);
     }

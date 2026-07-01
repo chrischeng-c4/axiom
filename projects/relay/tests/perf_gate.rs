@@ -69,12 +69,6 @@ fn gate_workloads_are_valid() {
     }
     assert_eq!(r.log_len("bench").unwrap(), M as u64);
 
-    // broadcast: every subscriber gets every message.
-    for sub in ["a", "b"] {
-        r.subscribe("bench", sub, 0).unwrap();
-        assert_eq!(r.poll("bench", sub).unwrap().len(), M);
-    }
-
     // work-queue: lease + ack each entry exactly once.
     let mut acked: BTreeSet<u64> = BTreeSet::new();
     while let Some(l) = r.lease("bench", "c", now).unwrap() {
