@@ -9,12 +9,11 @@
 # case = "getpreferredencoding__do_setlocale_as_bool_wrong"
 # subject = "locale.getpreferredencoding(do_setlocale: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed do_setlocale"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/locale.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed do_setlocale
 # mamba-strict-type: TypeError
 """Type wall: locale.getpreferredencoding(do_setlocale: bool); call it with the wrong type.
 
