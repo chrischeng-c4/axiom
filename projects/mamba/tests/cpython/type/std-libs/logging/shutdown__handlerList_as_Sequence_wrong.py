@@ -9,12 +9,11 @@
 # case = "shutdown__handlerList_as_Sequence_wrong"
 # subject = "logging.shutdown(handlerList: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed handlerList"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed handlerList
 # mamba-strict-type: TypeError
 """Type wall: logging.shutdown(handlerList: Sequence); call it with the wrong type.
 

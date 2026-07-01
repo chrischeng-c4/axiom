@@ -9,12 +9,11 @@
 # case = "ConvertingMixin__convert_with_key__replace_as_bool_wrong"
 # subject = "logging.config.ConvertingMixin.convert_with_key(replace: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed replace"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging/config.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed replace
 # mamba-strict-type: TypeError
 """Type wall: logging.config.ConvertingMixin.convert_with_key(replace: bool); call it with the wrong type.
 

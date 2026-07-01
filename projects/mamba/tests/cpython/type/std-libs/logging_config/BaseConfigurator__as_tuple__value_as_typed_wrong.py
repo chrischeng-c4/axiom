@@ -9,12 +9,11 @@
 # case = "BaseConfigurator__as_tuple__value_as_typed_wrong"
 # subject = "logging.config.BaseConfigurator.as_tuple(value: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging/config.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: logging.config.BaseConfigurator.as_tuple(value: typed); call it with the wrong type.
 

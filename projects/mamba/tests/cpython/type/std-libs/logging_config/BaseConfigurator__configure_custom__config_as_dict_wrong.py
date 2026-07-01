@@ -9,12 +9,11 @@
 # case = "BaseConfigurator__configure_custom__config_as_dict_wrong"
 # subject = "logging.config.BaseConfigurator.configure_custom(config: dict)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed config"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging/config.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed config
 # mamba-strict-type: TypeError
 """Type wall: logging.config.BaseConfigurator.configure_custom(config: dict); call it with the wrong type.
 

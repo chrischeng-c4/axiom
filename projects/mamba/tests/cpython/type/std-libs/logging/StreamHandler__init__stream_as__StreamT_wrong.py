@@ -9,12 +9,11 @@
 # case = "StreamHandler__init__stream_as__StreamT_wrong"
 # subject = "logging.StreamHandler.__init__(stream: _StreamT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stream"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed stream
 # mamba-strict-type: TypeError
 """Type wall: logging.StreamHandler.__init__(stream: _StreamT); call it with the wrong type.
 
