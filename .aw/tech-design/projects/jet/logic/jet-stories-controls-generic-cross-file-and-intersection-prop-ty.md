@@ -8,6 +8,12 @@ capability_refs:
     claim: stories-controls-panel
     coverage: partial
     rationale: "Resolving generic, cross-file, and intersection prop types lets controls render for far more real components, completing the controls panel."
+  - id: component-workbench
+    role: primary
+    gap: component-workbench-readiness
+    claim: generic-cross-file-prop-controls
+    coverage: partial
+    rationale: "This TD verifies controls for generic, cross-file, and intersection prop type shapes."
 ---
 
 # jet stories controls: Generic, Cross-File, and Intersection Prop Types
@@ -54,6 +60,19 @@ flowchart TD
     cross --> members
     inter --> members
     members --> done([PropDefs for inference])
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: generic_cross_file_prop_controls
+    capability_id: component-workbench
+    claim_id: generic-cross-file-prop-controls
+    name: "Generic and cross-file prop controls"
+    command: "cargo test -p jet --test controls -- --nocapture"
+    proves: "Controls are inferred from generic, cross-file, and intersection prop types."
 ```
 
 ## Changes

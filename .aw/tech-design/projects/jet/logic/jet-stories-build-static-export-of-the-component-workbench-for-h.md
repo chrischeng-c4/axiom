@@ -58,6 +58,19 @@ flowchart TD
     assets --> done([static workbench, servable])
 ```
 
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: stories_static_export
+    capability_id: component-workbench
+    claim_id: stories-static-export
+    name: "Stories static export"
+    command: "cargo test -p jet --test stories_build -- --nocapture"
+    proves: "jet stories build emits a server-less static workbench with manager, per-story previews, transformed modules, and relative URLs."
+```
+
 ## Changes
 <!-- type: changes lang: yaml -->
 

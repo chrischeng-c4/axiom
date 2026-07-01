@@ -1181,4 +1181,10 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: ".aw/tech-design/projects/jet/semantic/jet-tests-wasm.md"
+    action: verify
+    section: unit-test
+    impl_mode: hand-written
+    description: |
+      Traceability repair: hand-written TD section retained as the implementation edge during AW standardization.
 ```

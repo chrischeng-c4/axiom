@@ -96,7 +96,7 @@ Canonical field-style capability contracts below are machine-readable input for 
 | Native Test And Product-Flow E2E | #3785 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready_for_basic | Jet native runner, reporter, product-flow e2e, and trace gates are green for the Basic production-readiness contract. |
 | WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
-| Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: `preserve_modules`/IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
+| Library Build And Package Publishing | #168 | implemented | verified | conformance | partial | `jet build --lib` (ESM+CJS, externalized deps/peerDeps, multi-entry), preserve-modules ESM/CJS output, `.d.ts` emission, and `jet publish --build` with metadata validation + private-registry (`.npmrc` scoped) e2e all shipped and tested (A1-A3 merged). `partial`: IIFE lib output, class-member `.d.ts` reduction, and some CJS re-export edge cases are TODO follow-ups. |
 | Component Workbench (Stories) | #169 | implemented | verified | conformance | ready_for_basic | CSF `*.stories.tsx` discovery, the Stories dev manager + isolated preview, preview HMR, and a prop-type-derived Controls panel (B1-B3 + B2b). The earlier `partial` follow-ups have since shipped: hook-state-preserving React Refresh (#196), `node_modules` bare-import resolution for dev + static (#197), generic/cross-file/intersection prop-type controls (#198), CSF2 `Template.bind`/re-exported stories/spread args (#199), and `jet stories build` static export (#190). CSF-compatible, no Storybook runtime. |
 
 ### Rust-Native Frontend Toolchain Replacement
@@ -364,7 +364,8 @@ EC Dimensions:
 
 ID: library-build-publishing
 Root WI: #168
-Status: candidate
+Status: confirmed
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 jet builds publishable npm packages in library mode (ESM + optional CJS, externalized dependencies/peerDependencies, multi-entry from package.json `exports`), emits `.d.ts` type declarations, and `jet publish --build` builds + validates package metadata (`exports`/`main`/`module`/`types`) before publishing to public or private (GitLab/Verdaccio/Nexus) registries via `.npmrc` scoped-registry auth. App-mode `jet build` is unchanged.
@@ -374,11 +375,15 @@ Gate Inventory:
 - `cargo test -p jet --test library_publish_e2e`
 - `cargo test -p jet --lib bundler::lib_build bundler::dts`
 - `cargo test -p jet --lib pkg_manager::publish`
+Surfaces:
+- CLI: `jet build --lib` + `jet publish --build` - Library package build, metadata validation, and registry publishing surface.
+EC Dimensions:
+- behavior: `cargo test -p jet --test library_publish_e2e` - Library build, declaration output, package metadata validation, and publish/private-registry conformance.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Library publishing readiness | epic | #168 | implemented | verified | conformance | `cargo test -p jet --test library_publish_e2e` — A1 library build, A2 declaration emission, and A3 publish/private-registry hardening are merged |
-| Library Build Mode | change | #170 | implemented | verified | conformance | `cargo test -p jet --test library_build` — ESM+CJS, externalized deps/peerDeps, multi-entry (preserve-modules/IIFE TODO) |
+| Library Build Mode | change | #170 | implemented | verified | conformance | `cargo test -p jet --test library_build` — ESM+CJS, externalized deps/peerDeps, multi-entry, preserve-modules ESM/CJS (IIFE TODO) |
 | Type Declaration Emission | change | #171 | implemented | verified | conformance | `cargo test -p jet --test library_dts` — declaration files per entry plus package types field (isolatedDeclarations) |
 | Publish And Private Registry | change | #172 | implemented | verified | conformance | `cargo test -p jet --test library_publish_e2e` — build + metadata validate; in-process mock-registry publish/install round-trip |
 | Library CSS Cascade-Merge | change | #205 | implemented | verified | conformance | `cargo test -p jet --lib bundler::css_bundle` — cascade-ordered CSS merge across entries plus raw asset copy in library builds |
@@ -387,7 +392,8 @@ Gate Inventory:
 
 ID: component-workbench
 Root WI: #169
-Status: candidate
+Status: confirmed
+Type: DeveloperTool
 Required Verification: smoke, conformance, corpus, negative
 Promise:
 jet discovers and parses CSF `*.stories.tsx` (default-export meta + named-export stories), serves a jet-native manager UI (sidebar, isolated preview, toolbar) with HMR, and derives a live Controls panel from component prop types + `argTypes`. CSF/CSF2-compatible with no Storybook runtime dependency, with hook-state-preserving React Refresh, `node_modules` bare-import resolution, generic/cross-file prop-type controls, and a static `jet stories build` export (all shipped).
@@ -397,6 +403,13 @@ Gate Inventory:
 - `cargo test -p jet --test preview_hmr`
 - `cargo test -p jet --test controls`
 - `cargo test -p jet --test stories_build`
+Surfaces:
+- CLI: `jet stories` + `jet stories build` - Component workbench dev server and static export entrypoints.
+- UI: `jet stories` manager + preview - Sidebar, isolated story preview, toolbar, HMR, and controls panel surface.
+EC Dimensions:
+- behavior: `cargo test -p jet --test stories_build` - Static workbench export, story preview modules, and relative URL behavior.
+- behavior: `cargo test -p jet --test manager` - Manager UI routing, story listing, isolated preview, and bare-import resolution behavior.
+- behavior: `cargo test -p jet --test controls` - Prop-type-derived controls and live arg edit behavior.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|

@@ -60,6 +60,19 @@ flowchart TD
     more -->|no| done([StoryIndex stories+diagnostics])
 ```
 
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: csf_story_discovery
+    capability_id: component-workbench
+    claim_id: csf-story-discovery
+    name: "CSF story discovery"
+    command: "cargo test -p jet --test csf_discovery -- --nocapture"
+    proves: "CSF story discovery parses default-export metadata and named stories into the normalized story index."
+```
+
 ## Changes
 <!-- type: changes lang: yaml -->
 

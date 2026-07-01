@@ -18,6 +18,7 @@
 //!
 //! @issue #170
 //! @issue #722
+//! @issue #757
 
 use anyhow::{Context, Result};
 use std::collections::HashSet;
@@ -43,7 +44,7 @@ pub struct LibBuildOptions {
     /// When set, one output file is emitted per source module (mirroring the
     /// source tree under `out_dir`); internal relative imports are rewritten
     /// to the emitted siblings and external imports stay as bare specifiers.
-    /// Supported for ESM output; CJS + `preserve_modules` is a deferred TODO.
+    /// Supports ESM and CJS output. IIFE remains single-file only.
     pub preserve_modules: bool,
     /// Emit a `<entry>.d.ts` type declaration file next to each entry's JS
     /// output (isolatedDeclarations-style). Defaults to `true` for library
@@ -186,7 +187,7 @@ pub struct TypesOutput {
 /// Three emission shapes are supported:
 ///   * bundled single-file ESM/CJS (default),
 ///   * `preserve_modules` — one output file per source module mirroring the
-///     source tree (ESM only; CJS + preserve is a deferred TODO),
+///     source tree (ESM and CJS),
 ///   * [`OutputFormat::Iife`] — the bundled entry wrapped as a global-var IIFE.
 /// Resolve the SOURCE entries to build. Explicit `[lib].entry`
 /// (`options.entry`) wins. Otherwise entries are discovered from package.json
@@ -272,7 +273,7 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         .with_context(|| format!("creating out_dir {}", options.out_dir.display()))?;
 
     // preserve_modules: emit one file per source module + an entry re-export,
-    // mirroring the source tree under out_dir. ESM only; CJS is a TODO.
+    // mirroring the source tree under out_dir.
     if options.preserve_modules {
         return build_library_preserve_modules(&options, &entries, &externals);
     }
@@ -1101,25 +1102,20 @@ fn declared_name(decl: &str) -> Option<String> {
 /// from the entries, mirroring the source tree under `out_dir`.
 ///
 /// Internal relative imports are rewritten to point at the emitted siblings
-/// (always `./relative.js`); external imports stay bare. The entry file keeps
-/// its original `export … from "./x"` / re-export structure so a consumer can
-/// `import` the entry *or* deep-import any emitted module.
-///
-/// ESM only. CJS + `preserve_modules` is deferred — see the bail below.
+/// (`./relative.js` or `./relative.cjs`); external imports stay bare. The
+/// entry file keeps its original `export … from "./x"` / re-export structure
+/// so a consumer can `import` the entry *or* deep-import any emitted module.
 fn build_library_preserve_modules(
     options: &LibBuildOptions,
     entries: &[crate::resolver::package::LibraryEntry],
     externals: &HashSet<String>,
 ) -> Result<LibBuildResult> {
     for format in &options.formats {
-        if !matches!(format, OutputFormat::Esm) {
-            // TODO(#170 follow-up): preserve_modules currently emits ESM only.
-            // A CJS (and IIFE) per-module flavour needs per-module require()
-            // rewriting + an interop entry; deferred.
+        if matches!(format, OutputFormat::Iife) {
             anyhow::bail!(
-                "jet build --lib --preserve-modules: only esm output is supported \
-                 (TODO #170 follow-up); got {:?}",
-                format
+                "jet build --lib --preserve-modules: iife output is not supported; \
+                 use esm or cjs preserve-modules output, or drop --preserve-modules \
+                 for single-file iife output"
             );
         }
     }
@@ -1150,24 +1146,33 @@ fn build_library_preserve_modules(
             .strip_prefix(&src_root)
             .unwrap_or(module)
             .to_path_buf();
-        let out_rel = with_js_extension(&rel);
-        let out_path = options.out_dir.join(&out_rel);
-        if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
+        for format in &options.formats {
+            let out_rel = preserve_module_output_rel(&rel, format)?;
+            let out_path = options.out_dir.join(&out_rel);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+
+            let esm = rewrite_module_for_preserve(module, externals, format)?;
+            let code = transpile_library_esm(&esm)
+                .with_context(|| format!("transpiling {}", module.display()))?;
+            let code = match format {
+                OutputFormat::Esm => code,
+                OutputFormat::Cjs => esm_to_cjs(&code),
+                OutputFormat::Iife => unreachable!("validated above"),
+            };
+            std::fs::write(&out_path, &code)
+                .with_context(|| format!("writing {}", out_path.display()))?;
+
+            outputs.push(EntryOutput {
+                subpath: format!("./{}", out_rel.to_string_lossy().replace('\\', "/")),
+                format: format.clone(),
+                path: out_path,
+                code,
+                dts: None,
+            });
         }
-
-        let code = rewrite_module_for_preserve(module, externals)?;
-        std::fs::write(&out_path, &code)
-            .with_context(|| format!("writing {}", out_path.display()))?;
-
-        outputs.push(EntryOutput {
-            subpath: format!("./{}", out_rel.to_string_lossy().replace('\\', "/")),
-            format: OutputFormat::Esm,
-            path: out_path,
-            code,
-            dts: None,
-        });
     }
 
     // Post-emit asset steps run for preserve_modules builds too.
@@ -1268,11 +1273,33 @@ fn with_js_extension(rel: &Path) -> PathBuf {
     rel.with_extension("js")
 }
 
+/// Rewrite a relative path's extension for preserve-modules output.
+fn preserve_module_output_rel(rel: &Path, format: &OutputFormat) -> Result<PathBuf> {
+    match format {
+        OutputFormat::Esm => Ok(with_js_extension(rel)),
+        OutputFormat::Cjs => Ok(rel.with_extension("cjs")),
+        OutputFormat::Iife => {
+            anyhow::bail!("jet build --lib --preserve-modules: iife output is not supported")
+        }
+    }
+}
+
+fn preserve_module_specifier_extension(format: &OutputFormat) -> &'static str {
+    match format {
+        OutputFormat::Cjs => "cjs",
+        OutputFormat::Esm | OutputFormat::Iife => "js",
+    }
+}
+
 /// Rewrite one module's source for `preserve_modules` emission:
-///   * internal relative imports point at the emitted `.js` sibling,
+///   * internal relative imports point at the emitted same-format sibling,
 ///   * external imports are kept bare,
 ///   * everything else is verbatim.
-fn rewrite_module_for_preserve(path: &Path, externals: &HashSet<String>) -> Result<String> {
+fn rewrite_module_for_preserve(
+    path: &Path,
+    externals: &HashSet<String>,
+    format: &OutputFormat,
+) -> Result<String> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
@@ -1314,7 +1341,10 @@ fn rewrite_module_for_preserve(path: &Path, externals: &HashSet<String>) -> Resu
 
         // Emit text up to the string literal, then the rewritten specifier.
         out.push_str(&source[last_end..str_start]);
-        let rewritten = rewrite_relative_specifier(&spec);
+        let rewritten = rewrite_relative_specifier_with_extension(
+            &spec,
+            preserve_module_specifier_extension(format),
+        );
         out.push_str(&format!("\"{rewritten}\""));
         last_end = str_end;
     }
@@ -1338,7 +1368,12 @@ fn first_string_range(node: &tree_sitter::Node) -> Option<(usize, usize)> {
 /// `./` / `../` prefix. `./util.ts` → `./util.js`, `./util` → `./util.js`,
 /// `./sub/mod` → `./sub/mod.js`.
 fn rewrite_relative_specifier(spec: &str) -> String {
-    // Strip a known source extension, then append `.js`.
+    rewrite_relative_specifier_with_extension(spec, "js")
+}
+
+fn rewrite_relative_specifier_with_extension(spec: &str, extension: &str) -> String {
+    // Strip a known source extension, then append the requested emitted
+    // extension.
     let stripped = spec
         .strip_suffix(".ts")
         .or_else(|| spec.strip_suffix(".tsx"))
@@ -1347,7 +1382,7 @@ fn rewrite_relative_specifier(spec: &str) -> String {
         .or_else(|| spec.strip_suffix(".cjs"))
         .or_else(|| spec.strip_suffix(".js"))
         .unwrap_or(spec);
-    format!("{stripped}.js")
+    format!("{stripped}.{extension}")
 }
 
 /// Rewrite the relative specifier inside an `export … from "./m"` re-export

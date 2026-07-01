@@ -442,10 +442,17 @@ exports.run = function(x) { return util.double(x); };
 /// Build a library at `root` with `preserve_modules` on (ESM) and return the
 /// result.
 fn run_lib_build_preserve(root: &std::path::Path) -> jet::bundler::LibBuildResult {
+    run_lib_build_preserve_with_formats(root, vec![OutputFormat::Esm])
+}
+
+fn run_lib_build_preserve_with_formats(
+    root: &std::path::Path,
+    formats: Vec<OutputFormat>,
+) -> jet::bundler::LibBuildResult {
     let options = LibBuildOptions {
         project_root: root.to_path_buf(),
         out_dir: root.join("dist"),
-        formats: vec![OutputFormat::Esm],
+        formats,
         conditions: vec!["import".to_string(), "default".to_string()],
         extra_externals: HashSet::new(),
         preserve_modules: true,
@@ -559,6 +566,105 @@ export function go(a) { return useState(double(a)); }
         button_code.contains("export function Button"),
         "deep module is independently importable (exports Button), got:\n{button_code}"
     );
+}
+
+#[test]
+fn lib_preserve_modules_emits_dual_esm_cjs_tree() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "my-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts",
+            "dependencies": { "lodash-es": "^4.0.0" }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/lib/form-input/form-input.ts",
+        r#"import { trim } from "lodash-es";
+
+export function formInput(x: string): string {
+    return trim(x);
+}
+
+export const fieldKind: string = "text";
+"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export * from "./lib/form-input/form-input";
+export { formInput as renamedInput } from "./lib/form-input/form-input";
+"#,
+    );
+
+    let result =
+        run_lib_build_preserve_with_formats(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let dist = root.join("dist");
+
+    for rel in [
+        "index.js",
+        "index.cjs",
+        "lib/form-input/form-input.js",
+        "lib/form-input/form-input.cjs",
+    ] {
+        assert!(dist.join(rel).is_file(), "expected emitted file {rel}");
+    }
+
+    let index_esm = std::fs::read_to_string(dist.join("index.js")).unwrap();
+    assert!(
+        index_esm.contains("./lib/form-input/form-input.js"),
+        "ESM entry must point at the emitted .js sibling, got:\n{index_esm}"
+    );
+    assert!(
+        !index_esm.contains(".cjs"),
+        "ESM entry must not reference CJS siblings, got:\n{index_esm}"
+    );
+
+    let index_cjs = std::fs::read_to_string(dist.join("index.cjs")).unwrap();
+    assert!(
+        index_cjs.contains("require(\"./lib/form-input/form-input.cjs\")"),
+        "CJS entry must require the emitted .cjs sibling, got:\n{index_cjs}"
+    );
+    assert!(
+        index_cjs.contains(
+            "exports.renamedInput = require(\"./lib/form-input/form-input.cjs\").formInput;"
+        ),
+        "renamed re-export must bind through the CJS sibling, got:\n{index_cjs}"
+    );
+
+    let module_cjs = std::fs::read_to_string(dist.join("lib/form-input/form-input.cjs")).unwrap();
+    assert!(
+        module_cjs.contains("const { trim } = require(\"lodash-es\");"),
+        "external dependency must stay external via require(), got:\n{module_cjs}"
+    );
+    assert!(
+        module_cjs.contains("function formInput(x)")
+            && module_cjs.contains("exports.formInput = formInput;"),
+        "CJS module must expose the function export, got:\n{module_cjs}"
+    );
+    assert!(
+        !module_cjs.contains(": string"),
+        "preserve-modules CJS output must strip TypeScript annotations, got:\n{module_cjs}"
+    );
+
+    let esm_count = result
+        .entries
+        .iter()
+        .filter(|entry| entry.format == OutputFormat::Esm)
+        .count();
+    let cjs_count = result
+        .entries
+        .iter()
+        .filter(|entry| entry.format == OutputFormat::Cjs)
+        .count();
+    assert_eq!(esm_count, 2, "two source modules -> two ESM outputs");
+    assert_eq!(cjs_count, 2, "two source modules -> two CJS outputs");
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -53,6 +53,19 @@ flowchart TD
     rerender --> done([controls live, preview reflects args])
 ```
 
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: stories_controls_panel
+    capability_id: component-workbench
+    claim_id: stories-controls-panel
+    name: "Stories controls panel"
+    command: "cargo test -p jet --test controls -- --nocapture"
+    proves: "The controls panel infers prop controls, applies argTypes overrides, and live-edits preview args."
+```
+
 ## Changes
 <!-- type: changes lang: yaml -->
 

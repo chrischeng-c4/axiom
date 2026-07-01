@@ -67,8 +67,7 @@ pub struct BundleOptions {
 
     /// Preserve the internal module structure (one output file per source
     /// module) instead of bundling each entry into a single file. Library
-    /// mode only. Currently a deferred follow-up — see
-    /// `lib_build::build_library`. Default `false`.
+    /// mode only. Supports ESM/CJS preserve-modules output. Default `false`.
     /// @issue #170
     pub preserve_modules: bool,
 
