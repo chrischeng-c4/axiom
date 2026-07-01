@@ -936,6 +936,18 @@ pub fn register() {
         &[],
     );
     register_with(
+        "multiprocessing.forkserver",
+        &["ForkServer"],
+        &[
+            ("main", dispatch_noop as *const () as usize),
+            ("read_signed", dispatch_int_zero as *const () as usize),
+            ("set_forkserver_preload", dispatch_noop as *const () as usize),
+            ("write_signed", dispatch_noop as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "multiprocessing.dummy",
         &["DummyProcess", "Namespace", "Value"],
         &[
