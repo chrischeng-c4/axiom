@@ -9,12 +9,10 @@
 # case = "Completer__init__namespace_as_typed_wrong"
 # subject = "rlcompleter.Completer.__init__(namespace: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed namespace"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/rlcompleter.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed namespace
 # mamba-strict-type: TypeError
 """Type wall: rlcompleter.Completer.__init__(namespace: typed); call it with the wrong type.
 

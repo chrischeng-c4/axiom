@@ -9,12 +9,10 @@
 # case = "BaseCookie__value_encode__val_as__T_wrong"
 # subject = "http.cookies.BaseCookie.value_encode(val: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed val"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/http/cookies.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed val
 # mamba-strict-type: TypeError
 """Type wall: http.cookies.BaseCookie.value_encode(val: _T); call it with the wrong type.
 
