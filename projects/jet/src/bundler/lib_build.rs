@@ -247,7 +247,69 @@ fn resolve_lib_entries(
             entry.source = source;
         }
     }
+
+    // @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#logic
+    entries.retain(|entry| !configured_asset_export_entry(options, entry));
     Ok(entries)
+}
+
+fn configured_asset_export_entry(options: &LibBuildOptions, entry: &LibraryEntry) -> bool {
+    let source = normalize_export_path(&entry.source);
+    if is_library_source_path(&source) {
+        return false;
+    }
+
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext == "css" && css_merge_covers_asset_export(options, &source) {
+        return true;
+    }
+
+    raw_copy_covers_asset_export(options, &source)
+}
+
+fn css_merge_covers_asset_export(options: &LibBuildOptions, source: &Path) -> bool {
+    if options.css_merge.is_empty() {
+        return false;
+    }
+    options
+        .css_merge
+        .iter()
+        .any(|configured| normalize_export_path(configured) == source)
+        || source.file_name().and_then(|name| name.to_str()) == Some("style.css")
+}
+
+fn raw_copy_covers_asset_export(options: &LibBuildOptions, source: &Path) -> bool {
+    if options.raw_copy.is_empty() {
+        return false;
+    }
+
+    let dest_rel = output_relative_asset_path(options, source);
+    options.raw_copy.iter().any(|dir| {
+        let dest_root = normalize_export_path(dir.to.as_deref().unwrap_or(&dir.from));
+        dest_rel.starts_with(&dest_root) || source.starts_with(normalize_export_path(&dir.from))
+    })
+}
+
+fn output_relative_asset_path(options: &LibBuildOptions, source: &Path) -> PathBuf {
+    let Some(out_dir_name) = options.out_dir.file_name().and_then(|name| name.to_str()) else {
+        return source.to_path_buf();
+    };
+    source
+        .strip_prefix(out_dir_name)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| source.to_path_buf())
+}
+
+fn normalize_export_path(path: &str) -> PathBuf {
+    let trimmed = path
+        .trim_start_matches("./")
+        .trim_matches('/')
+        .replace('\\', "/");
+    if trimmed.is_empty() || trimmed == "." {
+        PathBuf::new()
+    } else {
+        PathBuf::from(trimmed)
+    }
 }
 
 fn source_entry_fallback(root: &Path, entry: &LibraryEntry) -> Option<String> {
@@ -607,7 +669,7 @@ fn merge_css(options: &LibBuildOptions) -> Result<Option<AssetOutput>> {
     // Preserve any style.css the normal emit already produced as the base of
     // the cascade, then append the declared dependents after it.
     let out_css = options.out_dir.join("style.css");
-    if out_css.is_file() {
+    if out_css.is_file() && !css_merge_includes_output(options, &out_css) {
         let existing = std::fs::read_to_string(&out_css)
             .with_context(|| format!("reading existing {}", out_css.display()))?;
         merged.push_str(&existing);
@@ -642,6 +704,20 @@ fn merge_css(options: &LibBuildOptions) -> Result<Option<AssetOutput>> {
         path: out_css,
         kind: AssetKind::MergedCss,
     }))
+}
+
+fn css_merge_includes_output(options: &LibBuildOptions, out_css: &Path) -> bool {
+    options.css_merge.iter().any(|rel| {
+        let src = options.project_root.join(rel);
+        same_existing_path(&src, out_css)
+    })
+}
+
+fn same_existing_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// Copy each `raw_copy` directory tree verbatim into `out_dir`, preserving
