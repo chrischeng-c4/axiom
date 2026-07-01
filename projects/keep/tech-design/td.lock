@@ -2,10 +2,10 @@ version = 2
 project = "keep"
 ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-07-01T02:25:50.415834+00:00"
-digest = "sha256:7abf9ba16bfeca55a4b20b0cf94348a76b8dcf964ee41ec0ae82ec40136be790"
-source_digest = "sha256:7abf9ba16bfeca55a4b20b0cf94348a76b8dcf964ee41ec0ae82ec40136be790"
-ir_digest = "sha256:70393ab7f27d31332ad9a6c41cccc11d00a14bb830b92e054cb5e7ef4116c212"
+generated_at = "2026-07-01T02:54:52.061543+00:00"
+digest = "sha256:2433561ccbb88912d46df98b19ac381a482ac1ca1c90ba26ed93a71a08d014e3"
+source_digest = "sha256:2433561ccbb88912d46df98b19ac381a482ac1ca1c90ba26ed93a71a08d014e3"
+ir_digest = "sha256:22e0cc257114875997985c14f6cc166a21ad1c6fa01de76d3331ee0f115bdcf8"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-keep-k8s-crd-operator-instance-cli.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "logic/adopt-libs-raft-host-per-shard-hosts-h2c-peer-transport.md"
 digest = "sha256:bbb1252ee1dfae65bb9e9d11359ce233c3ba96900d8f3f67a2491b2380de2da7"
 ir_digest = "sha256:ce3b445018ddfdfb54505006c986a8b3503be1850b4e4d5cb4ddd7067a27d433"
+section_count = 3
+
+[[files]]
+path = "logic/adopt-libs-service-backup-snapshot-sink-keep-backup-verb.md"
+digest = "sha256:4adf452c928f4e96f47d2e6bec6933de74e91e360acca662b9e1bc8f25c08a9f"
+ir_digest = "sha256:19b2b4d86667c6b13dd8de150d06c7cf16f287782b5eae10602c16daed26b0e2"
 section_count = 3
 
 [[files]]
