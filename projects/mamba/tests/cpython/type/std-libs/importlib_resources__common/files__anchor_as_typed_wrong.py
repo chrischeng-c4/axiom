@@ -9,12 +9,11 @@
 # case = "files__anchor_as_typed_wrong"
 # subject = "importlib.resources._common.files(anchor: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed anchor"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/resources/_common.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed anchor
 # mamba-strict-type: TypeError
 """Type wall: importlib.resources._common.files(anchor: typed); call it with the wrong type.
 

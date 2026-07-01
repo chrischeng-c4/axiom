@@ -9,12 +9,11 @@
 # case = "contents__anchor_as_Anchor_wrong"
 # subject = "importlib.resources._functional.contents(anchor: Anchor)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed anchor"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/resources/_functional.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed anchor
 # mamba-strict-type: TypeError
 """Type wall: importlib.resources._functional.contents(anchor: Anchor); call it with the wrong type.
 
