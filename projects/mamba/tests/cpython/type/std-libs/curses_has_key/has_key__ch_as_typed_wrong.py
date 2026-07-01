@@ -9,7 +9,6 @@
 # case = "has_key__ch_as_typed_wrong"
 # subject = "curses.has_key.has_key(ch: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/curses/has_key.pyi"
 # status = "filled"

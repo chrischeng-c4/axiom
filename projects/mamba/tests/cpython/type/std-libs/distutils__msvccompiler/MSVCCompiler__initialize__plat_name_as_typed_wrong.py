@@ -9,7 +9,6 @@
 # case = "MSVCCompiler__initialize__plat_name_as_typed_wrong"
 # subject = "distutils._msvccompiler.MSVCCompiler.initialize(plat_name: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/_msvccompiler.pyi"
 # status = "filled"

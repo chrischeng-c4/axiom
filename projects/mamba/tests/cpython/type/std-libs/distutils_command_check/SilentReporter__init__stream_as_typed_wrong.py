@@ -9,7 +9,6 @@
 # case = "SilentReporter__init__stream_as_typed_wrong"
 # subject = "distutils.command.check.SilentReporter.__init__(stream: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/command/check.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "MIMEMultipart__init___subtype_as_str_wrong"
 # subject = "email.mime.multipart.MIMEMultipart.__init__(_subtype: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/multipart.pyi"
 # status = "filled"

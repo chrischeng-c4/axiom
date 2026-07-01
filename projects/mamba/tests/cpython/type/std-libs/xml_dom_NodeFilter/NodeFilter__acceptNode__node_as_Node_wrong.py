@@ -9,7 +9,6 @@
 # case = "NodeFilter__acceptNode__node_as_Node_wrong"
 # subject = "xml.dom.NodeFilter.NodeFilter.acceptNode(node: Node)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/xml/dom/NodeFilter.pyi"
 # status = "filled"

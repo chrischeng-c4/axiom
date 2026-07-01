@@ -9,7 +9,6 @@
 # case = "askcolor__color_as_typed_wrong"
 # subject = "tkinter.colorchooser.askcolor(color: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tkinter/colorchooser.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "remove_duplicates__items_as_Iterable_wrong"
 # subject = "importlib.resources.readers.remove_duplicates(items: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/resources/readers.pyi"
 # status = "filled"

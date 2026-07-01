@@ -9,7 +9,6 @@
 # case = "MIMEApplication__init___data_as_typed_wrong"
 # subject = "email.mime.application.MIMEApplication.__init__(_data: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/mime/application.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "label__code_as_typed_wrong"
 # subject = "profiling.tracing.label(code: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/profiling/tracing.pyi"
 # status = "filled"

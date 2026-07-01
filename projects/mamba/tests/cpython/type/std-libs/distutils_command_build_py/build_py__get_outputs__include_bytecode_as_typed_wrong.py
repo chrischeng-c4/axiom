@@ -9,7 +9,6 @@
 # case = "build_py__get_outputs__include_bytecode_as_typed_wrong"
 # subject = "distutils.command.build_py.build_py.get_outputs(include_bytecode: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/command/build_py.pyi"
 # status = "filled"

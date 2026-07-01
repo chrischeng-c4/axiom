@@ -9,7 +9,6 @@
 # case = "getpass__prompt_as_str_wrong"
 # subject = "getpass.getpass(prompt: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/getpass.pyi"
 # status = "filled"

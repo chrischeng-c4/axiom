@@ -9,7 +9,6 @@
 # case = "Extension__init__name_as_str_wrong"
 # subject = "distutils.extension.Extension.__init__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/distutils/extension.pyi"
 # status = "filled"
