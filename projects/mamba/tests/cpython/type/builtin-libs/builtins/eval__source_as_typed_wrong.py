@@ -9,12 +9,10 @@
 # case = "eval__source_as_typed_wrong"
 # subject = "builtins.eval(source: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed source"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed source
 # mamba-strict-type: TypeError
 """Type wall: builtins.eval(source: typed); call it with the wrong type.
 

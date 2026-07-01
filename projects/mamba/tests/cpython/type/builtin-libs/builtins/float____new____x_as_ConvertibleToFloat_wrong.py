@@ -9,7 +9,6 @@
 # case = "float____new____x_as_ConvertibleToFloat_wrong"
 # subject = "builtins.float.__new__(x: ConvertibleToFloat)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

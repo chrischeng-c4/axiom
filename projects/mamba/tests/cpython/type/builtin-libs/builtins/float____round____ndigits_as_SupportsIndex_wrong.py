@@ -9,12 +9,10 @@
 # case = "float____round____ndigits_as_SupportsIndex_wrong"
 # subject = "builtins.float.__round__(ndigits: SupportsIndex)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ndigits"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ndigits
 # mamba-strict-type: TypeError
 """Type wall: builtins.float.__round__(ndigits: SupportsIndex); call it with the wrong type.
 

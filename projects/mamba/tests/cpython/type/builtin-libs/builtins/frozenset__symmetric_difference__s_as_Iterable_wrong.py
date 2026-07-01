@@ -9,7 +9,6 @@
 # case = "frozenset__symmetric_difference__s_as_Iterable_wrong"
 # subject = "builtins.frozenset.symmetric_difference(s: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

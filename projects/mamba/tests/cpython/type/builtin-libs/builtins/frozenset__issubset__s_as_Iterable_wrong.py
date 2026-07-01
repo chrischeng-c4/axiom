@@ -9,7 +9,6 @@
 # case = "frozenset__issubset__s_as_Iterable_wrong"
 # subject = "builtins.frozenset.issubset(s: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
