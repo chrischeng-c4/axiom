@@ -9,7 +9,6 @@
 # case = "bytearray__zfill__width_as_SupportsIndex_wrong"
 # subject = "builtins.bytearray.zfill(width: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

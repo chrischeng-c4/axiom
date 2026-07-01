@@ -9,7 +9,6 @@
 # case = "bytearray__take_bytes__n_as_typed_wrong"
 # subject = "builtins.bytearray.take_bytes(n: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

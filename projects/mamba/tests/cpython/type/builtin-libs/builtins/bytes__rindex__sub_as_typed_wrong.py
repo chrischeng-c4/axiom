@@ -9,7 +9,6 @@
 # case = "bytes__rindex__sub_as_typed_wrong"
 # subject = "builtins.bytes.rindex(sub: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
