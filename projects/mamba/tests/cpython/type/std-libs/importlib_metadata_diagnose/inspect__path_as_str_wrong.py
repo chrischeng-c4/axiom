@@ -9,7 +9,6 @@
 # case = "inspect__path_as_str_wrong"
 # subject = "importlib.metadata.diagnose.inspect(path: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/metadata/diagnose.pyi"
 # status = "filled"

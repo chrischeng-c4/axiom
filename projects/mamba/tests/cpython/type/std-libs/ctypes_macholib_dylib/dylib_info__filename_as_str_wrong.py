@@ -9,7 +9,6 @@
 # case = "dylib_info__filename_as_str_wrong"
 # subject = "ctypes.macholib.dylib.dylib_info(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ctypes/macholib/dylib.pyi"
 # status = "filled"

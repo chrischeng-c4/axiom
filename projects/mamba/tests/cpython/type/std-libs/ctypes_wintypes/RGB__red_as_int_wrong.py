@@ -9,7 +9,6 @@
 # case = "RGB__red_as_int_wrong"
 # subject = "ctypes.wintypes.RGB(red: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ctypes/wintypes.pyi"
 # status = "filled"

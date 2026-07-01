@@ -9,7 +9,6 @@
 # case = "to_thread__func_as_Callable_wrong"
 # subject = "asyncio.threads.to_thread(func: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/asyncio/threads.pyi"
 # status = "filled"

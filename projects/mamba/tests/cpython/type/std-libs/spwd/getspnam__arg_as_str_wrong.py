@@ -9,7 +9,6 @@
 # case = "getspnam__arg_as_str_wrong"
 # subject = "spwd.getspnam(arg: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/spwd.pyi"
 # status = "filled"

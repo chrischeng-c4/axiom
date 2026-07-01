@@ -9,7 +9,6 @@
 # case = "open__filename_as_StrOrBytesPath_wrong"
 # subject = "dbm.sqlite3.open(filename: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/dbm/sqlite3.pyi"
 # status = "filled"
