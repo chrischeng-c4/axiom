@@ -3676,6 +3676,13 @@ fn class_overrides_new(class_name: &str) -> bool {
     !lookup_method(class_name, "__new__").is_none()
 }
 
+fn unsafe_object_new_type_name(class_name: &str) -> Option<&'static str> {
+    match class_name {
+        "Certificate" => Some("_ssl.Certificate"),
+        _ => None,
+    }
+}
+
 pub(crate) fn object_new_unbound(items: &[MbValue]) -> MbValue {
     let Some(cls) = items.first().copied() else {
         super::exception::mb_raise(
@@ -3695,6 +3702,15 @@ pub(crate) fn object_new_unbound(items: &[MbValue]) -> MbValue {
         );
         return MbValue::none();
     };
+    if let Some(type_name) = unsafe_object_new_type_name(&class_name) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "object.__new__({type_name}) is not safe, use {type_name}.__new__()"
+            ))),
+        );
+        return MbValue::none();
+    }
     if items.len() > 1 && !class_overrides_init(&class_name) {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
