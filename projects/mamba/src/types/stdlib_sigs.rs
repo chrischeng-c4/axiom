@@ -4940,6 +4940,41 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("address", CoreTy::Unknown), p("strict", CoreTy::Bool)],
         enforceable: true,
     },
+    // ipaddress.get_mixed_type_key accepts IP address/network nominal types;
+    // reject bare user instances in strict fixtures while keeping concrete
+    // runtime values skip-safe.
+    StdlibSig {
+        module: "ipaddress",
+        qualifier: "",
+        name: "get_mixed_type_key",
+        kind: SigKind::ModuleFn,
+        params: &[p("obj", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ipaddress",
+        qualifier: "",
+        name: "ip_interface",
+        kind: SigKind::ModuleFn,
+        params: &[p("address", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ipaddress",
+        qualifier: "",
+        name: "ip_network",
+        kind: SigKind::ModuleFn,
+        params: &[p("address", CoreTy::Typed), p("strict", CoreTy::Bool)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ipaddress",
+        qualifier: "",
+        name: "summarize_address_range",
+        kind: SigKind::ModuleFn,
+        params: &[p("first", CoreTy::Typed), p("last", CoreTy::Unknown)],
+        enforceable: true,
+    },
     // fractions.Fraction arithmetic partners are generated from overloaded
     // numeric aliases and collapse to Unknown. For strict-type fixtures, use
     // Complex as the broad numeric wall: int/float/bool remain compatible, while
@@ -7183,6 +7218,10 @@ mod tests {
             ("inspect", "", "walktree", 0, "classes", CoreTy::List),
             ("ipaddress", "IPv4Network", "__init__", 1, "strict", CoreTy::Bool),
             ("ipaddress", "IPv6Network", "__init__", 1, "strict", CoreTy::Bool),
+            ("ipaddress", "", "get_mixed_type_key", 0, "obj", CoreTy::Typed),
+            ("ipaddress", "", "ip_interface", 0, "address", CoreTy::Typed),
+            ("ipaddress", "", "ip_network", 0, "address", CoreTy::Typed),
+            ("ipaddress", "", "summarize_address_range", 0, "first", CoreTy::Typed),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
