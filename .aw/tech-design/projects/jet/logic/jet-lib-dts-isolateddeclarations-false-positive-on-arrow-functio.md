@@ -86,7 +86,6 @@ changes:
       isolatedDeclarations output.
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
