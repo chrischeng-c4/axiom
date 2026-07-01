@@ -52,15 +52,21 @@ None target Apple Silicon / Metal. That gap is beam's wedge (see Positioning).
 Beating cuVS/CAGRA on NVIDIA is out of near-term scope (and needs NVIDIA hardware).
 The **honest, measurable** performance wins for beam:
 
-1. **Availability win (Mac):** on Apple Silicon, every competitor falls back to
-   **CPU** (no CUDA). beam runs the query on the **GPU (Metal)**. Head-to-head on
-   the *same Mac*: beam-GPU vs Faiss-CPU / pgvector-CPU / Qdrant-CPU. This is a
-   real, defensible "faster on this machine" claim.
-2. **Memory at scale:** IVF-PQ codes are ~`dim·4/m`× smaller than full vectors
-   (measured: **32× smaller at 1M / dim128 / m16**), so beam indexes corpora that
-   don't fit as full vectors — verified in `beam bench`.
-3. **Not yet a win:** IVF-PQ *query latency* (CPU ADC-table build dominates) and
-   recall at scale. Levers tracked as P1 (GPU table-build) + OPQ.
+1. **MEASURED, and it's not a latency win (see `competitor-performance-baseline.md`).**
+   The "faster on this machine" hypothesis was **falsified**: on M1 Max, **faiss-CPU-flat
+   beats beam-GPU-flat at every size** (10.1× / 5.0× / 2.2× slower at 10k/100k/1M,
+   both recall 1.000). Apple's **AMX/Accelerate** makes the CPU competitor extremely
+   fast — there is no "weak CPU fallback" to exploit — and beam pays a ~1.7 ms
+   per-query GPU dispatch/readback floor with **no query batching**. Claim retracted.
+2. **Where beam's GPU honestly shows:** the gap **narrows with n** (10.1×→2.2×), so
+   GPU scan scales better than AMX-CPU; a crossover needs n≫1M **and/or a batched GPU
+   query path** (the concrete lever, tracked as **P2**).
+3. **Memory at scale (real win):** IVF-PQ codes are ~`dim·4/m`× smaller than full
+   vectors — **32× smaller at 1M/dim128/m16** (measured) — so beam indexes corpora
+   that don't fit as full vectors.
+4. **Portability (real win):** beam uses the **Metal GPU** at all; faiss/every
+   surveyed competitor has **no GPU path on this Mac**. That's an availability/
+   portability win, NOT a raw-speed win.
 
 Pinned baseline artifact: `competitor-performance-baseline.md` (to be captured
 once F1–F5 land and a stable query surface exists).
