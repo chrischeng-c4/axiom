@@ -25,7 +25,7 @@ class _W:
 
 
 from builtins import bytearray
-obj = object.__new__(bytearray)
+obj = bytearray(b"abc")
 try:
     obj.extend(_W())  # iterable_of_ints: Iterable <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
