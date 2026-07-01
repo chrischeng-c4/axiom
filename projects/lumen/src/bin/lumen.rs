@@ -310,6 +310,9 @@ enum LlmTopic {
     Quickstart,
     /// Bearer-token auth, token registry schema, and Secret projection.
     Auth,
+    /// Operator storage/ops contract: StatefulSet + durable PVC-backed WAL,
+    /// including at `replicasPerShard: 1`.
+    Storage,
     /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
     Recipes,
 }
@@ -553,6 +556,7 @@ async fn main() -> Result<()> {
                 LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
                 LlmTopic::Auth => lumen::spec::llm_auth_md(),
+                LlmTopic::Storage => lumen::spec::llm_storage_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
             let out = match args.format {
@@ -577,6 +581,9 @@ async fn main() -> Result<()> {
                     )?,
                     LlmTopic::Auth => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "auth", "markdown": md }),
+                    )?,
+                    LlmTopic::Storage => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "storage", "markdown": md }),
                     )?,
                 },
             };

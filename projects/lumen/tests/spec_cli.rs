@@ -6,7 +6,8 @@
 
 use lumen::spec::{
     field_catalog, json_schema_json, llm_auth_md, llm_integration_md, llm_outline_md,
-    llm_quickstart_md, llm_recipes_md, llm_workflow_md, openapi_json, openapi_yaml, query_shapes,
+    llm_quickstart_md, llm_recipes_md, llm_storage_md, llm_workflow_md, openapi_json,
+    openapi_yaml, query_shapes,
 };
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
@@ -227,6 +228,7 @@ fn llm_outline_maps_agent_topics() {
         "lumen llm integration",
         "lumen llm quickstart",
         "lumen llm auth",
+        "lumen llm storage",
         "lumen llm recipes",
         "lumen spec --format openapi-yaml",
         "lumen spec",
@@ -255,6 +257,28 @@ fn llm_auth_publishes_token_registry_shape() {
         "default_headers",
     ] {
         assert!(auth.contains(needle), "auth topic missing `{needle}`");
+    }
+}
+
+/// #812: the serving fleet is always a StatefulSet with a durable PVC-backed
+/// WAL, including at `replicasPerShard: 1` — this must be discoverable
+/// offline via `lumen llm storage`, not only in the CRD doc comments.
+/// @spec projects/lumen/tech-design/logic/render-serving-as-a-statefulset-unconditionally-even-at-replicas.md
+#[test]
+fn llm_storage_documents_unconditional_statefulset_pvc() {
+    let storage = llm_storage_md();
+    assert!(!storage.trim().is_empty(), "storage topic is non-empty");
+    for needle in [
+        "StatefulSet",
+        "volumeClaimTemplates",
+        "raft",
+        "/var/lib/lumen",
+        "replicasPerShard: 1",
+        "20Gi",
+        "no raft consensus",
+        "HorizontalPodAutoscaler",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
     }
 }
 

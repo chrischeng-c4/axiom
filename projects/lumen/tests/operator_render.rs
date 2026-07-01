@@ -113,11 +113,15 @@ fn dev_renders_full_managed_set() {
     let l = lumen("search", dev_spec());
     let objs = render(&l);
 
-    // Serving objects, in the CR's namespace, named off the instance.
+    // Serving objects, in the CR's namespace, named off the instance. The
+    // serving fleet is a StatefulSet even at replicasPerShard:1 (#812) — its
+    // headless Service and the ClusterIP Service and HPA are all still
+    // rendered for the single-member regime.
     for (kind, name) in [
         ("ServiceAccount", "search"),
         ("ConfigMap", "search-config"),
-        ("Deployment", "search"),
+        ("StatefulSet", "search"),
+        ("Service", "search-headless"),
         ("Service", "search"),
         ("HorizontalPodAutoscaler", "search"),
         ("PodDisruptionBudget", "search"),
@@ -128,6 +132,9 @@ fn dev_renders_full_managed_set() {
             kinds(&objs)
         );
     }
+    // Never a Deployment — the operator no longer switches workload kind by
+    // replica count.
+    assert!(!has(&objs, "Deployment", "search"));
     // Relay is no longer part of Lumen's deployment surface.
     assert!(!has(&objs, "StatefulSet", "search-relay"));
     assert!(!has(&objs, "Service", "search-relay"));
@@ -152,20 +159,22 @@ fn dev_renders_full_managed_set() {
 }
 
 #[test]
-fn deployment_wires_serving_contract() {
+fn statefulset_wires_serving_contract_single_member() {
     let l = lumen("search", dev_spec());
     let objs = render(&l);
-    let dep = find(&objs, "Deployment", "search");
+    let sts = find(&objs, "StatefulSet", "search");
 
-    // HPA floor == apply-time replicas; zero-downtime rollout.
-    assert_eq!(dep["spec"]["replicas"], 1);
-    assert_eq!(
-        dep["spec"]["strategy"]["rollingUpdate"]["maxUnavailable"],
-        0
+    // HPA floor == apply-time replicas; StatefulSet-native rollout knobs.
+    assert_eq!(sts["spec"]["replicas"], 1);
+    assert_eq!(sts["spec"]["serviceName"], "search-headless");
+    assert_eq!(sts["spec"]["podManagementPolicy"], "Parallel");
+    assert_eq!(sts["spec"]["updateStrategy"]["type"], "RollingUpdate");
+    assert!(
+        sts["spec"]["strategy"].is_null(),
+        "strategy is Deployment-only; StatefulSet uses updateStrategy"
     );
-    assert_eq!(dep["spec"]["strategy"]["rollingUpdate"]["maxSurge"], 1);
 
-    let c = &dep["spec"]["template"]["spec"]["containers"][0];
+    let c = &sts["spec"]["template"]["spec"]["containers"][0];
     assert_eq!(c["image"], "lumen:latest");
     assert_eq!(c["imagePullPolicy"], "IfNotPresent");
     assert_eq!(c["command"], serde_json::json!(["lumen", "serve"]));
@@ -207,10 +216,35 @@ fn deployment_wires_serving_contract() {
             "missing env {required}; have {names:?}"
         );
     }
+    // Single member, no raft consensus at replicasPerShard:1 → no raft
+    // peer-identity env.
+    for absent in ["REPLICAS_PER_SHARD", "VOTER_COUNT", "LUMEN_HEADLESS_SERVICE"] {
+        assert!(
+            !names.contains(&absent.to_string()),
+            "unexpected raft env {absent} at replicasPerShard:1; have {names:?}"
+        );
+    }
     // auth=off and no log level → those env vars are absent.
     assert!(!names.contains(&"LUMEN_TOKENS".to_string()));
     assert!(!names.contains(&"LUMEN_TOKEN_REGISTRY_FILE".to_string()));
     assert!(!names.contains(&"LUMEN_LOG_LEVEL".to_string()));
+
+    // Durable raft PVC (#812): the WAL survives pod reschedule/eviction/node
+    // loss even for a single-member deployer — not just an emptyDir.
+    let mounts = c["volumeMounts"].as_array().unwrap();
+    assert!(
+        mounts
+            .iter()
+            .any(|m| m["name"] == "raft" && m["mountPath"] == "/var/lib/lumen"),
+        "missing raft volumeMount; have {mounts:?}"
+    );
+    let vcts = sts["spec"]["volumeClaimTemplates"].as_array().unwrap();
+    assert_eq!(vcts.len(), 1);
+    assert_eq!(vcts[0]["metadata"]["name"], "raft");
+    assert_eq!(
+        vcts[0]["spec"]["resources"]["requests"]["storage"],
+        "20Gi"
+    );
 }
 
 #[test]
@@ -235,6 +269,9 @@ fn hpa_is_rendered_for_single_replica_serving() {
     assert_eq!(hpa["spec"]["minReplicas"], 1);
     assert_eq!(hpa["spec"]["maxReplicas"], 3);
     assert_eq!(hpa["spec"]["scaleTargetRef"]["name"], "search");
+    // The serving fleet is a StatefulSet (#812) — the HPA must target it, not
+    // the retired Deployment kind.
+    assert_eq!(hpa["spec"]["scaleTargetRef"]["kind"], "StatefulSet");
 }
 
 #[test]
@@ -243,7 +280,7 @@ fn prod_wires_auth_and_observability() {
     let objs = render(&l);
 
     // auth=required + tokensSecret → registry file env + Secret volume mount.
-    let dep = find(&objs, "Deployment", "lumen");
+    let dep = find(&objs, "StatefulSet", "lumen");
     let c = &dep["spec"]["template"]["spec"]["containers"][0];
     assert_eq!(c["image"], "registry.example.com/lumen:1.2.3");
     assert_eq!(c["imagePullPolicy"], "Always");
@@ -339,6 +376,12 @@ fn raft_ha_renders_serving_statefulset() {
     ] {
         assert!(env.contains(&k.to_string()), "missing {k} in {env:?}");
     }
+
+    // The raft PVC shape is unchanged by #812 — it was already unconditional
+    // in the raft-HA regime.
+    let vcts = sts["spec"]["volumeClaimTemplates"].as_array().unwrap();
+    assert_eq!(vcts.len(), 1);
+    assert_eq!(vcts[0]["metadata"]["name"], "raft");
 }
 
 #[test]

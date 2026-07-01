@@ -213,6 +213,9 @@ Use the smallest topic that answers the task:
 - `lumen llm quickstart` — copy-paste local create → index → search flow.
 - `lumen llm auth` — bearer-token auth contract, token-registry.json schema,
   Secret Manager / Kubernetes Secret projection, and client header wiring.
+- `lumen llm storage` — operator storage/ops contract: the serving fleet is
+  always a StatefulSet with a durable PVC-backed WAL, including at
+  `replicasPerShard: 1`.
 - `lumen llm recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
@@ -469,5 +472,53 @@ pub fn llm_recipes_md() -> String {
         }
     }
     out
+}
+
+/// Operator storage/ops contract (`lumen llm storage`) as Markdown: the
+/// serving fleet's workload kind and PVC durability guarantee, independent of
+/// `replicasPerShard`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn llm_storage_md() -> String {
+    r#"# lumen storage
+
+## The serving fleet is always a StatefulSet
+The operator (`lumen::operator::render`) renders the serving fleet as a
+Kubernetes `StatefulSet` unconditionally — never a `Deployment` — regardless
+of `spec.replicasPerShard`. Every serving pod mounts a durable
+`volumeClaimTemplates`-backed PVC named `raft` at `/var/lib/lumen`, sized by
+`spec.serving.raftStorage` (default `20Gi`) and optionally pinned to
+`spec.serving.raftStorageClass`.
+
+This means a pod reschedule, eviction, or node loss never wipes the WAL —
+including for a `replicasPerShard: 1` deployer who doesn't want or need raft
+consensus. `replicasPerShard` only changes whether the fleet runs raft
+consensus; it never changes whether the WAL is durable.
+
+## `replicasPerShard: 1` (default) — single member, no raft consensus
+- One StatefulSet member per shard, with the durable `raft` PVC.
+- No raft peer-identity env — the pod runs a local WAL with no consensus
+  overhead.
+- A `HorizontalPodAutoscaler` (`scaleTargetRef.kind: StatefulSet`) still owns
+  the live replica count between `spec.serving.autoscaling.minReplicas` and
+  `maxReplicas`, exactly as it did before the fleet became a StatefulSet.
+
+## `replicasPerShard > 1` — raft-HA
+- Fixed replica count `shardCount * replicasPerShard` (raft needs a known,
+  stable peer set) — no HPA is attached.
+- Each pod additionally gets the downward-API env quartet
+  `raft_host::cluster::ClusterTopology::from_env` reads (`POD_NAME`,
+  `POD_NAMESPACE`, `REPLICAS_PER_SHARD`, `VOTER_COUNT`,
+  `LUMEN_HEADLESS_SERVICE`) and a stable DNS identity via the serving
+  headless Service (`<name>-headless`), required for the StatefulSet's
+  `serviceName`.
+- This regime, including the PVC, is unchanged from before `replicasPerShard:
+  1` also started getting a StatefulSet.
+
+## Snapshot / backup
+The PVC is the durability boundary; it does not by itself imply an external
+snapshot or backup schedule — see the operator's backup/restore surface
+(`lumen k8s`) for that separate concern.
+"#
+    .to_string()
 }
 // CODEGEN-END

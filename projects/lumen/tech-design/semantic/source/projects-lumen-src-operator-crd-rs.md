@@ -38,10 +38,13 @@ Public API manifest for `projects/lumen/src/operator/crd.rs` generated from AST 
 // CODEGEN-BEGIN
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
 //!
-//! One `Lumen` object declares a full deployment. Single-replica instances use
-//! an embedded WAL; multi-replica instances use Lumen-owned raft replication via
-//! a serving StatefulSet. The reconcile loop in [`super::reconcile`] turns this
-//! spec into Deployment/StatefulSet, Service, ConfigMap, HPA, PDB, and
+//! One `Lumen` object declares a full deployment. Single-replica instances
+//! write to a local WAL with no raft consensus; multi-replica instances add
+//! Lumen-owned raft replication on top. Both regimes render the serving fleet
+//! as a StatefulSet with a durable per-pod `raft` PVC backing the WAL —
+//! `replicasPerShard` only gates raft consensus, never persistence. The
+//! reconcile loop in [`super::reconcile`] turns this spec into StatefulSet,
+//! Service, ConfigMap, HPA (single-member regime only), PDB, and
 //! ServiceAccount objects, garbage-collected via owner references.
 
 use kube::CustomResource;
@@ -81,9 +84,11 @@ pub struct LumenSpec {
     #[serde(default = "default_shard_count")]
     pub shard_count: u32,
 
-    /// Raft replicas per shard. `1` (default) = stateless serving (a Deployment +
-    /// HPA). `> 1` switches the serving fleet to a raft-HA **StatefulSet** whose
-    /// pods inject the downward-API env `raft_host::cluster` reads.
+    /// Raft replicas per shard. `1` (default) = a single-member serving
+    /// StatefulSet with no raft consensus (still durable — the same
+    /// PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds
+    /// raft-HA: a fixed peer set whose pods inject the downward-API env
+    /// `raft_host::cluster` reads (no HPA — raft needs a known membership).
     #[serde(default = "default_replicas_per_shard")]
     pub replicas_per_shard: u32,
 
@@ -107,8 +112,10 @@ pub struct LumenSpec {
 
     /// Name of a Secret whose `token-registry.json` key is mounted at
     /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
-    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. Ignored
-    /// when `auth: off`.
+    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
+    /// `token-registry.json` is a JSON object of
+    /// `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
+    /// Ignored when `auth: off`.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 
@@ -189,11 +196,14 @@ pub struct ServingSpec {
     /// `terminationGracePeriodSeconds`.
     #[serde(default = "default_grace_secs")]
     pub grace_secs: u64,
-    /// Per-pod raft hard-state PVC size. Used only when
-    /// `replicasPerShard > 1`.
+    /// Per-pod WAL/raft hard-state PVC size. Always applied — the serving
+    /// StatefulSet's `raft` volumeClaimTemplate exists at every
+    /// `replicasPerShard` value, not only when raft consensus (`> 1`) is
+    /// active.
     #[serde(default = "default_raft_storage")]
     pub raft_storage: String,
-    /// PVC StorageClass for raft hard state. Unset means cluster default.
+    /// PVC StorageClass for the WAL/raft hard-state volume. Unset means
+    /// cluster default.
     #[serde(default)]
     pub raft_storage_class: Option<String>,
 }
@@ -280,7 +290,6 @@ fn default_raft_storage() -> String {
     "20Gi".into()
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
