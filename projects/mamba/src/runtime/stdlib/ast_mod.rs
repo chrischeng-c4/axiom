@@ -40,7 +40,6 @@ macro_rules! disp_binary {
 }
 
 disp_unary!(d_literal_eval, mb_ast_literal_eval);
-disp_unary!(d_get_docstring, mb_ast_get_docstring);
 disp_unary!(d_fix_missing_locations, mb_ast_fix_missing_locations);
 disp_binary!(d_copy_location, mb_ast_copy_location);
 disp_unary!(d_walk, mb_ast_walk);
@@ -81,6 +80,18 @@ unsafe extern "C" fn d_dump(args_ptr: *const MbValue, nargs: usize) -> MbValue {
         .or_else(|| pos.get(3).copied())
         .and_then(ast_dump_indent_step);
     mb_ast_dump_with_options(node, annotate_fields, include_attributes, indent.as_deref())
+}
+
+unsafe extern "C" fn d_get_docstring(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let (pos, kwargs) = split_native_kwargs(a);
+    let node = pos.first().copied().unwrap_or_else(MbValue::none);
+    let clean = kwargs
+        .and_then(|kw| kwargs_get(kw, "clean"))
+        .or_else(|| pos.get(1).copied())
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    mb_ast_get_docstring_checked(node, clean)
 }
 
 unsafe extern "C" fn d_increment_lineno(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -1213,6 +1224,9 @@ pub fn mb_ast_parse_with_mode(source: MbValue, mode: MbValue) -> MbValue {
         if let Some(module) = parse_exec_call_module(&src) {
             return module;
         }
+        if let Some(module) = parse_docstring_module(&src) {
+            return module;
+        }
     }
     let mut fields = FxHashMap::default();
     // One stub statement node per top-level statement, typed by its leading
@@ -1335,9 +1349,19 @@ fn parse_import_statement(stmt: &str) -> Option<MbValue> {
 fn parse_string_expr_statement(line: &str, lineno: usize) -> Option<MbValue> {
     let text = line.trim_start();
     let col = line.len() - text.len();
-    let value = quoted_string_literal(text)?;
-    let end_col = col + text.len();
-    let constant = make_string_constant_node_at(value, lineno, col, end_col);
+    parse_string_expr_text(text, lineno, col)
+}
+
+fn parse_string_expr_text(text: &str, lineno: usize, col: usize) -> Option<MbValue> {
+    let value = string_literal_value(text)?;
+    let line_count = text.lines().count().max(1);
+    let end_lineno = lineno + line_count - 1;
+    let end_col = if line_count == 1 {
+        col + text.len()
+    } else {
+        text.rsplit('\n').next().unwrap_or_default().len()
+    };
+    let constant = make_string_constant_node_span(value, lineno, col, end_lineno, end_col);
 
     let mut fields = FxHashMap::default();
     fields.insert("value".to_string(), constant);
@@ -1345,10 +1369,83 @@ fn parse_string_expr_statement(line: &str, lineno: usize) -> Option<MbValue> {
         &mut fields,
         lineno as i64,
         col as i64,
-        lineno as i64,
+        end_lineno as i64,
         end_col as i64,
     );
     Some(make_ast_node("Expr", fields))
+}
+
+fn parse_docstring_module(src: &str) -> Option<MbValue> {
+    let trimmed = src.trim_start();
+    if let Some(expr) = parse_string_expr_text(trimmed, 1, src.len() - trimmed.len()) {
+        return Some(make_module_with_body(src, vec![expr]));
+    }
+
+    let (header, body_src) = src.split_once('\n')?;
+    let header = header.trim_start();
+    let (kind, name) = parse_simple_suite_header(header)?;
+    let first_body_line = body_src.lines().next()?;
+    let indent = first_body_line.len() - first_body_line.trim_start().len();
+    if indent == 0 {
+        return None;
+    }
+    let expr = parse_string_expr_text(body_src.trim_start(), 2, indent)?;
+    let mut fields = FxHashMap::default();
+    fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    fields.insert(
+        "body".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![expr])),
+    );
+    fields.insert(
+        "decorator_list".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    insert_default_location_attrs(&mut fields);
+    Some(make_module_with_body(src, vec![make_ast_node(kind, fields)]))
+}
+
+fn make_module_with_body(src: &str, body: Vec<MbValue>) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("body".to_string(), MbValue::from_ptr(MbObject::new_list(body)));
+    fields.insert(
+        "type_ignores".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    fields.insert(
+        "_source".to_string(),
+        MbValue::from_ptr(MbObject::new_str(src.to_string())),
+    );
+    make_ast_node("Module", fields)
+}
+
+fn parse_simple_suite_header(header: &str) -> Option<(&'static str, &str)> {
+    if let Some(rest) = header.strip_prefix("class ") {
+        return rest
+            .strip_suffix(':')
+            .and_then(|name| name.split(['(', ':']).next())
+            .map(str::trim)
+            .filter(|name| is_identifier_text(name))
+            .map(|name| ("ClassDef", name));
+    }
+    if let Some(rest) = header.strip_prefix("async def ") {
+        return parse_simple_function_name(rest).map(|name| ("AsyncFunctionDef", name));
+    }
+    header
+        .strip_prefix("def ")
+        .and_then(parse_simple_function_name)
+        .map(|name| ("FunctionDef", name))
+}
+
+fn parse_simple_function_name(rest: &str) -> Option<&str> {
+    let open = rest.find('(')?;
+    if !rest.trim_end().ends_with(':') {
+        return None;
+    }
+    let name = rest[..open].trim();
+    is_identifier_text(name).then_some(name)
 }
 
 fn parse_alias_nodes(names_part: &str, names_start_col: usize) -> Vec<MbValue> {
@@ -1571,6 +1668,19 @@ fn quoted_string_literal(text: &str) -> Option<String> {
     Some(text[1..text.len() - 1].to_string())
 }
 
+fn string_literal_value(text: &str) -> Option<String> {
+    triple_quoted_string_literal(text).or_else(|| quoted_string_literal(text))
+}
+
+fn triple_quoted_string_literal(text: &str) -> Option<String> {
+    for quote in ["'''", "\"\"\""] {
+        if text.starts_with(quote) && text.ends_with(quote) && text.len() >= quote.len() * 2 {
+            return Some(text[quote.len()..text.len() - quote.len()].to_string());
+        }
+    }
+    None
+}
+
 fn is_identifier_text(text: &str) -> bool {
     let mut chars = text.chars();
     let Some(first) = chars.next() else {
@@ -1603,6 +1713,16 @@ fn make_string_constant_node_at(
     col: usize,
     end_col: usize,
 ) -> MbValue {
+    make_string_constant_node_span(value, lineno, col, lineno, end_col)
+}
+
+fn make_string_constant_node_span(
+    value: String,
+    lineno: usize,
+    col: usize,
+    end_lineno: usize,
+    end_col: usize,
+) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert(
         "value".to_string(),
@@ -1610,7 +1730,7 @@ fn make_string_constant_node_at(
     );
     fields.insert("lineno".to_string(), MbValue::from_int(lineno as i64));
     fields.insert("col_offset".to_string(), MbValue::from_int(col as i64));
-    fields.insert("end_lineno".to_string(), MbValue::from_int(lineno as i64));
+    fields.insert("end_lineno".to_string(), MbValue::from_int(end_lineno as i64));
     fields.insert(
         "end_col_offset".to_string(),
         MbValue::from_int(end_col as i64),
@@ -2419,8 +2539,21 @@ impl<'a> LiteralEvalParser<'a> {
 
 /// ast.get_docstring(node, clean=True) -> str | None
 pub fn mb_ast_get_docstring(node: MbValue) -> MbValue {
+    mb_ast_get_docstring_checked(node, true)
+}
+
+fn mb_ast_get_docstring_checked(node: MbValue, clean: bool) -> MbValue {
     if !is_ast_node_value(node) {
         return ast_arg_type_error("get_docstring", "node");
+    }
+    let Some(class_name) = ast_node_class_name(node) else {
+        return ast_arg_type_error("get_docstring", "node");
+    };
+    if !ast_docstring_owner_class(&class_name) {
+        super::super::builtins::raise_type_error(format!(
+            "ast.get_docstring expected Module, ClassDef, FunctionDef, or AsyncFunctionDef, got {class_name}"
+        ));
+        return MbValue::none();
     }
     let Some(first_stmt) = ast_docstring_body_first(node) else {
         return MbValue::none();
@@ -2431,15 +2564,16 @@ pub fn mb_ast_get_docstring(node: MbValue) -> MbValue {
     let Some(doc) = ast_docstring_constant_str(value) else {
         return MbValue::none();
     };
-    MbValue::from_ptr(MbObject::new_str(doc))
+    MbValue::from_ptr(MbObject::new_str(if clean {
+        clean_docstring(&doc)
+    } else {
+        doc
+    }))
 }
 
 fn ast_docstring_body_first(node: MbValue) -> Option<MbValue> {
     let class_name = ast_node_class_name(node)?;
-    if !matches!(
-        class_name.as_str(),
-        "Module" | "Interactive" | "FunctionDef" | "AsyncFunctionDef" | "ClassDef"
-    ) {
+    if !ast_docstring_owner_class(&class_name) {
         return None;
     }
     let body = ast_attr_value(node, "body")?;
@@ -2450,6 +2584,13 @@ fn ast_docstring_body_first(node: MbValue) -> Option<MbValue> {
             None
         }
     })
+}
+
+fn ast_docstring_owner_class(class_name: &str) -> bool {
+    matches!(
+        class_name,
+        "Module" | "Interactive" | "FunctionDef" | "AsyncFunctionDef" | "ClassDef"
+    )
 }
 
 fn ast_docstring_expr_value(node: MbValue) -> Option<MbValue> {
@@ -2475,6 +2616,37 @@ fn ast_node_class_name(node: MbValue) -> Option<String> {
             None
         }
     })
+}
+
+fn clean_docstring(doc: &str) -> String {
+    let mut lines: Vec<&str> = doc.lines().collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let margin = lines
+        .iter()
+        .skip(1)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take_while(|ch| *ch == ' ' || *ch == '\t').count())
+        .min()
+        .unwrap_or(0);
+    let mut cleaned = Vec::with_capacity(lines.len());
+    cleaned.push(lines[0].trim().to_string());
+    for line in lines.drain(1..) {
+        let trimmed = line
+            .char_indices()
+            .nth(margin)
+            .map(|(idx, _)| &line[idx..])
+            .unwrap_or("");
+        cleaned.push(trimmed.trim_end().to_string());
+    }
+    while cleaned.first().is_some_and(|line| line.is_empty()) {
+        cleaned.remove(0);
+    }
+    while cleaned.last().is_some_and(|line| line.is_empty()) {
+        cleaned.pop();
+    }
+    cleaned.join("\n")
 }
 
 /// ast.fix_missing_locations(node) -> node
