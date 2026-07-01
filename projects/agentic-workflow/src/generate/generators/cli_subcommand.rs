@@ -423,15 +423,15 @@ mod tests {
     #[test]
     fn async_command_dispatch_arm() {
         let cmd = CliCommand {
-            name: "merge".into(),
+            name: "publish".into(),
             variant: None,
             args: vec![],
             is_async: Some(true),
-            dispatch_fn: Some("run_merge".into()),
+            dispatch_fn: Some("run_publish".into()),
             struct_name: None,
         };
         let out = emit_cli_subcommand(&cmd);
-        assert_eq!(out.dispatch_arm, "Merge(a) => run_merge(a).await,");
+        assert_eq!(out.dispatch_arm, "Publish(a) => run_publish(a).await,");
     }
 
     /// R2 — sync command emits dispatch arm without .await.

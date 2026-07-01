@@ -28,8 +28,8 @@ mod td_check_test;
 mod td_claim_test;
 #[path = "cli/tests/td_dispatch_chain_test.rs"]
 mod td_dispatch_chain_test;
-#[path = "cli/tests/td_merge_atomic_test.rs"]
-mod td_merge_atomic_test;
+#[path = "cli/tests/td_no_merge_test.rs"]
+mod td_no_merge_test;
 // CODEGEN-END
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/semantic/agentic-workflow-tests.md#schema
 // CODEGEN-BEGIN

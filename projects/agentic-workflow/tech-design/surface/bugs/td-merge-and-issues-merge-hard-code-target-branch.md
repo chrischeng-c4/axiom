@@ -1,6 +1,6 @@
 ---
 id: bug-td-merge-and-issues-merge-hard-code-target-branch
-title: 'bug(score): td merge and issues merge hard-code target branch to main'
+title: 'bug(score): td code-check and issues merge hard-code target branch to main'
 sdd_id: bug-td-merge-and-issues-merge-hard-code-target-branch
 issue: .aw/issues/open/bug-td-merge-and-issues-merge-hard-code-target-branch.md
 fill_sections: [overview, changes, logic, test-plan]
@@ -22,7 +22,7 @@ capability_refs:
 > any other branch) as the merge target must not cause writes to a sibling or
 > primary checkout's `.aw/` tree.
 
-`aw td merge` and `aw wi merge` both hard-code `"main"` as the merge target. In `issues.rs`, `MergeArgs.base` carries `default_value = "main"` and is passed verbatim to the underlying `git merge` invocation without any current-branch detection. In `td.rs`, `MergeArgs` has no `base` field at all; the `git merge` runs against whatever HEAD the main repo is on, but there is no `--target-branch` override and the code contains a stale `// Merge branch to main` comment. Fix: extract a shared `resolve_merge_target(override_branch, project_root) -> Result<String>` helper that detects the current branch via `git rev-parse --abbrev-ref HEAD`, accepts an explicit `--target-branch <name>` override on both commands, and falls back to `.aw/config.toml` `[agentic_workflow.repo_platform].default_branch` only on detached HEAD. `projects/agentic-workflow/src/tools/merge_git_ops.rs` is NOT a fix site — it already accepts `default_branch` as a caller parameter; all `"main"` strings there are confined to unit-test fixture setup. **Rule 2-2 (hand-written)** — spec tracks intent and scope; `aw td gen-code` produces zero files.
+`aw td code-check` and `aw wi merge` both hard-code `"main"` as the merge target. In `issues.rs`, `CodeCheckArgs.base` carries `default_value = "main"` and is passed verbatim to the underlying `git merge` invocation without any current-branch detection. In `td.rs`, `CodeCheckArgs` has no `base` field at all; the `git merge` runs against whatever HEAD the main repo is on, but there is no `--target-branch` override and the code contains a stale `// Merge branch to main` comment. Fix: extract a shared `resolve_merge_target(override_branch, project_root) -> Result<String>` helper that detects the current branch via `git rev-parse --abbrev-ref HEAD`, accepts an explicit `--target-branch <name>` override on both commands, and falls back to `.aw/config.toml` `[agentic_workflow.repo_platform].default_branch` only on detached HEAD. `projects/agentic-workflow/src/tools/merge_git_ops.rs` is NOT a fix site — it already accepts `default_branch` as a caller parameter; all `"main"` strings there are confined to unit-test fixture setup. **Rule 2-2 (hand-written)** — spec tracks intent and scope; `aw td gen-code` produces zero files.
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -45,8 +45,8 @@ capability_refs:
   section: overview
   impl_mode: hand-written
   description: >
-    Replace MergeArgs.base (default_value = "main") with an optional
-    --target-branch <name> flag. In run_merge, call
+    Replace CodeCheckArgs.base (default_value = "main") with an optional
+    --target-branch <name> flag. In run_code_check, call
     resolve_merge_target(args.target_branch, &project_root) to obtain the
     effective branch; pass it to the git checkout step before git merge --no-ff;
     update error messages to use the resolved branch name.
@@ -56,8 +56,8 @@ capability_refs:
   section: test-plan
   impl_mode: hand-written
   description: >
-    Add --target-branch <name> flag to MergeArgs (currently absent). In
-    run_merge, call resolve_merge_target(args.target_branch, &project_root)
+    Add --target-branch <name> flag to CodeCheckArgs (currently absent). In
+    run_code_check, call resolve_merge_target(args.target_branch, &project_root)
     before the git merge command; add git checkout <target_branch> step so the
     merge lands on the intended branch. Remove stale "Merge branch to main"
     comment.
@@ -242,8 +242,8 @@ requirementDiagram
 
 | Artifact | Purpose |
 |----------|---------|
-| `projects/agentic-workflow/src/cli/issues.rs` lines 348-358, 3339-3443 | `MergeArgs` with `base` field and `run_merge` body — primary fix site for `aw wi merge` |
-| `projects/agentic-workflow/src/cli/td.rs` lines 102-109, 1584-1690 | `MergeArgs` (no base field) and `run_merge` body — primary fix site for `aw td merge` |
+| `projects/agentic-workflow/src/cli/issues.rs` lines 348-358, 3339-3443 | `CodeCheckArgs` with `base` field and `run_code_check` body — primary fix site for `aw wi merge` |
+| `projects/agentic-workflow/src/cli/td.rs` lines 102-109, 1584-1690 | `CodeCheckArgs` (no base field) and `run_code_check` body — primary fix site for `aw td code-check` |
 | `projects/agentic-workflow/src/tools/merge_git_ops.rs` lines 60-70, 282-310 | `merge_worktree_branch` — caller-parameterised, not a fix site; shows established pattern for threaded `default_branch` |
 | `.aw/config.toml` | `[agentic_workflow.repo_platform].default_branch` — detached-HEAD fallback source |
 | `.aw/tech-design/AUTHORING.md` §"Codegen Policy (1 / 2-1 / 2-2)" | Rule 2-2 definition and `impl_mode: hand-written` vocabulary |

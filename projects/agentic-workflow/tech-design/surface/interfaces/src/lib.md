@@ -95,7 +95,7 @@ pub mod workflow_guard;
 // Legacy modules kept for init.rs / update.rs dependencies
 pub(crate) mod migrate;
 
-// Shared merge-target resolution logic for `aw td merge` and `aw wi merge`.
+// Shared merge-target resolution logic for `aw td code-check` and `aw wi merge`.
 // Public so integration tests in tests/ can call resolve_merge_target directly.
 pub mod merge_target;
 

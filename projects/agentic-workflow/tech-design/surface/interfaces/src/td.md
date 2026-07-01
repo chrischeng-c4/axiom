@@ -20,7 +20,7 @@ command_refs:
   - command: aw td check
   - command: aw td claim
   - command: aw td create
-  - command: aw td merge
+  - command: aw td code-check
   - command: aw td review
   - command: aw td revise
   - command: aw td validate
@@ -43,7 +43,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/td.rs` generated from
 | `CheckArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 220 |  |
 | `CreateArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 92 |  |
 | `GenCodeArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 202 |  |
-| `MergeArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 237 |  |
+| `CodeCheckArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 237 |  |
 | `ReviewArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 146 |  |
 | `ReviseArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 171 |  |
 | `TdArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 23 |  |
@@ -102,16 +102,6 @@ pub enum TdCommand {
     Create(CreateArgs),
     /// Validate legacy slug lifecycle state or run the read-only TD checker.
     Validate(ValidateArgs),
-    /// Review a tech-design spec (brief or apply mode).
-    Review(ReviewArgs),
-    /// Revise flagged sections of a tech-design spec.
-    Revise(ReviseArgs),
-    /// Complete a tech-design spec's lifecycle by merging it into the target
-    /// branch — the CURRENT branch by default (detached HEAD falls back to the
-    /// configured default branch). On a `project-*` branch this is local
-    /// lifecycle completion, not a default-branch merge; pass
-    /// `--target-branch main` to merge into the default branch.
-    Merge(MergeArgs),
     /// Read-only rule-registry check against `.aw/tech-design/` files.
     /// Accepts a slug (resolved in the current checkout), a single file path, or
     /// a directory. Runs the unified rule registry; no commit, no phase
@@ -318,7 +308,7 @@ pub struct CheckArgs {
 
 #[derive(Debug, Args)]
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-pub struct MergeArgs {
+pub struct CodeCheckArgs {
     /// Issue slug.
     pub slug: String,
     /// Path to the spec file (relative to the current checkout root).
@@ -2392,18 +2382,6 @@ pub async fn run(args: TdArgs) -> Result<()> {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::Review(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
-        TdCommand::Revise(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
-        TdCommand::Merge(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
         TdCommand::Fill(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
@@ -2415,9 +2393,6 @@ pub async fn run(args: TdArgs) -> Result<()> {
     match args.command {
         TdCommand::Create(a) => run_create(a).await,
         TdCommand::Validate(a) => run_validate(a).await,
-        TdCommand::Review(a) => run_review(a).await,
-        TdCommand::Revise(a) => run_revise(a).await,
-        TdCommand::Merge(a) => run_merge(a).await,
         TdCommand::Check(a) => run_check(a),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
@@ -3152,7 +3127,7 @@ async fn handle_post_merge_lifecycle(
             print_envelope(&TdEnvelope::Done {
                 slug,
                 message: &format!(
-                    "backfilled ship_commit={} (from Lifecycle-Stage: Td-Merge git log)",
+                    "backfilled ship_commit={} (from Lifecycle-Stage: Cb-CodeCheck git log)",
                     &commit[..8.min(commit.len())]
                 ),
             })?;
@@ -3190,12 +3165,12 @@ async fn handle_post_merge_lifecycle(
 }
 
 /// Walk `git log` in the worktree for the most recent commit whose
-/// message contains `Lifecycle-Stage: Td-Merge` for this slug, and
+/// message contains `Lifecycle-Stage: Cb-CodeCheck` for this slug, and
 /// return its hash. Used by R8 backfill.
 /// @spec aw-td-validate-lifecycle-extension.md#logic
 fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Result<Option<String>> {
     let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git not found"))?;
-    let needle = format!("Lifecycle-Stage: Td-Merge");
+    let needle = format!("Lifecycle-Stage: Cb-CodeCheck");
     let slug_needle = format!("Lifecycle-Slug: {}", slug);
     let output = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -4733,7 +4708,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     // Phase 3 (R8): post-codegen dispatch decision.
     // Count emitted HANDWRITE markers in the worktree source tree. If any
     // remain, dispatch to `aw td fill`. Otherwise (0-marker fast-path,
-    // R11) retain the historical `aw td merge` dispatch.
+    // R11) retain the historical `aw td code-check` dispatch.
     // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic
     let marker_count = super::cb_fill::count_worktree_handwrite_markers(&worktree_abs);
     if marker_count > 0 {
@@ -4750,7 +4725,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw td merge",
+                command: "aw td code-check",
                 args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
             },
         })?;
@@ -4759,9 +4734,9 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     Ok(())
 }
 
-// ── td merge ────────────────────────────────────────────────────────
+// ── td code-check ────────────────────────────────────────────────────────
 
-async fn run_merge(args: MergeArgs) -> Result<()> {
+async fn run_code_check(args: CodeCheckArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = &args.slug;
     let starting_branch = crate::branch_switch::current_branch(&project_root)?;
@@ -4793,7 +4768,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
     // (no-codegen path), or td_merged (retry).
     // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic (R10)
     // @spec .aw/tech-design/projects/score/specs/aw-td-merge-accepts-cb-reviewed.md#schema (R1, R3)
-    if !crate::issues::types::td_phase::is_mergeable(phase)
+    if !crate::issues::types::td_phase::is_terminal_code_checkable(phase)
         && phase != crate::issues::types::td_phase::TD_REVIEWED
         && phase != crate::issues::types::td_phase::TD_MERGED
     {
@@ -4873,7 +4848,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
                 return Ok(());
             } else {
                 eprintln!(
-                    "[td merge] WARNING: {} of {} spec-listed files missing on disk:",
+                    "[td code-check] WARNING: {} of {} spec-listed files missing on disk:",
                     total_missing, entries_total,
                 );
                 for line in &preview {
@@ -4885,7 +4860,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
 
     // Atomic close: advance phase to td_merged AND state to closed, which
     // moves the issue file open/<slug>.md → closed/<slug>.md via
-    // LocalBackend::write. Stage both paths and commit a single Td-Merged
+    // LocalBackend::write. Stage both paths and commit a single Cb-CodeCheck
     // trailer so the rename + frontmatter advance land together when the
     // worktree branch merges into main. Idempotent: skip if already at
     // td_merged (retry after partial failure).
@@ -4896,7 +4871,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
             phase: Some("td_merged".to_string()),
             ship_status: Some(crate::issues::ShipStatus::Step1Shipped),
             add_labels: vec!["phase:td_merged".to_string()],
-            remove_labels: td_merge_labels_to_remove(),
+            remove_labels: td_code_check_labels_to_remove(),
             flagged_sections: Some(vec![]),
             validation_errors: Some(vec![]),
             ..Default::default()
@@ -4918,7 +4893,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
             "td({slug}) \u{2014} merged + closed\n\n\
              Lifecycle-Slug: {slug}\n\
              Work-Item: {slug}\n\
-             Lifecycle-Stage: Td-Merged",
+             Lifecycle-Stage: Cb-CodeCheck",
         );
         let commit = std::process::Command::new(&git_bin)
             .arg("-C")
@@ -5031,7 +5006,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
     Ok(())
 }
 
-fn td_merge_labels_to_remove() -> Vec<String> {
+fn td_code_check_labels_to_remove() -> Vec<String> {
     vec![
         super::workflow_guard::LOCK_LABEL.to_string(),
         super::workflow_guard::TD_LOCK_LABEL.to_string(),
@@ -6124,7 +6099,7 @@ label = "project:agentic-workflow"
         // Source already under .aw/tech-design/<sub>/ — must mirror the
         // exact relative path, ignoring labels. Without the fix this would
         // flatten to the label-derived dir and ship a duplicate spec on
-        // td merge.
+        // td code-check.
         let tmp = tempfile::tempdir().unwrap();
         let project_root = tmp.path();
         let src_rel =
@@ -6315,8 +6290,8 @@ label = "project:agentic-workflow"
     }
 
     #[test]
-    fn td_merge_label_cleanup_removes_stale_phase_and_lock_labels() {
-        let labels = td_merge_labels_to_remove();
+    fn td_code_check_label_cleanup_removes_stale_phase_and_lock_labels() {
+        let labels = td_code_check_labels_to_remove();
 
         assert!(labels.contains(&crate::cli::workflow_guard::LOCK_LABEL.to_string()));
         assert!(labels.contains(&crate::cli::workflow_guard::TD_LOCK_LABEL.to_string()));
@@ -6869,7 +6844,7 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
     // Without this, claiming an in-tree spec produced a duplicate at the
     // label-derived location (e.g. `crates/cclab-agent/agent-protocols-spec.md`
     // → `projects/score/specs/agent-protocols-spec.md`) and shipped both
-    // copies on `td merge`.
+    // copies on `td code-check`.
     let mut spec_path_in_worktree: Option<String> = None;
     if let Some(src_path) = args.from_path.as_deref() {
         let src = std::path::Path::new(src_path);

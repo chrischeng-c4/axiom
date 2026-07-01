@@ -1,6 +1,6 @@
 ---
 name: aw:wi:patrol
-description: Set up a cron to poll GitHub issues by label and auto-run the aw td CRRR loop when idle
+description: Set up a cron to poll GitHub issues by label and auto-run the aw td loop when idle
 user-invocable: true
 aliases: [aw:issue-patrol]
 ---
@@ -8,10 +8,10 @@ aliases: [aw:issue-patrol]
 # /aw:wi:patrol
 
 Recurring cron that polls GitHub issues by label. When new work-items are
-found and no SDD CRRR loop is in-flight, picks the highest-priority issue
-and drives it through `aw td` (issue → TD → merge). Hand-written
+found and no SDD lifecycle is in-flight, picks the highest-priority issue
+and drives it through `aw td` (issue → TD → terminal code-check). Hand-written
 implementation step is the operator's job; this skill stops after
-`aw td merge`.
+`aw td code-check`.
 
 ## Arguments
 
@@ -74,10 +74,9 @@ Follow exactly ONE envelope step:
 - `error` → write `.aw/handoffs/<slug>-patrol-handoff.md` with the
   error text; `gh issue edit <N> --add-label flagged:needs-human`; STOP.
 
-### B. td-<slug> already at phase `td_merged` but not merged into the working branch
-(known `aw td merge` bug)
-→ `git checkout <working-branch> && git merge --no-ff td-<slug> -m "merge td-<slug>"`,
-delete the td branch, STOP.
+### B. td-<slug> already at phase `td_merged`
+The terminal lifecycle action already committed closure. Delete any obsolete
+local td branch only after confirming it is fully merged, then STOP.
 
 ### C. No in-flight branch — pick a new issue
 Run:

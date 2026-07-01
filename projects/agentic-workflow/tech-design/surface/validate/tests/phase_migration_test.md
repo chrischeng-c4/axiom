@@ -70,7 +70,7 @@ fn test_phase_writer_emits_canonical() {
 fn test_trailer_reader_accepts_legacy() {
     assert_eq!(lifecycle_trailer::normalize("Td-GenCode"), "Cb-Gen");
     assert_eq!(lifecycle_trailer::normalize("Cb-Gen"), "Cb-Gen");
-    assert_eq!(lifecycle_trailer::normalize("Td-Merge"), "Td-Merge");
+    assert_eq!(lifecycle_trailer::normalize("Cb-CodeCheck"), "Cb-CodeCheck");
 }
 
 #[test]

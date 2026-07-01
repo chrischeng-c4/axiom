@@ -187,7 +187,7 @@ semantic_domain:
           - name: "cb_fill_apply_command"
             kind: "function"
             public: false
-          - name: "td_merge_command"
+          - name: "td_code_check_command"
             kind: "function"
             public: false
           - name: "marker_payload_template"
@@ -199,7 +199,7 @@ semantic_domain:
           - name: "next_for_marker"
             kind: "function"
             public: false
-          - name: "next_for_td_merge"
+          - name: "next_for_td_code_check"
             kind: "function"
             public: false
           - name: "print_compact_json"
@@ -1583,7 +1583,7 @@ semantic_domain:
           - name: "CheckArgs"
             kind: "struct"
             public: true
-          - name: "MergeArgs"
+          - name: "CodeCheckArgs"
             kind: "struct"
             public: true
           - name: "ArbitrateArgs"
@@ -2679,13 +2679,13 @@ semantic_domain:
           - name: "cb_arbitrate_command"
             kind: "function"
             public: false
-          - name: "td_merge_command"
+          - name: "td_code_check_command"
             kind: "function"
             public: false
           - name: "next_for_review_apply"
             kind: "function"
             public: false
-          - name: "next_for_td_merge"
+          - name: "next_for_td_code_check"
             kind: "function"
             public: false
           - name: "next_for_cb_revise"

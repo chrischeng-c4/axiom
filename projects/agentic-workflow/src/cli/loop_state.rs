@@ -152,13 +152,13 @@ pub fn apply_verification(
 }
 
 /// The loop's decision, given the latest verification (EC) result: the status
-/// the loop is now in, and the next command to run. Green = converged (merge);
+/// the loop is now in, and the next command to run. Green = converged (terminal code-check);
 /// Red = keep iterating (adapt and re-gen); Blocked = HITL (no auto next).
 /// This is the loop-engineering "decide" step — it reads the verifier, not a
 /// reviewer.
 pub fn decide_next_action(last: &LastResult) -> (LoopStatus, Option<&'static str>) {
     match last {
-        LastResult::Green => (LoopStatus::Converged, Some("aw td merge")),
+        LastResult::Green => (LoopStatus::Converged, Some("aw td code-check")),
         LastResult::Red { .. } => (LoopStatus::Iterating, Some("aw td gen")),
         LastResult::Blocked { .. } => (LoopStatus::Blocked, None),
         LastResult::None => (LoopStatus::Iterating, None),
@@ -197,10 +197,10 @@ mod tests {
 
     // @spec epic #188 E4: ec verifier drives the loop decision.
     #[test]
-    fn decide_green_converges_to_merge() {
+    fn decide_green_converges_to_code_check() {
         assert_eq!(
             decide_next_action(&LastResult::Green),
-            (LoopStatus::Converged, Some("aw td merge"))
+            (LoopStatus::Converged, Some("aw td code-check"))
         );
     }
 
@@ -246,7 +246,7 @@ mod tests {
         s.record_verification(LastResult::Green, None);
         assert_eq!(s.iterations.len(), 2);
         assert_eq!(s.status, LoopStatus::Converged);
-        assert_eq!(s.next_action.as_deref(), Some("aw td merge"));
+        assert_eq!(s.next_action.as_deref(), Some("aw td code-check"));
         assert_eq!(s.last_result, LastResult::Green);
     }
 
@@ -373,7 +373,7 @@ mod tests {
         let s2 = parse_loop_state(&out2).unwrap();
         assert_eq!(s2.iterations.len(), 2);
         assert_eq!(s2.status, LoopStatus::Converged);
-        assert_eq!(s2.next_action.as_deref(), Some("aw td merge"));
+        assert_eq!(s2.next_action.as_deref(), Some("aw td code-check"));
         assert_eq!(out2.matches(LOOP_START).count(), 1);
     }
 }

@@ -127,7 +127,7 @@ commands:
             description: >
               Issue slug. When provided, cb check runs in commit-gate mode:
               advances phase to cb_filled and commits Lifecycle-Stage: Cb-Fill on
-              quality pass. Emits dispatch envelope to aw td merge when
+              quality pass. Emits dispatch envelope to aw td code-check when
               no HANDWRITE markers remain. Required for phase advancement.
             required: false
           - name: group-by
@@ -154,7 +154,7 @@ commands:
           (verdict line + per-marker bullets), validates the payload schema,
           appends the review block under `# Reviews` in the spec, advances
           phase to cb_reviewed, and emits the next dispatch envelope. On
-          `approved` → dispatch `aw td merge`. On `needs-revision` with
+          `approved` → dispatch `aw td code-check`. On `needs-revision` with
           review_count < 2 → dispatch `score-cb-reviser`. On review_count
           >= 2 → dispatch `aw cb arbitrate`.
         args:
@@ -257,7 +257,7 @@ edges:
     event: "score-cb-reviser re-fills flagged markers; score-cb-reviewer re-dispatched"
   - from: cb_filled
     to: td_merged
-    event: "aw td merge"
+    event: "aw td code-check"
   - from: cb_arbitrated
     to: td_merged
     event: "arbitrate: force-merge"
@@ -275,7 +275,7 @@ stateDiagram-v2
     cb_reviewed --> cb_revised : verdict needs-revision [review_count < 2]
     cb_reviewed --> cb_arbitrated : verdict needs-revision [review_count >= 2]
     cb_revised --> cb_reviewed : reviser re-fills; reviewer re-dispatched
-    cb_filled --> td_merged : aw td merge
+    cb_filled --> td_merged : aw td code-check
     cb_arbitrated --> td_merged : force-merge
     cb_arbitrated --> cb_genned : send-back (reset)
     td_merged --> [*]
@@ -378,9 +378,9 @@ nodes:
   emit_dispatch_arbitrate:
     kind: terminal
     label: "Emit dispatch envelope to aw cb arbitrate (R12, human-only)"
-  emit_dispatch_td_merge:
+  emit_dispatch_td_code_check:
     kind: terminal
-    label: "Emit dispatch envelope to aw td merge; exit 0"
+    label: "Emit dispatch envelope to aw td code-check; exit 0"
 edges:
   - from: read_verb
     to: check_apply_flag
@@ -447,7 +447,7 @@ edges:
   - from: reviewer_runs
     to: read_reviewer_verdict
   - from: read_reviewer_verdict
-    to: emit_dispatch_td_merge
+    to: emit_dispatch_td_code_check
     label: "approved"
   - from: read_reviewer_verdict
     to: check_review_count
@@ -489,7 +489,7 @@ flowchart TD
     dispatch_reviewer --> emit_dispatch_reviewer["Emit dispatch envelope to score-cb-reviewer"]
     emit_dispatch_reviewer --> reviewer_runs["score-cb-reviewer writes payload + runs aw cb review --apply"]
     reviewer_runs --> read_reviewer_verdict{"Reviewer verdict?"}
-    read_reviewer_verdict -->|approved| emit_dispatch_td_merge(["Emit dispatch to aw td merge — exit 0"])
+    read_reviewer_verdict -->|approved| emit_dispatch_td_code_check(["Emit dispatch to aw td code-check — exit 0"])
     read_reviewer_verdict -->|needs-revision| check_review_count{"review_count < 2?"}
     check_review_count -->|yes| dispatch_reviser["Emit dispatch envelope to score-cb-reviser"]
     check_review_count -->|no| emit_dispatch_arbitrate(["Emit dispatch to aw cb arbitrate (R12) — exit 0"])
@@ -560,7 +560,7 @@ definitions:
       - TdRevise
       - CbGen
       - TdGenCode
-      - TdMerge
+      - TdCodeCheck
       - TdClaim
       - CbClaim
       - CbFill
@@ -588,8 +588,8 @@ definitions:
         - name: TdGenCode
           rename: "Td-GenCode"
           doc: "Legacy alias for Cb-Gen. Reader-only."
-        - name: TdMerge
-          rename: "Td-Merge"
+        - name: TdCodeCheck
+          rename: "Cb-CodeCheck"
           doc: "Spec merged."
         - name: TdClaim
           rename: "Td-Claim"
@@ -880,7 +880,7 @@ elements:
   test_crrr_retry_cap_arbitrate:
     kind: test
     type: "rs/#[test]"
-  test_cb_reviewer_approved_td_merge_dispatch:
+  test_cb_reviewer_approved_td_code_check_dispatch:
     kind: test
     type: "rs/#[test]"
   test_cb_reviser_dispatched_on_needs_revision:
@@ -929,7 +929,7 @@ relations:
     verifies: r3_cb_check_sole_commit_gate
   - from: test_crrr_retry_cap_arbitrate
     verifies: r4_crrr_retry_cap
-  - from: test_cb_reviewer_approved_td_merge_dispatch
+  - from: test_cb_reviewer_approved_td_code_check_dispatch
     verifies: r4_crrr_retry_cap
   - from: test_cb_reviser_dispatched_on_needs_revision
     verifies: r4_crrr_retry_cap
@@ -1270,17 +1270,17 @@ changes:
 
 **Verdict:** approved
 
-- [overall] All four round-1 findings are resolved. State-machine: only `cb_fill_applied → cb_filled` exists; the direct `→ cb_reviewed` shortcut is gone. Logic: the flowchart now covers the full CRRR loop — `reviewer_runs`, `read_reviewer_verdict`, `check_review_count`, `dispatch_reviser`, `reviser_runs`, `emit_dispatch_arbitrate`, `emit_dispatch_td_merge` are all present with correct edges including the `reviser_runs → emit_dispatch_reviewer` back-edge. Schema: `CbFillAgentRoles.reviewer.output` and `reviser.output` consistently reference `aw cb review --slug <slug> --apply` and `aw cb revise --slug <slug> --apply` respectively; no stale `--section review` text remains. CLI: `aw cb review` and `aw cb revise` subcommands are defined with `--apply` flags and correct exit codes. Test plan: `test_cb_reviewer_approved_td_merge_dispatch` and `test_cb_reviser_dispatched_on_needs_revision` appear in both elements and relations. Changes: agent template descriptions for `score-cb-reviewer.md` and `score-cb-reviser.md` reference the correct `--apply` verbs with no stale text.
+- [overall] All four round-1 findings are resolved. State-machine: only `cb_fill_applied → cb_filled` exists; the direct `→ cb_reviewed` shortcut is gone. Logic: the flowchart now covers the full CRRR loop — `reviewer_runs`, `read_reviewer_verdict`, `check_review_count`, `dispatch_reviser`, `reviser_runs`, `emit_dispatch_arbitrate`, `emit_dispatch_td_code_check` are all present with correct edges including the `reviser_runs → emit_dispatch_reviewer` back-edge. Schema: `CbFillAgentRoles.reviewer.output` and `reviser.output` consistently reference `aw cb review --slug <slug> --apply` and `aw cb revise --slug <slug> --apply` respectively; no stale `--section review` text remains. CLI: `aw cb review` and `aw cb revise` subcommands are defined with `--apply` flags and correct exit codes. Test plan: `test_cb_reviewer_approved_td_code_check_dispatch` and `test_cb_reviser_dispatched_on_needs_revision` appear in both elements and relations. Changes: agent template descriptions for `score-cb-reviewer.md` and `score-cb-reviser.md` reference the correct `--apply` verbs with no stale text.
 
 ## Review 1
 <!-- type: review lang: markdown -->
 
 **Verdict:** needs-revision
 
-- [logic] (item 3) The Logic section (`cb-fill-mainthread-loop`) covers only the `aw cb fill` verb — brief mode, apply mode, and the `aw cb check` gate. It terminates at `emit_dispatch_reviewer`. However, the primary contribution of this spec over `score-cb-fill-workflow.md` is the CRRR reviewer/reviser loop (R4, R6). None of the novel logic — reading the reviewer verdict, the `review_count` guard, dispatching the reviser, re-dispatching the reviewer after revision, or triggering arbitration — has any node or edge in the flowchart. An implementer cannot derive the CRRR orchestration path from the Logic section alone. Add a second logic diagram (e.g. `cb-fill-crrr-mainthread-loop`) with nodes for: `read_cb_check_result`, `dispatch_reviewer`, `read_reviewer_verdict`, `verdict_approved`, `verdict_needs_revision`, `check_review_count`, `dispatch_reviser`, `dispatch_arbitrate`, `dispatch_td_merge`. All R-ids in R4 and the review/revise cycle must be traceable to nodes in the diagram.
+- [logic] (item 3) The Logic section (`cb-fill-mainthread-loop`) covers only the `aw cb fill` verb — brief mode, apply mode, and the `aw cb check` gate. It terminates at `emit_dispatch_reviewer`. However, the primary contribution of this spec over `score-cb-fill-workflow.md` is the CRRR reviewer/reviser loop (R4, R6). None of the novel logic — reading the reviewer verdict, the `review_count` guard, dispatching the reviser, re-dispatching the reviewer after revision, or triggering arbitration — has any node or edge in the flowchart. An implementer cannot derive the CRRR orchestration path from the Logic section alone. Add a second logic diagram (e.g. `cb-fill-crrr-mainthread-loop`) with nodes for: `read_cb_check_result`, `dispatch_reviewer`, `read_reviewer_verdict`, `verdict_approved`, `verdict_needs_revision`, `check_review_count`, `dispatch_reviser`, `dispatch_arbitrate`, `dispatch_td_code_check`. All R-ids in R4 and the review/revise cycle must be traceable to nodes in the diagram.
 
 - [state-machine] (item 3) The state machine has a structural ambiguity between `cb_fill_applied → cb_filled` (via `aw cb check` sole-commit gate) and `cb_filled → cb_reviewed` (reviewer dispatched). The edge labelled `cb_fill_applied → cb_reviewed` with event "score-cb-reviewer dispatched (cb check quality gate pass → phase cb_filled)" implies the reviewer fires directly from `cb_fill_applied`, bypassing `cb_filled`. But two other edges show the path as `cb_fill_applied → cb_filled → cb_reviewed`. These are contradictory: either `cb_filled` is committed before the reviewer is dispatched, or it is not. The issue CRRR (`issue-crrr-state-machine.md`) commits each phase atomically before dispatching the next agent. Make the path unambiguous: `cb_fill_applied → cb_filled` (sole-commit gate writes `Lifecycle-Stage: Cb-Fill`, advances phase) → `cb_reviewed` (reviewer dispatched). Remove the direct `cb_fill_applied → cb_reviewed` edge.
 
 - [schema] (item 4) `CbFillAgentRoles.reviewer.output` states the reviewer "calls `aw cb fill --apply --section review` to merge". The `aw cb fill` CLI (defined in the same spec's `## CLI` section) has no `--section` flag. The reviewer has no merge mechanism defined in the CLI. Either: (a) define a `aw cb fill --apply --verdict` or `aw cb check --apply-review` flag in the CLI section, or (b) specify that the reviewer writes its verdict to `.aw/payloads/<slug>/review.md` and mainthread drives a separate merge (consistent with the two-phase-commit model). The current text instructs the reviewer to call a nonexistent flag, which would make the reviewer agent fail at runtime.
 
-- [test-plan] (item 2/5) R4 tests the CRRR retry cap (third `needs-revision` → arbitrate), but there are no test elements covering the baseline CRRR happy path: reviewer dispatched → approved → `td_merged`. Add at minimum: `test_cb_reviewer_approved_td_merge_dispatch` (verifies that `approved` verdict from `score-cb-reviewer` leads to dispatch envelope to `aw td merge`) and `test_cb_reviser_dispatched_on_needs_revision` (verifies that `needs-revision` with `review_count == 1` dispatches `score-cb-reviser`). Without these, the primary parity claim of this spec — that the CRRR loop works — is untested.
+- [test-plan] (item 2/5) R4 tests the CRRR retry cap (third `needs-revision` → arbitrate), but there are no test elements covering the baseline CRRR happy path: reviewer dispatched → approved → `td_merged`. Add at minimum: `test_cb_reviewer_approved_td_code_check_dispatch` (verifies that `approved` verdict from `score-cb-reviewer` leads to dispatch envelope to `aw td code-check`) and `test_cb_reviser_dispatched_on_needs_revision` (verifies that `needs-revision` with `review_count == 1` dispatches `score-cb-reviser`). Without these, the primary parity claim of this spec — that the CRRR loop works — is untested.

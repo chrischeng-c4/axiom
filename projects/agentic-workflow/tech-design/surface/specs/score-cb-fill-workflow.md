@@ -28,7 +28,7 @@ capability_refs:
 > **AMENDMENT (2026-05-11).** `cb fill brief` scopes marker enumeration
 > to the active TD spec's `## Changes` paths. Inherited HANDWRITE markers
 > outside that path set do not enter `marker_list`; if the scoped list is
-> empty, brief mode dispatches directly to `aw td merge`. See
+> empty, brief mode dispatches directly to `aw td code-check`. See
 > `projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-change-scope.md`.
 
 > **Phase C root note.** Legacy "worktree" wording in this spec refers to the
@@ -63,13 +63,13 @@ commands:
           and emit a `dispatch` envelope addressed to `score-cb-handwriter`
           with the marker list and worktree TD spec path embedded in
           `invoke.args`. When zero markers are found, emit a dispatch
-          envelope directly to `aw td merge` (0-marker fast-path).
+          envelope directly to `aw td code-check` (0-marker fast-path).
           --apply --marker <id> mode: merge the filled marker payload into
           the HANDWRITE-BEGIN/END block identified by <id> in the worktree
           source file. After merge, invoke `aw cb check` as a gate.
           On all markers applied and `cb check` passing clean, commit
           `Lifecycle-Stage: Cb-Fill` and advance phase to `cb_filled`;
-          then emit a dispatch envelope to `aw td merge`.
+          then emit a dispatch envelope to `aw td code-check`.
         args:
           - name: slug
             required: true
@@ -148,16 +148,16 @@ nodes:
   cb_filled:
     kind: normal
     label: "All markers filled; Cb-Fill trailer committed"
-  td_merge_dispatch:
+  td_code_check_dispatch:
     kind: terminal
-    label: "Dispatch to aw td merge"
+    label: "Dispatch to aw td code-check"
 edges:
   - from: cb_genned
     to: zero_marker_fastpath
     event: "aw cb gen: marker_count == 0"
     guard: "emitted marker count is zero"
   - from: zero_marker_fastpath
-    to: td_merge_dispatch
+    to: td_code_check_dispatch
     event: "fast-path dispatch (R11)"
   - from: cb_genned
     to: fill_dispatched
@@ -182,21 +182,21 @@ edges:
     event: "cb check exit 1: error envelope; re-dispatch"
     guard: "drift or remaining markers found"
   - from: cb_filled
-    to: td_merge_dispatch
-    event: "emit dispatch envelope to aw td merge (R7)"
+    to: td_code_check_dispatch
+    event: "emit dispatch envelope to aw td code-check (R7)"
 ---
 stateDiagram-v2
     [*] --> cb_genned
     cb_genned --> zero_marker_fastpath : aw cb gen: marker count == 0
-    zero_marker_fastpath --> td_merge_dispatch : fast-path dispatch (R11)
+    zero_marker_fastpath --> td_code_check_dispatch : fast-path dispatch (R11)
     cb_genned --> fill_dispatched : aw cb fill brief mode (marker count > 0)
     fill_dispatched --> marker_fill_loop : score-cb-handwriter first apply
     marker_fill_loop --> marker_fill_loop : aw cb fill --apply --marker (remaining > 0)
     marker_fill_loop --> cb_check_gate : all markers applied
     cb_check_gate --> cb_filled : cb check exit 0 — commit Cb-Fill (R6)
     cb_check_gate --> fill_dispatched : cb check exit 1 — error — re-dispatch (R5)
-    cb_filled --> td_merge_dispatch : emit dispatch to aw td merge (R7)
-    td_merge_dispatch --> [*]
+    cb_filled --> td_code_check_dispatch : emit dispatch to aw td code-check (R7)
+    td_code_check_dispatch --> [*]
 ```
 ## Logic: cb-fill-control-flow
 <!-- type: logic lang: mermaid -->
@@ -223,7 +223,7 @@ nodes:
     label: "marker_count == 0?"
   emit_fast_path_dispatch:
     kind: terminal
-    label: "Emit dispatch to aw td merge (0-marker fast-path, R8/R11)"
+    label: "Emit dispatch to aw td code-check (0-marker fast-path, R8/R11)"
   build_cb_handwriter_envelope:
     kind: process
     label: "Build dispatch envelope: agent=score-cb-handwriter, marker list + spec_path in invoke.args"
@@ -275,9 +275,9 @@ nodes:
   commit_cb_fill_trailer:
     kind: process
     label: "Commit Lifecycle-Stage: Cb-Fill; advance phase to cb_filled (R6)"
-  emit_dispatch_td_merge:
+  emit_dispatch_td_code_check:
     kind: terminal
-    label: "Emit dispatch envelope to aw td merge; exit 0 (R7)"
+    label: "Emit dispatch envelope to aw td code-check; exit 0 (R7)"
 edges:
   - from: read_verb_mode
     to: is_apply_mode
@@ -336,7 +336,7 @@ edges:
     to: emit_error_cb_check
     label: "no — slug_markers non-empty (R5)"
   - from: commit_cb_fill_trailer
-    to: emit_dispatch_td_merge
+    to: emit_dispatch_td_code_check
 ---
 flowchart TD
     read_verb_mode([Read --apply flag]) --> is_apply_mode{"--apply flag set?"}
@@ -344,7 +344,7 @@ flowchart TD
     is_apply_mode -->|"yes (apply mode)"| apply_check_marker_flag{"--marker provided?"}
     brief_resolve_slug --> enumerate_markers["Call parse_handwrite_markers on worktree source tree (R2)"]
     enumerate_markers --> marker_count_zero{"marker_count == 0?"}
-    marker_count_zero -->|"yes (R11)"| emit_fast_path_dispatch(["Emit dispatch to aw td merge — 0-marker fast-path"])
+    marker_count_zero -->|"yes (R11)"| emit_fast_path_dispatch(["Emit dispatch to aw td code-check — 0-marker fast-path"])
     marker_count_zero -->|"no"| build_cb_handwriter_envelope["Build dispatch envelope: agent=score-cb-handwriter + marker list + spec_path"]
     build_cb_handwriter_envelope --> emit_dispatch_handwriter(["Emit dispatch to score-cb-handwriter — exit 0 (R2)"])
     apply_check_marker_flag -->|no| error_missing_marker(["Error: --apply requires --marker — exit 2"])
@@ -361,7 +361,7 @@ flowchart TD
     intersect_markers_with_slug_files --> slug_markers_empty{"slug_markers empty? (R1, R4)"}
     slug_markers_empty -->|"yes — gate passes (R4, R5)"| commit_cb_fill_trailer["Commit Lifecycle-Stage: Cb-Fill; advance phase to cb_filled (R6)"]
     slug_markers_empty -->|"no — slug_markers non-empty (R5)"| emit_error_cb_check(["Emit error envelope: slug_markers has remaining HANDWRITE blocks — exit 1 (R5)"])
-    commit_cb_fill_trailer --> emit_dispatch_td_merge(["Emit dispatch to aw td merge — exit 0 (R7)"])
+    commit_cb_fill_trailer --> emit_dispatch_td_code_check(["Emit dispatch to aw td code-check — exit 0 (R7)"])
 ```
 ## Schema
 <!-- type: schema lang: yaml -->
@@ -579,7 +579,7 @@ definitions:
       - TdRevise
       - CbGen
       - TdGenCode
-      - TdMerge
+      - TdCodeCheck
       - TdClaim
       - CbClaim
       - CbFill
@@ -607,8 +607,8 @@ definitions:
         - name: TdGenCode
           rename: "Td-GenCode"
           doc: "Legacy alias for Cb-Gen. Reader-only."
-        - name: TdMerge
-          rename: "Td-Merge"
+        - name: TdCodeCheck
+          rename: "Cb-CodeCheck"
           doc: "Spec merged."
         - name: TdClaim
           rename: "Td-Claim"
@@ -663,9 +663,9 @@ requirements:
     kind: functional
     risk: high
     verify: test
-  r7_dispatch_td_merge:
+  r7_dispatch_td_code_check:
     id: R7
-    text: "dispatch envelope to aw td merge emitted after Cb-Fill trailer committed"
+    text: "dispatch envelope to aw td code-check emitted after Cb-Fill trailer committed"
     kind: functional
     risk: high
     verify: test
@@ -683,13 +683,13 @@ requirements:
     verify: test
   r10_phase_machine:
     id: R10
-    text: "aw td merge accepts cb_filled as valid pre-merge phase in addition to cb_genned"
+    text: "aw td code-check accepts cb_filled as valid pre-merge phase in addition to cb_genned"
     kind: functional
     risk: medium
     verify: test
   r11_zero_marker_fastpath:
     id: R11
-    text: "0-marker fast-path: aw cb gen emits dispatch directly to td merge when marker_count == 0; no cb_filled phase written"
+    text: "0-marker fast-path: aw cb gen emits dispatch directly to td code-check when marker_count == 0; no cb_filled phase written"
     kind: functional
     risk: medium
     verify: test
@@ -710,12 +710,12 @@ requirements:
     text: >
       Integration tests cover all six scenarios: (1) smoke happy-path — brief
       mode envelope shape (action=dispatch, agent=score-cb-handwriter);
-      (2) marker_count=0 fast-path — brief mode emits dispatch to td merge, no
+      (2) marker_count=0 fast-path — brief mode emits dispatch to td code-check, no
       cb_filled phase written; (3) --apply --marker single non-last — targeted
       HANDWRITE block replaced, partial-progress envelope emitted, adjacent
       blocks undisturbed; (4) --apply --marker last — all markers applied,
       cb check passes, Cb-Fill trailer committed, phase advanced to cb_filled,
-      dispatch to td merge emitted; (5) cb check fail re-dispatch — cb check
+      dispatch to td code-check emitted; (5) cb check fail re-dispatch — cb check
       exits 1, error envelope emitted, phase not advanced; (6) deprecated
       tdc-handwrite alias — skill stub prints one deprecation line redirecting
       to aw cb fill.
@@ -756,7 +756,7 @@ elements:
   test_cb_filled_phase_written:
     kind: test
     type: "rs/#[test]"
-  test_dispatch_td_merge_after_fill:
+  test_dispatch_td_code_check_after_fill:
     kind: test
     type: "rs/#[test]"
   test_cb_gen_dispatch_cb_fill:
@@ -768,7 +768,7 @@ elements:
   test_lifecycle_trailer_cb_fill_variant:
     kind: test
     type: "rs/#[test]"
-  test_td_merge_accepts_cb_filled:
+  test_td_code_check_accepts_cb_filled:
     kind: test
     type: "rs/#[test]"
   test_zero_marker_fastpath_no_fill_dispatch:
@@ -809,15 +809,15 @@ relations:
     verifies: r6_cb_fill_trailer
   - from: test_cb_filled_phase_written
     verifies: r6_cb_fill_trailer
-  - from: test_dispatch_td_merge_after_fill
-    verifies: r7_dispatch_td_merge
+  - from: test_dispatch_td_code_check_after_fill
+    verifies: r7_dispatch_td_code_check
   - from: test_cb_gen_dispatch_cb_fill
     verifies: r8_cb_gen_dispatch_update
   - from: test_issue_phase_cb_filled_variant
     verifies: r9_enum_extensions
   - from: test_lifecycle_trailer_cb_fill_variant
     verifies: r9_enum_extensions
-  - from: test_td_merge_accepts_cb_filled
+  - from: test_td_code_check_accepts_cb_filled
     verifies: r10_phase_machine
   - from: test_zero_marker_fastpath_no_fill_dispatch
     verifies: r11_zero_marker_fastpath
@@ -881,7 +881,7 @@ requirementDiagram
     }
     requirement R7 {
       id: R7
-      text: "dispatch envelope to aw td merge after Cb-Fill committed"
+      text: "dispatch envelope to aw td code-check after Cb-Fill committed"
       risk: high
       verifymethod: test
     }
@@ -899,13 +899,13 @@ requirementDiagram
     }
     requirement R10 {
       id: R10
-      text: "aw td merge accepts cb_filled as valid pre-merge phase"
+      text: "aw td code-check accepts cb_filled as valid pre-merge phase"
       risk: medium
       verifymethod: test
     }
     requirement R11 {
       id: R11
-      text: "0-marker fast-path: cb gen dispatches td merge directly; no cb_filled"
+      text: "0-marker fast-path: cb gen dispatches td code-check directly; no cb_filled"
       risk: medium
       verifymethod: test
     }
@@ -960,7 +960,7 @@ requirementDiagram
     element test_cb_filled_phase_written {
       type: "rs/#[test]"
     }
-    element test_dispatch_td_merge_after_fill {
+    element test_dispatch_td_code_check_after_fill {
       type: "rs/#[test]"
     }
     element test_cb_gen_dispatch_cb_fill {
@@ -972,7 +972,7 @@ requirementDiagram
     element test_lifecycle_trailer_cb_fill_variant {
       type: "rs/#[test]"
     }
-    element test_td_merge_accepts_cb_filled {
+    element test_td_code_check_accepts_cb_filled {
       type: "rs/#[test]"
     }
     element test_zero_marker_fastpath_no_fill_dispatch {
@@ -1001,11 +1001,11 @@ requirementDiagram
     test_cb_check_gate_error_envelope - verifies -> R5
     test_cb_fill_trailer_committed - verifies -> R6
     test_cb_filled_phase_written - verifies -> R6
-    test_dispatch_td_merge_after_fill - verifies -> R7
+    test_dispatch_td_code_check_after_fill - verifies -> R7
     test_cb_gen_dispatch_cb_fill - verifies -> R8
     test_issue_phase_cb_filled_variant - verifies -> R9
     test_lifecycle_trailer_cb_fill_variant - verifies -> R9
-    test_td_merge_accepts_cb_filled - verifies -> R10
+    test_td_code_check_accepts_cb_filled - verifies -> R10
     test_zero_marker_fastpath_no_fill_dispatch - verifies -> R11
     test_zero_marker_fastpath_no_cb_filled_phase - verifies -> R11
     inspect_skill_score_cb_handwriter - verifies -> R12
@@ -1032,7 +1032,7 @@ changes:
       New module implementing the `aw cb fill` verb.
       Brief mode: calls `parse_handwrite_markers` to enumerate all open
       HANDWRITE-BEGIN/END blocks in the worktree; if count == 0, emits a
-      dispatch envelope directly to `aw td merge` (0-marker fast-path, R11);
+      dispatch envelope directly to `aw td code-check` (0-marker fast-path, R11);
       otherwise builds a `CbFillBriefEnvelope` addressed to `score-cb-handwriter`
       with the marker list and worktree TD spec path embedded in `invoke.args` (R2).
       --apply --marker <id> mode: reads payload from
@@ -1049,7 +1049,7 @@ changes:
       work on `main`; if `slug_markers` is non-empty, emits an error envelope with
       the remaining slug-owned markers and exits 1 (R5).
       On gate pass: calls `commit_lifecycle(slug, LifecycleTrailer::CbFill,
-      IssuePhase::CbFilled)` and emits a dispatch envelope to `aw td merge` (R6, R7).
+      IssuePhase::CbFilled)` and emits a dispatch envelope to `aw td code-check` (R6, R7).
       New helpers added to this module:
         - `branch_changed_files(worktree: &Path, base_branch: &str) -> anyhow::Result<HashSet<PathBuf>>`:
           runs `git diff --name-only <base_branch>..HEAD` in the worktree directory
@@ -1083,15 +1083,15 @@ changes:
           passes, git log contains "Lifecycle-Stage: Cb-Fill".
         - test_cb_filled_phase_written: issue frontmatter has "phase: cb_filled"
           after successful fill.
-        - test_dispatch_td_merge_after_fill: final stdout is a valid dispatch
-          envelope to "aw td merge".
+        - test_dispatch_td_code_check_after_fill: final stdout is a valid dispatch
+          envelope to "aw td code-check".
         - test_cb_check_gate_rejection: when a slug-owned HANDWRITE block is missed,
           gate emits error envelope and phase does not advance.
         - test_cb_check_gate_inherited_ignored: when only inherited HANDWRITE
           markers from prior unrelated work on main remain (none in slug_files),
           the gate passes and phase advances to cb_filled (R1, R4).
         - test_zero_marker_fastpath_no_fill_dispatch: when worktree has zero
-          HANDWRITE markers, brief mode emits dispatch to td merge, not
+          HANDWRITE markers, brief mode emits dispatch to td code-check, not
           score-cb-handwriter.
         - test_zero_marker_fastpath_no_cb_filled_phase: after fast-path dispatch,
           issue phase is still cb_genned, not cb_filled.
@@ -1146,10 +1146,10 @@ changes:
         1. After the codegen apply pipeline completes, count emitted HANDWRITE
            markers by calling `parse_handwrite_markers` on the worktree source tree.
         2. If count > 0: emit dispatch envelope addressed to `aw cb fill`
-           (instead of the previous `aw td merge` dispatch).
-        3. If count == 0: retain existing dispatch envelope to `aw td merge`
+           (instead of the previous `aw td code-check` dispatch).
+        3. If count == 0: retain existing dispatch envelope to `aw td code-check`
            (0-marker fast-path, R11); do NOT advance phase to `cb_filled`.
-      Also update `run_merge` to accept `IssuePhase::CbFilled` as a valid
+      Also update `run_code_check` to accept `IssuePhase::CbFilled` as a valid
       pre-merge phase in addition to `IssuePhase::CbGenned` (R10).
 
   - path: projects/agentic-workflow/src/issues/types.rs
@@ -1186,7 +1186,7 @@ changes:
     impl_mode: hand-written
     description: >
       Update the post-review flow diagram and any prose descriptions to show
-      the full Phase 3 chain: `aw cb gen → aw cb fill → aw cb check → aw td merge`.
+      the full Phase 3 chain: `aw cb gen → aw cb fill → aw cb check → aw td code-check`.
       Replace any remaining references to `aw td gen-code` with `aw cb gen`.
 
   - path: projects/agentic-workflow/templates/mainthread/skills/score-td-create/SKILL.md
@@ -1195,7 +1195,7 @@ changes:
     impl_mode: hand-written
     description: >
       Update the post-review flow diagram and any prose descriptions to show
-      the Phase 3 chain: `aw cb gen → aw cb fill → aw cb check → aw td merge`.
+      the Phase 3 chain: `aw cb gen → aw cb fill → aw cb check → aw td code-check`.
 
   - path: projects/agentic-workflow/templates/mainthread/skills/tdc-handwrite/SKILL.md
     action: modify
@@ -1219,7 +1219,7 @@ changes:
       Update the Score TD verbs table to add Phase 3 entries:
         - Add row for `aw cb fill`: fills HANDWRITE-BEGIN/END marker blocks
           in generated code; requires approved TD spec; advances phase to cb_filled;
-          dispatches to td merge. Two modes: brief (dispatch to score-cb-handwriter)
+          dispatches to td code-check. Two modes: brief (dispatch to score-cb-handwriter)
           and --apply --marker <id> (per-marker merge).
       Update the phase progression diagram or prose to reflect:
         td_reviewed → cb_genned → cb_filled → td_merged.
@@ -1275,6 +1275,6 @@ changes:
 
 - [schema] (item 4) The `partial_done` terminal in the Logic flowchart emits a "partial-progress dispatch" envelope, but no corresponding type is defined in Schema. The only dispatch type defined is `CbFillBriefEnvelope`, which is addressed to `score-cb-handwriter` for the initial brief mode call. The per-marker `--apply` call's intermediate envelope (when remaining markers > 0) has no schema definition. This matters for implementation: an implementer cannot determine what fields to include, and it creates an ambiguity about whether mainthread will re-launch `score-cb-handwriter` (breaking R3's single-invocation guarantee) or whether the agent ignores the envelope and loops internally. Add a `CbFillPartialEnvelope` (or document that `--apply` emits `action: "dispatch", agent: null` pointing at the next `aw cb fill --apply --marker <next-id>` invocation so the agent reads it and continues) and specify in the SKILL.md changes entry what the agent does with this envelope on each per-marker call.
 
-- [logic] (item 3) R8 ("aw cb gen auto-dispatch updated: emits cb fill dispatch when marker_count > 0") is implemented exclusively in the Changes section (`td.rs` description) but has no node in the Logic flowchart. The Logic section's entry node is `read_verb_mode` (i.e., `aw cb fill` itself), so the `aw cb gen` side of R8 — the decision to emit `cb fill` vs `td merge` after codegen — is not traced through any logic node. This is acceptable if this spec intentionally covers only `aw cb fill` control flow and treats `aw cb gen`'s dispatch change as an amendment to the Phase 1 spec. If so, add a comment to the Logic section clarifying that scope boundary. If the intent is that this spec owns R8's logic, add the `post_gen_marker_count` decision node branching to either `emit_cb_fill_dispatch` or `emit_td_merge_dispatch` in a separate entry path.
+- [logic] (item 3) R8 ("aw cb gen auto-dispatch updated: emits cb fill dispatch when marker_count > 0") is implemented exclusively in the Changes section (`td.rs` description) but has no node in the Logic flowchart. The Logic section's entry node is `read_verb_mode` (i.e., `aw cb fill` itself), so the `aw cb gen` side of R8 — the decision to emit `cb fill` vs `td code-check` after codegen — is not traced through any logic node. This is acceptable if this spec intentionally covers only `aw cb fill` control flow and treats `aw cb gen`'s dispatch change as an amendment to the Phase 1 spec. If so, add a comment to the Logic section clarifying that scope boundary. If the intent is that this spec owns R8's logic, add the `post_gen_marker_count` decision node branching to either `emit_cb_fill_dispatch` or `emit_td_code_check_dispatch` in a separate entry path.
 
 - [test-plan] (item 2) R14's acceptance criterion text reads "Integration tests cover all six scenarios from R14" — it is self-referential (it names itself as the source of the six scenarios). The six scenarios are enumerable from R14's own text, but the self-reference creates a circular definition. Replace "from R14" with a concrete inline list: "brief-mode envelope shape, --apply merge, Cb-Fill trailer, cb_filled phase, 0-marker fast-path, cb check gate rejection" so R14 is testable as a standalone criterion.

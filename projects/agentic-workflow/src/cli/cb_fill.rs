@@ -5,7 +5,7 @@
 //! Two modes:
 //! - **Brief** (no `--apply`): walk the current checkout source tree and emit a
 //!   marker-list dispatch envelope for mainthread,
-//!   or fast-path-dispatch directly to `aw td merge` when zero markers
+//!   or fast-path-dispatch directly to `aw td code-check` when zero markers
 //!   are present (R11).
 //! - **Apply** (`--apply --marker <id>`): merge the expected marker payload
 //!   into the HANDWRITE block matching `<id>`, commit that marker with WI
@@ -172,12 +172,8 @@ fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
     format!("aw td fill {} --apply --marker {}", slug, marker_id)
 }
 
-fn td_merge_command(slug: &str, spec_path: &str) -> String {
-    if spec_path.is_empty() {
-        format!("aw td merge {}", slug)
-    } else {
-        format!("aw td merge {} --spec-path {}", slug, spec_path)
-    }
+fn td_code_check_command(slug: &str) -> String {
+    format!("aw td code-check {slug}")
 }
 
 fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
@@ -220,11 +216,11 @@ fn next_for_marker(
     })
 }
 
-fn next_for_td_merge(slug: &str, spec_path: &str) -> serde_json::Value {
+fn next_for_td_code_check(slug: &str) -> serde_json::Value {
     serde_json::json!({
         "kind": "dispatch",
-        "command": td_merge_command(slug, spec_path),
-        "reason": "all HANDWRITE markers are filled",
+        "command": td_code_check_command(slug),
+        "reason": "all HANDWRITE markers are filled; run the terminal code-check action",
         "requires_hitl": false,
         "payload_path": null,
     })
@@ -418,20 +414,15 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
     let spec_path = spec_path.unwrap_or_default();
 
     if markers.is_empty() {
-        // 0-marker fast-path (R11): dispatch directly to td merge.
-        let merge_args = if spec_path.is_empty() {
-            serde_json::json!({ "slug": slug })
-        } else {
-            serde_json::json!({ "slug": slug, "spec_path": spec_path })
-        };
+        // 0-marker fast-path: dispatch directly to terminal code-check.
         let env = serde_json::json!({
             "action": "dispatch",
             "agent": serde_json::Value::Null,
             "slug": slug,
-            "next": next_for_td_merge(&slug, &spec_path),
+            "next": next_for_td_code_check(&slug),
             "invoke": {
-                "command": "aw td merge",
-                "args": merge_args,
+                "command": "aw td code-check",
+                "args": { "target": slug },
             },
         });
         print_compact_json(&env)?;
@@ -839,16 +830,16 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     }
     crate::cli::workflow_guard::complete_issue_lock(&worktree_abs, &slug, "td").await?;
 
-    // Dispatch to merge after the local code gate. Capability/EC/health gates
-    // decide whether the TD and implementation need another iteration.
+    // Dispatch to terminal code-check after the local code gate.
+    // Capability/EC/health gates decide whether another iteration is needed.
     let env = serde_json::json!({
         "action": "dispatch",
         "agent": serde_json::Value::Null,
         "slug": slug,
-        "next": next_for_td_merge(&slug, ""),
+        "next": next_for_td_code_check(&slug),
         "invoke": {
-            "command": "aw td merge",
-            "args": { "slug": slug },
+            "command": "aw td code-check",
+            "args": { "target": slug },
         },
     });
     print_compact_json(&env)?;
@@ -995,7 +986,7 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
 // worktrees with no diff against base trivially pass (R5).
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
-async fn run_cb_check_gate(worktree_abs: &Path) -> std::result::Result<(), String> {
+pub(crate) async fn run_cb_check_gate(worktree_abs: &Path) -> std::result::Result<(), String> {
     let remaining = enumerate_worktree_markers(worktree_abs);
     if remaining.is_empty() {
         return Ok(());
@@ -1341,12 +1332,9 @@ mod tests {
     }
 
     #[test]
-    fn td_merge_next_command_uses_positional_slug() {
-        assert_eq!(
-            td_merge_command("4124", ".aw/tech-design/demo.md"),
-            "aw td merge 4124 --spec-path .aw/tech-design/demo.md"
-        );
-        assert!(!td_merge_command("4124", "").contains("--json"));
+    fn td_code_check_next_command_uses_positional_slug() {
+        assert_eq!(td_code_check_command("4124"), "aw td code-check 4124");
+        assert!(!td_code_check_command("4124").contains("--json"));
     }
 
     #[test]
