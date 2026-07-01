@@ -171,12 +171,12 @@ pub trait TaskSource: Send + Sync {
 /// Router for `loom schema-layer`: the worker-facing bidi work stream + health.
 pub fn router(source: Arc<dyn TaskSource>) -> Router {
     Router::new()
-        .route("/v1/work/stream", post(work_stream))
+        .route("/work/stream", post(work_stream))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(source)
 }
 
-/// POST /v1/work/stream — one bidi h2 stream per worker: TaskEnvelopes down,
+/// POST /work/stream — one bidi h2 stream per worker: TaskEnvelopes down,
 /// UpFrames up. Both half-streams stay open for the session's life.
 async fn work_stream(State(source): State<Arc<dyn TaskSource>>, req: Body) -> Response {
     let (down_tx, mut down_rx) = mpsc::channel::<Vec<u8>>(64);
@@ -753,7 +753,7 @@ mod tests {
             .build()
             .unwrap();
         let resp = client
-            .post(format!("http://{addr}/v1/work/stream"))
+            .post(format!("http://{addr}/work/stream"))
             .body(body)
             .send()
             .await

@@ -374,16 +374,8 @@ pub(crate) async fn bidi_session(
         let mut rx = up_rx;
         while let Some(b) = rx.recv().await { yield Ok::<Vec<u8>, std::io::Error>(b); }
     });
-    let resp = client
-        .post(format!("{schema_url}/v1/work/stream"))
-        .body(body)
-        .send()
-        .await?;
-    anyhow::ensure!(
-        resp.status().is_success(),
-        "schema-layer connect: {}",
-        resp.status()
-    );
+    let resp = client.post(format!("{schema_url}/work/stream")).body(body).send().await?;
+    anyhow::ensure!(resp.status().is_success(), "schema-layer connect: {}", resp.status());
     let mut down = resp.bytes_stream();
     up_tx
         .send(encode_frame(&UpFrame::Subscribe {

@@ -56,7 +56,7 @@ async def main():
             (":method", "POST"),
             (":authority", f"{HOST}:{PORT}"),
             (":scheme", "http"),
-            (":path", "/v1/work/stream"),
+            (":path", "/work/stream"),
             ("content-type", "application/octet-stream"),
         ],
         end_stream=False,
