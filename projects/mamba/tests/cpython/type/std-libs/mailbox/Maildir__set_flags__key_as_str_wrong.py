@@ -9,7 +9,6 @@
 # case = "Maildir__set_flags__key_as_str_wrong"
 # subject = "mailbox.Maildir.set_flags(key: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

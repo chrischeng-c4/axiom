@@ -9,7 +9,6 @@
 # case = "Maildir__add__message_as_typed_wrong"
 # subject = "mailbox.Maildir.add(message: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

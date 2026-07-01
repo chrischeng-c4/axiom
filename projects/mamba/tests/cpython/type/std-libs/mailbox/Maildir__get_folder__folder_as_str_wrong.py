@@ -9,7 +9,6 @@
 # case = "Maildir__get_folder__folder_as_str_wrong"
 # subject = "mailbox.Maildir.get_folder(folder: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

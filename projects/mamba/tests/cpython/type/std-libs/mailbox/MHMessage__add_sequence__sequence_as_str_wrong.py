@@ -9,7 +9,6 @@
 # case = "MHMessage__add_sequence__sequence_as_str_wrong"
 # subject = "mailbox.MHMessage.add_sequence(sequence: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"

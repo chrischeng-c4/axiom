@@ -9,7 +9,6 @@
 # case = "MaildirMessage__set_date__date_as_float_wrong"
 # subject = "mailbox.MaildirMessage.set_date(date: float)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/mailbox.pyi"
 # status = "filled"
