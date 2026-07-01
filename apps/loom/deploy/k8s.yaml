@@ -34,10 +34,17 @@ spec:
   template:
     metadata: { labels: { app: relay } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
         - name: relay
           image: loom:verify
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
           command: ["relay-server"]
           env: [{ name: RELAY_BIND, value: "0.0.0.0:7400" }]
           ports: [{ containerPort: 7400 }]
@@ -58,10 +65,17 @@ spec:
   template:
     metadata: { labels: { app: keep } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
         - name: keep
           image: loom:verify
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
           command: ["keep"]
           args: ["--host", "0.0.0.0", "--port", "7379"]
           env: [{ name: KEEP_BODY_LIMIT, value: "134217728" }]
@@ -83,10 +97,17 @@ spec:
   template:
     metadata: { labels: { app: loom-controller } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
         - name: controller
           image: loom:verify
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
           args: ["controller"]
           env:
             - { name: LOOM_ADDR, value: "0.0.0.0:7474" }
@@ -110,10 +131,17 @@ spec:
     metadata: { labels: { app: job-controller } }
     spec:
       serviceAccountName: loom-jobctl
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
         - name: job-controller
           image: loom:verify
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
           args: ["job-controller"]
           env:
             - { name: LOOM_RELAY, value: "http://relay:7400" }
