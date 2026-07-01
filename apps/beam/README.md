@@ -25,7 +25,7 @@ indexes and GPU memory tiers.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GPU Vector Index | #769 | planned | planned | none | not_ready | GPU ANN index lifecycle and memory tiers |
+| GPU Vector Index | #769 | partial | verified | conformance | not_ready | GPU flat kNN on wgpu/Metal verified vs CPU oracle; ANN/memory-tiers/rebuild pending |
 | Batch Ingest And Rebuild | #769 | planned | planned | none | not_ready | vector ingest, compaction, and offline rebuild |
 | Vector Query API | #769 | planned | planned | none | not_ready | nearest-neighbor search with filters and recall gates |
 | HTTP/2 API List | #769 | planned | planned | none | not_ready | h2c/OpenAPI endpoint inventory |
@@ -147,12 +147,14 @@ Promise:
 Beam manages GPU-native vector indexes with explicit memory-tier and rebuild
 semantics rather than treating vector search as a Lumen side path.
 Gate Inventory:
-- pending: apps/beam/tests/gpu_vector_index.rs
+- passing: apps/beam/tests/gpu_matches_cpu.rs (GPU flat top-k == CPU oracle, L2/Dot/Cosine)
+- pending: apps/beam/tests/gpu_vector_index.rs (ANN build/load/rebuild)
 - pending: apps/beam/meter-beam-gpu.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending vector index and GPU meter gates |
+| gpu-flat-knn-wgpu-metal | slice | #769 | implemented | verified | conformance | apps/beam/tests/gpu_matches_cpu.rs (Apple M1 Max/Metal, recall 1.000) |
+| gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending ANN (IVF-PQ), memory tiers, and GPU meter gates |
 
 ### Batch Ingest And Rebuild
 
