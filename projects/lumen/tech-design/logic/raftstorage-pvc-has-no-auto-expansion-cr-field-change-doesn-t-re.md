@@ -83,3 +83,10 @@ flowchart TD
     dry_run_only --> emit_report
     patch_pvc --> emit_report
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+(fill)
+```
