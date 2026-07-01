@@ -25,7 +25,7 @@ indexes and GPU memory tiers.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GPU Vector Index | #769 | partial | verified | conformance | not_ready | GPU flat kNN on wgpu/Metal verified vs CPU oracle; ANN/memory-tiers/rebuild pending |
+| GPU Vector Index | #769 | partial | verified | conformance | not_ready | GPU flat + IVF-flat + IVF-PQ ANN on wgpu/Metal, recall verified vs oracle; durable segments/memory-tiers/rebuild pending |
 | Batch Ingest And Rebuild | #769 | planned | planned | none | not_ready | vector ingest, compaction, and offline rebuild |
 | Vector Query API | #769 | planned | planned | none | not_ready | nearest-neighbor search with filters and recall gates |
 | HTTP/2 API List | #769 | planned | planned | none | not_ready | h2c/OpenAPI endpoint inventory |
@@ -148,13 +148,15 @@ Beam manages GPU-native vector indexes with explicit memory-tier and rebuild
 semantics rather than treating vector search as a Lumen side path.
 Gate Inventory:
 - passing: apps/beam/tests/gpu_matches_cpu.rs (GPU flat top-k == CPU oracle, L2/Dot/Cosine)
-- pending: apps/beam/tests/gpu_vector_index.rs (ANN build/load/rebuild)
+- passing: apps/beam/tests/ivf_recall.rs (IVF-flat exact at full probe; recall grows with nprobe; GPU ADC == CPU ADC; scaling)
+- pending: apps/beam/tests/gpu_vector_index.rs (durable index build/load/rebuild lifecycle)
 - pending: apps/beam/meter-beam-gpu.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | gpu-flat-knn-wgpu-metal | slice | #769 | implemented | verified | conformance | apps/beam/tests/gpu_matches_cpu.rs (Apple M1 Max/Metal, recall 1.000) |
-| gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending ANN (IVF-PQ), memory tiers, and GPU meter gates |
+| gpu-ivf-pq-ann | slice | #769 | implemented | verified | conformance | apps/beam/tests/ivf_recall.rs (IVF-flat 2.7× faster lossless; IVF-PQ ADC exact, recall tunable) |
+| gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending durable segments, memory tiers, rebuild, and GPU meter gates |
 
 ### Batch Ingest And Rebuild
 
