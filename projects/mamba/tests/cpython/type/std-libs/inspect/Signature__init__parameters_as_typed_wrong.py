@@ -9,12 +9,10 @@
 # case = "Signature__init__parameters_as_typed_wrong"
 # subject = "inspect.Signature.__init__(parameters: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed parameters"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/inspect.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed parameters
 # mamba-strict-type: TypeError
 """Type wall: inspect.Signature.__init__(parameters: typed); call it with the wrong type.
 
