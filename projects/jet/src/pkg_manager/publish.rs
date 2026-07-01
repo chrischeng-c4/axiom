@@ -123,6 +123,60 @@ pub struct Publisher {
     build_first: bool,
 }
 
+/// Preview produced by `jet publish --dry-run`.
+///
+/// The preview is built after the same package transform, optional build,
+/// metadata validation, registry selection, local auth lookup, and in-memory
+/// tarball creation as a real publish, but before the registry PUT upload.
+#[derive(Debug, Clone)]
+pub struct PublishDryRun {
+    pub name: String,
+    pub version: String,
+    pub registry: String,
+    pub tag: String,
+    pub access: String,
+    pub tarball_file: String,
+    pub tarball_bytes: usize,
+    pub files: Vec<String>,
+    pub package_json: serde_json::Value,
+}
+
+impl PublishDryRun {
+    pub fn report(&self) -> String {
+        let package_json =
+            serde_json::to_string_pretty(&self.package_json).unwrap_or_else(|_| "{}".to_string());
+        let mut lines = vec![
+            "jet publish --dry-run".to_string(),
+            format!("package: {}@{}", self.name, self.version),
+            format!("registry: {}", self.registry),
+            format!("tag: {}", self.tag),
+            format!("access: {}", self.access),
+            "auth: configured".to_string(),
+            format!("tarball: {}", self.tarball_file),
+            format!("tarball_bytes: {}", self.tarball_bytes),
+            "files:".to_string(),
+        ];
+        for file in &self.files {
+            lines.push(format!("  - {file}"));
+        }
+        lines.push("package.json:".to_string());
+        lines.push(package_json);
+        lines.join("\n")
+    }
+}
+
+struct PreparedPublish {
+    pkg: serde_json::Value,
+    name: String,
+    version: String,
+    registry: String,
+    auth_token: String,
+    tag: String,
+    access: String,
+    tarball_file: String,
+    tarball_bytes: Vec<u8>,
+}
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-pkg-manager.md#schema
 impl Publisher {
     pub fn new(root_dir: PathBuf) -> Self {
@@ -168,55 +222,35 @@ impl Publisher {
 
     /// Publish to npm registry.
     pub async fn publish(&self, tag: &str, access: Option<&str>) -> Result<()> {
-        let mut pkg = self.read_and_transform_package_json()?;
-        let package_json_path = self.root_dir.join("package.json");
-        let (name_owned, version_owned) = require_publish_identity(&pkg, &package_json_path)?;
-
-        // @issue #172 — optionally build first, then validate the package
-        // metadata before we contact the registry. Doing this before the
-        // auth/registry lookup means a misconfigured package.json fails with a
-        // clear filesystem error instead of a confusing registry rejection.
-        self.prepare_for_packing(&mut pkg)?;
-
-        let name = name_owned.as_str();
-        let version = version_owned.as_str();
-
-        let registry = self.npmrc.registry_for(name);
-        let auth_token = self.npmrc.auth_token_for(registry).ok_or_else(|| {
-            anyhow::anyhow!(
-                "No auth token found for registry {}. Add to .npmrc.",
-                registry
-            )
-        })?;
-
-        // Create tarball in memory
-        let tarball_bytes = self.create_tarball_bytes(&pkg)?;
+        let prepared = self.prepare_publish(tag, access)?;
+        let name = prepared.name.as_str();
+        let version = prepared.version.as_str();
 
         // Publish via npm registry PUT
-        let url = format!("{}/{}", registry.trim_end_matches('/'), name);
+        let url = format!("{}/{}", prepared.registry.trim_end_matches('/'), name);
         let client = reqwest::Client::new();
 
-        let encoded = base64_encode(&tarball_bytes);
+        let encoded = base64_encode(&prepared.tarball_bytes);
         let publish_body = serde_json::json!({
             "name": name,
-            "description": pkg.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-            "dist-tags": { tag: version },
+            "description": prepared.pkg.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+            "dist-tags": { prepared.tag.as_str(): version },
             "versions": {
-                version: pkg
+                version: prepared.pkg
             },
-            "access": access.unwrap_or("public"),
+            "access": prepared.access,
             "_attachments": {
-                format!("{}-{}.tgz", name, version): {
+                prepared.tarball_file: {
                     "content_type": "application/octet-stream",
                     "data": encoded,
-                    "length": tarball_bytes.len()
+                    "length": prepared.tarball_bytes.len()
                 }
             }
         });
 
         let response = client
             .put(&url)
-            .header("Authorization", format!("Bearer {}", auth_token))
+            .header("Authorization", format!("Bearer {}", prepared.auth_token))
             .json(&publish_body)
             .send()
             .await?;
@@ -227,8 +261,59 @@ impl Publisher {
             anyhow::bail!("Publish failed ({}): {}", status, body);
         }
 
-        tracing::info!("Published {}@{} with tag '{}'", name, version, tag);
+        tracing::info!("Published {}@{} with tag '{}'", name, version, prepared.tag);
         Ok(())
+    }
+
+    /// Preview a publish without uploading to the registry.
+    pub fn dry_run(&self, tag: &str, access: Option<&str>) -> Result<PublishDryRun> {
+        let prepared = self.prepare_publish(tag, access)?;
+        let files = tarball_entry_paths_from_bytes(&prepared.tarball_bytes)?;
+        Ok(PublishDryRun {
+            name: prepared.name,
+            version: prepared.version,
+            registry: prepared.registry,
+            tag: prepared.tag,
+            access: prepared.access,
+            tarball_file: prepared.tarball_file,
+            tarball_bytes: prepared.tarball_bytes.len(),
+            files,
+            package_json: prepared.pkg,
+        })
+    }
+
+    fn prepare_publish(&self, tag: &str, access: Option<&str>) -> Result<PreparedPublish> {
+        let mut pkg = self.read_and_transform_package_json()?;
+        let package_json_path = self.root_dir.join("package.json");
+        let (name, version) = require_publish_identity(&pkg, &package_json_path)?;
+
+        // @issue #172 — optionally build first, then validate the package
+        // metadata before we contact the registry. Doing this before the
+        // auth/registry lookup means a misconfigured package.json fails with a
+        // clear filesystem error instead of a confusing registry rejection.
+        self.prepare_for_packing(&mut pkg)?;
+
+        let registry = self.npmrc.registry_for(&name);
+        let auth_token = self.npmrc.auth_token_for(registry).ok_or_else(|| {
+            anyhow::anyhow!(
+                "No auth token found for registry {}. Add to .npmrc.",
+                registry
+            )
+        })?;
+        let tarball_bytes = self.create_tarball_bytes(&pkg)?;
+        let tarball_file = format!("{}-{}.tgz", name, version);
+
+        Ok(PreparedPublish {
+            pkg,
+            name,
+            version,
+            registry: registry.to_string(),
+            auth_token: auth_token.to_string(),
+            tag: tag.to_string(),
+            access: access.unwrap_or("public").to_string(),
+            tarball_file,
+            tarball_bytes,
+        })
     }
 
     /// @issue #172 — the build-then-validate step shared by `pack` and
@@ -817,6 +902,20 @@ fn base64_encode(data: &[u8]) -> String {
     }
 
     result
+}
+
+fn tarball_entry_paths_from_bytes(tarball_bytes: &[u8]) -> Result<Vec<String>> {
+    use flate2::read::GzDecoder;
+
+    let gz = GzDecoder::new(tarball_bytes);
+    let mut archive = tar::Archive::new(gz);
+    let mut paths = Vec::new();
+    for entry in archive.entries()? {
+        let entry = entry?;
+        paths.push(entry.path()?.to_string_lossy().replace('\\', "/"));
+    }
+    paths.sort();
+    Ok(paths)
 }
 
 #[cfg(test)]
