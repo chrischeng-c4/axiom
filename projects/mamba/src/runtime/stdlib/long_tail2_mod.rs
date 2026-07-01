@@ -950,6 +950,16 @@ pub fn register() {
         &[],
     );
     register_with(
+        "multiprocessing.dummy.connection",
+        &["Connection", "Listener"],
+        &[
+            ("Client", dispatch_class_shell as *const () as usize),
+            ("Pipe", dispatch_class_shell as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "multiprocessing.managers",
         &[
             "BaseManager",
