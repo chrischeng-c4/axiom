@@ -9,12 +9,11 @@
 # case = "answer_challenge__connection_as_Connection_wrong"
 # subject = "multiprocessing.connection.answer_challenge(connection: Connection)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed connection"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/connection.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed connection
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.connection.answer_challenge(connection: Connection); call it with the wrong type.
 

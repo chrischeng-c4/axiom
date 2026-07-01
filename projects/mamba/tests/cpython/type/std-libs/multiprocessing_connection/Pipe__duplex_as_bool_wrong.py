@@ -9,12 +9,11 @@
 # case = "Pipe__duplex_as_bool_wrong"
 # subject = "multiprocessing.connection.Pipe(duplex: bool)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed duplex"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/connection.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed duplex
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.connection.Pipe(duplex: bool); call it with the wrong type.
 

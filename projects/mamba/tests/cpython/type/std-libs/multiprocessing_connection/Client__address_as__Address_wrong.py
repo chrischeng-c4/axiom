@@ -9,12 +9,11 @@
 # case = "Client__address_as__Address_wrong"
 # subject = "multiprocessing.connection.Client(address: _Address)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/connection.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed address
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.connection.Client(address: _Address); call it with the wrong type.
 
