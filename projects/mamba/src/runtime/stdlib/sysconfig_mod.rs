@@ -21,6 +21,10 @@ unsafe extern "C" fn dispatch_get_default_scheme(_a: *const MbValue, _n: usize) 
     MbValue::from_ptr(MbObject::new_str("posix_prefix".to_string()))
 }
 
+unsafe extern "C" fn dispatch_is_python_build(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_bool(false)
+}
+
 unsafe extern "C" fn dispatch_get_scheme_names(_a: *const MbValue, _n: usize) -> MbValue {
     let names: Vec<MbValue> = ["posix_prefix", "posix_home", "posix_user", "nt", "nt_user"]
         .iter()
@@ -182,6 +186,10 @@ pub fn register() {
         (
             "get_default_scheme",
             dispatch_get_default_scheme as *const () as usize,
+        ),
+        (
+            "is_python_build",
+            dispatch_is_python_build as *const () as usize,
         ),
         (
             "get_scheme_names",

@@ -9,12 +9,11 @@
 # case = "test_asdl_parser__test_module"
 # subject = "cpython.test_asdl_parser.TestAsdlParser.test_module"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_asdl_parser.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_asdl_parser.py::TestAsdlParser::test_module
 """Auto-ported test: TestAsdlParser::test_module (CPython 3.12 oracle)."""
 
