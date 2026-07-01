@@ -16,6 +16,7 @@
 //! @issue #795
 //! @issue #796
 //! @issue #797
+//! @issue #798
 
 use jet::bundler::types::OutputFormat;
 use jet::bundler::types::SourceMapOption;
@@ -506,6 +507,102 @@ fn declaration_off_emits_no_dts() {
     assert!(
         !root.join("dist/index.d.ts").exists(),
         "no index.d.ts on disk when declaration is off"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-build-lib-dts-preserve-modules-dts-silently-emits-no-d-ts-fi.md#unit-test
+fn preserve_modules_emits_dts_per_source_module() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "preserve-dts-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export { add } from "./math";
+export { Greeter } from "./greeter";
+"#,
+    );
+    write_file(
+        root,
+        "src/math.ts",
+        "export function add(a: number, b: number): number { return a + b; }\n",
+    );
+    write_file(
+        root,
+        "src/greeter.ts",
+        r#"export class Greeter {
+    greet(name: string): string { return `hi ${name}`; }
+}
+"#,
+    );
+
+    let mut options = lib_options(root);
+    options.preserve_modules = true;
+    options.formats = vec![OutputFormat::Esm, OutputFormat::Cjs];
+    let result = build_library(options).expect("preserve_modules dts build must succeed");
+
+    for rel in [
+        "index.js",
+        "index.cjs",
+        "index.d.ts",
+        "math.js",
+        "math.cjs",
+        "math.d.ts",
+        "greeter.js",
+        "greeter.cjs",
+        "greeter.d.ts",
+    ] {
+        assert!(root.join("dist").join(rel).is_file(), "{rel} must exist");
+    }
+
+    let type_subpaths: HashSet<&str> = result
+        .types
+        .iter()
+        .map(|output| output.subpath.as_str())
+        .collect();
+    assert_eq!(
+        type_subpaths,
+        HashSet::from(["./index.d.ts", "./math.d.ts", "./greeter.d.ts"]),
+        "preserve_modules must report every emitted declaration"
+    );
+
+    for entry in &result.entries {
+        let rel = entry.path.strip_prefix(root.join("dist")).unwrap();
+        let expected_dts = root.join("dist").join(rel).with_extension("d.ts");
+        assert_eq!(
+            entry.dts.as_ref(),
+            Some(&expected_dts),
+            "EntryOutput::dts must point at the matching declaration for {:?}",
+            entry.path
+        );
+    }
+
+    let index_dts = std::fs::read_to_string(root.join("dist/index.d.ts")).unwrap();
+    assert!(
+        index_dts.contains("export { add } from \"./math\"")
+            && index_dts.contains("export { Greeter } from \"./greeter\""),
+        "entry declaration must preserve source re-exports, got:\n{index_dts}"
+    );
+    let math_dts = std::fs::read_to_string(root.join("dist/math.d.ts")).unwrap();
+    assert!(
+        math_dts.contains("export declare function add(a: number, b: number): number;"),
+        "math declaration must contain add signature, got:\n{math_dts}"
+    );
+    let greeter_dts = std::fs::read_to_string(root.join("dist/greeter.d.ts")).unwrap();
+    assert!(
+        greeter_dts.contains("export declare class Greeter")
+            && greeter_dts.contains("greet(name: string): string;"),
+        "greeter declaration must contain class signature, got:\n{greeter_dts}"
     );
 }
 

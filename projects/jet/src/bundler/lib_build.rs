@@ -22,9 +22,10 @@
 //! @issue #784
 //! @issue #795
 //! @issue #797
+//! @issue #798
 
 use anyhow::{Context, Result};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::types::{OutputFormat, SourceMapOption};
@@ -144,10 +145,12 @@ pub struct EntryOutput {
 pub struct LibBuildResult {
     /// All emitted outputs.
     pub entries: Vec<EntryOutput>,
-    /// Emitted `.d.ts` declaration files, keyed by the entry's public
-    /// subpath (`.`, `./client`). One per library entry when `declaration`
-    /// is on. Empty when declaration emission is disabled.
+    /// Emitted `.d.ts` declaration files. Single-file library builds record
+    /// one per public entry (`.`, `./client`); preserve-modules builds record
+    /// one per emitted source module. Empty when declaration emission is
+    /// disabled.
     /// @issue #171
+    /// @issue #798
     pub types: Vec<TypesOutput>,
 
     /// Post-emit asset side-effects: the merged `out_dir/style.css` (when
@@ -1332,10 +1335,17 @@ fn build_library_preserve_modules(
     // else the deepest common ancestor of all modules. The emitted tree
     // mirrors each module's path relative to this root.
     let src_root = common_source_root(&module_paths);
+    let (dts_by_module, types_outputs) = if options.declaration {
+        emit_preserve_module_declarations(options, &module_paths, &src_root)?
+    } else {
+        (HashMap::new(), Vec::new())
+    };
 
     let mut outputs = Vec::new();
 
     for module in &module_paths {
+        let module_key = module.canonicalize().unwrap_or_else(|_| module.clone());
+        let dts_path = dts_by_module.get(&module_key).cloned();
         let rel = module
             .strip_prefix(&src_root)
             .unwrap_or(module)
@@ -1364,7 +1374,7 @@ fn build_library_preserve_modules(
                 format: format.clone(),
                 path: out_path,
                 code,
-                dts: None,
+                dts: dts_path.clone(),
             });
         }
     }
@@ -1374,9 +1384,69 @@ fn build_library_preserve_modules(
 
     Ok(LibBuildResult {
         entries: outputs,
-        types: Vec::new(),
+        types: types_outputs,
         assets,
     })
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-build-lib-dts-preserve-modules-dts-silently-emits-no-d-ts-fi.md#logic
+fn emit_preserve_module_declarations(
+    options: &LibBuildOptions,
+    modules: &[PathBuf],
+    source_root: &Path,
+) -> Result<(HashMap<PathBuf, PathBuf>, Vec<TypesOutput>)> {
+    let mut by_module = HashMap::new();
+    let mut types_outputs = Vec::new();
+    let mut pending_outputs = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for module in modules {
+        let source = std::fs::read_to_string(module)
+            .with_context(|| format!("reading {} for .d.ts", module.display()))?;
+        let emit = super::dts::emit_declarations_with_diagnostics(&source)
+            .with_context(|| format!("emitting .d.ts for {}", module.display()))?;
+        let dts_out = declaration_module_output_path(&options.out_dir, source_root, module);
+        let module_key = module.canonicalize().unwrap_or_else(|_| module.clone());
+
+        by_module.insert(module_key, dts_out.clone());
+        types_outputs.push(TypesOutput {
+            subpath: preserve_type_subpath(&options.out_dir, &dts_out),
+            path: dts_out.clone(),
+        });
+        for diagnostic in emit.diagnostics {
+            diagnostics.push(format!(
+                "{}:{}:{}: {}",
+                module.display(),
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.message
+            ));
+        }
+        pending_outputs.push((dts_out, emit.text));
+    }
+
+    if !diagnostics.is_empty() {
+        anyhow::bail!(
+            "dts: isolatedDeclarations found {} error(s):\n  - {}",
+            diagnostics.len(),
+            diagnostics.join("\n  - ")
+        );
+    }
+
+    for (dts_out, dts) in pending_outputs {
+        if let Some(parent) = dts_out.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&dts_out, &dts).with_context(|| format!("writing {}", dts_out.display()))?;
+    }
+
+    Ok((by_module, types_outputs))
+}
+
+fn preserve_type_subpath(out_dir: &Path, dts_out: &Path) -> String {
+    let rel = dts_out.strip_prefix(out_dir).unwrap_or(dts_out);
+    format!("./{}", rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// Recursively collect all internal relative modules reachable from `path`.
