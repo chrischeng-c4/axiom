@@ -205,9 +205,8 @@ pub struct LibConfig {
     pub out_dir: Option<String>,
 
     /// Preserve the internal module structure (one output per source module)
-    /// instead of bundling each entry. Default `false`. Supported for ESM
-    /// output; CJS + `preserve_modules` is a deferred follow-up. `jet build
-    /// --lib --preserve-modules` overrides this.
+    /// instead of bundling each entry. Default `false`. Supports ESM/CJS
+    /// output. `jet build --lib --preserve-modules` overrides this.
     pub preserve_modules: Option<bool>,
 
     /// Global variable name for `iife` output (`jet build --lib --format

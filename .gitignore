@@ -89,6 +89,7 @@ target/
 
 # Frontend build artifacts
 dist/
+dist-stories/
 node_modules/
 .jet/
 .vite/

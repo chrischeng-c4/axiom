@@ -141,7 +141,7 @@ async function waitFor(baseUrl) {
 
 async function startJet(root) {
   if (!(await exists(jetBin))) throw new Error(`jet binary not found: ${jetBin}`);
-  const child = spawn(jetBin, ["serve", "--prod", "--host", "127.0.0.1", "--port", "0"], {
+  const child = spawn(jetBin, ["serve", "--host", "127.0.0.1", "--port", "0"], {
     cwd: root,
     env: { ...process.env, JET_SERVE_CHILD: "1" },
     stdio: ["ignore", "pipe", "pipe"],

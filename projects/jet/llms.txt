@@ -1,4 +1,4 @@
-<!-- SPEC-MANAGED: projects/jet/tech-design/semantic/jet-projects-jet.md#schema -->
+<!-- SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-projects-jet.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # jet Agent Context
 

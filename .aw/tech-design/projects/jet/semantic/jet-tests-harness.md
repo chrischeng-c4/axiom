@@ -95,4 +95,10 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:jet-tests-harness>"
+  - path: ".aw/tech-design/projects/jet/semantic/jet-tests-harness.md"
+    action: verify
+    section: unit-test
+    impl_mode: hand-written
+    description: |
+      Traceability repair: hand-written TD section retained as the implementation edge during AW standardization.
 ```

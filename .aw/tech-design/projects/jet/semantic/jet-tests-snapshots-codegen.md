@@ -121,6 +121,7 @@ flowchart TD
 
 <!-- frontend_source_evidence
 - projects/jet/tests/__snapshots__/codegen/minimal__client.ts
+- projects/jet/tests/__snapshots__/codegen/minimal__hooks.swr.ts
 - projects/jet/tests/__snapshots__/codegen/minimal__runtime.ts
 - projects/jet/tests/__snapshots__/codegen/minimal__hooks.ts
 - projects/jet/tests/__snapshots__/codegen/minimal__runtime.axios.ts
@@ -140,6 +141,14 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-jet-tests-snapshots-codegen-minimal-client-ts>"
+  - path: "projects/jet/tests/__snapshots__/codegen/minimal__hooks.swr.ts"
+    action: modify
+    section: logic
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-jet-tests-snapshots-codegen-minimal-hooks-swr-ts>"
   - path: "projects/jet/tests/__snapshots__/codegen/minimal__runtime.ts"
     action: modify
     section: logic

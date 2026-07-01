@@ -8,6 +8,12 @@ capability_refs:
     claim: csf-story-discovery
     coverage: partial
     rationale: "Supporting CSF2 Template.bind, re-exported stories, and spread args lets discovery capture the full story set from real story files."
+  - id: component-workbench
+    role: primary
+    gap: component-workbench-readiness
+    claim: csf2-template-bind-re-exports
+    coverage: partial
+    rationale: "This TD verifies CSF2 Template.bind, re-exported stories, and spread args discovery."
 ---
 
 # jet stories discovery: CSF2 Template.bind, Re-exported Stories, and Spread Args
@@ -49,6 +55,19 @@ flowchart TD
     reexport --> index[add to StoryIndex]
     resargs --> index
     index --> done([stories captured])
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: csf2_template_bind_re_exports
+    capability_id: component-workbench
+    claim_id: csf2-template-bind-re-exports
+    name: "CSF2 Template.bind and re-exports"
+    command: "cargo test -p jet --test csf_discovery -- --nocapture"
+    proves: "CSF2 Template.bind, re-exported stories, and spread args are discovered."
 ```
 
 ## Changes
