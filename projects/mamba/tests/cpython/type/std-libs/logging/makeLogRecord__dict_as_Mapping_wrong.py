@@ -9,12 +9,11 @@
 # case = "makeLogRecord__dict_as_Mapping_wrong"
 # subject = "logging.makeLogRecord(dict: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dict"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dict
 # mamba-strict-type: TypeError
 """Type wall: logging.makeLogRecord(dict: Mapping); call it with the wrong type.
 

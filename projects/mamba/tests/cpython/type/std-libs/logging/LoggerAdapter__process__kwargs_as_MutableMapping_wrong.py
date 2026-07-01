@@ -9,12 +9,11 @@
 # case = "LoggerAdapter__process__kwargs_as_MutableMapping_wrong"
 # subject = "logging.LoggerAdapter.process(kwargs: MutableMapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed kwargs"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed kwargs
 # mamba-strict-type: TypeError
 """Type wall: logging.LoggerAdapter.process(kwargs: MutableMapping); call it with the wrong type.
 

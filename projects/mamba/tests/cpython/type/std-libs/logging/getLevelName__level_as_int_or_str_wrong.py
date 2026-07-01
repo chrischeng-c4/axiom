@@ -6,8 +6,8 @@
 # bucket = "std-libs"
 # lib = "logging"
 # dimension = "type"
-# case = "captureWarnings__capture_as_bool_wrong"
-# subject = "logging.captureWarnings(capture: bool)"
+# case = "getLevelName__level_as_int_or_str_wrong"
+# subject = "logging.getLevelName(level: int | str)"
 # kind = "semantic"
 # xfail = ""
 # mem_carveout = ""
@@ -15,14 +15,14 @@
 # status = "filled"
 # ///
 # mamba-strict-type: TypeError
-"""Type wall: logging.captureWarnings(capture: bool); call it with the wrong type.
+"""Type wall: logging.getLevelName(level: int | str); call it with the wrong type.
 
-typeshed contract: capture is bool. mamba is force-typed, so a wrong-typed
-argument MUST raise TypeError (CPython may accept or raise — mamba's to enforce)."""
+typeshed contract: level is int | str across overloads. mamba is force-typed, so a
+wrong-typed argument MUST raise TypeError."""
 
-from logging import captureWarnings
+from logging import getLevelName
 try:
-    captureWarnings("not_a_bool")  # capture: bool <- wrong-typed
+    getLevelName(3.14)  # level: int | str <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)

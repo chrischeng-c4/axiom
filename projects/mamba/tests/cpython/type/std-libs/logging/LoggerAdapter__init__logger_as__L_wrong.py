@@ -9,12 +9,11 @@
 # case = "LoggerAdapter__init__logger_as__L_wrong"
 # subject = "logging.LoggerAdapter.__init__(logger: _L)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed logger"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/logging.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed logger
 # mamba-strict-type: TypeError
 """Type wall: logging.LoggerAdapter.__init__(logger: _L); call it with the wrong type.
 
