@@ -9,12 +9,10 @@
 # case = "DynamicClassAttribute__setter__fset_as_Callable_wrong"
 # subject = "types.DynamicClassAttribute.setter(fset: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fset"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fset
 # mamba-strict-type: TypeError
 """Type wall: types.DynamicClassAttribute.setter(fset: Callable); call it with the wrong type.
 

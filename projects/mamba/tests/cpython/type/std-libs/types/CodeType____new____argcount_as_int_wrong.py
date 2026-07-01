@@ -9,7 +9,6 @@
 # case = "CodeType____new____argcount_as_int_wrong"
 # subject = "types.CodeType.__new__(argcount: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

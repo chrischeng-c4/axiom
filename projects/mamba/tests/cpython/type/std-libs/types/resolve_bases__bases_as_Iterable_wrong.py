@@ -9,7 +9,6 @@
 # case = "resolve_bases__bases_as_Iterable_wrong"
 # subject = "types.resolve_bases(bases: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

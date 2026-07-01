@@ -9,12 +9,10 @@
 # case = "DynamicClassAttribute__init__fget_as_typed_wrong"
 # subject = "types.DynamicClassAttribute.__init__(fget: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fget"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed fget
 # mamba-strict-type: TypeError
 """Type wall: types.DynamicClassAttribute.__init__(fget: typed); call it with the wrong type.
 

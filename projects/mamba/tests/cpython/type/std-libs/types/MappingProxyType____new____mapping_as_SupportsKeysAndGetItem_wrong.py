@@ -9,7 +9,6 @@
 # case = "MappingProxyType____new____mapping_as_SupportsKeysAndGetItem_wrong"
 # subject = "types.MappingProxyType.__new__(mapping: SupportsKeysAndGetItem)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"

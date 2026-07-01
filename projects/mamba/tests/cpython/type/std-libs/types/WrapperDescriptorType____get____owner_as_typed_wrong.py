@@ -9,12 +9,10 @@
 # case = "WrapperDescriptorType____get____owner_as_typed_wrong"
 # subject = "types.WrapperDescriptorType.__get__(owner: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed owner"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed owner
 # mamba-strict-type: TypeError
 """Type wall: types.WrapperDescriptorType.__get__(owner: typed); call it with the wrong type.
 

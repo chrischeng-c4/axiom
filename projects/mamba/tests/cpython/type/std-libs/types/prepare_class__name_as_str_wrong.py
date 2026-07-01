@@ -9,7 +9,6 @@
 # case = "prepare_class__name_as_str_wrong"
 # subject = "types.prepare_class(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/types.pyi"
 # status = "filled"
