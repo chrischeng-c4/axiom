@@ -126,6 +126,20 @@ fn bytes_width_arg(width: MbValue) -> Option<usize> {
     Some(w.max(0) as usize)
 }
 
+fn bytes_optional_index_arg(value: MbValue, default: i64) -> Option<i64> {
+    if value.is_none() {
+        return Some(default);
+    }
+    let Some(v) = value.as_int() else {
+        raise_type_error(&format!(
+            "'{}' object cannot be interpreted as an integer",
+            super::builtins::value_type_name(value)
+        ));
+        return None;
+    };
+    Some(v)
+}
+
 fn encode_str_with_encoding(s: &str, encoding: &str) -> Option<Vec<u8>> {
     let normalized = encoding.to_ascii_lowercase().replace('_', "-");
     match normalized.as_str() {
@@ -961,7 +975,8 @@ pub fn mb_bytes_hex_with_sep(bytes: MbValue, sep: MbValue, bytes_per_sep: MbValu
             return MbValue::from_ptr(MbObject::new_str(String::new()));
         };
         // Resolve separator: accept str (first char) or bytes (first byte).
-        // None / unrecognised types fall through to the unseparated form.
+        // Missing sep uses the unseparated form; explicit wrong types are a
+        // TypeError so strict-type fixtures do not silently behave as default.
         // CPython requires the separator to be exactly one character; an empty
         // or multi-character separator raises ValueError("sep must be length 1.").
         let invalid_sep = || {
@@ -990,9 +1005,15 @@ pub fn mb_bytes_hex_with_sep(bytes: MbValue, sep: MbValue, bytes_per_sep: MbValu
             }
             b.first().map(|byte| *byte as char)
         } else {
-            None
+            raise_type_error(&format!(
+                "sep must be str or bytes, not {}",
+                super::builtins::value_type_name(sep)
+            ));
+            return MbValue::none();
         };
-        let bps = bytes_per_sep.as_int().unwrap_or(1);
+        let Some(bps) = bytes_optional_index_arg(bytes_per_sep, 1) else {
+            return MbValue::none();
+        };
         if sep_char.is_none() || data.is_empty() {
             let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
             return MbValue::from_ptr(MbObject::new_str(hex));
@@ -1142,7 +1163,14 @@ fn clamp_range(len: usize, start: MbValue, end: MbValue) -> (usize, usize) {
 /// bytes + bytes → new bytes
 pub fn mb_bytes_concat(a: MbValue, b: MbValue) -> MbValue {
     unsafe {
-        if let (Some(da), Some(db)) = (as_bytes_cloned(a), as_bytes_cloned(b)) {
+        if let Some(da) = as_bytes_cloned(a) {
+            let Some(db) = as_bytes_cloned(b) else {
+                raise_type_error(&format!(
+                    "can't concat {} to bytes",
+                    super::builtins::value_type_name(b)
+                ));
+                return MbValue::none();
+            };
             let mut result = da;
             result.extend_from_slice(&db);
             MbValue::from_ptr(MbObject::new_bytes(result))
@@ -2205,6 +2233,9 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             mb_bytes_decode_with(receiver, encoding, errors)
         }
         "hex" => mb_bytes_hex_with_sep(receiver, arg(0), arg(1)),
+        "__add__" => mb_bytes_concat(receiver, arg(0)),
+        "__mul__" => super::builtins::mb_mul(receiver, arg(0)),
+        "__rmul__" => super::builtins::mb_mul(arg(0), receiver),
         "find" => {
             let s = if argc() > 1 { arg(1) } else { MbValue::none() };
             let e = if argc() > 2 { arg(2) } else { MbValue::none() };
@@ -2695,7 +2726,10 @@ pub fn mb_bytes_zfill(receiver: MbValue, width: MbValue) -> MbValue {
 
 pub fn mb_bytes_expandtabs(receiver: MbValue, tabsize: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
-    let ts = tabsize.as_int().unwrap_or(8).max(0) as usize;
+    let Some(ts) = bytes_optional_index_arg(tabsize, 8) else {
+        return MbValue::none();
+    };
+    let ts = ts.max(0) as usize;
     let mut out = Vec::with_capacity(data.len());
     let mut col = 0usize;
     for &b in &data {
