@@ -9,7 +9,6 @@
 # case = "cbrt__x_as__SupportsFloatOrIndex_wrong"
 # subject = "math.cbrt(x: _SupportsFloatOrIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

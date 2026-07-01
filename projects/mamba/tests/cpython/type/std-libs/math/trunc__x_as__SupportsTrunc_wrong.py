@@ -9,7 +9,6 @@
 # case = "trunc__x_as__SupportsTrunc_wrong"
 # subject = "math.trunc(x: _SupportsTrunc)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "sumprod__p_as_Iterable_wrong"
 # subject = "math.sumprod(p: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "fsum__seq_as_Iterable_wrong"
 # subject = "math.fsum(seq: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"

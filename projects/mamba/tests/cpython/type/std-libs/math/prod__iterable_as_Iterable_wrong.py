@@ -9,12 +9,10 @@
 # case = "prod__iterable_as_Iterable_wrong"
 # subject = "math.prod(iterable: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iterable"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/math.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed iterable
 # mamba-strict-type: TypeError
 """Type wall: math.prod(iterable: Iterable); call it with the wrong type.
 
