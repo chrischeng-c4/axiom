@@ -48,3 +48,44 @@ flowchart TD
     validate --> pack[Write transformed package.json to tarball and publish body]
     pack --> done([No workspace: ranges leave the package])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jet-pack-publish-workspace-deps-tests
+requirements:
+  R1:
+    text: "pack/publish discovers the workspace root when invoked from a package directory."
+    risk: high
+    verify: unit
+  R2:
+    text: "dependencies, devDependencies, peerDependencies, and optionalDependencies rewrite workspace:* / workspace:^ / workspace:~ to package versions."
+    risk: high
+    verify: unit
+  R3:
+    text: "The package.json written into the tarball contains no workspace: protocol ranges."
+    risk: high
+    verify: unit
+---
+requirementDiagram
+requirement R1 {
+  id: R1
+  text: "Ancestor workspace root discovery"
+  risk: High
+  verifymethod: Test
+}
+requirement R2 {
+  id: R2
+  text: "All dependency fields rewrite"
+  risk: High
+  verifymethod: Test
+}
+requirement R3 {
+  id: R3
+  text: "Packed manifest is registry-safe"
+  risk: High
+  verifymethod: Test
+}
+```
