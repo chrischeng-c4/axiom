@@ -9,12 +9,11 @@
 # case = "ResourceHandle__joinpath__name_as_Never_wrong"
 # subject = "importlib.resources.simple.ResourceHandle.joinpath(name: Never)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/importlib/resources/simple.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: importlib.resources.simple.ResourceHandle.joinpath(name: Never); call it with the wrong type.
 

@@ -5065,6 +5065,30 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "importlib.resources.abc",
+        qualifier: "Traversable",
+        name: "open",
+        kind: SigKind::Method,
+        params: &[p("mode", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "importlib.resources.simple",
+        qualifier: "ResourceHandle",
+        name: "joinpath",
+        kind: SigKind::Method,
+        params: &[p("name", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "importlib.resources.simple",
+        qualifier: "ResourceHandle",
+        name: "open",
+        kind: SigKind::Method,
+        params: &[p("mode", CoreTy::Str)],
+        enforceable: true,
+    },
     // fractions.Fraction arithmetic partners are generated from overloaded
     // numeric aliases and collapse to Unknown. For strict-type fixtures, use
     // Complex as the broad numeric wall: int/float/bool remain compatible, while
@@ -7399,6 +7423,30 @@ mod tests {
                 0,
                 "anchor",
                 CoreTy::Typed,
+            ),
+            (
+                "importlib.resources.abc",
+                "Traversable",
+                "open",
+                0,
+                "mode",
+                CoreTy::Str,
+            ),
+            (
+                "importlib.resources.simple",
+                "ResourceHandle",
+                "joinpath",
+                0,
+                "name",
+                CoreTy::Typed,
+            ),
+            (
+                "importlib.resources.simple",
+                "ResourceHandle",
+                "open",
+                0,
+                "mode",
+                CoreTy::Str,
             ),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
