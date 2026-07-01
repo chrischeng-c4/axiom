@@ -9,12 +9,11 @@
 # case = "Untokenizer__compat__token_as_tuple_wrong"
 # subject = "lib2to3.pgen2.tokenize.Untokenizer.compat(token: tuple)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed token"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/pgen2/tokenize.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed token
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.pgen2.tokenize.Untokenizer.compat(token: tuple); call it with the wrong type.
 

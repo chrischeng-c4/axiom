@@ -9,12 +9,11 @@
 # case = "ParserGenerator__simplify_dfa__dfa_as_list_wrong"
 # subject = "lib2to3.pgen2.pgen.ParserGenerator.simplify_dfa(dfa: list)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dfa"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/lib2to3/pgen2/pgen.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed dfa
 # mamba-strict-type: TypeError
 """Type wall: lib2to3.pgen2.pgen.ParserGenerator.simplify_dfa(dfa: list); call it with the wrong type.
 
