@@ -4927,6 +4927,23 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: true,
     },
+    // mailcap.findmatch(caps) is a Mapping in typeshed. The generated row
+    // collapses it to Unknown, but the strict fixture's bare object must be
+    // rejected before the long-tail runtime shell returns a placeholder value.
+    StdlibSig {
+        module: "mailcap",
+        qualifier: "",
+        name: "findmatch",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("caps", CoreTy::Typed),
+            p("MIMEtype", CoreTy::Str),
+            p("key", CoreTy::Str),
+            p("filename", CoreTy::Str),
+            p("plist", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // mailbox generated rows collapse StrPath/Literal/Mapping contracts that
     // matter for strict fixture walls. Keep these constructor and mutator walls
     // enforceable without restoring the heavyweight filesystem mailbox classes.
@@ -5033,6 +5050,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("regressor", CoreTy::Typed),
             p("dependent_variable", CoreTy::Unknown),
         ],
+        enforceable: true,
+    },
+    // tkinter.dialog.Dialog.__init__(cnf) is Mapping-shaped. Keep master
+    // skip-safe while checking cnf so the strict fixture does not depend on
+    // GUI/Tk initialization being available.
+    StdlibSig {
+        module: "tkinter.dialog",
+        qualifier: "Dialog",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[p("master", CoreTy::Unknown), p("cnf", CoreTy::Typed)],
         enforceable: true,
     },
     // unittest.case callable/context-manager/typevar parameters collapse to
@@ -6415,6 +6443,14 @@ mod tests {
     }
 
     #[test]
+    fn curated_mailcap_findmatch_caps_wall_overrides_unknown_generated_row() {
+        let sig = get("mailcap", "", "findmatch").expect("mailcap.findmatch present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.params[0].name, "caps");
+        assert_eq!(sig.params[0].ty, CoreTy::Typed);
+    }
+
+    #[test]
     fn curated_mailbox_walls_override_unknown_generated_rows() {
         let mailbox = get("mailbox", "Mailbox", "__init__").expect("Mailbox.__init__ present");
         assert!(mailbox.enforceable);
@@ -6467,6 +6503,16 @@ mod tests {
         let kde = get("statistics", "", "kde").expect("statistics.kde present");
         assert_eq!(kde.params[1].name, "h");
         assert_eq!(kde.params[1].ty, CoreTy::Float);
+    }
+
+    #[test]
+    fn curated_tkinter_dialog_cnf_wall_overrides_unknown_generated_row() {
+        let sig = get("tkinter.dialog", "Dialog", "__init__").expect("Dialog.__init__ present");
+        assert!(sig.enforceable);
+        assert_eq!(sig.params[0].name, "master");
+        assert_eq!(sig.params[0].ty, CoreTy::Unknown);
+        assert_eq!(sig.params[1].name, "cnf");
+        assert_eq!(sig.params[1].ty, CoreTy::Typed);
     }
 
     #[test]
