@@ -31,8 +31,9 @@ use crate::overlay;
 use crate::sandbox;
 use crate::spec::{Base, EnvSpec, GpuRequest, Isolation};
 use crate::state::{
-    ArtifactRecord, ClusterRunRecord, ConfigRef, ProcessStatus, RouteRecord, RunRecord,
-    RunnerRunRecord, ScenarioRunRecord, ServiceRunRecord, Status, TestRunEvidence,
+    ArtifactRecord, ClusterRunRecord, ConfigRef, PlanEvidence, ProcessStatus, RouteRecord,
+    RunRecord, RunnerRunRecord, ScenarioRunRecord, ServiceRunRecord, Status, TestRunEvidence,
+    TopologyEvidence,
 };
 use crate::{id, store};
 
@@ -50,6 +51,8 @@ pub struct Args {
     pub gpu: GpuRequest,
     /// Direct mode prints full VatState JSON instead of a human summary.
     pub json: bool,
+    /// Opaque upstream execution plan to copy into the vat and expose to the runner.
+    pub plan: Option<PathBuf>,
     /// Per-invocation retention override for configured vat.toml runs.
     pub keep: Option<RetentionPolicy>,
 }
@@ -80,6 +83,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
         isolation,
         gpu,
         json,
+        plan,
         keep,
     } = args;
     match target {
@@ -95,6 +99,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             json,
+            plan,
         }),
         Target::Runner { runner_ids } => exec_runner(RunnerArgs {
             base,
@@ -103,6 +108,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             runner_ids,
+            plan,
             keep,
         }),
         Target::Scenario { scenario_id } => exec_scenario(ScenarioArgs {
@@ -112,6 +118,7 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             isolation,
             gpu,
             scenario_id,
+            plan,
             keep,
         }),
     }
@@ -124,6 +131,7 @@ struct RunnerArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     runner_ids: Vec<String>,
+    plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
 }
 
@@ -136,6 +144,7 @@ struct DirectArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     json: bool,
+    plan: Option<PathBuf>,
 }
 
 struct ScenarioArgs {
@@ -145,6 +154,7 @@ struct ScenarioArgs {
     isolation: Isolation,
     gpu: GpuRequest,
     scenario_id: String,
+    plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
 }
 
@@ -201,6 +211,8 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
         lineage,
     )
     .context("create vat")?;
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
+    let spec = vat.meta.spec.clone();
 
     let command: Vec<String> = std::iter::once(args.program.clone())
         .chain(args.program_args.iter().cloned())
@@ -358,6 +370,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         .context("create vat")?;
     let logs_dir = vat.dir.join(crate::paths::file::LOGS);
     std::fs::create_dir_all(&logs_dir).with_context(|| format!("create {}", logs_dir.display()))?;
+    let topology_services = configured_service_ids(&cfg, &runners, &[])?;
 
     vat.meta.status = Status::Running;
     vat.meta.test_run = Some(TestRunEvidence {
@@ -372,8 +385,16 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         runner: None,
         runners: Vec::new(),
         artifacts: Vec::new(),
+        plan: None,
+        topology: Some(TopologyEvidence {
+            runners: runners.iter().map(|runner| runner.id.clone()).collect(),
+            services: topology_services,
+            network: "open".to_string(),
+            hermetic: false,
+        }),
     });
     vat.save()?;
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
     vat.log(Event::new(
         EventKind::RunStarted,
         format!("runner: {joined_ids}"),
@@ -566,8 +587,16 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         runner: None,
         runners: Vec::new(),
         artifacts: Vec::new(),
+        plan: None,
+        topology: Some(TopologyEvidence {
+            runners: vec![runner.id.clone()],
+            services: extra_service_ids.clone(),
+            network: scenario_network_name(scenario.network).to_string(),
+            hermetic: scenario.network == ScenarioNetworkMode::Hermetic,
+        }),
     });
     vat.save()?;
+    attach_plan_file(&mut vat, args.plan.as_deref())?;
     vat.log(Event::new(
         EventKind::RunStarted,
         format!("scenario: {}", scenario.id),
@@ -637,6 +666,45 @@ fn process_exit_code(code: i32) -> ExitCode {
     } else {
         ExitCode::from(code.clamp(0, 255) as u8)
     }
+}
+
+fn attach_plan_file(vat: &mut store::Vat, plan_path: Option<&Path>) -> Result<()> {
+    let Some(plan_path) = plan_path else {
+        return Ok(());
+    };
+    let bytes = std::fs::read(plan_path)
+        .with_context(|| format!("read plan file {}", plan_path.display()))?;
+    let source_path = std::fs::canonicalize(plan_path)
+        .unwrap_or_else(|_| plan_path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let dest_dir = vat.rootfs().join(".vat-plan");
+    std::fs::create_dir_all(&dest_dir).with_context(|| format!("create {}", dest_dir.display()))?;
+    let file_name = plan_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("plan.json");
+    let dest = dest_dir.join(file_name);
+    std::fs::write(&dest, &bytes).with_context(|| format!("write {}", dest.display()))?;
+    let evidence = PlanEvidence {
+        source_path,
+        rootfs_path: dest.to_string_lossy().into_owned(),
+        digest: digest_bytes(&bytes),
+    };
+    vat.meta
+        .spec
+        .env
+        .insert("VAT_PLAN_PATH".to_string(), evidence.rootfs_path.clone());
+    vat.meta
+        .spec
+        .env
+        .insert("VAT_PLAN_DIGEST".to_string(), evidence.digest.clone());
+    vat.meta.plan = Some(evidence.clone());
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        test_run.plan = Some(evidence);
+    }
+    vat.save()
 }
 
 fn run_configured(
@@ -826,6 +894,32 @@ fn scenario_service_ids(
         .collect())
 }
 
+fn configured_service_ids(
+    cfg: &VatConfig,
+    runners: &[RunnerConfig],
+    extra_service_ids: &[String],
+) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for service_id in extra_service_ids {
+        if !ids.contains(service_id) {
+            ids.push(service_id.clone());
+        }
+    }
+    for runner in runners {
+        for service_id in &runner.requires {
+            if !ids.contains(service_id) {
+                ids.push(service_id.clone());
+            }
+        }
+    }
+    Ok(
+        ordered_required_services(cfg, &ids.iter().map(String::as_str).collect::<Vec<_>>())?
+            .into_iter()
+            .map(|service| service.id.clone())
+            .collect(),
+    )
+}
+
 fn service_set_has_http_mock(cfg: &VatConfig, service_ids: &[String]) -> bool {
     service_ids.iter().any(|id| {
         cfg.service(id)
@@ -849,6 +943,10 @@ fn persist_scenario_topology(
 ) -> Result<()> {
     let routes = scenario_route_records(cfg, plans);
     if let Some(test_run) = vat.meta.test_run.as_mut() {
+        if let Some(topology) = test_run.topology.as_mut() {
+            topology.services = plans.iter().map(|plan| plan.id.clone()).collect();
+            topology.hermetic = force_hermetic_proxy;
+        }
         if let Some(scenario) = test_run.scenario.as_mut() {
             scenario.services = plans.iter().map(|plan| plan.id.clone()).collect();
             scenario.routes = routes;

@@ -20,6 +20,16 @@ evidence afterward.
 - If `vat.toml` declares `[[scenarios]]` for an app-under-test, use
   `vat run --scenario <id>`.
 - Use `vat run <runner-id>` only when you need a non-default runner.
+- Use `vat capabilities --json` to inspect this host's effective substrate:
+  COW clone method, isolation backends, Docker provider/daemon state, and
+  service-provider capabilities.
+- Use `vat plan --json` to inspect selected runners, services, env keys, and
+  artifacts without creating a vat or starting services.
+- Use `vat doctor --json` for cheap host preflight before a CI/local run; it
+  includes the same capability report plus topology-specific checks.
+- If an upstream planner/TIA tool selected tests, pass the opaque file with
+  `vat run --plan impact.json <runner-id>`; vat copies and records it but does
+  not interpret test-selection semantics.
 - If you only need one ad-hoc command, use `vat run -- <command>`.
 - `vat run` prints sparse JSONL checkpoints; the final line has
   `"type":"result"`.
@@ -196,6 +206,9 @@ network = "hermetic"       # open | hermetic
 
 - Runner scripts can detect configured vat runner/scenario mode with
   `VAT_WORKSPACE_BASE`; it points at the source workspace that vat cloned.
+- `vat run --plan <path>` copies the opaque plan into the rootfs, injects
+  `VAT_PLAN_PATH` and `VAT_PLAN_DIGEST`, and records the same evidence in
+  `vat state`. The wrapped app/test tool owns the plan semantics.
 - macOS native TCP presets can hit `kern.ipc.somaxconn` under connection churn
   and produce intermittent `ECONNREFUSED` even while the service is up. vat emits
   a structured `hint` when a service log reports that backlog cap. Prefer app
@@ -212,6 +225,14 @@ network = "hermetic"       # open | hermetic
 - `vat run e2e`: explicitly run the `e2e` runner.
 - `vat run --keep always e2e`: override `[workspace].keep` for one invocation so
   a passing probe run remains inspectable via `vat logs` / `vat state`.
+- `vat capabilities --json`: report host backend/isolation/Docker/service
+  capabilities without requiring vat.toml.
+- `vat plan --json [e2e]`: print the selected configured topology without side
+  effects.
+- `vat doctor --json [e2e]`: check the selected topology's host prerequisites
+  without running the app/tests.
+- `vat run --plan impact.json impacted`: expose an upstream plan to the runner
+  through `VAT_PLAN_PATH` / `VAT_PLAN_DIGEST` and preserve plan evidence.
 - `vat run -- cargo test -p app`: run one direct command without requiring
   vat.toml; the child exit code is forwarded.
 - `vat logs <id> runner`: print retained runner stdout/stderr.

@@ -59,12 +59,43 @@ enum Cmd {
         /// Agent runner mode already emits compact JSONL. Direct mode uses this for full VatState JSON.
         #[arg(long)]
         json: bool,
+        /// Opaque upstream execution plan to copy into the vat and expose as VAT_PLAN_PATH.
+        #[arg(long)]
+        plan: Option<PathBuf>,
         /// Override vat.toml [workspace].keep for this configured run.
         #[arg(long, value_enum)]
         keep: Option<RetentionPolicy>,
         /// Direct command mode, e.g. `vat run -- python train.py`.
         #[arg(last = true, allow_hyphen_values = true, value_name = "COMMAND")]
         cmd: Vec<String>,
+    },
+    /// Print the configured run topology without creating a vat or starting services.
+    Plan {
+        /// Plan a named production-like integration scenario from vat.toml.
+        #[arg(long)]
+        scenario: Option<String>,
+        /// Named runner(s) from vat.toml; omit to use the default selection rule.
+        runners: Vec<String>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cheap host preflight for the configured run topology.
+    Doctor {
+        /// Check a named production-like integration scenario from vat.toml.
+        #[arg(long)]
+        scenario: Option<String>,
+        /// Named runner(s) from vat.toml; omit to use the default selection rule.
+        runners: Vec<String>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report this host's effective vat backend capabilities.
+    Capabilities {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// List all vats.
     Ls {
@@ -287,6 +318,7 @@ pub fn run() -> Result<ExitCode> {
             isolation,
             gpu,
             json,
+            plan,
             keep,
             mut cmd,
         } => {
@@ -306,6 +338,7 @@ pub fn run() -> Result<ExitCode> {
                     isolation,
                     gpu,
                     json,
+                    plan,
                     keep,
                 });
             }
@@ -328,9 +361,21 @@ pub fn run() -> Result<ExitCode> {
                 isolation,
                 gpu,
                 json,
+                plan,
                 keep,
             })
         }
+        Cmd::Plan {
+            scenario,
+            runners,
+            json,
+        } => commands::plan::exec(configured_target(scenario, runners)?, json),
+        Cmd::Doctor {
+            scenario,
+            runners,
+            json,
+        } => commands::doctor::exec(configured_target(scenario, runners)?, json),
+        Cmd::Capabilities { json } => commands::capabilities::exec(json),
         Cmd::Ls { json } => commands::ls::exec(json),
         Cmd::State { id, compact } => commands::state::exec(id, compact),
         Cmd::Diff { id, json } => commands::diff::exec(id, json),
@@ -376,6 +421,22 @@ pub fn run() -> Result<ExitCode> {
             route,
             no_forward,
         ),
+    }
+}
+
+fn configured_target(
+    scenario: Option<String>,
+    runners: Vec<String>,
+) -> Result<commands::plan::PlanTarget> {
+    if let Some(scenario_id) = scenario {
+        if !runners.is_empty() {
+            anyhow::bail!("--scenario cannot be combined with runner ids");
+        }
+        Ok(commands::plan::PlanTarget::Scenario { scenario_id })
+    } else {
+        Ok(commands::plan::PlanTarget::Runner {
+            runner_ids: runners,
+        })
     }
 }
 

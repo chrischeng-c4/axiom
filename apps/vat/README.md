@@ -124,8 +124,14 @@ apps/vat/build.sh debug         # build + install ~/.cargo/bin/vat
 vat run -- python train.py
 
 # run the default local test protocol from vat.toml
+vat capabilities --json  # inspect host backend/isolation/Docker/service capabilities
+vat plan --json          # inspect selected runner/services without side effects
+vat doctor --json        # cheap host preflight for the selected topology
 vat run
 vat logs <id> runner
+
+# let an upstream planner/TIA tool choose tests; vat only injects the plan
+vat run --plan impact.json impacted
 
 # give an LLM/tool agent the compact vat usage contract
 vat llm
@@ -176,6 +182,10 @@ The command an agent calls to understand a vat. One document, no log-scraping:
   "spec":   { "isolation": "none", "gpu": "auto", ... },
   "lineage": ["vat-..."],            // the fork tree this vat sits in
   "last_run": { "command": [...], "exit_code": 0, "duration_ms": 30 },
+  "plan": { "source_path": "impact.json", "rootfs_path": ".../.vat-plan/impact.json",
+            "digest": "fnv1a64:..." },
+  "test_run": { "topology": { "runners": ["e2e"], "services": ["pg"] },
+                "plan": { "...": "..." }, ... },
   "workspace": { "rootfs": "...", "file_count": 12, "size_bytes": 4096 },
   "changes": { "added": 1, "deleted": 1, "sample_added": ["made.txt"], ... },
   "gpu": { "chip": "Apple M1 Pro", "accessible": true,
@@ -192,7 +202,11 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat run <runner-id>` | Run a specific `vat.toml` runner. |
 | `vat run --scenario <id>` | Run a named app-under-test scenario: app service + scenario deps + runner deps, with topology evidence in `vat state`. |
 | `vat run --keep always\|failed\|never [runner-id]` | Override `[workspace].keep` for one configured run, e.g. retain logs for a passing probe without editing `vat.toml`. |
+| `vat run --plan <path> [runner-id]` | Copy an opaque upstream plan (for example TIA output) into the vat, expose it as `VAT_PLAN_PATH` / `VAT_PLAN_DIGEST`, and record it in `vat state`. |
 | `vat run -- <cmd>` | Clone a base, run one direct command, record the result. `--base DIR`, `--from VAT`, `--isolation none\|seatbelt`, `--gpu auto\|required\|none`, `--json`. |
+| `vat capabilities --json` | Report this host's effective VAT substrate: COW clone method, isolation backends, Docker provider/daemon state, and service-provider capabilities. |
+| `vat plan [runner-id...] --json` | Print the selected configured run topology without creating a vat, starting services, or running tests. |
+| `vat doctor [runner-id...] --json` | Run cheap host preflight checks for the selected topology (capabilities, egress enforcement, external TCP reachability, Docker daemon, cluster backend, command binaries, referenced files). |
 | `vat llm [--topic <t>] [--format md\|json]` | Print offline agent-facing docs. Default `outline`; use `--topic guide` for the detailed vat.toml/service/evidence/boundary guide. |
 | `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`issue`), via the shared `cli-std` crate. |
 | `vat issue search\|view\|create` | Search, read, and file diagnostics-rich GitHub issues under `app:vat`; `issue create --dry-run --title <t>` previews version + target + OS/arch diagnostics without submitting. |
@@ -394,7 +408,9 @@ Env export contract:
 
 Runner scripts can detect a configured vat run with `VAT_WORKSPACE_BASE`; it is
 set for `vat.toml` runner and scenario modes and points at the source workspace
-that vat cloned.
+that vat cloned. When `vat run --plan <path>` is used, vat copies that opaque
+plan into the rootfs, injects `VAT_PLAN_PATH` and `VAT_PLAN_DIGEST`, and records
+the plan evidence in `vat state`; vat never interprets the plan semantics.
 
 For the native path vat checks for required binaries, cold-prepares cached
 service data when needed, and clones it on later runs. For the Docker path it

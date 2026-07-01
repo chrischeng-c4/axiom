@@ -7,13 +7,16 @@
 //! so the binary can propagate a meaningful status (notably: `vat run`
 //! forwards the child's exit code).
 
+pub mod capabilities;
 pub mod cluster;
 pub mod diff;
+pub mod doctor;
 pub mod emulator;
 pub mod gpu;
 pub mod llm;
 pub mod logs;
 pub mod ls;
+pub mod plan;
 pub mod rm;
 pub mod run;
 pub mod snapshot;
