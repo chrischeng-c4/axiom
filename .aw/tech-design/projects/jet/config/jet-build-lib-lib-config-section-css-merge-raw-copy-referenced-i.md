@@ -1,6 +1,6 @@
 ---
 id: projects-jet-config-jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i-md
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -61,6 +61,58 @@ flowchart TD
     skip_asset_entry --> build_source
     build_source --> post_assets[Run css_merge/raw_copy post-emit assets]
     post_assets --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/src/wasm_build/schema.rs"
+    action: modify
+    section: logic
+    description: |
+      Generate `jet config schema` from the full `JetConfig` surface instead
+      of a WASM-only wrapper, so `[lib]` is documented and `[wasm]` is optional.
+    impl_mode: hand-written
+  - path: "schemas/jet.schema.json"
+    action: modify
+    section: logic
+    description: |
+      Regenerate the checked-in schema artifact from the full JetConfig schema.
+    impl_mode: generated
+  - path: "projects/jet/src/wasm_build/lint.rs"
+    action: modify
+    section: logic
+    description: |
+      Validate `jet config lint` against the full JetConfig file shape while
+      preserving WASM-specific warning/diagnostic behavior when `[wasm]` is
+      present.
+    impl_mode: hand-written
+  - path: "projects/jet/src/wasm_build/config.rs"
+    action: modify
+    section: logic
+    description: |
+      Keep the WASM loader's shared-section allowlist aligned with JetConfig by
+      accepting `[lib]` and `[codegen]` as raw non-WASM sections.
+    impl_mode: hand-written
+  - path: "projects/jet/src/bundler/lib_build.rs"
+    action: modify
+    section: logic
+    description: |
+      During library entry discovery, skip package export targets that are
+      non-JS/TS assets only when they are covered by configured css_merge or
+      raw_copy, then run the existing post-emit asset steps.
+    impl_mode: hand-written
+  - path: "projects/jet/tests/build/library_build.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Add regression coverage for a package exports map containing
+      `./style.css` backed by css_merge, asserting the JS entry builds and
+      style.css is emitted without treating CSS as a JS entry.
+    impl_mode: hand-written
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
