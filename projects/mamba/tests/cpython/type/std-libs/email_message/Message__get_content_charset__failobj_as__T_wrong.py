@@ -9,12 +9,10 @@
 # case = "Message__get_content_charset__failobj_as__T_wrong"
 # subject = "email.message.Message.get_content_charset(failobj: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed failobj"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/email/message.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed failobj
 # mamba-strict-type: TypeError
 """Type wall: email.message.Message.get_content_charset(failobj: _T); call it with the wrong type.
 
