@@ -9,7 +9,6 @@
 # case = "ZipExtFile__readline__limit_as_int_wrong"
 # subject = "zipfile.ZipExtFile.readline(limit: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

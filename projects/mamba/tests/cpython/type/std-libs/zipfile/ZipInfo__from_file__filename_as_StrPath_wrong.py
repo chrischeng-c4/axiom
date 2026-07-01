@@ -9,7 +9,6 @@
 # case = "ZipInfo__from_file__filename_as_StrPath_wrong"
 # subject = "zipfile.ZipInfo.from_file(filename: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

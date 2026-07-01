@@ -9,12 +9,10 @@
 # case = "ZipFile__setpassword__pwd_as_bytes_wrong"
 # subject = "zipfile.ZipFile.setpassword(pwd: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pwd"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed pwd
 # mamba-strict-type: TypeError
 """Type wall: zipfile.ZipFile.setpassword(pwd: bytes); call it with the wrong type.
 

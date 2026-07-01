@@ -9,12 +9,10 @@
 # case = "CompleteDirs__make__source_as_ZipFile_wrong"
 # subject = "zipfile.CompleteDirs.make(source: ZipFile)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed source"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed source
 # mamba-strict-type: TypeError
 """Type wall: zipfile.CompleteDirs.make(source: ZipFile); call it with the wrong type.
 

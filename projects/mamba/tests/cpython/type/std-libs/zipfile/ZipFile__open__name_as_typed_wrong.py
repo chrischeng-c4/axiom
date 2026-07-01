@@ -9,7 +9,6 @@
 # case = "ZipFile__open__name_as_typed_wrong"
 # subject = "zipfile.ZipFile.open(name: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

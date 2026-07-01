@@ -9,7 +9,6 @@
 # case = "CompleteDirs__resolve_dir__name_as_str_wrong"
 # subject = "zipfile.CompleteDirs.resolve_dir(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

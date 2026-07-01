@@ -9,7 +9,6 @@
 # case = "ZipFile__extractall__path_as_typed_wrong"
 # subject = "zipfile.ZipFile.extractall(path: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

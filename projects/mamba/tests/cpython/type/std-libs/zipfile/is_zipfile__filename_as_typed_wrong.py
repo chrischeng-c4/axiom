@@ -9,7 +9,6 @@
 # case = "is_zipfile__filename_as_typed_wrong"
 # subject = "zipfile.is_zipfile(filename: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

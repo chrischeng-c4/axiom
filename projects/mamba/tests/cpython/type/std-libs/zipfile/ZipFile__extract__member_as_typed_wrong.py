@@ -9,7 +9,6 @@
 # case = "ZipFile__extract__member_as_typed_wrong"
 # subject = "zipfile.ZipFile.extract(member: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

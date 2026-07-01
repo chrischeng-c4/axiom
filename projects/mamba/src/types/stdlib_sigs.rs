@@ -5091,6 +5091,79 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("cm", CoreTy::Typed)],
         enforceable: true,
     },
+    // zipfile has several private/helper classes and Literal/protocol params
+    // that the generated table leaves uncheckable. Keep strict type walls in
+    // front of runtime ImportError/OSError fallthroughs.
+    StdlibSig {
+        module: "zipfile",
+        qualifier: "CompleteDirs",
+        name: "make",
+        kind: SigKind::Method,
+        params: &[p("source", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "zipfile",
+        qualifier: "Path",
+        name: "open",
+        kind: SigKind::Method,
+        params: &[
+            p("mode", CoreTy::Str),
+            p("encoding", CoreTy::Typed),
+            p("errors", CoreTy::Typed),
+            p("newline", CoreTy::Typed),
+            p("line_buffering", CoreTy::Typed),
+            p("write_through", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "zipfile",
+        qualifier: "ZipExtFile",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("fileobj", CoreTy::Typed),
+            p("mode", CoreTy::Unknown),
+            p("zipinfo", CoreTy::Unknown),
+            p("pwd", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "zipfile",
+        qualifier: "ZipFile",
+        name: "__exit__",
+        kind: SigKind::Method,
+        params: &[
+            p("type", CoreTy::Type),
+            p("value", CoreTy::Typed),
+            p("traceback", CoreTy::Typed),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "zipfile",
+        qualifier: "ZipFile",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("file", CoreTy::Typed),
+            p("mode", CoreTy::Unknown),
+            p("compression", CoreTy::Int),
+            p("allowZip64", CoreTy::Unknown),
+            p("compresslevel", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "zipfile",
+        qualifier: "ZipFile",
+        name: "setpassword",
+        kind: SigKind::Method,
+        params: &[p("pwd", CoreTy::Bytes)],
+        enforceable: true,
+    },
     // pathlib generated rows intentionally collapse type variables, overload
     // literals, and Optional exception state to Unknown/Typed. Keep strict-mode
     // fixture walls enforceable while still skipping correct None sentinels and
@@ -6410,6 +6483,23 @@ mod tests {
             assert!(sig.enforceable, "unittest.case.{qualifier}.{name}");
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+    }
+
+    #[test]
+    fn curated_zipfile_walls_override_unknown_generated_rows() {
+        for (qualifier, name, first_param, first_ty) in [
+            ("CompleteDirs", "make", "source", CoreTy::Typed),
+            ("Path", "open", "mode", CoreTy::Str),
+            ("ZipExtFile", "__init__", "fileobj", CoreTy::Typed),
+            ("ZipFile", "__exit__", "type", CoreTy::Type),
+            ("ZipFile", "__init__", "file", CoreTy::Typed),
+            ("ZipFile", "setpassword", "pwd", CoreTy::Bytes),
+        ] {
+            let sig = get("zipfile", qualifier, name).expect("zipfile row present");
+            assert!(sig.enforceable, "zipfile.{qualifier}.{name}");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, first_ty);
         }
     }
 

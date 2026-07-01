@@ -9,7 +9,6 @@
 # case = "ZipExtFile__read__n_as_typed_wrong"
 # subject = "zipfile.ZipExtFile.read(n: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

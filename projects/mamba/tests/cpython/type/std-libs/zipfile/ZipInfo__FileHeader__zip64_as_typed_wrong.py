@@ -9,7 +9,6 @@
 # case = "ZipInfo__FileHeader__zip64_as_typed_wrong"
 # subject = "zipfile.ZipInfo.FileHeader(zip64: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

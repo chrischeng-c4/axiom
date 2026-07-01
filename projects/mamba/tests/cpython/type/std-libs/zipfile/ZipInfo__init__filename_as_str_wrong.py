@@ -9,7 +9,6 @@
 # case = "ZipInfo__init__filename_as_str_wrong"
 # subject = "zipfile.ZipInfo.__init__(filename: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
