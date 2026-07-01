@@ -9,7 +9,6 @@
 # case = "FTP__mlsd__path_as_str_wrong"
 # subject = "ftplib.FTP.mlsd(path: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

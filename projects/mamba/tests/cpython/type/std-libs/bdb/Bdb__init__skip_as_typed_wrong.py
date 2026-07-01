@@ -9,7 +9,6 @@
 # case = "Bdb__init__skip_as_typed_wrong"
 # subject = "bdb.Bdb.__init__(skip: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

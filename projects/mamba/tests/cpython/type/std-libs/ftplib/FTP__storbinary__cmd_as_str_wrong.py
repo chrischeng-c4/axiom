@@ -9,7 +9,6 @@
 # case = "FTP__storbinary__cmd_as_str_wrong"
 # subject = "ftplib.FTP.storbinary(cmd: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"

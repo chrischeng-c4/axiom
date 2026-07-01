@@ -9,7 +9,6 @@
 # case = "OutputChecker__output_difference__example_as_Example_wrong"
 # subject = "doctest.OutputChecker.output_difference(example: Example)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

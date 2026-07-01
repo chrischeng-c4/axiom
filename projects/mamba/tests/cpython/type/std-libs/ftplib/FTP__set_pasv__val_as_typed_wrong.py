@@ -9,12 +9,10 @@
 # case = "FTP__set_pasv__val_as_typed_wrong"
 # subject = "ftplib.FTP.set_pasv(val: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed val"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ftplib.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed val
 # mamba-strict-type: TypeError
 """Type wall: ftplib.FTP.set_pasv(val: typed); call it with the wrong type.
 

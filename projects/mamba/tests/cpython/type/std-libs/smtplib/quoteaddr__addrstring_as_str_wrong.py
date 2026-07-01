@@ -9,7 +9,6 @@
 # case = "quoteaddr__addrstring_as_str_wrong"
 # subject = "smtplib.quoteaddr(addrstring: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

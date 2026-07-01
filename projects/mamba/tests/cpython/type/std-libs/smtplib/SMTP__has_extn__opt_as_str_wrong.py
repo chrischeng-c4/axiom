@@ -9,7 +9,6 @@
 # case = "SMTP__has_extn__opt_as_str_wrong"
 # subject = "smtplib.SMTP.has_extn(opt: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

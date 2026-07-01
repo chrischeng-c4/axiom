@@ -9,7 +9,6 @@
 # case = "DocTestRunner__init__checker_as_typed_wrong"
 # subject = "doctest.DocTestRunner.__init__(checker: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/doctest.pyi"
 # status = "filled"

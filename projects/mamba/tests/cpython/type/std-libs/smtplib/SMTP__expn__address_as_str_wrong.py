@@ -9,7 +9,6 @@
 # case = "SMTP__expn__address_as_str_wrong"
 # subject = "smtplib.SMTP.expn(address: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "Bdb__trace_dispatch__frame_as_FrameType_wrong"
 # subject = "bdb.Bdb.trace_dispatch(frame: FrameType)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

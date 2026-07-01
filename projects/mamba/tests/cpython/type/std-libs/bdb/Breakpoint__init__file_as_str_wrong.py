@@ -9,7 +9,6 @@
 # case = "Breakpoint__init__file_as_str_wrong"
 # subject = "bdb.Breakpoint.__init__(file: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/bdb.pyi"
 # status = "filled"

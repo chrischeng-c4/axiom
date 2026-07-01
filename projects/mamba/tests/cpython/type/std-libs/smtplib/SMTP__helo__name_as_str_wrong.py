@@ -9,7 +9,6 @@
 # case = "SMTP__helo__name_as_str_wrong"
 # subject = "smtplib.SMTP.helo(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"

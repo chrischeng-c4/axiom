@@ -9,7 +9,6 @@
 # case = "bind_textdomain_codeset__domain_as_str_wrong"
 # subject = "gettext.bind_textdomain_codeset(domain: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/gettext.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "SMTP__putcmd__cmd_as_str_wrong"
 # subject = "smtplib.SMTP.putcmd(cmd: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/smtplib.pyi"
 # status = "filled"
