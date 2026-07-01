@@ -5500,6 +5500,8 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                         if let Some(iv) = result.as_int() {
                             return iv != 0;
                         }
+                    } else {
+                        return try_reflected_eq(b, a);
                     }
                     false
                 }
