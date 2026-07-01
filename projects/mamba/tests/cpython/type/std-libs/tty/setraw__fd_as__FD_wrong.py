@@ -9,7 +9,6 @@
 # case = "setraw__fd_as__FD_wrong"
 # subject = "tty.setraw(fd: _FD)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/tty.pyi"
 # status = "filled"

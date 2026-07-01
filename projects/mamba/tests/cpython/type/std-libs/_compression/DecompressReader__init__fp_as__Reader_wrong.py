@@ -9,7 +9,6 @@
 # case = "DecompressReader__init__fp_as__Reader_wrong"
 # subject = "_compression.DecompressReader.__init__(fp: _Reader)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_compression.pyi"
 # status = "filled"

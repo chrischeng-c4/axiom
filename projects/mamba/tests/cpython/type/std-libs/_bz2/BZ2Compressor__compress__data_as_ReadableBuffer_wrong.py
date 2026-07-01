@@ -9,7 +9,6 @@
 # case = "BZ2Compressor__compress__data_as_ReadableBuffer_wrong"
 # subject = "_bz2.BZ2Compressor.compress(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_bz2.pyi"
 # status = "filled"

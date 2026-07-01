@@ -9,7 +9,6 @@
 # case = "fork_exec__args_as_typed_wrong"
 # subject = "_posixsubprocess.fork_exec(args: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_posixsubprocess.pyi"
 # status = "filled"

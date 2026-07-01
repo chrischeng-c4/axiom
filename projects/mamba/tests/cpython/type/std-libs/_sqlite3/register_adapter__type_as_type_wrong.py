@@ -9,7 +9,6 @@
 # case = "register_adapter__type_as_type_wrong"
 # subject = "_sqlite3.register_adapter(type: type)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"

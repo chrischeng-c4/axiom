@@ -9,7 +9,6 @@
 # case = "prlimit__pid_as_int_wrong"
 # subject = "resource.prlimit(pid: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/resource.pyi"
 # status = "filled"

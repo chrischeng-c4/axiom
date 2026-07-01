@@ -9,7 +9,6 @@
 # case = "Future__set_exception__exception_as_typed_wrong"
 # subject = "_asyncio.Future.set_exception(exception: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_asyncio.pyi"
 # status = "filled"

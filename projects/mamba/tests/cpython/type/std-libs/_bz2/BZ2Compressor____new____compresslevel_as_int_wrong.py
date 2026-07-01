@@ -9,7 +9,6 @@
 # case = "BZ2Compressor____new____compresslevel_as_int_wrong"
 # subject = "_bz2.BZ2Compressor.__new__(compresslevel: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_bz2.pyi"
 # status = "filled"

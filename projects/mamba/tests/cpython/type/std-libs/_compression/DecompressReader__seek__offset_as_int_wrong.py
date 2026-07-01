@@ -9,7 +9,6 @@
 # case = "DecompressReader__seek__offset_as_int_wrong"
 # subject = "_compression.DecompressReader.seek(offset: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_compression.pyi"
 # status = "filled"

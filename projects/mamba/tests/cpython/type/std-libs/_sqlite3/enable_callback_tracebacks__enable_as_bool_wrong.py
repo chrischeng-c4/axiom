@@ -9,7 +9,6 @@
 # case = "enable_callback_tracebacks__enable_as_bool_wrong"
 # subject = "_sqlite3.enable_callback_tracebacks(enable: bool)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_sqlite3.pyi"
 # status = "filled"

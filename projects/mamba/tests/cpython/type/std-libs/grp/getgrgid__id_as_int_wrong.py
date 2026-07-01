@@ -9,7 +9,6 @@
 # case = "getgrgid__id_as_int_wrong"
 # subject = "grp.getgrgid(id: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/grp.pyi"
 # status = "filled"

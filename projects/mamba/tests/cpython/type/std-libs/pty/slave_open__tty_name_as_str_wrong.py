@@ -9,7 +9,6 @@
 # case = "slave_open__tty_name_as_str_wrong"
 # subject = "pty.slave_open(tty_name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pty.pyi"
 # status = "filled"
