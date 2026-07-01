@@ -1,4 +1,4 @@
-//! Blocking list pops (BLPOP / BRPOP) under `/v1/lists/{key}/{blpop,brpop}`.
+//! Blocking list pops (BLPOP / BRPOP) under `/lists/{key}/{blpop,brpop}`.
 //!
 //! HTTP long-poll: block up to `timeout_ms` for an element, then return it (or
 //! null on timeout). The pop itself is durable-before-ack like any list pop.
@@ -83,7 +83,7 @@ async fn blocking_pop(
 
 /// Block until an element is available at the head of the list, then pop it
 /// (BLPOP). Returns null on timeout.
-#[utoipa::path(post, path = "/v1/lists/{key}/blpop", tag = "Lists",
+#[utoipa::path(post, path = "/lists/{key}/blpop", tag = "Lists",
     params(("key" = String, Path, description = "List key")), request_body = BlockingPopRequest,
     responses((status = 200, description = "Popped value or null on timeout", body = PopResponse)))]
 pub async fn blpop(
@@ -96,7 +96,7 @@ pub async fn blpop(
 
 /// Block until an element is available at the tail of the list, then pop it
 /// (BRPOP). Returns null on timeout.
-#[utoipa::path(post, path = "/v1/lists/{key}/brpop", tag = "Lists",
+#[utoipa::path(post, path = "/lists/{key}/brpop", tag = "Lists",
     params(("key" = String, Path, description = "List key")), request_body = BlockingPopRequest,
     responses((status = 200, description = "Popped value or null on timeout", body = PopResponse)))]
 pub async fn brpop(

@@ -464,12 +464,12 @@ const TOPICS: &[cli_std::llm::Topic] = &[
         body: "# keep — HTTP/2 API surface\n\n\
             One port speaks HTTP/1.1 and HTTP/2 cleartext (h2c, prior-knowledge). JSON \
             values, or raw `application/octet-stream` blobs on the value path.\n\n\
-            - `GET|PUT|DELETE|HEAD /v1/kv/{key}` — scalar value (`?ttl_ms=` on PUT).\n\
-            - `POST /v1/kv/{key}/incr|cas|setnx` — atomic integer / compare-and-swap.\n\
-            - `POST /v1/kv:mset|kv:mget|kv:mdel` — batch.\n\
-            - `GET /v1/kv?prefix=&limit=` — prefix scan.\n\
-            - `POST|DELETE /v1/locks/{name}` — owner+TTL advisory locks.\n\
-            - `/v1/hashes /v1/sets /v1/zsets /v1/lists` — collections.\n\
+            - `GET|PUT|DELETE|HEAD /kv/{key}` — scalar value (`?ttl_ms=` on PUT).\n\
+            - `POST /kv/{key}/incr|cas|setnx` — atomic integer / compare-and-swap.\n\
+            - `POST /kv:mset|kv:mget|kv:mdel` — batch.\n\
+            - `GET /kv?prefix=&limit=` — prefix scan.\n\
+            - `POST|DELETE /locks/{name}` — owner+TTL advisory locks.\n\
+            - `/hashes /sets /zsets /lists` — collections.\n\
             - `/healthz /readyz /metrics /openapi.json /docs` — probes, metrics, OpenAPI.\n\n\
             The full document: `GET /openapi.json` (served by the binary).\n",
     },
@@ -479,8 +479,8 @@ const TOPICS: &[cli_std::llm::Topic] = &[
         body: "# keep — claim-check data plane\n\n\
             keep is loom/relay's result store: a worker GETs its input and PUTs its result \
             by message id; the producer mirrors it.\n\n\
-            - `GET|PUT /v1/inputs/{id}` — job input payload.\n\
-            - `GET|PUT /v1/results/{id}` — job result payload.\n\n\
+            - `GET|PUT /inputs/{id}` — job input payload.\n\
+            - `GET|PUT /results/{id}` — job result payload.\n\n\
             Bytes-first (octet-stream), durable before the write is acked.\n\n\
             **Scoped tokens** (#445/#446): set `KEEP_TOKEN_SECRET` to require an HMAC \
             `Authorization: Bearer <token>` scoped to the bare input/result key on worker ops.\n\n\

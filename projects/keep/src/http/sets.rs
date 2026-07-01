@@ -1,4 +1,4 @@
-//! Set routes under `/v1/sets/{key}` (string members). WAL-backed and
+//! Set routes under `/sets/{key}` (string members). WAL-backed and
 //! durable-before-ack.
 
 use axum::{
@@ -25,7 +25,7 @@ pub struct MembersResponse {
 }
 
 /// Add members (SADD). Returns the number newly added.
-#[utoipa::path(post, path = "/v1/sets/{key}", tag = "Sets",
+#[utoipa::path(post, path = "/sets/{key}", tag = "Sets",
     params(("key" = String, Path, description = "Set key")), request_body = MembersRequest,
     responses((status = 200, description = "Members added", body = CountResponse)))]
 pub async fn sadd(
@@ -40,7 +40,7 @@ pub async fn sadd(
 }
 
 /// All members (SMEMBERS).
-#[utoipa::path(get, path = "/v1/sets/{key}", tag = "Sets",
+#[utoipa::path(get, path = "/sets/{key}", tag = "Sets",
     params(("key" = String, Path, description = "Set key")),
     responses((status = 200, description = "Members", body = MembersResponse)))]
 pub async fn smembers(
@@ -54,7 +54,7 @@ pub async fn smembers(
 }
 
 /// Remove members (SREM). Returns the number removed.
-#[utoipa::path(delete, path = "/v1/sets/{key}", tag = "Sets",
+#[utoipa::path(delete, path = "/sets/{key}", tag = "Sets",
     params(("key" = String, Path, description = "Set key")), request_body = MembersRequest,
     responses((status = 200, description = "Members removed", body = CountResponse)))]
 pub async fn srem(
@@ -69,7 +69,7 @@ pub async fn srem(
 }
 
 /// Cardinality (SCARD).
-#[utoipa::path(get, path = "/v1/sets/{key}/length", tag = "Sets",
+#[utoipa::path(get, path = "/sets/{key}/length", tag = "Sets",
     params(("key" = String, Path, description = "Set key")),
     responses((status = 200, description = "Member count", body = CountResponse)))]
 pub async fn scard(
@@ -83,7 +83,7 @@ pub async fn scard(
 }
 
 /// Membership test (SISMEMBER), no body.
-#[utoipa::path(head, path = "/v1/sets/{key}/members/{member}", tag = "Sets",
+#[utoipa::path(head, path = "/sets/{key}/members/{member}", tag = "Sets",
     params(("key" = String, Path, description = "Set key"), ("member" = String, Path, description = "Member")),
     responses((status = 200, description = "Is a member"), (status = 404, description = "Not a member")))]
 pub async fn sismember(

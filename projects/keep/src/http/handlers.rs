@@ -53,7 +53,7 @@ pub struct TtlQuery {
 /// everything else as a JSON `ValueResponse`.
 #[utoipa::path(
     get,
-    path = "/v1/kv/{key}",
+    path = "/kv/{key}",
     tag = "KV",
     params(("key" = String, Path, description = "Key to fetch")),
     responses(
@@ -88,7 +88,7 @@ pub async fn get_key(
 /// `?ttl_ms=`), which is the efficient path for claim-check payloads.
 #[utoipa::path(
     put,
-    path = "/v1/kv/{key}",
+    path = "/kv/{key}",
     tag = "KV",
     params(("key" = String, Path, description = "Key to set")),
     request_body(content = SetRequest, description = "JSON value + optional ttl_ms (or send a raw octet-stream blob)"),
@@ -136,7 +136,7 @@ pub async fn put_key(
 /// Delete a key.
 #[utoipa::path(
     delete,
-    path = "/v1/kv/{key}",
+    path = "/kv/{key}",
     tag = "KV",
     params(("key" = String, Path, description = "Key to delete")),
     responses((status = 200, description = "Delete result", body = DeleteResponse))
@@ -154,7 +154,7 @@ pub async fn delete_key(
 /// Existence check (no body).
 #[utoipa::path(
     head,
-    path = "/v1/kv/{key}",
+    path = "/kv/{key}",
     tag = "KV",
     params(("key" = String, Path, description = "Key to test")),
     responses(
@@ -173,7 +173,7 @@ pub async fn head_key(State(st): State<AppState>, Path(key): Path<String>) -> St
 /// Atomic increment/decrement of an integer value.
 #[utoipa::path(
     post,
-    path = "/v1/kv/{key}/incr",
+    path = "/kv/{key}/incr",
     tag = "KV",
     params(("key" = String, Path, description = "Counter key")),
     request_body = IncrRequest,
@@ -196,7 +196,7 @@ pub async fn incr_key(
 /// Compare-and-swap.
 #[utoipa::path(
     post,
-    path = "/v1/kv/{key}/cas",
+    path = "/kv/{key}/cas",
     tag = "KV",
     params(("key" = String, Path, description = "Key to swap")),
     request_body = CasRequest,
@@ -220,7 +220,7 @@ pub async fn cas_key(
 /// Set only if the key does not already exist.
 #[utoipa::path(
     post,
-    path = "/v1/kv/{key}/setnx",
+    path = "/kv/{key}/setnx",
     tag = "KV",
     params(("key" = String, Path, description = "Key to set")),
     request_body = SetRequest,
@@ -247,7 +247,7 @@ pub async fn setnx_key(
 /// Fetch many keys at once.
 #[utoipa::path(
     post,
-    path = "/v1/kv:mget",
+    path = "/kv:mget",
     tag = "Batch",
     request_body = MGetRequest,
     responses((status = 200, description = "Values parallel to the request keys", body = MGetResponse))
@@ -275,7 +275,7 @@ pub async fn mget(
 /// Set many keys at once with a shared TTL.
 #[utoipa::path(
     post,
-    path = "/v1/kv:mset",
+    path = "/kv:mset",
     tag = "Batch",
     request_body = MSetRequest,
     responses((status = 200, description = "Number of keys written", body = CountResponse))
@@ -301,7 +301,7 @@ pub async fn mset(State(st): State<AppState>, body: Bytes) -> Result<Json<CountR
 /// Delete many keys at once.
 #[utoipa::path(
     post,
-    path = "/v1/kv:mdel",
+    path = "/kv:mdel",
     tag = "Batch",
     request_body = MDelRequest,
     responses((status = 200, description = "Number of keys deleted", body = CountResponse))
@@ -325,7 +325,7 @@ pub async fn mdel(
 /// List keys, optionally filtered by prefix.
 #[utoipa::path(
     get,
-    path = "/v1/kv",
+    path = "/kv",
     tag = "KV",
     params(
         ("prefix" = Option<String>, Query, description = "Only keys with this prefix"),
@@ -346,7 +346,7 @@ pub async fn scan(State(st): State<AppState>, Query(q): Query<ScanQuery>) -> Jso
 /// Acquire a leased lock. Idempotent for the same owner.
 #[utoipa::path(
     post,
-    path = "/v1/locks/{key}",
+    path = "/locks/{key}",
     tag = "Locks",
     params(("key" = String, Path, description = "Lock name")),
     request_body = LockRequest,
@@ -367,7 +367,7 @@ pub async fn lock(
 /// Release a lock held by `owner`.
 #[utoipa::path(
     delete,
-    path = "/v1/locks/{key}",
+    path = "/locks/{key}",
     tag = "Locks",
     params(("key" = String, Path, description = "Lock name")),
     request_body = UnlockRequest,
@@ -389,7 +389,7 @@ pub async fn unlock(
 /// Extend the lease on a held lock.
 #[utoipa::path(
     patch,
-    path = "/v1/locks/{key}",
+    path = "/locks/{key}",
     tag = "Locks",
     params(("key" = String, Path, description = "Lock name")),
     request_body = ExtendLockRequest,
@@ -418,7 +418,7 @@ pub async fn extend_lock(
 /// Prepend values to a list (LPUSH).
 #[utoipa::path(
     post,
-    path = "/v1/lists/{key}/lpush",
+    path = "/lists/{key}/lpush",
     tag = "Lists",
     params(("key" = String, Path, description = "List key")),
     request_body = PushRequest,
@@ -439,7 +439,7 @@ pub async fn lpush(
 /// Append values to a list (RPUSH).
 #[utoipa::path(
     post,
-    path = "/v1/lists/{key}/rpush",
+    path = "/lists/{key}/rpush",
     tag = "Lists",
     params(("key" = String, Path, description = "List key")),
     request_body = PushRequest,
@@ -460,7 +460,7 @@ pub async fn rpush(
 /// Pop from the head of a list (LPOP).
 #[utoipa::path(
     post,
-    path = "/v1/lists/{key}/lpop",
+    path = "/lists/{key}/lpop",
     tag = "Lists",
     params(("key" = String, Path, description = "List key")),
     responses((status = 200, description = "Popped value or null", body = PopResponse))
@@ -478,7 +478,7 @@ pub async fn lpop(
 /// Pop from the tail of a list (RPOP).
 #[utoipa::path(
     post,
-    path = "/v1/lists/{key}/rpop",
+    path = "/lists/{key}/rpop",
     tag = "Lists",
     params(("key" = String, Path, description = "List key")),
     responses((status = 200, description = "Popped value or null", body = PopResponse))
@@ -699,7 +699,7 @@ async fn claim_put(
 
 /// Fetch a job input by id (worker reads its input — #167).
 #[utoipa::path(
-    get, path = "/v1/inputs/{id}", tag = "Claim-check",
+    get, path = "/inputs/{id}", tag = "Claim-check",
     params(("id" = String, Path, description = "Job input id")),
     responses(
         (status = 200, description = "Input payload"),
@@ -745,7 +745,7 @@ pub async fn get_input(
 
 /// Store a job input by id (producer writes the input — #167).
 #[utoipa::path(
-    put, path = "/v1/inputs/{id}", tag = "Claim-check",
+    put, path = "/inputs/{id}", tag = "Claim-check",
     params(("id" = String, Path, description = "Job input id")),
     responses((status = 200, description = "Stored", body = OkResponse))
 )]
@@ -762,7 +762,7 @@ pub async fn put_input(
 
 /// Fetch a job result by id (producer reads the result — #167).
 #[utoipa::path(
-    get, path = "/v1/results/{id}", tag = "Claim-check",
+    get, path = "/results/{id}", tag = "Claim-check",
     params(("id" = String, Path, description = "Job result id")),
     responses(
         (status = 200, description = "Result payload"),
@@ -780,7 +780,7 @@ pub async fn get_result(
 
 /// Store a job result by id (worker writes its result — #167).
 #[utoipa::path(
-    put, path = "/v1/results/{id}", tag = "Claim-check",
+    put, path = "/results/{id}", tag = "Claim-check",
     params(("id" = String, Path, description = "Job result id")),
     responses((status = 200, description = "Stored", body = OkResponse))
 )]

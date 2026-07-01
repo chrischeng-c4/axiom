@@ -57,7 +57,7 @@ Gate Inventory:
 
 ID: competitor-feature-parity
 Type: RuntimeTool
-Surfaces: HTTP: `/v1/kv/*`, `/v1/hashes`, `/v1/sets`, `/v1/zsets`, `/v1/lists`, `/v1/locks` - Redis/Dragonfly-style data plane over HTTP/2.; Rust API: `keep::client::KvClient` - in-tree HTTP client.
+Surfaces: HTTP: `/kv/*`, `/hashes`, `/sets`, `/zsets`, `/lists`, `/locks` - Redis/Dragonfly-style data plane over HTTP/2.; Rust API: `keep::client::KvClient` - in-tree HTTP client.
 EC Dimensions: behavior: `cargo test -p keep --test http_api --test collections_api` - public KV, collection, lock, TTL, and claim-check conformance
 Root WI: 108
 Status: auditing
@@ -146,7 +146,7 @@ Gate Inventory:
 
 ID: http2-api-list
 Type: RuntimeTool
-Surfaces: HTTP: `/v1/kv/*`, `/v1/hashes`, `/v1/sets`, `/v1/zsets`, `/v1/lists`, `/v1/locks`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - concise HTTP/2 API list for operators and client authors.
+Surfaces: HTTP: `/kv/*`, `/hashes`, `/sets`, `/zsets`, `/lists`, `/locks`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - concise HTTP/2 API list for operators and client authors.
 EC Dimensions: behavior: `cargo test -p keep --test http_api --test collections_api` - public route list and data-plane conformance
 Root WI: -
 Status: auditing
@@ -213,7 +213,7 @@ Gate Inventory:
 
 ID: kv-api
 Type: Runtime
-Surfaces: HTTP: `/v1/kv/*`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json` - public service API.; Rust API: `keep::client::KvClient` - in-tree HTTP client.
+Surfaces: HTTP: `/kv/*`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json` - public service API.; Rust API: `keep::client::KvClient` - in-tree HTTP client.
 EC Dimensions: behavior: `cargo test -p keep --test http_api` - public HTTP API conformance
 Root WI: -
 Status: auditing
@@ -234,7 +234,7 @@ Gate Inventory:
 
 ID: collections
 Type: Runtime
-Surfaces: HTTP: `/v1/hashes`, `/v1/sets`, `/v1/zsets`, `/v1/lists` - collection APIs.
+Surfaces: HTTP: `/hashes`, `/sets`, `/zsets`, `/lists` - collection APIs.
 EC Dimensions: behavior: `cargo test -p keep --test collections_api` - collection operation conformance
 Root WI: -
 Status: auditing
@@ -324,18 +324,18 @@ client to ship (relay+keep worker contract, #108).
 
 | Method | Path | Op |
 |--------|------|----|
-| GET/PUT/DELETE/HEAD | `/v1/kv/{key}` | get / set / delete / exists |
-| POST | `/v1/kv/{key}/incr` | atomic incr/decr (signed `delta`) |
-| POST | `/v1/kv/{key}/cas` | compare-and-swap |
-| POST | `/v1/kv/{key}/setnx` | set-if-absent |
-| POST | `/v1/kv:mget` `:mset` `:mdel` | batch |
-| GET | `/v1/kv?prefix=&limit=` | scan |
-| POST/DELETE/PATCH | `/v1/locks/{key}` | acquire / release / extend lease |
-| POST/GET | `/v1/lists/{key}` + `/{lpush,rpush,lpop,rpop,blpop,brpop}` `/length` | list push/pop/blocking-pop/range/len |
-| POST/GET/DELETE | `/v1/hashes/{key}` + `/length` `/mget` `/incr` `/fields/{field}` | hash ops |
-| POST/GET/DELETE | `/v1/sets/{key}` + `/length` `/members/{m}` | set ops |
-| POST/GET/DELETE | `/v1/zsets/{key}` + `/length` `/incr` `/members/{m}/{score,rank}` | sorted-set ops |
-| POST/GET | `/v1/kv/{key}/{expire,ttl,persist,getex}` | TTL / expiry on any key |
+| GET/PUT/DELETE/HEAD | `/kv/{key}` | get / set / delete / exists |
+| POST | `/kv/{key}/incr` | atomic incr/decr (signed `delta`) |
+| POST | `/kv/{key}/cas` | compare-and-swap |
+| POST | `/kv/{key}/setnx` | set-if-absent |
+| POST | `/kv:mget` `:mset` `:mdel` | batch |
+| GET | `/kv?prefix=&limit=` | scan |
+| POST/DELETE/PATCH | `/locks/{key}` | acquire / release / extend lease |
+| POST/GET | `/lists/{key}` + `/{lpush,rpush,lpop,rpop,blpop,brpop}` `/length` | list push/pop/blocking-pop/range/len |
+| POST/GET/DELETE | `/hashes/{key}` + `/length` `/mget` `/incr` `/fields/{field}` | hash ops |
+| POST/GET/DELETE | `/sets/{key}` + `/length` `/members/{m}` | set ops |
+| POST/GET/DELETE | `/zsets/{key}` + `/length` `/incr` `/members/{m}/{score,rank}` | sorted-set ops |
+| POST/GET | `/kv/{key}/{expire,ttl,persist,getex}` | TTL / expiry on any key |
 | GET | `/healthz` `/readyz` `/metrics` `/info` `/openapi.json` `/docs` | admin / probes |
 
 **Values.** Structured values travel as native JSON (`application/json`, body
@@ -344,7 +344,7 @@ as raw bytes (`application/octet-stream`, TTL via `?ttl_ms=`) and never round-tr
 through JSON — `GET` returns them verbatim as octet-stream.
 
 **Durability.** All mutations are WAL-backed and durable-before-ack — scalars
-(`/v1/kv`, incr/cas/setnx, `:mset`/`:mdel`), collections (hash / set /
+(`/kv`, incr/cas/setnx, `:mset`/`:mdel`), collections (hash / set /
 sorted-set / list push+pop), and TTL ops (expire/persist). A write returns 200
 only after its op is fsynced (group-committed); committed state survives a cold
 recovery (see `tests/durability.rs`).

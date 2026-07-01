@@ -54,7 +54,7 @@ impl KvClient {
     pub async fn get(&self, key: &str) -> Result<Option<KvValue>, ClientError> {
         let r = self
             .http
-            .get(format!("{}/v1/kv/{}", self.base, key))
+            .get(format!("{}/kv/{}", self.base, key))
             .send()
             .await?;
         if r.status().as_u16() == 404 {
@@ -92,7 +92,7 @@ impl KvClient {
         value: KvValue,
         ttl: Option<Duration>,
     ) -> Result<(), ClientError> {
-        let url = format!("{}/v1/kv/{}", self.base, key);
+        let url = format!("{}/kv/{}", self.base, key);
         let req = match value {
             KvValue::Bytes(b) => {
                 let mut rb = self
@@ -145,7 +145,7 @@ impl KvClient {
     pub async fn delete(&self, key: &str) -> Result<(), ClientError> {
         let r = self
             .http
-            .delete(format!("{}/v1/kv/{}", self.base, key))
+            .delete(format!("{}/kv/{}", self.base, key))
             .send()
             .await?;
         if !r.status().is_success() {
