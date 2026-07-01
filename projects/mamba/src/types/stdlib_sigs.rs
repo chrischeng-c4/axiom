@@ -5214,6 +5214,19 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "modulefinder",
+        qualifier: "ModuleFinder",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("path", CoreTy::Typed),
+            p("debug", CoreTy::Unknown),
+            p("excludes", CoreTy::Unknown),
+            p("replace_paths", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "logging.config",
         qualifier: "BaseConfigurator",
         name: "__init__",
@@ -8333,6 +8346,14 @@ mod tests {
                 CoreTy::MemoryView,
             ),
             ("mmap", "mmap", "__setitem__", 0, "key", CoreTy::Typed),
+            (
+                "modulefinder",
+                "ModuleFinder",
+                "__init__",
+                0,
+                "path",
+                CoreTy::Typed,
+            ),
             (
                 "logging.config",
                 "BaseConfigurator",

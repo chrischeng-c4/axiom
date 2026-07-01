@@ -9,12 +9,11 @@
 # case = "ModuleFinder__init__path_as_typed_wrong"
 # subject = "modulefinder.ModuleFinder.__init__(path: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/modulefinder.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: modulefinder.ModuleFinder.__init__(path: typed); call it with the wrong type.
 
