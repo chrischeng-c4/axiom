@@ -9,7 +9,6 @@
 # case = "bytearray__replace__old_as_ReadableBuffer_wrong"
 # subject = "builtins.bytearray.replace(old: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

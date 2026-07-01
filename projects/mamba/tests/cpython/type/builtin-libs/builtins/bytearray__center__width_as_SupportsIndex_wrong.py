@@ -9,7 +9,6 @@
 # case = "bytearray__center__width_as_SupportsIndex_wrong"
 # subject = "builtins.bytearray.center(width: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

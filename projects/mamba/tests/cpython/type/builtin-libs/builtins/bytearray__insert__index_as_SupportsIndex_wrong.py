@@ -9,7 +9,6 @@
 # case = "bytearray__insert__index_as_SupportsIndex_wrong"
 # subject = "builtins.bytearray.insert(index: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

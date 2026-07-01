@@ -9,7 +9,6 @@
 # case = "bytearray____mul____value_as_SupportsIndex_wrong"
 # subject = "builtins.bytearray.__mul__(value: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

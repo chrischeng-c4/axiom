@@ -9,7 +9,6 @@
 # case = "bytearray__removeprefix__prefix_as_ReadableBuffer_wrong"
 # subject = "builtins.bytearray.removeprefix(prefix: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "bytearray__join__iterable_of_bytes_as_Iterable_wrong"
 # subject = "builtins.bytearray.join(iterable_of_bytes: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

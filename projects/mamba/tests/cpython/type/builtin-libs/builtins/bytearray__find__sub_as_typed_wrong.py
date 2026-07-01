@@ -9,7 +9,6 @@
 # case = "bytearray__find__sub_as_typed_wrong"
 # subject = "builtins.bytearray.find(sub: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "bytearray__rsplit__sep_as_typed_wrong"
 # subject = "builtins.bytearray.rsplit(sep: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
