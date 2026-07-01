@@ -15,6 +15,7 @@
 //! @issue #784
 //! @issue #795
 //! @issue #796
+//! @issue #797
 
 use jet::bundler::types::OutputFormat;
 use jet::bundler::types::SourceMapOption;
@@ -401,6 +402,74 @@ export * from "./greeter";
         greeter_text.contains("export declare class Greeter")
             && greeter_text.contains("greet(name: string): string;"),
         "sibling declaration must preserve typed class member, got:\n{greeter_text}"
+    );
+}
+
+#[test]
+fn svgr_asset_reexports_preserve_source_reexport_in_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "svgr-dts-lib",
+            "version": "1.0.0",
+            "module": "./src/index.tsx",
+            "dependencies": { "react": "18.2.0" }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.tsx",
+        r#"export { ReactComponent as ErrorCircleIcon } from "./icons/error.svg";
+export { ReactComponent as SuccessCircleIcon } from "./icons/success.svg";
+"#,
+    );
+    write_file(
+        root,
+        "src/icons/error.svg",
+        r#"<svg viewBox="0 0 24 24"><path d="M1 1h22v22H1z"/></svg>"#,
+    );
+    write_file(
+        root,
+        "src/icons/success.svg",
+        r#"<svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("SVGR asset re-export build must succeed");
+
+    let js = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Esm)
+        .expect("ESM output present");
+    assert!(
+        js.code.contains("SvgErrorCircleIcon as ErrorCircleIcon")
+            && js
+                .code
+                .contains("SvgSuccessCircleIcon as SuccessCircleIcon"),
+        "runtime JS still exports transformed SVG components, got:\n{}",
+        js.code
+    );
+
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export { ReactComponent as ErrorCircleIcon } from \"./icons/error.svg\";")
+            && dts.contains(
+                "export { ReactComponent as SuccessCircleIcon } from \"./icons/success.svg\";"
+            ),
+        "entry declaration must preserve source-level SVG re-exports, got:\n{dts}"
+    );
+    assert!(
+        !dts.contains("SvgErrorCircleIcon") && !dts.contains("SvgSuccessCircleIcon"),
+        "declaration must not expose runtime SVG aliases, got:\n{dts}"
+    );
+    assert!(
+        !root.join("dist/icons/error.d.ts").exists()
+            && !root.join("dist/icons/success.d.ts").exists(),
+        "asset re-export targets must not be chased as sibling declarations"
     );
 }
 

@@ -21,6 +21,7 @@
 //! @issue #757
 //! @issue #784
 //! @issue #795
+//! @issue #797
 
 use anyhow::{Context, Result};
 use std::collections::HashSet;
@@ -575,11 +576,24 @@ fn collect_reexport_declaration_modules(
         if is_external_specifier(&spec, externals) {
             continue;
         }
+        // @spec .aw/tech-design/projects/jet/logic/jet-build-lib-dts-svgr-style-asset-re-exports-build-correctly-bu.md#logic
+        if !should_chase_declaration_reexport_target(&spec) {
+            continue;
+        }
         if let Some(target) = resolve_relative(path, &spec)? {
             collect_reexport_declaration_modules(&target, externals, visited, order)?;
         }
     }
     Ok(())
+}
+
+fn should_chase_declaration_reexport_target(spec: &str) -> bool {
+    let path = Path::new(specifier_path_part(spec));
+    match path.extension().and_then(|ext| ext.to_str()) {
+        None => true,
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs") => true,
+        Some(_) => false,
+    }
 }
 
 fn reexport_specifiers(source: &str, path: &Path) -> Result<Vec<String>> {
@@ -987,6 +1001,10 @@ fn is_library_source_path(path: &Path) -> bool {
         path.extension().and_then(|e| e.to_str()),
         Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")
     )
+}
+
+fn specifier_path_part(spec: &str) -> &str {
+    spec.split(['?', '#']).next().unwrap_or(spec)
 }
 
 /// Read the `name` field from a `package.json`, falling back to `"lib"` when
@@ -1796,7 +1814,11 @@ fn inline_module(
             // Recursion + the shared `inlined_files` visited-set make this
             // transitive (a re-export of a re-export is followed) and cycle-
             // safe (a module is inlined at most once).
-            if let Some(target) = resolve_relative(path, &spec)? {
+            if let Some(svg_reexport) =
+                inline_svg_named_reexport(path, &spec, stmt_text, external_imports, seen_external)?
+            {
+                out.push_str(&svg_reexport);
+            } else if let Some(target) = resolve_relative(path, &spec)? {
                 if is_star_reexport(stmt_text) {
                     // `export * from "./m"` — inline keeping export keywords so
                     // the target's exports become the bundle's exports.
@@ -1866,6 +1888,111 @@ fn inline_module(
         out = strip_top_level_exports(&out);
     }
     Ok(out)
+}
+
+fn inline_svg_named_reexport(
+    from: &Path,
+    spec: &str,
+    stmt_text: &str,
+    external_imports: &mut Vec<String>,
+    seen_external: &mut HashSet<String>,
+) -> Result<Option<String>> {
+    if !crate::bundler::imports::is_svg_specifier(spec) {
+        return Ok(None);
+    }
+    let Some(asset_path) = resolve_relative_asset(from, spec) else {
+        return Ok(None);
+    };
+    let aliases = svgr_reexport_public_aliases(stmt_text);
+    if aliases.is_empty() {
+        return Ok(None);
+    }
+
+    let react_import = "import * as React from \"react\";".to_string();
+    if seen_external.insert(react_import.clone()) {
+        external_imports.push(react_import);
+    }
+
+    let svg_src = std::fs::read_to_string(&asset_path)
+        .with_context(|| format!("reading SVG re-export {}", asset_path.display()))?;
+    let mut module =
+        crate::asset::transform_svg_to_component(&svg_src, crate::asset::SvgrExportType::Named)
+            .with_context(|| format!("transforming SVG re-export {}", asset_path.display()))?;
+
+    let local_name = svg_component_local_name(&aliases[0], &asset_path);
+    module = module.replace("import * as React from \"react\";\n\n", "");
+    module = module.replace("const ReactComponent =", &format!("const {local_name} ="));
+    module = module.replace("export { ReactComponent };\n", "");
+
+    let reexports = aliases
+        .iter()
+        .map(|alias| format!("{local_name} as {alias}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(Some(format!("{module}export {{ {reexports} }};\n")))
+}
+
+fn resolve_relative_asset(from: &Path, spec: &str) -> Option<PathBuf> {
+    let parent = from.parent()?;
+    let base = parent.join(specifier_path_part(spec).trim_start_matches("./"));
+    base.is_file().then_some(base)
+}
+
+fn svgr_reexport_public_aliases(stmt_text: &str) -> Vec<String> {
+    let Some(clause) = export_named_clause(stmt_text) else {
+        return Vec::new();
+    };
+    clause
+        .split(',')
+        .filter_map(|binding| svgr_reexport_public_alias(binding.trim()))
+        .collect()
+}
+
+fn svgr_reexport_public_alias(binding: &str) -> Option<String> {
+    let mut parts = binding.split_whitespace();
+    let first = parts.next()?;
+    if first != "ReactComponent" {
+        return None;
+    }
+    match (parts.next(), parts.next(), parts.next()) {
+        (None, None, None) => Some(first.to_string()),
+        (Some("as"), Some(alias), None) => Some(alias.to_string()),
+        _ => None,
+    }
+}
+
+fn svg_component_local_name(public_alias: &str, asset_path: &Path) -> String {
+    let seed = if public_alias == "ReactComponent" {
+        asset_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Icon")
+    } else {
+        public_alias
+    };
+    format!("Svg{}", sanitize_identifier_part(seed))
+}
+
+fn sanitize_identifier_part(seed: &str) -> String {
+    let mut out = String::new();
+    let mut uppercase_next = true;
+    for ch in seed.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if uppercase_next {
+                out.push(ch.to_ascii_uppercase());
+                uppercase_next = false;
+            } else {
+                out.push(ch);
+            }
+        } else {
+            uppercase_next = true;
+        }
+    }
+    if out.is_empty() {
+        "Icon".to_string()
+    } else {
+        out
+    }
 }
 
 /// Strip top-level `export ` / `export default ` keywords from a concatenated

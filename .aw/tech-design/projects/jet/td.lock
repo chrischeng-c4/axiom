@@ -1,1869 +1,2834 @@
-version = 1
+version = 2
 project = "jet"
+ir_kind = "td"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-06-30T15:45:00.074+00:00"
-digest = "sha256:ba5c29059d438e0af4555059a534881a6ae2bdc7e15bb3ca101769791282b2f9"
+generated_at = "2026-07-01T10:36:02.653484+00:00"
+digest = "sha256:5910268cdf408970fdf3d5710816cf0b327643e20af2da4da3f9a1c6ce9b41e1"
+source_digest = "sha256:5910268cdf408970fdf3d5710816cf0b327643e20af2da4da3f9a1c6ce9b41e1"
+ir_digest = "sha256:c89667c0a7c5787d53651e5a83a4f66d3c36b533040f619b477ce4b85c5ee2e7"
+
+[[files]]
+path = "config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md"
+digest = "sha256:97d654179c716106c222992ac3490aafbd23c04b3ed25de8b2ea36421eab5e7f"
+ir_digest = "sha256:750e8ceeaec2eb06830e15f748d9efa12bce15edccf9227c8b0a07c0d5f7ae98"
+section_count = 3
 
 [[files]]
 path = "config/jet-config-validation.md"
 digest = "sha256:bcb9b27a79e5e25828452e682592b0916eeb64d1f227731db64c4fd3e65e0881"
+ir_digest = "sha256:c0e16014fb2aca957077f2c10c6806c69d5b1af0a2269f7c360077d833422216"
+section_count = 2
 
 [[files]]
 path = "interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md"
 digest = "sha256:5f7535812a7b3beb97e16eb0962e1dd552c23cc4341b4e0eda272750bc4d107b"
+ir_digest = "sha256:20464cb6e735f2a9a6d60c3ad053d465d583c25f81518bd81a51a7140f0ead62"
+section_count = 3
 
 [[files]]
 path = "interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md"
 digest = "sha256:22c2a514a609d8bc148a64e03ca60b23e52f77ae34e08f6125f0323479846503"
+ir_digest = "sha256:85bc9337cd73da313c0e4a7b75aca2c02679a7dfc45f65f9625fbd597b5c5b84"
+section_count = 4
 
 [[files]]
 path = "interfaces/cli/select-http-client-backend-fetch-axios-for-openapi-codegen.md"
 digest = "sha256:c174faeed4c1c2e1a4147f4c3d7b52517d8a352b146a333cadb0c23011533239"
+ir_digest = "sha256:492ec03ef466b071b8aaf5c44eab5a8cc1780f6523d6270de73417e140f56cd0"
+section_count = 3
 
 [[files]]
 path = "interfaces/trace/format.md"
 digest = "sha256:d5413670cb51c4107a2dd34f6c73cc4a7912d087b4292775e4648c9a539cce84"
+ir_digest = "sha256:ad829fbe701e5538783d0ccffd206b9c3af5f8998a68bc0cc3630feecec70a61"
+section_count = 2
 
 [[files]]
 path = "interfaces/wasm-renderer/binding-manifest.md"
 digest = "sha256:9f090f0bcbde3344a8c4303e70e33bcfe1325269b6efef9fcf31418d20895e34"
+ir_digest = "sha256:bdd5481912bc843d14473ff94be3daa5ae07633b871e26a6b9c54a89d3abbbf5"
+section_count = 5
 
 [[files]]
 path = "interfaces/wasm-renderer/debug-bridge.md"
 digest = "sha256:36de41f46fc60877e7742277a3b337bb3ec49e95be1652e76da21e3f91513efa"
+ir_digest = "sha256:581fe64837453336fa35dd92d063019a2263ce8d67f7d21268248242d14c96dd"
+section_count = 2
 
 [[files]]
 path = "logic/aot-build.md"
 digest = "sha256:044e5ee8a275dd92b0450c84036d6e64899f8a31f40abd445d21256460b24d28"
+ir_digest = "sha256:a631fa1279d1e127dc3fcfab4f0ab89155276d18a612cde90dc567f49c375ca9"
+section_count = 2
 
 [[files]]
 path = "logic/architecture.md"
 digest = "sha256:9706832b41db812d9e493f77aa90c0991adab73e0ca6be3791d429e8597c5eb6"
+ir_digest = "sha256:cbb1200aa3c4697cb57f1982dd2341461f37dd3093a08293465e8dfd9201e2ea"
+section_count = 2
 
 [[files]]
 path = "logic/assets/html-reporter/report.md"
 digest = "sha256:7dec69aee40bf9192022dbfcd169715eab0cebef90c3e492a4713a3cfa4e1c70"
+ir_digest = "sha256:54ca5e498ca50b9ccc91747212b40b39dfc3350ed784c9a330ff043476c1de47"
+section_count = 1
 
 [[files]]
 path = "logic/assets/trace-viewer/viewer.md"
 digest = "sha256:f2a003bdbbf089446423fceabc9f21f20cf66c914af7fcc2d3ba2b0dfc841c62"
+ir_digest = "sha256:09cf695cea8a7a21a492463b28aced1146113efb5f6d427a6a6aa8474b937e2b"
+section_count = 1
 
 [[files]]
 path = "logic/auto-artifacts.md"
 digest = "sha256:a6ef6db26ce3416ede27703cedaddd3354fb68f1a8d44f4fca87dfa70652833d"
+ir_digest = "sha256:45eae56b08b365a64443da5dd4211d77b2505bf672522ec93e9321c59a5fcdd6"
+section_count = 2
 
 [[files]]
 path = "logic/browser-driver.md"
 digest = "sha256:221718d1fdb6acf31c09ecf6dfeb0a15987d7a673b63c643901e0a105eaed4e6"
+ir_digest = "sha256:61d9d44f511274635a79b78d0d4b4d30eb2bb6a40dd1bb788ace885f1174ef06"
+section_count = 2
 
 [[files]]
 path = "logic/bundler-incremental-rebuild.md"
 digest = "sha256:642bbf66ddb0d6492fce544ee28376c57841620b80c582f24aa43eee5066ff90"
+ir_digest = "sha256:03411bdb7bc742f05a75ccc7799d452724f2824667202b21070e68b9c95366a3"
+section_count = 2
 
 [[files]]
 path = "logic/bundler-splitting-tests.md"
 digest = "sha256:202cbde4bad9cf353976a77e094feae8470401563aa2fbfbaf4ee4aafc7ead69"
+ir_digest = "sha256:b8da41ed5482db1529b7ec0a1014e39e8117c73d7e6d212b5d9dc34658698882"
+section_count = 2
 
 [[files]]
 path = "logic/bundler-tree-shake-validation.md"
 digest = "sha256:ea067b020ac39d1641fb262f0ce3b53e9e8f96091454a8ad32a6296fed14c31d"
+ir_digest = "sha256:345e25eb2020992d5fea0cad2c1eae563bb433358d8570569498f29b46402035"
+section_count = 2
 
 [[files]]
 path = "logic/bundler.md"
 digest = "sha256:2cd3fa2fd790c2e62a64540c2f6ebdaf2994a6754bed93edfdf519c0b39ffae1"
+ir_digest = "sha256:de6f50afb22692036c28de36e674d3cdcf0cbb8d1004f8c774b02a030990469a"
+section_count = 2
 
 [[files]]
 path = "logic/conformance-cli/src/lib.md"
 digest = "sha256:087483d1b207801dbead2b69e2ff65a40e49c997a0850c43cb7ff02c06df9e46"
+ir_digest = "sha256:905b0111759e39d432217db37ac16de9802b2f263585b4e8f2e6d537cc5e5646"
+section_count = 1
 
 [[files]]
 path = "logic/console-error-relay.md"
 digest = "sha256:9827ca560b98bccfddcc4e3be28aaf8a5a3fe69e87224ce2ecc2a775bfdf9b83"
+ir_digest = "sha256:81fb7bae74220d45d72600e77d64f89a82ab6553b493f8b63df931f5c82312c3"
+section_count = 2
 
 [[files]]
 path = "logic/css/postcss-tailwind-foundation.md"
 digest = "sha256:58f10908c47a0b05f6afe6d751c7574e2bc1bdc22e596f9ad5a86c428946e7a4"
+ir_digest = "sha256:d73c7581c30f999a6e91bfab79a4c8d4b2ee7ce38aab9dccccf9f83cdbdd9fa0"
+section_count = 2
 
 [[files]]
 path = "logic/dev-server.md"
 digest = "sha256:5c8afefc11e9dc5584e1352e4f1b3491c3ba5d278c053bd2baf31797708dcf79"
+ir_digest = "sha256:d209191f9f315210ee4f37f2165f78d24f1a62d0aba6cd119cd3d06c5101b8cb"
+section_count = 2
 
 [[files]]
 path = "logic/e2e-test-infrastructure.md"
 digest = "sha256:5d34a4c3fdfb9286eb16a10721bab9d6da13c03e5fae15765ca5b23b9c119a53"
+ir_digest = "sha256:7f214ca647fa5f379bb09c99477f02eb355b8966a3cbd899bc80f8df8b6ba153"
+section_count = 2
 
 [[files]]
 path = "logic/examples/dev_server.md"
 digest = "sha256:be3bde990140bc7837f464d7635496be5585027203a56cce0fdd3d8a8a1cd1f4"
+ir_digest = "sha256:fb2733633174f7c5ebcf1896aaa29a19c480b092e2ac18deb39cd660b28bba64"
+section_count = 1
 
 [[files]]
 path = "logic/examples/full_pipeline.md"
 digest = "sha256:30eb164d01400bc9313a9f21aa9926f2162a37b848cd07cab84f9f2ddbf212c2"
+ir_digest = "sha256:a54238cd638d0955451b4e302ee5ccc4833c4acdc64655cac3cf0b39dd641cf3"
+section_count = 1
 
 [[files]]
 path = "logic/examples/test-specs/page-object-pattern.spec.md"
 digest = "sha256:1c48dec355aec0cf7c30a3700b791221335756bab8eaf54024252905fb8bf8ac"
+ir_digest = "sha256:2aa1961c1f2aac96ed819b89a931e9df44f5bd393c6c284ff0fe32120240b588"
+section_count = 1
 
 [[files]]
 path = "logic/fixture-di.md"
 digest = "sha256:37fa259360b710cc65974d4efbca7f3510873fa591af21810a4027d4e9c567f1"
+ir_digest = "sha256:876b7cdbcc5b558d7ea6a81b18c2e3ed2d65e2deb77ac06cb1021d58ff7c13e1"
+section_count = 2
 
 [[files]]
 path = "logic/hmr.md"
 digest = "sha256:fcb7306ce2bf4d558e38d3461b13582a50286e77eb8f8d6195f21b34055788b2"
+ir_digest = "sha256:25dd4493ae96b5b5650d3095dda07f585424fcf4a3e83bc42286464842a59cac"
+section_count = 2
 
 [[files]]
 path = "logic/html-reporter.md"
 digest = "sha256:e6fea7ce64798246a8acea38077ea3c32eb9005fc1adc0763f73303ea3b9468e"
+ir_digest = "sha256:671af011aff7ba110faf206bb19eaf395a915a84dfdd1509451529da5e752fff"
+section_count = 2
 
 [[files]]
 path = "logic/inspector.md"
 digest = "sha256:3d3d312f20f585aca0d265f1292d9485f399051c163900cb3eb607e01a2bc056"
+ir_digest = "sha256:c7eabf0f8b4dff937fd6b8baeda01c7c5c33c1e1678f53e691889547fe177cc5"
+section_count = 2
 
 [[files]]
 path = "logic/jet-browser-observation-bundle.md"
 digest = "sha256:c572867c42c6a79dbbbf6cc63f91b511910d14ab7d691bf7b0056de1b48fcc02"
+ir_digest = "sha256:a2dbe2ddd66742c19e63c8375940e6e4f781406c181c2023927c58913f08b201"
+section_count = 22
 
 [[files]]
 path = "logic/jet-build-lib-cjs-re-export-and-renamed-alias-edge-cases.md"
 digest = "sha256:2f73025b737c72b4acdd445578481ad3c08eef843b5939754f32b3e2842ac99e"
+ir_digest = "sha256:63bf6a9c85e210f658bb7457b81f7ec8faaf36d7b0d1955cd929605c71713418"
+section_count = 2
 
 [[files]]
 path = "logic/jet-build-lib-css-cascade-merge-across-dependent-packages-raw-as.md"
 digest = "sha256:2dea34708c96c621ded4172e67115b83dc88f0e54a309c51fe2619a3254d6be8"
+ir_digest = "sha256:f97b0bb6991f9280845ebecb1bc35204fc59639cd30b1fc1610165132c1f731d"
+section_count = 2
 
 [[files]]
 path = "logic/jet-build-lib-d-ts-class-member-signature-reduction-remaining-ex.md"
 digest = "sha256:c5219ea54b64635689e6bb2b8f5edba37f2ad0132d56348eecb85640236ec072"
+ir_digest = "sha256:47c05679ea67328caa12f74d13cd177390313b8d71f541a3daff8b5206939ebe"
+section_count = 2
 
 [[files]]
 path = "logic/jet-build-lib-dts-broken-lossy-d-ts-for-barrel-re-exports-silent.md"
 digest = "sha256:292a7a6d92c1ec93aaf81264498943b128b39f808a7ec8fadfcc0f85643c2356"
+ir_digest = "sha256:8f10a8eb76fb25eff2ae0e6b31d5dffea2cf317311d846b971574e73528b92c3"
+section_count = 2
 
 [[files]]
 path = "logic/jet-build-lib-dts-emission.md"
 digest = "sha256:28fb2684a699e482560c810ef17586fe5db4201932dd5aef3d723e54251fe69c"
+ir_digest = "sha256:b300d5214eebad0517490740550a62b8054881f8afc071d0c4752975bb4a7af4"
+section_count = 2
+
+[[files]]
+path = "logic/jet-build-lib-dts-isolateddeclarations-check-and-d-ts-correctnes.md"
+digest = "sha256:0b4e5b7c12aa74949e264d650c680c6df1193473e23a9606db71ad625e56c1b8"
+ir_digest = "sha256:b27c80e1b1c53812ecc1789831b47b0676622e465c9504d7f2e8b626bae00d47"
+section_count = 2
+
+[[files]]
+path = "logic/jet-build-lib-dts-stops-at-first-isolateddeclarations-violation.md"
+digest = "sha256:9c3cc2e371589609a79e4e4ffe6989e2b1bea4dbe8a219f7b8b0157c3505f56c"
+ir_digest = "sha256:3a46403477f3bd8bbf33433922aeba2f64b2b7b62b41f4439a26d17bfbae0b55"
+section_count = 2
+
+[[files]]
+path = "logic/jet-build-lib-dts-svgr-style-asset-re-exports-build-correctly-bu.md"
+digest = "sha256:a7455deeb70573440154f856a8b36b8ec11b9b1d37df92a6b105e0acded2c399"
+ir_digest = "sha256:7e39cfe14bfee1f5774000572863098462647286e3485ec2ff0ff10d097460f5"
+section_count = 3
 
 [[files]]
 path = "logic/jet-build-lib-inline-barrel-re-exports-export-from-x-in-single-f.md"
 digest = "sha256:24a14796b44f249d5c0eba6a91ad44c0e5208bc395eab216b5a56a279a8f5a50"
+ir_digest = "sha256:194e8c8363678ebccdfa47bd6796d6f096a7ca3178767d20b0677535610e361a"
+section_count = 2
 
 [[files]]
 path = "logic/jet-build-lib-library-build-mode-esm-cjs-externalize-deps-peerde.md"
 digest = "sha256:75132646810455186d78eeaeca53455742fc98674ebf4ff2ca4106f80d9495b5"
+ir_digest = "sha256:522d2d286e155361ad200be939ff1caad8bb3382cfb1adcb198bb5408b1223b8"
+section_count = 2
 
 [[files]]
 path = "logic/jet-build-lib-preserve-modules-iife-library-output-modes.md"
 digest = "sha256:c4ec343be259977b0805768fee97d7b64f2bbde98dcd058a232a116894fbb106"
+ir_digest = "sha256:6e5e5ce3304b4c45546a24c03d538af8a1bce3dcc8192e8c66fdba6d94379b2a"
+section_count = 2
+
+[[files]]
+path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-plain-string.md"
+digest = "sha256:b43965e01588e4ebf17045c442c26d1882c6055574157c4ea013d467be244206"
+ir_digest = "sha256:0b632e02c7adefe75eddac33b411c71636446d9a86a7de963d05ecfd8ab0a688"
+section_count = 2
 
 [[files]]
 path = "logic/jet-pack-publish-honor-package-json-files-allowlist-npmignore.md"
 digest = "sha256:0223c3bc4b61aade6f4e9af917b0b9a429fa8f392ea6b6a3523464a403eaa66e"
+ir_digest = "sha256:c3e80d932337159eca5766a99bfe2a61dcddb7735e843f0cf4ef8ee49dad6711"
+section_count = 2
 
 [[files]]
 path = "logic/jet-publish-library-and-private-registry.md"
 digest = "sha256:c686a168208f7f7998eba19b74853096e849f05a55390897b2cd0a920ecad639"
+ir_digest = "sha256:fc0af277c3fab094774ec50cc75ad781ed0dcd871621dd705292afce9ca74bfd"
+section_count = 2
 
 [[files]]
 path = "logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md"
 digest = "sha256:fcabccc303d1be801ef1642adf040d4c65e92de6bf5bb8e02a5bb8e495bf44a9"
+ir_digest = "sha256:716430592fd83bdb85805a14350ead6e06b9a8c9e0932ac2a18897fc09c6f54e"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md"
 digest = "sha256:406e5b5920f146aaf609c7997f311435eee6a07ecedcef38002fe44579992fdc"
+ir_digest = "sha256:a4a1049acf4ea168e70240b51c1ce7a08e79dfeca45bb95a4adab9753f686059"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md"
 digest = "sha256:7ac09c8171ef15fdc09e28edea5f8c8801905035b8353c81e119c36783e47d0f"
+ir_digest = "sha256:814857b58147144d7ebc07d2f0f98e3414198f8fa972635656f639ec5759d2a6"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md"
 digest = "sha256:4b2acfd0a47449d9bd006b6a08ba15e9b823f32e9d9b7ebadc4fa177cfe967be"
+ir_digest = "sha256:de8ce3a588ef360403ad38486d6cadf8d8bbc4783003bb5c0c0b6dbabe0958b5"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md"
 digest = "sha256:77f62f13d7efe8cc4310586f316cf57660ce0dd4ac5caada9aaeb54f93fc95de"
+ir_digest = "sha256:925d4128809d2f3a1b50887bc3f809113d6430661b4bb47a0a3c9b7291b6eeea"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md"
 digest = "sha256:f15de30e0468feca8c7778d97c7f99206ecb120bc31ffb4c19a71a3d95199d6d"
+ir_digest = "sha256:8d4116def549defb15e0f856839d075efaf2169eae5d2c0a36e9a3221fc25733"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md"
 digest = "sha256:f0abbda105f61e86c4244529c493f1996a9c9e8256cc2ffa4d69b8831e467788"
+ir_digest = "sha256:66054f47f3527bc6827015da52aa724d71a73b7d0ad65872ee2225a89084d3ad"
+section_count = 3
 
 [[files]]
 path = "logic/jet-stories-hmr-state-preserving-react-refresh-for-the-story-pre.md"
 digest = "sha256:8acd6d0566680fc7a81aeacbf9f99f3b3cc2567e9e38da6ef32c16a0af1883f3"
+ir_digest = "sha256:0de7183109041f75657f0665776da497e20678d5a100f7016d618b6168913afc"
+section_count = 2
 
 [[files]]
 path = "logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md"
 digest = "sha256:e8b4769b0bc49551fd9eb6924010f53484ec357ba075f21e8bb27b00fa598f68"
+ir_digest = "sha256:c807d73b60f11f7ae002fa53746f9b11325ac85f6d81875a068a9250056279fd"
+section_count = 3
 
 [[files]]
 path = "logic/jit-runner.md"
 digest = "sha256:5dbec5c713d9ebbb1d11f523887573f606ce20fb494e106169edfc2a0d6273e1"
+ir_digest = "sha256:7da6410e2e699d16ef596b26983b00eb10bd290676a941e741de76cd56f1b4c2"
+section_count = 2
 
 [[files]]
 path = "logic/legacy/pnpm-parity.md"
 digest = "sha256:818637e93ecc48fec92a2ba9df6a6854cbf55f6aafe9822f02af63e919cc650a"
+ir_digest = "sha256:940f04e3ad46e8aa7efce69ad0c4f1ab5c494e1efa5c89ad4a84488c10081333"
+section_count = 2
 
 [[files]]
 path = "logic/locator-engine.md"
 digest = "sha256:13026e4fbb1f771df763fc6c0b994597a7559bb10d1b27678f72baefce3160d1"
+ir_digest = "sha256:20d2c131b277dc1de32ca75969727251de4cefc4b07beb8934ac1b6f5630ae6d"
+section_count = 2
 
 [[files]]
 path = "logic/locator-js-api.md"
 digest = "sha256:5f216a67c461b3f00e760f2236a34d1072ea08860123439826247a58ce976e5e"
+ir_digest = "sha256:38694e0010c83e2a295870b8000c1aeb5835752cf2cca6708ff35beab2894724"
+section_count = 2
 
 [[files]]
 path = "logic/manifest-cli/src/lib.md"
 digest = "sha256:ce01c316d1d37f3a01d01a4c63162bcd516966433c70d15719f462f60e01dc1e"
+ir_digest = "sha256:ba7b6cd44510e8944ad97a2f40e5fc621cc15ae8c19082fa3f61345d70d0041a"
+section_count = 1
 
 [[files]]
 path = "logic/matchers-state-value-a11y.md"
 digest = "sha256:56d00e41b205c9bbd88083a21943766207e0bf88d81350df215b0fbcda2a2d20"
+ir_digest = "sha256:8ac090584f2b72eb03ccd8bc9180531715cdac5a7959d566466b5aefacf6a409"
+section_count = 2
 
 [[files]]
 path = "logic/multi-target/README.md"
 digest = "sha256:21a0cb104a50d023191edf01b28509826724fc2f6584c349e367afb6be6f0c3a"
+ir_digest = "sha256:961049c1dc884fcb10636ef4e700d800237398426aa8f86976fcf8baaaa249d6"
+section_count = 2
 
 [[files]]
 path = "logic/multi-target/build-targets.md"
 digest = "sha256:fbde2c2836ef015291ce387cbce60f92077be1393f39cf38c7dfba8957acfa4d"
+ir_digest = "sha256:00bb6ae1c89391facc907fe4b72a28bc94ac2959c7b4373cc7cdfba2d8fedcbc"
+section_count = 2
 
 [[files]]
 path = "logic/multi-target/desktop-runtime.md"
 digest = "sha256:43303826b702afebe46179dab76eec83920636e7df5a032a9cce4c4a40a431d5"
+ir_digest = "sha256:81681fb75a9b05559f49241170b27761b4b6f50437b3292c46be6baec90a718c"
+section_count = 2
 
 [[files]]
 path = "logic/multi-target/element-contract.md"
 digest = "sha256:0f825a65fa03ef6ab674d5a315f0580c5a11ff31a7643b825b8a255b8cc7ca71"
+ir_digest = "sha256:dc6a8de300d68410a67418bb31655585cc237b7df3c36bff6d1a1739bae994ef"
+section_count = 2
 
 [[files]]
 path = "logic/multi-target/src/event.md"
 digest = "sha256:ca794cf50246d37cf0963d878d8a4c4b5c15aa3d3154c9d792d607c49a116fd8"
+ir_digest = "sha256:104f448d093ab426029f55f820bf45db7120adc6c73e3ec56b19c89e853ee501"
+section_count = 1
 
 [[files]]
 path = "logic/multi-target/src/hook.md"
 digest = "sha256:9efc65c1faab984a584a9bd19ba351602ffba478fc791b8dbdf20c2664ec449d"
+ir_digest = "sha256:6846b3f3af1344cfc56431d096a63ff50f37cfa78d1107b442bceb65352580bc"
+section_count = 1
 
 [[files]]
 path = "logic/multi-target/src/lib.md"
 digest = "sha256:9d1427315725b67ccfded078702a83d828229385e13a991fc99897a0045c9898"
+ir_digest = "sha256:65763665b7f020fd8ca1b2525e5a2bae248854b01eac27f3cd1461f89ee28e1f"
+section_count = 1
 
 [[files]]
 path = "logic/multi-target/src/profile.md"
 digest = "sha256:b68fe49816407d276743b0f4b3e8784dc526ea62bfe70ed49f6e574ba7722737"
+ir_digest = "sha256:d7a33263d1aaf44ee11bf4161b27def427150b283fb1aebe7741f520203d58fe"
+section_count = 1
 
 [[files]]
 path = "logic/multi-target/src/renderer.md"
 digest = "sha256:3fddc925b9641c1601c7825a8f80749011b6140d0b8bec8d6a936d9694dd520a"
+ir_digest = "sha256:783307635f2fc4f22c63ba1a9df9272567ddda269852ad729af9ba85e6014bd0"
+section_count = 1
 
 [[files]]
 path = "logic/multi-target/src/web.md"
 digest = "sha256:8ea5fde605723e02aca6b84b67d5791b1f63b3414c02435be808bac7a675d875"
+ir_digest = "sha256:d3f89fe83976c264a1b818f5481d5130b383ca5f26297eb4e88952e589b9b03e"
+section_count = 1
 
 [[files]]
 path = "logic/multi-target/target-profiles.md"
 digest = "sha256:879904f983096467fbb2d19e0a4669f4120b5b7058c77b4da2ab31a7598eb3b3"
+ir_digest = "sha256:cfaa581c0ec6d8ec6b0871c48fcf5bf7e4a5256ae0dba7eee8a8b931656b7d27"
+section_count = 2
 
 [[files]]
 path = "logic/multi-target/target-profiles.yaml"
 digest = "sha256:bce51a3b0305a38fec033f9a2bfe81ef26d3afdc4e44887a91ee998ec08fbc63"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
 
 [[files]]
 path = "logic/multi-target/target-profiles.yaml.schema.json"
 digest = "sha256:aaa1cb51443eac37293d507485dc6b5e63253f23d38a9b9069ede8b8c73ec283"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
 
 [[files]]
 path = "logic/multi-target/tui-renderer.md"
 digest = "sha256:9da96c6d711bd5d9e979f35b7526d123516e59d3fe04fd17eef68ad9ff423c71"
+ir_digest = "sha256:74d323d45b402b8b86a6dcf827c206732ebeb38f2a99a03ca3a99b5613f9d67b"
+section_count = 2
 
 [[files]]
 path = "logic/nx-support.md"
 digest = "sha256:98688605033952c6b91e02e20f57996bfb287344467a32062faa7435a2d294ed"
+ir_digest = "sha256:5f30a8bc58d6528148d8554130b61f966ae054e6f39d71f3c6d2d47a6b7a09ae"
+section_count = 2
 
 [[files]]
 path = "logic/page-api-parity.md"
 digest = "sha256:dc0eb61b5c75a952cf78a4f84e3a4ec8caa01f829af466451cc082e2208f6ec9"
+ir_digest = "sha256:a2cf059c955bfdd92f7e44be62a8e18eecc4b2646ba61c9dbaf8391c30e5f96d"
+section_count = 2
 
 [[files]]
 path = "logic/page-fixture-auto-inject.md"
 digest = "sha256:b2c3b7cea351e03475420a7a266e99cea025403e2f120d30ea5f6782bc530f76"
+ir_digest = "sha256:5dfd486c5fbc326cbe2b7ce70396bdd96e8e0e25cdeb11a5b5b1d89ce78fbe30"
+section_count = 2
 
 [[files]]
 path = "logic/parity-dom-reference-runner.md"
 digest = "sha256:c8cf65ac6d12ada02893d1ad75bc31e98e5a2caf10bc8b82abcd541598e3800d"
+ir_digest = "sha256:0477ed89c5f0c96490c5f9978d0c3c3c68cd65e182840fe1c1192074c6d8163e"
+section_count = 2
 
 [[files]]
 path = "logic/pkg-manager.md"
 digest = "sha256:226151270f324f27adf8011b185fd33fa425bd9730048a0ed8d5221e1d83d701"
+ir_digest = "sha256:f4e58cb94aeb4d847f29760fed51cf92ec2bed85c2d5e86401a1b066818393cb"
+section_count = 2
 
 [[files]]
 path = "logic/playwright-compat-shim-reexport.md"
 digest = "sha256:acfb5221a93b19baa5b1d333147b353dd7046ef3f5c54f236285903d32fdc6ca"
+ir_digest = "sha256:8bf18b5043bb007a6c7f0ee06c39f38a472adc8ca4c10132c19e5295016647f2"
+section_count = 2
 
 [[files]]
 path = "logic/playwright-compat-shim.md"
 digest = "sha256:86991c503fb570f7f1a1037600d471027e94dbb334347e86d7ccfbd4ab44b149"
+ir_digest = "sha256:03987397105f4e42398336730c90bbd697077b032e869c41c3355d542d768515"
+section_count = 2
 
 [[files]]
 path = "logic/postcss-tailwind.md"
 digest = "sha256:939c4488861c5537dd5248ef06a61b72732d607826df15a827b0b99f13de69f7"
+ir_digest = "sha256:1c0809047deb4087ab5666388c9dd8db044a642eb32c9348fb993146e68f88bf"
+section_count = 2
 
 [[files]]
 path = "logic/remove-optional-esbuild-from-phase-3-production-build-gate.md"
 digest = "sha256:144f0b4e787c8a1d0f5d3a24b6003ef999d153a0b6dec41330de5e226ed74cc8"
+ir_digest = "sha256:3c4615e124c88e840cd8284bdecbb91707a6641ce74611bf76b4b63a5239c6b0"
+section_count = 6
 
 [[files]]
 path = "logic/resolver.md"
 digest = "sha256:d060051aac878b3a973e5abe5d653fce93f1e1a5112637f4b10c2cf37a28a822"
+ir_digest = "sha256:2ed3e0a306d1df01faed279fd8c9b752e30412bb797182183b127ab0a5263d77"
+section_count = 2
 
 [[files]]
 path = "logic/route-intercept.md"
 digest = "sha256:2eb5fbf41d14205446282292b804c71d140a6d65023f32c3a8b2f2997cc54e7f"
+ir_digest = "sha256:c3430ef6f21fb22b7f0a1a89c97b360fc47784df3e8e7b01778dd05fc46f6b6c"
+section_count = 2
 
 [[files]]
 path = "logic/scope-hoisting.md"
 digest = "sha256:9fa3d7ea78c70f8eba794363745fc3b7c8221b3a5c9727f467607f21bbb69ef3"
+ir_digest = "sha256:0c67bce975e3d3f413a055423a2bafd43b454d3d29985d08e57266798e6661db"
+section_count = 2
 
 [[files]]
 path = "logic/scss-sass-compilation-in-the-build-lib-css-pipeline.md"
 digest = "sha256:b05546741bd511ba100418aa031968996893b27f6095df4a6f00c36843110d0e"
+ir_digest = "sha256:c032a4879f1fab7eedf31f6ac30847a0d079ec3e9458d3247549bc5fc22d4077"
+section_count = 3
 
 [[files]]
 path = "logic/src/asset/image_processor.md"
 digest = "sha256:faefc33b99073703fab89b6012d97cc22ef1d0f1a4703433deff067b102b1fc0"
+ir_digest = "sha256:c3583a8ad49ec1056967a553b7260db25b762a7f300d6780f56fe083e81f7c4c"
+section_count = 1
 
 [[files]]
 path = "logic/src/asset/mod.md"
 digest = "sha256:d04cb68087cdc9f4ae0ba5c4055a0ae4e04bb5f24f0c4ffed4e12d98c9d28423"
+ir_digest = "sha256:bded5a3bc7ef3eb3cef90dbb13402510a6c0607a6245e65b87e9bc3061a4bf64"
+section_count = 1
 
 [[files]]
 path = "logic/src/asset/types.md"
 digest = "sha256:dd4c9e2646f7c2cb7dc7f42c75d921d58b58f286358e791180ceb4c36ee54ad9"
+ir_digest = "sha256:66a5148344bce751e1c5a3d27ba05ed51b9a791b2057ab611364e6801597e508"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser/cdp.md"
 digest = "sha256:465fedccbd228c2b5be785d6343e3927e3ba44a89a6468fe1a6eceefcaff285f"
+ir_digest = "sha256:3348240ad64323522408f4db3ee1c4ac007127a6a08e2b471c59e28752f05f40"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser/context.md"
 digest = "sha256:3e140eeb145646741c265774056280dae2800ed38a7381e262da95948aa7cb7c"
+ir_digest = "sha256:319986297e3118442d8a5264485c7289771ed3a5fe1bf93da148c248e6089a9b"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser/install.md"
 digest = "sha256:6d4f8b203a5117f0a7c6170526cec4fe21d2419f877a802e944365ae08b93788"
+ir_digest = "sha256:7489c47b9d5c5de248fbb707118cd1b39dcd640824299e8990a52892e3d1859e"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser/launcher.md"
 digest = "sha256:a1437533efdbf1fccc2f9c564938de485fffc7195541089086425c9a5ef8db6f"
+ir_digest = "sha256:878855c0aa4cbaa06ae5c6a2dcaa89519ca512a76a100736ead78fc7b64b1e5c"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser/locator.md"
 digest = "sha256:1b38f1bb434d04d3d0fbb326a3ab86df96e03f4bfffd351dd21727ad4f840589"
+ir_digest = "sha256:8209d262dce64037a1d29ceb48f91133e344f1569b9fd4dd07e7ae0109014918"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser/mod.md"
 digest = "sha256:0f38d532d03335135f0a72ad1bfbfee64ba4a90cf8656e5266c0a43090b9a229"
+ir_digest = "sha256:095c57d441159a5eb4d562180e3c4b7f58c303f7afd4e9a1e73f4d68431c9129"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser_cli/pretty.md"
 digest = "sha256:7a9cc2a86742121e9c3c8d27b6822b0cc3be7dbbed0d71bfbca68d2d0c95d321"
+ir_digest = "sha256:4bb6597ec5919c2ceb0ee254b3f2b09dfb8c539a7db19915db3d45fda76f392b"
+section_count = 1
 
 [[files]]
 path = "logic/src/browser_cli/session.md"
 digest = "sha256:e9f098b0843e382e76177fdf066ff641f555d6e0a7442d591aa5a1f2d5aef513"
+ir_digest = "sha256:d9f385ee6da9ccabd0be093c33da038557677ef84caabb56224d10f04971c87b"
+section_count = 1
 
 [[files]]
 path = "logic/src/build_target.md"
 digest = "sha256:2f311dbfce698199520e43e730981ba2207ca01c8403a253ea1b2e35e88dff2a"
+ir_digest = "sha256:56603e152006a0f05fb6d5d3e5ae4b304f1ae813fc02551195dd3d53f7b58009"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/css_bundle.md"
 digest = "sha256:3d4fce67115e82efe4a99c0a84f41425203638eb496753011903817ffa1d2e77"
+ir_digest = "sha256:c6cf1dedd5f3dc9936d26ed0b46fefeb7f5e33b2635282578afcdf97d13e65e2"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/dce.md"
 digest = "sha256:ee6bd0c20fc50473a8d3450148430e4785c60f46255d8ddb1174e10513c7f6da"
+ir_digest = "sha256:2a0a5c2f6844968674cc34e68ff9e15a4d283a18946a835cb935301208863544"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/define.md"
 digest = "sha256:788afe8d8579de9d0497b947eb22732abcdb82d0fbe87f6ceca4ff49eaed03e0"
+ir_digest = "sha256:13532d42b180faedf114051feec62dd215294e51a51691bd858cb2fa04eea8fe"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/fold.md"
 digest = "sha256:4ced15dc5210cd65eb8063a15d8d13dcd4bf50579ef60e58d9bb52281272a256"
+ir_digest = "sha256:0c00333ff3041486a105a3ccbbac702e4aca7735499ec01fe98b06ce9353e088"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/graph.md"
 digest = "sha256:517312f5a1ab94685d5696debfcfa434b68bbfeec4618ef345a1ed45c2276231"
+ir_digest = "sha256:480050cbf0452260415e168190f60baec5e75d8adf1467b8f40e76f64e10591b"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/html_minify.md"
 digest = "sha256:329252981fc42fbd691780aa052fc7d9b202aa62e7b8ec3c346c9efc51f07926"
+ir_digest = "sha256:937cc6c37a20470401a8aaff173f82dd551c688ad42a444af1759a52bc31ab4c"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/imports.md"
 digest = "sha256:f14c8c41f93185fd6f064317f43221500c61fa783250a81ab59c3d48e730f945"
+ir_digest = "sha256:970cc62dca0199ae9c7f6f593d360280b8bd122652008d0a9e55fdc105813f7f"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/json_shake.md"
 digest = "sha256:c2cc89ddcb11d2abe4619d291da21a08c1c4066a57c16944e3f4492663d6ca26"
+ir_digest = "sha256:51397ee4ce0b506fe8c6d74eeedaaa26e7ba09182bee2ca708d0b4aa61ba7842"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/mangle.md"
 digest = "sha256:a68cf9814689de2da429e73eee7ed601adba3743240af9883a30917aed18aef3"
+ir_digest = "sha256:83b586ec96c567aca60e91a7fb74166275ba932193ac8ecc7686a5f35bfba432"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/minify.md"
 digest = "sha256:0338cd301a1667070f2b19b829a7e554fa4c8f167e3d8b6624944d0d55230c6e"
+ir_digest = "sha256:3192659122977f689eacfd8fe791f7154d6de9a438b28cf4b7244e8df24d4c4b"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/mod.md"
 digest = "sha256:e0543f2e8d3b6a11a12eec8aacaaf86ed6a2436227280d01b640b158cc42cd3e"
+ir_digest = "sha256:04a5a1c63162379026ef06372eed989e4fd4e06c3b5cc96d3ed21856fa581c4d"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/scope_hoist.md"
 digest = "sha256:2bf1b51311f138f32be86a21e88c3c138a0fa88e08e532d6d6c036b6c4c97241"
+ir_digest = "sha256:f48e7d5e1529b1caf74c200b3b20b650a6ae3e352e1cff2f898370a46432a87c"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/scope_hoist_opt.md"
 digest = "sha256:f3b18fcf658f3d800bfc114f56aa4105f7b68be3f01469570f7b423a22205c93"
+ir_digest = "sha256:5fb60432ce1bfba285b93bd95183f3963382abc82e48f3909a0d926c5b86a8c0"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/sourcemap.md"
 digest = "sha256:3529218ef5c474628e3aeafe4de1b6161384e718316a72ca90780518201eb402"
+ir_digest = "sha256:c7992149c42a912773ac2f0c8727c68aa432c1f556ad313f39ca223e3b2c0ff5"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/splitting.md"
 digest = "sha256:fc96eecd743dbab994a89df67393e21ddc78eb9e214a93137dcade8d9334221c"
+ir_digest = "sha256:386e7e37f1fa5d676e68e4b64cf35c3561fc61b627a28a3df2fc7913aae907e9"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/tree_shake.md"
 digest = "sha256:71070cc225f793700c14b555b614dee1e513e4d961f1c4cf1823f0dea91074f6"
+ir_digest = "sha256:3b571332f2c35393ac5504d287ee6110c0ff62e4f91c127d272d9cf74f999f17"
+section_count = 1
 
 [[files]]
 path = "logic/src/bundler/types.md"
 digest = "sha256:ab906d7b7e978ac2af647e70f87679ba0cb496bbd9b1efa2a74e1367339fc8e5"
+ir_digest = "sha256:e3a5908db2c72479d1b3908cec852b3bdc0484b69632feb2d9cd917e02aba415"
+section_count = 1
 
 [[files]]
 path = "logic/src/cdp_driver/mod.md"
 digest = "sha256:ddf638c66d7378c74e762d1866bf1edad9899a46a9f82f211efcabdd37b2b06b"
+ir_digest = "sha256:1b3d1b79aa797c4404d6cee98484e22e24cae4050a89454e7002506cda3a8c0b"
+section_count = 1
 
 [[files]]
 path = "logic/src/cdp_driver/page_binding.md"
 digest = "sha256:e8dc11c95da0d5a16d250a200b9b53bfcb470d80e98175d9ca35a4286dc0c6de"
+ir_digest = "sha256:be843ed50bbbdcefbd43be482798b61c8538c4531e2fe74cfa06878b94becb88"
+section_count = 1
 
 [[files]]
 path = "logic/src/cli.md"
 digest = "sha256:b8214ba569112f0ce888091037a03f357afcea4e7724c3d8b307c37bfeab29b5"
+ir_digest = "sha256:40835d130a5d3ae430ff9a9db02e8e673624c318cc8884481a877f928f167a6b"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/directives.md"
 digest = "sha256:dcb2a69a9b51a252981050c1a85ab4999b54bc20de5b9ece7cd6847da805903c"
+ir_digest = "sha256:075a4ca0d06b011c0686451bb397788a45f35ffb761a476498f3cadf4573bbf3"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/mod.md"
 digest = "sha256:0deb987511caf13f1f0cc3aa436ac9e5e6319440d0bf937ff802caa4c2f96340"
+ir_digest = "sha256:19e201650da24eb508d6a2d58d91f855ee3c3c025c3ef72711075182edffaec0"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/output.md"
 digest = "sha256:f01f4c5382ac4d4fe4482204bc53bc7ab6ae9077826a4e49fdcc10bac1f4393a"
+ir_digest = "sha256:34555705d417e9bf15a4a130075c1de05fe8c5b816886ba9f7fa0956d7554916"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/plugins/animate.md"
 digest = "sha256:55eaadb54e67e1419cc4db2914220042c8a6a7c94ba4b2cc88629451bda0f6d6"
+ir_digest = "sha256:b4df9c7af8fc4381bd69f9943add20392bfc21398c23d8c9f1e6d4f5005227dd"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/plugins/mod.md"
 digest = "sha256:f14305c73b1d42d4b4efbb2d7f3ad2edfaf56e2ca507e7a719ff6fa6c30408e0"
+ir_digest = "sha256:b9a4f9c4de4955070ebfd46d1770f867917e05021e8976b65f57cb6f7398e31a"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/plugins/typography.md"
 digest = "sha256:ce7666b2bf868ad29989e027565a514e8aabb9ce23feb01e4317022501d38267"
+ir_digest = "sha256:7795e83246c5e53e705b21166db383bd19598716ebdf81ea7f097aca20174372"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/tailwind/config.md"
 digest = "sha256:76e5b7429ada5f4a675a0816940a0773ec799dca640f6aa2e78f9d1ef3607f15"
+ir_digest = "sha256:aefa1b938aaefe170c5665c0bd280fc396b62078642eb24f1edceeb75c2e186a"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/tailwind/mod.md"
 digest = "sha256:38e9e24f81f52a4619b246fa535d5060e1d08bfe28b63c428e02bb2bc466cc13"
+ir_digest = "sha256:e181388090062885380181f683d776281c6490fcd02168870a1ecd92b559161a"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/tailwind/preflight.md"
 digest = "sha256:c46765da5b67b755ae06ba56e573757dedbbb6783f876e0394209703c1e917b9"
+ir_digest = "sha256:86657fdbbb38c35b0962138aff939a1cc12d51cc533ee1a6b0fcfc4da0a44656"
+section_count = 1
 
 [[files]]
 path = "logic/src/css/tailwind/scanner.md"
 digest = "sha256:3b1f5546594f5d3ff2f86cb8516676405a1b7f61b68dd89340037270b9a0af96"
+ir_digest = "sha256:c532b2b7ae7c5938b05ee9fae377f3e37497cf8cdb924b0525e9f8d94ae24f2d"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/hmr.md"
 digest = "sha256:72a6043b7e30b926a14bdae2c3a00dc7bf476b4e57577afd04ac67ca3ab33db9"
+ir_digest = "sha256:0f21763b96b1c5d2181d7df393e9d7f41785e7517969e0bf8b6c539604912530"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/hmr_client.md"
 digest = "sha256:ed450c230b68caf1bb43d768d77c2a8643d94b100a7f36094e5a8f7310ac7869"
+ir_digest = "sha256:d006ab5bea0a6d620b7e054ce899c47a1622c782cb1f2fc0798680bd67fd3d6c"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/importmap.md"
 digest = "sha256:e3af88d7eef8d1d9a299bf4d1d22b5be30c3c614d9eda3a58cfc2db75b8d8a32"
+ir_digest = "sha256:5f40d674d88953a0250d669f514a141d7f9f751650dbea93a2f319fa721ed0fa"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/incremental_rebuilder.md"
 digest = "sha256:f485aa6a73788e6821a888e6a734a6eeaeebe3369e1a4173d0d865fa3c82116b"
+ir_digest = "sha256:cb6ed2d999971ce07bce7730cec37697d1c00d6c373adad8faa32cf17a0ff70d"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/mod.md"
 digest = "sha256:49c32345c914251f7de61335c70f3a481d7ed177db72cb722ef0b464eccf0576"
+ir_digest = "sha256:bdf0faf363b7281c52797b57bd286babf20af85bc5d71bd6e134d980dfea661e"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/module_graph.md"
 digest = "sha256:7889f39fc1e60abcf139e910e4d8c62c6d7a60ca9713573d472e22d97b970329"
+ir_digest = "sha256:3e3dc4c02ddf867bcf7255a889b0aa52c70cbd3836d8c2b2dca8b60266b7ddfd"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/polyfills.md"
 digest = "sha256:df3483c16bad421b1f9706cb8a89729a951f6a58447f273df9c476ee9bda6f20"
+ir_digest = "sha256:9667d2261bd9111c13b961ecbeb91de97619bf436e7f7b8d13c9f0633acfdec4"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/polyfills_tests.md"
 digest = "sha256:3c1fe05a1e9db1138690b88e158dd911bc3e3f3ca8c0fe1d1fef02f4493790ef"
+ir_digest = "sha256:b9cd2bddee2a15b8c2c9c155c989eb49ddd8176818162765f08599fdc1c1a30d"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/prebundle_tests.md"
 digest = "sha256:6aad48794806993050d8993eab5b1eb878ace30f89fed0861aa88f908b97c06e"
+ir_digest = "sha256:dfd24e62ea0719202b12ab27e73804e7dfa94008dcc4b6ba3807abef89b1f7ea"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/proxy.md"
 digest = "sha256:220f0b14e13f780365d840a21d615e96cc5443cb0e72fe76b8a69de0608c315e"
+ir_digest = "sha256:ec54e941aa234716e08ec21897b3a8dc90e7fe7bbd9605c7e190b227cc5156f5"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/react_refresh.md"
 digest = "sha256:d614e4ae47809fe3dde9c575e574bec85eada6fdaec4497c62029602c2386467"
+ir_digest = "sha256:39a28f7c3446e463284c89df74da863d423e3a9135a1e4b1ebd1a33f5ab0bc4a"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/source_analysis.md"
 digest = "sha256:b64cecda70bffa9e1fb652c5fd9bb46d6353b64481f42367ce81cf1050255a9d"
+ir_digest = "sha256:7d4557e45014f6d48ae1b5cfbe956f9592d4f8d378c46594b09677006016bbb2"
+section_count = 1
 
 [[files]]
 path = "logic/src/dev_server/watcher.md"
 digest = "sha256:4dfbe0555e1c3e3eb67a6d1dc1820fdd6c40e86e8d1db86427be714ae7cb65cd"
+ir_digest = "sha256:f65e5fe3209bf0c4807ee82e263a9a000b405596c0f452692e25f1e914f1933a"
+section_count = 1
 
 [[files]]
 path = "logic/src/lib.md"
 digest = "sha256:ba1cae3a08da7a46d5cad224610161a6148c796947121b44ede595a813e2746f"
+ir_digest = "sha256:580048ee9a9e92570d381192202872a3515555b527f0582b977a0001140601f0"
+section_count = 1
 
 [[files]]
 path = "logic/src/main.md"
 digest = "sha256:58519826e900eaa6812eecf0d5c902da86151cad452d58a347a5cef16aae8f24"
+ir_digest = "sha256:9ec64bf20c793ce0ab371b0f2ddac7ba90af542a819aa4c8ecfd500949b8a96c"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/audit.md"
 digest = "sha256:595d2a3a3c4b906e346071ffdb551bb7f8f4ad16af278fc408b23a3c106576be"
+ir_digest = "sha256:8db36028fb7016ada6873ca3999650add63dc68d6ffe589a17ee5fa4c8fbcc66"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/gc.md"
 digest = "sha256:0d5d9622e7d0e25b27c1c54fe7839fe1192c0620b4e56b8e9999100265d237e7"
+ir_digest = "sha256:13eee3f1da69854b1b1b34075e681e1e971d825ae6242f5b9a0c3ee747e97e4d"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/npmrc.md"
 digest = "sha256:b1373d01daaab4058faf9b51d3630de3d99d07014dd96c6fc91c9e92a8162934"
+ir_digest = "sha256:e7c17bb9533ecf5d36323c32800baaddeeec4005a1f5c3bd6789d1de1ca4e770"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/nx.md"
 digest = "sha256:0bea27669df3efacabf580ade37cc12e902635ee9e8b0127f550ba0880222424"
+ir_digest = "sha256:090413649e2f48507caca4abf692ce2b023e00982d2ef4a7f41fe2621b2914aa"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/nx_test.md"
 digest = "sha256:2ce0e970a79dbac80a8588c703ca2dd0cc0f8524e7efd03b569b34a6a8650eb7"
+ir_digest = "sha256:b3ffaff22dc7bb7c21bfec7f391d1c6ff400e4b0b674916a80aa23e4605f15cd"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/patch.md"
 digest = "sha256:d9dc6f766e857793b7c3cb3d64665c759a8acd8a029f8c2a9086699902660856"
+ir_digest = "sha256:98e02667f4764e56ca235409a390b8d9ba465110e799070a79ea4ea137a63e5b"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/platform.md"
 digest = "sha256:abf5d528f3b20366ffabff8b12e3f2d93d042ba4f90e4f494b891080800c598d"
+ir_digest = "sha256:8cbd7a8e1c7156ff0098ec1a46a867e70f8dc425090f1c13e956c16bfaa27709"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/publish.md"
 digest = "sha256:862b8361c2405f138214868781f054167f4c222679745ec7208ab4e726e364a9"
+ir_digest = "sha256:701b3add0daae889a0d622cecf9555c34a296cbf2e24cdc64e8ff9d2495b69dc"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/registry.md"
 digest = "sha256:6fb5b0d6c03f2564451cbb0fcc27a64688499711943bc78feffc839093594f24"
+ir_digest = "sha256:3f966787511e814f2444eb6c54ec354bb537a43b5233f4b3319966195f43fbec"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/resolver.md"
 digest = "sha256:6094faba548b29865d367886075bbba4a8c5cb417b1cdd58d12370bdfac6c93c"
+ir_digest = "sha256:a1fc6247861bdc7280bc99fb577d1e044d6424cb3606e1a6c8916771af04b260"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/store.md"
 digest = "sha256:9b34aa6c15940d677740223bd379b0bc1aea18e11a168e59304edc2cb5a3745c"
+ir_digest = "sha256:0ebfefcc98f90282b365fee2467d7e9ca7e50a04f7c85cd9c252193c90035a61"
+section_count = 1
 
 [[files]]
 path = "logic/src/pkg_manager/workspace.md"
 digest = "sha256:17a1c6b000f746fd8dbf2620b104d219d316ebe09e222993b327b1d253da4112"
+ir_digest = "sha256:73034071f2203cccb7851420e137877b3f2c7a989cb2f5d17fe7ac720ead2dac"
+section_count = 1
 
 [[files]]
 path = "logic/src/playwright_shim.md"
 digest = "sha256:ae79951aeaa764e964b90bf1939a900012b62bb9a3a6eed90a51c8885163e529"
+ir_digest = "sha256:4306ab7c58803e47a5ecbd75a6821944dc07c4a679575e8ddfc159651c2e5e2a"
+section_count = 1
 
 [[files]]
 path = "logic/src/reporter/html.md"
 digest = "sha256:4ac5dbd8027f21c0d59ed9db6f1c72c12cfbcb499beb18f7371f2fbb660e1aa4"
+ir_digest = "sha256:9e869ff62a48aa2ae9564a43c46570e71a4da9fdf3e9fdca304ec138ebc41edf"
+section_count = 1
 
 [[files]]
 path = "logic/src/reporter/merge.md"
 digest = "sha256:d37a93e717a09b2ac0e555f1fce4aab95ad81c8d9712a574e5069856d2f3f1a7"
+ir_digest = "sha256:63f73a203d891b37a6ae5b259167263b50edc324aba77882b03608843ca4fb14"
+section_count = 1
 
 [[files]]
 path = "logic/src/reporter/mod.md"
 digest = "sha256:3c18458fe3eebfcde8b38a3308a15876f0a53cb6a0b38655935d545e7cc4bfe4"
+ir_digest = "sha256:36e9b167507f2963a1dc07fc73711a3796f59697115256085677de19c56c6589"
+section_count = 1
 
 [[files]]
 path = "logic/src/reporter/parser.md"
 digest = "sha256:c22b894b6ff5ce7693fab862bde3a16656a14adf40089f210a27dbb03a9c093c"
+ir_digest = "sha256:b87d6a867ce3e4f6e58b3fc051c01ddef31255283f291d73988a4afb0cb1721c"
+section_count = 1
 
 [[files]]
 path = "logic/src/resolver/alias.md"
 digest = "sha256:7c7c2005495e6e74b3093b94cca5ed9732fe716fe0a6fed38aa7697a59a78760"
+ir_digest = "sha256:8bb76a044044342f28e66f05e523ec73b37e6a8ec2409a799420842a55b0ec82"
+section_count = 1
 
 [[files]]
 path = "logic/src/resolver/mod.md"
 digest = "sha256:15f9bf681cbb995fb36eb9d4c01756c0762b408187de2c31260fa50efc4d59f4"
+ir_digest = "sha256:fbdc457029b1aea3d738c823c7bc01c353762cce1682dfab1a28a35ecf5efa33"
+section_count = 1
 
 [[files]]
 path = "logic/src/resolver/package.md"
 digest = "sha256:99cf6f0e3ba3ec1b7751ec7febdd7dc05bdc88792816ad529f4397ded965fce5"
+ir_digest = "sha256:fffb8f140928e39f3507c7a5e0fc88904ae862bb17bc24b86ef07a54ec2761bf"
+section_count = 1
 
 [[files]]
 path = "logic/src/runner/env.md"
 digest = "sha256:ff258c3d2f6495e6adb52968753a4ff52c57d4b6a743f12fc7ec9fae29b45aee"
+ir_digest = "sha256:eefee09eb7f76b1a3b02afcc38be7156407d8642a13742ad7b7d70a425b13ca3"
+section_count = 1
 
 [[files]]
 path = "logic/src/runner/jit.md"
 digest = "sha256:5f73e4840201afc1238663fdbe2e18be3fd35a14d8c3422a631eae9fba912a23"
+ir_digest = "sha256:ca115f46618373f525d77d1c01f8bbaa0783071489eac268b833d63bc4f8f8f0"
+section_count = 1
 
 [[files]]
 path = "logic/src/runner/mod.md"
 digest = "sha256:2e93f6e7b427b08ee46dd0fcd2c37152c607660cc6364b39f2cb7e0d5f76e2ee"
+ir_digest = "sha256:d03a8a30efe25113a6a9a2c1ec15366b5da1cc80cb40cc51cfa54e333ca461f5"
+section_count = 1
 
 [[files]]
 path = "logic/src/runner/source_map.md"
 digest = "sha256:0ba321975bc4d2cd3cf07b20e69ded71afc27069747a5ffe3609cf662769abec"
+ir_digest = "sha256:1faac31598d3579de8d660b7eb65ab5c4bc375ab7949571d04678fb69f9d57dc"
+section_count = 1
 
 [[files]]
 path = "logic/src/runner/watcher.md"
 digest = "sha256:66340eb0d435c2ebd2ca9db864043aa5e1cb7725eb0acb13afeb60cf3f1c7dad"
+ir_digest = "sha256:f12c83ff53c884a7cf5da421614803325201e7d4a4045c06607ce3bbfb6aadb1"
+section_count = 1
 
 [[files]]
 path = "logic/src/task_runner/cache.md"
 digest = "sha256:a45ae2cb2f09c17e45f89108bd9348bebdda02281b3411d71d8f1247fe10a355"
+ir_digest = "sha256:0b54308c3fbb5032ce5c8f6a0a40f84822d5e993446dfaaea71731fe24038947"
+section_count = 1
 
 [[files]]
 path = "logic/src/task_runner/graph.md"
 digest = "sha256:1ddc5e73f89d80c2725f0e0b2d18f91117ca82b7b7c77b3edc4ce7fe2dcd8092"
+ir_digest = "sha256:bc91eeb9c2eb15fe692583c44ff2982d4e186c938c1134616830eddfd700cc59"
+section_count = 1
 
 [[files]]
 path = "logic/src/task_runner/hash.md"
 digest = "sha256:be281e8b287c62b43c77c5592b3656263161370a0995baad83ba75bb5a16947c"
+ir_digest = "sha256:e0f84387bf2b4ff265aca39dba6181a6fe3d45ebeeb46f42965f9240d23e5f91"
+section_count = 1
 
 [[files]]
 path = "logic/src/task_runner/mod.md"
 digest = "sha256:1b77cf920524563291f9ccd0721146383b8efec521536c89230c703f0acbf571"
+ir_digest = "sha256:dc394623662f6df54f7fc99d16ba524158824cd05e57c32c5f5c5db8d9977ba7"
+section_count = 1
 
 [[files]]
 path = "logic/src/trace/mod.md"
 digest = "sha256:8216a294859a5ce47217bb4b7b34d485fc2edbecaa620c948d80fe90503fbd87"
+ir_digest = "sha256:856d869d9db12fa23725ed58f1ec38fcfe0352b4db58267cf2c4f04dc05629fc"
+section_count = 1
 
 [[files]]
 path = "logic/src/trace/server.md"
 digest = "sha256:589e3e84eb2a0d739524b3bce76035d5af56b1916aca81798c58915a06c9d9b2"
+ir_digest = "sha256:c7b5537c434b18999b2973090b32575c46bbe176dd9f346f805552fd666f585a"
+section_count = 1
 
 [[files]]
 path = "logic/src/trace/view.md"
 digest = "sha256:b9f864e91630c876674960a115e6c11c3b23eb99c5c9b2c880feb9679d6a7404"
+ir_digest = "sha256:f13ccff93b0ef0e97faaef7e42556a6155d09053e10d25bd31b08663f168112f"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/css.md"
 digest = "sha256:31efadcd3cd366a52d0a6b164c2017787fed11b08b9aef0ae6c4dd15b8d347ba"
+ir_digest = "sha256:ad440c1ed03289f5ea54e4206d6dbdf7472273a658dc0c1ab981e7de68ad977d"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/incremental.md"
 digest = "sha256:d57cf6bbcbf6467db4974a0317f0e80bfe154f648367ce075df1597eab120a5f"
+ir_digest = "sha256:accc4070b739e2146a2ef58f97c73b4ef860a6c337457019305e435ed0064821"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/jsx.md"
 digest = "sha256:eba4a160df0711d9d9b1de99bbf17b673b86816b2e3898c61143f4ce1f578f53"
+ir_digest = "sha256:de33f3320fd085b7baaa6d5a0156c13ff84184aea2873f2187a3b3378d195330"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/mod.md"
 digest = "sha256:cd8057660edce3f69551f4b7f253e00dfe86d672b0f4c4c66a7a344d1d51ec1f"
+ir_digest = "sha256:4153b9e15f5c98cbc9c91985062a450de3a225682547aba47102852ac2c2c80d"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/modules.md"
 digest = "sha256:cc51a5776c7bd2c0004ade2edbbefeea1d63bed34638d91dcd73804b9d9405d3"
+ir_digest = "sha256:9c3742ae99bec37196ae2bccbe72c7961de8e0831de0fc28fc2247669ddcebc6"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/react_refresh.md"
 digest = "sha256:7b7e76460bdeaed00f5df437c80e77e512679b541ba570033c19b7be45250fe8"
+ir_digest = "sha256:6b7301d2a3273d892e3558a69cdc7b91918d6a101de99836f29691164fa6425c"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/transform_tsx.md"
 digest = "sha256:3f7719816a0f70604e026683bee6eac2c73fac7d8264cf7243aa85980dc19860"
+ir_digest = "sha256:b155fe93abd83187808dea372c54fdba6885ff78bb904c80d3ad67d97e2a889b"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/transform_tsx_tests.md"
 digest = "sha256:fb085c5b40d2197cd0ba25c9d1f99ecfd27fe25d618dcc51e348c506d5ff05e7"
+ir_digest = "sha256:913b0c136b29f5d3dd089ec0b91af92896a67a4a2006be048fae9d2571f3c2c0"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/type_strip.md"
 digest = "sha256:47f686580016988b9798412ef6160dfdadce2216d28b7d7fb678d3634a624f47"
+ir_digest = "sha256:ef3d425a863a6358e15061f1565d1fff3bcc04610a5a43d2a67e5a6b2e5bf0ee"
+section_count = 1
 
 [[files]]
 path = "logic/src/transform/typescript.md"
 digest = "sha256:4c8ef67db9468a9240a4e829d123de440465daa351f11f0efd64e3df30c0898c"
+ir_digest = "sha256:522951f416743b9aaf5a52e0047569db458edc93ab38d73e2a993dc947774d20"
+section_count = 1
 
 [[files]]
 path = "logic/src/tsx_to_rust/emit.md"
 digest = "sha256:032b6939e79a5b56f3ebca3baaaab6ecd21e07e5271a06f7fa6056931590b151"
+ir_digest = "sha256:68c6a4e8ba7024569a3c66edca4c36ff7767e0b70a2398594fcf6cb8b2e887aa"
+section_count = 1
 
 [[files]]
 path = "logic/src/tsx_to_rust/mod.md"
 digest = "sha256:f214422c446677e285ea5e722542c0e3aeab80a245d14d4bc4805931e71fe82c"
+ir_digest = "sha256:822e013037038e9abb1654df318e8fdac1d66ed7de6e0cbbcc69e53d0a97ac4b"
+section_count = 1
 
 [[files]]
 path = "logic/src/wasm_build/config.md"
 digest = "sha256:dd68eaf7cb05cf94752ccef40e8010332f5ec47e7e7caa33a9d295498102be6a"
+ir_digest = "sha256:955fee84fc2c68a11dedee446d555498a240c31a93829ccfd771a67c681e8be5"
+section_count = 1
 
 [[files]]
 path = "logic/src/wasm_build/lint.md"
 digest = "sha256:74a04edc4fbb5e352518dad20e6e2591d220afb59ee106d283b2274c8cf6fc21"
+ir_digest = "sha256:654440ee08fc57dc3bb9d134107cf0a71bd579cc8358cfc12d887eedd80ac0e1"
+section_count = 1
 
 [[files]]
 path = "logic/src/wasm_build/manifest.md"
 digest = "sha256:9bb756705429c874a6b0e14784af191a1299a787e467061dede8c9518b7eb133"
+ir_digest = "sha256:2ec0b334b217aa8e7dba412811713e5e9d10cc6741c47b418a2729d377c6baa2"
+section_count = 1
 
 [[files]]
 path = "logic/src/wasm_build/mod.md"
 digest = "sha256:c26fd23d7436c146e75de1a4f65b0642365bd35ff8aa75af01933918d009dfe0"
+ir_digest = "sha256:f2f5e2f6332d515557688db8a29a251e49d438eb9b72cfd3fea0b27c950cb3f9"
+section_count = 1
 
 [[files]]
 path = "logic/src/wasm_build/schema.md"
 digest = "sha256:9ad80be08741bc9dd2faca216451f26da18f31947beee8962c77ac9d48c99dfe"
+ir_digest = "sha256:ddf6d1fef7c20ab4ca2b1ab8a09ff9864808b5f8001210aa2105032cebb9bbbd"
+section_count = 1
 
 [[files]]
 path = "logic/src/wasm_dev/mod.md"
 digest = "sha256:318cc51054d9e720291435d437ba5920459a88e104f097f4a09f2aa21af07972"
+ir_digest = "sha256:9be11e46a5f59f9d683284dd0889643b491d3dd6c04e3e04093cafa1360549ed"
+section_count = 1
 
 [[files]]
 path = "logic/storage-state.md"
 digest = "sha256:b860214da216234fb0f70996c43c61272b9c4c303f0c25e98b7f71567c234ef3"
+ir_digest = "sha256:33df8f6746e1c1570f495216292813282b19c8a0b1b5aaf63fea1f4eda57aa8b"
+section_count = 2
 
 [[files]]
 path = "logic/svgr-import-svg-as-a-react-component-named-default-export.md"
 digest = "sha256:fd3c3c687f987256b5b968052fcb9cbe8b33e30f54cf3151b18dfc1066ff3eaf"
+ir_digest = "sha256:41d8bb7ab6eba9e1c84781b78bb92350b141dec7c794b0f0d02b5d8f2282d631"
+section_count = 2
 
 [[files]]
 path = "logic/tauri-shell/src/bridge.md"
 digest = "sha256:121ce0ecccd1d4781068ea318176e9d31dfcb8f31bb86085abfd03a46da73e44"
+ir_digest = "sha256:d9f74f49b5185d36d31bc031297917fc81303b7e29c0e32b4147ddf8f08dc138"
+section_count = 1
 
 [[files]]
 path = "logic/tauri-shell/src/lib.md"
 digest = "sha256:f1221b56344dca76bcc4e10d3b8730a3fa13f2ede32aa457edca6426fa695466"
+ir_digest = "sha256:ace76c691bffe25ef4dbc933322d308fd7e5e14e2b85cf9a0ea12c2264d08858"
+section_count = 1
 
 [[files]]
 path = "logic/tauri-shell/src/lifecycle.md"
 digest = "sha256:a04fbaae0c3931881ed7c1f7090827e9f571c40f0bfb686f2f58a4448dffe548"
+ir_digest = "sha256:54e777bd7f0f86214da790c67639146ff55817f84df10d085b9f5b52dcaab015"
+section_count = 1
 
 [[files]]
 path = "logic/tauri-shell/src/packager.md"
 digest = "sha256:5fdca7ecb2d8aad5e78db460fade8b8104d11b20fe991448bf7be1cc9d191690"
+ir_digest = "sha256:9125091744128893b31733c75bbff535900b6d86c7709d7737c9179067ee4209"
+section_count = 1
 
 [[files]]
 path = "logic/test-runner.md"
 digest = "sha256:178247a60eb5d96eb01a718a06f502f83f580bdf12b8392f7dabe36024937f97"
+ir_digest = "sha256:b3eec0442a4150ec90e702839efd9f84062b734231cd24d1d05c8c794778c0cb"
+section_count = 2
 
 [[files]]
 path = "logic/to-have-screenshot.md"
 digest = "sha256:ad9f975452f12bd784e941e7b8443b7f5516a55cd81396a5c95d3c02a2e25e55"
+ir_digest = "sha256:2cbfc7f1ea1ee149075a6515269d0ffa9a0c3d55317222da08088125b9c35cf2"
+section_count = 2
 
 [[files]]
 path = "logic/trace-capture.md"
 digest = "sha256:323f340e7fb7bfe9dc85d70eae00b3b738e0dd1bec859bf815dae5414a5a8862"
+ir_digest = "sha256:2965eed5b288b3755b0f935f5015651a0b3487b07dfb0787a60c02f5106bfbfe"
+section_count = 2
 
 [[files]]
 path = "logic/trace-viewer.md"
 digest = "sha256:b31d1c88a73060c76f3c6fd8ff1f92883523074ffef571196aaaafffe43749f6"
+ir_digest = "sha256:2ae0c69baddeb398d9f235f7b6409b4b87a8e1cfea6e34c3cdc8daa3155ead8d"
+section_count = 2
 
 [[files]]
 path = "logic/tree-shaking.md"
 digest = "sha256:befbe60ee2e0da2b955371dc1b22c525eff1a7eac640cac5b25f3697452a326c"
+ir_digest = "sha256:dc10643e666f70708b87df69717c44f7d6fb47584af1dab3a2cf32140ad69b52"
+section_count = 2
 
 [[files]]
 path = "logic/tui-renderer/src/event_in.md"
 digest = "sha256:ddf4f2daf5425d580ca7625c79a26b04134edd2cfc11ea0cd9845ffba780363b"
+ir_digest = "sha256:6ff52828a116bcf51f34fed076e96d8d543f484a6694fb12e4c7205a859ec561"
+section_count = 1
 
 [[files]]
 path = "logic/tui-renderer/src/lib.md"
 digest = "sha256:15c96728a0e4895e078e86b355452c4086280fe92bd1ae11d40e3cecf90d3cf2"
+ir_digest = "sha256:04465c115a9df612fa5661ba33381d06214e5650dc8285dad692caa28427d491"
+section_count = 1
 
 [[files]]
 path = "logic/tui-renderer/src/runtime.md"
 digest = "sha256:0c96376b9450da40c4ffb43ce6fc99bd3bbbd729a27adf802b98002226973cc0"
+ir_digest = "sha256:d574d3704743eb3b8f78a9a5f0c370455a4af5604a230b26fd19b646ca7c6043"
+section_count = 1
 
 [[files]]
 path = "logic/tui-renderer/src/style.md"
 digest = "sha256:f6e846ebd3d766d81f6b898304a68a958f239ceb415d3eb6ce3fa14e61590615"
+ir_digest = "sha256:dfd2553c13c56c11f192de91006bd53160b20517453340a1050647ea358f956c"
+section_count = 1
 
 [[files]]
 path = "logic/variable-mangling.md"
 digest = "sha256:ae32fd4c068880814adf56ca3b4f87f3ae8b7421b2fe6ce9f5c0dfef4def9584"
+ir_digest = "sha256:512d2d620d4336754abda6d557a975ccb6e5faa0746d2a8f91a65bf0f7858bf8"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-architecture.md"
 digest = "sha256:d0cfa2579f961b1e81ed6e4ee103f9db70ad27d85883b777746dfb4da58ad34d"
+ir_digest = "sha256:97a15710a6d5cac8bfa108c713658db4c0205bb1eae8e191481604d6c04cf0a6"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-conformance.md"
 digest = "sha256:db0abc8665134b8b9b71f910d8bfa85abf8a5ce76e8f676e42cac5afe4e418ba"
+ir_digest = "sha256:4124687420a4ed3b7f85471e3e38a88e604b603aeca88a55516fc1455b7f6ace"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-event-pipeline.md"
 digest = "sha256:98efe383c3869471bbe2e1ce4fca4856840198241093dd252a3fe8b09ede4beb"
+ir_digest = "sha256:16c50b375dccfe38865ab2f102edadadd743a318b23d1c8cb165789a20706555"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-hooks-runtime.md"
 digest = "sha256:2ae8bf80df063f11d74721fb7a1022a1ec8c82849b2de890a71498128e08d416"
+ir_digest = "sha256:3a7ad91f223454049029df578bdf29289a66a7cd2cd25340dcd4f37c3d18f737"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-layout-bridge.md"
 digest = "sha256:7db800010364e72ffd01bc3299685f966c59fb0b12083ce8341765439e6aaebf"
+ir_digest = "sha256:62d60411dc863d1b69aa17b6b82799c337550eb2ac4ceac18a150494052830dd"
+section_count = 7
 
 [[files]]
 path = "logic/wasm-renderer-layout-runtime.md"
 digest = "sha256:e9ff2a34f79001ee1b07752285dcf79e094501f433b60c68ce5df08fef75b99b"
+ir_digest = "sha256:808efc22e13bfb4b7beae159692be601daf0c76542016aaaf601f2f5752aca0b"
+section_count = 8
 
 [[files]]
 path = "logic/wasm-renderer-line-bidi.md"
 digest = "sha256:489f7bf030b8dc77349131468e221a09c70764b869bd7ff18fba374edad734ba"
+ir_digest = "sha256:d01a18ff2f2bb72cff3f066aaa9588490a0f5a15fd78a60ff1815fb6d82ef797"
+section_count = 6
 
 [[files]]
 path = "logic/wasm-renderer-paint-runtime.md"
 digest = "sha256:1ed2d523cb7ad4dbc55f46818b65339b14f16c94286a41ccff4a8b9a5341776d"
+ir_digest = "sha256:5c7563e7cb48493d8c483fdf098d137b2730c0b6d156975377f599c3ef826a10"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-poc/bench/bench.md"
 digest = "sha256:1db69a5cbc796b86c6c7e1046519710a73f80db15034b5778e1cd586f67c4c37"
+ir_digest = "sha256:de29633de3f12fa9228c43fa34145c861a7b3e0bfece109401b086b8be489cd8"
+section_count = 1
 
 [[files]]
 path = "logic/wasm-renderer-poc/src/lib.md"
 digest = "sha256:e471eb3e7afc73ae0fc3e784a986bde51b4a272c0ff2fd602a84b93328f882d3"
+ir_digest = "sha256:2fa1e581f0f48de5de276246097d68b79e2df8377726685488f6b07aecf9fa09"
+section_count = 1
 
 [[files]]
 path = "logic/wasm-renderer-subset.md"
 digest = "sha256:bc4e40fc874d3e91b20c373a7d31ceb3097974a5d0bc545af903f52b7a6b2b35"
+ir_digest = "sha256:e730077fd32addbc89036556ee0110a03936639cb61b564ce096d9e5c049947c"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-text-shaping.md"
 digest = "sha256:56cb4a940f21d5b0029781561a89872de3338403a87589552f9d7a369fc0b8f0"
+ir_digest = "sha256:3d78bd0aa67315d1451d429ebc75b6fd9fd1b9af45764c755427d89e1d193091"
+section_count = 6
 
 [[files]]
 path = "logic/wasm-renderer-transpiler.md"
 digest = "sha256:59310f3f27e6bee7944d846a0f348074615f25fc97c0d489fe2db5dbf190523c"
+ir_digest = "sha256:244fdf558acba1f4de617de351aa4979f076d3525880885d182031e9d9a14b92"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-wasm-dev-server.md"
 digest = "sha256:73bef71bbf96f23d513c2494265a58e4254aa1d23c4ce27145988eac8b9524a7"
+ir_digest = "sha256:23cbdb13ad7e501e729bfd82cd31a1039d2ed41aea70953fe7aa02937b3058c5"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-webgpu-backend.md"
 digest = "sha256:81f01c140e60ee9dc714933cb7e87407485a8c87823ed1a7dc4b7ec31247fa2b"
+ir_digest = "sha256:ece6b1eab2a461e70a87186ea30a2532defddb1ac76195dbaf86da92fbf2a853"
+section_count = 2
 
 [[files]]
 path = "logic/wasm-renderer-webgpu-strokerect.md"
 digest = "sha256:4938e6f4eed5960982180f56308257f5a8e894c3c9ab93ec71743bfcbd0b02e8"
+ir_digest = "sha256:a85322d0e3314dbab7c88164fa8718874982e9c7c74de93347b899a15c77471d"
+section_count = 2
 
 [[files]]
 path = "logic/wasm/src/debug/mod.md"
 digest = "sha256:9bce585165384098be28a807f80efa085f5a5921f9aecd7786a3eef6a8acaef1"
+ir_digest = "sha256:34f869ce5ffffeaca0c015a461c00faaa3b24f3df0d2bfad0ab858a13a93ba10"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/lib.md"
 digest = "sha256:eb920a91273a02daa28a170212e0d673d21841678904b879fdd9ee2490864629"
+ir_digest = "sha256:f0c65e4b161b079bcd6c194841e5df5aef252baf8553f9e87a86dfa2114d6bd1"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/manifest/defaults.md"
 digest = "sha256:c403048e9d31c842e7ad2c2e5b83cb58b819c9a93ce99952b85f8d2eddccf264"
+ir_digest = "sha256:58b901cb7d45df23a7121b60f0961f4f78e3bcf62fc31772fcda1e12fb1e250b"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/manifest/mod.md"
 digest = "sha256:6a322ce086d8bd7f4a8d033a0ea8fd2b6249eb7b1e6dc3584367230bf583ddbf"
+ir_digest = "sha256:d834141819978fdc930850addb8c465693301aa004fa17750795b230793a25cd"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/manifest/parser.md"
 digest = "sha256:3787ef8ebf16335de772097fdec6c4cf2992ebe1e14b2ec9cd28a4a61ee1fab5"
+ir_digest = "sha256:fbf99e10236579eda8f88211cb7cf5e858cff5260eb479c4efedbc07e0b0e1ad"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/react/canvas_app.md"
 digest = "sha256:2b73532b7072b72053b83681dcfd9e9a07f654ccd5e615ec8b73fe8f4166eb43"
+ir_digest = "sha256:4b5217d827b412a49d9ca27003a0a08a1a00351e6ec0f2da35c032a9d6c034b6"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/react/mod.md"
 digest = "sha256:06e23615fbd635a529d459f44cf8d40f168e30ea65d8fbc3c3963069fbfe713d"
+ir_digest = "sha256:0bb9cb46993e0fd6c9da4e5e6555ef3b6c43d889d793825197efb868421fec51"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/renderer/canvas.md"
 digest = "sha256:82dad177bb9d481d07dc05e8c1296c676d17efd80e91dbaf539c26c52198dc09"
+ir_digest = "sha256:d23e01eb125d730ff316475323efe1143bd1c1006a9a67fc1454779344f94102"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/renderer/layout/dirty.md"
 digest = "sha256:a4f46619b1be36145675a04a11a204194652a034cffa6056103c4d6ed21192e5"
+ir_digest = "sha256:e315a4efc7990fd12c5e94f324caab8faee4bdbc64418244c065c17e439613f0"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/renderer/layout/mod.md"
 digest = "sha256:7ee5428849bc627caae60f83315a623537154ada8b7b4080ca06c3ab0885cc8a"
+ir_digest = "sha256:acda38a29e5a386f5bbc7ba20fd28ff66b4b180fb8375655937de227d3df007a"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/renderer/layout/style_parser.md"
 digest = "sha256:e20aa54a2f5d260d80f82416af1614cb6a9b6d6b11f584a96d1351f9efc997ab"
+ir_digest = "sha256:f2e7b37bcff462b563fe0514e1049664bad28a1a41d7b1e5bc3ac4a085b5aac4"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/renderer/mod.md"
 digest = "sha256:6142c83837cac4a96316e281709db0ce9a7b2cb43eade2ef90d5abae43b6780d"
+ir_digest = "sha256:afacd165f8ed68278c212dac8c6b31292f6f5977d8d4ce582d7d8890b3ac4b25"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/bidi.md"
 digest = "sha256:dee4bff5162160deeaa0066db7ee75583f029bfe3740a7e11468b9cc05a98a43"
+ir_digest = "sha256:e6a82ad72545046f7dd3dcb946602e65e329de09b5973f41bbbbb48188c78da7"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/cache.md"
 digest = "sha256:ca4fe60e70300e76121b260c44f7a9815e606e46616d030aff08b9d14475e8f7"
+ir_digest = "sha256:da5830a5bdd93461a5979642ace0299eb6d916b096f363c48737a3d853eb477e"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/font_face.md"
 digest = "sha256:b23d7bed90ffbab4a9cc0c923b3e93af005a129d939460b632156f69b96efc96"
+ir_digest = "sha256:bc03242be1ae3e99b6844e010f382285caeff7ca907c4eb526754727cbb6b030"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/line_break.md"
 digest = "sha256:b01a01c28faafd210821847d2a0e0baf45ec28f15bd71780bdc6cdfa7ddd6011"
+ir_digest = "sha256:9c52a294d68e8e335e2cbfec84e9485a12d26389b9000a75de37176ec458182c"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/mod.md"
 digest = "sha256:f599e0dc4f57608551f4e6087348a1dbc06aa764cbb1774e8b07f14acf6a2457"
+ir_digest = "sha256:fc384e5cb72a8660205940a15028681b7337487e8c353a4548d5154556e47d92"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/paint_bridge.md"
 digest = "sha256:1ebd22ec944dfdbada639f8bd5d5dc4070fd251e1cbc5f5811e34f5579619e52"
+ir_digest = "sha256:13721b4d88a90ed316dba069963f7b1e3e8befb94906b61203040a506a5157e3"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/paragraph.md"
 digest = "sha256:7bf4d755c2681542a332a528944ad4d81993b172d0fc225525cab0d006b59935"
+ir_digest = "sha256:5a92b72fcb414c14670f6dda26967cdb7297f7595b0dc771c0804a5e932840d4"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/script_run.md"
 digest = "sha256:85410c6852d1d30708fc78fd01cb9b6539471dc0430451cc91a0fe5a51624da5"
+ir_digest = "sha256:c2044ce04aba8245d9b4a3f59bb455275e815dc18b0acac477003ea4717133df"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/shaped.md"
 digest = "sha256:a7eb5cc381d4ff8ee17669353457fd6ffbe7da721705897ad14f446306dc9151"
+ir_digest = "sha256:6e5db71caef7133d7e7cd59cc3270b608f83a2a9e764175f093f77d9edf6f5e1"
+section_count = 1
 
 [[files]]
 path = "logic/wasm/src/text/shaper.md"
 digest = "sha256:bf3bae424e2f9db62258e4019f18653b88145eeddaac58bb8e9ce467de204b4a"
+ir_digest = "sha256:52fb06ba0cb59084b8b62930a89cacd051afb2f87e1051833c0b7a03df9c60b6"
+section_count = 1
 
 [[files]]
 path = "logic/watch-mode.md"
 digest = "sha256:5dbcee78aa3aac47eb9bb13c31eddd6797dcf3c61ec9253ff6651b175afa36cf"
+ir_digest = "sha256:c05acd011da8a42e049eed9a15d041bc21744724503c3470cee127740be42774"
+section_count = 2
 
 [[files]]
 path = "logic/web-server.md"
 digest = "sha256:5e70174da2cf00f78efbfbd103d7c1d4d7f02bf6a63bea4ff019f9547bcf4770"
+ir_digest = "sha256:34b6b3489daf0f42f4c4f03f20d85e6d2859e75b67360682aa49f29de125d241"
+section_count = 2
 
 [[files]]
 path = "logic/worker-pool.md"
 digest = "sha256:929be9f29f6e5906481c379dbdc1ccfd694aed1883ddbfd780d9fa7c0ad0f5c7"
+ir_digest = "sha256:fa2dc1f67da138a82b0bafe3ab5d83b27b9a038be2cfbe52d420ee64f0043707"
+section_count = 2
 
 [[files]]
 path = "logic/workspace-protocol.md"
 digest = "sha256:1f9d0d01f94bf2bf4622ae879645ce9f37fdaffba5e9b98bb694c7fd77a8d4fa"
+ir_digest = "sha256:c94c5227e6d4920774a7211585824ea20b59590debb933274a515d0707618475"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-agent.md"
 digest = "sha256:33501d9162e8e3c395f944aaf5d07b5be83bbf611d1dcd3f647e3a7b3e218fd5"
+ir_digest = "sha256:da92031e77e346544e7f058154ad4f9125f91c5fafca0c9fc47dcd6f0664148c"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-asset.md"
 digest = "sha256:1aec541b2ac7651d9932368083ac1c36dc5ba3692e09488f1c030ab5939ee7a3"
+ir_digest = "sha256:b1331ac0b4168431615b1ffecf2c99a9cf7fbdca54a717c8564773c72d1189e1"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-assets-html-reporter.md"
 digest = "sha256:92b1f0b6f0047de2cb4dd26601d46d1f36b7770a7b5411cf31924c56401ddff7"
+ir_digest = "sha256:85c8ad79f8bdb0af918358dca7e98ae3fdf4938cf808150ebc5382307031dad5"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-assets-trace-viewer.md"
 digest = "sha256:ed52eba01075c1701025aa217b13ac844fbfe71c9d01d724444011c2a34c8153"
+ir_digest = "sha256:918f7a3ebc18e446bed69f5dd42d7460e96d0bca3dd9b802ce81c0c6920cfd33"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-browser-cli.md"
 digest = "sha256:b338ca4c53b77a82884dfca2a66e6bced6b2d75307bd32cfdfc1d3f9437014da"
+ir_digest = "sha256:b2fc30a75d188df43125d0c62a09199af500cb8ba65e54e747656c27793e049c"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-browser.md"
 digest = "sha256:dfe3f47cadcc9b61b8a245b148663d3a4e33c60503bbf50a44bcf26d6d83cda1"
+ir_digest = "sha256:759426f19cc2d20c35fc383a5e4f1c165d6c991239d198d8af21920cc51b18ff"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-bundler.md"
 digest = "sha256:0b97cc97de20aa2110cd8f6d1efe793bccd0682c52381b9560c17b463d9e7bdc"
+ir_digest = "sha256:a88b82b27b3e8ad47d42fdb1125e6d8a2ea191e2fadbd41d5eda9190fb989be8"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-cdp-driver.md"
 digest = "sha256:4ac25f5c1656943fb13e33a21b996f81fe0f0d228459d315457fd10c7d0008ec"
+ir_digest = "sha256:b8026727a0d73366210f38ceebf7313fdc8822fb85aadc47c1eb7eb64a67039d"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-css-plugins.md"
 digest = "sha256:04a4acd6708298c6d90da8cc85563798778283152cbfc56fa75a53e6fa9e59cb"
+ir_digest = "sha256:07cec3748b240ebec9ca94f66653954bb3c35aba233f6f63b295cdc96859fe84"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-css-tailwind.md"
 digest = "sha256:9a7ba38d539abbe714196b66f4b3ebc7a1dd2c6802e6a9819d35b18c88e74054"
+ir_digest = "sha256:7816fa8a3d7046eda98be75a766c33aeeec486210ae1702d5d9636dae92802f7"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-css.md"
 digest = "sha256:d8003a462068cb5e6609f90810d96b8be1058414c38f02c477beddf85cbecc71"
+ir_digest = "sha256:b201c8703aeb9071424c4fe8dd5ffa059ea9a1aafc0d741a54750a90f1e1a423"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-data-runtime-test.md"
 digest = "sha256:d82a5c3ad1956777c4f63ed5794e2d3cf0c273f72a4a9dfd9b7fd59bcf5a2752"
+ir_digest = "sha256:1ba2759919151d41ff6c596b011c8ac9b11d9be3aece47d1f8a10c035a70ed2f"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-dev-server.md"
 digest = "sha256:1b8971c3b28c9efa0b8bee22ec8a95f156f421c847108b88c75f8333941d9558"
+ir_digest = "sha256:68f22813b763946ec78982a34461773ee5e528c989e458a9626ea9ff183fe3bf"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-dev-session.md"
 digest = "sha256:deae2a6c04226e228e599f04e703c24b79d92ad06a688225b9723b951f2b58d1"
+ir_digest = "sha256:54f4d8d4e1fe4f5814eb95c1e38f6d37968fccbe785f0c2d770324b2f23b7e66"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-e2e.md"
 digest = "sha256:477bd031fae1bb244b2c84a55a2904fa84e345c0274aa42f38bdf14021f14450"
+ir_digest = "sha256:86fcf4423c378a04256bffa41280a31376ae90263e6c7ff1872386e10b5c0640"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-evidence.md"
 digest = "sha256:22d7a4d31db037e01267a86a15ca292322e8306b6a49686ca895693361e2256a"
+ir_digest = "sha256:f9b4ccfa6a6df8ee39c01feaf438349ac20baf5c9202938c6b0ffaa537804d56"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-examples-jet-test-dogfood-src.md"
 digest = "sha256:f4a76378412ae11314e32b2bcf35e79ee80781885d3ab144cfd5a51d6dc4722b"
+ir_digest = "sha256:aa1c0edc27d49653d4124cc2af3070401252dc8ce49ad63cd0f4868f61dc3eae"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-examples-test-specs.md"
 digest = "sha256:2debc9f1c7b48856be924a7d94bdc2d8f880c508f2a5dcfadef7515221dae5c2"
+ir_digest = "sha256:c7d8cd46bf5064bb31e8f303acd62298995a69e00d0b0ed7bf77fee82ac157e2"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-examples.md"
 digest = "sha256:5b66c48ac6fdd028726547848d359306d07f060e994c105c66ae9bff2d22ecdf"
+ir_digest = "sha256:9780da5df229b2f82235425733faf8e8064cdfa988766b2e16c4b09e1efb4a2b"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-corpus-src.md"
 digest = "sha256:52efda628f5f753f053d80a322e1ad7b9f41f9fff22aba54ff32bbd8b68b1c99"
+ir_digest = "sha256:615f1449e571a324a57f67a0ce9771bb37342bb267953124a1c595addfe2f585"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-corpus-tests.md"
 digest = "sha256:3612c137483ccf41d44a5c38e462b93239fe539fee994f579dba18c0a2c8cc62"
+ir_digest = "sha256:d32d0cd365725ec5bf11b0f292fed412314484edaadb845874151332f942f820"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-data-fixtures-libraries.md"
 digest = "sha256:a9d496088953b8f54184bb53e7761c43785ddce51fd459d10b60bd4c41edafae"
+ir_digest = "sha256:3fb17109e07507cd3ac2f12014248e2424f5ad363282d12743e9d6e000563a78"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-data-fixtures-mui-mui-button-primary-v1.md"
 digest = "sha256:b5300fb03b70abb873bd73cd84187cbad7f952a1834a9c863cd932556ce58168"
+ir_digest = "sha256:8a35a79b98d48a8214cac8861d459118aa488b3d68a52864e217c01ca4c6a202"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-data-fixtures-mui-mui-checkbox-basic-v1.md"
 digest = "sha256:cc6d69a44dc7cbd6ec94d67bdf14fd413f8720d6bc996ee108b79d362ef5f3c0"
+ir_digest = "sha256:724fa7daad13b1516f8947d44ffcd889b89d2ec74afcfd1bfba3148c59c7ad92"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-data-fixtures-mui-mui-textfield-outlined-v1.md"
 digest = "sha256:9cab3babd2cd3f953464643f4ddfc8427a68248d2b84ac4fb46d420d54777006"
+ir_digest = "sha256:f889080cfbbd868beac3997aad0f36066ecf73b3578bbd977925b7a23f8e611c"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-data-fixtures-mui.md"
 digest = "sha256:dfcce580cf384852f504d72832675fc41bfc2679280ca6d91cda16f67c0033ed"
+ir_digest = "sha256:735da99dae8799b9e9692aaf1893394673859bf8ea9e4f8c2af5e5f42487aa09"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-data-fixtures-parity-grid.md"
 digest = "sha256:b2dd58ecec89954bef2926919f29db999c1c1fa10c16a0fece2bf8ca375ffcb3"
+ir_digest = "sha256:1070dc65175ee438daddf50ff8a4002b72bd800cced318dea8f8501908512208"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-gate-src.md"
 digest = "sha256:bafdfcc9f1b99fc1f5e0733cc49f25b720f81b722852b17a4a5f83bf0d7d0492"
+ir_digest = "sha256:032d38df409d39f4c586d1d48456c973a3257633905536ff0540840588654690"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-gate-tests.md"
 digest = "sha256:dd8cfa1b7351a8a39ae1648a5c83c6871c0f310e40a819d12c5d03b6ce5eb18b"
+ir_digest = "sha256:6b01076b1b40df63617acf76310abdb57bcd4f82fbfff32dd7176c20cd130643"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-oracle-fixtures-shell.md"
 digest = "sha256:28ce7dfe9d4088adf582ce65318a5dd0d28f6b43b75bf60e37a1ecd91f5713ae"
+ir_digest = "sha256:d3b7c9051bd6ca9b5618f64d91b873eba384c43cf8eab17d8a3b15ee52bcef9f"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-oracle-fixtures.md"
 digest = "sha256:739af4d1f52496b1d9c8d0d6914fa0d70b982b0ae957910b791bcb5205087774"
+ir_digest = "sha256:9a494fede4414ce1625e2be6c1abca714b5d6fdc0658161c2db00c419fb287c9"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-parity-oracle-src-bin.md"
 digest = "sha256:acef226a92ab09cba6ac7c1603eaf4873ac1304b95bff0310f971e406fcb82d1"
+ir_digest = "sha256:58b098772dec6a904e6ff76de3401d62f2462390cbcefa0ff03b921502eacf71"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-oracle-src-channels.md"
 digest = "sha256:ef29009ac9dcae506640083f629dfe83415cfccae98ce3145b24f7f838f49a65"
+ir_digest = "sha256:68deb9e804ee098abe0a9050952db8f9ca6f6aada1fe47fe55e1b6fc44da0dc6"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-oracle-src.md"
 digest = "sha256:23acab24cc44dd2922b7b207b29cc944571d39aebd8837f42085e3467bfcc699"
+ir_digest = "sha256:404985a765024f4ec1153609afa80e20494dfdc2ca52da609493495ffc94b888"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-parity-oracle-tests.md"
 digest = "sha256:34d2bf9eaa45f570fefb7e639fff2fc258621cd7635301b5496de03bfd396536"
+ir_digest = "sha256:d6f7dfb2df6356b7901ab9429ce73e8d2c0f4a79d49815dd0009a9b71afb1df0"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-pkg-manager.md"
 digest = "sha256:d1e8a6df2b2d6ef515da948d766494694f08b7beb05415a988d96b644c35aea4"
+ir_digest = "sha256:d3366f61453ebe893122316b1e39d75dd288a7adee9529e5fea9976a0eed15fb"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-pm-report.md"
 digest = "sha256:e911fb27aca124c2e143eeb72e71e4fac9ff88953fb2bf846b93e7960817d7b1"
+ir_digest = "sha256:5b16520114fabfdf669bd0ebd606ad80ef5818f539870e5a41781f1f52dddf22"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-projects-jet.md"
 digest = "sha256:7daa02c643c893596f043eff268b36fe6b422578f7127821d36c5755eb19f5ea"
+ir_digest = "sha256:4b6399a335a169439aa4ea3ef9339003e642506270a702e7ebd61443b038ccb4"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-reporter.md"
 digest = "sha256:a6b14a56558e8fcf7a5b5c13b8886a58c01d0b6f61187c05577e7ecc5e35d39a"
+ir_digest = "sha256:cf91beafcbe09d45689884b3d9f84f5524ec9a6f8440560542a3efac1ebfdece"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-resolver.md"
 digest = "sha256:3fc0bc6c468d100eee707a847f386e14bcd8cee266340ae39286a38a5319c1e1"
+ir_digest = "sha256:03cee980055e05ddf007e7c03e0aa782591e4a47aea4a2e6c52a9e62b1c67865"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-runner.md"
 digest = "sha256:ff40801517f6268d0d9f941a7f37c1b59a7c73a1383d7ba81e731defbbb7757e"
+ir_digest = "sha256:09954097ea9798a143422021cf80fb477ec150f4b08a22b9853320e473be2d58"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-scripts.md"
 digest = "sha256:4a2f48d0c11754cb697593c44948c5325ec7b6672b34fd430a4dee46b6c6ad7f"
+ir_digest = "sha256:050388bbf8130858fc5ba3354a839803b9de612a4e45bf65053df33875363d3b"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-src.md"
 digest = "sha256:e23f5b76c38b51be0c2e3f94e59669da6427518e09e170185f78cb6f0eff4ecc"
+ir_digest = "sha256:67511d25a9ab54e16b49545091c09c265efd860de023e8e836b1642350ea0e82"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-stories.md"
 digest = "sha256:3ff24b7609a61318642c47e49aee8cc037d65871e96877aae92eb8a7bfe5ca16"
+ir_digest = "sha256:aa8f952323823ec3c1d5cf3f4a0f622a63ff5bfcf48f08f33bbc1b620106a674"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-task-runner.md"
 digest = "sha256:65a055abbea6873bb2099e68a1a60b8837441f78354ca5cb3bd81e5bbf43442a"
+ir_digest = "sha256:61cc4a708fddb1e9d3a4a966beca3b0dcb096262e31642ec8eef1c2df4a60a5c"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tauri-shell-src.md"
 digest = "sha256:5eefaac998981e638c6996e96f8362cb704c673239b648d41dbdb4efb86b59c5"
+ir_digest = "sha256:7065ee6f635a92878d3e39a3fc814c0c16bcf170d1b4b6dea82ef5cd39ab1181"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-test-runner.md"
 digest = "sha256:3078e52eac17c9f713f90bea5f278d6798667a6cc2cb22cd84aadbc7edb6da10"
+ir_digest = "sha256:927dcae7b9d04be59a1ae97e3dd6b94e0b44bf94b1e4c6add4c1972a29e7b557"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-browser-bridge.md"
 digest = "sha256:9c89379cdb865b576a567af5534fefe477f8b54b16c9838cbac2927cadfc2d3d"
+ir_digest = "sha256:3c50404dad9de9990aa89fa80d215ae1ed57cdc6cdee5715e860224c9a37b3a5"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-common.md"
 digest = "sha256:7bad457a37051bc17990058a9ba88d986b14b4327b66a0253327c4a78ff39d4b"
+ir_digest = "sha256:ccbeab8a8621c46b504fed3e0959d8804a94b062aa90f9db042cd08c46e9c98d"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-fixtures-dom-production-build-antd-visual.md"
 digest = "sha256:8a2721e59ef9aefaa9421541f2cc052c7b4d4fa05d9871ff266884d263016596"
+ir_digest = "sha256:b85466eb9960f84f2912f4063a5856454a2d471357dcaaace785f4fedfa45b39"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-fixtures-dom-production-build-dom-production-assets.md"
 digest = "sha256:7ddfdff1ee83563c1d84c837b54abbb53c7ededd31fc9e3a9d8c67589b2a9032"
+ir_digest = "sha256:92c6a13953aed5662156aeff69d3c578a218192c655a4177c09ea3418e3041bf"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-fixtures-dom-production-build-mui-visual.md"
 digest = "sha256:c435d2bfcad15177f8938d9d7e528468a608a5615a0c9b00b4d1fc04b36ceb6d"
+ir_digest = "sha256:169eed540135e3d77e63f9bbe54b03a33f4cf7b8495be934bea0a0683b16870d"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-fixtures-dom-production-build-react-bench.md"
 digest = "sha256:67e829e6dcab3d7c8b68f90d666a5d2ee8e1de308936bf8ccb7c4ca0e25e911a"
+ir_digest = "sha256:db1b5b5990850af2879039e6f320f619fbac887ea3ba16c7a25aeff990346809"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-fixtures-dom-production-build-styled-components-visual.md"
 digest = "sha256:9f3ce9571feb5e3439ecab7c05b8e1761ba4bce3061049442ff54c074b0b4efb"
+ir_digest = "sha256:f1b653e5c79d6c6910be04dcc0b24bac807c16fde081b6b0f28634c99b415dfe"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-fixtures-dom-production-build-tailwind-visual.md"
 digest = "sha256:d118d7a5e5ccadf7b2ee108671e4c97bee933b57d64d4e0fef184ffa48320065"
+ir_digest = "sha256:a6d21a54e1da5b8f40cd01ce8a29ef951a447ad5fe9aeb739d0240e0e79982e6"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-fixtures-dom-production-build.md"
 digest = "sha256:4c9236a2c882b85b72c17793223285de4228de0131cd8351601a630194b3bcee"
+ir_digest = "sha256:521b1ebace5a1149f0de09d40b81b01c3b386eefb07b80a25847367d192226c1"
+section_count = 5
 
 [[files]]
 path = "semantic/jet-tests-fixtures-jet-test-api-compat.md"
 digest = "sha256:d8c7555735d5248002684cbbb40e2fa0bbc22ddfe64b679b2df0d67c1d42ac69"
+ir_digest = "sha256:0fd54b5929f0b2aa026fca2a0c0ee3f02c3c9c60bc648a19af902ca3e76afa5f"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-tests-fixtures-playwright-compat.md"
 digest = "sha256:7057fcd709b73f6942203636f0ff6733cd710dbd4bb7c04c0e6ff296c4b7ad21"
+ir_digest = "sha256:51eed81857e1956fcb61258ea5a35697f9c819a4502347036a372d1f083f9f79"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-tests-fixtures.md"
 digest = "sha256:92f9a4ab15721fb4aa9e214b6b7d0ff1a9f9791b65693691b6444c5f970a4f13"
+ir_digest = "sha256:40e0ece9da9ab514223d8071eb8ea6c9556cb7a7ea49d1aeee623f9117e70db5"
+section_count = 2
 
 [[files]]
 path = "semantic/jet-tests-harness.md"
 digest = "sha256:e86e846449223c1062735c371a5b8ea44a4813d1311bc0f25971c5246bc3a686"
+ir_digest = "sha256:2556f42c8667b2a6d2838e16d12f7444128fb2a64ea8352f29b25890cb80b977"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-pkg-mgmt.md"
 digest = "sha256:abe4ffd257de0de6b6e5b538601335390d61bad9609918331532793aaaa7ae70"
+ir_digest = "sha256:64cffd2a5357f40d860facb69f5d547a41d77d3b8dae4d0046fa888728b63736"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-snapshots-codegen.md"
 digest = "sha256:f0134dbfbaf9c5edbe3b9aef03ceb77a207d3cba1d9b46adcac19b5df1476bf1"
+ir_digest = "sha256:a188996ce46e7ac79a45c8e69da38173bcffa385fe4f7b2b84ab58ebc24ecf64"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests-wasm.md"
 digest = "sha256:20342d4bfe5727d89ea8cc199289d3ac1a00a7f71051d867ed8f32ae2eed8bf0"
+ir_digest = "sha256:2714f87c53e829bfea629fcf9390d23a1a188af9a28f53384a0c713e9b7938f5"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tests.md"
 digest = "sha256:d3ea322bdf6aad6a4965000d143590db527ff8536f1d4add7e145da0887f6e79"
+ir_digest = "sha256:90a8190eab2e7309e1dd1d9246f3c05b66367571a25d66729ab3a9cd66d7fa47"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tools-conformance-src.md"
 digest = "sha256:b744ed662669637c89b4da43cb7842c39cb4091bd2539d90cdf000338f4e04a8"
+ir_digest = "sha256:adc8fabfd77c44347e5202cfa73c79252fc9e375819514156b1733058a9689dc"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tools-conformance-tests.md"
 digest = "sha256:cf55811143d8f8ec847e0f7a3b2e259c1126ffb6d8ad335dc6bacf22301df4ec"
+ir_digest = "sha256:cb727349e5e25aa45e8cef1ff7e0a7b9bb74e901aa4aa786fd8c42af9a56795b"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tools-manifest-src.md"
 digest = "sha256:0ad5566d6d31001858c6655d672b04d37d3cd0ed8463c5d6f097e69d4147e956"
+ir_digest = "sha256:5663ca011702754cb0a1b274a9a6a9c8539c038ee5a4ec077d053a5f6b68a21e"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-trace.md"
 digest = "sha256:b7b2c643f4e20acb7b201eb8dc4ff8aa3a6365c6d627fbc3b9190f5df866f903"
+ir_digest = "sha256:2022c692b58a364990d0cd9bf433b014a733cd0565c3a27d26610731ccf62204"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-transform.md"
 digest = "sha256:1feb6062e68e382d56c846b30a0be4539a7753c64763b4f4ad478001f0260293"
+ir_digest = "sha256:6ae4b9425597cf5c3ec058814c5c82173e5551d1e5ffb81a93905c9105957181"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-tsx-to-rust.md"
 digest = "sha256:6cf272f9a8eca4433b70da4d9a71179e6a7300af3a09d31f936a2b6b2a77f984"
+ir_digest = "sha256:4b654ae9104d3906a1a53617774420ffb1d53e798f36442d6bded164e7264053"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-build.md"
 digest = "sha256:317ec5d9102f9bf63ce549b3cf1df7ea92dc84c6eec76c2632fbf9c8932d9492"
+ir_digest = "sha256:e9206e7af9abc527f18db37e172191c1f21102d5ce90e0a551bf08ab00a1c5f2"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-dev.md"
 digest = "sha256:594cf7a85b2a44f432cd21550df3867a734d4e70ad634bb4b9267cdeb94d23e2"
+ir_digest = "sha256:b4d86caab46f86b3c9ddd1d79d970de4826e1989e714417b1bf47850ed2eef80"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-src-debug.md"
 digest = "sha256:81417a83b0d1d3ce2bce30738eb3f4ccebe5dce6f7f1f61c3e4b3ceb160a8cf1"
+ir_digest = "sha256:7159016ffc4b85961490656d3b6f62364cf679aa97d2519519dea92cbe31175b"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-src-manifest.md"
 digest = "sha256:51c85dda1d557f3a67eb98184445080208a93eb487cc64466e62e8c77b408a73"
+ir_digest = "sha256:74221d30f46fc416cb76957ffa53d31c6dd48bf9e000bf88e9fd892552038d3f"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-src-react.md"
 digest = "sha256:17ce07d3c508ed4c88aa586079b69a5da6f80f68d1eb9b9e964299021fab54ec"
+ir_digest = "sha256:0686ecd3901b3e6956228994a05752c2570003523ed4d24fa6d33c1ef7cd44e6"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-src-renderer-layout.md"
 digest = "sha256:0121799bba1db9e0edae2f1e4d557e384fd8d002c329b2acc822b523d427b57e"
+ir_digest = "sha256:d71866cc30c5d5e7686ee85b2e9ef2e98516d659e41054dd09ee173df6f779bb"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-src-renderer.md"
 digest = "sha256:8509510cfa36a9b960da2a19516bd6fb34c1d9e505c4851e26e2fe8ccf48ffe1"
+ir_digest = "sha256:91acec01bc5b5e49790bc8c6fe96eca14576096ab516e62578213142a5be4c5e"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-src-text.md"
 digest = "sha256:6c7b3c11d788bc38b508ca23915aba83ce2db061b2c0b4502e66a2ab3474fdd4"
+ir_digest = "sha256:177339983b1461bf999005d176c3549eae07448fdfa56e9a2aaf2cf1c9eb013c"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-src.md"
 digest = "sha256:059e60325a58abe8aa12353628ce150b58cc6345b6fa1143329b7a00e93752ce"
+ir_digest = "sha256:1963a43509c7c97bef3c6385912a63088a44ecb9c8c66867a78a7857c2dc5bc1"
+section_count = 3
 
 [[files]]
 path = "semantic/jet-wasm-tests.md"
 digest = "sha256:ef4574e2058ce70fd6d7f11c69c1b14b57e834f12157c63fdbb1fe51503ac388"
+ir_digest = "sha256:81eeb9f9ac6a2e2380796eac3c00bd063e6b78237f3657ddc316ae6e08cb0e3a"
+section_count = 3
 
 [[files]]
 path = "specs/1235.md"
 digest = "sha256:c2b117a12cdce62fde746f276acb757135c9cc210e72b40a292a9201beac1fb8"
+ir_digest = "sha256:53030b3bd04d2c10a6d19612ee47949a0470a524617ce3edaabc2335a5c49f8b"
+section_count = 4
 
 [[files]]
 path = "specs/1236.md"
 digest = "sha256:457eda799b953dce134f47b6b30bf6858b913b7d0d4083f3d65c27a24c78782c"
+ir_digest = "sha256:e7f613b294f8bf805a3f54f1da2da655cafffbca00f843144fd7f2cd6818ead2"
+section_count = 4
 
 [[files]]
 path = "specs/1237.md"
 digest = "sha256:48b994cbed87383987766997e8c707d2efb7351429fcb3aa43d1f211fcd088aa"
+ir_digest = "sha256:af4945cb15320b1bdc5059d16d48869093b2e1313b4da19a475f57144ffafe11"
+section_count = 4
 
 [[files]]
 path = "specs/1254.md"
 digest = "sha256:4678765b6da111733270cf1bb698a04f25f17dbdcfd70601c9bb195c29a294b9"
+ir_digest = "sha256:e1d8fcdb3764059f9141d499ede01ea235815525a20a288ce07b4e5c1601bff6"
+section_count = 4
 
 [[files]]
 path = "specs/1268.md"
 digest = "sha256:78bb08d9f3dd80166f7554a131ea6c194c2ce4ebdc4048a7d9873e159a8f095f"
+ir_digest = "sha256:446333c1e917d3c5bc37db8c25d339a9f8d8f66b89e4283b32776e0d6085235c"
+section_count = 4
 
 [[files]]
 path = "specs/2114.md"
 digest = "sha256:78c964ab332d2e6a450161432b5be9a46f73be329f3060f848df45ed0fea0563"
+ir_digest = "sha256:9b14411e6092df0b432d75c5596f4a9c8936f765014837ea352ed5cad5a22256"
+section_count = 4
 
 [[files]]
 path = "specs/2115.md"
 digest = "sha256:b283790221f58a5eeab8be369814fa3e2241c220469a7c4df77c4a31b2980078"
+ir_digest = "sha256:867f7c3ae0d8d657e4e0f159abfb52bb10bfdfc82948c21243284bc0679a0e11"
+section_count = 4
 
 [[files]]
 path = "specs/2133.md"
 digest = "sha256:f843caebfd1952817753f95b573c8330ce8325dc4eabcecf794807f25d92e864"
+ir_digest = "sha256:6c68aaa71f3295f117cf4c6e760e9790414ae089c30baac1f5654e707a274242"
+section_count = 4
 
 [[files]]
 path = "specs/2134.md"
 digest = "sha256:e80aed1e153337c59c11fa9a6ad3906b531a0076dae5267589938b07ec54369b"
+ir_digest = "sha256:3da021fb1ca83e2ef150b35557b5b4f3c44bd0b594902fc9002fc549b1232b9d"
+section_count = 4
 
 [[files]]
 path = "specs/2135.md"
 digest = "sha256:2c0b5993f7cc0fb557781d0e2d2263a1fd986defe53ff94e6b6e9890d33b35b2"
+ir_digest = "sha256:81f8eba322cd638adbc5ae1f9a94514f30c1c00009bbe4c0febefcbfccd2ae69"
+section_count = 4
 
 [[files]]
 path = "specs/2136.md"
 digest = "sha256:997434cb1a55f385b4ed272e9b6e1d77b32a1b2342803d64b5043b3b38867d46"
+ir_digest = "sha256:a1058081aca0b29f56c6b12ab69f299ac3f258d4edb2a66f4f0e06dd1c181507"
+section_count = 4
 
 [[files]]
 path = "specs/2137.md"
 digest = "sha256:4f4bbd1b0763567e04505d7565920e08b6c1d66eb0951a7308d3a57cab827455"
+ir_digest = "sha256:5b7796d0408b735efa1dc336506799c738c72c4510432fa018f781355f17f3e1"
+section_count = 4
 
 [[files]]
 path = "specs/2138.md"
 digest = "sha256:070fcc27b4b758b23662ea6a8ea15694fa1d13dec5f81cf0072689afdb61c9d2"
+ir_digest = "sha256:7adf37199f6a35203b23e4be6d329841ed17d3d12f149dea8da98fd441d8234b"
+section_count = 4
 
 [[files]]
 path = "specs/2302.md"
 digest = "sha256:9386b13c1f248f8d9e80f673c64627eff9526cd6979df87a191b2a50c78e3bfa"
+ir_digest = "sha256:a82228e576a2136def1afc10bc53ea8bde018700aa2ac714697df9591609e1c7"
+section_count = 5
 
 [[files]]
 path = "specs/2303.md"
 digest = "sha256:042a2350ec1e31823e888be2391bd1b656d1fe46e85f22ddab1fce101d28dba2"
+ir_digest = "sha256:666e49781decc78720d0ccaf85ffa2e9a05930a85f57d9fd0b03dea74aad1bf6"
+section_count = 5
 
 [[files]]
 path = "specs/2304.md"
 digest = "sha256:8ec8a4ea2cf5fdb945f227de29af006e0039e4c54b589792519dbbef852b9d38"
+ir_digest = "sha256:a94f444956912153d4b00341c3e8da72c0fc2f0ccb27db567052ab0ec22df523"
+section_count = 4
 
 [[files]]
 path = "specs/2305.md"
 digest = "sha256:a52460aca6a9c20f2e0a9a57ba40f0b1f7336b6a52e42b86ff3c536dc4cc884f"
+ir_digest = "sha256:8ce0b1b9848c066661c350f44410baf6d765f3c821b46febde9d616489f4b79f"
+section_count = 4
 
 [[files]]
 path = "specs/2306.md"
 digest = "sha256:712a872794b74bd4ce67e7d6a0bb03a6cfc2e5fb822ba1059d199d51bafa1268"
+ir_digest = "sha256:cc54c65ec320b2c1fc07e540cb3f9bc7cd1f73c82882b993ae273876bc2457d8"
+section_count = 4
 
 [[files]]
 path = "specs/2307.md"
 digest = "sha256:05fe8a4dd3279905bbe026eae3c7779dc977956619461cb82d99272adce1f0f2"
+ir_digest = "sha256:47fe1b695d9c49ee956e96d20dea3954898b437ac4b19ddc0a513e77e18ca101"
+section_count = 4
 
 [[files]]
 path = "specs/2308.md"
 digest = "sha256:e16b6773ad50c80aa42063f83128dd8becdf3db0200e9f531b60b635d4e18337"
+ir_digest = "sha256:5f9c79c9c195a017660473fb2afbf470736797b4816b07c00384118679cb68f6"
+section_count = 4
 
 [[files]]
 path = "specs/2310.md"
 digest = "sha256:53190d61210067c823b2428fe0bad7089725d70f7985a4a2cb6b8323c67ef5a9"
+ir_digest = "sha256:1368d880e396c52ea360d2458d79c1c43f028d59767ae95cd5dc5dc58b99318f"
+section_count = 4
 
 [[files]]
 path = "specs/2311.md"
 digest = "sha256:1268924736c0836e4b629e6373a00752228ace383078fe3b899e9dc27ec3039e"
+ir_digest = "sha256:6c5273f107779530b12d9284427b304160f35433305aa2ca63bcbc104c398b72"
+section_count = 4
 
 [[files]]
 path = "specs/2312.md"
 digest = "sha256:41ac3aca5ee432ec38c919ac07102e4bfd878acee4663ba39f410470723c9763"
+ir_digest = "sha256:5b6f41aff4001e10539a3f437a0c1f1ccb4fefcbd936c01d9ee4679d54d1321a"
+section_count = 4
 
 [[files]]
 path = "specs/2313.md"
 digest = "sha256:4a4d041bced853e70c5a99b5f37ab385bbd151f3ceb30f9734d129acab0facb7"
+ir_digest = "sha256:41b558346ca42dfc872da4b8a02a6832685d06f753937df57c4e9820c61ac598"
+section_count = 4
 
 [[files]]
 path = "specs/2314.md"
 digest = "sha256:1b03c33ee310c40f3fe622b4c97642515131691bceede296c693a4995101b09d"
+ir_digest = "sha256:6c5a69280b589d8fbe3fcfbb862ad179b88fa65117060592bc5cf7d8fbbfd983"
+section_count = 4
 
 [[files]]
 path = "specs/2315.md"
 digest = "sha256:89ab4458e2838f5a36c7baae64177f8c6e85bef4327b905e1991c7f5db673ec4"
+ir_digest = "sha256:d22ecf0aba529c4cb36c4c49af24bff27699b3dbc826fb02c4670c0cb7a22af9"
+section_count = 4
 
 [[files]]
 path = "specs/2316.md"
 digest = "sha256:849d11a68a9fcb52d31977d6fcaa2321aec6726146695773fe7c95dc9a297f94"
+ir_digest = "sha256:66ac4759a36dd3fbc01ec9e9fe5d58345a271b2992460689255e913260f017f3"
+section_count = 4
 
 [[files]]
 path = "specs/2317.md"
 digest = "sha256:aee2bcdb1313f475c457ed18c92a84ff6ff3cf75e418fc85fe5b1995cd715d13"
+ir_digest = "sha256:d65c40a8a00df7f0ade21f167e6806889329898984cd903d2808ff768ae47d33"
+section_count = 4
 
 [[files]]
 path = "specs/2318.md"
 digest = "sha256:0449bde1533b0e12760e8a4c12e9275c8eea4b5f62d3944e7de5267893009fb9"
+ir_digest = "sha256:d0915e5451710cd1a06b1cc1a73e62aa834d6834f49c7368f2e7dc281b4db7a8"
+section_count = 4
 
 [[files]]
 path = "specs/2385.md"
 digest = "sha256:afbcc2971e9a1e0da2ee70b90f7c5b83d0fa7d633ca79b6294f4395e94fd210a"
+ir_digest = "sha256:2a80c677c0f6c727192fc9029c36aa4060e76b874fcffb9b559ceca654018641"
+section_count = 20
 
 [[files]]
 path = "specs/3778.md"
 digest = "sha256:232bae6b32bbd4c912dd1e7ab66f8f8f5fedd1c8e59f91dad32da42ad2bba295"
+ir_digest = "sha256:b1c645ee821717a5b7c8865def47b001c97b1f1ebe5e7e74d285844d8ca07671"
+section_count = 22
 
 [[files]]
 path = "specs/3779.md"
 digest = "sha256:2b426c956653053bed0a5c4510fe8c6194e11b0192c415b2af178073f0c959d8"
+ir_digest = "sha256:82b43c125211d9443656264da39cff61997eb46d4c41faa66119f8e81665fbe6"
+section_count = 22
 
 [[files]]
 path = "specs/3780.md"
 digest = "sha256:498d78e60f0f00e2ceb8e8a35354ef8a866e677e3cd5aecd061a82b49ca65e3a"
+ir_digest = "sha256:73618bf65ee29dd12a6c75c8558dcf789ee8fa880e9e8617c7683d30650b2a72"
+section_count = 22
 
 [[files]]
 path = "specs/3781.md"
 digest = "sha256:b551a653c1b1b94a7a6c8d51b9c971df09c160f83e13679e0e60e6930112c1c0"
+ir_digest = "sha256:272fdeba997da5b1886513e3ecb503f567491bd33a214ede024eb572dc0b6cfe"
+section_count = 22
 
 [[files]]
 path = "specs/3782.md"
 digest = "sha256:44d3a0da651a53ddd206bbbd38c4a3de84709783fa00762ff5653561b5da33fe"
+ir_digest = "sha256:1adf4f5be4271e709a9325590c4900b1e3b255db51fd103ec6fd4528357be9fc"
+section_count = 22
 
 [[files]]
 path = "specs/3783.md"
 digest = "sha256:e0c606bd182f5ce1c9b61c36162c95ce05494fdac2328ddc2576de05e59595f6"
+ir_digest = "sha256:f55146d4465833da960d4794b704fff812d2403a1c6ebc9d15f98236b973ea76"
+section_count = 22
 
 [[files]]
 path = "specs/3784.md"
 digest = "sha256:0e45006eb7e4b186201c7eba71adcc21b390b206b293856dd773b7ff1fe3fc85"
+ir_digest = "sha256:50d3935ea5ccece7e31b15876dbeaee86edc1bddf70a705787093820d6b73436"
+section_count = 22
 
 [[files]]
 path = "specs/3785.md"
 digest = "sha256:6b2a6adf1b706a422d374ee824e47ddee849e2f482aa337ebd0c23198e498597"
+ir_digest = "sha256:7407c4b55a2ba2a3d089f58983cbeb9f52c6cc93cfe3174eb5a05b456295dbeb"
+section_count = 22
 
 [[files]]
 path = "specs/3786.md"
 digest = "sha256:5fe21aa94d70119fdc8f9dab82b8823aaccbbadd3b51ca2c5f609901bcf212a0"
+ir_digest = "sha256:9ab3eeedcf55014e395f3ac3394a932422690ff9324e5bdc5731016134ce0efa"
+section_count = 23
 
 [[files]]
 path = "specs/3941.md"
 digest = "sha256:d6a8ea38370987717edb5e4bbebb083c6016af1f00da1a642d7a0ff88709a5ef"
+ir_digest = "sha256:a041cca5941747ba306f60ec00c586c40fa55d1e49795eec812f26c5bbe06a1d"
+section_count = 22
 
 [[files]]
 path = "specs/3943.md"
 digest = "sha256:677718da2a5a322ebfac30cba5becccacb09547e4d2bc9f93cd0e6beb95221ff"
+ir_digest = "sha256:15f7f88cf354b47c6b5f1d4361aa54fa9f0c82fa6d9f8bf2c7249c31a52fc82b"
+section_count = 22
 
 [[files]]
 path = "specs/3944.md"
 digest = "sha256:5afccf4df1b663c994c03c85b3d7b7302da3d33caf286ba3f24cbce9b6083123"
+ir_digest = "sha256:190db8c3117c6a569a719de29e464c0081c7537f4282d0e369ca3c4fd14766db"
+section_count = 22
 
 [[files]]
 path = "specs/3945.md"
 digest = "sha256:b78c06cff8ee1d6a65e533761db8cfc1d2ec0d4c38505b87b24c9106e1678f1d"
+ir_digest = "sha256:74aa4529e7f92c0ba7cc7f484781089aba2d14de69adad857f010f22769d4c68"
+section_count = 22
 
 [[files]]
 path = "specs/3958.md"
 digest = "sha256:625e0ad0fa99134ba2625bbf15ca5e519657354739c157f3c5659d0d42fa1550"
+ir_digest = "sha256:4e4c101fd829ff6ede18d6097eab236f6ba61d4bf86af947e86f87b6bf951a0e"
+section_count = 22
 
 [[files]]
 path = "specs/3972.md"
 digest = "sha256:58898c239da8ff83e09a3dca74ccaf83c17862766621e9c274c55d2ad6dca2b7"
+ir_digest = "sha256:750c0dc89d33b1b928fc62127f7103219c13a90301ccad0e4c45c4dbd247a81f"
+section_count = 22
 
 [[files]]
 path = "specs/4004.md"
 digest = "sha256:5c35a083cc77506c17423ac97869a7628d06c74bc97f89c1b8a4dc0f3da4f0b0"
+ir_digest = "sha256:cea86b0ad0546deafa5aba6c58fb3bad120c08e863dd40cab27d9d3ae5c4bbc8"
+section_count = 22
 
 [[files]]
 path = "specs/4015.md"
 digest = "sha256:456f9f6d8a1eac90cc14858a39946005afc41ccd74c4acbcf895653f07b8c990"
+ir_digest = "sha256:e7c29a58cd40c13213dadd2b5e355c3ac752fc72afd2544b7ea3fbeda70fa3e1"
+section_count = 22
 
 [[files]]
 path = "specs/4041.md"
 digest = "sha256:37a161e784c53780b2644e71176b71eaea410c9da58184d7f844ae13683cb39f"
+ir_digest = "sha256:aeae2e6872d8a8094a16dc6d6ad34f9e3adb74edc6f533c428980bf93465dbd8"
+section_count = 22
 
 [[files]]
 path = "specs/4072.md"
 digest = "sha256:b67d6a9ca68de8479897532b78809d647208df1bd8aa2c88a9c1bbd8f62f022b"
+ir_digest = "sha256:c28d835644ea6691f709c9a5b4208732e58456f4bdb3df6b20d5012fe09024c6"
+section_count = 22
 
 [[files]]
 path = "specs/jet-parity-fixture-corpus.md"
 digest = "sha256:9b41f17ee3ae1f0fe2a92171e431664097d633ac4924e6e7339e4cb9336d4e41"
+ir_digest = "sha256:ebc132818c41a046e0f8963cb748801a5f21c2f0421e6339b2aeb3ce5babef44"
+section_count = 6
 
 [[files]]
 path = "specs/parity-dom-reference-runner.md"
 digest = "sha256:b6f77fe6e77864f12d9b34e618a8bdd364c9ff098d160472353c92d01ae02b18"
+ir_digest = "sha256:f18a0ae0ba2bae8552e9b61222ff42c32fa965ee765f50259c1269aca798fa5e"
+section_count = 5
 
 [[files]]
 path = "specs/webgpu-text-pass-encode.md"
 digest = "sha256:72f6a7245572b729ce83180ff7330b3e3ddb38d9ab15af21efdf201ddee48548"
+ir_digest = "sha256:2a62fe1c6375cb9168d6500c889662c5ec5cf23ac0f6b5776a5797c1e7efda41"
+section_count = 5
 
 [[files]]
 path = "tools/wasm-renderer-browser-cli.md"
 digest = "sha256:218b4007c63cc1cf3cf8f2d179e14f767a26a9d7aff25636c4489b6a5af1e965"
+ir_digest = "sha256:0aca9b6b10d9993a1e07622a9cdca4ba6211648cf9b43d2efdca01392384cb93"
+section_count = 2
 
 [[files]]
 path = "validate/complete-package-management-replacement-gate-before-build.md"
 digest = "sha256:a5d3011162a7669612b9b1e468c3b8e0291d0a3d0298e2dbb5436ad550a66f7d"
+ir_digest = "sha256:9e12ffaafc7826a218f5fe5f97fc39a2169102ed0c95d1eedba11f1a2e15e8aa"
+section_count = 22
 
 [[files]]
 path = "validate/conformance-cli/tests/manifest_self_check.md"
 digest = "sha256:95bdafe87c5600cd170f3a2adc12aa2d108e789587c1ce3e3ba3263dff9c7868"
+ir_digest = "sha256:2f823a21e1c4773bede02453e2777d46294c6d108d3ce33e3c0f3d4a359c9f47"
+section_count = 1
 
 [[files]]
 path = "validate/runtime/test/index.md"
 digest = "sha256:313628554f7386da238a05edf46aa2c0721d8edeb896a6033b49c685d0ff7a86"
+ir_digest = "sha256:45b098115284a2ee4e8f22291a9945b0c1a054dff6bf319975b926d0a7df61b5"
+section_count = 1
 
 [[files]]
 path = "validate/runtime/test/matchers.md"
 digest = "sha256:f3a52f3a9f1137a76a9077834f65870772622159168d076607ea6e479a194e7a"
+ir_digest = "sha256:52f4fbf54ea916193674458876817f9d9811123c6e9ca4c62f8357316e8fe6a6"
+section_count = 1
 
 [[files]]
 path = "validate/runtime/test/page.md"
 digest = "sha256:7a7c5b88b0aa20b34bb2fb48c473d64cff2f1eda4d20fddf45264ff6197e446e"
+ir_digest = "sha256:f8d43ab30046d4a1f01b98127cdb9cfffb50f982fcebc98a5d72439b5affd84a"
+section_count = 1
 
 [[files]]
 path = "validate/src/test_runner/expect.md"
 digest = "sha256:16fc26f5284e5e4f8d723f87b688b8f17b084b194c91148d4f0f411cfb7fd3bb"
+ir_digest = "sha256:cb745d6f7d1f94d0eb4feda8597e2fa348ec06aa1d4f68dfd83351b483c7d518"
+section_count = 1
 
 [[files]]
 path = "validate/src/test_runner/mod.md"
 digest = "sha256:2a20cd57b3c2a5ec53cc8236e4263d9dd019a0c16042aa6ef780812bdf35f71b"
+ir_digest = "sha256:96c7270b08dc1f6cd2d2ba7f4601b9be99ff9dd619d9ab2fb499e0bd4c790e91"
+section_count = 1
 
 [[files]]
 path = "validate/tests/auto_artifacts_tests.md"
 digest = "sha256:70a9b547a607da9429a3de79952ba3c302289e67db81072324917e3a1b29c255"
+ir_digest = "sha256:7285b25de1c2a37a30a302544a35359ae9185708154bb65729adcde3f4fabcec"
+section_count = 1
 
 [[files]]
 path = "validate/tests/big_list_debug.md"
 digest = "sha256:a16e4977d92b0ba971fd5350c7b2b3f959396deaf3d96d08299f4895b8ebf227"
+ir_digest = "sha256:bd7a0d4396083284589aa7014052d9d3fd80349555f5e00f0d16889318d5eda1"
+section_count = 1
 
 [[files]]
 path = "validate/tests/browser_cli_smoke.md"
 digest = "sha256:a92609b7849b5e7996e6b21ea3cc29196aa8a9ee318fe190b9e9cf49357f1b97"
+ir_digest = "sha256:20333fedc9eb5bc1a013e55c5b2ff6313406a8a143d857ff86162632aece0876"
+section_count = 1
 
 [[files]]
 path = "validate/tests/browser_context.md"
 digest = "sha256:5deaeb07174afd017b547542a81c66d220123457326d8e44aa1692100db8f390"
+ir_digest = "sha256:fcfc7b5d2571a84f4e485cca2b03dba2c7126118ef6e7afd6a19cdfc23d1ebb0"
+section_count = 1
 
 [[files]]
 path = "validate/tests/browser_install.md"
 digest = "sha256:2ac6d3581f1b4a1f580a8e7e2f3a28e8ef6a60ec9d9291a6c745af41c43701a4"
+ir_digest = "sha256:ebd344aec82dee8f63300208539fd156b3d00ce5e0a553e0f245d90811ada784"
+section_count = 1
 
 [[files]]
 path = "validate/tests/bundler_monorepo.md"
 digest = "sha256:ea8273621860921bc93992055b15af45c7235d4387c60a2a39b3723ede7db365"
+ir_digest = "sha256:7c5d1410c3c1353c0c5ce14a2510d42370a0ad4416c1b7dfbb9424e72ab21837"
+section_count = 1
 
 [[files]]
 path = "validate/tests/classname_debug.md"
 digest = "sha256:c780337d76170b484951d437f562be060df90575d77de258495133d91a49afea"
+ir_digest = "sha256:009594bcf32dcb7c97d7c86415535be44699940a67f94030fb69681cc7a6615f"
+section_count = 1
 
 [[files]]
 path = "validate/tests/common/snapshot.md"
 digest = "sha256:6df9a718f7bf0fcbba1c63705237cbecdd2bc188bf664d03f8af7912fe910f3d"
+ir_digest = "sha256:1d9c12fc86883ee3b397998213cce556df46cdb11d9279de00085021e2847cd8"
+section_count = 1
 
 [[files]]
 path = "validate/tests/e2e_playwright_residue.md"
 digest = "sha256:2a39b6337d9843c8d75029153218ba8f9d8f78d054755a698c17f858e972f16f"
+ir_digest = "sha256:cd229672ee5e2ee659ae34a69b0a2f3b04f7944774b30db386950e744857e163"
+section_count = 1
 
 [[files]]
 path = "validate/tests/fixture_di_tests.md"
 digest = "sha256:808f292973764c38d6d746a1bec78fdb425955426627e2fc24387ae72f261b53"
+ir_digest = "sha256:64f7dad2ecafad9015e8e1cfd79d1eabca3421f8bf2dee0878a1680e0ac3c1a5"
+section_count = 1
 
 [[files]]
 path = "validate/tests/fixtures/playwright-compat/basic.spec.md"
 digest = "sha256:fc0a59d76b3f1a6b86ee463c572ffef88dc2a65382e15ea5b79eef74a250cb29"
+ir_digest = "sha256:8da36c6541a7bf6acee8c3264755b80b0722065ef2047722f86ad1af34ab8920"
+section_count = 1
 
 [[files]]
 path = "validate/tests/fixtures/tsx_to_rust_boolean_literal_state.md"
 digest = "sha256:9f63c128f264348906539d8203583a6ab89246513b665098703ced418ad68246"
+ir_digest = "sha256:854bd612286c5277d4b50bf2db2bb39d6f7c6ac26cc1f3e19439aeacc9fc8856"
+section_count = 1
 
 [[files]]
 path = "validate/tests/fixtures/tsx_to_rust_counter.md"
 digest = "sha256:968fee2a4f7391b9d64ba423e40bdf962fd96ea8bd1e8d89397ad811fd3c0707"
+ir_digest = "sha256:12bdd253410e34de5472be1bce6c2c5dd1743e6a1097d431cadffc2025ca4044"
+section_count = 1
 
 [[files]]
 path = "validate/tests/fixtures/tsx_to_rust_toggle.md"
 digest = "sha256:91ab449818a933160022e3756c185c997678aacf4e436c78c468c211d210cbce"
+ir_digest = "sha256:c02a135f27e6bd337fbdb4e344065f55e61f651cd2a8ee309db67dc73d480674"
+section_count = 1
 
 [[files]]
 path = "validate/tests/html_reporter_tests.md"
 digest = "sha256:cd018ae8949c87afd2df29df37e075de95d90b8603b0a374e5891d5222133646"
+ir_digest = "sha256:a5a7de2b8d85465c934c3c0ed55dea74847470ed2185cd413a655200152b6dcd"
+section_count = 1
 
 [[files]]
 path = "validate/tests/incremental_rebuild_bench.md"
 digest = "sha256:fd63a80af625b2358efad3d8b37e8f12462ddd18c7909f4ad2b9482f5c8d17ea"
+ir_digest = "sha256:d132df8bceee4266ec01a3f9db315ffc6009a5ff08cc14bc7f03e8d42c71dba1"
+section_count = 1
 
 [[files]]
 path = "validate/tests/items_list_debug.md"
 digest = "sha256:28872535c187ced66d7ee9bc72d6f0324d4ae0d08f17dce88608fafee348556b"
+ir_digest = "sha256:9ab110a81a7a857837763da4971fb1cd7372d047ed55feb0a612fd80a19f34ec"
+section_count = 1
 
 [[files]]
 path = "validate/tests/large_int_debug.md"
 digest = "sha256:e58b4f2bbe21dac5a4e97110f3f8593b7a3ff4f2ff8272096dae7fb2ff261a1d"
+ir_digest = "sha256:05659e6d623c7a213bffb35b51dc8552b3cdc32b5e9e25af29209604cc247a1a"
+section_count = 1
 
 [[files]]
 path = "validate/tests/list_render_debug.md"
 digest = "sha256:7645296438258bd3b5e92ca4d8b7efdf8f50c0dd32d4120c0678abb9c2e70d8b"
+ir_digest = "sha256:db97fd25cee7ce3ec76c5932debfa59198082906ec7c63fdd426f0ff2286cef8"
+section_count = 1
 
 [[files]]
 path = "validate/tests/locator_js_api.md"
 digest = "sha256:b7d58c87e3d54a668336c608be56f1194190ad473dbbf114ff52df4f187ef9f3"
+ir_digest = "sha256:72b79f246631e5ab8e423cb0e1d117885ad33f1b8c09ffdfd98bec48a3d5be29"
+section_count = 1
 
 [[files]]
 path = "validate/tests/matchers_state_value_a11y.md"
 digest = "sha256:5e3efaa347c89f37d841960aa2d337df78af0310310be4defdf49ebebffc35fb"
+ir_digest = "sha256:25b60c8088f8447bc7f8ec18069a2f1bd59dedda43e7073fdda45a10bfa1aa5f"
+section_count = 1
 
 [[files]]
 path = "validate/tests/multi_handler_debug.md"
 digest = "sha256:b5dc3ff8ff371fc418f116b1c657d8dfab4a7757bbfb8904c92be6f9e7d3edee"
+ir_digest = "sha256:498beb7b23aad5307b2ad70f5decc592a6b2b39a6cecfc559ba1db95fe9d44e6"
+section_count = 1
 
 [[files]]
 path = "validate/tests/nested_debug.md"
 digest = "sha256:4c32bd34e2d2f4bd3d388463caf09d2a377151f16827ed9478ee1ae5dce8a006"
+ir_digest = "sha256:d8aa0d48f774c5a307bf3a5a724330296d3a4a5fab9559b36c15f638ae786212"
+section_count = 1
 
 [[files]]
 path = "validate/tests/no_state_debug.md"
 digest = "sha256:b45e9ef2ef2fcf4ab78db06b0dca4e62b3299f275d412a698976bcaac9ea7682"
+ir_digest = "sha256:1562e67e5a876cd130852a085db998559ffa34cc934fbc2f565f0e443905d52b"
+section_count = 1
 
 [[files]]
 path = "validate/tests/nx_support.md"
 digest = "sha256:431e87c61fdcee9ab697e3ce62f87f1784f7a6004f6bd16427437e498c060efa"
+ir_digest = "sha256:d27e7e2c2fe09f3d596da4302497922ea09dfa00ee0d536cb69fa60171b9f966"
+section_count = 1
 
 [[files]]
 path = "validate/tests/page_api_parity.md"
 digest = "sha256:5d96a89edf37bd33561ffea3c093079f5f4fee46dd73b6aa864bf575a1e96122"
+ir_digest = "sha256:d5eabc16b679ace0845f59493a9c47b31b9cf9384d56995420ec8b192fd4014a"
+section_count = 1
 
 [[files]]
 path = "validate/tests/page_fixture_auto_inject.md"
 digest = "sha256:a7234c011295282f03b11c94698a60e516d951548f51dc303a60937ba8e0e6b9"
+ir_digest = "sha256:4f4a4f693d838e55c30099cae320a8512c783ef520d90c5d6c5b81d6c8ebbcd9"
+section_count = 1
 
 [[files]]
 path = "validate/tests/playwright_compat_shim_tests.md"
 digest = "sha256:9b07bebdcbcb9aa7fe0d23bbbe37bd494b22b08e9eb1c8217fa7c7415872e334"
+ir_digest = "sha256:bbbba0417590395bd0396f000a7ea30a790fbb7592a129380488a1cfcc723d57"
+section_count = 1
 
 [[files]]
 path = "validate/tests/playwright_compat_tests.md"
 digest = "sha256:681cc564351e82f59b146dbf1113d93c141e5028be9985f2bab5fc33928c7f1e"
+ir_digest = "sha256:3ea444f1e2594325720ba5fb6722f4a91e7348be36c9d09c242750dc2146790f"
+section_count = 1
 
 [[files]]
 path = "validate/tests/route_intercept_tests.md"
 digest = "sha256:8dc62bfa8f7a7470c8d86cba029b01cd3686ed570567ba8e363f150ea949a19c"
+ir_digest = "sha256:ee20c21dcfd138f8392f499d2102d51a468d72619ee8c98012446f31e382ac45"
+section_count = 1
 
 [[files]]
 path = "validate/tests/self_closing_debug.md"
 digest = "sha256:1acbf555ac9e159572cdadb14fced83f36bba5d5b1f16d0f13b4d6405c2390c0"
+ir_digest = "sha256:4f070f5ddc963633a8a27f6970e1d82bdcefc7de8f131ee1a085baa1d23820c5"
+section_count = 1
 
 [[files]]
 path = "validate/tests/storage_state_tests.md"
 digest = "sha256:fc3344183b8267b6f088cf0e4b1289bf5c5cbb02d6041e28500a25fa1c8fe154"
+ir_digest = "sha256:0b0bf7cf4e20c9581d76e43793bc2073a5a1f0f7346b26d17b696f5bfc9208fe"
+section_count = 1
 
 [[files]]
 path = "validate/tests/string_state_debug.md"
 digest = "sha256:eb2399a7f446d10d2f1e4c911f046d19a133fd1baa866bdeef4792ce42d96e64"
+ir_digest = "sha256:77a5e3ee56c853d799f9ff7bf6dc647f6ca8a63a1bf57f1ad954b38351e556a0"
+section_count = 1
 
 [[files]]
 path = "validate/tests/test_runner_smoke.md"
 digest = "sha256:43f6e47178807952f16756f3857dddac7289363a4e7250e1dd983070e1db6e60"
+ir_digest = "sha256:15c47ab06ee4aef78c8e1bfa2f82e4f23aab9e9f350650c81fdd615d6a1d20ed"
+section_count = 1
 
 [[files]]
 path = "validate/tests/to_have_screenshot_tests.md"
 digest = "sha256:276b94e8e7fe691eacde01b0f0b63eb8a8ccbfb4d48376f0ed4767f7a3edaff4"
+ir_digest = "sha256:8b3c21887006ed7faa5ec063a5a085dbda172508698566ea747d4b0c2cb5fb67"
+section_count = 1
 
 [[files]]
 path = "validate/tests/toggle_debug.md"
 digest = "sha256:1deb88c4f1aa2fdcc275c9a90ffefa04f2f1bb89e501b7ab687371c581f2e384"
+ir_digest = "sha256:606daa44d355b50c5872f5ab5fd874cd69c225b4e55beead298b93e6a0c2791b"
+section_count = 1
 
 [[files]]
 path = "validate/tests/trace_capture.md"
 digest = "sha256:91fed96638fc45fba797dfb634863eb16c1189e9d034ca2ec8a6f87855ed6195"
+ir_digest = "sha256:ca8d07b9cd903d919029e6c0b782c2e54accbe801c649f3c9a082980d8eca85d"
+section_count = 1
 
 [[files]]
 path = "validate/tests/trace_viewer.md"
 digest = "sha256:706889765406faf9fda61762b4ea043e00ea87819a122e05f171be8a0234d20a"
+ir_digest = "sha256:74a1e07e8a6cbe303bbe9580d602169f09660753052d8a50032b11a1879f5162"
+section_count = 1
 
 [[files]]
 path = "validate/tests/tree_shaking.md"
 digest = "sha256:35c3e26e09755ed38b3cd0494e9b4398a754073061d8690086f62b482cd5a335"
+ir_digest = "sha256:e71de9f63106e7fb7f71442e1db4ef30fa1d61730aabde3df5b7814e4e9ad7f1"
+section_count = 1
 
 [[files]]
 path = "validate/tests/tsx_to_rust_ast_probe.md"
 digest = "sha256:e0b5e0a4b2dac4d7aa987a724795e51fe9fda699581ccc01a4b3ff4c434bc02b"
+ir_digest = "sha256:3ea70e810e42db0083c1b88e0cf049284eccc01b3a5ed0a7ace32d948ef53057"
+section_count = 1
 
 [[files]]
 path = "validate/tests/tsx_to_rust_boolean_literal_state.md"
 digest = "sha256:91ffa4fda96bb2b89c75daeb284f1a163eb59f41982ad015dd579bac9974aca1"
+ir_digest = "sha256:949884da0a62fd32d965538589cbcfec173834c1c053cfc1388e25d76531e785"
+section_count = 1
 
 [[files]]
 path = "validate/tests/tsx_to_rust_counter.md"
 digest = "sha256:e8a5796dfb5e1f14aa216f86a4ae6f1fa7b2f9dc5704f617cf44c46d816b6bb2"
+ir_digest = "sha256:8a2e4231c1ac17517acdbceeb521b50c6b756e850ed8181f82507fad3dae6e06"
+section_count = 1
 
 [[files]]
 path = "validate/tests/tsx_to_rust_toggle.md"
 digest = "sha256:70dcd8127fd6c08a6be5eca059d8b2534ee15c559ed17d673b305f27bf0cc700"
+ir_digest = "sha256:eb43b6ef607ed7849ada53daa781cb685422f8caf00aa6a40f6dd88df9072b1f"
+section_count = 1
 
 [[files]]
 path = "validate/tests/unicode_debug.md"
 digest = "sha256:42558de314858ab1b9578ac6ce79fd5976109b01a5a5b0feee25a6a1b89830d6"
+ir_digest = "sha256:ac0bb577e443ece54d707256d5d23427dffe49e7fdc0107a33f33ca418ce7880"
+section_count = 1
 
 [[files]]
 path = "validate/tests/usememo_debug.md"
 digest = "sha256:d26c6e01e1ff23689506eba734f04132dc570a882ad311ecc46bb4224c83635c"
+ir_digest = "sha256:f609f865820bbea6a62a883039c7dc5ac3dd8be133d0041d90184934542dc56d"
+section_count = 1
 
 [[files]]
 path = "validate/tests/wasm_build_end_to_end.md"
 digest = "sha256:68aae46e116f2d7220a368449f41b2071f8df1406a5a73440ee490357910576e"
+ir_digest = "sha256:e2c337ad8573586053217d73711c63f3a658170cd6bfad51e71fc385c68dcd76"
+section_count = 1
 
 [[files]]
 path = "validate/tests/wasm_dev_smoke.md"
 digest = "sha256:7d566f0678cbf1969ed5e771be34f1968ec7e4063414928f3e03f39e35c3df81"
+ir_digest = "sha256:60206e2b0bb1709032e63a23e39618a9031dcd17fc84ee749c4394d235c96bc4"
+section_count = 1
 
 [[files]]
 path = "validate/tests/web_server_tests.md"
 digest = "sha256:5a2ff8bd62aa327caeea8823785c40be74573ad8bfdfc63c2247ffed5d81df35"
+ir_digest = "sha256:07f59b495a5dfc72a237896e942c76d2e5348f47645fb8cf22e17ae422ae97a1"
+section_count = 1
 
 [[files]]
 path = "validate/tests/worker_pool_tests.md"
 digest = "sha256:b67f14fb88335a55aa355d54f722e47f89ec45c1e2a7f09da6972cf41bc0d8a0"
+ir_digest = "sha256:9caaf96655578ada630512b7ab86e14b9d683a2a735a0ff2b1a80a0b661ecda1"
+section_count = 1
 
 [[files]]
 path = "validate/tests/workspace_protocol.md"
 digest = "sha256:8e93d3bbf5e15b6a75879510f526ac5a6a00867643a18269d064e1fc0eabbcbe"
+ir_digest = "sha256:736cb7983d73e56f80fd06af4118b043c251a4ddbe93204897811048d52c26e1"
+section_count = 1
 
 [[files]]
 path = "validate/tui-renderer/tests/cue_command_input_demo.md"
 digest = "sha256:3072c123410f0ede756d998d38e5082d05e55516a64381511c226ee4a138f17a"
+ir_digest = "sha256:1dc01eedb968b207542df1a8e9873142d16135a754ca6a23204651b541ba2d2f"
+section_count = 1
 
 [[files]]
 path = "validate/tui-renderer/tests/cue_work_item_list_demo.md"
 digest = "sha256:8d4b6451dca94b7b49e9c6fb92fbd4a5df8367ef80847f8512d050a7b3f39874"
+ir_digest = "sha256:83db58996aa30307eb5a5fd60d748f4a3c00bc622b711b9ba8008df7ae450daf"
+section_count = 1
 
 [[files]]
 path = "validate/wasm-renderer-poc/tests/bench_runner.md"
 digest = "sha256:d0f24c934e95ea574893d72970be2ecb18804005d08e20dc638e52d012efd839"
+ir_digest = "sha256:14d7e73853f5534a756dfa42a410b3290288e27a3bcf834508bde28df25413bd"
+section_count = 1
 
 [[files]]
 path = "validate/wasm-renderer-react-dom-oracle-conformance.md"
 digest = "sha256:803fc5e9563845c300460a47538d2d0d11a7e0f82d529d8fb58839de22642fc0"
+ir_digest = "sha256:ec6d373e99d655b7ea3a5cdd80c7aa9021ef9b8c077da74369e774c4524177fc"
+section_count = 6
 
 [[files]]
 path = "validate/wasm-renderer-subset-rigor.md"
 digest = "sha256:a862c79cd125f9788150878558148ef6a88965ef2067a41bb428b91b4195e208"
+ir_digest = "sha256:aee05f1e0f540584e2553bec3c43c272a363783cbcb4017a78dc4542255a1ba6"
+section_count = 2
 
 [[files]]
 path = "validate/wasm/tests/counter_integration.md"
 digest = "sha256:98305912f5da226cb5b459f56b46a9bae29bc5156f7c12b3ca8ca126526b6d08"
+ir_digest = "sha256:1fe38b6f47e009cc24ea4ab14cfcb5798150deeca9f645a6288724fdde0228bf"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/layout_block.md"
 digest = "sha256:58128b4b1d1169cdbb900101a957f6b615951870c298ed1f800711d985daf3c4"
+ir_digest = "sha256:524f784bd6af0545b8afedc0ae6f15b7a4028887abc351f80a0dcafd14e8dd32"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/layout_dirty.md"
 digest = "sha256:91371a10c39e7a872566fd9db04089ef08da6d93fb6dc395a031dafbe8bd60fe"
+ir_digest = "sha256:423b006c11844bc4015f4110dbf5061270c6d64b6e22ac73ac49a32bf43b5644"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/layout_flex.md"
 digest = "sha256:4de59216b053ad750d32d3e70499a1364fb4ab5395c113569bc4e1ddbee1b592"
+ir_digest = "sha256:139de46939c2f88406f6d743b5c46ab116ec904320bd90521097bd3d0c3d75ed"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/line_bidi_s1.md"
 digest = "sha256:417cc7fe8076146bb0376fe59425cc42c7665894bb160b28a7838d15f6ca5b65"
+ir_digest = "sha256:010235b6c3e135bb71eefe748cfcf1083efef114f887516de7aa52a6f305412f"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/line_bidi_s2.md"
 digest = "sha256:e550646df98c040796a605f7c2fa6282837a01d94117811d3c6c20fd8dded793"
+ir_digest = "sha256:6866c6eb3dde4b13872cbac7d3c89065e45942c731785b10b5de1b10c81d6fc2"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/line_bidi_s3.md"
 digest = "sha256:9d37feb9404613e7230c86d7cce96b485c642b2038b5e9e1160dff13706a739d"
+ir_digest = "sha256:bf4c5d56286d7476abe66b6c361f27b16977663c6ddb2867f2a0d852abcea1fc"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/line_bidi_s4.md"
 digest = "sha256:3a9f663b1dfab8f59adb933948aaf7f96e3b451996cb540a639ef52a94b8a89a"
+ir_digest = "sha256:b69c9d5b7009a49fbfb6a97e9eb16037f7dda644dfe0e8ce4d07a7d274eff4e0"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/line_bidi_s5.md"
 digest = "sha256:ef13e4a0f0f58dc204083f868af272e2d2b7e09073ca54bc23230016074f2fb2"
+ir_digest = "sha256:614a79546a75a2e23536057cc164b756fbe51f4ebb1ce6c0e6dc847a9983479a"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/line_bidi_s6.md"
 digest = "sha256:bb8e89d865486a2010d83a024c54cac8d3a1b747b10feaecb0dfb3c26b71c3d0"
+ir_digest = "sha256:844e4fd5523be83c1a8289df9c5503d9f3f534a46f9de5758d34868697c77de0"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/line_bidi_s7.md"
 digest = "sha256:d27d81ccce5235a4853036bc36ab5685606687ad5f277459873c9f86540b6303"
+ir_digest = "sha256:48d4892ceaa05396f7293b8345f9385c0048b0675b18b4851a34fb9a7e3e9f42"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/reducer_ref_memo.md"
 digest = "sha256:1bfe38b1107abd33071e2bb286061af2202c23edab0affbcabe2a46e2e6ec9d8"
+ir_digest = "sha256:6ca9c242abb12fc14ef99dfbd9b49244d9a3f31d658bd7ffc61c4596fbbf8a18"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/renderer_integration_counter.md"
 digest = "sha256:5ac60707ddddbe272c8ed7cf0a1d23db3dacc917a9bd0f17c2802af93e67a2ee"
+ir_digest = "sha256:d44ab192e25c4ccb3931e8d73a1287ec8db774977e3ceb423ecd5eb28e3fdc65"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/renderer_layout.md"
 digest = "sha256:d23142862f3f76b3f8ea5f3f9d41bade9fe7ec6873ee9b31eeb3f509efd7bba9"
+ir_digest = "sha256:55078d1bf3ad74d6fe42a458e4491dcf8cab440dc9c486d92a174ccb0a364d98"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/renderer_paint.md"
 digest = "sha256:01d7584ec7f7b28fee069905ac5061433d8739fa0c2e97a3d4131781ee35264e"
+ir_digest = "sha256:e194d2d4dfdcdda6e3f0e53a825e02b397d71f8e4f3119352769442308c6f353"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/text_shaping_s1.md"
 digest = "sha256:a31bafe782edeeca855d32e5550d14e84302d94f457be2395473bcb55a0c772f"
+ir_digest = "sha256:ca0d0a8cab3933201fb0d48d52efd27bc3aac6649f4c48494d156f32abe32fee"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/text_shaping_s2.md"
 digest = "sha256:1b0204623da0625fb8b11ceadd1f11df8706829e8c108c2e2bf8eedd96547ac8"
+ir_digest = "sha256:87c2ff59edf5bcdd18591e9e6fd9c38b4c677bcb5e45efa30f6695c39ebbdbea"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/text_shaping_s3.md"
 digest = "sha256:3d2088ecf540c3e46e9b648ae2ac52e856f4fccdff75288af7eec55c41819395"
+ir_digest = "sha256:138a5d63d7c32619d14e15b66925a0cc7bdc758a68df995dbc5e13ba11e4ebd6"
+section_count = 1
 
 [[files]]
 path = "validate/wasm/tests/text_shaping_s4.md"
 digest = "sha256:d53411f32281283b7edb69cf8b1003d2877f80026bad4ac9f41e2f8edb2bdef0"
+ir_digest = "sha256:4aea76b6f5d4075e50bbe65fef6caee651e17eb3d180227bf22692d804ffef0a"
+section_count = 1
 
 [[files]]
 path = "wasm-renderer/binding-manifest.schema.json"
 digest = "sha256:3e16f0bbb5396c1a1c79069294dc254794ff81f907fff310289e8f809b9032d9"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
 
 [[files]]
 path = "wasm-renderer/conformance.yaml"
 digest = "sha256:7b7c13c08a0afa8c55a83f015dc12949cc87da367c3e147ed33f19eed0619fd8"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
 
 [[files]]
 path = "wasm-renderer/conformance.yaml.schema.json"
 digest = "sha256:b7f848b93833aa0aa53315e44bbb730a52aeed00df665cd0b2a58acb6192f93e"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
 
 [[files]]
 path = "wasm-renderer/line-bidi.schema.json"
 digest = "sha256:0a1aeb1e31d5f31ed5f21067f160c957f80c87320a692e5d7a6f2f69854d9861"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
 
 [[files]]
 path = "wasm-renderer/text-shaping.schema.json"
 digest = "sha256:fc403e9af79c491c3c001f8c994fd020f3c5611c484008f152e34c8970032e66"
+ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
+section_count = 0
