@@ -1432,6 +1432,24 @@ fn int_subclass_numeric_operands(
     }
 }
 
+fn str_subclass_ordering_operands(
+    a: MbValue,
+    b: MbValue,
+    dunder: &str,
+) -> Option<(MbValue, MbValue)> {
+    let av = super::class::builtin_data_payload_if_unoverridden(a, dunder)
+        .filter(|(base, _)| *base == "str")
+        .map(|(_, payload)| payload);
+    let bv = super::class::builtin_data_payload_if_unoverridden(b, dunder)
+        .filter(|(base, _)| *base == "str")
+        .map(|(_, payload)| payload);
+    if av.is_some() || bv.is_some() {
+        Some((av.unwrap_or(a), bv.unwrap_or(b)))
+    } else {
+        None
+    }
+}
+
 fn numeric_subclass_operands(a: MbValue, b: MbValue, dunder: &str) -> Option<(MbValue, MbValue)> {
     let av = int_subclass_payload_for_dunder(a, dunder)
         .or_else(|| float_subclass_payload_for_dunder(a, dunder));
@@ -5837,6 +5855,9 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
         }
     }
     if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__lt__") {
+        return mb_values_lt(na, nb);
+    }
+    if let Some((na, nb)) = str_subclass_ordering_operands(a, b, "__lt__") {
         return mb_values_lt(na, nb);
     }
     // functools.total_ordering: derive __lt__ from the class's seed op.
@@ -10693,6 +10714,9 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
     if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__gt__") {
         return mb_lt(nb, na);
     }
+    if let Some((na, nb)) = str_subclass_ordering_operands(a, b, "__gt__") {
+        return mb_lt(nb, na);
+    }
     // Try __gt__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -10757,6 +10781,13 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
             lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
         );
     }
+    if let Some((na, nb)) = str_subclass_ordering_operands(a, b, "__le__") {
+        let lt_result = mb_lt(na, nb);
+        let eq_result = mb_eq(na, nb);
+        return MbValue::from_bool(
+            lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
+        );
+    }
     // Try __le__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -10813,6 +10844,13 @@ pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
         return MbValue::from_bool(false);
     }
     if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__ge__") {
+        let lt_result = mb_lt(nb, na);
+        let eq_result = mb_eq(na, nb);
+        return MbValue::from_bool(
+            lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
+        );
+    }
+    if let Some((na, nb)) = str_subclass_ordering_operands(a, b, "__ge__") {
         let lt_result = mb_lt(nb, na);
         let eq_result = mb_eq(na, nb);
         return MbValue::from_bool(
