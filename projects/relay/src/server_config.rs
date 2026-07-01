@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#config
+// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#config
 // HANDWRITE-BEGIN gap="missing-generator:config:04be064e" tracker="pending-tracker" reason="RelayServerConfig per the Config contract."
 //! HTTP/2 transport configuration, embedding the relay core config.
 
@@ -8,7 +8,7 @@ use crate::config::RelayCoreConfig;
 
 /// Settings for the HTTP/2 (h2c) transport in front of the relay core.
 ///
-/// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#config
+/// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#config
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RelayServerConfig {

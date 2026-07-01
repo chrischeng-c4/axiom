@@ -1,7 +1,7 @@
 // SPEC-MANAGED: projects/relay/tech-design/logic/bounded-ram-durable-log-entry-eviction-offset-index-disk-backed.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:d73d9a0d" tracker="pending-tracker" reason="Tests: disk-backed entry() for evicted seqs, broadcast range/replay across the evict boundary, bounded dedupe window, and no-eviction parity."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:d73d9a0d" tracker="pending-tracker" reason="Tests: disk-backed entry() for evicted seqs, ranged read across the evict boundary, bounded dedupe window, and no-eviction parity."
 //! Bounded-RAM durable log (#130): entries evicted past `ram_ring_entries` are
-//! read back from disk via the offset index; broadcast replay spans the evict
+//! read back from disk via the offset index; a ranged read spans the evict
 //! boundary; the dedupe map is bounded to a FIFO window.
 
 use std::collections::BTreeMap;
@@ -50,8 +50,8 @@ fn evicted_entry_reads_from_disk() {
     assert!(log.entry(20).unwrap().is_none());
 }
 
-// range / broadcast replay spans the evict boundary (cold prefix from disk,
-// hot tail from the ring), in order.
+// a ranged read spans the evict boundary (cold prefix from disk, hot tail
+// from the ring), in order.
 #[test]
 fn range_spans_evict_boundary() {
     let dir = tempfile::tempdir().unwrap();

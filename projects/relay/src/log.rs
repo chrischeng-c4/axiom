@@ -4,10 +4,13 @@
 //!
 //! Append assigns a monotonic, gap-free [`Seq`], dedupes on [`MessageId`], and
 //! persists entries as newline-delimited JSON. Storage is **segmented** (#131):
-//! the active segment rolls at `segment_bytes`, and retention prunes the oldest
-//! whole segments by `max_bytes_per_shard` / `max_age_secs`, advancing
-//! `start_seq`. RAM is bounded (#130): only the most recent `ram_ring_entries`
-//! stay resident; older (but un-pruned) entries are read back from their segment
+//! the active segment rolls at `segment_bytes`. Retention is delete-on-ack only
+//! ([`Log::truncate_below_acked`]): the engine calls it after durably
+//! persisting the work-queue committed watermark, dropping the oldest whole
+//! segments that are fully below it and advancing `start_seq`; an un-acked
+//! entry pins the head, so backlog is never dropped by wall-clock age or size.
+//! RAM is bounded (#130): only the most recent `ram_ring_entries` stay
+//! resident; older (but un-truncated) entries are read back from their segment
 //! via a per-segment byte-offset index. The dedupe map is a FIFO window.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};

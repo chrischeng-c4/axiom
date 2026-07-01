@@ -1,6 +1,6 @@
 ---
 id: relay-bounded-ram-log
-summary: Bounded-RAM durable log — keep only the most recent ram_ring_entries resident, evict older entries to disk and read them back via a dense byte-offset index; bound the dedupe map to dedupe.window_entries. The log scales far beyond memory while broadcast replay and reads still work. Standalone.
+summary: Bounded-RAM durable log — keep only the most recent ram_ring_entries resident, evict older entries to disk and read them back via a dense byte-offset index; bound the dedupe map to dedupe.window_entries. The log scales far beyond memory while ranged reads still work. Standalone.
 fill_sections: [logic, unit-test, changes]
 ---
 
@@ -67,8 +67,8 @@ nodes:
   suite: { kind: start, label: "bounded-RAM log tests" }
   t_evict: { kind: process, label: "tiny ram_ring (e.g. 4); publish 20 to a disk log" }
   a_evict: { kind: terminal, label: "assert entry(seq) returns the correct payload for evicted AND resident seqs (disk-backed read)" }
-  t_range: { kind: process, label: "broadcast subscribe from_seq=0 over a log with most entries evicted" }
-  a_range: { kind: terminal, label: "assert all entries delivered in order (range reads cold prefix from disk + hot tail from RAM)" }
+  t_range: { kind: process, label: "range(from_seq=0) over a log with most entries evicted" }
+  a_range: { kind: terminal, label: "assert all entries returned in order (range reads cold prefix from disk + hot tail from RAM)" }
   t_dedupe: { kind: process, label: "dedupe window = small; publish more distinct ids than the window, then re-publish a still-in-window id and an evicted id" }
   a_dedupe: { kind: terminal, label: "assert in-window id dedupes (same seq); evicted id re-appends (new seq) — bounded at-least-once window" }
   t_unchanged: { kind: process, label: "ram_ring larger than N: publish N, read back" }
@@ -86,7 +86,7 @@ edges:
 flowchart TD
     suite([bounded-RAM log suite]) --> t_evict[tiny ring, publish 20]
     t_evict --> a_evict([entry reads evicted from disk])
-    suite --> t_range[subscribe from 0, mostly evicted]
+    suite --> t_range[range from 0, mostly evicted]
     t_range --> a_range([all in order, cold+hot])
     suite --> t_dedupe[small dedupe window]
     t_dedupe --> a_dedupe([in-window dedupes; evicted re-appends])
@@ -107,7 +107,7 @@ changes:
     action: create
     section: unit-test
     impl_mode: hand-written
-    reason: "Tests: disk-backed entry() for evicted seqs, broadcast range/replay across the evict boundary, bounded dedupe window (in-window dedupes, evicted re-appends), and no-eviction parity when the ring exceeds N."
+    reason: "Tests: disk-backed entry() for evicted seqs, ranged read across the evict boundary, bounded dedupe window (in-window dedupes, evicted re-appends), and no-eviction parity when the ring exceeds N."
 ```
 
 # Reviews
@@ -116,5 +116,5 @@ changes:
 **Verdict:** approved
 
 - [logic] Sound: a dense offset index + a bounded ring give RAM ~8 bytes/entry instead of a full entry; cold reads seek the offset and read the line; range reads the cold prefix sequentially then the hot tail; dedupe is a FIFO window. Replay rebuilds all of it. Scales beyond RAM without changing the hot path.
-- [unit-test] Covers disk-backed reads for evicted seqs, replay across the evict boundary, the bounded dedupe window (in-window dedupes, evicted re-appends), and no-eviction parity.
+- [unit-test] Covers disk-backed reads for evicted seqs, ranged reads across the evict boundary, the bounded dedupe window (in-window dedupes, evicted re-appends), and no-eviction parity.
 - [changes] Bounded to log.rs + a new test; reuses existing config knobs.

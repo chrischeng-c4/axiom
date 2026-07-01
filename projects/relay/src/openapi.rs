@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#rest-api
+// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#rest-api
 // HANDWRITE-BEGIN gap="missing-generator:rest-api:44732064" tracker="pending-tracker" reason="utoipa OpenAPI document for the public endpoints, served at /openapi.json."
 //! utoipa OpenAPI document for the relay HTTP/2 transport.
 //!
@@ -10,7 +10,7 @@ use utoipa::OpenApi;
 
 /// The served OpenAPI document.
 ///
-/// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#rest-api
+/// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#rest-api
 #[derive(OpenApi)]
 #[openapi(
     info(

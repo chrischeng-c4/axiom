@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#logic
+// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:a8062fb3" tracker="pending-tracker" reason="axum h2c app over the relay core: publish/lease/ack handlers (JSON + CBOR) and the streaming broadcast subscribe handler."
 //! axum HTTP/2 (h2c) application over the relay core.
 //!
@@ -58,7 +58,7 @@ impl AppState {
 
 /// Build the HTTP/2 router for the relay transport.
 ///
-/// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#logic
+/// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#logic
 pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .route("/v1/{subject}/publish", post(publish))

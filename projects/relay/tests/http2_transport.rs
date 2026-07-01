@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#unit-test
+// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:7c3c08fd" tracker="pending-tracker" reason="In-process h2c integration tests for the unit-test plan."
 //! HTTP/2 (h2c) transport integration tests over a real ephemeral server.
 //!

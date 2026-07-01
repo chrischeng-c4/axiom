@@ -1,7 +1,7 @@
 // SPEC-MANAGED: projects/relay/tech-design/logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:4a1c74a7" tracker="pending-tracker" reason="Tests: publish spread across shards, whole-subject exactly-once drain across shards, broadcast merge across shards, and default_shards=1 parity with single-shard semantics."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:4a1c74a7" tracker="pending-tracker" reason="Tests: publish spread across shards with whole-subject exactly-once drain through lease/ack, and default_shards=1 parity with single-shard semantics."
 //! Multi-shard per subject (#132): routing spreads a subject across shards, the
-//! whole subject still drains exactly-once and broadcasts in full, and
+//! whole subject still drains exactly-once through lease/ack, and
 //! default_shards=1 is identical to single-shard.
 
 use std::collections::{BTreeMap, BTreeSet};

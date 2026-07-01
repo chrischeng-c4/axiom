@@ -1,6 +1,6 @@
 // SPEC-MANAGED: projects/relay/tech-design/logic/competitor-perf-gate-vs-nats-rabbitmq-redpanda-arena-ratchet.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:b7f01a68" tracker="pending-tracker" reason="Tests for the ratchet rule (holds / regresses / must-beat lost) and a small-scale smoke of the benched workloads."
-//! Perf-gate ratchet rule (#125) plus a small-scale smoke that keeps the three
+//! Perf-gate ratchet rule (#125) plus a small-scale smoke that keeps the two
 //! benched gate workloads honest in CI without any competitor running.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,7 +21,7 @@ fn cell(name: &str, ratio: f64, baseline: f64, must_beat: bool) -> Cell {
 
 #[test]
 fn ratchet_holds_when_no_regression() {
-    let v = evaluate(&[cell("broadcast", 1.55, 1.60, true)], 0.95);
+    let v = evaluate(&[cell("work_queue", 1.55, 1.60, true)], 0.95);
     assert!(v.passed, "1.55 >= 1.60*0.95 and still winning");
 }
 
@@ -35,10 +35,10 @@ fn ratchet_fails_on_regression() {
 #[test]
 fn gate_fails_when_must_beat_cell_is_lost() {
     // No regression vs its own baseline, but relay is now slower than the bar.
-    let v = evaluate(&[cell("broadcast", 0.90, 0.90, true)], 0.95);
+    let v = evaluate(&[cell("work_queue", 0.90, 0.90, true)], 0.95);
     assert!(!v.passed);
     assert!(v.regressions.is_empty());
-    assert_eq!(v.must_beat_losses, vec!["broadcast".to_string()]);
+    assert_eq!(v.must_beat_losses, vec!["work_queue".to_string()]);
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn report_only_cell_does_not_fail_when_behind() {
     assert!(v.passed);
 }
 
-// Smoke: the three benched workloads execute and remain correct at small scale.
+// Smoke: the two benched workloads execute and remain correct at small scale.
 #[test]
 fn gate_workloads_are_valid() {
     let r = Relay::new(RelayCoreConfig::in_memory());

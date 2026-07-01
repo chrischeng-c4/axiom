@@ -37,7 +37,7 @@ first-class domain roots.
 | HTTP/2 API List | 108 | implemented | passing | conformance | not_ready | mandatory baseline: concise h2c producer, replay, worker, probe, and OpenAPI route list |
 | Kubernetes-Native Deployment | - | implemented | planned | dogfood | not_ready | mandatory baseline: StatefulSet raft deployment and kind failover smoke |
 | Primary Replicas | - | implemented | planned | dogfood | not_ready | mandatory baseline: raft leader/follower primary-replica topology |
-| Durable Ordered Log | - | implemented | passing | conformance | not_ready | domain: per-subject append, replay, broadcast fan-out, and segment lifecycle |
+| Durable Ordered Log | - | implemented | passing | conformance | not_ready | domain: per-subject append, dedupe, and segment lifecycle |
 | Work Queue Lifecycle | - | implemented | passing | conformance | not_ready | domain: lease, heartbeat, ack, redelivery, and reconciler behavior |
 | HTTP/OpenAPI Worker Protocol | 108 | implemented | passing | conformance | not_ready | domain: polyglot h2c worker contract |
 | Raft HA | - | implemented | planned | dogfood | not_ready | domain: raft state machine, hard-state persistence, h2c cluster, and kind failover |
@@ -68,7 +68,7 @@ Gate Inventory:
 
 ID: competitor-feature-parity
 Type: RuntimeTool
-Surfaces: Rust API: `Relay` - durable ordered log, broadcast, queue lease, and ack primitives.; HTTP: `publish`, `subscribe`, `lease`, `heartbeat`, `ack` - NATS/RabbitMQ-style broker workflows over h2c.; CLI: `relay-raft` - failover-capable broker node.
+Surfaces: Rust API: `Relay` - durable ordered log, work-queue lease, and ack primitives.; HTTP: `publish`, `lease`, `heartbeat`, `ack` - RabbitMQ/SQS-style single-cast work-queue workflows over h2c.; CLI: `relay-raft` - failover-capable broker node.
 EC Dimensions: behavior: `cargo test -p relay --test relay_core --test work_queue_api --test worker_loop --test raft_core --test raft_persistence --test raft_cluster` - functional parity conformance for core broker workflows
 Root WI: -
 Status: auditing
@@ -83,7 +83,6 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | ordered-log-queue-and-raft-feature-breadth | epic | - | implemented | passing | conformance | projects/relay/tests/relay_core.rs; projects/relay/tests/work_queue_api.rs; projects/relay/tests/raft_core.rs |
 | per-subject-shard-append-ordering | epic | - | implemented | passing | conformance | projects/relay/tests/relay_core.rs |
-| broadcast-replay-model | epic | - | implemented | passing | conformance | projects/relay/tests/relay_core.rs; projects/relay/tests/http2_transport.rs |
 | lease-heartbeat-ack-lifecycle | epic | - | implemented | passing | conformance | projects/relay/tests/work_queue_api.rs |
 | http-worker-protocol-parity | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md |
 | in-process-raft-convergence | epic | - | implemented | passing | conformance | projects/relay/tests/raft_core.rs |
@@ -165,21 +164,21 @@ Gate Inventory:
 
 ID: http2-api-list
 Type: RuntimeTool
-Surfaces: HTTP: publish, subscribe, lease, heartbeat, ack, replay, `/openapi.json`, and probe routes - concise h2c API list for producers and workers.; Docs: `projects/relay/docs/worker-protocol.md` - endpoint contract summary.
+Surfaces: HTTP: publish, lease, heartbeat, ack, consume, `/openapi.json`, and probe routes - concise h2c API list for producers and workers.; Docs: `projects/relay/docs/worker-protocol.md` - endpoint contract summary.
 EC Dimensions: behavior: `cargo test -p relay --test http2_transport --test worker_loop` - h2c transport and worker protocol conformance
 Root WI: 108
 Status: auditing
 Required Verification: conformance
 Promise:
-Publish Relay's supported HTTP/2 API as a compact producer, replay, and worker
-endpoint inventory, with OpenAPI/docs pointers, without making OpenAPI
-completeness the capability definition.
+Publish Relay's supported HTTP/2 API as a compact producer and worker endpoint
+inventory, with OpenAPI/docs pointers, without making OpenAPI completeness the
+capability definition.
 Gate Inventory:
 - projects/relay/tests/http2_transport.rs; projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| h2c-producer-and-replay-route-list | epic | - | implemented | passing | conformance | projects/relay/tests/http2_transport.rs |
+| h2c-publish-and-consume-route-list | epic | - | implemented | passing | conformance | projects/relay/tests/http2_transport.rs |
 | worker-lease-heartbeat-ack-route-list | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md |
 | served-openapi-contract | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs |
 
@@ -231,22 +230,22 @@ Gate Inventory:
 
 ID: durable-ordered-log
 Type: Runtime
-Surfaces: Rust API: `Relay` - append, replay, broadcast fan-out, subject/shard ordering.; Disk: segment log - durable local log lifecycle.
+Surfaces: Rust API: `Relay` - append, dedupe, subject/shard ordering.; Disk: segment log - durable local log lifecycle.
 EC Dimensions: behavior: `cargo test -p relay --test relay_core --test durable --test segments` - ordered log and recovery conformance
 Root WI: -
 Status: auditing
 Required Verification: conformance
 Promise:
-Append messages in per-subject/shard order, replay them through independent
-subscriber cursors, broadcast fan-out without payload interpretation, and
-recover committed log state across restarts and segment rotation.
+Append messages in per-subject/shard order, deduplicate idempotent retries on
+message id, and recover committed log state across restarts and segment
+rotation (delete-on-ack: segments are reclaimed once every entry in them is
+acked, not by wall-clock age or size).
 Gate Inventory:
 - projects/relay/tests/relay_core.rs; projects/relay/tests/durable.rs; projects/relay/tests/segments.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | per-subject-shard-append-ordering | epic | - | implemented | passing | conformance | projects/relay/tests/relay_core.rs |
-| broadcast-replay-model | epic | - | implemented | passing | conformance | projects/relay/tests/relay_core.rs; projects/relay/tests/http2_transport.rs |
 | segment-rotation-and-retention-recovery | epic | - | implemented | passing | conformance | projects/relay/tests/segments.rs |
 
 ### Work Queue Lifecycle
@@ -273,14 +272,14 @@ Gate Inventory:
 
 ID: http-openapi-worker-protocol
 Type: Runtime
-Surfaces: HTTP: h2c worker API - publish, subscribe, lease, heartbeat, ack.; OpenAPI: `/openapi.json` and docs/worker-protocol.md - polyglot worker contract.
+Surfaces: HTTP: h2c worker API - publish, consume, lease, heartbeat, ack.; OpenAPI: `/openapi.json` and docs/worker-protocol.md - polyglot worker contract.
 EC Dimensions: behavior: `cargo test -p relay --test worker_loop` - worker protocol conformance
 Root WI: 108
 Status: auditing
 Required Verification: conformance
 Promise:
 Expose Relay's broker and worker lifecycle through a polyglot h2c/OpenAPI
-contract so non-Rust workers can lease, heartbeat, ack, publish, and replay.
+contract so non-Rust workers can publish, consume, lease, heartbeat, and ack.
 Gate Inventory:
 - projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md
 

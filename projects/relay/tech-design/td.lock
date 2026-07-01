@@ -1,73 +1,104 @@
-version = 1
+version = 2
 project = "relay"
+ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-06-20T14:26:46.661241+00:00"
-digest = "sha256:a89576408fae832c046a2a8d4b86fbacbcde6d8c7bc6caf9dc5a5b8248d4b503"
+generated_at = "2026-07-01T13:17:56.310414+00:00"
+digest = "sha256:7fac8e5bbc30ee5f2263745ef3b554e2675c89c7dd6f75bdbb4daac3ab24e217"
+source_digest = "sha256:7fac8e5bbc30ee5f2263745ef3b554e2675c89c7dd6f75bdbb4daac3ab24e217"
+ir_digest = "sha256:8228263edb495d354fdae94b05281e107ff817ddc6f4afbe61e450fe8806b6ae"
 
 [[files]]
-path = "interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md"
-digest = "sha256:f4eca33406eb642d92afd1859776073de69df3fd0c4df6e12a025fd144a577eb"
+path = "interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md"
+digest = "sha256:8fedfaa698d57a4f84483aed52c2b146e0879b88059f97290ed7ccf11f57bf25"
+ir_digest = "sha256:320d5a9d82852878ee52de774558112ff3fe4d9e4ad43bf8ea7b00df96d010d3"
+section_count = 6
 
 [[files]]
 path = "interfaces/rest/relay-keep-worker-facing-openapi-contract-polyglot-worker-integr.md"
 digest = "sha256:1823425df637d13a67f4e6aa89661831b16392aed22fb9018cefcb2f1d06d111"
+ir_digest = "sha256:2404623fe616c68534bd0a65964fdef48980f4930d37f219e8523806d2aad03e"
+section_count = 2
 
 [[files]]
 path = "interfaces/rest/work-queue-api-lease-ack-heartbeat.md"
-digest = "sha256:4b60a1feb6cdc35fe0c432505482727ebbdbaebf207d8532359092a914370665"
+digest = "sha256:0087bef459dde8785642e66e27aaa718c057e3cf337cc06a350314073b787b93"
+ir_digest = "sha256:f5bd17fc3780fb4798cc329b1db786cff81c77481e6a83b255e61ca990b609c6"
+section_count = 5
 
 [[files]]
 path = "logic/bounded-ram-durable-log-entry-eviction-offset-index-disk-backed.md"
-digest = "sha256:45c7f0701704886bff0ed25db7ee531aa18e53b116eee40f0693f096c0c5e7db"
+digest = "sha256:6ac456d97efae0f45bc7496688146e614bad54aff274cb596c3bffb76a7375e2"
+ir_digest = "sha256:ba8545d2f6b7c5520088629eaca661e4bb23451765308244becafa43f3498330"
+section_count = 3
 
 [[files]]
 path = "logic/competitor-perf-gate-vs-nats-rabbitmq-redpanda-arena-ratchet.md"
-digest = "sha256:56061c7b6a0954119814d373c6a501e971779bd8e361835c3707617b98bae03e"
+digest = "sha256:35015296b5beaaa2f08440276a706f6db986bd3b40211faace70ada10d347e09"
+ir_digest = "sha256:251271862b0c14b200a0ebe973715ee093092f7973756813ad7e34e7ba204e3e"
+section_count = 4
 
 [[files]]
 path = "logic/core-durable-log-single-multi-broadcast-delivery-model.md"
-digest = "sha256:0b29d2df9006f1ab0105f863a0ac9b97e9a871d6eed99f9beb982837dd12b567"
+digest = "sha256:68a78573773599143e18a1d685b5cfc3a9f77e09817f39913e84262bb886319f"
+ir_digest = "sha256:16043ec2e8e753d9df3999363974cd6c953566a10947b4e4e479de893238893b"
+section_count = 5
 
 [[files]]
 path = "logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md"
 digest = "sha256:59948f81413e00d80c09861eddab47ed3c6fd0cfb9d7f07f16abc5c3f52f1275"
+ir_digest = "sha256:8e904c141f4910582db1829a1223ea037ff0c625a10bf264c5b875a472ad7864"
+section_count = 5
 
 [[files]]
 path = "logic/h2c-raft-transport-driver-producer-redirect-to-leader.md"
 digest = "sha256:a5f8ca1aa48fa912ff7d768569b378ecff21ba60cb87703abb6eaec1df79de73"
-
-[[files]]
-path = "logic/ha-via-leader-follower-log-replication-async-primary-backup.md"
-digest = "sha256:d961955ef2bc9a4e258a43d117f799f4d30e391501dc5eda1a698c63e58f3eb6"
+ir_digest = "sha256:9eadc77351a8cc86f8a719dc2efc50b7fa372a7f2af01d8700055f2ef6192990"
+section_count = 3
 
 [[files]]
 path = "logic/k8s-manifests-ordinal-role-kind-failover-smoke-raft-ha-layer-2.md"
 digest = "sha256:2919f9b9be02bf1d55f3f05de90f58128346820df51feecb752e6c250de3786a"
+ir_digest = "sha256:7161114e3eec7fbd2411c0aa5df1d8cd217b2983d8efa44d679c974c813a50e0"
+section_count = 3
 
 [[files]]
 path = "logic/log-segment-rotation-retention-full-log-lifecycle.md"
-digest = "sha256:10a3465cffaf6ed5b7c59c86735c2e85f981090dc9ccaf988179f0c568049c38"
+digest = "sha256:3930b2dee7401c5d00ff61af3d52c29a2fde70186194bb7a4a4e92a914c431e3"
+ir_digest = "sha256:6cdc72c1718e75e531cc85462e56c02ddc0c08e00279a13f8abfae86794ec53a"
+section_count = 3
 
 [[files]]
 path = "logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md"
-digest = "sha256:a4557b5a2cfebd2a0e48d319b08e98b39fcac11982781009e6257d18e90013f4"
+digest = "sha256:a7bb83e6b409908b02800ca525f9adea46c1e5ff47ec25bfb9bf273253c365b3"
+ir_digest = "sha256:b344197684273809073c51a51130ba11eac87eb4641f7ea961d86b7609360be1"
+section_count = 3
 
 [[files]]
 path = "logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md"
 digest = "sha256:e0abf58c27e661333d5feff7b93cbe350b8897d525335c1a93a2c235fc190633"
+ir_digest = "sha256:79a0e977dc50f71290754d7eb4334ebb072b0a46762c9f8fa6c2df8fec0ed4c4"
+section_count = 3
 
 [[files]]
 path = "logic/reconciler-lease-reclaim-redeliver-liveness.md"
-digest = "sha256:8713bae64cfbe618f577a924c76cc656656e27676849f4e3decf5e6a4bde2fd5"
+digest = "sha256:dc3ce1e8d3933099d6d7a87a95b8b23e71c446842229e4e7760802aadeb59ff1"
+ir_digest = "sha256:6b86b0fa29ac1285406d60823093b71357045237eea35abe6284ca6bc804dec4"
+section_count = 4
 
 [[files]]
 path = "logic/single-shard-raft-consensus-core-self-contained-rsm-auto-voter-l.md"
 digest = "sha256:a0c64c71c4d6fcd535e231a8c861fca1fe362948f5665ddcc9684dc2a65fa131"
+ir_digest = "sha256:21f7d12f66de134c2c91ca0352e4547b3de1a284aaa40ee2b9f19c83bc9c95f5"
+section_count = 3
 
 [[files]]
 path = "logic/sparse-offset-index-scale-the-log-to-billions-of-entries.md"
 digest = "sha256:b568c5d90a8a57a1fe2ba861a5344ae9656b05e5108b23b78e9f9c0a37d54dee"
+ir_digest = "sha256:ceac8573d9ece3b559ec61f4cc87b77c5e42824f6d56cceae453d2d17f1c7af5"
+section_count = 3
 
 [[files]]
 path = "logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md"
-digest = "sha256:c14877cb770c187d72f4e904d762eb32cdbcb6242c8dc6fd252034e9098d44d1"
+digest = "sha256:176fa127b524b2c2f9df3fae2c550cfa1191a7d193e72dc22fac4aa67c3fe61e"
+ir_digest = "sha256:e3d87bc0ac7948bb88171c0186e7212fb2991cf783692f3dee217ab7a150251e"
+section_count = 5

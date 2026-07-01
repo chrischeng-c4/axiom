@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#logic
+// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:695511a3" tracker="pending-tracker" reason="relay-server binary entrypoint: load config, build the app, serve h2c."
 //! `relay-server` — serve the relay HTTP/2 (h2c) transport for one shard,
 //! with the background lease reconciler running.

@@ -1,6 +1,6 @@
 ---
 id: relay-core-durable-log
-summary: In-process broker core that serves both broadcast (replay from seq) and work-queue (lease / ack / redeliver) delivery over one durable ordered log per subject/shard. Standalone HTTP/2 queue core with standard at-least-once / replay semantics; depends on no other axiom project.
+summary: In-process broker core that serves single-cast work-queue (lease / ack / redeliver) delivery over one durable ordered log per subject/shard. Standalone HTTP/2 queue core with standard at-least-once semantics; depends on no other axiom project.
 capability_refs:
   - id: competitor-feature-parity
     role: primary
@@ -8,12 +8,6 @@ capability_refs:
     claim: per-subject-shard-append-ordering
     coverage: full
     rationale: "Defines the per-subject/shard append path, idempotent message id handling, and monotonic ordered log semantics."
-  - id: competitor-feature-parity
-    role: primary
-    gap: broadcast-replay-model
-    claim: broadcast-replay-model
-    coverage: full
-    rationale: "Defines broadcast fan-out, independent subscriber cursors, and replay from a requested sequence over the durable log."
   - id: security-hardening
     role: primary
     gap: opaque-payload-boundary
@@ -23,7 +17,7 @@ capability_refs:
 fill_sections: [logic, schema, config, unit-test, changes]
 ---
 
-# relay core — durable log + single/multi/broadcast delivery model
+# relay core — durable log + single-cast work-queue delivery model
 
 ## Logic
 <!-- type: logic lang: mermaid -->
@@ -35,7 +29,7 @@ entry: publish
 nodes:
   publish:
     kind: start
-    label: "Producer publishes a message to a subject with a delivery intent (singlecast / multicast / broadcast / work-queue)"
+    label: "Producer publishes a message to a subject (single-cast work-queue delivery)"
   assign_id:
     kind: process
     label: "Derive a deterministic message id (producer key + content) so retries are idempotent"
@@ -48,27 +42,21 @@ nodes:
   append_log:
     kind: process
     label: "Append to the durable ordered log for the subject/shard (RAM ring + disk segment) and assign a monotonic seq"
-  classify:
-    kind: decision
-    label: "Resolve delivery model for the subject via the reused routing model"
-  fanout:
+  offer:
     kind: process
-    label: "Broadcast/fan-out: every subscriber cursor advances; each subscriber gets every message in order"
-  replay:
-    kind: terminal
-    label: "A (re)connecting subscriber replays from its requested from_seq over the same durable log"
+    label: "Offer the new entry to the work-queue: immediately leasable, or held in the delay index until its not_before time"
   lease:
     kind: process
-    label: "Work-queue/competing: offer the message into EVERY named consumer group's queue (multicast — each group gets it once); within a group it is leased to exactly one consumer. Default group \"\" = the single-queue path. Each group has its own cursor / committed / redeliver / delay; delete-on-ack GC truncates below the MIN committed across groups."
+    label: "Lease the next eligible entry to exactly one competing consumer"
   lease_ok:
     kind: decision
     label: "Did the leased consumer ack before the lease expired?"
   commit_ack:
     kind: terminal
-    label: "Ack: mark the message delivered and advance the committed offset"
+    label: "Ack: mark the message delivered, advance the committed offset, and reclaim fully-acked log segments (delete-on-ack)"
   redeliver:
     kind: process
-    label: "Lease expiry or nack: requeue for redelivery to another consumer (reuse retry / revocation model)"
+    label: "Lease expiry or nack: re-offer for redelivery to another consumer (reuse retry / revocation model)"
 edges:
   - from: publish
     to: assign_id
@@ -83,17 +71,11 @@ edges:
     to: append_log
     label: "new id"
   - from: append_log
-    to: classify
+    to: offer
     label: "seq assigned, durably persisted"
-  - from: classify
-    to: fanout
-    label: "broadcast / multicast"
-  - from: classify
+  - from: offer
     to: lease
-    label: "work-queue / singlecast"
-  - from: fanout
-    to: replay
-    label: "subscriber subscribes from_seq"
+    label: "eligible for lease"
   - from: lease
     to: lease_ok
     label: "awaiting ack"
@@ -112,12 +94,10 @@ flowchart TD
     assign_id --> dedupe{Already appended?}
     dedupe -->|duplicate id| dedupe_drop([Drop, return existing seq])
     dedupe -->|new id| append_log[Append to durable ordered log, assign seq]
-    append_log --> classify{Delivery model?}
-    classify -->|broadcast / multicast| fanout[Fan-out to every subscriber cursor]
-    classify -->|work-queue / singlecast| lease[Lease to exactly one consumer]
-    fanout --> replay([Subscriber replays from_seq])
+    append_log --> offer[Offer to work-queue: leasable now or delayed]
+    offer --> lease[Lease to exactly one consumer]
     lease --> lease_ok{Acked before lease expiry?}
-    lease_ok -->|yes| commit_ack([Ack, advance committed offset])
+    lease_ok -->|yes| commit_ack([Ack, advance committed offset, reclaim acked segments])
     lease_ok -->|lease expired / nack| redeliver[Requeue for redelivery]
     redeliver --> lease
 ```
@@ -130,15 +110,15 @@ $id: relay-core-durable-log#schema
 title: Relay Core Durable Log Types
 description: >
   Core in-process data model for the relay broker: a durable ordered log per
-  (subject, shard) plus the per-model delivery state that reads from it. The
+  (subject, shard) plus the work-queue lease state that reads from it. The
   message payload is an opaque body stored unchanged; relay owns only the log,
-  sequencing, dedupe, subscriber cursors, and work-queue leases.
+  sequencing, dedupe, and work-queue leases.
 
 definitions:
   Subject:
     type: string
     $id: Subject
-    description: "Logical channel a producer publishes to and consumers subscribe on."
+    description: "Logical channel a producer publishes to and a work-queue consumer leases from."
 
   ShardId:
     type: integer
@@ -150,27 +130,12 @@ definitions:
     type: integer
     $id: Seq
     minimum: 0
-    description: "Monotonic, gap-free position assigned on append within one (subject, shard). The replay and ack cursors are expressed in this space."
+    description: "Monotonic, gap-free position assigned on append within one (subject, shard). The work-queue ack cursor is expressed in this space."
 
   MessageId:
     type: string
     $id: MessageId
     description: "Deterministic id derived from producer key + content, used as the idempotency/dedupe key so an at-least-once retry maps to the same log entry."
-
-  DeliveryModel:
-    type: string
-    $id: DeliveryModel
-    x-rust-derive: ["Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash", "Serialize", "Deserialize"]
-    enum:
-      - singlecast
-      - multicast
-      - broadcast
-      - work_queue
-    description: >
-      How a subject's appended messages are delivered. `broadcast`/`multicast`
-      fan out every message to every (group) subscriber, replayable from a seq.
-      `work_queue` leases each message to exactly one competing consumer.
-      `singlecast` is the degenerate one-consumer case of work_queue.
 
   Payload:
     $id: Payload
@@ -187,7 +152,7 @@ definitions:
     $id: LogEntry
     x-rust-derive: ["Debug", "Clone", "PartialEq", "Serialize", "Deserialize"]
     required: [seq, message_id, subject, shard, payload, appended_at]
-    description: "One durable record in the ordered log; the unit of both broadcast replay and work-queue lease."
+    description: "One durable record in the ordered log; the unit of work-queue lease."
     properties:
       seq:
         $ref: "#/definitions/Seq"
@@ -211,10 +176,10 @@ definitions:
       not_before:
         type: ["string", "null"]
         format: date-time
-        description: "Work-queue visibility gate (delayed / ETA / countdown): durably appended at once but not leasable until this time. Null = leasable immediately. Does not affect broadcast replay."
+        description: "Work-queue visibility gate (delayed / ETA / countdown): durably appended at once but not leasable until this time. Null = leasable immediately."
       priority:
         type: integer
-        description: "Work-queue priority band (0 = lowest / default; higher leases first, clamped to the band count). Does not affect broadcast."
+        description: "Work-queue priority band (0 = lowest / default; higher leases first, clamped to the band count)."
 
   AppendOutcome:
     type: object
@@ -229,27 +194,6 @@ definitions:
       deduped:
         type: boolean
         description: "True when the id was already present and no new entry was written."
-
-  SubscriberCursor:
-    type: object
-    $id: SubscriberCursor
-    x-rust-derive: ["Debug", "Clone", "PartialEq", "Eq", "Serialize", "Deserialize"]
-    required: [subscriber_id, subject, shard, from_seq, position]
-    description: "Broadcast/fan-out read position; each subscriber advances independently and may replay from any seq."
-    properties:
-      subscriber_id:
-        type: string
-        description: "Stable id of a broadcast subscriber (or member of a multicast group)."
-      subject:
-        $ref: "#/definitions/Subject"
-      shard:
-        $ref: "#/definitions/ShardId"
-      from_seq:
-        $ref: "#/definitions/Seq"
-        description: "Seq the subscription (re)started replay from."
-      position:
-        $ref: "#/definitions/Seq"
-        description: "Seq of the last entry delivered to this subscriber."
 
   Lease:
     type: object
@@ -308,8 +252,8 @@ definitions:
 # Durable ordered log substrate (RAM ring + disk segments).
 data_dir: "./relay-data"        # root directory for durable disk segments
 segment_bytes: 134217728        # roll to a new disk segment at 128 MiB
-ram_ring_entries: 65536         # hot in-memory entries retained per (subject, shard) for low-latency fan-out / replay
-fsync: "interval"               # durability policy: always | interval | os
+ram_ring_entries: 65536         # hot in-memory entries retained per (subject, shard) for low-latency lease
+fsync: "always"                 # durability policy: always | interval | os
 fsync_interval_ms: 50           # flush cadence when fsync = interval
 default_shards: 1               # shards per subject unless the subject overrides it
 
@@ -325,19 +269,14 @@ work_queue:
   redeliver_backoff_ms: 1000    # base backoff between delivery attempts
   dlq_suffix: ".dlq"            # exhausted entries route to {subject}{dlq_suffix}; such subjects open with max_attempts=0
 
-# Broadcast / fan-out delivery (replayable from any retained seq).
-broadcast:
-  max_replay_entries: 0         # 0 = replay from any retained seq; >0 caps replay depth
-
-# Retention / pruning of the durable log.
+# Retention of the durable log — relay is delete-on-ack ONLY: a segment is
+# reclaimed once every entry in it is acked (the committed watermark passes
+# it), so storage tracks backlog depth, not total throughput. An un-acked
+# backlog is never deleted by wall-clock or size — the broker owns task
+# durability until ack.
 retention:
-  max_age_secs: 604800          # (Age mode) prune aged segments after 7 days
-  max_bytes_per_shard: 0        # (Age mode) 0 = unbounded; else prune oldest segments past this size
-  mode: "age"                   # storage reclaim strategy: age | ack
-                                #   age = Kafka-style retain-then-prune by age/size (broadcast/replay subjects, e.g. lumen)
-                                #   ack = celery/airflow delete-on-ack: reclaim segments as the committed watermark
-                                #         advances past them (storage tracks backlog depth); disables age/size pruning
-                                #         so an un-acked backlog is never deleted (broker owns task durability until ack)
+  max_age_secs: 604800          # reserved for a future hard-cap/backpressure knob; does not prune un-acked entries
+  max_bytes_per_shard: 0        # reserved for a future hard-cap/backpressure knob; does not prune un-acked entries
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -362,18 +301,6 @@ nodes:
   a_dedupe:
     kind: terminal
     label: "assert one LogEntry; second AppendOutcome.deduped=true with the same seq (idempotent at-least-once)"
-  t_broadcast_all:
-    kind: process
-    label: "two broadcast subscribers, publish 3 messages"
-  a_broadcast_all:
-    kind: terminal
-    label: "assert both subscribers receive all 3 in seq order (fan-out, no message dropped)"
-  t_replay:
-    kind: process
-    label: "subscribe broadcast with from_seq=K after M>K entries exist"
-  a_replay:
-    kind: terminal
-    label: "assert delivery starts at K and covers K..M-1 in order (replayable from seq)"
   t_workqueue_one:
     kind: process
     label: "two competing consumers on the same log, publish 3 messages"
@@ -391,58 +318,30 @@ nodes:
     label: "consumer acks its leased entry"
   a_ack_commit:
     kind: terminal
-    label: "assert CommittedOffset.committed_seq advances and the entry is not redelivered"
-  t_both_models:
-    kind: process
-    label: "ACCEPTANCE: one broadcast subscriber and one work-queue consumer on the same subject/log"
-  a_both_models:
-    kind: terminal
-    label: "assert the broadcast subscriber sees every message AND the work-queue consumer leases each exactly once, over the same durable log"
-  t_groups:
-    kind: process
-    label: "two named consumer groups on one subject; competing consumers within a group; an Ack-mode subject where one group lags"
-  a_groups:
-    kind: terminal
-    label: "assert each group independently receives every message, within a group each message leases once, and delete-on-ack GC is pinned until the slowest group acks"
+    label: "assert CommittedOffset.committed_seq advances and the entry is not redelivered, and fully-acked segments are reclaimed (delete-on-ack)"
 edges:
   - { from: suite, to: t_seq, label: "case: sequencing" }
   - { from: t_seq, to: a_seq }
   - { from: suite, to: t_dedupe, label: "case: idempotency" }
   - { from: t_dedupe, to: a_dedupe }
-  - { from: suite, to: t_broadcast_all, label: "case: fan-out" }
-  - { from: t_broadcast_all, to: a_broadcast_all }
-  - { from: suite, to: t_replay, label: "case: replay" }
-  - { from: t_replay, to: a_replay }
   - { from: suite, to: t_workqueue_one, label: "case: competing" }
   - { from: t_workqueue_one, to: a_workqueue_one }
   - { from: suite, to: t_lease_expiry, label: "case: redelivery" }
   - { from: t_lease_expiry, to: a_lease_expiry }
   - { from: suite, to: t_ack_commit, label: "case: ack/commit" }
   - { from: t_ack_commit, to: a_ack_commit }
-  - { from: suite, to: t_both_models, label: "case: acceptance" }
-  - { from: t_both_models, to: a_both_models }
-  - { from: suite, to: t_groups, label: "case: consumer groups / multicast" }
-  - { from: t_groups, to: a_groups }
 ---
 flowchart TD
     suite([relay core test suite]) --> t_seq[append N -> monotonic seq]
     t_seq --> a_seq([seqs ordered and gap-free])
     suite --> t_dedupe[append same MessageId twice]
     t_dedupe --> a_dedupe([one entry, deduped=true, same seq])
-    suite --> t_broadcast_all[2 subscribers, publish 3]
-    t_broadcast_all --> a_broadcast_all([both get all 3 in order])
-    suite --> t_replay[subscribe from_seq=K]
-    t_replay --> a_replay([delivery starts at K, ordered])
     suite --> t_workqueue_one[2 consumers compete, publish 3]
     t_workqueue_one --> a_workqueue_one([each seq leased exactly once])
     suite --> t_lease_expiry[lease, do not ack past ttl]
     t_lease_expiry --> a_lease_expiry([redelivered, attempt++])
     suite --> t_ack_commit[ack leased entry]
-    t_ack_commit --> a_ack_commit([committed_seq advances, no redelivery])
-    suite --> t_both_models[broadcast + work-queue on same log]
-    t_both_models --> a_both_models([subscriber sees all; consumer leases each once])
-    suite --> t_groups[two groups; compete within; one lags]
-    t_groups --> a_groups([each group gets all; once within group; GC pinned by slowest])
+    t_ack_commit --> a_ack_commit([committed_seq advances, no redelivery, segments reclaimed])
 ```
 
 ## Changes
@@ -459,52 +358,42 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "Crate root: module wiring and public re-exports for the in-process core."
+    reason: "Crate root: module wiring and public re-exports for the in-process core (single-cast work-queue only; no broadcast/replication modules)."
   - path: projects/relay/src/types.rs
     action: create
     section: schema
     impl_mode: hand-written
-    reason: "Core data model (LogEntry, Seq, MessageId, DeliveryModel, AppendOutcome, SubscriberCursor, Lease, CommittedOffset) per the Schema contract."
+    reason: "Core data model (LogEntry, Seq, MessageId, AppendOutcome, Lease, CommittedOffset) per the Schema contract."
   - path: projects/relay/src/config.rs
     action: create
     section: config
     impl_mode: hand-written
-    reason: "RelayCoreConfig per the Config contract, incl. RetentionMode { age, ack } on RetentionConfig (delete-on-ack vs age/size pruning)."
+    reason: "RelayCoreConfig per the Config contract; RetentionConfig is delete-on-ack only (max_age_secs/max_bytes_per_shard are reserved future hard-cap knobs, not an alternate pruning mode)."
   - path: projects/relay/src/log.rs
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "Durable ordered log substrate: append with deterministic-id dedupe, monotonic seq, RAM ring + disk segment persistence, ordered read/replay."
-  - path: projects/relay/src/broadcast.rs
-    action: create
-    section: logic
-    impl_mode: hand-written
-    reason: "Broadcast / multicast fan-out and replay-from-seq over the log via per-subscriber cursors."
+    reason: "Durable ordered log substrate: append with deterministic-id dedupe, monotonic seq, RAM ring + disk segment persistence, ordered read, and truncate_below_acked (delete-on-ack GC)."
   - path: projects/relay/src/workqueue.rs
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "Work-queue competing-consumer delivery: lease / ack / redeliver and committed offset (standard at-least-once lease / retry semantics)."
+    reason: "Work-queue competing-consumer delivery: lease / ack / redeliver, delay index, priority bands, dead-lettering, and committed offset (standard at-least-once lease / retry semantics)."
   - path: projects/relay/src/engine.rs
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "Relay core engine tying publish -> classify -> broadcast / work-queue delivery over one durable log. Per-subject retention override (subject_modes + set_retention_mode, applied to all shards); ack/ack_batch persist the committed watermark then, in ack mode, truncate the fully-acked segment prefix (persist-before-truncate ordering). Phase 6: SubjectState.workqueue -> groups: HashMap<String, WorkQueue> (named consumer groups / multicast); lease_in/ack_in/release_in target a group (lease/ack/release delegate to default \"\"); groups created lazily (\"\" resumes from .commit, named from start_seq) so an unused group never pins GC; publish offers each message to EVERY group; persist_and_truncate truncates below the MIN committed across groups; reconcile sweeps all groups."
+    reason: "Relay core engine tying publish -> durable append -> single-cast work-queue lease/ack/redeliver over one durable log. ack/ack_batch persist the committed watermark then truncate the fully-acked segment prefix (persist-before-truncate ordering, H1)."
   - path: projects/relay/src/consume.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    reason: "Subscribe frame gains an optional group; the streaming consume drive leases/acks/nacks within that named group (default \"\")."
+    reason: "Streaming consume drive leases/acks/nacks entries from the subject's single work-queue."
   - path: projects/relay/tests/relay_core.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    reason: "Deterministic tests for the unit-test plan, including the #122 acceptance (both delivery models over the same log)."
-  - path: projects/relay/tests/consumer_groups.rs
-    action: create
-    section: unit-test
-    impl_mode: hand-written
-    reason: "Phase 6 tests: two named groups each receive every message, competing consumers within a group split the work, and delete-on-ack GC is pinned by the slowest group."
+    reason: "Deterministic tests for the unit-test plan: sequencing, idempotency, single-cast competing-consumer delivery, lease-expiry redelivery, and ack/commit with delete-on-ack reclaim."
 ```
 
 # Reviews
@@ -512,17 +401,7 @@ changes:
 ### Review 1
 **Verdict:** approved
 
-- [logic] Publish -> deterministic id -> dedupe -> durable append+seq -> classify into broadcast fan-out vs work-queue lease/ack/redeliver. Captures both delivery models over one log and the idempotent at-least-once path. Applicable.
-- [schema] LogEntry / Seq / MessageId / DeliveryModel / SubscriberCursor / Lease / CommittedOffset cover the durable-log substrate plus per-model delivery state; payload is an opaque JSON body (x-rust-type serde_json::Value). Applicable and codegen-ready.
-- [config] RelayCoreConfig scopes durability (segments, ram ring, fsync), dedupe window, work-queue lease/retry, broadcast replay, and retention — all in-process core concerns; transport/HA correctly deferred to #115/#109. Applicable.
-- [unit-test] Cases cover sequencing, idempotency, broadcast fan-out + replay-from-seq, work-queue single-delivery, lease-expiry redelivery, ack/commit, and the #122 acceptance (both models over the same log). Applicable.
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Flow is internally consistent and satisfies #122: deterministic id -> dedupe -> durable append+seq -> single classify gate into broadcast/multicast fan-out vs work-queue/singlecast lease. Singlecast correctly modeled as the one-consumer case of the lease path; multicast as group fan-out. Redeliver loops back to lease (re-offer), ack advances the committed offset — both delivery models terminate cleanly over one log.
-- [schema] Types are codegen-ready and cover the substrate (LogEntry, Seq, MessageId) plus per-model state (SubscriberCursor for broadcast replay, Lease + CommittedOffset for work-queue). Payload is an opaque JSON body (serde_json::Value) stored verbatim with no reinterpretation, keeping the broker standalone (#120 "knows nothing about workflows"). AppendOutcome.deduped expresses the idempotent at-least-once contract. Known bound (accepted, not blocking): dedupe.window_entries / ttl_secs scope idempotency to a finite window — a retry arriving after eviction can double-append; this is the standard at-least-once tradeoff and is configurable.
-- [config] RelayCoreConfig scopes only in-process core concerns (durability, dedupe window, lease/retry, broadcast replay, retention); transport, sharding fan-out, and HA are correctly deferred to #115/#109. Defaults are sane (128 MiB segments, 30s lease, 5 attempts).
-- [unit-test] Cases map 1:1 to the contract: sequencing, idempotency, fan-out + replay-from-seq, work-queue exactly-once-delivery, lease-expiry redelivery with attempt increment, ack/commit, and the #122 acceptance case asserting both models over the same durable log.
+- [logic] Publish -> deterministic id -> dedupe -> durable append+seq -> offer to the work-queue (immediate or delay-gated) -> lease/ack/redeliver. Single-cast only: one competing-consumer queue per subject/shard, no broadcast/multicast fan-out. Captures the idempotent at-least-once path end to end. Applicable.
+- [schema] LogEntry / Seq / MessageId / AppendOutcome / Lease / CommittedOffset cover the durable-log substrate plus work-queue lease state; payload is an opaque JSON body (x-rust-type serde_json::Value). Applicable and codegen-ready.
+- [config] RelayCoreConfig scopes durability (segments, ram ring, fsync), dedupe window, work-queue lease/retry, and retention — all in-process core concerns; transport/HA correctly deferred to #115/#109. Retention is delete-on-ack only; `max_age_secs`/`max_bytes_per_shard` are reserved future hard-cap knobs, not an alternate pruning mode. Applicable.
+- [unit-test] Cases cover sequencing, idempotency, single-cast competing-consumer delivery, lease-expiry redelivery, and ack/commit with delete-on-ack reclaim. Applicable.

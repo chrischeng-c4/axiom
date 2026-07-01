@@ -1,11 +1,13 @@
-// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md#schema
+// SPEC-MANAGED: projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:schema:a9efe379" tracker="pending-tracker" reason="Transport DTOs and length-prefixed CBOR framing."
 //! HTTP/2 transport wire types and framing.
 //!
-//! JSON shapes are the OpenAPI contract; hot request/response calls can use the
-//! same shapes as `application/cbor`, and the broadcast stream uses
-//! length-prefixed CBOR frames. A frame is a big-endian `u32` byte length
-//! followed by that many CBOR bytes.
+//! JSON shapes are the OpenAPI contract; hot request/response calls on the
+//! deprecated lease/ack routes can use the same shapes as `application/cbor`.
+//! `encode_frame`/`decode_frames` provide general length-prefixed CBOR framing
+//! (a big-endian `u32` byte length followed by that many CBOR bytes) for any
+//! future streaming need; the `/consume` stream uses its own JSON framing
+//! (`consume.rs`) rather than these.
 
 use std::collections::BTreeMap;
 
@@ -24,7 +26,7 @@ pub struct PublishRequest {
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     /// Optional work-queue visibility gate: the entry is not leasable until this
-    /// absolute time (delayed / ETA delivery). Ignored by broadcast.
+    /// absolute time (delayed / ETA delivery).
     #[serde(default)]
     pub not_before: Option<DateTime<Utc>>,
     /// Convenience countdown: deliver `delay_ms` from now. Resolved server-side to

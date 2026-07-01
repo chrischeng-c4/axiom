@@ -14,7 +14,7 @@
 /// @spec projects/relay/tech-design/logic/competitor-perf-gate-vs-nats-rabbitmq-redpanda-arena-ratchet.md#logic
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cell {
-    /// Cell name (e.g. `broadcast`, `work_queue`, `durable_log`).
+    /// Cell name (e.g. `work_queue`, `durable_log`).
     pub name: String,
     /// Current ratio, normalized so higher is better for relay.
     pub ratio: f64,
