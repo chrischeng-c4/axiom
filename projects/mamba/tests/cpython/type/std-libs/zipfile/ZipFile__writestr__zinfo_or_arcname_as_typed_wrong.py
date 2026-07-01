@@ -9,7 +9,6 @@
 # case = "ZipFile__writestr__zinfo_or_arcname_as_typed_wrong"
 # subject = "zipfile.ZipFile.writestr(zinfo_or_arcname: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"

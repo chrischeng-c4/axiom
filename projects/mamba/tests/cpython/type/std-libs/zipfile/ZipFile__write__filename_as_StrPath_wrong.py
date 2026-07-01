@@ -9,7 +9,6 @@
 # case = "ZipFile__write__filename_as_StrPath_wrong"
 # subject = "zipfile.ZipFile.write(filename: StrPath)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zipfile.pyi"
 # status = "filled"
