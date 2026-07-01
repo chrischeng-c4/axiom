@@ -1,13 +1,13 @@
-//! beam binary — the GPU-native vector database CLI shell (first slice).
+//! beam binary — the GPU-native vector database CLI.
 //!
-//! Alongside the standard agent-facing commands — `beam llm`, `beam upgrade`,
-//! `beam issue` (the CONTRIBUTING.md CLI convention, via the shared `cli-std`
-//! lib) — sit placeholder service verbs (`serve`, `collections`, `index`,
-//! `query`, `dockerfile`, `k8s`) that each exit with a tracked "not implemented
-//! yet: …" diagnostic until the real feature lands. Agents start at
+//! Standard agent-facing commands — `beam llm`, `beam upgrade`, `beam issue`
+//! (the CONTRIBUTING.md CLI convention, via the shared `cli-std` lib) — sit
+//! alongside `beam bench` (a GPU-vs-CPU vector-search demo over the in-memory
+//! engine: flat, IVF-flat, and IVF-PQ indexes on wgpu/Metal) and the
+//! placeholder service verbs (`serve`, `collections`, `index`, `query`,
+//! `dockerfile`, `k8s`) that each exit with a tracked "not implemented yet: …"
+//! diagnostic until the real feature lands. Agents start at
 //! `beam llm --topic outline`.
-//!
-//! This slice is CPU/GPU-neutral: no CUDA/Metal/wgpu/vector/ANN dependency.
 
 use std::process::ExitCode;
 
@@ -46,10 +46,14 @@ const TOPICS: &[cli_std::llm::Topic] = &[
             service (exact, lexical, semantic, perceptual, and duplicate search) and \
             owns ranking and dedup. Beam is the GPU vector engine underneath vector \
             retrieval — it never claims mixed search, ranking, or dedup.\n\n\
-            Engine today: an in-memory vector collection with an exact CPU oracle \
-            and a GPU flat (brute-force) k-NN index on wgpu — Metal on Apple Silicon, \
-            Vulkan on Linux/NVIDIA. `beam bench` runs a GPU-vs-CPU parity + timing demo. \
-            Still to come: durable segments, ANN (IVF-PQ), an HTTP/2 query API, and k8s. \
+            Engine today: an in-memory vector collection with an exact CPU oracle, \
+            a GPU flat (brute-force) k-NN index, and a GPU IVF-PQ (IVFADC) \
+            approximate-nearest-neighbor index — all on wgpu (Metal on Apple Silicon, \
+            Vulkan on Linux/NVIDIA). IVF-PQ prunes to the nprobe nearest cells and \
+            product-quantizes residuals, so a query touches a small fraction of the \
+            corpus; recall is verified against the flat oracle. `beam bench --index \
+            flat|ivfflat|ivfpq` runs the GPU-vs-CPU parity, recall, pruning, and timing \
+            demo. Still to come: durable segments, an HTTP/2 query API, and k8s. \
             Capability roots live in projects/beam/README.md (epic #769).\n",
     },
     cli_std::llm::Topic {
@@ -159,6 +163,20 @@ struct BenchArgs {
     /// Distance metric.
     #[arg(long, value_parser = ["l2", "dot", "cosine"], default_value = "l2")]
     metric: String,
+    /// Index backend: `flat` (exact GPU brute force), `ivfflat` (IVF + exact
+    /// residual refine), or `ivfpq` (IVF + product-quantized residuals). IVF
+    /// backends use a clustered corpus and print the candidates-scanned ratio.
+    #[arg(long, value_parser = ["flat", "ivfflat", "ivfpq"], default_value = "flat")]
+    index: String,
+    /// IVF coarse-cell count (ivfflat / ivfpq).
+    #[arg(long, default_value_t = 256)]
+    nlist: usize,
+    /// Cells probed per query (ivfflat / ivfpq).
+    #[arg(long, default_value_t = 16)]
+    nprobe: usize,
+    /// PQ subvector count (ivfpq); `dim` must be divisible by `m`.
+    #[arg(long, default_value_t = 16)]
+    m: usize,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
@@ -261,12 +279,18 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         Command::Bench(args) => {
             let metric = beam::collection::Metric::parse(&args.metric)
                 .ok_or_else(|| anyhow::anyhow!("unknown metric: {}", args.metric))?;
+            let index = beam::bench::IndexKind::parse(&args.index)
+                .ok_or_else(|| anyhow::anyhow!("unknown index: {}", args.index))?;
             beam::bench::run(&beam::bench::BenchConfig {
                 n: args.n,
                 dim: args.dim,
                 k: args.k,
                 queries: args.queries,
                 metric,
+                index,
+                nlist: args.nlist,
+                nprobe: args.nprobe,
+                m: args.m,
             })
         }
         // Placeholder service verbs — a consistent, tracked "not built yet" exit.

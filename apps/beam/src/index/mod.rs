@@ -26,6 +26,7 @@ use std::cmp::Ordering;
 use crate::collection::Metric;
 
 pub mod cpu_flat;
+pub mod ivf_pq;
 
 /// One search result: the stored row index, its external id, and its raw score
 /// under the collection's metric (squared-L2 distance, or dot product).

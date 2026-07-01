@@ -23,6 +23,8 @@ use wgpu::util::DeviceExt;
 use crate::collection::{l2_normalize, Collection, Metric};
 use crate::index::{topk, Neighbor, VectorIndex};
 
+pub mod ivfpq;
+
 /// Owns the wgpu handles for one GPU (adapter). Cheap to clone the `Device` /
 /// `Queue` out of (both are Arc-backed handles).
 pub struct GpuContext {

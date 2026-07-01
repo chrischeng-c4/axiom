@@ -15,10 +15,13 @@
 //! The first real vector-search engine lives here:
 //!
 //! - [`collection`] — the in-memory row-major vector store + [`collection::Metric`].
-//! - [`index`] — the [`index::VectorIndex`] contract + shared top-k, and the
-//!   [`index::cpu_flat::CpuFlatIndex`] exact CPU oracle.
-//! - [`gpu`] — [`gpu::GpuContext`] (wgpu / Metal) and the
-//!   [`gpu::GpuFlatIndex`] GPU brute-force index whose results match the oracle.
+//! - [`index`] — the [`index::VectorIndex`] contract + shared top-k, the
+//!   [`index::cpu_flat::CpuFlatIndex`] exact CPU oracle, and the
+//!   [`index::ivf_pq::IvfPqIndex`] IVF-PQ (IVFADC) approximate index.
+//! - [`gpu`] — [`gpu::GpuContext`] (wgpu / Metal), the
+//!   [`gpu::GpuFlatIndex`] GPU brute-force index, and the
+//!   [`gpu::ivfpq::GpuIvfScanner`] GPU IVF-PQ candidate scan — all matched to the
+//!   oracle.
 //! - [`dataset`] — deterministic (fixed-seed LCG) synthetic corpora + queries.
 //! - [`bench`] — the `beam bench` GPU-vs-CPU parity + timing demo.
 
