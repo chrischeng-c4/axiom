@@ -2106,6 +2106,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_traceback_note_propagation",
+            traceback_mod::mb_traceback_note_propagation as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
             "mb_singledispatch_register_annotation",
             functools_mod::mb_singledispatch_register_annotation
                 as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
