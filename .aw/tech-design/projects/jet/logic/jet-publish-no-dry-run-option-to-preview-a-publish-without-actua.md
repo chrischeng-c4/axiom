@@ -17,36 +17,35 @@ capability_refs:
 
 ```mermaid
 ---
-id: jet-publish-dry-run-flow
-entry: start
+id: jet-publish-dry-run-contract
+entry: cli
 nodes:
-  start: { kind: start, label: "jet publish --dry-run" }
-  read_pkg: { kind: process, label: "Read and transform package.json" }
-  prepare: { kind: process, label: "Run optional --build and metadata validation" }
-  registry: { kind: process, label: "Resolve registry, tag, access, and local auth token" }
-  pack_memory: { kind: process, label: "Create tarball bytes in memory" }
-  summarize: { kind: process, label: "Summarize transformed manifest and tarball entries" }
-  upload: { kind: decision, label: "dry-run?" }
-  done: { kind: terminal, label: "Print preview without PUT upload" }
+  cli: { kind: start, label: "CLI parses publish --dry-run" }
+  common_prep: { kind: process, label: "Run common publish preparation" }
+  auth_check: { kind: process, label: "Resolve registry and require local auth token" }
+  tarball: { kind: process, label: "Create tarball bytes without writing or uploading" }
+  preview: { kind: process, label: "Build preview report from manifest, registry, tag, access, files" }
+  put_gate: { kind: decision, label: "dry-run flag set?" }
+  print: { kind: terminal, label: "Print preview and return success" }
+  put: { kind: process, label: "Real publish PUT path remains unchanged" }
 edges:
-  - { from: start, to: read_pkg }
-  - { from: read_pkg, to: prepare }
-  - { from: prepare, to: registry }
-  - { from: registry, to: pack_memory }
-  - { from: pack_memory, to: summarize }
-  - { from: summarize, to: upload }
-  - { from: upload, to: done, label: "yes" }
+  - { from: cli, to: common_prep }
+  - { from: common_prep, to: auth_check }
+  - { from: auth_check, to: tarball }
+  - { from: tarball, to: preview }
+  - { from: preview, to: put_gate }
+  - { from: put_gate, to: print, label: "yes" }
+  - { from: put_gate, to: put, label: "no" }
 ---
 flowchart TD
-    start([jet publish --dry-run]) --> read_pkg[Read and transform package.json]
-    read_pkg --> prepare[Optional --build plus metadata validation]
-    prepare --> registry[Resolve registry, tag, access, and auth token]
-    registry --> pack_memory[Create tarball bytes in memory]
-    pack_memory --> summarize[Summarize manifest and tarball entries]
-    summarize --> upload{dry-run?}
-    upload -->|yes| done([Print preview; no registry PUT])
+    cli([publish --dry-run parsed]) --> common_prep[Common publish prep: transform, optional build, metadata validation]
+    common_prep --> auth_check[Resolve registry and require local auth token]
+    auth_check --> tarball[Create tarball bytes in memory]
+    tarball --> preview[Build preview report]
+    preview --> put_gate{dry-run?}
+    put_gate -->|yes| print([Print preview; no PUT])
+    put_gate -->|no| put[Existing registry PUT publish]
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
