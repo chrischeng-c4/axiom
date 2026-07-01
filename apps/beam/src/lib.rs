@@ -15,6 +15,9 @@
 //! The first real vector-search engine lives here:
 //!
 //! - [`collection`] — the in-memory row-major vector store + [`collection::Metric`].
+//! - [`payload`] — row attribute payloads ([`payload::Payload`]) and the
+//!   composable [`payload::Filter`] for filtered k-NN (metadata + filtered
+//!   search, the vector-DB table stakes).
 //! - [`index`] — the [`index::VectorIndex`] contract + shared top-k, the
 //!   [`index::cpu_flat::CpuFlatIndex`] exact CPU oracle, and the
 //!   [`index::ivf_pq::IvfPqIndex`] IVF-PQ (IVFADC) approximate index.
@@ -30,6 +33,7 @@ pub mod collection;
 pub mod dataset;
 pub mod gpu;
 pub mod index;
+pub mod payload;
 
 /// One-line statement of the Beam/Lumen boundary, surfaced in `beam llm`.
 pub const LUMEN_BOUNDARY: &str =

@@ -50,3 +50,60 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     out_dist[row] = acc;
 }
+
+// ---- Filtered flat scan (entry point `main_filtered`) ----------------------
+//
+// Identical to `main`, but each row also carries a host-built `keep` bit
+// (`fmask[row]`: 1 = the row's payload matches the filter, 0 = drop). A dropped
+// row is assigned the metric's WORST score (a large sentinel) so it can never
+// enter top-k; a kept row gets the exact same distance `main` would compute, so
+// filtered GPU top-k equals the filtered CPU oracle for the surviving rows.
+// Bindings are disjoint from `main` (this module holds two entry points and
+// each pipeline supplies a layout for only its own bindings).
+//
+//   metric == 0 (L2)          -> dropped rows get +SENTINEL (smaller is better)
+//   metric != 0 (Dot/Cosine)  -> dropped rows get -SENTINEL (larger is better)
+//
+// SENTINEL is a large finite value (near f32::MAX) rather than a true infinity
+// so the readback stays a plain finite f32; the host caps top-k at the match
+// count regardless, so a dropped row's sentinel is never actually selected.
+
+const SENTINEL: f32 = 3.0e38;
+
+@group(0) @binding(4) var<storage, read> db_f: array<f32>;
+@group(0) @binding(5) var<storage, read> query_f: array<f32>;
+@group(0) @binding(6) var<uniform> params_f: Params;
+@group(0) @binding(7) var<storage, read_write> out_dist_f: array<f32>;
+@group(0) @binding(8) var<storage, read> fmask: array<u32>;
+
+@compute @workgroup_size(64)
+fn main_filtered(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let row: u32 = gid.x;
+    if (row >= params_f.n) {
+        return;
+    }
+    if (fmask[row] == 0u) {
+        // Non-matching row: worst-possible score for the metric.
+        if (params_f.metric == 0u) {
+            out_dist_f[row] = SENTINEL;
+        } else {
+            out_dist_f[row] = -SENTINEL;
+        }
+        return;
+    }
+    let dim: u32 = params_f.dim;
+    let base: u32 = row * dim;
+
+    var acc: f32 = 0.0;
+    if (params_f.metric == 0u) {
+        for (var j: u32 = 0u; j < dim; j = j + 1u) {
+            let d: f32 = db_f[base + j] - query_f[j];
+            acc = acc + d * d;
+        }
+    } else {
+        for (var j: u32 = 0u; j < dim; j = j + 1u) {
+            acc = acc + db_f[base + j] * query_f[j];
+        }
+    }
+    out_dist_f[row] = acc;
+}

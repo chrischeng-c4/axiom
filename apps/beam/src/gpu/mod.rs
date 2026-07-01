@@ -22,6 +22,7 @@ use wgpu::util::DeviceExt;
 
 use crate::collection::{l2_normalize, Collection, Metric};
 use crate::index::{topk, Neighbor, VectorIndex};
+use crate::payload::{Filter, Payload};
 
 pub mod ivfpq;
 
@@ -105,10 +106,17 @@ pub struct GpuFlatIndex {
     n: usize,
     metric: Metric,
     external_ids: Vec<String>,
+    /// Row-aligned attribute payloads (snapshot of the collection), read on the
+    /// host to build the GPU filter bitmask.
+    payloads: Vec<Payload>,
     /// The whole corpus (`n * dim` f32) uploaded once as a read-only storage buffer.
     db_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
+    /// Bind-group layout + pipeline for the `main_filtered` kernel (adds the
+    /// per-row keep bitmask at binding 8; distances otherwise identical).
+    filtered_bind_group_layout: wgpu::BindGroupLayout,
+    filtered_pipeline: wgpu::ComputePipeline,
 }
 
 impl GpuFlatIndex {
@@ -173,6 +181,44 @@ impl GpuFlatIndex {
             cache: None,
         });
 
+        // Filtered kernel: same db/query/params/out (at disjoint bindings 4..8)
+        // plus the per-row keep bitmask at binding 8.
+        let filtered_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("beam_flat_filtered_bgl"),
+                entries: &[
+                    storage_entry(4, true), // db vectors
+                    storage_entry(5, true), // query vector
+                    // params (uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    storage_entry(7, false), // out distances (read_write)
+                    storage_entry(8, true),  // keep bitmask (read-only)
+                ],
+            });
+        let filtered_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("beam_flat_filtered_pipeline_layout"),
+                bind_group_layouts: &[&filtered_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let filtered_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("beam_flat_filtered_pipeline"),
+            layout: Some(&filtered_pipeline_layout),
+            module: &shader,
+            entry_point: Some("main_filtered"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
         Self {
             device,
             queue,
@@ -180,9 +226,12 @@ impl GpuFlatIndex {
             n,
             metric,
             external_ids: collection.external_ids().to_vec(),
+            payloads: collection.payloads().to_vec(),
             db_buffer,
             bind_group_layout,
             pipeline,
+            filtered_bind_group_layout,
+            filtered_pipeline,
         }
     }
 
@@ -301,6 +350,122 @@ impl GpuFlatIndex {
         readback.unmap();
         scores
     }
+
+    /// Run the filtered kernel: upload the query + the host-built per-row `keep`
+    /// bitmask, dispatch `main_filtered` (which writes the metric's worst-case
+    /// sentinel for dropped rows and the exact distance for kept rows), and read
+    /// back the `n` per-row scores. Only kept rows carry a real score; the host
+    /// top-k caps at the match count so sentinels are never selected.
+    fn compute_distances_filtered(&self, query: &[f32], mask: &[u32]) -> Vec<f32> {
+        let q = match self.metric {
+            Metric::Cosine => l2_normalize(query),
+            _ => query.to_vec(),
+        };
+
+        let query_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_query_filtered"),
+                contents: bytemuck::cast_slice(&q),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let mask_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("beam_keep_mask"),
+                contents: bytemuck::cast_slice(mask),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
+        let params = Params {
+            n: self.n as u32,
+            dim: self.dim as u32,
+            metric: self.metric.code(),
+            _pad: 0,
+        };
+        let params_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("beam_params_filtered"),
+                    contents: bytemuck::bytes_of(&params),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+        let out_bytes = (self.n * std::mem::size_of::<f32>()) as wgpu::BufferAddress;
+        let out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_out_dist_filtered"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("beam_readback_filtered"),
+            size: out_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("beam_flat_filtered_bind_group"),
+            layout: &self.filtered_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.db_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: query_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: out_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: mask_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("beam_flat_filtered_encoder"),
+            });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("beam_flat_filtered_pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.filtered_pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            let workgroups = (self.n as u32).div_ceil(64).max(1);
+            cpass.dispatch_workgroups(workgroups, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out_buffer, 0, &readback, 0, out_bytes);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .expect("map_async callback dropped")
+            .expect("gpu buffer map failed");
+
+        let data = slice.get_mapped_range();
+        let scores: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        readback.unmap();
+        scores
+    }
 }
 
 /// A `COMPUTE`-visible storage-buffer bind-group-layout entry (`read_only`
@@ -325,5 +490,44 @@ impl VectorIndex for GpuFlatIndex {
         }
         let scores = self.compute_distances(query);
         topk(&scores, self.metric, k, &self.external_ids)
+    }
+
+    fn num_vectors(&self) -> usize {
+        self.n
+    }
+
+    fn row_payload(&self, row: u32) -> &Payload {
+        &self.payloads[row as usize]
+    }
+
+    /// Efficient GPU-side filtered scan: build the per-row keep bitmask on the
+    /// host, hand it to the `main_filtered` kernel (which sentinels the dropped
+    /// rows on the GPU), then take the top `min(k, #matching)` — capping at the
+    /// match count so only matching rows are returned. This computes the exact
+    /// same distances the CPU oracle does for the surviving rows, so filtered
+    /// GPU top-k equals the filtered CPU oracle.
+    fn search_knn_filtered(&self, query: &[f32], k: usize, filter: &Filter) -> Vec<Neighbor> {
+        if query.len() != self.dim || self.n == 0 || k == 0 {
+            return Vec::new();
+        }
+        // Host-built keep bitmask (1 = payload matches filter) + match count.
+        let mut nmatch = 0usize;
+        let mask: Vec<u32> = self
+            .payloads
+            .iter()
+            .map(|p| {
+                if filter.matches(p) {
+                    nmatch += 1;
+                    1
+                } else {
+                    0
+                }
+            })
+            .collect();
+        if nmatch == 0 {
+            return Vec::new();
+        }
+        let scores = self.compute_distances_filtered(query, &mask);
+        topk(&scores, self.metric, k.min(nmatch), &self.external_ids)
     }
 }

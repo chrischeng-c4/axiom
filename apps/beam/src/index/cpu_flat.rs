@@ -7,6 +7,7 @@
 
 use crate::collection::{l2_normalize, Collection, Metric};
 use crate::index::{topk, Neighbor, VectorIndex};
+use crate::payload::{Filter, Payload};
 
 /// Exact brute-force nearest-neighbor index over a borrowed [`Collection`].
 pub struct CpuFlatIndex<'a> {
@@ -56,6 +57,46 @@ impl VectorIndex for CpuFlatIndex<'_> {
             .map(|i| score(metric, &q, self.collection.row(i)))
             .collect();
         topk(&scores, metric, k, self.collection.external_ids())
+    }
+
+    fn num_vectors(&self) -> usize {
+        self.collection.len()
+    }
+
+    fn row_payload(&self, row: u32) -> &Payload {
+        self.collection.payload(row as usize)
+    }
+
+    /// Exact filtered oracle: score every row, then assign the metric's
+    /// worst-case sentinel to rows whose payload fails `filter` and take the
+    /// top `min(k, #matching)` — so only matching rows can be returned and the
+    /// result length is exactly the number of matches when fewer than `k` match.
+    fn search_knn_filtered(&self, query: &[f32], k: usize, filter: &Filter) -> Vec<Neighbor> {
+        let dim = self.collection.dim();
+        let n = self.collection.len();
+        let metric = self.collection.metric();
+        if query.len() != dim || n == 0 || k == 0 {
+            return Vec::new();
+        }
+        let q = match metric {
+            Metric::Cosine => l2_normalize(query),
+            _ => query.to_vec(),
+        };
+        let sentinel = metric.worst_score();
+        let mut nmatch = 0usize;
+        let scores: Vec<f32> = (0..n)
+            .map(|i| {
+                if filter.matches(self.collection.payload(i)) {
+                    nmatch += 1;
+                    score(metric, &q, self.collection.row(i))
+                } else {
+                    sentinel
+                }
+            })
+            .collect();
+        // Cap the result to the number of matching rows: sentinels sort last, so
+        // the top `min(k, nmatch)` are exactly the best matching rows.
+        topk(&scores, metric, k.min(nmatch), self.collection.external_ids())
     }
 }
 

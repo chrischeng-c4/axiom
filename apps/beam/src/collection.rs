@@ -10,6 +10,17 @@
 //! the inserted vector is L2-normalized on `add`, so cosine similarity reduces
 //! to a plain dot product at search time (the query is normalized by the index).
 //! L2 and Dot store the raw vector unchanged.
+//!
+//! Alongside the vectors, each row carries an optional [`Payload`] of scalar
+//! attributes, stored row-aligned in a parallel `Vec<Payload>`. Plain [`add`]
+//! attaches the empty payload (so existing callers are unchanged);
+//! [`add_with_payload`] attaches attributes. This is the metadata store that
+//! filtered k-NN reads (see [`crate::payload`]).
+//!
+//! [`add`]: Collection::add
+//! [`add_with_payload`]: Collection::add_with_payload
+
+use crate::payload::Payload;
 
 /// Distance / similarity metric a collection is scored under.
 ///
@@ -53,6 +64,17 @@ impl Metric {
     pub fn larger_is_better(self) -> bool {
         !matches!(self, Metric::L2)
     }
+
+    /// The "worst possible" score under this metric — the filter sentinel a
+    /// non-matching row is assigned so it can never enter top-k: `+∞` for L2
+    /// (smaller is better) and `-∞` for Dot/Cosine (larger is better).
+    pub fn worst_score(self) -> f32 {
+        if self.larger_is_better() {
+            f32::NEG_INFINITY
+        } else {
+            f32::INFINITY
+        }
+    }
 }
 
 /// L2-normalize `v` to unit length. A zero vector is returned unchanged (its
@@ -78,6 +100,9 @@ pub struct Collection {
     data: Vec<f32>,
     /// External id per row, `external_ids[i]` pairs with row `i`.
     external_ids: Vec<String>,
+    /// Attribute payload per row, `payloads[i]` pairs with row `i` (empty for
+    /// rows added without one). The row-aligned metadata filtered search reads.
+    payloads: Vec<Payload>,
 }
 
 impl Collection {
@@ -89,13 +114,27 @@ impl Collection {
             metric,
             data: Vec::new(),
             external_ids: Vec::new(),
+            payloads: Vec::new(),
         }
     }
 
-    /// Append a vector under `external_id`. The vector length must equal
-    /// [`Collection::dim`]. For [`Metric::Cosine`] the vector is L2-normalized
-    /// before storage so search can use a plain dot product.
+    /// Append a vector under `external_id` with an **empty** payload. The vector
+    /// length must equal [`Collection::dim`]. For [`Metric::Cosine`] the vector
+    /// is L2-normalized before storage so search can use a plain dot product.
+    /// Use [`Collection::add_with_payload`] to attach attributes.
     pub fn add(&mut self, external_id: impl Into<String>, vector: &[f32]) -> anyhow::Result<()> {
+        self.add_with_payload(external_id, vector, Payload::new())
+    }
+
+    /// Append a vector under `external_id` carrying `payload`. Same storage
+    /// rules as [`Collection::add`]; the payload is stored row-aligned and read
+    /// by filtered k-NN.
+    pub fn add_with_payload(
+        &mut self,
+        external_id: impl Into<String>,
+        vector: &[f32],
+        payload: Payload,
+    ) -> anyhow::Result<()> {
         if vector.len() != self.dim {
             anyhow::bail!(
                 "vector dim mismatch: collection dim is {}, got {}",
@@ -108,7 +147,15 @@ impl Collection {
             _ => self.data.extend_from_slice(vector),
         }
         self.external_ids.push(external_id.into());
+        self.payloads.push(payload);
         Ok(())
+    }
+
+    /// Replace the payload of an existing row (used to assign deterministic
+    /// attributes to a pre-built corpus in tests and the bench). Panics if `i`
+    /// is out of range.
+    pub fn set_payload(&mut self, i: usize, payload: Payload) {
+        self.payloads[i] = payload;
     }
 
     /// Number of stored vectors (`n`).
@@ -140,6 +187,16 @@ impl Collection {
     /// The external ids, indexed by row.
     pub fn external_ids(&self) -> &[String] {
         &self.external_ids
+    }
+
+    /// The attribute payloads, indexed by row (row-aligned with the vectors).
+    pub fn payloads(&self) -> &[Payload] {
+        &self.payloads
+    }
+
+    /// Row `i`'s attribute payload.
+    pub fn payload(&self, i: usize) -> &Payload {
+        &self.payloads[i]
     }
 
     /// Row `i`'s `dim`-long vector slice (as stored — already normalized for

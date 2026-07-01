@@ -35,6 +35,7 @@
 
 use crate::collection::{Collection, Metric};
 use crate::index::{Neighbor, VectorIndex};
+use crate::payload::{Filter, Payload};
 
 /// Number of PQ centroids per subspace. `nbits = 8` is the only supported width,
 /// giving `2^8 = 256` codebook entries and one `u8` code byte per subspace.
@@ -114,6 +115,9 @@ pub struct IvfPqIndex {
     /// Residual vectors per cell, flattened `count * dim` (Flat only).
     list_resid: Vec<Vec<f32>>,
     external_ids: Vec<String>,
+    /// Row-aligned attribute payloads (snapshot of the collection), read to
+    /// filter candidates in filtered search.
+    payloads: Vec<Payload>,
     n: usize,
 }
 
@@ -345,6 +349,7 @@ impl IvfPqIndex {
             list_codes,
             list_resid,
             external_ids: collection.external_ids().to_vec(),
+            payloads: collection.payloads().to_vec(),
             n,
         })
     }
@@ -530,6 +535,30 @@ impl IvfPqIndex {
         self.topk_candidates(&plan.rows, &dist, k)
     }
 
+    /// The attribute payload of stored row `row`.
+    pub fn payload(&self, row: u32) -> &Payload {
+        &self.payloads[row as usize]
+    }
+
+    /// CPU reference **filtered** `k`-NN: scan the probed cells, then keep only
+    /// candidates whose payload matches `filter` and return the top
+    /// `min(k, #matching-candidates)`. With `Refine::Flat` + `nprobe == nlist`
+    /// this scans every cell exactly, so it reproduces the filtered flat oracle.
+    pub fn search_cpu_filtered(
+        &self,
+        query: &[f32],
+        k: usize,
+        nprobe: usize,
+        filter: &Filter,
+    ) -> Vec<Neighbor> {
+        if query.len() != self.dim || self.n == 0 || k == 0 {
+            return Vec::new();
+        }
+        let plan = self.plan(query, nprobe);
+        let dist = plan.cpu_scan();
+        self.topk_candidates_filtered(&plan.rows, &dist, k, filter)
+    }
+
     /// Assemble best-first [`Neighbor`]s from candidate `rows` + their `dist`
     /// (smaller = better, L2). Shared by the CPU and GPU search paths.
     pub fn topk_candidates(&self, rows: &[u32], dist: &[f32], k: usize) -> Vec<Neighbor> {
@@ -560,6 +589,35 @@ impl IvfPqIndex {
             })
             .collect()
     }
+
+    /// Filtered variant of [`Self::topk_candidates`]: assign the L2 sentinel
+    /// (`+∞`) to candidates whose payload fails `filter`, then take the top
+    /// `min(k, #matching)` — so only matching candidates from the probed cells
+    /// survive, and the result length is the match count when fewer than `k`
+    /// match. Shared by the CPU reference and the GPU filtered search.
+    pub fn topk_candidates_filtered(
+        &self,
+        rows: &[u32],
+        dist: &[f32],
+        k: usize,
+        filter: &Filter,
+    ) -> Vec<Neighbor> {
+        // IVF-PQ is L2-only, so smaller is better and `+∞` sinks a candidate.
+        let mut nmatch = 0usize;
+        let fdist: Vec<f32> = rows
+            .iter()
+            .zip(dist)
+            .map(|(&row, &d)| {
+                if filter.matches(&self.payloads[row as usize]) {
+                    nmatch += 1;
+                    d
+                } else {
+                    f32::INFINITY
+                }
+            })
+            .collect();
+        self.topk_candidates(rows, &fdist, k.min(nmatch))
+    }
 }
 
 /// The [`VectorIndex`] contract uses a default `nprobe = nlist` (probe every
@@ -569,6 +627,18 @@ impl IvfPqIndex {
 impl VectorIndex for IvfPqIndex {
     fn search_knn(&self, query: &[f32], k: usize) -> Vec<Neighbor> {
         self.search_cpu(query, k, self.nlist)
+    }
+
+    fn num_vectors(&self) -> usize {
+        self.n
+    }
+
+    fn row_payload(&self, row: u32) -> &Payload {
+        &self.payloads[row as usize]
+    }
+
+    fn search_knn_filtered(&self, query: &[f32], k: usize, filter: &Filter) -> Vec<Neighbor> {
+        self.search_cpu_filtered(query, k, self.nlist, filter)
     }
 }
 

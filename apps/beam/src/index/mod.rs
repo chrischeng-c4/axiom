@@ -24,6 +24,7 @@
 use std::cmp::Ordering;
 
 use crate::collection::Metric;
+use crate::payload::{Filter, Payload};
 
 pub mod cpu_flat;
 pub mod ivf_pq;
@@ -41,11 +42,62 @@ pub struct Neighbor {
 }
 
 /// The nearest-neighbor query contract shared by every backend.
+///
+/// Beyond the plain `search_knn`, every index also exposes its row payloads
+/// ([`Self::row_payload`]) and a filtered query ([`Self::search_knn_filtered`])
+/// that returns the top-k among ONLY the rows whose payload matches a
+/// [`Filter`]. The trait ships a correct default `search_knn_filtered` (over-
+/// fetch `search_knn`, then post-filter) so a new backend gets filtered search
+/// for free; the flat and IVF backends override it with an efficient path (a
+/// GPU bitmask/sentinel scan and probed-cell candidate filtering respectively).
 pub trait VectorIndex {
     /// Return the `k` nearest neighbors to `query`, best-first (see the module
     /// ordering contract). The result length is `min(k, n)`; an empty result is
     /// returned for `k == 0`, an empty collection, or a dimension mismatch.
     fn search_knn(&self, query: &[f32], k: usize) -> Vec<Neighbor>;
+
+    /// Number of stored vectors — the ceiling for over-fetching in the default
+    /// [`Self::search_knn_filtered`].
+    fn num_vectors(&self) -> usize;
+
+    /// The attribute payload of stored row `row` (`0..num_vectors`), read by
+    /// filtered search to decide whether the row survives a [`Filter`].
+    fn row_payload(&self, row: u32) -> &Payload;
+
+    /// Return the `k` nearest neighbors to `query` among ONLY the rows whose
+    /// payload satisfies `filter`, best-first. The result length is
+    /// `min(k, #matching)`, so a filter matching fewer than `k` rows returns
+    /// exactly the matching rows and a filter matching none returns empty.
+    ///
+    /// The default implementation over-fetches an unfiltered `search_knn` and
+    /// post-filters, doubling the fetch until `k` matches survive or the whole
+    /// corpus has been scanned — correct for any backend, at the cost of extra
+    /// candidate scanning under a selective filter. The flat/IVF backends
+    /// override this with a single-pass filtered scan.
+    fn search_knn_filtered(&self, query: &[f32], k: usize, filter: &Filter) -> Vec<Neighbor> {
+        if k == 0 {
+            return Vec::new();
+        }
+        let n = self.num_vectors();
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut fetch = k;
+        loop {
+            let capped = fetch.min(n);
+            let filtered: Vec<Neighbor> = self
+                .search_knn(query, capped)
+                .into_iter()
+                .filter(|nb| filter.matches(self.row_payload(nb.row)))
+                .take(k)
+                .collect();
+            // Enough survivors, or we already scanned the whole corpus.
+            if filtered.len() >= k || capped >= n {
+                return filtered;
+            }
+            fetch = fetch.saturating_mul(2);
+        }
+    }
 }
 
 /// Select the top-`k` rows from `scores` (one score per row) under `metric`,

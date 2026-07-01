@@ -26,6 +26,7 @@ use crate::gpu::{GpuContext, GpuFlatIndex};
 use crate::index::cpu_flat::CpuFlatIndex;
 use crate::index::ivf_pq::{IvfPqConfig, IvfPqIndex, Refine};
 use crate::index::VectorIndex;
+use crate::payload::Filter;
 
 /// Fixed seeds so the bench is fully reproducible run-to-run.
 const DATASET_SEED: u64 = 0xBEA3_0001;
@@ -82,7 +83,17 @@ pub struct BenchConfig {
     /// dim=128) draws embedding-like **low-rank** data where PQ recall is
     /// meaningful — the P1 realism knob.
     pub rank: usize,
+    /// Optional attribute filter for filtered k-NN. When `Some(cat)`, every row
+    /// `i` is tagged `category = i % FILTER_CATEGORIES` and the query keeps only
+    /// rows with `category == cat` (~1/8 selectivity), reporting filtered recall
+    /// vs the filtered CPU oracle + timing. `None` (default) is the original
+    /// unfiltered bench.
+    pub filter_category: Option<i64>,
 }
+
+/// Number of distinct `category` buckets the `--filter` bench assigns
+/// (`category = i % FILTER_CATEGORIES`), so a single category is ~1/8 of rows.
+pub const FILTER_CATEGORIES: i64 = 8;
 
 impl Default for BenchConfig {
     fn default() -> Self {
@@ -97,7 +108,18 @@ impl Default for BenchConfig {
             nprobe: 16,
             m: 8,
             rank: 0,
+            filter_category: None,
         }
+    }
+}
+
+/// Tag every row `i` with `category = i % FILTER_CATEGORIES` (see
+/// [`FILTER_CATEGORIES`]), the deterministic attribute the `--filter` bench
+/// filters on.
+fn assign_category_payloads(collection: &mut crate::collection::Collection) {
+    use crate::payload::Payload;
+    for i in 0..collection.len() {
+        collection.set_payload(i, Payload::new().with("category", i as i64 % FILTER_CATEGORIES));
     }
 }
 
@@ -118,21 +140,41 @@ pub fn run(cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     }
 }
 
-/// Original exact GPU flat scan vs the CPU oracle.
+/// Original exact GPU flat scan vs the CPU oracle. With `--filter <cat>` set,
+/// every row is tagged `category = i % 8` and the search keeps only
+/// `category == cat` rows, reporting filtered recall vs the filtered CPU oracle.
 fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     println!(
         "index=flat dataset: n={} dim={} metric={:?} k={} queries={} (uniform, deterministic seed)",
         cfg.n, cfg.dim, cfg.metric, cfg.k, cfg.queries
     );
 
-    let collection = dataset::random_collection("bench", cfg.n, cfg.dim, cfg.metric, DATASET_SEED);
+    let mut collection =
+        dataset::random_collection("bench", cfg.n, cfg.dim, cfg.metric, DATASET_SEED);
+    if cfg.filter_category.is_some() {
+        assign_category_payloads(&mut collection);
+    }
     let queries = dataset::random_queries(cfg.queries, cfg.dim, QUERY_SEED);
 
     let cpu = CpuFlatIndex::new(&collection);
     let gpu_index = GpuFlatIndex::new(gpu, &collection);
 
+    // The optional attribute filter (keep only `category == cat`).
+    let filter = cfg
+        .filter_category
+        .map(|cat| Filter::new().eq("category", cat));
+    if let Some(cat) = cfg.filter_category {
+        println!(
+            "filter: category == {cat} (~1/{} selectivity, deterministic category = row % {})",
+            FILTER_CATEGORIES, FILTER_CATEGORIES
+        );
+    }
+
     if let Some(first) = queries.first() {
-        let _ = gpu_index.search_knn(first, cfg.k);
+        let _ = match &filter {
+            Some(f) => gpu_index.search_knn_filtered(first, cfg.k, f),
+            None => gpu_index.search_knn(first, cfg.k),
+        };
     }
 
     let mut matched = 0usize;
@@ -140,9 +182,18 @@ fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     let mut gpu_elapsed = std::time::Duration::ZERO;
 
     for q in &queries {
-        let cpu_rows: HashSet<u32> = cpu.search_knn(q, cfg.k).iter().map(|nb| nb.row).collect();
+        let cpu_rows: HashSet<u32> = match &filter {
+            Some(f) => cpu.search_knn_filtered(q, cfg.k, f),
+            None => cpu.search_knn(q, cfg.k),
+        }
+        .iter()
+        .map(|nb| nb.row)
+        .collect();
         let t0 = Instant::now();
-        let gpu_res = gpu_index.search_knn(q, cfg.k);
+        let gpu_res = match &filter {
+            Some(f) => gpu_index.search_knn_filtered(q, cfg.k, f),
+            None => gpu_index.search_knn(q, cfg.k),
+        };
         gpu_elapsed += t0.elapsed();
         matched += gpu_res.iter().filter(|nb| cpu_rows.contains(&nb.row)).count();
         total += gpu_res.len();
@@ -150,7 +201,12 @@ fn run_flat(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
 
     let recall = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
     let avg_ms = gpu_elapsed.as_secs_f64() * 1000.0 / cfg.queries.max(1) as f64;
-    println!("recall vs CPU oracle: {recall:.3} (exact flat)");
+    let label = if filter.is_some() {
+        "filtered CPU oracle"
+    } else {
+        "CPU oracle"
+    };
+    println!("recall vs {label}: {recall:.3} (exact flat)");
     println!("candidates scanned / n: 1.000 (brute force)");
     println!("GPU query timing: avg {avg_ms:.3} ms/query over {} queries", cfg.queries);
     Ok(ExitCode::SUCCESS)
@@ -204,7 +260,7 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     // high. Same clustering/pruning either way, so the recall delta isolates the
     // effect of intrinsic dimension on PQ.
     let num_clusters = cfg.nlist.clamp(1, cfg.n.max(1));
-    let (collection, queries, data_desc) = if cfg.rank > 0 {
+    let (mut collection, queries, data_desc) = if cfg.rank > 0 {
         let c = dataset::low_rank_collection(
             "bench",
             cfg.n,
@@ -244,6 +300,15 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
         (c, q, "isotropic clustered".to_string())
     };
 
+    // Deterministic per-row attribute for filtered search (must be assigned
+    // before training, which snapshots the payloads into the index).
+    if cfg.filter_category.is_some() {
+        assign_category_payloads(&mut collection);
+    }
+    let filter = cfg
+        .filter_category
+        .map(|cat| Filter::new().eq("category", cat));
+
     let refine = match cfg.index {
         IndexKind::IvfFlat => Refine::Flat,
         IndexKind::IvfPq => Refine::Pq { m: cfg.m },
@@ -281,6 +346,12 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
         print!(" m={} (dsub={})", cfg.m, cfg.dim / cfg.m);
     }
     println!(" ({data_desc}, deterministic seed)");
+    if let Some(cat) = cfg.filter_category {
+        println!(
+            "filter: category == {cat} (~1/{} selectivity, deterministic category = row % {}); candidates filtered within probed cells",
+            FILTER_CATEGORIES, FILTER_CATEGORIES
+        );
+    }
     if train_sample < cfg.n {
         println!(
             "training: coarse + PQ k-means fit on a {train_sample}-vector sample ({} iters); all {} vectors assigned + encoded",
@@ -312,14 +383,23 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     let mut topk_elapsed = std::time::Duration::ZERO;
 
     for q in &queries {
-        let truth: HashSet<u32> = oracle.search_knn(q, cfg.k).iter().map(|nb| nb.row).collect();
+        let truth: HashSet<u32> = match &filter {
+            Some(f) => oracle.search_knn_filtered(q, cfg.k, f),
+            None => oracle.search_knn(q, cfg.k),
+        }
+        .iter()
+        .map(|nb| nb.row)
+        .collect();
 
         let t0 = Instant::now();
         let plan = index.plan(q, cfg.nprobe);
         let t1 = Instant::now();
         let dist = scanner.scan(&plan);
         let t2 = Instant::now();
-        let res = index.topk_candidates(&plan.rows, &dist, cfg.k);
+        let res = match &filter {
+            Some(f) => index.topk_candidates_filtered(&plan.rows, &dist, cfg.k, f),
+            None => index.topk_candidates(&plan.rows, &dist, cfg.k),
+        };
         let t3 = Instant::now();
         total_elapsed += t3 - t0;
         plan_elapsed += t1 - t0;
@@ -335,7 +415,12 @@ fn run_ivf(gpu: &GpuContext, cfg: &BenchConfig) -> anyhow::Result<ExitCode> {
     let cand_ratio = cand_sum as f64 / (cfg.queries.max(1) as f64 * cfg.n.max(1) as f64);
     let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / cfg.queries.max(1) as f64;
 
-    println!("recall@{} vs flat oracle: {recall:.3}", cfg.k);
+    let oracle_label = if filter.is_some() {
+        "filtered flat oracle"
+    } else {
+        "flat oracle"
+    };
+    println!("recall@{} vs {oracle_label}: {recall:.3}", cfg.k);
     println!(
         "candidates scanned / n: {cand_ratio:.4} (avg {} of {} vectors per query)",
         cand_sum / cfg.queries.max(1),

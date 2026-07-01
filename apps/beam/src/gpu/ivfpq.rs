@@ -18,6 +18,7 @@ use wgpu::util::DeviceExt;
 use crate::gpu::GpuContext;
 use crate::index::ivf_pq::{IvfPqIndex, QueryPlan, ScanData};
 use crate::index::Neighbor;
+use crate::payload::Filter;
 
 /// 16-byte scan uniform: `(num_cand, secondary)` where `secondary` is `m` for
 /// the ADC kernel or `dim` for the flat kernel. Padded to uniform alignment.
@@ -223,6 +224,29 @@ impl GpuIvfScanner {
         let plan = index.plan(query, nprobe);
         let dist = self.scan(&plan);
         index.topk_candidates(&plan.rows, &dist, k)
+    }
+
+    /// Full GPU **filtered** `k`-NN: plan + GPU candidate scan as [`Self::search`],
+    /// but keep only candidates from the probed cells whose payload matches
+    /// `filter` (applied during the host top-k, where the candidate set is
+    /// already pruned and small). Returns the top `min(k, #matching-candidates)`.
+    /// Equal to [`IvfPqIndex::search_cpu_filtered`] (their candidate distances
+    /// match; ties aside), so with `Refine::Flat` + `nprobe == nlist` it
+    /// reproduces the filtered flat oracle.
+    pub fn search_filtered(
+        &self,
+        index: &IvfPqIndex,
+        query: &[f32],
+        k: usize,
+        nprobe: usize,
+        filter: &Filter,
+    ) -> Vec<Neighbor> {
+        if query.len() != index.dim() || index.is_empty() || k == 0 {
+            return Vec::new();
+        }
+        let plan = index.plan(query, nprobe);
+        let dist = self.scan(&plan);
+        index.topk_candidates_filtered(&plan.rows, &dist, k, filter)
     }
 
     /// One dispatch: upload the three inputs + params, run `pipeline` over

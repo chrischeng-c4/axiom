@@ -182,6 +182,11 @@ struct BenchArgs {
     /// where IVF-PQ recall is high. Only affects the ivfflat / ivfpq backends.
     #[arg(long, default_value_t = 0)]
     rank: usize,
+    /// Filtered k-NN demo: tag every row `category = i % 8` and keep only rows
+    /// with `category == <this>` (~1/8 selectivity), reporting filtered recall
+    /// vs the filtered CPU oracle. Omit for the unfiltered bench.
+    #[arg(long = "filter")]
+    filter: Option<i64>,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
@@ -297,6 +302,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
                 nprobe: args.nprobe,
                 m: args.m,
                 rank: args.rank,
+                filter_category: args.filter,
             })
         }
         // Placeholder service verbs — a consistent, tracked "not built yet" exit.
