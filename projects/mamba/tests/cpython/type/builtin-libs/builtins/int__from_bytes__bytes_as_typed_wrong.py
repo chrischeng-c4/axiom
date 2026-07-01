@@ -9,7 +9,6 @@
 # case = "int__from_bytes__bytes_as_typed_wrong"
 # subject = "builtins.int.from_bytes(bytes: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

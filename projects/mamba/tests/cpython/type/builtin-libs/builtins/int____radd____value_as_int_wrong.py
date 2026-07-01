@@ -9,7 +9,6 @@
 # case = "int____radd____value_as_int_wrong"
 # subject = "builtins.int.__radd__(value: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

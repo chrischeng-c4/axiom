@@ -9,7 +9,6 @@
 # case = "memoryview____new____obj_as_ReadableBuffer_wrong"
 # subject = "builtins.memoryview.__new__(obj: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

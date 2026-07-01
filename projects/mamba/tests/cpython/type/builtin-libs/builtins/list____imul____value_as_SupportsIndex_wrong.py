@@ -9,7 +9,6 @@
 # case = "list____imul____value_as_SupportsIndex_wrong"
 # subject = "builtins.list.__imul__(value: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

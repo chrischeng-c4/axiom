@@ -9,7 +9,6 @@
 # case = "hasattr__name_as_str_wrong"
 # subject = "builtins.hasattr(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

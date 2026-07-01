@@ -9,12 +9,10 @@
 # case = "issubclass__cls_as_type_wrong"
 # subject = "builtins.issubclass(cls: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed cls
 # mamba-strict-type: TypeError
 """Type wall: builtins.issubclass(cls: type); call it with the wrong type.
 

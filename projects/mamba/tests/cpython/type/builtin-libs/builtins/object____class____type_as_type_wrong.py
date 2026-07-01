@@ -9,12 +9,10 @@
 # case = "object____class____type_as_type_wrong"
 # subject = "builtins.object.__class__(type: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed type
 # mamba-strict-type: TypeError
 """Type wall: builtins.object.__class__(type: type); call it with the wrong type.
 

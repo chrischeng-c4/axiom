@@ -9,7 +9,6 @@
 # case = "int____rxor____value_as_int_wrong"
 # subject = "builtins.int.__rxor__(value: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

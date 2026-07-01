@@ -9,7 +9,6 @@
 # case = "iter__object_as_SupportsIter_wrong"
 # subject = "builtins.iter(object: SupportsIter)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

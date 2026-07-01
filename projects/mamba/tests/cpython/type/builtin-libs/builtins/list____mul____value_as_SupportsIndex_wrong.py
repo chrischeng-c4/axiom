@@ -9,7 +9,6 @@
 # case = "list____mul____value_as_SupportsIndex_wrong"
 # subject = "builtins.list.__mul__(value: SupportsIndex)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
