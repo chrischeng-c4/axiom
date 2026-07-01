@@ -5245,7 +5245,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "",
         name: "getblock",
         kind: SigKind::ModuleFn,
-        params: &[p("lines", CoreTy::Typed)],
+        params: &[p("lines", CoreTy::List)],
         enforceable: true,
     },
     StdlibSig {
@@ -7041,7 +7041,7 @@ mod tests {
             ("inspect", "", "get_annotations", 0, "obj", CoreTy::Typed),
             ("inspect", "", "getasyncgenlocals", 0, "agen", CoreTy::Typed),
             ("inspect", "", "getasyncgenstate", 0, "agen", CoreTy::Typed),
-            ("inspect", "", "getblock", 0, "lines", CoreTy::Typed),
+            ("inspect", "", "getblock", 0, "lines", CoreTy::List),
             ("http.client", "", "parse_headers", 0, "fp", CoreTy::Typed),
             (
                 "http.client",
