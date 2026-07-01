@@ -9,7 +9,6 @@
 # case = "NormalDist__quantiles__n_as_int_wrong"
 # subject = "statistics.NormalDist.quantiles(n: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "NormalDist__from_samples__data_as_Iterable_wrong"
 # subject = "statistics.NormalDist.from_samples(data: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

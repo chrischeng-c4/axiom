@@ -9,7 +9,6 @@
 # case = "NormalDist____add____x2_as_typed_wrong"
 # subject = "statistics.NormalDist.__add__(x2: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

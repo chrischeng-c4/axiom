@@ -9,7 +9,6 @@
 # case = "NormalDist__overlap__other_as_NormalDist_wrong"
 # subject = "statistics.NormalDist.overlap(other: NormalDist)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"

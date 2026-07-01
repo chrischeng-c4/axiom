@@ -9,12 +9,10 @@
 # case = "linear_regression__regressor_as__SizedIterable_wrong"
 # subject = "statistics.linear_regression(regressor: _SizedIterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed regressor"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/statistics.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed regressor
 # mamba-strict-type: TypeError
 """Type wall: statistics.linear_regression(regressor: _SizedIterable); call it with the wrong type.
 
