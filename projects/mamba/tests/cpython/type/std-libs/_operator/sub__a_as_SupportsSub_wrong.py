@@ -9,7 +9,6 @@
 # case = "sub__a_as_SupportsSub_wrong"
 # subject = "_operator.sub(a: SupportsSub)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

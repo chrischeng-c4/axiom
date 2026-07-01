@@ -9,7 +9,6 @@
 # case = "HTMLCalendar__formatmonthpage__theyear_as_int_wrong"
 # subject = "calendar.HTMLCalendar.formatmonthpage(theyear: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

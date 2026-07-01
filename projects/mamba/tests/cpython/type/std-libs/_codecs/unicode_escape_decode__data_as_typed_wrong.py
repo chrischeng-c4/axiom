@@ -9,7 +9,6 @@
 # case = "unicode_escape_decode__data_as_typed_wrong"
 # subject = "_codecs.unicode_escape_decode(data: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

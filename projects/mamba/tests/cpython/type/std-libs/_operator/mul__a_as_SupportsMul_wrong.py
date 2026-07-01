@@ -9,7 +9,6 @@
 # case = "mul__a_as_SupportsMul_wrong"
 # subject = "_operator.mul(a: SupportsMul)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

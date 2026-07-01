@@ -9,7 +9,6 @@
 # case = "OrderedDict__popitem__last_as_bool_wrong"
 # subject = "collections.OrderedDict.popitem(last: bool)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

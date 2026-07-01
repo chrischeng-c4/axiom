@@ -9,7 +9,6 @@
 # case = "UserString__removesuffix__suffix_as_typed_wrong"
 # subject = "collections.UserString.removesuffix(suffix: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

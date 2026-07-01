@@ -9,7 +9,6 @@
 # case = "getencoder__encoding_as_str_wrong"
 # subject = "codecs.getencoder(encoding: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

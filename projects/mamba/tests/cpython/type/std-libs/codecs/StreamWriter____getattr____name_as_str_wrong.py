@@ -9,7 +9,6 @@
 # case = "StreamWriter____getattr____name_as_str_wrong"
 # subject = "codecs.StreamWriter.__getattr__(name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

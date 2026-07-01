@@ -9,7 +9,6 @@
 # case = "setfirstweekday__firstweekday_as_int_wrong"
 # subject = "calendar.setfirstweekday(firstweekday: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

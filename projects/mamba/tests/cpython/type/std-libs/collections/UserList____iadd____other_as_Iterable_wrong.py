@@ -9,7 +9,6 @@
 # case = "UserList____iadd____other_as_Iterable_wrong"
 # subject = "collections.UserList.__iadd__(other: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

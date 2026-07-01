@@ -9,7 +9,6 @@
 # case = "concat__a_as_Sequence_wrong"
 # subject = "_operator.concat(a: Sequence)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

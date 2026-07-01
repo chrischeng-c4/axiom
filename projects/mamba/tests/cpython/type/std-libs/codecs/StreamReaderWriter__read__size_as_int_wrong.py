@@ -9,7 +9,6 @@
 # case = "StreamReaderWriter__read__size_as_int_wrong"
 # subject = "codecs.StreamReaderWriter.read(size: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

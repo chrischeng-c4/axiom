@@ -9,7 +9,6 @@
 # case = "deque__appendleft__x_as__T_wrong"
 # subject = "collections.deque.appendleft(x: _T)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

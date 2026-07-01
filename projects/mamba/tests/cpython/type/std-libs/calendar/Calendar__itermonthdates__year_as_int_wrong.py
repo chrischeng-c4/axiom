@@ -9,7 +9,6 @@
 # case = "Calendar__itermonthdates__year_as_int_wrong"
 # subject = "calendar.Calendar.itermonthdates(year: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

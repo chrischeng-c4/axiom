@@ -9,7 +9,6 @@
 # case = "StreamRecoder__truncate__size_as_typed_wrong"
 # subject = "codecs.StreamRecoder.truncate(size: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

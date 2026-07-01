@@ -9,7 +9,6 @@
 # case = "Counter__most_common__n_as_typed_wrong"
 # subject = "collections.Counter.most_common(n: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

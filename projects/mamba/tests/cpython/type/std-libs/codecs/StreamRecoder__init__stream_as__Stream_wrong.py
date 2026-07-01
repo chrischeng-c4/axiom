@@ -9,7 +9,6 @@
 # case = "StreamRecoder__init__stream_as__Stream_wrong"
 # subject = "codecs.StreamRecoder.__init__(stream: _Stream)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

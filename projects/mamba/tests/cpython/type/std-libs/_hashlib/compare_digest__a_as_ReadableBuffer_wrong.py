@@ -9,7 +9,6 @@
 # case = "compare_digest__a_as_ReadableBuffer_wrong"
 # subject = "_hashlib.compare_digest(a: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

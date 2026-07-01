@@ -9,7 +9,6 @@
 # case = "ChainMap__setdefault__key_as__KT_wrong"
 # subject = "collections.ChainMap.setdefault(key: _KT)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

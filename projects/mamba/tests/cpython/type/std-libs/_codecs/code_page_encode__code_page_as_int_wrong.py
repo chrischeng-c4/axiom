@@ -9,7 +9,6 @@
 # case = "code_page_encode__code_page_as_int_wrong"
 # subject = "_codecs.code_page_encode(code_page: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

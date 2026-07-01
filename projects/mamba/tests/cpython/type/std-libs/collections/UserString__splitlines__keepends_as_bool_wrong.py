@@ -9,7 +9,6 @@
 # case = "UserString__splitlines__keepends_as_bool_wrong"
 # subject = "collections.UserString.splitlines(keepends: bool)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

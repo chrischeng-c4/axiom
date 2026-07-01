@@ -9,7 +9,6 @@
 # case = "openssl_shake_128__data_as_ReadableBuffer_wrong"
 # subject = "_hashlib.openssl_shake_128(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

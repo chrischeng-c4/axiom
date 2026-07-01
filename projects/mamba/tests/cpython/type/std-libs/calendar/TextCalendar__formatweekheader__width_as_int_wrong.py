@@ -9,7 +9,6 @@
 # case = "TextCalendar__formatweekheader__width_as_int_wrong"
 # subject = "calendar.TextCalendar.formatweekheader(width: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

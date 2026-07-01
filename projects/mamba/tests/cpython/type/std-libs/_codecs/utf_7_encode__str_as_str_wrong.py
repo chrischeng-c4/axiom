@@ -9,7 +9,6 @@
 # case = "utf_7_encode__str_as_str_wrong"
 # subject = "_codecs.utf_7_encode(str: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

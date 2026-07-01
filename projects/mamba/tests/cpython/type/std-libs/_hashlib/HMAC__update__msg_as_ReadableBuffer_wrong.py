@@ -9,7 +9,6 @@
 # case = "HMAC__update__msg_as_ReadableBuffer_wrong"
 # subject = "_hashlib.HMAC.update(msg: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

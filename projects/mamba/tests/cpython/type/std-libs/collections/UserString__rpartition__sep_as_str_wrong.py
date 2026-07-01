@@ -9,7 +9,6 @@
 # case = "UserString__rpartition__sep_as_str_wrong"
 # subject = "collections.UserString.rpartition(sep: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

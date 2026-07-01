@@ -9,7 +9,6 @@
 # case = "UserList____le____other_as_typed_wrong"
 # subject = "collections.UserList.__le__(other: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

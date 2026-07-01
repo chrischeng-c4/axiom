@@ -9,7 +9,6 @@
 # case = "StreamReader__init__stream_as__ReadableStream_wrong"
 # subject = "codecs.StreamReader.__init__(stream: _ReadableStream)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

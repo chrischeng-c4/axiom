@@ -9,7 +9,6 @@
 # case = "UserString__removeprefix__prefix_as_typed_wrong"
 # subject = "collections.UserString.removeprefix(prefix: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

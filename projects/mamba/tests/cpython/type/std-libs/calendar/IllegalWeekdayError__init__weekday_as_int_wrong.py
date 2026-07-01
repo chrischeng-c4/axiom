@@ -9,7 +9,6 @@
 # case = "IllegalWeekdayError__init__weekday_as_int_wrong"
 # subject = "calendar.IllegalWeekdayError.__init__(weekday: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

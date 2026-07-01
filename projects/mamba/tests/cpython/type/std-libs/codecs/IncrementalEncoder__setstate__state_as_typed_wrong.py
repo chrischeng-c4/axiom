@@ -9,7 +9,6 @@
 # case = "IncrementalEncoder__setstate__state_as_typed_wrong"
 # subject = "codecs.IncrementalEncoder.setstate(state: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

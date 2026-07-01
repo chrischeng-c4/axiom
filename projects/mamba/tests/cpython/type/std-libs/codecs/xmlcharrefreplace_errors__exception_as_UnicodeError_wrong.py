@@ -9,7 +9,6 @@
 # case = "xmlcharrefreplace_errors__exception_as_UnicodeError_wrong"
 # subject = "codecs.xmlcharrefreplace_errors(exception: UnicodeError)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"

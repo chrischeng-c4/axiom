@@ -9,7 +9,6 @@
 # case = "Counter____missing____key_as__T_wrong"
 # subject = "collections.Counter.__missing__(key: _T)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

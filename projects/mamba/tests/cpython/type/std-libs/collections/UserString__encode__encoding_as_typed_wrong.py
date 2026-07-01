@@ -9,7 +9,6 @@
 # case = "UserString__encode__encoding_as_typed_wrong"
 # subject = "collections.UserString.encode(encoding: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

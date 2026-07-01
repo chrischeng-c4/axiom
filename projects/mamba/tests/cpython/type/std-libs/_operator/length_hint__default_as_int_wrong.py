@@ -9,7 +9,6 @@
 # case = "length_hint__default_as_int_wrong"
 # subject = "_operator.length_hint(default: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

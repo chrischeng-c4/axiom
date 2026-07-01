@@ -9,7 +9,6 @@
 # case = "raw_unicode_escape_encode__str_as_str_wrong"
 # subject = "_codecs.raw_unicode_escape_encode(str: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

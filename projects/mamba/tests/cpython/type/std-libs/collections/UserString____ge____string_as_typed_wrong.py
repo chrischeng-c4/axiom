@@ -9,7 +9,6 @@
 # case = "UserString____ge____string_as_typed_wrong"
 # subject = "collections.UserString.__ge__(string: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

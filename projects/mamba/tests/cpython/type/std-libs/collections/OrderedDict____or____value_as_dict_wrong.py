@@ -9,7 +9,6 @@
 # case = "OrderedDict____or____value_as_dict_wrong"
 # subject = "collections.OrderedDict.__or__(value: dict)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

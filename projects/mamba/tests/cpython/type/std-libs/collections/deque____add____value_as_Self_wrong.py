@@ -9,7 +9,6 @@
 # case = "deque____add____value_as_Self_wrong"
 # subject = "collections.deque.__add__(value: Self)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

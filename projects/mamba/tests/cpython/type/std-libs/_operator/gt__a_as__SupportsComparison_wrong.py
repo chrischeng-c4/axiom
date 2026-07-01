@@ -9,7 +9,6 @@
 # case = "gt__a_as__SupportsComparison_wrong"
 # subject = "_operator.gt(a: _SupportsComparison)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

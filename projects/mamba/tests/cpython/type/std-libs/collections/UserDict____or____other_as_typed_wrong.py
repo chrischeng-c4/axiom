@@ -9,7 +9,6 @@
 # case = "UserDict____or____other_as_typed_wrong"
 # subject = "collections.UserDict.__or__(other: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

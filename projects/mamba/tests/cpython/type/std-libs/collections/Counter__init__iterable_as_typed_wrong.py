@@ -9,7 +9,6 @@
 # case = "Counter__init__iterable_as_typed_wrong"
 # subject = "collections.Counter.__init__(iterable: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

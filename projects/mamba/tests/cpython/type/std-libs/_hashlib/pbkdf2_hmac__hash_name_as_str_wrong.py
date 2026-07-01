@@ -9,7 +9,6 @@
 # case = "pbkdf2_hmac__hash_name_as_str_wrong"
 # subject = "_hashlib.pbkdf2_hmac(hash_name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

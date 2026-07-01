@@ -9,7 +9,6 @@
 # case = "Counter____le____other_as_Counter_wrong"
 # subject = "collections.Counter.__le__(other: Counter)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

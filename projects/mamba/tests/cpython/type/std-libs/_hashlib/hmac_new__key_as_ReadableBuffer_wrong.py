@@ -9,7 +9,6 @@
 # case = "hmac_new__key_as_ReadableBuffer_wrong"
 # subject = "_hashlib.hmac_new(key: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

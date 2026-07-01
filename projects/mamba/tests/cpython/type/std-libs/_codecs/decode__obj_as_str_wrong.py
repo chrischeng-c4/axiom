@@ -9,7 +9,6 @@
 # case = "decode__obj_as_str_wrong"
 # subject = "_codecs.decode(obj: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_codecs.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "openssl_sha3_384__data_as_ReadableBuffer_wrong"
 # subject = "_hashlib.openssl_sha3_384(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_hashlib.pyi"
 # status = "filled"

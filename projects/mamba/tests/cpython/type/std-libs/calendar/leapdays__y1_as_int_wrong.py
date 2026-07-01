@@ -9,7 +9,6 @@
 # case = "leapdays__y1_as_int_wrong"
 # subject = "calendar.leapdays(y1: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/calendar.pyi"
 # status = "filled"

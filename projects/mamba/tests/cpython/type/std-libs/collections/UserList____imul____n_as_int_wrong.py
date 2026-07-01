@@ -9,7 +9,6 @@
 # case = "UserList____imul____n_as_int_wrong"
 # subject = "collections.UserList.__imul__(n: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/collections.pyi"
 # status = "filled"

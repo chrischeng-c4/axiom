@@ -9,7 +9,6 @@
 # case = "call__obj_as_Callable_wrong"
 # subject = "_operator.call(obj: Callable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_operator.pyi"
 # status = "filled"

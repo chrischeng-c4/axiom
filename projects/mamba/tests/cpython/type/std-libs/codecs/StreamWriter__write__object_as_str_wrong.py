@@ -9,7 +9,6 @@
 # case = "StreamWriter__write__object_as_str_wrong"
 # subject = "codecs.StreamWriter.write(object: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/codecs.pyi"
 # status = "filled"
