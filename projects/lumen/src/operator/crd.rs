@@ -71,8 +71,10 @@ pub struct LumenSpec {
 
     /// Name of a Secret whose `token-registry.json` key is mounted at
     /// `/var/run/secrets/lumen/token-registry.json` and exposed to the serving
-    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`. Ignored
-    /// when `auth: off`.
+    /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
+    /// `token-registry.json` is a JSON object of
+    /// `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
+    /// Ignored when `auth: off`.
     #[serde(default)]
     pub tokens_secret: Option<String>,
 

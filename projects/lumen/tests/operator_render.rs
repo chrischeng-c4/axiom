@@ -354,5 +354,16 @@ fn crd_yaml_emits_lumen_definition() {
         !yaml.contains("format: uint32") && !yaml.contains("format: uint64"),
         "Kubernetes OpenAPI does not recognize unsigned integer formats: {yaml}"
     );
+    for needle in [
+        "token-registry.json",
+        "/var/run/secrets/lumen/token-registry.json",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+        "read|write|admin",
+    ] {
+        assert!(
+            yaml.contains(needle),
+            "CRD should publish token registry shape in tokensSecret docs; missing `{needle}`: {yaml}"
+        );
+    }
 }
 // CODEGEN-END
