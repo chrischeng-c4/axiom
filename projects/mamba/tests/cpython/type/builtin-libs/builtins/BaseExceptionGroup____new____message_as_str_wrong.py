@@ -9,7 +9,6 @@
 # case = "BaseExceptionGroup____new____message_as_str_wrong"
 # subject = "builtins.BaseExceptionGroup.__new__(message: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

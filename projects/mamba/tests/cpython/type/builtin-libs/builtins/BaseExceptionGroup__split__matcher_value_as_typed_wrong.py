@@ -9,7 +9,6 @@
 # case = "BaseExceptionGroup__split__matcher_value_as_typed_wrong"
 # subject = "builtins.BaseExceptionGroup.split(matcher_value: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

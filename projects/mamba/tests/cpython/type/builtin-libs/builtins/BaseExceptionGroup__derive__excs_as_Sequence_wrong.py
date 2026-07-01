@@ -9,12 +9,10 @@
 # case = "BaseExceptionGroup__derive__excs_as_Sequence_wrong"
 # subject = "builtins.BaseExceptionGroup.derive(excs: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed excs"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed excs
 # mamba-strict-type: TypeError
 """Type wall: builtins.BaseExceptionGroup.derive(excs: Sequence); call it with the wrong type.
 

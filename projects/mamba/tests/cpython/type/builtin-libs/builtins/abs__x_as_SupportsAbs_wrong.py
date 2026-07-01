@@ -9,7 +9,6 @@
 # case = "abs__x_as_SupportsAbs_wrong"
 # subject = "builtins.abs(x: SupportsAbs)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"

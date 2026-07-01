@@ -9,7 +9,6 @@
 # case = "BaseExceptionGroup__subgroup__matcher_value_as_typed_wrong"
 # subject = "builtins.BaseExceptionGroup.subgroup(matcher_value: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/builtins.pyi"
 # status = "filled"
