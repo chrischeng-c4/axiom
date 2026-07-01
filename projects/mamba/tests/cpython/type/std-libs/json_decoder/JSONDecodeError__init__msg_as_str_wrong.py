@@ -9,7 +9,6 @@
 # case = "JSONDecodeError__init__msg_as_str_wrong"
 # subject = "json.decoder.JSONDecodeError.__init__(msg: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/json/decoder.pyi"
 # status = "filled"

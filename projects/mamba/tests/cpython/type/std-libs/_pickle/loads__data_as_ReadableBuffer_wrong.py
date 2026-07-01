@@ -9,7 +9,6 @@
 # case = "loads__data_as_ReadableBuffer_wrong"
 # subject = "_pickle.loads(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"

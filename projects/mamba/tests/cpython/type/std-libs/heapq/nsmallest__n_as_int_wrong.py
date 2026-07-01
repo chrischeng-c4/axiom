@@ -9,7 +9,6 @@
 # case = "nsmallest__n_as_int_wrong"
 # subject = "heapq.nsmallest(n: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/heapq.pyi"
 # status = "filled"

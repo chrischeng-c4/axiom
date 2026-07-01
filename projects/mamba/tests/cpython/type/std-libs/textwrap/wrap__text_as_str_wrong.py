@@ -9,7 +9,6 @@
 # case = "wrap__text_as_str_wrong"
 # subject = "textwrap.wrap(text: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/textwrap.pyi"
 # status = "filled"

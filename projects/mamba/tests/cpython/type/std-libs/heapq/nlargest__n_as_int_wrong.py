@@ -9,7 +9,6 @@
 # case = "nlargest__n_as_int_wrong"
 # subject = "heapq.nlargest(n: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/heapq.pyi"
 # status = "filled"

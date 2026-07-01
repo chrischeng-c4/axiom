@@ -9,7 +9,6 @@
 # case = "DictWriter__writerows__rowdicts_as_Iterable_wrong"
 # subject = "csv.DictWriter.writerows(rowdicts: Iterable)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/csv.pyi"
 # status = "filled"

@@ -9,12 +9,10 @@
 # case = "DictWriter__writerow__rowdict_as_Mapping_wrong"
 # subject = "csv.DictWriter.writerow(rowdict: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed rowdict"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/csv.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed rowdict
 # mamba-strict-type: TypeError
 """Type wall: csv.DictWriter.writerow(rowdict: Mapping); call it with the wrong type.
 

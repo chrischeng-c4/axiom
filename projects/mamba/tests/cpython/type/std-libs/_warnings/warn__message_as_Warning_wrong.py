@@ -9,12 +9,10 @@
 # case = "warn__message_as_Warning_wrong"
 # subject = "_warnings.warn(message: Warning)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed message"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_warnings.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed message
 # mamba-strict-type: TypeError
 """Type wall: _warnings.warn(message: Warning); call it with the wrong type.
 

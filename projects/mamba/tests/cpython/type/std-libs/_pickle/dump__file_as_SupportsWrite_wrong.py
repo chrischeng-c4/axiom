@@ -9,7 +9,6 @@
 # case = "dump__file_as_SupportsWrite_wrong"
 # subject = "_pickle.dump(file: SupportsWrite)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_pickle.pyi"
 # status = "filled"

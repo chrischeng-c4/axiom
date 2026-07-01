@@ -9,7 +9,6 @@
 # case = "JSONDecoder__raw_decode__s_as_str_wrong"
 # subject = "json.decoder.JSONDecoder.raw_decode(s: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/json/decoder.pyi"
 # status = "filled"

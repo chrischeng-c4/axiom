@@ -9,7 +9,6 @@
 # case = "encode_long__x_as_int_wrong"
 # subject = "pickle.encode_long(x: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pickle.pyi"
 # status = "filled"

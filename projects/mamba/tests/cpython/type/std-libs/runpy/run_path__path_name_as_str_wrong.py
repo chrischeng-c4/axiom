@@ -9,7 +9,6 @@
 # case = "run_path__path_name_as_str_wrong"
 # subject = "runpy.run_path(path_name: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/runpy.pyi"
 # status = "filled"

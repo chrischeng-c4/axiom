@@ -9,7 +9,6 @@
 # case = "ZoneInfo__utcoffset__dt_as_typed_wrong"
 # subject = "zoneinfo.ZoneInfo.utcoffset(dt: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zoneinfo.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "ZoneInfo__from_file__fobj_as__IOBytes_wrong"
 # subject = "zoneinfo.ZoneInfo.from_file(fobj: _IOBytes)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zoneinfo.pyi"
 # status = "filled"

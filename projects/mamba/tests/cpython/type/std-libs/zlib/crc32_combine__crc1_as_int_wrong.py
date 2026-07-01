@@ -9,7 +9,6 @@
 # case = "crc32_combine__crc1_as_int_wrong"
 # subject = "zlib.crc32_combine(crc1: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zlib.pyi"
 # status = "filled"

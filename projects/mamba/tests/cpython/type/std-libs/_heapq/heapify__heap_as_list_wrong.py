@@ -9,7 +9,6 @@
 # case = "heapify__heap_as_list_wrong"
 # subject = "_heapq.heapify(heap: list)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_heapq.pyi"
 # status = "filled"

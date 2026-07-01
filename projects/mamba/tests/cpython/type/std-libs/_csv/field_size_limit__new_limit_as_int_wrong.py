@@ -9,7 +9,6 @@
 # case = "field_size_limit__new_limit_as_int_wrong"
 # subject = "_csv.field_size_limit(new_limit: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_csv.pyi"
 # status = "filled"

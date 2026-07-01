@@ -9,7 +9,6 @@
 # case = "TextWrapper__init__width_as_int_wrong"
 # subject = "textwrap.TextWrapper.__init__(width: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/textwrap.pyi"
 # status = "filled"

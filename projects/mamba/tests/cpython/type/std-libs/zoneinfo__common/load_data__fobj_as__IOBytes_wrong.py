@@ -9,7 +9,6 @@
 # case = "load_data__fobj_as__IOBytes_wrong"
 # subject = "zoneinfo._common.load_data(fobj: _IOBytes)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zoneinfo/_common.pyi"
 # status = "filled"

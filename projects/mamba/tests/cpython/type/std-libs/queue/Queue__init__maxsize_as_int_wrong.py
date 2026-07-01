@@ -9,7 +9,6 @@
 # case = "Queue__init__maxsize_as_int_wrong"
 # subject = "queue.Queue.__init__(maxsize: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/queue.pyi"
 # status = "filled"

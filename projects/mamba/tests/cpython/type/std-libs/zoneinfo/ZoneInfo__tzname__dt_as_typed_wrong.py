@@ -9,7 +9,6 @@
 # case = "ZoneInfo__tzname__dt_as_typed_wrong"
 # subject = "zoneinfo.ZoneInfo.tzname(dt: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/zoneinfo.pyi"
 # status = "filled"

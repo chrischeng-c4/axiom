@@ -9,7 +9,6 @@
 # case = "dcgettext__domain_as_typed_wrong"
 # subject = "_locale.dcgettext(domain: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_locale.pyi"
 # status = "filled"

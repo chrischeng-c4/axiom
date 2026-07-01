@@ -9,7 +9,6 @@
 # case = "make_scanner____new____context_as_make_scanner_wrong"
 # subject = "_json.make_scanner.__new__(context: make_scanner)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_json.pyi"
 # status = "filled"

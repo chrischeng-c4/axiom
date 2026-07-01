@@ -9,7 +9,6 @@
 # case = "insort_right__a_as_MutableSequence_wrong"
 # subject = "_bisect.insort_right(a: MutableSequence)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_bisect.pyi"
 # status = "filled"

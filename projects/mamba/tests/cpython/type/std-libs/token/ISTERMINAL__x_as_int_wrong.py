@@ -9,7 +9,6 @@
 # case = "ISTERMINAL__x_as_int_wrong"
 # subject = "token.ISTERMINAL(x: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/token.pyi"
 # status = "filled"

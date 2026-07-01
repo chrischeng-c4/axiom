@@ -9,7 +9,6 @@
 # case = "detect_encoding__b_as_typed_wrong"
 # subject = "json.detect_encoding(b: typed)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/json.pyi"
 # status = "filled"

@@ -9,7 +9,6 @@
 # case = "SimpleQueue__put__item_as__T_wrong"
 # subject = "_queue.SimpleQueue.put(item: _T)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_queue.pyi"
 # status = "filled"

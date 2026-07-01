@@ -9,7 +9,6 @@
 # case = "iskeyword__s_as_str_wrong"
 # subject = "keyword.iskeyword(s: str)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/keyword.pyi"
 # status = "filled"

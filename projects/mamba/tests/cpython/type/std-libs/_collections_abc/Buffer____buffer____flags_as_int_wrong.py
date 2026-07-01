@@ -9,7 +9,6 @@
 # case = "Buffer____buffer____flags_as_int_wrong"
 # subject = "_collections_abc.Buffer.__buffer__(flags: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_collections_abc.pyi"
 # status = "filled"

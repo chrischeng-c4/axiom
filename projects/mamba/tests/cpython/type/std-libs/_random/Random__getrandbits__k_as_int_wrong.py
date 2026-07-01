@@ -9,7 +9,6 @@
 # case = "Random__getrandbits__k_as_int_wrong"
 # subject = "_random.Random.getrandbits(k: int)"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/_random.pyi"
 # status = "filled"
