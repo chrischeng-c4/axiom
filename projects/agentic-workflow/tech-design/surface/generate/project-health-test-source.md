@@ -613,6 +613,11 @@ fn project_health_summary_with_payload_path_is_bounded_result() {
         verify_evaluated: true,
         status: ProjectEcGateStatus::Failed,
         note: None,
+        lock_status: Some(agentic_workflow::cli::ec::EcLockState::Locked),
+        lock_clean: true,
+        lock_path: "projects/demo/external-contracts/ec.lock".to_string(),
+        lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        locked_lock_ir_digest: Some("sha256:ec-ir".to_string()),
         inventory_path: "projects/demo/aw.toml".to_string(),
         expected_case_count: 1,
         case_count: 1,
@@ -733,6 +738,11 @@ fn project_health_ec_gen_axis_is_not_configured_for_zero_expected_units() {
         verify_evaluated: false,
         status: ProjectEcGateStatus::NotConfigured,
         note: None,
+        lock_status: Some(agentic_workflow::cli::ec::EcLockState::Locked),
+        lock_clean: true,
+        lock_path: "projects/demo/external-contracts/ec.lock".to_string(),
+        lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        locked_lock_ir_digest: Some("sha256:ec-ir".to_string()),
         inventory_path: "projects/demo/aw.toml".to_string(),
         expected_case_count: 0,
         case_count: 0,
@@ -877,6 +887,11 @@ fn project_health_next_reason_matches_managed_route_when_ec_has_no_expected_unit
         verify_evaluated: false,
         status: ProjectEcGateStatus::NotConfigured,
         note: Some("EC inventory has no cases".to_string()),
+        lock_status: Some(agentic_workflow::cli::ec::EcLockState::Locked),
+        lock_clean: true,
+        lock_path: "projects/demo/external-contracts/ec.lock".to_string(),
+        lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        locked_lock_ir_digest: Some("sha256:ec-ir".to_string()),
         inventory_path: "projects/demo/aw.toml".to_string(),
         expected_case_count: 0,
         case_count: 0,
@@ -898,6 +913,167 @@ fn project_health_next_reason_matches_managed_route_when_ec_has_no_expected_unit
     assert_eq!(
         summary["next"]["reason"].as_str(),
         Some("source ownership is incomplete; advance managed takeover")
+    );
+}
+
+#[test]
+fn project_health_next_command_stays_off_verify_ec_for_self_health_without_configured_ec() {
+    // Self-AW (#934): with no configured/verified EC command surface
+    // (`command_count == 0`), EC renders as advisory and next.command must
+    // route to the highest-priority *real* gap (here: capability
+    // remediation) instead of `--verify-ec`.
+    let mut report = ProjectHealthReport::from_components(
+        "agentic-workflow",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.production_ready = false;
+    report.status = ProjectHealthStatus::Blocked;
+    report.capability_ready = false;
+    report.blockers =
+        vec!["capability roots are incomplete; advance the capability workflow".to_string()];
+    report.ec = ProjectEcGateReport {
+        evaluated: true,
+        check_clean: true,
+        verify_evaluated: false,
+        status: ProjectEcGateStatus::NotEvaluated,
+        note: Some(
+            "EC is advisory for `agentic-workflow` self-health; no configured EC command surface has been verified yet. Capability contract integrity is the unconditional gate; run `aw health --project agentic-workflow --verify-ec` to opt into EC verification.".to_string(),
+        ),
+        lock_status: Some(agentic_workflow::cli::ec::EcLockState::Locked),
+        lock_clean: true,
+        lock_path: "projects/agentic-workflow/external-contracts/ec.lock".to_string(),
+        lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        locked_lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        inventory_path: "projects/agentic-workflow/aw.toml".to_string(),
+        expected_case_count: 39,
+        case_count: 39,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        command_count: 0,
+        passed_count: 0,
+        failed_count: 0,
+        findings: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(summary["axes"]["ec"]["status"].as_str(), Some("advisory"));
+    let next_command = summary["next"]["command"].as_str().unwrap_or_default();
+    assert!(!next_command.contains("--verify-ec"));
+    assert_eq!(
+        next_command,
+        "aw capability run --project agentic-workflow --non-interactive --max-ticks 1"
+    );
+}
+
+#[test]
+fn project_health_next_command_still_targets_verify_ec_for_self_health_with_configured_ec_failure()
+{
+    // Self-AW (#934): once a real command surface has been configured and
+    // evaluated (`command_count > 0`), EC behaves exactly like today's hard
+    // axis, unaffected by the advisory carve-out above.
+    let mut report = ProjectHealthReport::from_components(
+        "agentic-workflow",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.production_ready = false;
+    report.status = ProjectHealthStatus::Blocked;
+    report.ec = ProjectEcGateReport {
+        evaluated: true,
+        check_clean: true,
+        verify_evaluated: true,
+        status: ProjectEcGateStatus::Failed,
+        note: Some("EC commands failed: 1/3 command(s)".to_string()),
+        lock_status: Some(agentic_workflow::cli::ec::EcLockState::Locked),
+        lock_clean: true,
+        lock_path: "projects/agentic-workflow/external-contracts/ec.lock".to_string(),
+        lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        locked_lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        inventory_path: "projects/agentic-workflow/aw.toml".to_string(),
+        expected_case_count: 3,
+        case_count: 3,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        command_count: 3,
+        passed_count: 2,
+        failed_count: 1,
+        findings: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(summary["axes"]["ec"]["status"].as_str(), Some("failed"));
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw health --project agentic-workflow --verify-ec")
+    );
+}
+
+#[test]
+fn project_health_next_command_still_targets_verify_ec_for_non_self_health_project() {
+    // Non-self-AW projects are unaffected by #934: an unverified EC axis
+    // with a configured inventory keeps routing to `--verify-ec` exactly
+    // as before.
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.production_ready = false;
+    report.status = ProjectHealthStatus::Blocked;
+    report.ec = ProjectEcGateReport {
+        evaluated: true,
+        check_clean: true,
+        verify_evaluated: false,
+        status: ProjectEcGateStatus::NotVerified,
+        note: Some(
+            "EC commands not evaluated; run `aw health --project demo --verify-ec`".to_string(),
+        ),
+        lock_status: Some(agentic_workflow::cli::ec::EcLockState::Locked),
+        lock_clean: true,
+        lock_path: "projects/demo/external-contracts/ec.lock".to_string(),
+        lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        locked_lock_ir_digest: Some("sha256:ec-ir".to_string()),
+        inventory_path: "projects/demo/aw.toml".to_string(),
+        expected_case_count: 1,
+        case_count: 1,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        command_count: 0,
+        passed_count: 0,
+        failed_count: 0,
+        findings: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(
+        summary["axes"]["ec"]["status"].as_str(),
+        Some("not_verified")
+    );
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw health --project demo --verify-ec")
     );
 }
 
