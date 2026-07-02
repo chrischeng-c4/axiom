@@ -30,36 +30,32 @@ fill_sections: [logic, unit-test, changes]
 id: lumen-llm-topic-invocation-contract
 entry: start
 nodes:
-  start: { kind: start, label: "agent reads lumen offline self-docs" }
-  convention: { kind: process, label: "repo CLI convention: lumen llm [--topic <t>] [--format md|json]" }
-  docs: { kind: process, label: "module docs, README, and llm_outline_md publish runnable topic commands" }
-  parse: { kind: process, label: "clap parses LlmArgs { --topic <enum>, --format <enum> }" }
-  mismatch: { kind: decision, label: "published command shape matches parser?" }
-  broken: { kind: terminal, label: "no: copied positional topic fails before agent can read detail topic" }
-  canonical: { kind: process, label: "yes: every published topic command uses --topic <topic>" }
-  gate: { kind: process, label: "test extracts topic commands from llm_outline_md() and verifies clap accepts them" }
-  done: { kind: terminal, label: "agent self-onboarding commands are copy-paste runnable" }
+  start: { kind: start, label: "agent reads Lumen's offline entry points" }
+  convention: { kind: process, label: "CONTRIBUTING contract: llm [--topic <t>] [--format md|json]" }
+  parser: { kind: process, label: "LlmArgs remains flag-only: --topic defaults to outline, --format defaults to md" }
+  docs: { kind: process, label: "module docs, README, and llm_outline_md advertise the same --topic commands" }
+  outline: { kind: process, label: "llm_outline_md lists workflow/integration/quickstart/auth/storage/recipes as `lumen llm --topic <topic>`" }
+  readme: { kind: process, label: "README brief and Agent Offline Integration surfaces use --topic examples" }
+  tests: { kind: process, label: "spec_cli guards canonical text; cli_convention executes each advertised topic command" }
+  done: { kind: terminal, label: "copying the self-docs command shape succeeds against the binary parser" }
 edges:
   - { from: start, to: convention }
-  - { from: convention, to: docs }
-  - { from: docs, to: parse }
-  - { from: parse, to: mismatch }
-  - { from: mismatch, to: broken, label: "current: positional form advertised" }
-  - { from: mismatch, to: canonical, label: "fixed: --topic form advertised" }
-  - { from: canonical, to: gate }
-  - { from: gate, to: done }
+  - { from: convention, to: parser }
+  - { from: parser, to: docs }
+  - { from: docs, to: outline }
+  - { from: outline, to: readme }
+  - { from: readme, to: tests }
+  - { from: tests, to: done }
 ---
 flowchart TD
-    start([agent reads lumen offline self-docs]) --> convention[CLI convention: lumen llm --topic topic]
-    convention --> docs[module docs, README, and llm_outline_md publish runnable commands]
-    docs --> parse[clap parser accepts --topic enum]
-    parse --> mismatch{docs match parser?}
-    mismatch -->|current no| broken([copied positional topic errors])
-    mismatch -->|fixed yes| canonical[canonicalize self-docs to --topic topic]
-    canonical --> gate[test outline commands parse through clap]
-    gate --> done([agent self-onboarding commands are runnable])
+    start([agent reads Lumen offline entry points]) --> convention[CLI convention: llm --topic topic]
+    convention --> parser[LlmArgs remains flag-only]
+    parser --> docs[self-docs advertise the parser shape]
+    docs --> outline[outline lists detail topics with --topic]
+    outline --> readme[README surfaces use --topic examples]
+    readme --> tests[spec text + binary parser tests]
+    tests --> done([copied self-doc commands parse])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
