@@ -1104,9 +1104,33 @@ semantic_domain:
           - name: "WorkflowGoalEnvelope"
             kind: "struct"
             public: false
+          - name: "RunPrintOptions"
+            kind: "struct"
+            public: true
           - name: "run"
             kind: "function"
             public: true
+          - name: "run_resolved_root"
+            kind: "function"
+            public: false
+          - name: "wi_run_command"
+            kind: "function"
+            public: true
+          - name: "run_wi_root"
+            kind: "function"
+            public: true
+          - name: "capability_run_command"
+            kind: "function"
+            public: true
+          - name: "run_capability_root"
+            kind: "function"
+            public: true
+          - name: "project_capability_rollup_command"
+            kind: "function"
+            public: true
+          - name: "print_run_deprecation_notice"
+            kind: "function"
+            public: false
           - name: "resolve_run_root"
             kind: "function"
             public: false
