@@ -913,6 +913,7 @@ impl TypeChecker {
             | CoreTy::Tuple
             | CoreTy::Dict
             | CoreTy::Typed
+            | CoreTy::TypedNamed(_)
             | CoreTy::Type
             | CoreTy::Unknown => None,
         }
