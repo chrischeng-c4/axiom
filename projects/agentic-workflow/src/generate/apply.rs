@@ -1697,9 +1697,11 @@ fn normalize_path_for_spec_ref(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// Count the spec's Changes entries (excluding `action: delete`). Used by the
-/// terminal TD/CB gate to gauge how much implementation the spec promises so it
-/// can refuse completion whose entire promise is unfulfilled.
+/// Count the spec's Changes entries (excluding `action: delete`). Called by
+/// the terminal `aw td code-check` empty-implementation gate
+/// (`run_check_lifecycle_terminal` in `cb.rs`, issue #847) to gauge how much
+/// implementation the spec promises so it can refuse completion whose entire
+/// promise is unfulfilled.
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
 pub fn extract_change_entries_count(spec_content: &str) -> usize {
     extract_change_entries(spec_content)
@@ -1710,9 +1712,11 @@ pub fn extract_change_entries_count(spec_content: &str) -> usize {
 
 /// Walk the spec's Changes section and return the subset of `action: create`
 /// or `action: modify` entries whose `path:` does NOT exist on disk relative
-/// to `root`. Used by the terminal TD/CB gate to refuse completion whose
-/// implementation is empty: a spec listing N files with 0 written is the
-/// signature of a stalled gen-code + missing handwrite step.
+/// to `root`. Called by the terminal `aw td code-check` empty-implementation
+/// gate (`run_check_lifecycle_terminal` in `cb.rs`, issue #847) to refuse
+/// completion whose implementation is empty: a spec listing N files with 0
+/// written is the signature of a stalled gen-code + missing handwrite step.
+/// Overridable via `aw td code-check --allow-empty-impl`.
 ///
 /// `delete` entries are excluded — the missing-file IS the desired outcome.
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
