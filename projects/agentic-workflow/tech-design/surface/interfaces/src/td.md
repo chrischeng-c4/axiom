@@ -2529,6 +2529,19 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         .spec_path
         .clone()
         .unwrap_or_else(|| default_spec_path_for_issue_in_project(&project_root, &issue, &slug));
+
+    // Issue #939: record the spec `aw td create` just provisioned/located
+    // for this issue in `Issue.implements`, so `cb.rs`'s tier-1
+    // `Issue.implements` scope resolution (#854, `resolve_slug_spec_paths`)
+    // has real data instead of always falling through to the tier-3
+    // derived-path guess. Idempotent by path so repeat brief calls (status
+    // checks between section fills) never duplicate the entry.
+    if !issue.implements.iter().any(|p| p == &spec_path) {
+        let mut issue_with_implements = issue.clone();
+        issue_with_implements.implements.push(spec_path.clone());
+        backend.write(&issue_with_implements).await?;
+    }
+
     let queue = td_section_queue(pass);
     let mut first_payload_created = None;
     if let Some(first_section) = queue.first() {
@@ -6922,10 +6935,20 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
             .clone()
             .unwrap_or_else(|| "<unknown>".to_string())
     });
-    let updated_issue = wt_backend
+    let mut updated_issue = wt_backend
         .get(slug)
         .await?
         .ok_or_else(|| anyhow::anyhow!("issue '{}' not found after claim update", slug))?;
+    // Issue #939: claim copies an already-authored spec into the worktree
+    // (`spec_path_in_worktree` above) — record it in `Issue.implements` the
+    // same way `aw td create` does, so `cb.rs`'s tier-1 scope resolution
+    // (#854) resolves a claimed spec too. Idempotent by path.
+    if let Some(ref sp) = spec_path_in_worktree {
+        if !updated_issue.implements.iter().any(|p| p == sp) {
+            updated_issue.implements.push(sp.clone());
+            wt_backend.write(&updated_issue).await?;
+        }
+    }
     let issue_path = wt_backend.issue_path(&updated_issue);
     let issue_path_s = issue_path.to_string_lossy().into_owned();
     let mut paths: Vec<&str> = vec![issue_path_s.as_str()];
