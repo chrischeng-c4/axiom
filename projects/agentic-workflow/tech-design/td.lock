@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T16:41:48.275848+00:00"
-digest = "sha256:3f343befdf752b11732d164c0fe31ed2243e367fce0c8aba2f4bed6fedfa4c9f"
-source_digest = "sha256:3f343befdf752b11732d164c0fe31ed2243e367fce0c8aba2f4bed6fedfa4c9f"
-ir_digest = "sha256:8818dd95b2296924766960d9feafe2d740c771d0f89e07bdacebeb05065b78ea"
+generated_at = "2026-07-02T17:03:34.809792+00:00"
+digest = "sha256:e6ecc7d0bd63fc08e04d26c5bb5674d8f8817d20a4797040add9dd4610a8432e"
+source_digest = "sha256:e6ecc7d0bd63fc08e04d26c5bb5674d8f8817d20a4797040add9dd4610a8432e"
+ir_digest = "sha256:16f89cfbd4de69515b39c670a8591132ccde9058f6f3e8d5d31b1c0b5b0ba73b"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5819,8 +5819,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/phase_migration_test.md"
-digest = "sha256:57ae1bbaa4c3c62576f97d08b31f1aad54042202e44e5f91c162ae3b96413112"
-ir_digest = "sha256:6a87abd32e447f2c9b506a35b6bfc5c9149f0f52e930a76af47dcd5c1ad0f6d5"
+digest = "sha256:437f38c3e5c55aaf76374d563148f6ecc92da7d785af869d3c177efefc9b1c3e"
+ir_digest = "sha256:d1ca8c4586a3a9d5014e98f083c19ecca68971de702997fd2d76400ac98f83db"
 section_count = 2
 
 [[files]]
