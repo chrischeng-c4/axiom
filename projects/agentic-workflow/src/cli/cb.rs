@@ -92,10 +92,15 @@ pub struct CbClaimArgs {
     // Create `.aw/` workspace directory if it does not already exist.
     #[arg(long)]
     pub init: bool,
-    // Create a minimal issue stub in the temp issue working copy using the
-    // derived slug inferred from the code path.
+    // Skip filing/linking a durable tracker work-item for the adopted code
+    // path. Tracker linkage is on by default (issue #925): adopted code
+    // needs a durable root — a real work-item the commit/marker can point
+    // back to — for traceability closure the same way any other lifecycle
+    // artifact does. This opt-out exists for offline or sandboxed runs
+    // where no issue backend is configured/reachable; the claim itself
+    // (spec write + commit) still completes either way.
     #[arg(long)]
-    pub issue_stub: bool,
+    pub no_issue: bool,
     // Tech-design group name. Inferred from the code path when omitted.
     #[arg(long)]
     pub group: Option<String>,
@@ -2951,16 +2956,18 @@ fn collect_tree_files_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        cb_verify_summary_from_report, classify_codegen_origin_spec, collect_force_regen_specs,
-        collect_source_scope_files, collect_tree_files, commit_force_regen, compare_source_roots,
-        copy_tree, extract_cold_rebuild_target_paths, extract_project_root_llms_target_paths,
-        extract_spec_managed_ref, extract_spec_managed_refs, format_rust_files,
-        has_handwrite_ownership_marker, is_minified_asset_file, resolve_project_force_regen_scope,
+        cb_verify_summary_from_report, claim_issue_create_args, claim_issue_title,
+        classify_codegen_origin_spec, collect_force_regen_specs, collect_source_scope_files,
+        collect_tree_files, commit_cb_claim_trailer, commit_force_regen, compare_source_roots,
+        copy_tree, ensure_claim_issue, extract_cold_rebuild_target_paths,
+        extract_project_root_llms_target_paths, extract_spec_managed_ref,
+        extract_spec_managed_refs, format_rust_files, has_handwrite_ownership_marker,
+        is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
         run_force_regen_specs, sample_count, sample_semantic_review_units,
         spec_declares_source_section, td_public_symbol_semantic_coverage,
         upsert_public_api_overview, upsert_public_api_overview_targets,
         verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
-        CbCommand, CbGenArgs, ForceRegenConformanceReport, ForceRegenScope,
+        CbCommand, CbGenArgs, ClaimIssueRef, ForceRegenConformanceReport, ForceRegenScope,
         PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
         SemanticReviewUnit,
     };
@@ -4180,6 +4187,167 @@ pub fn signature_only() -> Result<()>
             "let marker = \"HANDWRITE-BEGIN\";"
         ));
     }
+
+    // ── cb claim: tracker linkage (issue #925) ─────────────────────
+
+    #[test]
+    fn claim_issue_title_is_stable_and_derived_from_code_path() {
+        assert_eq!(
+            claim_issue_title("projects/tool/src/lib.rs"),
+            "Adopted (td code-claim): projects/tool/src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn repo_relative_code_path_normalizes_dot_slash_and_absolute_paths() {
+        let root = std::path::Path::new("/repo");
+        assert_eq!(repo_relative_code_path(root, "./src/lib.rs"), "src/lib.rs");
+        assert_eq!(repo_relative_code_path(root, "src/lib.rs"), "src/lib.rs");
+        assert_eq!(
+            repo_relative_code_path(root, "/repo/src/lib.rs"),
+            "src/lib.rs"
+        );
+    }
+
+    // Mirrors `standardize::gap_issue_create_args_uses_typed_fields_and_bounded_skeleton`
+    // (issue #919): the code-claim tracker issue must be filed with typed
+    // fields, not a freeform body, so `run_create`'s own structured skeleton
+    // fills in the description.
+    #[test]
+    fn claim_issue_create_args_uses_typed_refactor_fields_and_bounded_skeleton() {
+        let title = claim_issue_title("projects/tool/src/lib.rs");
+        let args = claim_issue_create_args(&title, "tool".to_string());
+        assert_eq!(args.title.as_deref(), Some(title.as_str()));
+        assert!(matches!(
+            args.issue_type,
+            Some(crate::cli::issues::TypeFilter::Refactor)
+        ));
+        assert_eq!(args.projects, vec!["tool".to_string()]);
+        assert!(args.body.is_none(), "no free-form body");
+        assert!(args.body_file.is_none());
+        assert!(args.draft_path.is_none());
+        assert!(!args.json, "json:true would make backend failures fatal");
+    }
+
+    // Mirrors `standardize::ensure_gap_issue_reports_recoverable_error_when_backend_unconfigured`
+    // (issue #919): a configured project with no issue backend must surface
+    // a normal recoverable `Result::Err`, not panic/exit, so `run_claim` can
+    // warn-and-proceed.
+    #[test]
+    fn ensure_claim_issue_reports_recoverable_error_when_backend_unconfigured() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".aw")).unwrap();
+        std::fs::write(
+            dir.path().join(".aw/config.toml"),
+            "[[projects]]\n\
+             name = \"tool\"\n\
+             path = \"projects/tool\"\n\
+             label = \"project:tool\"\n\
+             \n\
+             [[projects.workspaces]]\n\
+             name = \"tool\"\n\
+             paths = [\"projects/tool/**\"]\n\
+             target = \"rust\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("projects/tool/src")).unwrap();
+        std::fs::write(
+            dir.path().join("projects/tool/src/lib.rs"),
+            "pub fn x() {}\n",
+        )
+        .unwrap();
+
+        let err = ensure_claim_issue(dir.path(), "projects/tool/src/lib.rs").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("repo_platform") || msg.contains("issue_platform"),
+            "expected a backend-configuration error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ensure_claim_issue_errors_when_no_project_configured_for_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/lib.rs"), "pub fn x() {}\n").unwrap();
+
+        let err = ensure_claim_issue(dir.path(), "src/lib.rs").unwrap_err();
+        assert!(
+            err.to_string().contains("no configured project owns"),
+            "got: {}",
+            err
+        );
+    }
+
+    fn init_claim_test_git_repo(root: &std::path::Path) {
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        run(&["init", "--initial-branch=main"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        run(&["commit", "--allow-empty", "-m", "init"]);
+    }
+
+    fn claim_test_git_log_body(root: &std::path::Path) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["log", "-1", "--format=%B"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    #[test]
+    fn commit_cb_claim_trailer_without_issue_omits_claim_issue_trailer() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        init_claim_test_git_repo(dir.path());
+        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", None).unwrap();
+        let body = claim_test_git_log_body(dir.path());
+        assert!(body.contains("Lifecycle-Stage: Cb-Claim"), "body:\n{body}");
+        assert!(!body.contains("Claim-Issue:"), "body:\n{body}");
+    }
+
+    #[test]
+    fn commit_cb_claim_trailer_with_remote_issue_uses_issue_number() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        init_claim_test_git_repo(dir.path());
+        let issue_ref = ClaimIssueRef {
+            slug: "adopted-lib".to_string(),
+            number: Some(42),
+        };
+        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", Some(&issue_ref)).unwrap();
+        let body = claim_test_git_log_body(dir.path());
+        assert!(body.contains("Claim-Issue: #42"), "body:\n{body}");
+    }
+
+    #[test]
+    fn commit_cb_claim_trailer_falls_back_to_slug_without_issue_number() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        init_claim_test_git_repo(dir.path());
+        let issue_ref = ClaimIssueRef {
+            slug: "adopted-lib".to_string(),
+            number: None,
+        };
+        commit_cb_claim_trailer(dir.path(), "demo-slug", "src/lib.rs", Some(&issue_ref)).unwrap();
+        let body = claim_test_git_log_body(dir.path());
+        assert!(body.contains("Claim-Issue: adopted-lib"), "body:\n{body}");
+    }
 }
 
 /// True if `target` (an `aw td code-check <target>` argument, or the dead
@@ -5057,17 +5225,44 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
         std::process::exit(1);
     }
 
-    // 4. Optional issue stub.
+    // 4. Tracker linkage (default-on; issue #925). Adopted code needs a
+    //    durable tracker root for traceability closure — file (or reuse) a
+    //    real work-item through the same `aw wi create` routing issue #919
+    //    established for `standardize::ensure_gap_issue`, instead of a
+    //    `LocalBackend`-only stub. `--no-issue` is the documented opt-out.
+    //    Best-effort either way: a skipped or failed tracker link must
+    //    never fail the claim itself (`aw td code-claim` has to keep
+    //    working offline / with no issue backend configured).
     let derived_slug = derive_slug_from_path(&code_path);
-    if args.issue_stub {
-        if let Err(e) = create_issue_stub(&project_root, &derived_slug, &args.code_path).await {
-            eprintln!("warning: failed to create issue stub: {}", e);
+    let code_path_rel = repo_relative_code_path(&project_root, &args.code_path);
+    let claim_issue = if args.no_issue {
+        eprintln!(
+            "note: --no-issue set; skipping tracker-issue creation for adopted code at {}",
+            args.code_path
+        );
+        None
+    } else {
+        match ensure_claim_issue(&project_root, &code_path_rel) {
+            Ok(issue_ref) => Some(issue_ref),
+            Err(e) => {
+                eprintln!(
+                    "warning: failed to create/link a tracker issue for adopted code at {} \
+                     (offline or issue backend unconfigured?): {}",
+                    args.code_path, e
+                );
+                None
+            }
         }
-    }
+    };
 
     // 5. Commit a Cb-Claim trailer in the current checkout when possible.
     let mut committed = false;
-    if let Err(e) = commit_cb_claim_trailer(&project_root, &derived_slug, &args.code_path) {
+    if let Err(e) = commit_cb_claim_trailer(
+        &project_root,
+        &derived_slug,
+        &args.code_path,
+        claim_issue.as_ref(),
+    ) {
         eprintln!("warning: failed to commit Cb-Claim trailer: {}", e);
     } else {
         committed = true;
@@ -5077,6 +5272,7 @@ pub async fn run_claim(args: CbClaimArgs) -> Result<()> {
     let env = serde_json::json!({
         "action": "done",
         "slug": derived_slug,
+        "claim_issue": claim_issue.as_ref().map(|r| r.trailer_value()),
         "message": if committed {
             "td code-claim: spec written; Cb-Claim trailer committed"
         } else {
@@ -5097,65 +5293,249 @@ fn derive_slug_from_path(p: &std::path::Path) -> String {
         .unwrap_or_else(|| "claim".to_string())
 }
 
-// Create a minimal issue stub in the temp issue working copy.
-async fn create_issue_stub(
-    project_root: &std::path::Path,
-    slug: &str,
-    code_path: &str,
-) -> Result<()> {
-    use crate::issues::{IssueBackend, IssueState, IssueType, LocalBackend};
-    let backend = LocalBackend::from_project_root(project_root);
-    if backend.get(slug).await?.is_some() {
-        return Ok(()); // skip when an issue already exists for the slug
-    }
-    let title = format!("Adopted (td code-claim): {}", code_path);
-    let stub = crate::issues::Issue {
-        issue_type: IssueType::Enhancement,
-        title: title.clone(),
-        state: IssueState::Open,
-        id: None,
-        github_id: None,
-        gitlab_id: None,
-        url: None,
-        author: None,
-        labels: Vec::new(),
-        created_at: Some(chrono::Utc::now().to_rfc3339()),
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
-        slug: slug.to_string(),
-        body: format!("# {}\n\nIssue stub created by `aw td code-claim`.\n", title),
-        related: Vec::new(),
-        implements: Vec::new(),
-        phase: None,
-        branch: None,
-        target_branch: None,
-        git_workflow: None,
-        change_id: None,
-        iteration: None,
-        current_task_id: None,
-        impl_spec_phase: None,
-        task_revisions: None,
-        revision_counts: None,
-        last_action: None,
-        session_id: None,
-        validation_errors: Vec::new(),
-        review_count: None,
-        flagged_sections: None,
-        fill_retry_count: None,
-        ship_status: None,
-        ship_commit: None,
-        regen_verified_at: None,
+// Best-effort project-root-relative form of a `code-claim` path argument,
+// for `configured_project_name_for_path` matching (that helper expects a
+// forward-slash path rooted at `project_root`, matching its other call
+// sites — see `write_project_root_llms_targets` above). `aw td code-claim`
+// is invoked with a path relative to the current checkout root in normal
+// use (the same convention `derive_slug_from_path` already assumes); this
+// only adjusts for a leading `./` or an absolute path that happens to live
+// under `project_root`.
+fn repo_relative_code_path(project_root: &std::path::Path, code_path: &str) -> String {
+    let candidate = std::path::Path::new(code_path);
+    let rel = if candidate.is_absolute() {
+        candidate
+            .strip_prefix(project_root)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| candidate.to_path_buf())
+    } else {
+        candidate.to_path_buf()
     };
-    backend.create(&stub).await?;
-    Ok(())
+    let mut rel = rel.to_string_lossy().replace('\\', "/");
+    while let Some(stripped) = rel.strip_prefix("./") {
+        rel = stripped.to_string();
+    }
+    rel
+}
+
+// ── cb claim: tracker linkage (issue #925) ─────────────────────────
+
+// Guards the process-wide cwd while `ensure_claim_issue` drives
+// `crate::cli::issues::run` — that entry point resolves its project root
+// from `std::env::current_dir()`, not a parameter. Mirrors
+// `standardize.rs`'s own `CwdGuard` (issue #919); duplicated here rather
+// than reused because that struct is file-private to `standardize.rs` and
+// this module already owns its own cwd-guarding convention, matching the
+// existing per-module `CWD_LOCK` pattern in `cli/mod.rs` and
+// `cli/guard.rs`. Restores the previous cwd on drop, including on
+// error/panic unwind.
+struct CwdGuard {
+    prev: std::path::PathBuf,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl CwdGuard {
+    fn enter(dir: &std::path::Path) -> Result<Self> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev = std::env::current_dir().context("failed to read current directory")?;
+        std::env::set_current_dir(dir)
+            .with_context(|| format!("failed to switch cwd to {}", dir.display()))?;
+        Ok(Self { prev, _lock: lock })
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.prev);
+    }
+}
+
+// Run an async future to completion from sync code that may or may not
+// already be inside a tokio runtime (production runs inside `aw`'s
+// top-level multi-thread runtime; unit tests call in directly with none).
+// Mirrors `standardize.rs`'s `block_on_bridge` (issue #919) for the same
+// duplication reason documented on `CwdGuard` above.
+fn block_on_bridge<F: std::future::Future>(fut: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        Err(_) => {
+            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+            rt.block_on(fut)
+        }
+    }
+}
+
+// Durable tracker reference returned by `ensure_claim_issue` — the created
+// (or matched) work-item's slug, plus, when the resolved backend is a
+// remote tracker, its published issue number for the commit trailer.
+#[derive(Debug)]
+struct ClaimIssueRef {
+    slug: String,
+    number: Option<u64>,
+}
+
+impl ClaimIssueRef {
+    // The value to place on a `Claim-Issue:` trailer: the published issue
+    // number when the backend is remote (`#42`), else the work-item slug
+    // (local-backend fallback — see the durability note on
+    // `ensure_claim_issue`).
+    fn trailer_value(&self) -> String {
+        match self.number {
+            Some(n) => format!("#{n}"),
+            None => self.slug.clone(),
+        }
+    }
+}
+
+// File (or reuse, if one already exists for the same title) a durable
+// tracker work-item for code adopted via `aw td code-claim`, routed
+// through the real `aw wi create` path (`crate::cli::issues::run`)
+// instead of a `LocalBackend`-only stub — the same routing issue #919
+// established for `standardize::ensure_gap_issue`. Tracker linkage is
+// default-on (see `CbClaimArgs::no_issue` for the opt-out); this function
+// is best-effort — the caller (`run_claim`) warns and proceeds on `Err`,
+// never fails the claim, since `aw td code-claim` has to keep working
+// offline / with no issue backend configured.
+//
+// `--type refactor`, not `enhancement`: adopting already-written code into
+// the spec-driven regenerability lifecycle is maintenance/tech-debt work
+// on existing code, not a new user-facing capability — matching
+// `IssueType::Refactor`'s "maintenance" bucket in `issues.rs`'s planning
+// groups (`groups.maintenance.push(issue)`), as distinct from
+// `ensure_gap_issue`'s `enhancement` (a genuine HANDWRITE-coverage gap).
+//
+// Backend/durability note: this lands in whatever backend
+// `.aw/config.toml` resolves for the project that owns `code_path_rel`
+// (local → ephemeral `/tmp/aw/...`, exactly like plain `aw wi create`;
+// github/gitlab → a durable tracker issue). This function only fixes
+// code-claim's routing to the real create path — a marker/attr surface to
+// carry the tracker id back onto the adopted source doesn't exist yet
+// (the fillback pipeline that writes the spec for adopted code does not
+// wrap it in a HANDWRITE marker), so the published id is attached to the
+// `Cb-Claim` commit trailer instead (`commit_cb_claim_trailer`); the #932
+// gate is expected to pick this up once a marker surface exists.
+fn ensure_claim_issue(
+    project_root: &std::path::Path,
+    code_path_rel: &str,
+) -> Result<ClaimIssueRef> {
+    let project_name =
+        crate::cli::standardize::configured_project_name_for_path(project_root, code_path_rel)?
+            .with_context(|| {
+                format!(
+            "no configured project owns `{code_path_rel}` — cannot file a code-claim tracker issue"
+        )
+            })?;
+    // Pre-resolve the exact `--project` label lookup `aw wi create` performs
+    // so a misconfigured project surfaces as a normal `Result::Err` here
+    // instead of `run_create`'s own validation-failure path, which hard
+    // `std::process::exit`s regardless of `--json` (see
+    // `claim_issue_create_args`).
+    crate::cli::issues::resolve_project_label(project_root, &project_name).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot file a code-claim tracker issue for `{code_path_rel}`: {}",
+            e.to_envelope_message()
+        )
+    })?;
+
+    let title = claim_issue_title(code_path_rel);
+
+    let find_existing = |title: &str| {
+        let title = title.to_string();
+        block_on_bridge(async move {
+            let (kind, repo, host) = crate::issues::resolve_default_backend(project_root)?;
+            let backend = crate::issues::make_backend(&kind, project_root, repo, host)?;
+            let filter = crate::issues::IssueFilter {
+                state: None,
+                issue_type: Some(crate::issues::IssueType::Refactor),
+                label: None,
+                author: None,
+            };
+            let issues = backend.list(&filter).await?;
+            Ok::<_, anyhow::Error>(
+                issues
+                    .into_iter()
+                    .filter(|issue| issue.title == title)
+                    .max_by(|a, b| a.created_at.cmp(&b.created_at)),
+            )
+        })
+    };
+
+    // Idempotent by title: a re-run of `code-claim` over the same path
+    // reuses the already-filed work-item instead of filing a duplicate.
+    if let Some(existing) = find_existing(&title)? {
+        return Ok(ClaimIssueRef {
+            number: existing.github_id.or(existing.gitlab_id),
+            slug: existing.slug,
+        });
+    }
+
+    let issues_args = crate::cli::issues::IssuesArgs {
+        command: crate::cli::issues::IssuesCommand::Create(claim_issue_create_args(
+            &title,
+            project_name,
+        )),
+    };
+    {
+        let _cwd = CwdGuard::enter(project_root)?;
+        block_on_bridge(crate::cli::issues::run(issues_args))
+            .with_context(|| format!("aw wi create failed for code-claim `{code_path_rel}`"))?;
+    }
+
+    let created = find_existing(&title)?
+        .context("aw wi create reported success but the work-item was not found via list")?;
+
+    Ok(ClaimIssueRef {
+        number: created.github_id.or(created.gitlab_id),
+        slug: created.slug,
+    })
+}
+
+// The stable, deterministic title `ensure_claim_issue` files (and
+// re-finds) an adopted-code tracker work-item under.
+fn claim_issue_title(code_path_rel: &str) -> String {
+    format!("Adopted (td code-claim): {code_path_rel}")
+}
+
+// Build the exact `CreateArgs` `ensure_claim_issue` hands to the real
+// `aw wi create` internal path (`crate::cli::issues::run`) for adopted
+// code — typed `--type refactor` + `--project <project_name>` fields, no
+// free-form `--body` (so `run_create`'s own canonical structured skeleton
+// is what gets filed). Split out from `ensure_claim_issue` so the
+// field/skeleton shape is unit-testable without a configured issue
+// backend — mirrors `standardize::gap_issue_create_args` (issue #919).
+fn claim_issue_create_args(title: &str, project_name: String) -> crate::cli::issues::CreateArgs {
+    crate::cli::issues::CreateArgs {
+        draft_path: None,
+        title: Some(title.to_string()),
+        issue_type: Some(crate::cli::issues::TypeFilter::Refactor),
+        body: None,
+        body_file: None,
+        projects: vec![project_name],
+        priority: None,
+        agent: None,
+        remote: false,
+        // `false`, not the CLI default `true`: with `json: true`,
+        // `run_create`'s validation-failure and remote-backend-create-failure
+        // branches hard `std::process::exit` instead of returning
+        // `Result::Err`. This call site runs deep inside `aw td code-claim`,
+        // not as a direct CLI invocation, and must stay recoverable so a
+        // tracker-linkage failure only warns (see `run_claim`) instead of
+        // crashing the whole claim.
+        json: false,
+        repo: None,
+    }
 }
 
 // Commit a `Lifecycle-Stage: Cb-Claim` trailer in the current checkout.
 // Best-effort: a missing git binary or non-git tree returns Err and the
-// caller logs a warning.
+// caller logs a warning. `claim_issue`, when set, carries the published
+// tracker issue (issue #925) as a `Claim-Issue:` trailer.
 fn commit_cb_claim_trailer(
     checkout_root: &std::path::Path,
     slug: &str,
     code_path: &str,
+    claim_issue: Option<&ClaimIssueRef>,
 ) -> Result<()> {
     let git_bin = crate::git::find_git_bin()
         .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
@@ -5164,7 +5544,7 @@ fn commit_cb_claim_trailer(
         .arg(checkout_root)
         .args(["add", "-A"])
         .output()?;
-    let msg = format!(
+    let mut msg = format!(
         "cb({slug}) \u{2014} adopted code at {code_path}\n\n\
          Lifecycle-Slug: {slug}\n\
          Work-Item: {slug}\n\
@@ -5172,6 +5552,9 @@ fn commit_cb_claim_trailer(
          Claim-Source: {code_path}\n\
          Claim-Type: cb-code"
     );
+    if let Some(issue) = claim_issue {
+        msg.push_str(&format!("\nClaim-Issue: {}", issue.trailer_value()));
+    }
     let commit = std::process::Command::new(&git_bin)
         .arg("-C")
         .arg(checkout_root)
