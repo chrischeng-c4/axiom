@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T10:43:21.506654+00:00"
-digest = "sha256:612a1fe28f0080fa4198c2f18759ad0ad231647d3998302d1c29cd3b08731b20"
-source_digest = "sha256:612a1fe28f0080fa4198c2f18759ad0ad231647d3998302d1c29cd3b08731b20"
-ir_digest = "sha256:f4ed5230a81e8dcd891eb1df398de184e0c9d36bed2b0366741df235cf67125d"
+generated_at = "2026-07-02T10:45:50.933610+00:00"
+digest = "sha256:6255bdd4e7d3625ba58fd8ffaec5cbca17d33a9d820820e69916f827633fcec7"
+source_digest = "sha256:6255bdd4e7d3625ba58fd8ffaec5cbca17d33a9d820820e69916f827633fcec7"
+ir_digest = "sha256:c0ee97db7b4d56fe516fe99b911b58bf89cd49bf160c16161d4e111fcbf2861d"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4914,8 +4914,8 @@ section_count = 2
 
 [[files]]
 path = "logic/aw-llm-offline-agent-orientation-command.md"
-digest = "sha256:68e43decf288dfe3aada4696f35c3469593e544cc4b1dee1c743637b147210b1"
-ir_digest = "sha256:d793f167d8e9996e39e4678e0c2dd30ba9d3a683d3105518cbfd748908e898b6"
+digest = "sha256:c37789de5593f211c6292907a2850c7730f447c0446f2673c45ed194d1c7e39f"
+ir_digest = "sha256:d771b44fa4f870c5f2472c06c9b2bd4201ffb52c1155b178d17a590f419f8faa"
 section_count = 2
 
 [[files]]
@@ -5315,8 +5315,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/issues.md"
-digest = "sha256:b62d3b6a8164c476af74ca4029bb7aab5b169f763c10f9eaaa0d764b79ae534f"
-ir_digest = "sha256:922d1a2cfb796eaf6856e429c7ca4c9aa1588a94b34897af6bcc028d72b0d954"
+digest = "sha256:3890701348fc7d4e6e199f34e80c80f92ae9850fe16a5b55f28468b20eaedee3"
+ir_digest = "sha256:b96398e88a6d2e25155db84946efed69bd50e0ee5c57dfe69153b9691da3f225"
 section_count = 2
 
 [[files]]
