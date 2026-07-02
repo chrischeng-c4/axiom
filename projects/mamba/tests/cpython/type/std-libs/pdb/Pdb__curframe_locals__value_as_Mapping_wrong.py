@@ -9,12 +9,11 @@
 # case = "Pdb__curframe_locals__value_as_Mapping_wrong"
 # subject = "pdb.Pdb.curframe_locals(value: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pdb.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed value
 # mamba-strict-type: TypeError
 """Type wall: pdb.Pdb.curframe_locals(value: Mapping); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from pdb import Pdb
-obj = object.__new__(Pdb)
+obj = Pdb()
 try:
     obj.curframe_locals(_W())  # value: Mapping <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
