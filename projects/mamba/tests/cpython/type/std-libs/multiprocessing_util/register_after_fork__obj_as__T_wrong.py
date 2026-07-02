@@ -9,12 +9,11 @@
 # case = "register_after_fork__obj_as__T_wrong"
 # subject = "multiprocessing.util.register_after_fork(obj: _T)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.util.register_after_fork(obj: _T); call it with the wrong type.
 

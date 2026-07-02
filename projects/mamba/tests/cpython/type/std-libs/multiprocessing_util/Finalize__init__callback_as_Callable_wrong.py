@@ -9,12 +9,11 @@
 # case = "Finalize__init__callback_as_Callable_wrong"
 # subject = "multiprocessing.util.Finalize.__init__(callback: Callable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callback"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed callback
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.util.Finalize.__init__(callback: Callable); call it with the wrong type.
 
