@@ -9,12 +9,11 @@
 # case = "Pdb__print_stack_trace__count_as_typed_wrong"
 # subject = "pdb.Pdb.print_stack_trace(count: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed count"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/pdb.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed count
 # mamba-strict-type: TypeError
 """Type wall: pdb.Pdb.print_stack_trace(count: typed); call it with the wrong type.
 
@@ -26,7 +25,7 @@ class _W:
 
 
 from pdb import Pdb
-obj = object.__new__(Pdb)
+obj = Pdb()
 try:
     obj.print_stack_trace(_W())  # count: typed <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
