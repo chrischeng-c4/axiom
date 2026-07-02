@@ -485,9 +485,9 @@ contract_id = "workflow-root-runner-cli-workflow-chain"
 category = "behavior"
 td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#workflow-root-runner-cli-workflow-chain"
 test_path = "projects/agentic-workflow/tests/behavior_workflow_root_runner_cli_workflow_chain.rs"
-command = "cargo test -p agentic-workflow --lib root_parser_accepts_capability_and_wi_roots -- --nocapture"
+command = "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
 required_for_production = true
-assertions = ["aw run root parser accepts capability and work-item roots"]
+assertions = ["CLI workflow chain emit sites resolve through the real clap tree for capability and work-item roots"]
 
 [[aw.ec.generated.cases]]
 id = "workflow-root-runner-parent-rollup-routing"

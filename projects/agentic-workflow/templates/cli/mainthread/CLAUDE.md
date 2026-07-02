@@ -7,10 +7,10 @@ Agentic Workflow is the workflow protocol. Agents should use the CLI verbs
 below, run `aw <verb> --help` when an argument shape matters, and treat stdout
 as the live prompt for the current binary and repository state. If stdout
 contains a JSON envelope, payload path, `invoke.command`, validation error, or
-next command, follow it exactly. For `aw run` JSON, do not declare the workflow
-complete unless `completion.workflow_complete=true`; `action=done` can mean only
-the current child root is complete and the envelope is asking you to inspect the
-parent.
+next command, follow it exactly. For `aw wi run`/`aw capability run` JSON, do
+not declare the workflow complete unless `completion.workflow_complete=true`;
+`action=done` can mean only the current child root is complete and the
+envelope is asking you to inspect the parent.
 
 For Agentic Workflow itself (`agentic-workflow` / `aw`), do not run the full
 AW loop against its own repo, and do not turn `aw health` or `aw standardize`
@@ -27,9 +27,9 @@ bypass.
 
 | CLI | Use it for |
 |-----|------------|
-| `aw run` | Root-driven workflow runner. Choose exactly one root with `--project <project>`, `--capability <project>:<capability-id>`, or `--wi <id>`; follow `invoke.command` and `agent_prompt` until `completion.workflow_complete=true` or `requires_hitl=true`. |
+| `aw wi run <id>` / `aw capability run [<cap-id>] --project <p>` | Root-driven workflow runners on the delivery nouns: `aw wi run <id>` drives one WI to terminal; `aw capability run <cap-id>` drives one capability's work-root WIs; `aw capability run --project <p>` is the project-wide run-to-end driver. Follow `invoke.command` and `agent_prompt` until `completion.workflow_complete=true` or `requires_hitl=true`. |
 | `aw capability` | Product capability completion loop: `report`, `next`, `run`, and `check`; use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses `## Brief`, `## Capabilities`, `### Capability Index`, field-style capability contracts, and work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
-| `aw wi` | Work-item inventory and planning: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, and `fill-section`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. |
+| `aw wi` | Work-item inventory and planning: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, and `fill-section`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. There is no `estimate`/`sprintize`; use `aw capability run --project <name>` as the run-to-end driver instead of cron-style sprint batches. |
 | `aw td` | Tech-design and code-artifact lifecycle. TD defines candidate implementation structure; capability and EC gates are the source of product truth. Primary verbs are `create`, `validate`, `check`, `ast`, `migrate-mermaid`, and `claim`; code-artifact verbs inherited by TD are `gen`, `gen-source`, `fill`, `code-check`, and `code-claim`. Terminal TD/CB completion is `code-check <slug>`. |
 | `aw standardize` | Existing-project takeover workflow and remediation guidance. `capability`, `managed`, `semantic`, `traceability`, and `regenerable` expose `report`, `next`, and `run` to drive bounded repair work; readiness metrics live in `aw health`. |
 | `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Use `--verify-traceability --verify-cb --verify-cold --verify-tests` when production readiness must be evaluated. |

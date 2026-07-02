@@ -137,8 +137,8 @@ pub fn upsert_loop_state(body: &str, state: &LoopState) -> Result<String> {
 /// producer side of the loop: parse the existing block (or start a fresh one),
 /// `record_verification` (append the iteration + decide `next_action` from the
 /// verifier), and re-emit the block in place. Pure; the caller persists the
-/// returned body. This is what the EC verify step calls so `aw run`'s loop
-/// engine has an up-to-date block to read (#188 E1/E4).
+/// returned body. This is what the EC verify step calls so the `aw wi run` /
+/// `aw capability run` loop engine has an up-to-date block to read (#188 E1/E4).
 pub fn apply_verification(
     body: &str,
     wi: &str,

@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T18:22:25.354472+00:00"
-digest = "sha256:b126e937705a54777e5467d859e0f8803aa225dc7be4bff186a111a3c05cb504"
-source_digest = "sha256:b126e937705a54777e5467d859e0f8803aa225dc7be4bff186a111a3c05cb504"
-ir_digest = "sha256:646214cde032860babf16446b580a035ebce3dd4ad05a7ee8685ca063999c41d"
+generated_at = "2026-07-02T19:31:07.271922+00:00"
+digest = "sha256:cf21cf665be255177d46b248a3b66a9444580310d97a9c7df63b6a102546f1c5"
+source_digest = "sha256:cf21cf665be255177d46b248a3b66a9444580310d97a9c7df63b6a102546f1c5"
+ir_digest = "sha256:d1d453501e605adf9980baa0735db13afcbef1a4880c3170c8e4f10f372e8171"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5249,8 +5249,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/chain.md"
-digest = "sha256:8e38a9f3d4329d5d221c075246f79cfd1b2c9f99b2367a8690f2270d72e79edf"
-ir_digest = "sha256:893f869076332d155a0c04804c5abf68040b4ee9bf838516a56dce96372b2a14"
+digest = "sha256:414cf76ca87dc7b44148e39284f0282a9a16540447738e5f24e2d82ee693068d"
+ir_digest = "sha256:9c2a0b1d6c47aab24d144aa3044f6df29e6aef47b98e355110af4f49d51985a6"
 section_count = 2
 
 [[files]]
@@ -5285,8 +5285,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/commands.md"
-digest = "sha256:1b9dde4dc222d2bc6cf19b3018687e04de2a78f76bd1d6c5c9c69d92d578e8c7"
-ir_digest = "sha256:34d6852667f00a29f96346699257aec023e81fd33aacd6a0b6d5e326e2685583"
+digest = "sha256:d69661a4368d1b4249df977a315f1077430788d323c3e95017d93f702ba776ba"
+ir_digest = "sha256:7f0096687f8a253366350040a633f41c1be71866909f4762513375ad5cc2058f"
 section_count = 2
 
 [[files]]
@@ -5309,8 +5309,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/init.md"
-digest = "sha256:0684d9b687efa1a7989c02c659a873ed99021936442a3f61b45274be7d7306db"
-ir_digest = "sha256:b4e9fcc21e4f436d20a07e7b50aa3e24435415908e469d0ae491e1258e90229a"
+digest = "sha256:4a8cbf305680a6f2aae9a76ad8079b219223b3133a34759aee32ef7b269f3097"
+ir_digest = "sha256:40e344996312e4f99f66b3f13127f71c4b425022794a151bfc4459cadb0c2b92"
 section_count = 2
 
 [[files]]
@@ -5363,8 +5363,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/standardize.md"
-digest = "sha256:bfb0dcb014628f3f1bfd2086234574916ac396eeef38c5fae04f917ccc27206a"
-ir_digest = "sha256:2609c96c69a33aaceee8df0c76c2f14c3182c46cbfcfc6b61c62aa7602dc01a8"
+digest = "sha256:abca19375e21634f0efd9d8a013ab320fb5088ee6ff23b54e6c41fe97bc02cbe"
+ir_digest = "sha256:4bd369a644bf84a4ae581314e42f11cac8104e64f1f57f81c140fe1fb0c19f44"
 section_count = 3
 
 [[files]]
@@ -5441,13 +5441,13 @@ section_count = 7
 
 [[files]]
 path = "surface/specs/aw-capability-alignment-wi-planning.md"
-digest = "sha256:5c2bf1aa8d19bfcead4909748ab1d87472be916310bf688a9fb8bdd7004de1ec"
+digest = "sha256:e9fcf503bdcf77279c956fcb571c82ef86caefcaf7238db87845b7c298c716aa"
 parse_error = "cli:353-484: section 'cli' at lines 353..484: CLI manifest typed-payload parse error: commands[0]: missing field `name` at line 2 column 5"
 
 [[files]]
 path = "surface/specs/aw-capability-claim-closure-ec-inventory.md"
-digest = "sha256:819e48aa3c6badbdc81e8a43e1a1f00c80b5599a3c1476dcb3023bcdbba52e76"
-ir_digest = "sha256:14a5c4296149295d6e54af524ca6932f2dda9bd42a12433d9cdcfb2943586a92"
+digest = "sha256:70b742dbb795276a0eb8d14bcd81988250c43a96d453234a2e15d730f44ef8e4"
+ir_digest = "sha256:5d4eaab33e623496abd51440e0d3fc399f02308fbd323f1e6017552936d2076e"
 section_count = 1
 
 [[files]]
@@ -5457,7 +5457,7 @@ parse_error = "cli:22-198: section 'cli' at lines 22..198: CLI manifest typed-pa
 
 [[files]]
 path = "surface/specs/aw-client-boundaries.md"
-digest = "sha256:c580f69823190ab3b8ae857612df5e0925a1f2e3c1a47c7baa7a86bec66d96a7"
+digest = "sha256:18cb1e8d07a021a8d920332f38b6892a6ee4ce22a37dd4ea8f787ef7fc19e869"
 ir_digest = "sha256:be911fda9bb86f51bc4a97778a3697b38651dd81b7cc7731042c5a9cfac83661"
 section_count = 4
 
@@ -5558,8 +5558,8 @@ section_count = 4
 
 [[files]]
 path = "surface/specs/init-command.md"
-digest = "sha256:facf4187e0c9a24a16afa8bf9a81dbe05a458c9c19180e26d09288fced7111f9"
-ir_digest = "sha256:146e9846748ae1a2871394b71ce9e5c7c6fde03d71637dbd16f24ded93454a11"
+digest = "sha256:6de79a7a88ddcada1ba7f912ea2edc958d88eb193e76d6c8aae5015c39690984"
+ir_digest = "sha256:6819f9eaf3ce2478db82dbde13cf74d492d7ee765174dbe4f107f42eb3b83bf9"
 section_count = 24
 
 [[files]]

@@ -7,15 +7,15 @@
 // @contract workflow-root-runner-cli-workflow-chain
 // @category behavior
 // @required_for_production true
-// @command cargo test -p agentic-workflow --lib root_parser_accepts_capability_and_wi_roots -- --nocapture
+// @command cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture
 // AW-EC-END
 
-// Contract: aw run root parser accepts capability and work-item roots
+// Contract: CLI workflow chain emit sites resolve through the real clap tree for capability and work-item roots
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn workflow_root_runner_cli_workflow_chain() {
     let command =
-        "cargo test -p agentic-workflow --lib root_parser_accepts_capability_and_wi_roots -- --nocapture";
+        "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture";
     let id = "workflow-root-runner-cli-workflow-chain";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

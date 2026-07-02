@@ -114,7 +114,7 @@ requirement R12 {
 
 requirement R13 {
   id: R13
-  text: "Do not install cron-style issue patrol skills; aw run owns run-to-end project orchestration"
+  text: "Do not install cron-style issue patrol skills; aw capability run owns run-to-end project orchestration"
   risk: low
   verifymethod: test
 }

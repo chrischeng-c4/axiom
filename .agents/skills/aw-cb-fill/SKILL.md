@@ -64,8 +64,9 @@ For each envelope:
   from mainthread directly. On pass it commits terminal lifecycle closure. On
   fail it emits an `error` envelope; mainthread re-writes the offending marker
   payload and re-applies.
-  If the dispatch or parent `aw run` envelope includes an `Artifact Quality
-  Gate`, the produced code/test artifacts must satisfy its hard preflight
+  If the dispatch or parent runner (`aw wi run` / `aw capability run`)
+  envelope includes an `Artifact Quality Gate`, the produced code/test
+  artifacts must satisfy its hard preflight
   evidence before this lifecycle can be considered complete. Frontend/UI work
   needs desktop and mobile viewport evidence, interaction smoke proof,
   accessibility/readability smoke, and placeholder-free primary-state evidence.
