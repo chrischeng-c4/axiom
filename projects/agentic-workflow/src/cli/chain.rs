@@ -270,9 +270,19 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "standardize workflow's audit-record follow-up command",
     },
     EmitSite {
-        source: "standardize.rs:standardize (traceability report/next)",
-        sample: "aw standardize traceability report --project agentic-workflow",
-        note: "standardize traceability layer's report command",
+        source: "standardize.rs:managed_health_worker_command (~:1298)",
+        sample: "aw td code-claim projects/agentic-workflow/src/cli/chain.rs",
+        note: "health managed-axis routing: unmarked file -> code-claim (#920)",
+    },
+    EmitSite {
+        source: "standardize.rs:semantic_health_worker_command (~:1313)",
+        sample: "aw health --project agentic-workflow metrics --verbose",
+        note: "health semantic-axis routing pointer (#920)",
+    },
+    EmitSite {
+        source: "standardize.rs:traceability_health_worker_command (~:1323)",
+        sample: "aw health --project agentic-workflow traceability --verbose",
+        note: "health traceability-axis routing pointer (#920)",
     },
     EmitSite {
         source: "capability.rs:lifecycle_action_for_work_item (terminal check)",
