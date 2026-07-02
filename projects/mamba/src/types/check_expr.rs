@@ -836,6 +836,54 @@ impl TypeChecker {
         }
     }
 
+    /// #886: fall back to a receiver's already-*inferred* `Ty::Class` name to
+    /// resolve a Method-row lookup when `instance_origins` misses. This covers
+    /// receivers that `instance_origins` never sees because it is only
+    /// populated by a direct `x = Cls(...)` / `object.__new__(Cls)` assignment
+    /// through a *from-imported* qualifier (`check_stmt.rs`) — e.g. a
+    /// receiver constructed from a builtin needing no import at all, such as
+    /// `e = BaseException("boom")` (`Ty::Class{name:"BaseException"}` is
+    /// already the inferred type of `e`, but `BaseException` never appears in
+    /// `import_origins` so the direct instance-provenance path never fires).
+    ///
+    /// Deliberately conservative (skip-when-unsure, matching the file's
+    /// zero-false-positive goal):
+    /// - Never fires for a name that is a *user-defined* class (tracked in
+    ///   `class_methods` for classes with methods, `user_bare_classes` for
+    ///   bare ones) — a user class that happens to share a stdlib class's
+    ///   name must not adopt the stdlib class's Method contract.
+    /// - Only fires when the class name owns a `Method` row in *exactly one*
+    ///   module across the sig tables. A name ambiguous across modules (no
+    ///   real import to disambiguate) is left unresolved rather than guessed.
+    fn stdlib_method_sig_by_class_name(
+        &self,
+        class_name: &str,
+        attr: &str,
+    ) -> Option<&'static super::stdlib_sigs::StdlibSig> {
+        use super::stdlib_sigs::{SigKind, STDLIB_SIGS};
+        use super::stdlib_sigs_generated::STDLIB_SIGS_GENERATED;
+        if self.class_methods.contains_key(class_name)
+            || self.user_bare_classes.contains(class_name)
+        {
+            return None;
+        }
+        let owns_class = |s: &&super::stdlib_sigs::StdlibSig| {
+            matches!(s.kind, SigKind::Method) && s.qualifier == class_name
+        };
+        let mut modules: Vec<&'static str> = STDLIB_SIGS
+            .iter()
+            .chain(STDLIB_SIGS_GENERATED.iter())
+            .filter(owns_class)
+            .map(|s| s.module)
+            .collect();
+        modules.sort_unstable();
+        modules.dedup();
+        let [module] = modules.as_slice() else {
+            return None;
+        };
+        super::stdlib_sigs::get(module, class_name, attr)
+    }
+
     /// ① Type-wall PoC HOOK. Resolve a call's callee to `(module, qualifier,
     /// name)` via import/instance provenance, look it up in the hardcoded
     /// `stdlib_sigs` table, and — only when the signature is enforceable —
@@ -937,6 +985,14 @@ impl TypeChecker {
                             // `f.__get__(..., owner)` enforceable without pretending
                             // that `builtins.function` is importable in CPython.
                             super::stdlib_sigs::get("builtins", "function", attr)
+                        } else if let Ty::Class { name, .. } =
+                            self.tcx.get(self.get_sym_type(sym.0)).clone()
+                        {
+                            // #886: `instance_origins` missed (no direct
+                            // `x = Cls(...)` provenance through an import) but
+                            // inference already knows `base`'s class — fall
+                            // back to it. See `stdlib_method_sig_by_class_name`.
+                            self.stdlib_method_sig_by_class_name(&name, attr)
                         } else {
                             None
                         }
