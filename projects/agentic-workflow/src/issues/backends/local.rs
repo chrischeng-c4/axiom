@@ -427,7 +427,14 @@ fn parse_issue_file(path: &Path) -> Result<Issue> {
         body: doc.body,
         related: doc.frontmatter.related,
         implements: doc.frontmatter.implements,
-        phase: doc.frontmatter.phase,
+        // issue #850: normalize at the on-disk read choke point so a WI
+        // parked at a retired CRRR phase (cb_reviewed/cb_revised/
+        // cb_arbitrated/td_reviewed) self-heals to its live linear
+        // equivalent for every downstream reader, without a backfill pass.
+        phase: doc
+            .frontmatter
+            .phase
+            .map(|p| crate::issues::types::td_phase::normalize(&p).to_string()),
         branch: doc.frontmatter.branch,
         target_branch: doc.frontmatter.target_branch,
         git_workflow: doc.frontmatter.git_workflow,

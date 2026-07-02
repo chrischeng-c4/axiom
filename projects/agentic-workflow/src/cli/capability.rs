@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 //! `aw capability` -- product capability map governance.
 
+use crate::issues::types::td_phase;
 use crate::issues::{
     make_backend, resolve_default_backend, Issue, IssueFilter, IssueState, IssueType,
 };
@@ -6945,24 +6946,38 @@ fn lifecycle_action_for_work_item(
         );
     }
 
-    match evidence.and_then(|evidence| evidence.phase.as_deref()) {
-        Some("td_reviewed") => (
+    // issues #916 / #850: derive from the single td_phase transition table
+    // instead of a raw-string match, and normalize before matching so a WI
+    // parked at a retired CRRR phase (cb_reviewed/cb_revised/cb_arbitrated/
+    // td_reviewed) routes to the same live-lifecycle command a freshly
+    // normalized phase would — never to a verb whose guard rejects it.
+    let normalized_phase = evidence
+        .and_then(|evidence| evidence.phase.as_deref())
+        .map(td_phase::normalize);
+    match normalized_phase {
+        // td_reviewed normalizes to td_created and continues CB generation,
+        // same as a WI freshly landed at td_created.
+        Some(td_phase::TD_CREATED) => (
             CapabilityActionKind::RunCb,
             cb_gen_command(work_item, td_spec_path),
             "active WI has reviewed TD; continue CB generation".to_string(),
         ),
-        Some("cb_genned") | Some("cb_fill_in_progress") => (
+        Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
             CapabilityActionKind::RunCb,
             format!("aw td fill {work_item}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
-        Some("cb_filled") | Some("cb_reviewed") => (
+        // cb_reviewed / cb_revised / cb_arbitrated all normalize to
+        // cb_filled, which the terminal code-check guard accepts — closes
+        // the #850 dispatch-loop (cb_reviewed used to route here directly
+        // and get rejected by the un-normalized guard).
+        Some(td_phase::CB_FILLED) => (
             CapabilityActionKind::RunTd,
             format!("aw td code-check {work_item}"),
             "active WI has generated and checked implementation output; run terminal code-check"
                 .to_string(),
         ),
-        Some("td_merged") => (
+        Some(td_phase::TD_MERGED) => (
             CapabilityActionKind::RunVerify,
             format!("aw capability report --project {} --verify", report.project),
             "active WI has merged TD/CB lifecycle; verify capability readiness".to_string(),
@@ -16960,6 +16975,47 @@ capability_refs:
             "aw td gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
         );
         assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
+    }
+
+    // issue #850: cb_reviewed/cb_revised/cb_arbitrated are retired CRRR
+    // phases that normalize to cb_filled. Before this fix, cb_reviewed
+    // routed straight to `aw td code-check` without normalizing first,
+    // which the terminal code-check phase guard then rejected outright —
+    // an unrecoverable dispatch-loop. This proves the capability loop now
+    // routes all three retired post-fill phases to the terminal
+    // code-check command the (normalized) guard accepts.
+    #[test]
+    fn lifecycle_action_for_retired_post_fill_phases_runs_terminal_code_check() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        for phase in ["cb_reviewed", "cb_revised", "cb_arbitrated", "cb_filled"] {
+            let evidence = CapabilityWiEvidence {
+                reference: "#57".to_string(),
+                gap_id: "generated-manual-ec-evidence-schema".to_string(),
+                issue_type: "enhancement".to_string(),
+                state: "open".to_string(),
+                phase: Some(phase.to_string()),
+                expected_command: None,
+                title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
+            };
+
+            let (kind, command, reason) = lifecycle_action_for_work_item(
+                &report,
+                "57",
+                Some(&evidence),
+                Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+                None,
+                true,
+                "active WI exists; continue WI -> TD -> CB lifecycle",
+            );
+
+            assert_eq!(kind, CapabilityActionKind::RunTd, "phase: {phase}");
+            assert_eq!(command, "aw td code-check 57", "phase: {phase}");
+            assert_eq!(
+                reason,
+                "active WI has generated and checked implementation output; run terminal code-check",
+                "phase: {phase}"
+            );
+        }
     }
 
     #[test]

@@ -18,7 +18,7 @@ Reads the current issue phase and picks up where the chain left off.
 > Mainthread takes over each step directly. The CLI records the current
 > expected payload and exact command in the WI projection; mainthread fills
 > only that initialized payload, then either lets the hook run the expected command or runs
-> it literally. Section/review apply commands are atomic gates: they validate,
+> it literally. Section apply commands are atomic gates: they validate,
 > update WI projection/labels, commit git trailers, and emit the next command.
 
 ## Usage
@@ -39,15 +39,22 @@ Reads the current issue phase and picks up where the chain left off.
 |-------|-------------------|
 | `td_inited` | Run `aw td create <slug>` to initialize the applicability queue and WI projection |
 | `td_applicability_in_progress` | Fill `.aw/payloads/<slug>/applicability/<section>.md`, then run the projection's exact `aw td create --apply --phase applicability --section <section>` command |
-| `td_applicability_created` | Run `aw td review <slug> --phase applicability --spec-path <path>`, fill `.aw/payloads/<slug>/applicability/review.md`, then run the projection's exact review apply command |
+| `td_applicability_created` | Transient — the linear lifecycle advances straight to the first contract section (or `aw td gen` if the contract pass has no sections), no review step. If no lock is active here, read the `Next-Command` git trailer off the last td commit for this slug and run it verbatim |
 | `td_contract_in_progress` | Fill `.aw/payloads/<slug>/contract/<section>.md`, then run the projection's exact `aw td create --apply --phase contract --section <section>` command |
-| `td_created` | Run `aw td review <slug> --phase contract --spec-path <path>`, fill `.aw/payloads/<slug>/contract/review.md`, then run the projection's exact review apply command |
-| `td_reviewed` | Legacy reviewed phase: continue to `aw td gen`; EC and code-check gates decide whether another TD iteration is needed |
-| `td_revised` | Legacy phase: run `aw td review <slug> --spec-path <path>` and follow the emitted envelope |
+| `td_created` | Transient — the linear lifecycle advances straight to `aw td gen`. If no lock is active here, read the `Next-Command` git trailer off the last td commit for this slug and run it verbatim |
+| `td_reviewed` | Retired CRRR phase (issue #850); self-heals to `td_created` on read (`td_phase::normalize`), so `aw wi show` never actually surfaces it — treat as `td_created` and run `aw td gen <slug> --spec-path <path>` |
 | `cb_genned` | Run `aw td fill` to fill HANDWRITE markers |
 | `cb_filled` | Run `aw td code-check <slug>`; terminal code-check commits closure, and EC/health decide the next iteration |
-| `cb_reviewed` | Legacy reviewed phase: run `aw td code-check <slug>` |
+| `cb_reviewed` / `cb_revised` / `cb_arbitrated` | Retired CRRR phases (issue #850); self-heal to `cb_filled` on read (`td_phase::normalize`), so `aw wi show` never actually surfaces them — treat as `cb_filled` and run `aw td code-check <slug>` |
 | `td_merged` | Already done — report success |
+
+`td_revised` is a dead legacy phase with no writer anywhere in the CLI and no
+successor command in the current linear lifecycle — if an issue is ever found
+resting there, treat it as a bug, not a normal resume state. The four rows
+above it (`td_reviewed`, `cb_reviewed`, `cb_revised`, `cb_arbitrated`) predate
+the CRRR collapse but DO self-heal via `td_phase::normalize` at every
+issue-read site, so they remain safe, documented resume states even though
+you should rarely observe them directly.
 
 3. For phases that need the spec_path, find it by scanning `projects/agentic-workflow/tech-design/` in the current checkout for `.md` files with `fill_sections` in their frontmatter.
 

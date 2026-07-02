@@ -11,6 +11,7 @@
 //!
 //! @spec projects/agentic-workflow/tech-design/logic/workitem-loop-state-model-additive-foundation.md
 
+use crate::issues::types::td_phase;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -170,17 +171,26 @@ pub fn apply_verification(
 pub fn decide_next_action(last: &LastResult, issue_id: &str) -> (LoopStatus, Option<String>) {
     match last {
         LastResult::Green => {
+            // issues #916 / #850: derive the base command from the single
+            // td_phase transition table rather than a hardcoded literal, so
+            // this producer stays in sync with the terminal code-check
+            // guard it feeds.
+            let base =
+                td_phase::next_phase_command(td_phase::CB_FILLED).unwrap_or("aw td code-check");
             let command = if issue_id.is_empty() {
                 // Defensive fallback only: `apply_verification` always seeds
                 // `issue_id`, so this arm should not be reachable from the
                 // real `aw ec record` producer path.
-                "aw td code-check".to_string()
+                base.to_string()
             } else {
-                format!("aw td code-check {issue_id}")
+                format!("{base} {issue_id}")
             };
             (LoopStatus::Converged, Some(command))
         }
-        LastResult::Red { .. } => (LoopStatus::Iterating, Some("aw td gen".to_string())),
+        LastResult::Red { .. } => {
+            let base = td_phase::next_phase_command(td_phase::TD_CREATED).unwrap_or("aw td gen");
+            (LoopStatus::Iterating, Some(base.to_string()))
+        }
         LastResult::Blocked { .. } => (LoopStatus::Blocked, None),
         LastResult::None => (LoopStatus::Iterating, None),
     }
