@@ -5155,10 +5155,13 @@ fill_sections: [schema]
 ///
 /// Adopt an on-disk TD spec into the score lifecycle. Switches to or creates
 /// the `td-<slug>` branch only when launched from `main`; otherwise it stays
-/// on the current branch. It sets `phase: td_reviewed`, commits the
-/// `Lifecycle-Stage: Td-Claim` trailer with a `Claim-Source:` sub-trailer, and
-/// emits a dispatch envelope to `aw td gen`. Idempotent on re-run when the
-/// active branch already carries the trailer (use `--force-rebase` to re-run).
+/// on the current branch. It sets `phase: td_created` (claim adopts an
+/// already-authored spec, which is semantically the post-create state; the
+/// linear lifecycle has no outgoing transition from `td_reviewed`), commits
+/// the `Lifecycle-Stage: Td-Claim` trailer with a `Claim-Source:`
+/// sub-trailer, and emits a dispatch envelope to `aw td gen` (whose guard
+/// requires exactly `td_created`). Idempotent on re-run when the active
+/// branch already carries the trailer (use `--force-rebase` to re-run).
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
@@ -5295,9 +5298,13 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
         spec_path_in_worktree = Some(dest_rel);
     }
 
-    // 4. R5: Set phase: td_reviewed with disambiguating error context.
+    // 4. R5: Set phase: td_created — claim adopts an already-authored spec
+    // into the worktree, which is semantically the post-create state, and
+    // the dispatch envelope below points at `aw td gen`, whose guard demands
+    // exactly `td_created` (run_gen_code). `td_reviewed` has no outgoing
+    // transition in the linear lifecycle and would permanently deadlock.
     let patch = IssuePatch {
-        phase: Some(crate::issues::types::td_phase::TD_REVIEWED.to_string()),
+        phase: Some(crate::issues::types::td_phase::TD_CREATED.to_string()),
         branch: Some(active_branch),
         ..Default::default()
     };

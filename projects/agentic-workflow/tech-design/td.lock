@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T09:28:56.213055+00:00"
-digest = "sha256:c913e63d2968761f3cdc74817ac55f3054caad311c382c0946904cd6596810e8"
-source_digest = "sha256:c913e63d2968761f3cdc74817ac55f3054caad311c382c0946904cd6596810e8"
-ir_digest = "sha256:6e247f15768f9a33dbbf911643d4a2d573d19a2d5e5d541ba3f739ac999c20ca"
+generated_at = "2026-07-02T09:37:28.845083+00:00"
+digest = "sha256:cf27a517c402202568eb1929f3b55776aed2c3bdf0f99352c67c044b2d3b0877"
+source_digest = "sha256:cf27a517c402202568eb1929f3b55776aed2c3bdf0f99352c67c044b2d3b0877"
+ir_digest = "sha256:8328c2c4157d3211d1d143530409faef77226f904296b78af097bb3fe034ca03"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5819,8 +5819,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/recovery_flow_test.md"
-digest = "sha256:721cca11fb57f5b3feb94e47d9dd3084a5f9e0760883c8cdf9dc5d4f465e1267"
-ir_digest = "sha256:a9097bb50e1d25361d783bda3ed3b98562ec8d5055077d2077d8059ff7854b0c"
+digest = "sha256:0625f485ebb4f72f7c9cca5fa48123021d96ad148f3f36a13f73d47abc603b2a"
+ir_digest = "sha256:bfc7879ffa8d044e9b84e5728cc56fda39246a9b8c3c933d2dc993ef83866d82"
 section_count = 2
 
 [[files]]
@@ -5837,8 +5837,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_claim_test.md"
-digest = "sha256:ab5b0528f17a359adb30092b095378a24830f42f01bd0834f2f992a008ba93a7"
-ir_digest = "sha256:93d9078dddb539ccc7762b677275b0e2c5eaad48d227decef9fef2bebba0a62a"
+digest = "sha256:c1069a87158ff2f5db677278e3a8fb1075d276caac7101ffaac9188a42485e9a"
+ir_digest = "sha256:a1b0e3fbab3e925499e70813e1d69ce6fa2d181b476d1eadfebeb828073cfc1c"
 section_count = 2
 
 [[files]]
