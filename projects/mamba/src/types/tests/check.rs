@@ -1454,6 +1454,27 @@ fn test_stdlib_module_fn_correct_scalar_clean() {
 }
 
 #[test]
+fn test_stdlib_path_or_fd_wall_keeps_valid_overloads_clean() {
+    let errors = check("from os import listdir\nlistdir('.')\nlistdir(0)\n");
+    assert!(
+        errors.is_empty(),
+        "listdir(str/int) overloads must stay clean, got: {errors:?}"
+    );
+
+    let errors = check("from os import listdir\nlistdir(3.14)\n");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "listdir(float) should be rejected, got: {errors:?}"
+    );
+
+    let errors = check("from os import listdir\nclass _W: pass\nlistdir(_W())\n");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "listdir(bare object) should be rejected, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_stdlib_module_fn_via_module_attr() {
     // `import os; os.strerror("x")` — attr path through module binding.
     let errors = check("import os\nos.strerror(\"x\")\n");

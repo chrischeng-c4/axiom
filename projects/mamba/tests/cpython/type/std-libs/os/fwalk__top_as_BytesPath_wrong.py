@@ -9,12 +9,11 @@
 # case = "fwalk__top_as_BytesPath_wrong"
 # subject = "os.fwalk(top: BytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed top"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed top
 # mamba-strict-type: TypeError
 """Type wall: os.fwalk(top: BytesPath); call it with the wrong type.
 

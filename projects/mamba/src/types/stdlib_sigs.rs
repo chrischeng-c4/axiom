@@ -26,6 +26,10 @@ pub enum CoreTy {
     /// A small explicit union used for stdlib overloads whose accepted scalar
     /// set is still false-positive-clean to enforce.
     IntOrStr,
+    /// Path-like APIs that also accept an fd integer. Concrete str/int values
+    /// are accepted, bytes/pathlike objects remain skip-safe, and impossible
+    /// concrete scalars plus bare user objects are rejected.
+    PathOrFd,
     Bytes,
     MemoryView,
     Complex,
@@ -4900,6 +4904,192 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("mask", CoreTy::Unknown)],
         enforceable: false,
     },
+    // POSITIVE: generated os rows lose first-argument precision for variadic
+    // wrappers, path/fd overloads, and protocol-heavy env/fd/sequence aliases.
+    // Keep these first-argument walls false-positive-clean: path/fd rows accept
+    // legal str/int scalars and skip bytes/pathlike objects; protocol rows only
+    // reject bare inert user instances or impossible concrete scalars.
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "execl",
+        kind: SigKind::ModuleFn,
+        params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "execle",
+        kind: SigKind::ModuleFn,
+        params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "execlp",
+        kind: SigKind::ModuleFn,
+        params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "execlpe",
+        kind: SigKind::ModuleFn,
+        params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "fwalk",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("top", CoreTy::Typed),
+            p("topdown", CoreTy::Unknown),
+            p("onerror", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "get_exec_path",
+        kind: SigKind::ModuleFn,
+        params: &[p("env", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "getenvb",
+        kind: SigKind::ModuleFn,
+        params: &[p("key", CoreTy::Bytes)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "listdir",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::PathOrFd)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "putenv",
+        kind: SigKind::ModuleFn,
+        params: &[p("name", CoreTy::Str), p("value", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "readlink",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "scandir",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::PathOrFd)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "sendfile",
+        kind: SigKind::ModuleFn,
+        params: &[p("out_fd", CoreTy::Int), p("in_fd", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "setgroups",
+        kind: SigKind::ModuleFn,
+        params: &[p("groups", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "spawnl",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("mode", CoreTy::Int),
+            p("file", CoreTy::Unknown),
+            p("arg0", CoreTy::Unknown),
+            p("args", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "spawnle",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("mode", CoreTy::Int),
+            p("file", CoreTy::Unknown),
+            p("arg0", CoreTy::Unknown),
+            p("args", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "spawnlp",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("mode", CoreTy::Int),
+            p("file", CoreTy::Unknown),
+            p("arg0", CoreTy::Unknown),
+            p("args", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "spawnlpe",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("mode", CoreTy::Int),
+            p("file", CoreTy::Unknown),
+            p("arg0", CoreTy::Unknown),
+            p("args", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "unsetenv",
+        kind: SigKind::ModuleFn,
+        params: &[p("name", CoreTy::Str)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "os",
+        qualifier: "",
+        name: "walk",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("top", CoreTy::Typed),
+            p("topdown", CoreTy::Unknown),
+            p("onerror", CoreTy::Unknown),
+            p("followlinks", CoreTy::Unknown),
+        ],
+        enforceable: true,
+    },
     // NEGATIVE: locale.setlocale(category, locale=None) — a non-int category
     // (`setlocale("not_a_category", ...)`) is a RUNTIME TypeError ("an integer
     // is required (got type str)"); the dispatcher raises it.
@@ -8394,6 +8584,36 @@ mod tests {
         let walk = get("pathlib", "Path", "walk").expect("Path.walk row present");
         assert_eq!(walk.params[2].name, "follow_symlinks");
         assert_eq!(walk.params[2].ty, CoreTy::Bool);
+    }
+
+    #[test]
+    fn curated_os_walls_override_unknown_generated_rows() {
+        for (name, param_name, param_ty) in [
+            ("execl", "file", CoreTy::Typed),
+            ("execle", "file", CoreTy::Typed),
+            ("execlp", "file", CoreTy::Typed),
+            ("execlpe", "file", CoreTy::Typed),
+            ("fwalk", "top", CoreTy::Typed),
+            ("get_exec_path", "env", CoreTy::Typed),
+            ("getenvb", "key", CoreTy::Bytes),
+            ("listdir", "path", CoreTy::PathOrFd),
+            ("putenv", "name", CoreTy::Str),
+            ("readlink", "path", CoreTy::Typed),
+            ("scandir", "path", CoreTy::PathOrFd),
+            ("sendfile", "out_fd", CoreTy::Int),
+            ("setgroups", "groups", CoreTy::Typed),
+            ("spawnl", "mode", CoreTy::Int),
+            ("spawnle", "mode", CoreTy::Int),
+            ("spawnlp", "mode", CoreTy::Int),
+            ("spawnlpe", "mode", CoreTy::Int),
+            ("unsetenv", "name", CoreTy::Str),
+            ("walk", "top", CoreTy::Typed),
+        ] {
+            let sig = get("os", "", name).expect("os row present");
+            assert!(sig.enforceable, "os.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, param_name);
+            assert_eq!(sig.params[0].ty, param_ty);
+        }
     }
 
     #[test]
