@@ -67,23 +67,108 @@ pub fn resolve_bare_specifier(
         ..ResolveOptions::default()
     };
     let resolver = ModuleResolver::new(options).ok()?;
-    let resolved = resolver.resolve(specifier, importer_file).ok()?;
+    let resolved = match resolver.resolve(specifier, importer_file).ok() {
+        Some(resolved) => resolved,
+        None => return resolve_bare_asset_export(root, specifier),
+    };
 
     // External (or anything not a package resolution) is not something we serve
     // from disk — leave it for the importmap.
     if resolved.is_external || resolved.kind != ResolveKind::Package {
-        return None;
+        return resolve_bare_asset_export(root, specifier);
     }
 
     // Must be a real file genuinely inside node_modules. (`resolve` returns the
     // specifier path verbatim for externals, which would not be a real file.)
     if !resolved.path.is_file() {
-        return None;
+        return resolve_bare_asset_export(root, specifier);
     }
     if !path_has_node_modules(&resolved.path) {
-        return None;
+        return resolve_bare_asset_export(root, specifier);
     }
     Some(resolved.path)
+}
+
+fn resolve_bare_asset_export(root: &Path, specifier: &str) -> Option<PathBuf> {
+    let (package_name, subpath) = split_package_specifier(specifier)?;
+    if !is_raw_asset_specifier(&subpath) {
+        return None;
+    }
+    let package_dir = root.join("node_modules").join(&package_name);
+    let package_json = package_dir.join("package.json");
+    let body = std::fs::read_to_string(package_json).ok()?;
+    let package: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let exports = package.get("exports")?;
+    let target = export_target_for_subpath(exports, &subpath)?;
+    let file = package_dir.join(target.trim_start_matches("./"));
+    file.is_file().then_some(file)
+}
+
+fn split_package_specifier(specifier: &str) -> Option<(String, String)> {
+    if specifier.starts_with('@') {
+        let mut parts = specifier.splitn(4, '/');
+        let scope = parts.next()?;
+        let name = parts.next()?;
+        let package_end = scope.len() + 1 + name.len();
+        let subpath = specifier
+            .get(package_end + 1..)
+            .map(|rest| format!("./{rest}"))
+            .unwrap_or_else(|| ".".to_string());
+        return Some((specifier[..package_end].to_string(), subpath));
+    }
+
+    let (package_name, rest) = specifier.split_once('/').unwrap_or((specifier, ""));
+    let subpath = if rest.is_empty() {
+        ".".to_string()
+    } else {
+        format!("./{rest}")
+    };
+    Some((package_name.to_string(), subpath))
+}
+
+fn export_target_for_subpath(exports: &serde_json::Value, subpath: &str) -> Option<String> {
+    match exports {
+        serde_json::Value::String(path) if subpath == "." => Some(path.clone()),
+        serde_json::Value::Object(map) => {
+            if let Some(value) = map.get(subpath) {
+                return export_target_value(value);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn export_target_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(path) => Some(path.clone()),
+        serde_json::Value::Object(map) => {
+            for key in ["import", "browser", "default"] {
+                if let Some(nested) = map.get(key) {
+                    if let Some(path) = export_target_value(nested) {
+                        return Some(path);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn is_raw_asset_specifier(path: &str) -> bool {
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    matches!(
+        Path::new(path).extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("svg")
+                || ext.eq_ignore_ascii_case("png")
+                || ext.eq_ignore_ascii_case("jpg")
+                || ext.eq_ignore_ascii_case("jpeg")
+                || ext.eq_ignore_ascii_case("gif")
+                || ext.eq_ignore_ascii_case("webp")
+                || ext.eq_ignore_ascii_case("avif")
+    )
 }
 
 /// The `node_modules`-relative key for a resolved dep file: the path *after* the

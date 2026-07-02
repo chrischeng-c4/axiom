@@ -147,6 +147,12 @@ fn emit_export_statement(
 ) -> Result<()> {
     // `export { A, B }` / `export { A } from "./x"` / `export type { … }` /
     // `export * from "./x"` — re-export forms have no inner declaration node.
+    if let Some(lines) = svgr_reexport_declarations(node, source) {
+        for line in lines {
+            push_line(out, &line);
+        }
+        return Ok(());
+    }
     if let Some(line) = reexport_line(node, source) {
         push_line(out, &line);
         return Ok(());
@@ -429,11 +435,19 @@ fn normalize_arrow_parameters_for_type(params: &str) -> Option<String> {
             }
             let optional = name.ends_with('?') || default_value.is_some();
             let name = name.trim_end_matches('?').trim();
-            if !is_identifier(name) {
+            let is_binding_pattern = is_supported_binding_pattern(name);
+            if !is_identifier(name) && !is_binding_pattern {
+                return None;
+            }
+            if is_binding_pattern && optional {
                 return None;
             }
             let rest = if is_rest { "..." } else { "" };
-            let marker = if optional && !is_rest { "?" } else { "" };
+            let marker = if optional && !is_rest && !is_binding_pattern {
+                "?"
+            } else {
+                ""
+            };
             normalized.push(format!("{rest}{name}{marker}: {ty}"));
             continue;
         }
@@ -451,6 +465,10 @@ fn normalize_arrow_parameters_for_type(params: &str) -> Option<String> {
         normalized.push(format!("{name}?: {ty}"));
     }
     Some(format!("({})", normalized.join(", ")))
+}
+
+fn is_supported_binding_pattern(name: &str) -> bool {
+    (name.starts_with('{') && name.ends_with('}')) || (name.starts_with('[') && name.ends_with(']'))
 }
 
 fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
@@ -473,6 +491,10 @@ fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
         if property.starts_with("...") || property.starts_with('[') {
             return None;
         }
+        if let Some(member) = infer_object_method_member_type(property) {
+            members.push(format!("    {member};"));
+            continue;
+        }
         let (key, value) = split_once_top_level(property, ':')?;
         let key = key.trim();
         if !is_supported_object_literal_key(key) {
@@ -493,15 +515,47 @@ fn is_supported_object_literal_key(key: &str) -> bool {
     is_identifier(key) || is_string_literal(key) || is_number_literal(key)
 }
 
+fn infer_object_method_member_type(property: &str) -> Option<String> {
+    let open = property.find('(')?;
+    let close = matching_delimiter(property, open, '(', ')')?;
+    let prefix = property[..open].trim();
+    let name = prefix.strip_prefix("async").unwrap_or(prefix).trim();
+    if !is_supported_object_literal_key(name) {
+        return None;
+    }
+    let params = &property[open..=close];
+    let rest = property[close + 1..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let body_start = rest.find('{')?;
+    let ret = rest[..body_start].trim();
+    if ret.is_empty() {
+        return None;
+    }
+    Some(format!("{name}{params}: {ret}"))
+}
+
 fn infer_arrow_function_type_from_text(expr: &str) -> Option<String> {
     let (left, _) = split_once_top_level_arrow(expr)?;
-    let (params, ret) = split_once_top_level(left, ':')?;
+    let (params, ret) = split_arrow_head_params_and_return(left)?;
     let params = normalize_arrow_parameters_for_type(params.trim())?;
     let ret = ret.trim();
     if ret.is_empty() {
         return None;
     }
     Some(format!("{params} => {ret}"))
+}
+
+fn split_arrow_head_params_and_return(head: &str) -> Option<(&str, &str)> {
+    let head = head.trim();
+    let head = head.strip_prefix("async").unwrap_or(head).trim_start();
+    if head.starts_with('(') {
+        let close = matching_delimiter(head, 0, '(', ')')?;
+        let params = &head[..=close];
+        let rest = head[close + 1..].trim_start();
+        let ret = rest.strip_prefix(':')?.trim_start();
+        return Some((params, ret));
+    }
+    split_once_top_level(head, ':')
 }
 
 fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
@@ -529,6 +583,40 @@ fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
             ')' | ']' | '}' | '>' => depth -= 1,
             '=' if depth == 0 && text[idx..].starts_with("=>") => {
                 return Some((&text[..idx], &text[idx + 2..]));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn matching_delimiter(text: &str, open_idx: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices().skip_while(|(idx, _)| *idx < open_idx) {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            _ if ch == open => depth += 1,
+            _ if ch == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(idx);
+                }
             }
             _ => {}
         }
@@ -1268,6 +1356,71 @@ fn reexport_line(node: Node, source: &str) -> Option<String> {
     Some(node_text(node, source).trim_end().to_string())
 }
 
+fn svgr_reexport_declarations(node: Node, source: &str) -> Option<Vec<String>> {
+    if !has_child_kind(node, "export_clause") {
+        return None;
+    }
+    let text = node_text(node, source).trim_end();
+    let spec = export_from_specifier(text)?;
+    if !is_svg_specifier_for_dts(spec) {
+        return None;
+    }
+    let aliases = svgr_reexport_aliases(text);
+    if aliases.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec!["import type { FC, SVGProps } from \"react\";".to_string()];
+    for alias in aliases {
+        lines.push(format!(
+            "export declare const {alias}: FC<SVGProps<SVGSVGElement>>;"
+        ));
+    }
+    Some(lines)
+}
+
+fn export_from_specifier(text: &str) -> Option<&str> {
+    let after = text.rsplit_once(" from ")?.1.trim();
+    let quote = after.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &after[1..];
+    let end = rest.find(quote)?;
+    Some(&rest[..end])
+}
+
+fn is_svg_specifier_for_dts(spec: &str) -> bool {
+    let path = spec.split(['?', '#']).next().unwrap_or(spec);
+    path.ends_with(".svg")
+}
+
+fn svgr_reexport_aliases(text: &str) -> Vec<String> {
+    let Some(open) = text.find('{') else {
+        return Vec::new();
+    };
+    let Some(close) = text[open..].find('}').map(|idx| open + idx) else {
+        return Vec::new();
+    };
+    text[open + 1..close]
+        .split(',')
+        .filter_map(|binding| svgr_reexport_alias(binding.trim()))
+        .collect()
+}
+
+fn svgr_reexport_alias(binding: &str) -> Option<String> {
+    let mut parts = binding.split_whitespace();
+    let first = parts.next()?;
+    if first != "ReactComponent" {
+        return None;
+    }
+    match (parts.next(), parts.next(), parts.next()) {
+        (None, None, None) => Some(first.to_string()),
+        (Some("as"), Some(alias), None) if is_identifier(alias) => Some(alias.to_string()),
+        _ => None,
+    }
+}
+
 /// Detect `export * from "x"` whose `*` is an anonymous token, not a named
 /// child node.
 fn star_export(node: Node, source: &str) -> bool {
@@ -1460,6 +1613,60 @@ mod tests {
     }
 
     #[test]
+    fn infers_object_literal_method_with_object_assign_computed_key_body() {
+        let src = r#"export const columns = {
+    render(rows: Array<{ key: string }>): Record<string, number> {
+        return Object.assign({}, ...rows.map((row) => ({ [row.key]: 1 })));
+    },
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("render(rows: Array<{ key: string }>): Record<string, number>;"),
+            "object method with computed object body should use explicit boundary types, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_literal_async_arrow_with_destructured_typed_param() {
+        let src = r#"export const handlers = {
+    load: async ({ id }: { id: string }): Promise<string> => id,
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("load: ({ id }: { id: string }) => Promise<string>;"),
+            "async object arrow with typed destructured param should emit, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_with_destructured_typed_param() {
+        let src = r#"export const load = ({ id }: { id: string }): Promise<string> => Promise.resolve(id);
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const load: ({ id }: { id: string }) => Promise<string>;"),
+            "const arrow with typed destructured param should emit, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_literal_async_method_with_plain_typed_params() {
+        let src = r#"export const handlers = {
+    async save(id: string, count: number): Promise<number> {
+        return count;
+    },
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("save(id: string, count: number): Promise<number>;"),
+            "async object method with typed params should emit, got:\n{dts}"
+        );
+    }
+
+    #[test]
     fn infers_exported_generic_const_arrow_function_type() {
         let src = "export const identity = <T>(value: T): T => value;\n";
         let dts = emit_declarations(src).unwrap();
@@ -1525,12 +1732,12 @@ mod tests {
         let src = "export { ReactComponent as ErrorCircleIcon } from \"./icons/error.svg\";\n";
         let dts = emit_declarations(src).unwrap();
         assert!(
-            dts.contains("export { ReactComponent as ErrorCircleIcon } from \"./icons/error.svg\""),
-            "SVGR asset re-export must be preserved, got:\n{dts}"
+            dts.contains("import type { FC, SVGProps } from \"react\";"),
+            "SVGR declaration should import React component types, got:\n{dts}"
         );
         assert!(
-            !dts.contains("SvgError") && !dts.contains("SvgErrorCircleIcon"),
-            "declaration must not expose transformed runtime aliases, got:\n{dts}"
+            dts.contains("export declare const ErrorCircleIcon: FC<SVGProps<SVGSVGElement>>;"),
+            "SVGR asset re-export must emit a concrete component declaration, got:\n{dts}"
         );
     }
 
