@@ -9,12 +9,11 @@
 # case = "synchronized__obj_as_typed_wrong"
 # subject = "multiprocessing.sharedctypes.synchronized(obj: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/sharedctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.sharedctypes.synchronized(obj: typed); call it with the wrong type.
 

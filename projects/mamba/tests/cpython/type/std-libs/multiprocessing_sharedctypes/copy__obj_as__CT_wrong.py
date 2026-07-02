@@ -9,12 +9,11 @@
 # case = "copy__obj_as__CT_wrong"
 # subject = "multiprocessing.sharedctypes.copy(obj: _CT)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/sharedctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.sharedctypes.copy(obj: _CT); call it with the wrong type.
 
