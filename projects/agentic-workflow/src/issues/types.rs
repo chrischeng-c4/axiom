@@ -353,6 +353,22 @@ pub mod td_phase {
         matches!(phase, CB_GENNED | LEGACY_TD_GEN_CODED | CB_FILLED)
     }
 
+    /// True if `phase` is the terminal phase itself (`td_merged`), meaning a
+    /// prior `aw td code-check` run already advanced the phase (and closed
+    /// the issue) but a later step in the terminal sequence — remote push,
+    /// the `Cb-CodeCheck` trailer commit, or workflow-lock release — may not
+    /// have completed. Re-entry at this phase is a **resumable retry**, not
+    /// a fresh code-check: the marker gate and the phase-advancing update
+    /// must be skipped, and only the remaining terminal steps re-attempted.
+    /// Does not widen [`is_terminal_code_checkable`]'s fresh-entry set.
+    ///
+    /// Extends the linear-lifecycle terminal gate this phase table defines
+    /// (see `is_terminal_code_checkable` above) to also recognize a resumable
+    /// retry entry; issue #846.
+    pub fn is_terminal_code_check_retry(phase: &str) -> bool {
+        phase == TD_MERGED
+    }
+
     /// The next lifecycle command for a phase, in the linear lifecycle
     /// `td_inited -> create -> td_created -> gen -> cb_genned -> fill ->
     /// cb_filled -> code-check`. There is no review/revise hop. `td_inited`
@@ -393,6 +409,18 @@ pub mod td_phase {
             assert!(!is_terminal_code_checkable("cb_reviewed"));
             assert!(!is_terminal_code_checkable("cb_revised"));
             assert!(!is_terminal_code_checkable("cb_arbitrated"));
+        }
+
+        // issue #846
+        #[test]
+        fn terminal_code_check_retry_is_td_merged_only() {
+            assert!(is_terminal_code_check_retry(TD_MERGED));
+            // Fresh-entry phases are not retry phases, and retry is not a
+            // fresh-entry phase — the two sets are disjoint.
+            assert!(!is_terminal_code_check_retry(CB_GENNED));
+            assert!(!is_terminal_code_check_retry(CB_FILLED));
+            assert!(!is_terminal_code_check_retry(LEGACY_TD_GEN_CODED));
+            assert!(!is_terminal_code_checkable(TD_MERGED));
         }
 
         // @spec remove-td-cb-crrr-collapse-to-linear-lifecycle.md R3

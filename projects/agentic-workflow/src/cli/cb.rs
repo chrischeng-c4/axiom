@@ -4207,6 +4207,21 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
     td::run_audit(td_args)
 }
 
+/// Terminal `aw td code-check <slug>` — advances a fresh `cb_genned` /
+/// `cb_filled` (or legacy `td_gen_coded`) issue to `td_merged`, then runs the
+/// resumable terminal step sequence (remote closure, `Cb-CodeCheck` trailer
+/// commit, workflow-lock release).
+///
+/// `td_merged` itself is accepted as a **retry** entry (issue #846): a prior
+/// run may have advanced phase + closed the issue via `backend.update` and
+/// then failed before finishing the remaining steps (network error on push,
+/// git commit failure, ...), which would otherwise strand the issue with
+/// `score:locked` forever since every retry hit the phase guard. On retry,
+/// the marker gate and the phase-advancing `backend.update` are skipped
+/// (they already ran on the attempt that reached `td_merged`), and each
+/// remaining step is re-attempted idempotently — see the per-step comments
+/// below for how each one avoids redoing already-completed work. A future
+/// branch-landing step (#842) slots in between steps 1 and 2.
 async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str) -> Result<bool> {
     use crate::cli::remote_push::maybe_push_remote;
     use crate::issues::types::{td_phase, ShipStatus};
@@ -4217,67 +4232,155 @@ async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str
         return Ok(false);
     };
     let phase = issue.phase.as_deref().unwrap_or("");
-    if !td_phase::is_terminal_code_checkable(phase) {
+    let is_retry = td_phase::is_terminal_code_check_retry(phase);
+    if !td_phase::is_terminal_code_checkable(phase) && !is_retry {
         let env = serde_json::json!({
             "action": "error",
             "slug": slug,
             "message": format!(
-                "cannot complete code-check: phase is '{}', expected '{}', '{}', or legacy '{}'",
+                "cannot complete code-check: phase is '{}', expected '{}', '{}', legacy '{}', or terminal retry '{}'",
                 phase,
                 td_phase::CB_FILLED,
                 td_phase::CB_GENNED,
                 td_phase::LEGACY_TD_GEN_CODED,
+                td_phase::TD_MERGED,
             ),
         });
         println!("{}", serde_json::to_string(&env)?);
         return Ok(true);
     }
 
-    if let Err(message) = crate::cli::cb_fill::run_cb_check_gate(project_root).await {
-        let env = serde_json::json!({
-            "action": "error",
-            "slug": slug,
-            "message": format!("td code-check gate failed: {}", message),
-        });
-        println!("{}", serde_json::to_string(&env)?);
-        return Ok(true);
+    if !is_retry {
+        if let Err(message) = crate::cli::cb_fill::run_cb_check_gate(project_root).await {
+            let env = serde_json::json!({
+                "action": "error",
+                "slug": slug,
+                "message": format!("td code-check gate failed: {}", message),
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+
+        let patch = IssuePatch {
+            state: Some(IssueState::Closed),
+            phase: Some(td_phase::TD_MERGED.to_string()),
+            ship_status: Some(ShipStatus::Step1Shipped),
+            add_labels: vec![format!("phase:{}", td_phase::TD_MERGED)],
+            remove_labels: vec![
+                crate::cli::workflow_guard::LOCK_LABEL.to_string(),
+                crate::cli::workflow_guard::TD_LOCK_LABEL.to_string(),
+                crate::cli::workflow_guard::CB_LOCK_LABEL.to_string(),
+                format!("phase:{}", td_phase::CB_GENNED),
+                format!("phase:{}", td_phase::CB_FILLED),
+                "phase:td_gen_coded".to_string(),
+            ],
+            flagged_sections: Some(vec![]),
+            validation_errors: Some(vec![]),
+            ..Default::default()
+        };
+        backend.update(slug, &patch).await?;
     }
 
-    let patch = IssuePatch {
-        state: Some(IssueState::Closed),
-        phase: Some(td_phase::TD_MERGED.to_string()),
-        ship_status: Some(ShipStatus::Step1Shipped),
-        add_labels: vec![format!("phase:{}", td_phase::TD_MERGED)],
-        remove_labels: vec![
-            crate::cli::workflow_guard::LOCK_LABEL.to_string(),
-            crate::cli::workflow_guard::TD_LOCK_LABEL.to_string(),
-            crate::cli::workflow_guard::CB_LOCK_LABEL.to_string(),
-            format!("phase:{}", td_phase::CB_GENNED),
-            format!("phase:{}", td_phase::CB_FILLED),
-            "phase:td_gen_coded".to_string(),
-        ],
-        flagged_sections: Some(vec![]),
-        validation_errors: Some(vec![]),
-        ..Default::default()
-    };
-    backend.update(slug, &patch).await?;
+    // From here the sequence is resumable: a fresh entry has just advanced
+    // phase to td_merged above; a retry entry (phase already td_merged) skips
+    // straight here. Every remaining step is self-checking so a partial
+    // failure at any point can be recovered by re-running
+    // `aw td code-check <slug>`.
     let closed_issue = backend
         .get(slug)
         .await?
         .ok_or_else(|| anyhow::anyhow!("closed issue '{}' was not readable", slug))?;
     let closed_path = backend.issue_path(&closed_issue);
+
+    // Step 1 — remote closure. `push_through` only *creates* on the remote
+    // when no remote issue exists yet (looked up by github_id/gitlab_id once
+    // known); otherwise it updates the existing remote issue and refreshes
+    // the local copy. Re-running it against an already-closed remote issue
+    // is a safe, idempotent write — no separate "already happened" gate.
     maybe_push_remote(project_root, &closed_path, slug).await?;
 
-    commit_cb_code_check_terminal(project_root, slug, &closed_path)?;
+    // Step 2 — terminal lifecycle commit. NOT naturally idempotent: calling
+    // `commit_cb_code_check_terminal` unconditionally on every retry would
+    // spam duplicate --allow-empty commits. Gate it on whether a commit with
+    // the exact `Lifecycle-Slug` + `Lifecycle-Stage: Cb-CodeCheck` trailer
+    // pair already exists in the log.
+    if !terminal_commit_already_landed(project_root, slug)? {
+        commit_cb_code_check_terminal(project_root, slug, &closed_path)?;
+    }
+
+    // Step 3 — lock release. `complete_issue_lock` already no-ops when the
+    // lock label / projection is already clear, so it's safe to re-run.
     crate::cli::workflow_guard::complete_issue_lock(project_root, slug, "td").await?;
 
     let env = serde_json::json!({
         "action": "done",
         "slug": slug,
-        "message": "td code-check passed; lifecycle closed",
+        "message": if is_retry {
+            "td code-check retry: remaining terminal steps completed; lifecycle closed"
+        } else {
+            "td code-check passed; lifecycle closed"
+        },
     });
     println!("{}", serde_json::to_string(&env)?);
     Ok(true)
+}
+
+/// True if the worktree git log already has a terminal commit for `slug` —
+/// one whose message has an exact-line `Lifecycle-Slug: <slug>` AND an
+/// exact-line `Lifecycle-Stage: Cb-CodeCheck`. Used by the resumable retry
+/// path above to avoid re-committing a duplicate trailer when only the
+/// commit step failed on a prior attempt.
+///
+/// Deliberately line-exact (not substring) on both trailers: the ship-commit
+/// backfill scan in td.rs (`find_ship_commit_from_log`) substring-matches the
+/// stage trailer, which is fine for a best-effort backfill scan but not
+/// precise enough for an idempotency gate that decides whether to skip a
+/// commit.
+fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) -> Result<bool> {
+    use crate::issues::types::lifecycle_trailer;
+
+    let Some(git_bin) = crate::git::find_git_bin() else {
+        // No git binary: can't check either way. Treat as "not yet
+        // committed" so the commit attempt below runs and surfaces the same
+        // "git binary not found" error the fresh-entry path would.
+        return Ok(false);
+    };
+    let slug_line = format!("Lifecycle-Slug: {}", slug);
+    let stage_line = format!("Lifecycle-Stage: {}", lifecycle_trailer::CB_CODE_CHECK);
+    let output = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args([
+            "log",
+            "--format=%B%x1e",
+            "--all",
+            "--fixed-strings",
+            "--grep",
+            &slug_line,
+        ])
+        .output()
+        .context("git log failed")?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for entry in stdout.split('\x1e') {
+        let mut has_slug_line = false;
+        let mut has_stage_line = false;
+        for line in entry.lines() {
+            let line = line.trim_end();
+            if line == slug_line {
+                has_slug_line = true;
+            }
+            if line == stage_line {
+                has_stage_line = true;
+            }
+        }
+        if has_slug_line && has_stage_line {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn commit_cb_code_check_terminal(
