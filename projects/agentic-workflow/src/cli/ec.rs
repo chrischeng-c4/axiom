@@ -1356,6 +1356,7 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
             };
             issue.body = crate::cli::loop_state::apply_verification(
                 &issue.body,
+                &args.wi,
                 result,
                 args.summary.clone(),
             )?;

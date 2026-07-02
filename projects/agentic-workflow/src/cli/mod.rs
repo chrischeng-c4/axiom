@@ -10,6 +10,7 @@ pub mod capability;
 pub mod capability_type;
 pub mod cb;
 pub mod cb_fill;
+pub(crate) mod chain;
 #[path = "chat.rs"]
 pub mod chat;
 pub mod check_alignment;

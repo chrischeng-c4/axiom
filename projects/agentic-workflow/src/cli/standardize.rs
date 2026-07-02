@@ -50,7 +50,10 @@ const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
 #[derive(Parser)]
 #[command(name = "aw")]
-struct TraceabilityCli {
+// Promoted to `pub(crate)` so `crate::cli::chain::validate_aw_command_string`
+// (#915) can reuse this as the single full clap tree to validate emitted
+// next-command strings against, instead of redeclaring a second wrapper.
+pub(crate) struct TraceabilityCli {
     #[command(subcommand)]
     command: crate::cli::commands::Commands,
 }
