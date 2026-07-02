@@ -2033,6 +2033,74 @@ pub fn project_managed_coverage(project: &str) -> Result<StandardizationCoverage
     Ok(inventory.coverage)
 }
 
+// Touched-scope standardization verdict for one WI's candidate file set
+// (typically a code-check terminal gate's branch-diff-union-Changes-paths
+// scope; see `cb_fill::resolve_touched_scope`). `unmarked` names in-scope
+// candidate files carrying neither a CODEGEN nor a HANDWRITE marker;
+// `attr_gap` names candidate files whose HANDWRITE marker(s) are missing a
+// required `gap`/`tracker`/`reason` attribute (see `detect_handwrite_gaps`).
+// `baseline_percent` is the project's managed-coverage percent computed
+// over the REST of the managed inventory, i.e. excluding every candidate
+// path — this answers "was everything this WI did not touch already fully
+// standardized", which is what activation policy gates on (issue #932).
+pub(crate) struct TouchedScopeStandardization {
+    pub baseline_percent: f64,
+    pub unmarked: Vec<String>,
+    pub attr_gap: Vec<String>,
+}
+
+// Compute the touched-scope standardization verdict for `candidate_paths`
+// against one configured project's managed inventory. Only files that are
+// both in-scope (managed-inventory scope: supported source language, not
+// excluded) AND present in `candidate_paths` are evaluated; every other
+// inventory file only contributes to `baseline_percent`. Files in
+// `candidate_paths` that fall outside the managed-inventory scope (e.g. not
+// a supported source language) are silently ignored — this gate never
+// invents new file-scope rules beyond the existing managed-inventory
+// classifier.
+// @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+pub(crate) fn project_touched_scope_standardization(
+    project: &str,
+    candidate_paths: &[String],
+) -> Result<TouchedScopeStandardization> {
+    let project_root = crate::find_project_root()?;
+    let inventory = build_inventory(&project_root, &[], Some(project), false)?;
+    let candidates: std::collections::BTreeSet<&str> =
+        candidate_paths.iter().map(String::as_str).collect();
+
+    let mut unmarked = Vec::new();
+    let mut attr_gap = Vec::new();
+    let mut baseline_total = inventory.coverage.total_files;
+    let mut baseline_managed = inventory.coverage.managed_files;
+
+    for file in &inventory.files {
+        if !candidates.contains(file.rel.as_str()) {
+            continue;
+        }
+        baseline_total = baseline_total.saturating_sub(1);
+        if file.markers.managed() {
+            baseline_managed = baseline_managed.saturating_sub(1);
+        } else {
+            unmarked.push(file.rel.clone());
+        }
+        if !file.handwrite_gaps.is_empty() {
+            attr_gap.push(file.rel.clone());
+        }
+    }
+
+    let baseline_percent = if baseline_total == 0 {
+        100.0
+    } else {
+        (baseline_managed as f64 / baseline_total as f64) * 100.0
+    };
+
+    Ok(TouchedScopeStandardization {
+        baseline_percent,
+        unmarked,
+        attr_gap,
+    })
+}
+
 // Return full regenerability coverage for one configured project without
 // printing the standardize report.
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
