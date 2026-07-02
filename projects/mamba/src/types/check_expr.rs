@@ -1074,13 +1074,9 @@ impl TypeChecker {
         // concrete parameter contract: it is not a scalar (str/int/float/
         // bytes/bool; no relevant dunder), not a protocol (no dunders), and
         // not a nominal class (object is its only base). Reject it against any
-        // param whose CoreTy names such a contract. Use expression shape,
-        // not just `Ty::Class`: the current type model represents both `C`
-        // and `C()` as `Ty::Class`, and descriptor/type params must accept
-        // class objects such as `f.__get__(None, C)` and
-        // `object.__subclasshook__(C)`. `None`/`Unknown` params are excluded
-        // because `None` is frequently an under-declared Optional sentinel
-        // and Unknown remains skip-when-unsure.
+        // param whose CoreTy names such a contract. `None`/`Unknown` params
+        // are excluded because `None` is frequently an under-declared
+        // Optional sentinel and Unknown remains skip-when-unsure.
         let concrete_param = matches!(
             param.ty,
             super::stdlib_sigs::CoreTy::Int
@@ -1098,7 +1094,31 @@ impl TypeChecker {
                 | super::stdlib_sigs::CoreTy::Typed
                 | super::stdlib_sigs::CoreTy::Type
         );
-        let bare_arg = self.classinfo_bare_instance_name(a);
+        // #885: a bare instance stashed in a variable (`w = _W(); f(w)`) has
+        // no distinguishing expression shape at the call site, so the
+        // syntactic `classinfo_bare_instance_name` helper alone misses it.
+        // Fall back to the inferred type — `Ty::Class{name,..}` whose name is
+        // a registered bare class — mirroring the dict `__ior__`/`__or__`
+        // precedent (check_dict_operator_call above). This CANNOT apply to
+        // `CoreTy::Type`: the current type model represents both the class
+        // object `C` and an instance `C()` as the identical `Ty::Class`, and
+        // `CoreTy::Type` params must keep accepting real class objects such
+        // as `f.__get__(None, C)` / `object.__subclasshook__(C)` — those stay
+        // shape-skip-safe. Every other concrete contract here (scalars, and
+        // the `Typed` nominal/protocol contract) can never legitimately
+        // receive a raw class object either, so widening them to the
+        // inferred type adds no false positives.
+        let bare_arg = self.classinfo_bare_instance_name(a).or_else(|| {
+            if matches!(param.ty, super::stdlib_sigs::CoreTy::Type) {
+                return None;
+            }
+            match self.tcx.get(actual) {
+                Ty::Class { name, .. } if self.user_bare_classes.contains(name) => {
+                    Some(name.clone())
+                }
+                _ => None,
+            }
+        });
         if let (true, Some(name)) = (concrete_param, &bare_arg) {
             self.error(
                 a.span,
