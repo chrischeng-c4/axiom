@@ -230,6 +230,14 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("count", CoreTy::Typed)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "pipes",
+        qualifier: "Template",
+        name: "debug",
+        kind: SigKind::Method,
+        params: &[p("flag", CoreTy::Bool)],
+        enforceable: true,
+    },
     // POSITIVE: bz2 filename arguments are overload/protocol unions
     // (path-like or file-object). A bare user instance cannot satisfy either,
     // while real strings/bytes/path/file-like objects stay skip-safe.
@@ -9666,6 +9674,7 @@ mod tests {
                 CoreTy::Tuple,
             ),
             ("pdb", "Pdb", "print_stack_trace", 0, "count", CoreTy::Typed),
+            ("pipes", "Template", "debug", 0, "flag", CoreTy::Bool),
             ("platform", "", "platform", 0, "aliased", CoreTy::Bool),
             ("pprint", "PrettyPrinter", "format", 1, "context", CoreTy::Dict),
             (

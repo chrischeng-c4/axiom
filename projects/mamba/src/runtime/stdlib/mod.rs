@@ -60,6 +60,7 @@ pub mod logging_mod;
 pub mod lzma_mod;
 pub mod numbers_mod;
 pub mod pickle_mod;
+pub mod pipes_mod;
 pub mod platform_mod;
 pub mod pprint_mod;
 pub mod queue_mod;
@@ -387,6 +388,7 @@ pub fn register_stdlib() {
     tomllib_mod::register();
     compileall_mod::register();
     bdb_mod::register();
+    pipes_mod::register();
     code_mod::register();
     binascii_mod::register();
     concurrent_futures_mod::register();
