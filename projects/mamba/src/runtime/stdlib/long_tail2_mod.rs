@@ -978,6 +978,23 @@ pub fn register() {
         &[],
     );
     register_with(
+        "multiprocessing.spawn",
+        &[],
+        &[
+            ("freeze_support", dispatch_noop as *const () as usize),
+            ("get_command_line", dispatch_empty_list as *const () as usize),
+            ("get_executable", dispatch_empty_str as *const () as usize),
+            ("get_preparation_data", dispatch_empty_dict as *const () as usize),
+            ("import_main_path", dispatch_noop as *const () as usize),
+            ("is_forking", dispatch_false as *const () as usize),
+            ("prepare", dispatch_noop as *const () as usize),
+            ("set_executable", dispatch_noop as *const () as usize),
+            ("spawn_main", dispatch_noop as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "multiprocessing.dummy",
         &["DummyProcess", "Namespace", "Value"],
         &[
