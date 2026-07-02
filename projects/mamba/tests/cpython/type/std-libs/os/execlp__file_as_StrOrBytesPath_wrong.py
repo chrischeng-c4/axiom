@@ -9,12 +9,11 @@
 # case = "execlp__file_as_StrOrBytesPath_wrong"
 # subject = "os.execlp(file: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed file"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed file
 # mamba-strict-type: TypeError
 """Type wall: os.execlp(file: StrOrBytesPath); call it with the wrong type.
 

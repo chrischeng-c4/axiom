@@ -9,12 +9,11 @@
 # case = "sendfile__out_fd_as_FileDescriptor_wrong"
 # subject = "os.sendfile(out_fd: FileDescriptor)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed out_fd"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed out_fd
 # mamba-strict-type: TypeError
 """Type wall: os.sendfile(out_fd: FileDescriptor); call it with the wrong type.
 

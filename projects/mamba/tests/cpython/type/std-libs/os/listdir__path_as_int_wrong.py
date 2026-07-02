@@ -9,12 +9,11 @@
 # case = "listdir__path_as_int_wrong"
 # subject = "os.listdir(path: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: os.listdir(path: int); call it with the wrong type.
 
@@ -23,7 +22,7 @@ argument MUST raise TypeError (CPython may accept or raise — mamba's to enforc
 
 from os import listdir
 try:
-    listdir("not_an_int")  # path: int <- wrong-typed
+    listdir(3.14)  # path: int <- wrong-typed
     print("no_typeerror:")  # CPython accepted the wrong-typed arg; mamba must raise
 except TypeError as e:
     print("typeerror:", type(e).__name__)
