@@ -11,6 +11,19 @@ competitor, new hardware class, a beam query-path change that could move the
 numbers) or a human explicitly asks. Numbers are date-agnostic — they describe
 fixed params + versions, not a wall-clock run.
 
+## What "beating a competitor" means on Apple Silicon
+
+There is **no GPU vector system on a Mac** — faiss-GPU, NVIDIA cuVS/CAGRA, and
+Milvus-GPU are all CUDA/NVIDIA-only and do not run on Metal. So on Apple Silicon
+the **strongest vector search a user can actually run is faiss-CPU** (BLAS on the
+AMX/Accelerate matrix units — genuinely fast, *not* a weak fallback). That makes
+faiss-CPU the **legitimate competitor on this platform**: beating it means beam is
+the **fastest vector search available on a Mac**. This baseline is exactly that
+head-to-head, and beam-GPU wins it (batched, n ≥ 100k). The orthogonal question —
+beam vs GPU competitors (cuVS/faiss-GPU) on the *same NVIDIA GPU* — is out of scope
+here: it needs NVIDIA hardware; beam's wgpu code already runs there via Vulkan but
+is unbenchmarked against those systems.
+
 ## Setup
 
 | Item | Value |
