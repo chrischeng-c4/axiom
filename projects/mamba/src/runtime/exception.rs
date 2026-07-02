@@ -1089,6 +1089,13 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
         // dataclasses.FrozenInstanceError (class.rs mb_setattr raises this on
         // frozen-dataclass assignment). Derives from AttributeError.
         | "FrozenInstanceError"
+        // termios.error (termios_mod.rs raises this). Unlike most stdlib
+        // "errno-flavored" exceptions it is a PLAIN Exception subclass, NOT
+        // an OSError subclass — verified against the CPython 3.12 oracle
+        // (`issubclass(termios.error, OSError) is False`) and asserted by
+        // `test_termios.TestModule.test_exception`. Deliberately absent from
+        // the "OSError" arm below.
+        | "termios.error"
     )
 }
 
