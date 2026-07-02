@@ -453,6 +453,9 @@ pub mod lifecycle_trailer {
     pub const LEGACY_TD_GEN_CODE: &str = "Td-GenCode";
     /// Canonical terminal trailer written by `aw td code-check <slug>`.
     pub const CB_CODE_CHECK: &str = "Cb-CodeCheck";
+    /// Legacy terminal trailer written by the removed `aw td merge` verb.
+    /// Readers MUST accept it; writers MUST NOT emit it. Issue #853.
+    pub const LEGACY_TD_MERGED: &str = "Td-Merged";
     /// Phase 2: TD spec adopted from disk; phase bypassed to td_reviewed.
     /// @spec projects/agentic-workflow/tech-design/surface/specs/score-recovery-verbs.md#schema
     pub const TD_CLAIM: &str = "Td-Claim";
@@ -477,13 +480,94 @@ pub mod lifecycle_trailer {
     pub const CB_ARBITRATE: &str = "Cb-Arbitrate";
 
     /// Normalize a trailer to its canonical form. Maps the legacy
-    /// `Td-GenCode` to `Cb-Gen`; everything else passes through.
+    /// `Td-GenCode` to `Cb-Gen` and the legacy `Td-Merged` (written by the
+    /// removed `aw td merge` verb) to `Cb-CodeCheck`; everything else passes
+    /// through. Readers that need to recognize a canonical trailer value
+    /// (e.g. `Cb-CodeCheck`) across a trailer rename should call
+    /// [`normalize`] on the candidate value rather than hardcoding a second
+    /// legacy needle — a future rename then only requires one accept-set
+    /// entry here (issue #853 AC3).
     ///
     /// @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#schema
     pub fn normalize(trailer: &str) -> &str {
         match trailer {
             LEGACY_TD_GEN_CODE => CB_GEN,
+            LEGACY_TD_MERGED => CB_CODE_CHECK,
             other => other,
+        }
+    }
+
+    /// True if `body` (a full git commit message) contains an exact-line
+    /// `Lifecycle-Slug: <slug>` trailer. Line-exact, not substring — a
+    /// substring/`git log --grep` check on `Lifecycle-Slug: 41` also matches
+    /// `Lifecycle-Slug: 412`'s commits, letting a shorter slug silently
+    /// adopt a longer, prefix-colliding slug's commit. Issue #853.
+    pub fn body_has_slug_trailer(body: &str, slug: &str) -> bool {
+        let needle = format!("Lifecycle-Slug: {}", slug);
+        body.lines().any(|line| line.trim_end() == needle)
+    }
+
+    /// True if `body` (a full git commit message) contains an exact-line
+    /// `Lifecycle-Stage: <trailer>` whose value [`normalize`]s to
+    /// `expect_canonical`. Accepts legacy trailer aliases (e.g. the removed
+    /// `aw td merge` verb's `Td-Merged`, which normalizes to
+    /// `Cb-CodeCheck`) through the shared accept-set in [`normalize`] rather
+    /// than a second hardcoded needle. Line-exact, not substring. Shared by
+    /// the terminal-commit idempotency gate (`cli::cb::
+    /// terminal_commit_already_landed`, issue #846) and the ship_commit
+    /// backfill scan (`cli::td::find_ship_commit_from_log`, issue #853).
+    pub fn body_has_stage_trailer(body: &str, expect_canonical: &str) -> bool {
+        const PREFIX: &str = "Lifecycle-Stage: ";
+        body.lines().any(|line| {
+            line.trim_end()
+                .strip_prefix(PREFIX)
+                .map(|value| normalize(value) == expect_canonical)
+                .unwrap_or(false)
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        // issue #853 AC3: one accept-set entry covers a trailer rename.
+        #[test]
+        fn normalize_accepts_legacy_td_merged() {
+            assert_eq!(normalize(LEGACY_TD_MERGED), CB_CODE_CHECK);
+            assert_eq!(normalize(CB_CODE_CHECK), CB_CODE_CHECK);
+        }
+
+        // issue #853 AC1: legacy `Td-Merged` terminal commits must be
+        // readable by anything scanning for the canonical `Cb-CodeCheck`
+        // stage.
+        #[test]
+        fn body_has_stage_trailer_accepts_legacy_trailer() {
+            let body = "td(722) \u{2014} merged + closed\n\n\
+                         Lifecycle-Slug: 722\n\
+                         Work-Item: 722\n\
+                         Lifecycle-Stage: Td-Merged";
+            assert!(body_has_stage_trailer(body, CB_CODE_CHECK));
+        }
+
+        #[test]
+        fn body_has_stage_trailer_rejects_unrelated_trailer() {
+            let body = "Lifecycle-Slug: 722\nLifecycle-Stage: Cb-Fill";
+            assert!(!body_has_stage_trailer(body, CB_CODE_CHECK));
+        }
+
+        // issue #853 AC2: slug `41` must not match slug `412`'s trailer —
+        // a naive substring check would.
+        #[test]
+        fn body_has_slug_trailer_rejects_prefix_collision() {
+            let body = "Lifecycle-Slug: 412\nLifecycle-Stage: Cb-CodeCheck";
+            assert!(!body_has_slug_trailer(body, "41"));
+            assert!(body_has_slug_trailer(body, "412"));
+        }
+
+        #[test]
+        fn body_has_slug_trailer_ignores_trailing_whitespace() {
+            let body = "Lifecycle-Slug: 41 \nLifecycle-Stage: Cb-CodeCheck";
+            assert!(body_has_slug_trailer(body, "41"));
         }
     }
 }
