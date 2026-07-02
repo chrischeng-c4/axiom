@@ -959,8 +959,10 @@ impl TypeChecker {
         let mut arg_idx = 0usize;
         for arg in args {
             let CallArg::Positional(a) = arg else {
-                // Keyword / *args / **kwargs: stop enforcement entirely. We do
-                // not know how positional alignment continues past these.
+                // Keyword / *args / **kwargs: stop *positional* enforcement
+                // entirely. We do not know how positional alignment continues
+                // past these. Keyword args are still checked below (#881) —
+                // by name, independent of this position walk.
                 break;
             };
             if explicit_unbound_receiver && arg_idx == 0 {
@@ -974,17 +976,12 @@ impl TypeChecker {
             if param.star {
                 break; // never enforce past `*args`
             }
-            // Map the param's CoreTy to a concrete scalar; None => no positive
-            // scalar mapping (Unknown / Typed / Bytes). Still advance param_idx.
-            // Bytes is handled below as a negative scalar wall because bytes
-            // literals currently infer to Any.
-            let expected = self.core_ty_to_type_id(param.ty);
-            let actual = self.check_expr(a);
             let classinfo_param = sig.module == "builtins"
                 && sig.qualifier.is_empty()
                 && matches!(sig.name, "isinstance" | "issubclass")
                 && param_idx == 1;
             if classinfo_param {
+                self.check_expr(a);
                 if let Some(name) = self.classinfo_bare_instance_name(a) {
                     self.error(
                         a.span,
@@ -995,151 +992,195 @@ impl TypeChecker {
                     );
                 }
                 param_idx += 1;
+                arg_idx += 1;
                 continue;
             }
-            // A BARE user class instance (`class _W: pass` -> `_W()`) satisfies NO
-            // concrete parameter contract: it is not a scalar (str/int/float/
-            // bytes/bool; no relevant dunder), not a protocol (no dunders), and
-            // not a nominal class (object is its only base). Reject it against any
-            // param whose CoreTy names such a contract. Use expression shape,
-            // not just `Ty::Class`: the current type model represents both `C`
-            // and `C()` as `Ty::Class`, and descriptor/type params must accept
-            // class objects such as `f.__get__(None, C)` and
-            // `object.__subclasshook__(C)`. `None`/`Unknown` params are excluded
-            // because `None` is frequently an under-declared Optional sentinel
-            // and Unknown remains skip-when-unsure.
-            let concrete_param = matches!(
-                param.ty,
-                super::stdlib_sigs::CoreTy::Int
-                    | super::stdlib_sigs::CoreTy::Float
-                    | super::stdlib_sigs::CoreTy::Str
-                    | super::stdlib_sigs::CoreTy::Bytes
-                    | super::stdlib_sigs::CoreTy::MemoryView
-                    | super::stdlib_sigs::CoreTy::Complex
-                    | super::stdlib_sigs::CoreTy::IntOrStr
-                    | super::stdlib_sigs::CoreTy::PathOrFd
-                    | super::stdlib_sigs::CoreTy::List
-                    | super::stdlib_sigs::CoreTy::Tuple
-                    | super::stdlib_sigs::CoreTy::Dict
-                    | super::stdlib_sigs::CoreTy::Bool
-                    | super::stdlib_sigs::CoreTy::Typed
-                    | super::stdlib_sigs::CoreTy::Type
+            let bytes_encoding_source = bytes_encoding_arg_is_positional && param_idx == 0;
+            self.check_stdlib_scalar_arg(param, a, bytes_encoding_source);
+            param_idx += 1;
+            arg_idx += 1;
+        }
+
+        // #881: keyword-arg alignment. The positional walk above breaks at the
+        // first non-positional arg (position tracking becomes meaningless past
+        // *args), but named keyword args don't need position — match each
+        // `CallArg::Keyword{name, value}` to the like-named `ParamSig` (never a
+        // `*args`/`**kwargs` boundary param) and run the same scalar/Typed
+        // checks positional args get. Skip-when-unsure: an unknown keyword name
+        // (typeshed-only kwarg not modeled, or a genuinely bad call CPython
+        // itself will reject) is left unchecked here rather than guessed at.
+        for arg in args {
+            let CallArg::Keyword { name, value } = arg else {
+                continue;
+            };
+            let Some(param) = sig
+                .params
+                .iter()
+                .find(|p| !p.star && p.name == name.as_str())
+            else {
+                continue;
+            };
+            self.check_stdlib_scalar_arg(param, value, false);
+        }
+    }
+
+    /// Shared scalar/Typed check for a single (param, actual-arg) pair: the
+    /// bare-user-class-instance rejection plus the CoreTy-specific and generic
+    /// concrete-scalar-disjoint checks. Used by both the positional `param_idx`
+    /// walk and (#881) keyword-name alignment in `check_stdlib_call` above.
+    /// `bytes_encoding_source` only applies to the positional `bytes`/
+    /// `bytearray` `encoding`-implies-`str`-source special case — always
+    /// `false` for keyword calls (out of scope for #881).
+    fn check_stdlib_scalar_arg(
+        &mut self,
+        param: &super::stdlib_sigs::ParamSig,
+        a: &Spanned<Expr>,
+        bytes_encoding_source: bool,
+    ) {
+        // Map the param's CoreTy to a concrete scalar; None => no positive
+        // scalar mapping (Unknown / Typed / Bytes). Bytes is handled below as a
+        // negative scalar wall because bytes literals currently infer to Any.
+        let expected = self.core_ty_to_type_id(param.ty);
+        let actual = self.check_expr(a);
+        // A BARE user class instance (`class _W: pass` -> `_W()`) satisfies NO
+        // concrete parameter contract: it is not a scalar (str/int/float/
+        // bytes/bool; no relevant dunder), not a protocol (no dunders), and
+        // not a nominal class (object is its only base). Reject it against any
+        // param whose CoreTy names such a contract. Use expression shape,
+        // not just `Ty::Class`: the current type model represents both `C`
+        // and `C()` as `Ty::Class`, and descriptor/type params must accept
+        // class objects such as `f.__get__(None, C)` and
+        // `object.__subclasshook__(C)`. `None`/`Unknown` params are excluded
+        // because `None` is frequently an under-declared Optional sentinel
+        // and Unknown remains skip-when-unsure.
+        let concrete_param = matches!(
+            param.ty,
+            super::stdlib_sigs::CoreTy::Int
+                | super::stdlib_sigs::CoreTy::Float
+                | super::stdlib_sigs::CoreTy::Str
+                | super::stdlib_sigs::CoreTy::Bytes
+                | super::stdlib_sigs::CoreTy::MemoryView
+                | super::stdlib_sigs::CoreTy::Complex
+                | super::stdlib_sigs::CoreTy::IntOrStr
+                | super::stdlib_sigs::CoreTy::PathOrFd
+                | super::stdlib_sigs::CoreTy::List
+                | super::stdlib_sigs::CoreTy::Tuple
+                | super::stdlib_sigs::CoreTy::Dict
+                | super::stdlib_sigs::CoreTy::Bool
+                | super::stdlib_sigs::CoreTy::Typed
+                | super::stdlib_sigs::CoreTy::Type
+        );
+        let bare_arg = self.classinfo_bare_instance_name(a);
+        if let (true, Some(name)) = (concrete_param, &bare_arg) {
+            self.error(
+                a.span,
+                format!(
+                    "argument type mismatch: `{name}` does not satisfy parameter `{}`'s type",
+                    param.name,
+                ),
             );
-            let bare_arg = self.classinfo_bare_instance_name(a);
-            if let (true, Some(name)) = (concrete_param, &bare_arg) {
+            return;
+        }
+        // A `None` actual argument is NEVER rejected: typeshed routinely
+        // under-declares Optional (a `host: str` parameter is called with
+        // `None` as a sentinel/clear, `set_proxy(host, None)` etc.), and
+        // `None` is the single most common "looks wrong, is right" runtime
+        // value. Skip-when-unsure — a missed enforcement is fine, a false
+        // reject is not. (The ① type-wall fixtures probe with wrong
+        // *scalars* — str-for-int, instance-for-bool — not bare `None`, so
+        // this costs no type gain.)
+        let actual_is_none = matches!(self.tcx.get(actual), Ty::None);
+        if bytes_encoding_source
+            && !actual_is_none
+            && self.is_concrete_scalar(actual)
+            && !matches!(self.tcx.get(actual), Ty::Str)
+        {
+            self.error(
+                a.span,
+                format!(
+                    "argument type mismatch: expected `str` source when `encoding` is provided, got `{}`",
+                    self.ty_name(actual),
+                ),
+            );
+        } else if matches!(param.ty, super::stdlib_sigs::CoreTy::Complex)
+            && !actual_is_none
+            && self.is_concrete_scalar(actual)
+            && !matches!(self.tcx.get(actual), Ty::Int | Ty::Float | Ty::Bool)
+        {
+            self.error(
+                a.span,
+                format!(
+                    "argument type mismatch: expected `complex`, got `{}`",
+                    self.ty_name(actual),
+                ),
+            );
+        } else if matches!(param.ty, super::stdlib_sigs::CoreTy::IntOrStr)
+            && !actual_is_none
+            && self.is_concrete_scalar(actual)
+            && !matches!(self.tcx.get(actual), Ty::Int | Ty::Bool | Ty::Str)
+        {
+            self.error(
+                a.span,
+                format!(
+                    "argument type mismatch: expected `int | str`, got `{}`",
+                    self.ty_name(actual),
+                ),
+            );
+        } else if matches!(param.ty, super::stdlib_sigs::CoreTy::PathOrFd)
+            && !actual_is_none
+            && self.is_concrete_scalar(actual)
+            && !matches!(self.tcx.get(actual), Ty::Int | Ty::Bool | Ty::Str)
+        {
+            self.error(
+                a.span,
+                format!(
+                    "argument type mismatch: expected `str | bytes | os.PathLike | int`, got `{}`",
+                    self.ty_name(actual),
+                ),
+            );
+        } else if matches!(
+            param.ty,
+            super::stdlib_sigs::CoreTy::Bytes
+                | super::stdlib_sigs::CoreTy::MemoryView
+                | super::stdlib_sigs::CoreTy::List
+                | super::stdlib_sigs::CoreTy::Tuple
+                | super::stdlib_sigs::CoreTy::Dict
+                | super::stdlib_sigs::CoreTy::Type
+        ) && !actual_is_none
+            && self.is_concrete_scalar(actual)
+        {
+            let expected_name = match param.ty {
+                super::stdlib_sigs::CoreTy::Bytes => "bytes",
+                super::stdlib_sigs::CoreTy::MemoryView => "memoryview",
+                super::stdlib_sigs::CoreTy::List => "list",
+                super::stdlib_sigs::CoreTy::Tuple => "tuple",
+                super::stdlib_sigs::CoreTy::Dict => "dict",
+                super::stdlib_sigs::CoreTy::Type => "type",
+                _ => unreachable!(),
+            };
+            self.error(
+                a.span,
+                format!(
+                    "argument type mismatch: expected `{expected_name}`, got `{}`",
+                    self.ty_name(actual),
+                ),
+            );
+        } else if let Some(expected) = expected {
+            // Both must be concrete scalars, and genuinely incompatible
+            // (types_compatible already allows Bool->Int and Int->Float).
+            if !actual_is_none
+                && self.is_concrete_scalar(actual)
+                && !self.types_compatible(expected, actual)
+            {
                 self.error(
                     a.span,
                     format!(
-                        "argument type mismatch: `{name}` does not satisfy parameter `{}`'s type",
-                        param.name,
+                        "argument type mismatch: expected `{}`, got `{}`",
+                        self.ty_name(expected),
+                        self.ty_name(actual),
                     ),
                 );
-            } else {
-                // A `None` actual argument is NEVER rejected: typeshed routinely
-                // under-declares Optional (a `host: str` parameter is called with
-                // `None` as a sentinel/clear, `set_proxy(host, None)` etc.), and
-                // `None` is the single most common "looks wrong, is right" runtime
-                // value. Skip-when-unsure — a missed enforcement is fine, a false
-                // reject is not. (The ① type-wall fixtures probe with wrong
-                // *scalars* — str-for-int, instance-for-bool — not bare `None`, so
-                // this costs no type gain.)
-                let actual_is_none = matches!(self.tcx.get(actual), Ty::None);
-                if bytes_encoding_arg_is_positional
-                    && param_idx == 0
-                    && !actual_is_none
-                    && self.is_concrete_scalar(actual)
-                    && !matches!(self.tcx.get(actual), Ty::Str)
-                {
-                    self.error(
-                        a.span,
-                        format!(
-                            "argument type mismatch: expected `str` source when `encoding` is provided, got `{}`",
-                            self.ty_name(actual),
-                        ),
-                    );
-                } else if matches!(param.ty, super::stdlib_sigs::CoreTy::Complex)
-                    && !actual_is_none
-                    && self.is_concrete_scalar(actual)
-                    && !matches!(self.tcx.get(actual), Ty::Int | Ty::Float | Ty::Bool)
-                {
-                    self.error(
-                        a.span,
-                        format!(
-                            "argument type mismatch: expected `complex`, got `{}`",
-                            self.ty_name(actual),
-                        ),
-                    );
-                } else if matches!(param.ty, super::stdlib_sigs::CoreTy::IntOrStr)
-                    && !actual_is_none
-                    && self.is_concrete_scalar(actual)
-                    && !matches!(self.tcx.get(actual), Ty::Int | Ty::Bool | Ty::Str)
-                {
-                    self.error(
-                        a.span,
-                        format!(
-                            "argument type mismatch: expected `int | str`, got `{}`",
-                            self.ty_name(actual),
-                        ),
-                    );
-                } else if matches!(param.ty, super::stdlib_sigs::CoreTy::PathOrFd)
-                    && !actual_is_none
-                    && self.is_concrete_scalar(actual)
-                    && !matches!(self.tcx.get(actual), Ty::Int | Ty::Bool | Ty::Str)
-                {
-                    self.error(
-                        a.span,
-                        format!(
-                            "argument type mismatch: expected `str | bytes | os.PathLike | int`, got `{}`",
-                            self.ty_name(actual),
-                        ),
-                    );
-                } else if matches!(
-                    param.ty,
-                    super::stdlib_sigs::CoreTy::Bytes
-                        | super::stdlib_sigs::CoreTy::MemoryView
-                        | super::stdlib_sigs::CoreTy::List
-                        | super::stdlib_sigs::CoreTy::Tuple
-                        | super::stdlib_sigs::CoreTy::Dict
-                        | super::stdlib_sigs::CoreTy::Type
-                ) && !actual_is_none
-                    && self.is_concrete_scalar(actual)
-                {
-                    let expected_name = match param.ty {
-                        super::stdlib_sigs::CoreTy::Bytes => "bytes",
-                        super::stdlib_sigs::CoreTy::MemoryView => "memoryview",
-                        super::stdlib_sigs::CoreTy::List => "list",
-                        super::stdlib_sigs::CoreTy::Tuple => "tuple",
-                        super::stdlib_sigs::CoreTy::Dict => "dict",
-                        super::stdlib_sigs::CoreTy::Type => "type",
-                        _ => unreachable!(),
-                    };
-                    self.error(
-                        a.span,
-                        format!(
-                            "argument type mismatch: expected `{expected_name}`, got `{}`",
-                            self.ty_name(actual),
-                        ),
-                    );
-                } else if let Some(expected) = expected {
-                    // Both must be concrete scalars, and genuinely incompatible
-                    // (types_compatible already allows Bool->Int and Int->Float).
-                    if !actual_is_none
-                        && self.is_concrete_scalar(actual)
-                        && !self.types_compatible(expected, actual)
-                    {
-                        self.error(
-                            a.span,
-                            format!(
-                                "argument type mismatch: expected `{}`, got `{}`",
-                                self.ty_name(expected),
-                                self.ty_name(actual),
-                            ),
-                        );
-                    }
-                }
             }
-            param_idx += 1;
-            arg_idx += 1;
         }
     }
 
