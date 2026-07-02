@@ -139,9 +139,14 @@ pub struct TypeChecker {
     pub(crate) current_class: Option<String>,
     /// Strict mode: treat Any-inference warnings as errors (#244).
     pub strict: bool,
-    /// Source carries `# mamba-strict-type:`. A few stdlib APIs are runtime
-    /// permissive but still have explicit type-wall fixtures; keep those
-    /// compile-time checks scoped to strict fixtures.
+    /// Source carries `# mamba-strict-type:`. #888 audited every call site
+    /// gated on this flag: a wall belongs here ONLY when enforcing it
+    /// unconditionally would reject a call CPython's own runtime genuinely
+    /// accepts (each `self.strict_type_fixture` site in `check_expr.rs`
+    /// carries a comment with the concrete conflicting fixture, verified by
+    /// sweep). Do not add a new gated site without that same verification —
+    /// an untested gate silently never fires for real user programs, which
+    /// was the original #888 bug.
     pub strict_type_fixture: bool,
     /// Suppress Any-inference warnings (#244).
     pub no_warn_any: bool,
