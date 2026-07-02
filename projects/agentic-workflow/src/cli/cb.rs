@@ -169,6 +169,12 @@ pub struct CbCheckArgs {
     // Group findings by gap / file / status.
     #[arg(long, value_enum)]
     pub group_by: Option<AuditGroupBy>,
+    // Skip the empty-implementation gate (issue #847) that refuses to
+    // complete a terminal code-check whose spec's entire promised
+    // implementation is missing from disk. For legitimate spec-only
+    // completions.
+    #[arg(long)]
+    pub allow_empty_impl: bool,
 }
 
 // Dispatch for code-artifact verbs.
@@ -4192,7 +4198,9 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
         } else {
             project_root.join(target_path)
         };
-        if !target_abs.exists() && run_check_lifecycle_terminal(&project_root, target).await? {
+        if !target_abs.exists()
+            && run_check_lifecycle_terminal(&project_root, target, args.allow_empty_impl).await?
+        {
             return Ok(());
         }
     }
@@ -4217,11 +4225,19 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
 /// then failed before finishing the remaining steps (network error on push,
 /// git commit failure, ...), which would otherwise strand the issue with
 /// `score:locked` forever since every retry hit the phase guard. On retry,
-/// the marker gate and the phase-advancing `backend.update` are skipped
-/// (they already ran on the attempt that reached `td_merged`), and each
-/// remaining step is re-attempted idempotently — see the per-step comments
-/// below for how each one avoids redoing already-completed work.
-async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str) -> Result<bool> {
+/// the marker gate, the empty-implementation gate, and the phase-advancing
+/// `backend.update` are all skipped (they already ran on the attempt that
+/// reached `td_merged`), and each remaining step is re-attempted
+/// idempotently — see the per-step comments below for how each one avoids
+/// redoing already-completed work.
+///
+/// `allow_empty_impl` skips the empty-implementation gate (issue #847) on a
+/// fresh entry; it has no effect on a retry, which never runs that gate.
+async fn run_check_lifecycle_terminal(
+    project_root: &std::path::Path,
+    slug: &str,
+    allow_empty_impl: bool,
+) -> Result<bool> {
     use crate::cli::remote_push::maybe_push_remote;
     use crate::issues::types::{td_phase, ShipStatus};
     use crate::issues::{IssueBackend, IssuePatch, IssueState, LocalBackend};
@@ -4255,6 +4271,27 @@ async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str
                 "action": "error",
                 "slug": slug,
                 "message": format!("td code-check gate failed: {}", message),
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+
+        // Empty-implementation gate (issue #847, restoring the removed `aw
+        // td merge` Bug-2 guard): refuse completion when a spec's Changes
+        // section lists N create/modify entries and every one of them is
+        // missing on disk — the signature of gen-code having been skipped
+        // entirely (e.g. a hand-written batch with no scaffold that was
+        // never actually implemented). `--allow-empty-impl` overrides for
+        // legitimate spec-only completions.
+        if allow_empty_impl {
+            eprintln!(
+                "[td code-check] WARNING: --allow-empty-impl set; skipping empty-implementation gate"
+            );
+        } else if let Some(message) = empty_implementation_gate_message(project_root, slug) {
+            let env = serde_json::json!({
+                "action": "error",
+                "slug": slug,
+                "message": message,
             });
             println!("{}", serde_json::to_string(&env)?);
             return Ok(true);
@@ -4367,6 +4404,86 @@ async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str
     });
     println!("{}", serde_json::to_string(&env)?);
     Ok(true)
+}
+
+/// Empty-implementation gate (issue #847, restoring the removed `aw td
+/// merge` "Bug 2" guard byte-for-byte in condition). Walks every `.md` file
+/// under the project's tech-design root — matching the removed `run_merge`
+/// exactly, this is a project-wide scan, not scoped to `slug`'s own spec —
+/// and sums each file's `action: create`/`modify` Changes entries via
+/// [`crate::generate::apply::extract_change_entries_count`] plus the subset
+/// missing from disk via
+/// [`crate::generate::apply::missing_implementation_paths`].
+///
+/// Returns `Some(message)` (block) only when the *entire* promised
+/// implementation across all scanned specs is missing (0-of-N,
+/// `total_missing == entries_total`, with `entries_total > 0`) — the
+/// signature of gen-code having been skipped entirely. Partial presence
+/// (some but not all missing) is warn-only to stderr and returns `None`, as
+/// does the no-entries case.
+fn empty_implementation_gate_message(project_root: &std::path::Path, slug: &str) -> Option<String> {
+    let mut missing_total: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
+    let mut entries_total = 0usize;
+    let td_root = crate::shared::workspace::tech_design_path(project_root);
+    if td_root.exists() {
+        for entry in walkdir::WalkDir::new(&td_root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            let total = crate::generate::apply::extract_change_entries_count(&content);
+            entries_total += total;
+            let missing =
+                crate::generate::apply::missing_implementation_paths(&content, project_root);
+            if !missing.is_empty() {
+                missing_total.push((entry.path().to_path_buf(), missing));
+            }
+        }
+    }
+    if entries_total == 0 || missing_total.is_empty() {
+        return None;
+    }
+    let total_missing: usize = missing_total.iter().map(|(_, m)| m.len()).sum();
+    let block = total_missing == entries_total;
+    let mut preview: Vec<String> = Vec::new();
+    for (spec, m) in missing_total.iter().take(3) {
+        let spec_rel = spec
+            .strip_prefix(project_root)
+            .unwrap_or(spec)
+            .display()
+            .to_string();
+        for p in m.iter().take(3) {
+            preview.push(format!("    {} \u{2192} missing {}", spec_rel, p));
+        }
+    }
+    if block {
+        Some(format!(
+            "refusing to complete code-check: spec lists {} file(s) but {} are missing on disk \
+             (codegen likely skipped; run `aw td gen {}` then implement, \
+             or pass --allow-empty-impl for spec-only completions).\n{}",
+            entries_total,
+            total_missing,
+            slug,
+            preview.join("\n"),
+        ))
+    } else {
+        eprintln!(
+            "[td code-check] WARNING: {} of {} spec-listed files missing on disk:",
+            total_missing, entries_total,
+        );
+        for line in &preview {
+            eprintln!("{}", line);
+        }
+        None
+    }
 }
 
 /// Outcome of [`land_td_lifecycle_branch`] — reported in the terminal `done`
