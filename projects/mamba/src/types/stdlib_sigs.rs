@@ -47,6 +47,20 @@ pub enum CoreTy {
     /// class with a base or a method, and every non-class value, is skipped — so
     /// it stays false-positive-clean.
     Typed,
+    /// #882: `Typed` with a known contract *identity* — the generator emits
+    /// this only for the seed set of typeshed names whose structural
+    /// requirements the hook can check positively (currently `"PathLike"` —
+    /// `os.PathLike`/`StrPath`/`BytesPath`/`StrOrBytesPath`/`GenericPath` —
+    /// and `"SupportsIndex"`). Behaves exactly like `Typed` for the bare-class
+    /// fallback (same rejection, same skip-when-unsure default for every
+    /// value shape it doesn't recognize), PLUS a hardcoded positive predicate
+    /// in `check_expr.rs` for those two names: `PathLike` rejects a concrete
+    /// int/float/bool actual (str/bytes stay accepted, matching
+    /// `__fspath__`'s two valid return shapes); `SupportsIndex` rejects a
+    /// concrete str/float actual (int/bool stay accepted, matching
+    /// `__index__`). Any other name — reserved for future seeds — falls back
+    /// to the bare-class-only check, identical to plain `Typed`.
+    TypedNamed(&'static str),
     /// A type/class object contract. Reject bare user instances and concrete
     /// scalar values; keep real class-like expressions skip-safe until the type
     /// model can distinguish class objects from instances everywhere.
@@ -9500,6 +9514,7 @@ mod tests {
                         | CoreTy::Float
                         | CoreTy::Str
                         | CoreTy::Typed
+                        | CoreTy::TypedNamed(_)
                         | CoreTy::Bytes
                         | CoreTy::MemoryView
                         | CoreTy::Complex

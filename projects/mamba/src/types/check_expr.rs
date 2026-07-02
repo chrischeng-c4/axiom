@@ -1163,6 +1163,7 @@ impl TypeChecker {
                 | super::stdlib_sigs::CoreTy::Dict
                 | super::stdlib_sigs::CoreTy::Bool
                 | super::stdlib_sigs::CoreTy::Typed
+                | super::stdlib_sigs::CoreTy::TypedNamed(_)
                 | super::stdlib_sigs::CoreTy::Type
         );
         // #885: a bare instance stashed in a variable (`w = _W(); f(w)`) has
@@ -1296,6 +1297,50 @@ impl TypeChecker {
                     self.ty_name(actual),
                 ),
             );
+        } else if let super::stdlib_sigs::CoreTy::TypedNamed(contract) = param.ty {
+            // #882: positive predicate for the seed named contracts. The
+            // bare-class rejection above already fired for a bare instance;
+            // this only rejects a *concrete scalar* actual that provably
+            // cannot satisfy the named protocol. Any other name (reserved for
+            // future seeds) is left skip-when-unsure, identical to `Typed`.
+            let violates = match contract {
+                // os.PathLike / StrPath / BytesPath / StrOrBytesPath /
+                // GenericPath: `__fspath__`'s two valid concrete return
+                // shapes are str and bytes, so only str is a concrete-scalar
+                // match — bytes values currently infer to `Any` and stay
+                // skip-safe there already. int/float/bool can never satisfy
+                // `__fspath__`.
+                "PathLike" => {
+                    !actual_is_none
+                        && self.is_concrete_scalar(actual)
+                        && !matches!(self.tcx.get(actual), Ty::Str)
+                }
+                // SupportsIndex: `__index__` is satisfiable by int (and bool,
+                // an int subtype at runtime); str/float never define it. A
+                // user class defining `__index__` (the same protocol the
+                // `chr`/`hex`/`oct`/`bin` check above recognizes) is never a
+                // concrete scalar, so `is_concrete_scalar` already excludes
+                // it here with no extra class-shape check needed.
+                "SupportsIndex" => {
+                    !actual_is_none
+                        && self.is_concrete_scalar(actual)
+                        && !matches!(self.tcx.get(actual), Ty::Int | Ty::Bool)
+                }
+                _ => false,
+            };
+            if violates {
+                let expected_name = match contract {
+                    "PathLike" => "str | bytes | os.PathLike",
+                    other => other,
+                };
+                self.error(
+                    a.span,
+                    format!(
+                        "argument type mismatch: expected `{expected_name}`, got `{}`",
+                        self.ty_name(actual),
+                    ),
+                );
+            }
         } else if let Some(expected) = expected {
             // Both must be concrete scalars, and genuinely incompatible
             // (types_compatible already allows Bool->Int and Int->Float).
