@@ -61,6 +61,11 @@ pub enum TdCommand {
     CodeClaim(super::cb::CbClaimArgs),
     /// Fill HANDWRITE marker blocks in generated code.
     Fill(super::cb::CbFillArgs),
+    /// Promote a HANDWRITE marker block to CODEGEN once its gap-blocker has
+    /// closed (byte-equivalence-checked). Shares its core flip logic with
+    /// `aw standardize managed run`'s `promote_handwrite` action.
+    /// @spec projects/agentic-workflow/tech-design/surface/specs/score-standardization.md#the-6-standardization-actions
+    Promote(PromoteArgs),
 }
 
 /// Args for `aw td claim <slug>`.
@@ -78,6 +83,28 @@ pub struct TdClaimArgs {
     #[arg(long)]
     pub force_rebase: bool,
     /// Emit the dispatch envelope as pretty-printed JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Args for `aw td promote <target>`.
+#[derive(Debug, Args)]
+/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
+pub struct PromoteArgs {
+    /// Repo-relative source path, or a HANDWRITE marker `tracker=` id, to
+    /// promote from HANDWRITE to CODEGEN. Every HANDWRITE block in the
+    /// resolved file must already carry a complete `gap` and a durable
+    /// `tracker` attribute (`aw standardize managed run`'s `issue_marker_gap`
+    /// action attaches those) before it can be promoted.
+    pub target: String,
+    /// Fallback `<mirror>.md#anchor` spec reference written above a
+    /// promoted block that has no preceding `SPEC-MANAGED:` line. Defaults
+    /// to a semantic-spec path derived from the resolved file's configured
+    /// project workspace, matching `aw standardize managed run`'s own
+    /// default.
+    #[arg(long = "spec-ref")]
+    pub spec_ref: Option<String>,
+    /// Emit the result envelope as pretty-printed JSON.
     #[arg(long)]
     pub json: bool,
 }
@@ -2280,7 +2307,10 @@ pub async fn run(args: TdArgs) -> Result<()> {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) | TdCommand::CodeClaim(_) => {
+        TdCommand::MigrateMermaid(_)
+        | TdCommand::Claim(_)
+        | TdCommand::CodeClaim(_)
+        | TdCommand::Promote(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
     }
@@ -2297,6 +2327,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::CodeCheck(a) => super::cb::run_check(a).await,
         TdCommand::CodeClaim(a) => super::cb::run_claim(a).await,
         TdCommand::Fill(a) => super::cb_fill::run(a).await,
+        TdCommand::Promote(a) => run_promote(a),
     }
 }
 
@@ -5628,6 +5659,265 @@ fn commit_lifecycle_with_extra(
         );
     }
     Ok(())
+}
+
+// ── td promote ────────────────────────────────────────────────────────
+
+/// `aw td promote <path|marker-id>` — HANDWRITE→CODEGEN marker promotion.
+///
+/// Resolves `target` (a repo-relative source path or a HANDWRITE marker
+/// `tracker=` id) to its owning source file, then delegates the actual flip
+/// to [`super::standardize::promote_handwrite_marker_to_codegen`] — the same
+/// core promotion logic `aw standardize managed run`'s `PromoteHandwrite`
+/// action shares via its own soft-mode wrapper, so behavior stays identical
+/// across both call sites and lives in exactly one place. This verb is the
+/// strict, explicitly-targeted form: a marker that isn't closure-ready yet
+/// (missing `gap`, no durable `tracker`, or a flip that would change the
+/// payload outside the marker delimiters) is a hard error here, not a
+/// skipped tick. On a real flip, commits the promoted file via the standard
+/// lifecycle-commit helpers (issue #856 family — [`commit_lifecycle_with_extra`]
+/// above) with a `Promote-Target` trailer.
+///
+/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
+fn run_promote(args: PromoteArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    run_promote_at(&project_root, args)
+}
+
+/// [`run_promote`]'s body, taking an explicit `project_root` instead of
+/// resolving it from cwd — every step downstream of that resolution is
+/// already cwd-independent (matching the rest of this module's and
+/// `standardize.rs`'s design), so this split makes the real promotion
+/// logic directly unit-testable without a process-wide cwd mutation.
+fn run_promote_at(project_root: &std::path::Path, args: PromoteArgs) -> Result<()> {
+    let target = args.target.as_str();
+
+    let rel = match super::standardize::resolve_promote_target(project_root, target) {
+        Ok(rel) => rel,
+        Err(e) => {
+            let msg = e.to_string();
+            print_envelope(&TdEnvelope::Error {
+                slug: target,
+                message: &msg,
+            })?;
+            std::process::exit(1);
+        }
+    };
+
+    let spec_ref = args
+        .spec_ref
+        .clone()
+        .unwrap_or_else(|| super::standardize::default_promote_spec_ref(project_root, &rel));
+
+    let outcome = match super::standardize::promote_handwrite_marker_to_codegen(
+        project_root,
+        &rel,
+        &spec_ref,
+    ) {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            let msg = e.to_string();
+            print_envelope(&TdEnvelope::Error {
+                slug: &rel,
+                message: &msg,
+            })?;
+            std::process::exit(1);
+        }
+    };
+
+    if outcome.changed_paths.is_empty() {
+        print_envelope(&TdEnvelope::Done {
+            slug: &rel,
+            message: &outcome.message,
+        })?;
+        let _ = args.json; // pretty-printed by default
+        return Ok(());
+    }
+
+    let slug = super::standardize::slug_for_path(&rel);
+    let paths: Vec<&str> = vec![rel.as_str()];
+    commit_lifecycle_with_extra(
+        project_root,
+        &slug,
+        &format!("promote {}", rel),
+        "Td-Promote",
+        &paths,
+        &[("Promote-Target", rel.as_str())],
+    )?;
+
+    print_envelope(&TdEnvelope::Done {
+        slug: &slug,
+        message: &outcome.message,
+    })?;
+    let _ = args.json; // pretty-printed by default
+    Ok(())
+}
+
+#[cfg(test)]
+mod promote_tests {
+    use super::*;
+
+    fn init_git_repo(root: &std::path::Path) {
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+            vec!["commit", "--allow-empty", "-m", "init", "-q"],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(root)
+                .output()
+                .expect("git command");
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    fn write(root: &std::path::Path, rel: &str, content: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn write_project_config(root: &std::path::Path) {
+        write(
+            root,
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+    }
+
+    fn git_log_body(root: &std::path::Path) -> String {
+        let out = std::process::Command::new("git")
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(root)
+            .output()
+            .expect("git log");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// End-to-end: a HANDWRITE marker that already carries a complete `gap`
+    /// + durable `tracker` (the state `issue_marker_gap` leaves it in) gets
+    /// flipped to CODEGEN, and the flip commits via the shared
+    /// `commit_lifecycle` family with a `Td-Promote` stage and a
+    /// `Promote-Target` trailer — the same lifecycle-commit machinery every
+    /// other `td` verb uses (issue #856).
+    #[test]
+    fn promote_flips_ready_marker_and_commits_with_trailers() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write_project_config(tmp.path());
+        write(
+            tmp.path(),
+            "projects/tool/src/lib.rs",
+            "// HANDWRITE-BEGIN gap=\"standardize:manual\" tracker=\"issue-42\" reason=\"legacy\"\npub fn answer() -> i32 { 42 }\n// HANDWRITE-END\n",
+        );
+
+        run_promote_at(
+            tmp.path(),
+            PromoteArgs {
+                target: "projects/tool/src/lib.rs".to_string(),
+                spec_ref: Some("tech-design/tool.md#schema".to_string()),
+                json: false,
+            },
+        )
+        .unwrap();
+
+        let source = std::fs::read_to_string(tmp.path().join("projects/tool/src/lib.rs")).unwrap();
+        assert!(source.contains("// CODEGEN-BEGIN"), "source:\n{source}");
+        assert!(source.contains("// CODEGEN-END"), "source:\n{source}");
+        assert!(!source.contains("HANDWRITE"), "source:\n{source}");
+        assert!(source.contains("pub fn answer() -> i32 { 42 }"));
+
+        let body = git_log_body(tmp.path());
+        assert!(
+            body.contains("Lifecycle-Stage: Td-Promote"),
+            "body:\n{body}"
+        );
+        assert!(
+            body.contains("Promote-Target: projects/tool/src/lib.rs"),
+            "body:\n{body}"
+        );
+        assert!(body.contains("Work-Item:"), "body:\n{body}");
+        assert!(body.contains("Lifecycle-Slug:"), "body:\n{body}");
+    }
+
+    /// A marker that hasn't been through `issue_marker_gap` yet (no durable
+    /// tracker) refuses the flip — hard error for this explicitly-targeted
+    /// verb — and leaves the file byte-for-byte unchanged.
+    #[test]
+    fn promote_refuses_marker_missing_tracker() {
+        // Exercises the shared core promotion fn directly (not
+        // `run_promote_at`/`run_promote`): the CLI-dispatch layer prints an
+        // error envelope and `std::process::exit`s on failure — correct for
+        // a real `aw td promote` invocation, but a hard process exit inside
+        // one `#[test]` thread would tear down the whole `cargo test --lib`
+        // binary (all tests share one process). The refusal behavior itself
+        // — no durable tracker, byte-for-byte-unchanged file — lives in
+        // `promote_handwrite_marker_to_codegen` and is fully testable there.
+        let tmp = tempfile::TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write_project_config(tmp.path());
+        let original =
+            "// HANDWRITE-BEGIN gap=\"standardize:manual\" reason=\"legacy\"\npub fn answer() -> i32 { 42 }\n// HANDWRITE-END\n";
+        write(tmp.path(), "projects/tool/src/lib.rs", original);
+
+        let rel = super::super::standardize::resolve_promote_target(
+            tmp.path(),
+            "projects/tool/src/lib.rs",
+        )
+        .unwrap();
+        let result = super::super::standardize::promote_handwrite_marker_to_codegen(
+            tmp.path(),
+            &rel,
+            "tech-design/tool.md#schema",
+        );
+        let err = match result {
+            Ok(_) => panic!("expected promotion to refuse a marker with no durable tracker"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("no durable tracker"),
+            "unexpected error: {err}"
+        );
+
+        let source = std::fs::read_to_string(tmp.path().join("projects/tool/src/lib.rs")).unwrap();
+        assert_eq!(source, original, "refusal must not touch the file");
+    }
+
+    /// `aw td promote <marker-id>` resolves a HANDWRITE marker's `tracker=`
+    /// id to its owning file, matching the `<path|marker-id>` contract in
+    /// the verb's own `--help`.
+    #[test]
+    fn resolve_promote_target_accepts_marker_tracker_id() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write_project_config(tmp.path());
+        write(
+            tmp.path(),
+            "projects/tool/src/lib.rs",
+            "// HANDWRITE-BEGIN gap=\"standardize:manual\" tracker=\"issue-42\" reason=\"legacy\"\npub fn answer() -> i32 { 42 }\n// HANDWRITE-END\n",
+        );
+
+        let rel = super::super::standardize::resolve_promote_target(tmp.path(), "issue-42")
+            .expect("marker tracker id should resolve to its owning file");
+        assert_eq!(rel, "projects/tool/src/lib.rs");
+    }
 }
 
 // CODEGEN-END
