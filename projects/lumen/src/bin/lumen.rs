@@ -2,7 +2,8 @@
 // CODEGEN-BEGIN
 //! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
 //! `llm` (offline integration contract + agent topics), and `k8s` (operator
-//! + CRD generation). Agents start here: `lumen llm outline`.
+//! + CRD generation). Agents start here: `lumen llm --topic outline`.
+//! @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
@@ -83,7 +84,7 @@ enum Command {
     /// `libs/service-backup`. No new snapshot mechanism — this only
     /// schedules and transports the existing admin API. Typically invoked by
     /// the operator's optional backup CronJob (`spec.serving.backup`, see
-    /// `lumen llm storage`), but works standalone. Requires the `backup`
+    /// `lumen llm --topic storage`), but works standalone. Requires the `backup`
     /// feature (pulled in transitively by `operator`).
     Backup(BackupArgs),
 }

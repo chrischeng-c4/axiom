@@ -172,7 +172,7 @@ pub struct ServingSpec {
     /// pd-balanced, not pd-ssd). Raft/WAL write latency is sensitive to
     /// disk performance, so a deployer who cares about that latency should
     /// set this field explicitly to an SSD-backed StorageClass name rather
-    /// than relying on the cluster default (see `lumen llm storage` for
+    /// than relying on the cluster default (see `lumen llm --topic storage` for
     /// example StorageClass names per common provider — informational
     /// reference only, not a value validated or defaulted by this field).
     #[serde(default)]
@@ -184,7 +184,7 @@ pub struct ServingSpec {
     /// snapshot mechanism, only scheduling + transport. Absent means no
     /// CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`,
     /// `POST /admin/restore`) is still reachable for manual/scripted use
-    /// either way (see `lumen llm storage`).
+    /// either way (see `lumen llm --topic storage`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<ServingBackupSpec>,
 }

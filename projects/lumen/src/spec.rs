@@ -40,7 +40,7 @@ pub fn json_schema_json() -> String {
 
 /// The deployment-side token registry file schema. This is not an HTTP request
 /// body, so it lives under `operationalSchemas` in `lumen spec --format
-/// json-schema` and in `lumen llm auth`.
+/// json-schema` and in `lumen llm --topic auth`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn token_registry_schema() -> Value {
     json!({
@@ -125,6 +125,8 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "range": { "field": "price", "gte": 1000, "lt": 5000 } }, "limit": 20 } },
             { "name": "match_bm25", "description": "lexical BM25 ranking over a text field",
               "request": { "query": { "match": { "field": "bio", "text": "rust search engineer" } }, "limit": 20 } },
+            { "name": "autocomplete_ngram", "description": "autocomplete/suggest recipe: declare a text field with analyzer=ngram, index the searchable label, then run match on the prefix/substring; lumen returns external_ids, not suggestion payloads",
+              "request": { "query": { "match": { "field": "title_suggest", "text": "wire" } }, "limit": 10 } },
             { "name": "boolean_and", "description": "conjunction; planner drives from the most selective clause",
               "request": { "query": { "and": [
                   { "match": { "field": "name", "text": "手機殼" } },
@@ -188,7 +190,13 @@ pub fn field_catalog() -> Value {
             { "type": "number", "purpose": "numeric range + sort (dates as epoch)" },
             { "type": "set", "purpose": "multi-valued keyword membership" },
             { "type": "vector", "purpose": "semantic kNN over a caller-supplied embedding (HNSW)", "metrics": ["cosine", "dot", "l2"] },
-            { "type": "hash", "purpose": "perceptual/structural near-dup search — 64-bit hex hash, queried by Hamming distance (pHash / SimHash / b-bit MinHash)" }
+            {
+                "type": "hash",
+                "purpose": "perceptual/structural near-dup search — caller-supplied 64-bit hex hash, queried by Hamming distance (pHash / SimHash / b-bit MinHash)",
+                "value": "16-hex-character string; optional 0x prefix accepted",
+                "queries": ["hamming"],
+                "schema": { "type": "hash" }
+            }
         ],
         "analyzers": [
             { "name": "whitespace_lower", "purpose": "split on whitespace, lowercase (default lexical)" },
@@ -198,25 +206,27 @@ pub fn field_catalog() -> Value {
     })
 }
 
-/// The agent-facing LLM topic outline (`lumen llm outline`) as Markdown.
+/// The agent-facing LLM topic outline (`lumen llm --topic outline`) as
+/// Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 pub fn llm_outline_md() -> String {
     r#"# lumen LLM outline
 
 Use the smallest topic that answers the task:
 
-- `lumen llm workflow` — product model, declare→ingest→search→hydrate, query
+- `lumen llm --topic workflow` — product model, declare→ingest→search→hydrate, query
   flavor choices, connection, and non-goals.
-- `lumen llm integration` — recommended Postgres/AlloyDB adapter boundary:
+- `lumen llm --topic integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
-- `lumen llm quickstart` — copy-paste local create → index → search flow.
-- `lumen llm auth` — bearer-token auth contract, token-registry.json schema,
+- `lumen llm --topic quickstart` — copy-paste local create → index → search flow.
+- `lumen llm --topic auth` — bearer-token auth contract, token-registry.json schema,
   Secret Manager / Kubernetes Secret projection, and client header wiring.
-- `lumen llm storage` — operator storage/ops contract: the serving fleet is
+- `lumen llm --topic storage` — operator storage/ops contract: the serving fleet is
   always a StatefulSet with a durable PVC-backed WAL, including at
   `replicasPerShard: 1`.
-- `lumen llm recipes` — task → ready-to-POST query bodies.
+- `lumen llm --topic recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
@@ -224,8 +234,8 @@ Use the smallest topic that answers the task:
     .to_string()
 }
 
-/// Bearer-token auth + deployment secret contract (`lumen llm auth`) as
-/// Markdown.
+/// Bearer-token auth + deployment secret contract (`lumen llm --topic auth`)
+/// as Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_auth_md() -> String {
     format!(
@@ -289,10 +299,10 @@ Generated Python clients accept either `auth_token="<token>"` or
     )
 }
 
-/// The agent workflow model (`lumen llm workflow`) as Markdown — the mental
+/// The agent workflow model (`lumen llm --topic workflow`) as Markdown — the mental
 /// model, declare→ingest→search→hydrate workflow, search-flavor decision map,
 /// connection, and non-goals. Where exact wire shape is needed it points at
-/// `lumen spec` / `lumen llm recipes` so there is one source of truth.
+/// `lumen spec` / `lumen llm --topic recipes` so there is one source of truth.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_workflow_md() -> String {
     r#"# lumen workflow
@@ -325,11 +335,30 @@ hydrate the hits against your own store.
 - perceptual / near-duplicate → `hash` + `hamming`
 - hybrid lexical+semantic → `rrf` (fuse `match` + `knn` by rank; put any filter
   INSIDE each leg so the kNN leg stays filter-correct)
+- autocomplete / suggest → declare a dedicated `text` field with the `ngram`
+  analyzer and use `match`; lumen returns candidate `external_id`s, not
+  completion strings
 - which `external_id`s share a value → `POST /duplicates`
 - nested data-table / "parent whose child matches" → `has_child`; combine it
   with parent-field `sort` for list-row flows that filter by child rows then
   order/count parent rows
 - compose any of the above under `and` / `or` / `not`
+
+## Search concept boundaries
+These boundaries are explicit so search-engine selection does not infer silent
+parity with PostGIS, OpenSearch, or MongoDB features that are not part of
+Lumen's current contract.
+
+| Concept | Disposition |
+|---------|-------------|
+| Geo / spatial search | Roadmap candidate; use PostGIS/MongoDB/OpenSearch or a caller-owned geospatial prefilter today, then pass matching `external_id`s to lumen. |
+| Phrase / proximity queries | Roadmap candidate; current `match` is bag-of-words BM25 over analyzer tokens, not phrase order or slop. |
+| Fuzzy / typo tolerance | Roadmap candidate; no edit-distance automaton today. For coarse prefix/substring recall, use the `ngram` analyzer recipe. |
+| Synonyms | Caller-owned query expansion or normalized companion fields; lumen has no synonym analyzer or managed synonym dictionary. |
+| Autocomplete / suggest | Recipe via a dedicated `text` field with `analyzer: "ngram"` plus `match`; hydrate suggestions from the caller's source of truth. |
+| Highlighting | Non-goal: responses contain only `external_id` + `score`, and lumen does not store source text to return fragments. |
+| Per-field / per-clause boost | Not supported as an arbitrary query knob. Use separate fields/query legs plus `rrf` and, if needed, final reranking in the caller. |
+| Document TTL / expiry | Caller-owned lifecycle. Delete/reindex expired `external_id`s from the source-of-truth event stream; collection soft-delete grace is not per-document TTL. |
 
 ## Connection
 HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. When the
@@ -346,16 +375,20 @@ deployments route on the client: `crc32(collection_id) % shard_count`.
 - aggregate (group-by / histogram / percentile / cardinality) — pair it with an
   OLAP store (ClickHouse / Druid / BigQuery / DuckDB)
 - generate embeddings or hashes — you compute them; lumen indexes the bits
+- return highlights, snippets, stored fields, or document payloads
+- enforce per-document TTL/expiry independent of caller-owned delete/reindex
+  events
 
 ## Exact wire shapes
 `lumen spec` (OpenAPI), `lumen spec --shapes` (query cookbook), `lumen spec
---fields` (field/analyzer catalog), or `lumen llm recipes` (task → ready-to-POST
-body). `lumen llm integration` covers database/pubsub adapter boundaries.
+--fields` (field/analyzer catalog), or `lumen llm --topic recipes` (task →
+ready-to-POST body). `lumen llm --topic integration` covers database/pubsub
+adapter boundaries.
 "#
     .to_string()
 }
 
-/// The recommended database/pubsub integration boundary (`lumen llm
+/// The recommended database/pubsub integration boundary (`lumen llm --topic
 /// integration`) as Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_integration_md() -> String {
@@ -390,8 +423,8 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
     .to_string()
 }
 
-/// A copy-paste end-to-end (`lumen llm quickstart`) as Markdown: create → index
-/// → search against a local `lumen serve` on `:7373`.
+/// A copy-paste end-to-end (`lumen llm --topic quickstart`) as Markdown:
+/// create → index → search against a local `lumen serve` on `:7373`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
@@ -444,13 +477,14 @@ curl -sS -XPOST localhost:7373/collections/products/search \
 The response is `{ "hits": [ { "external_id", "score" } ], ... }`. Fetch the full
 records from YOUR store by those `external_id`s — lumen never stored them.
 
-More shapes: `lumen llm recipes`. Full schema: `lumen spec`.
+More shapes: `lumen llm --topic recipes`. Full schema: `lumen spec`.
 "#
     .to_string()
 }
 
-/// Task → ready-to-POST body recipes (`lumen llm recipes`) as Markdown, rendered
-/// from [`query_shapes`] so the bodies never drift from the canonical cookbook.
+/// Task → ready-to-POST body recipes (`lumen llm --topic recipes`) as Markdown,
+/// rendered from [`query_shapes`] so the bodies never drift from the canonical
+/// cookbook.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_recipes_md() -> String {
     let shapes = query_shapes();
@@ -474,7 +508,7 @@ pub fn llm_recipes_md() -> String {
     out
 }
 
-/// Operator storage/ops contract (`lumen llm storage`) as Markdown: the
+/// Operator storage/ops contract (`lumen llm --topic storage`) as Markdown: the
 /// serving fleet's workload kind and PVC durability guarantee, independent of
 /// `replicasPerShard`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source

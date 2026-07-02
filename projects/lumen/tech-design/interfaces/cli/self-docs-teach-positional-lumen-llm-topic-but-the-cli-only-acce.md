@@ -102,6 +102,11 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Update `llm_outline_md()` topic bullets and nearby cross-topic references from positional `lumen llm <topic>` to canonical `lumen llm --topic <topic>` text."
+  - path: projects/lumen/src/operator/crd.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Update CRD/operator-facing storage topic references from `lumen llm storage` to `lumen llm --topic storage`."
   - path: projects/lumen/README.md
     action: modify
     section: logic

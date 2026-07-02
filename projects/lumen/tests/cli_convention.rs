@@ -1,5 +1,6 @@
 // SPEC-MANAGED: projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-cli-convention" tracker="standardize-gap-projects-lumen-tests-cli-convention-rs" reason="CLI convention smoke test for the shared llm/upgrade/issue surface until the test generator owns binary-help assertions."
+use lumen::spec::llm_outline_md;
 use std::process::Command;
 
 fn run_lumen(args: &[&str]) -> String {
@@ -18,6 +19,18 @@ fn run_lumen(args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("lumen stdout is utf8")
 }
 
+fn outline_llm_topic_commands() -> Vec<String> {
+    llm_outline_md()
+        .lines()
+        .filter_map(|line| {
+            let start = line.find("`lumen llm --topic ")?;
+            let command = &line[start + 1..];
+            let end = command.find('`')?;
+            Some(command[..end].to_string())
+        })
+        .collect()
+}
+
 #[test]
 fn help_ships_standard_issue_group_not_report_issue() {
     let help = run_lumen(&["--help"]);
@@ -28,6 +41,29 @@ fn help_ships_standard_issue_group_not_report_issue() {
         !help.contains("report-issue"),
         "deprecated report-issue command still appears in:\n{help}"
     );
+}
+
+/// #824: every topic command shown by `llm_outline_md()` must parse through
+/// the actual lumen binary.
+/// @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#unit-test
+#[test]
+fn llm_outline_advertised_topic_commands_parse() {
+    let commands = outline_llm_topic_commands();
+    assert_eq!(
+        commands.len(),
+        6,
+        "outline should advertise the six detail topics: {commands:?}"
+    );
+
+    for command in commands {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        assert_eq!(
+            parts.first(),
+            Some(&"lumen"),
+            "unexpected command: {command}"
+        );
+        run_lumen(&parts[1..]);
+    }
 }
 
 #[test]
