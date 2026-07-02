@@ -239,10 +239,13 @@ loop converges on ec green.
   child completes; stop when `completion.workflow_complete=true`.
 - `completion.requires_hitl=true` -> stop and ask a human.
 
-Drive it: `aw run --wi <id>` (or `--project` / `--capability`); the linear
-forward path is `wi -> td -> code-check`.
+Drive it: `aw wi run <id>` for one work item, or `aw capability run
+<capability-id> --project <project>` for a capability's work-root queue; the
+linear forward path is `wi -> td -> code-check`. `aw run --wi|--project|
+--capability` still works but is a deprecated forwarding alias.
 
-For exact flags, run `aw run --help` or `aw wi --help`.
+For exact flags, run `aw wi run --help`, `aw capability run --help`, or
+`aw wi --help`.
 "#;
 
 #[cfg(test)]

@@ -39,6 +39,7 @@
 
 use clap::CommandFactory;
 
+use super::run;
 use super::standardize::TraceabilityCli;
 
 /// Why [`validate_aw_command_string`] rejected a command string.
@@ -304,6 +305,26 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         sample: "aw td code-check 915",
         note: "fill loop's terminal-check follow-up command, always built with a slug",
     },
+    EmitSite {
+        source: "run.rs:wi_run_command",
+        sample: "aw wi run 915",
+        note: "#917: canonical `aw wi run <id>` replacement for the deprecated \
+               `aw run --wi <id>` / `aw run --root wi:<id>` forms; shared by \
+               loop_state_envelope, closed_wi_envelope's parent_inspection_command, \
+               and project_ready_wi_envelope",
+    },
+    EmitSite {
+        source: "run.rs:capability_run_command",
+        sample: "aw capability run work-item-planning --project agentic-workflow",
+        note: "#917: canonical `aw capability run <capability-id> --project <project>` \
+               replacement for the deprecated `aw run --root capability:<project>:<id>` forms",
+    },
+    EmitSite {
+        source: "run.rs:project_capability_rollup_command",
+        sample: "aw capability run --project agentic-workflow --non-interactive --max-ticks 1",
+        note: "#917: canonical replacement for the deprecated bare `aw run --project <project>` \
+               form; subsumes the project root via the existing project-scoped capability loop",
+    },
 ];
 
 /// One known stale/legacy persisted `next_action` string and how to repair
@@ -336,8 +357,97 @@ const LEGACY_NEXT_ACTION_RULES: &[LegacyNextActionRule] = &[
     },
 ];
 
+/// #917: repair a persisted `next_action` that used one of the now-deprecated
+/// `aw run` root-selection flag shapes, rewriting it to the equivalent
+/// `aw wi run <id>` / `aw capability run <capability-id> --project <project>`
+/// form. Reuses the same command-string builders `aw wi run` and
+/// `aw capability run` themselves call ([`run::wi_run_command`],
+/// [`run::capability_run_command`], [`run::project_capability_rollup_command`])
+/// so there is exactly one place that knows what those verbs look like.
+///
+/// Token parsing is the same plain `split_whitespace` scheme as
+/// [`validate_aw_command_string`] (not a shell/shlex split).
+///
+/// Returns nested `Option`s so the caller can distinguish "not a legacy
+/// root-selection form at all" (outer `None`, e.g. a bare `aw run` or
+/// `aw run --human` with no root-selecting flag — the caller should fall
+/// back to its own chain-validity pass-through) from "this *is* a legacy
+/// root-selection form, and it either rewrites (inner `Some`) or is
+/// definitively unrepairable (inner `None`, e.g. a bare `--root
+/// capability:<id>` / `--capability <id>` with no explicit `--project` to
+/// carry — no project inference is available from a static string)". In the
+/// unrepairable case the caller must not fall through to a pass-through
+/// check: the input is a known-deprecated form, not a valid one.
+fn normalize_legacy_aw_run_command(cmd: &str) -> Option<Option<String>> {
+    let rest = cmd.strip_prefix("aw run")?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+    let mut wi: Option<&str> = None;
+    let mut project: Option<&str> = None;
+    let mut capability: Option<&str> = None;
+    let mut root: Option<&str> = None;
+    let mut i = 0;
+    while i < tokens.len() {
+        match tokens[i] {
+            "--wi" => {
+                wi = tokens.get(i + 1).copied();
+                i += 2;
+            }
+            "--project" => {
+                project = tokens.get(i + 1).copied();
+                i += 2;
+            }
+            "--capability" => {
+                capability = tokens.get(i + 1).copied();
+                i += 2;
+            }
+            "--root" => {
+                root = tokens.get(i + 1).copied();
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+
+    if wi.is_none() && root.is_none() && capability.is_none() && project.is_none() {
+        // No recognized root-selection flag at all (e.g. `aw run --human`):
+        // not this rewriter's concern.
+        return None;
+    }
+
+    if let Some(id) = wi {
+        return Some(Some(run::wi_run_command(id)));
+    }
+    if let Some(raw_root) = root {
+        if let Some(id) = raw_root.strip_prefix("wi:") {
+            return Some(Some(run::wi_run_command(id)));
+        }
+        if let Some(cap_id) = raw_root.strip_prefix("capability:") {
+            return Some(project.map(|p| run::capability_run_command(p, cap_id)));
+        }
+        return Some(None);
+    }
+    if let Some(cap_id) = capability {
+        return Some(project.map(|p| run::capability_run_command(p, cap_id)));
+    }
+    if let Some(project) = project {
+        return Some(Some(run::project_capability_rollup_command(project)));
+    }
+    None
+}
+
 /// Normalize a persisted `next_action` string for dispatch.
 ///
+/// - If `cmd` is a legacy `aw run ...` root-selection form (has a
+///   recognized `--wi`/`--root`/`--capability`/`--project` flag),
+///   [`normalize_legacy_aw_run_command`] is authoritative: it either
+///   rewrites `cmd` to the current `aw wi run` / `aw capability run` verb,
+///   or — if the form cannot be repaired (e.g. a capability root with no
+///   explicit project) — this function returns `None` without falling back
+///   to the plain chain-validity pass-through below (an `aw run` root form
+///   is deprecated by definition here even when clap still accepts it).
 /// - If `cmd` is already chain-valid, it is returned unchanged.
 /// - If `cmd` exactly matches a [`LEGACY_NEXT_ACTION_RULES`] entry, the
 ///   repaired command (with `slug` substituted in) is returned — but only if
@@ -347,6 +457,9 @@ const LEGACY_NEXT_ACTION_RULES: &[LegacyNextActionRule] = &[
 ///   should surface a blocked/HITL envelope instead.
 pub fn normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> {
     let trimmed = cmd.trim();
+    if let Some(outcome) = normalize_legacy_aw_run_command(trimmed) {
+        return outcome.filter(|candidate| validate_aw_command_string(candidate).is_ok());
+    }
     if validate_aw_command_string(trimmed).is_ok() {
         return Some(trimmed.to_string());
     }
@@ -457,6 +570,76 @@ mod tests {
     #[test]
     fn unparseable_next_action_normalizes_to_none() {
         assert_eq!(normalize_legacy_next_action("aw bogus-verb", "915"), None);
+    }
+
+    // #917: persisted `aw run --wi <id>` / `aw run --root wi:<id>` strings
+    // repair to the new `aw wi run <id>` verb.
+    #[test]
+    fn legacy_aw_run_wi_flag_normalizes_to_wi_run() {
+        assert_eq!(
+            normalize_legacy_next_action("aw run --wi 915", "irrelevant"),
+            Some("aw wi run 915".to_string())
+        );
+    }
+
+    #[test]
+    fn legacy_aw_run_root_wi_normalizes_to_wi_run() {
+        assert_eq!(
+            normalize_legacy_next_action("aw run --root wi:915", "irrelevant"),
+            Some("aw wi run 915".to_string())
+        );
+    }
+
+    // #917: persisted `aw run --project <p> --root capability:<id>` (or the
+    // deprecated `--capability <id> --project <p>` form) repairs to the new
+    // `aw capability run <id> --project <p>` verb.
+    #[test]
+    fn legacy_aw_run_root_capability_normalizes_to_capability_run() {
+        assert_eq!(
+            normalize_legacy_next_action(
+                "aw run --project agentic-workflow --root capability:work-item-planning",
+                "irrelevant",
+            ),
+            Some("aw capability run work-item-planning --project agentic-workflow".to_string())
+        );
+    }
+
+    #[test]
+    fn legacy_aw_run_capability_flag_normalizes_to_capability_run() {
+        assert_eq!(
+            normalize_legacy_next_action(
+                "aw run --capability work-item-planning --project agentic-workflow",
+                "irrelevant",
+            ),
+            Some("aw capability run work-item-planning --project agentic-workflow".to_string())
+        );
+    }
+
+    // #917: a bare persisted `aw run --project <p>` repairs to the
+    // project-scoped capability rollup command.
+    #[test]
+    fn legacy_aw_run_project_only_normalizes_to_capability_rollup() {
+        assert_eq!(
+            normalize_legacy_next_action("aw run --project agentic-workflow", "irrelevant"),
+            Some(
+                "aw capability run --project agentic-workflow --non-interactive --max-ticks 1"
+                    .to_string()
+            )
+        );
+    }
+
+    // A `--root capability:<id>` form with no explicit `--project` cannot be
+    // repaired from a static string (no project inference available here);
+    // the caller must surface blocked/HITL instead of dispatching verbatim.
+    #[test]
+    fn legacy_aw_run_root_capability_without_project_normalizes_to_none() {
+        assert_eq!(
+            normalize_legacy_next_action(
+                "aw run --root capability:work-item-planning",
+                "irrelevant"
+            ),
+            None
+        );
     }
 }
 // CODEGEN-END

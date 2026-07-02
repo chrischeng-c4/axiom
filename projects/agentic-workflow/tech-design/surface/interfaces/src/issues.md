@@ -27,6 +27,7 @@ command_refs:
   - command: aw wi plan
   - command: aw wi prioritize
   - command: aw wi review
+  - command: aw wi run
   - command: aw wi show
   - command: aw wi update
   - command: aw wi validate
@@ -130,6 +131,8 @@ pub enum IssuesCommand {
     List(ListArgs),
     /// Show a single work-item by slug or numeric id.
     Show(ShowArgs),
+    /// Drive one work-item to its next lifecycle command (root-driven runner).
+    Run(WiRunArgs),
     /// Create a new work-item.
     Create(CreateArgs),
     /// Update an existing work-item's metadata or body.
@@ -313,6 +316,25 @@ pub struct ShowArgs {
 
     #[arg(long)]
     pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+pub struct WiRunArgs {
+    /// Work-item identifier (slug for local, numeric for github).
+    pub id: String,
+
+    /// Emit human-readable text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
+
+    /// Generate a /goal-ready prompt for this work item instead of the normal run envelope.
+    #[arg(long)]
+    pub goal: bool,
 }
 
 // @spec projects/agentic-workflow/tech-design/core/logic/issues-backend.md#R1
@@ -1005,6 +1027,7 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Draft(a) => run_draft(a).await,
         IssuesCommand::List(a) => run_list(a).await,
         IssuesCommand::Show(a) => run_show(a).await,
+        IssuesCommand::Run(a) => run_wi_run(a).await,
         IssuesCommand::Create(a) => run_create(a).await,
         IssuesCommand::Update(a) => run_update(a).await,
         IssuesCommand::Close(a) => run_close(a).await,
@@ -1529,6 +1552,21 @@ async fn run_show(args: ShowArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// `aw wi run <id>` -- thin shell over the shared root-driven workflow runner
+// (`crate::cli::run`); consumes/updates the work item's loop-state exactly as
+// the deprecated `aw run --wi <id>` does today.
+async fn run_wi_run(args: WiRunArgs) -> Result<()> {
+    crate::cli::run::run_wi_root(
+        &args.id,
+        crate::cli::run::RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: args.goal,
+        },
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
