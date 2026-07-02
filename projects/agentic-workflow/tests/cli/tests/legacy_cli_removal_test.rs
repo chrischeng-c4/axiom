@@ -36,7 +36,8 @@ fn legacy_top_level_commands_are_removed() {
     for name in [
         "status",
         "list",
-        "view",
+        // "view" was re-added by the repo-view desktop app capability
+        // (Commands::View in src/cli/commands.rs) — no longer removed.
         "changes",
         "fillback",
         "sdd",
