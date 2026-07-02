@@ -1360,48 +1360,72 @@ fn loop_state_envelope(
         kind: "change".to_string(),
         id: issue_ref(issue),
     };
+    let slug = issue_cli_ref(issue);
     match loop_state.next_action.as_deref() {
-        Some(command) => {
-            let command = command.to_string();
-            let converged = matches!(
-                loop_state.status,
-                crate::cli::loop_state::LoopStatus::Converged
-            );
-            let reason = if converged {
-                "loop converged: ec is green — run the finalize act".to_string()
-            } else {
-                "loop iterating: ec is not green — run the next act".to_string()
-            };
-            WorkflowEnvelope {
-                action: "dispatch".to_string(),
-                root,
-                current,
-                completed: None,
-                completion: wi_completion(
-                    false,
-                    false,
-                    vec!["loop not yet terminal; ec verifier drives the next act".to_string()],
+        // #844/#845: a persisted `next_action` is a raw text template that
+        // predates chain validation — it can be a bare, chain-invalid
+        // `aw td code-check` (#844) or a stale legacy string like
+        // `aw td merge` that no longer exists in the LINEAR lifecycle
+        // (#845). Normalize/repair it before dispatching, or fall through to
+        // a blocked/HITL envelope naming the bad command instead of running
+        // it verbatim.
+        Some(raw_command) => {
+            match crate::cli::chain::normalize_legacy_next_action(raw_command, &slug) {
+                Some(command) => {
+                    let converged = matches!(
+                        loop_state.status,
+                        crate::cli::loop_state::LoopStatus::Converged
+                    );
+                    let reason = if converged {
+                        "loop converged: ec is green — run the finalize act".to_string()
+                    } else {
+                        "loop iterating: ec is not green — run the next act".to_string()
+                    };
+                    WorkflowEnvelope {
+                        action: "dispatch".to_string(),
+                        root,
+                        current,
+                        completed: None,
+                        completion: wi_completion(
+                            false,
+                            false,
+                            vec![
+                                "loop not yet terminal; ec verifier drives the next act"
+                                    .to_string(),
+                            ],
+                        ),
+                        next: WorkflowNext {
+                            kind: "loop_act".to_string(),
+                            command: command.clone(),
+                            reason,
+                            payload_path: None,
+                        },
+                        invoke: WorkflowInvoke { command },
+                        agent_prompt:
+                            "Loop engine: run next.command, then re-run `aw run --wi` to re-observe the loop state."
+                                .to_string(),
+                        requires_hitl: false,
+                        artifact_quality_profile: None,
+                        hitl_question: None,
+                        persistence: None,
+                    }
+                }
+                None => blocked_envelope(
+                    root,
+                    current,
+                    format!("aw wi show {slug}"),
+                    format!(
+                        "loop next_action `{raw_command}` is not a runnable aw command; \
+                         inspect and repair the WI's loop-state block"
+                    ),
+                    true,
                 ),
-                next: WorkflowNext {
-                    kind: "loop_act".to_string(),
-                    command: command.clone(),
-                    reason,
-                    payload_path: None,
-                },
-                invoke: WorkflowInvoke { command },
-                agent_prompt:
-                    "Loop engine: run next.command, then re-run `aw run --wi` to re-observe the loop state."
-                        .to_string(),
-                requires_hitl: false,
-                artifact_quality_profile: None,
-                hitl_question: None,
-                persistence: None,
             }
         }
         None => blocked_envelope(
             root,
             current,
-            format!("aw wi show {}", issue_ref(issue).trim_start_matches('#')),
+            format!("aw wi show {slug}"),
             "loop has no next act: ec verifier is blocked or undefined — human input required"
                 .to_string(),
             true,
@@ -2833,6 +2857,53 @@ mod tests {
         let e = loop_state_envelope(root, &issue, &s);
         assert_eq!(e.action, "blocked");
         assert!(e.requires_hitl);
+    }
+
+    // #844/#845: a persisted `next_action` predating chain validation must be
+    // normalized/repaired before dispatch, not run verbatim.
+    #[test]
+    fn loop_state_envelope_repairs_legacy_next_action() {
+        use crate::cli::loop_state::{LoopState, LoopStatus};
+        let issue = open_issue(IssueType::Enhancement, 188);
+        let root = WorkflowNode {
+            kind: "change".to_string(),
+            id: issue_ref(&issue),
+        };
+
+        // #844: a persisted bare `aw td code-check` must pick up the WI's
+        // slug rather than dispatch a whole-tree audit.
+        let s = LoopState {
+            status: LoopStatus::Converged,
+            next_action: Some("aw td code-check".to_string()),
+            ..Default::default()
+        };
+        let e = loop_state_envelope(root.clone(), &issue, &s);
+        assert_eq!(e.action, "dispatch");
+        assert_eq!(e.next.command, "aw td code-check 188");
+        assert_eq!(e.invoke.command, "aw td code-check 188");
+
+        // #845: `aw td merge` was removed from the LINEAR lifecycle; a stale
+        // persisted string must repair to the current terminal step.
+        let s = LoopState {
+            status: LoopStatus::Converged,
+            next_action: Some("aw td merge".to_string()),
+            ..Default::default()
+        };
+        let e = loop_state_envelope(root.clone(), &issue, &s);
+        assert_eq!(e.action, "dispatch");
+        assert_eq!(e.next.command, "aw td code-check 188");
+
+        // An unparseable/unrepairable command must not dispatch verbatim —
+        // fall through to blocked/HITL naming the bad command.
+        let s = LoopState {
+            status: LoopStatus::Iterating,
+            next_action: Some("aw bogus-verb".to_string()),
+            ..Default::default()
+        };
+        let e = loop_state_envelope(root, &issue, &s);
+        assert_eq!(e.action, "blocked");
+        assert!(e.requires_hitl);
+        assert!(e.next.command.contains("aw wi show 188"));
     }
 
     #[test]
