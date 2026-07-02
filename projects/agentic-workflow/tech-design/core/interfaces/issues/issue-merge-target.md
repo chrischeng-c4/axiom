@@ -136,9 +136,10 @@ commands:
       - name: --target-branch
         type: Option<String>
         description: |
-          Target branch to merge this issue's worktree into when
-          `aw wi merge` is invoked. When supplied, the value is
-          written to the issue frontmatter as `target_branch`. When
+          Target branch to land this issue's `td-<slug>` lifecycle branch
+          into when `aw td code-check`'s terminal branch-landing step runs
+          (`land_td_lifecycle_branch`, issue #842). When supplied, the value
+          is written to the issue frontmatter as `target_branch`. When
           omitted, no field is written (absence preserves the default
           resolution path — current branch → config default_branch →
           error). Must refer to a branch that exists in the local
@@ -149,16 +150,24 @@ commands:
           - --target-branch develop
           - --target-branch release/2.0
 
-  - name: aw wi merge
-    description: Merge the issue worktree branch into the target branch.
+  - name: aw td code-check
+    description: |
+      Terminal code-check step. On completion it lands the issue's
+      `td-<slug>` lifecycle branch (when one exists) into the resolved
+      target with a `--no-ff` merge carrying lifecycle trailers, then
+      deletes the branch — there is no separate `aw wi merge` verb; this
+      landing happens automatically as part of `aw td code-check`.
     options:
       - name: --target-branch
         type: Option<String>
         description: |
-          Explicit target branch override. When supplied, takes
-          precedence over all other resolution steps (issue frontmatter,
-          current branch, config default). Intended for ad-hoc overrides
-          at merge time; prefer setting `target_branch` in frontmatter
+          Reserved override parameter on `merge_target::resolve_merge_target`
+          (the `override_branch` argument), taking precedence over all other
+          resolution steps (issue frontmatter, current branch, config
+          default) when set. No CLI flag currently wires a value into it —
+          `aw td code-check`'s landing step always calls it with `None` and
+          relies on `target_branch` frontmatter (or current-branch/config
+          fallback) instead. Prefer setting `target_branch` in frontmatter
           for repeatable issue-level configuration.
         required: false
         examples:
