@@ -182,7 +182,7 @@ impl TypeChecker {
                 // Any-path return. It only *emits* the existing arg-mismatch
                 // error when a known stdlib signature is genuinely violated by a
                 // concrete-scalar argument. Skip-when-unsure at every branch.
-                self.check_stdlib_call(func, args);
+                let stdlib_ret = self.check_stdlib_call(func, args);
                 self.check_dict_operator_call(func, args);
                 match func_ty {
                     Ty::Fn {
@@ -423,7 +423,13 @@ impl TypeChecker {
                         for arg in args {
                             self.check_call_arg(arg);
                         }
-                        self.tcx.any()
+                        // #887: a from-imported / module-qualified stdlib
+                        // callee resolves to `Ty::Any` at this layer (module
+                        // bindings aren't typed as `Ty::Fn`) — feed the
+                        // resolved `StdlibSig`'s concrete-scalar return type
+                        // through when the ① hook found one, instead of
+                        // always widening to `Any`.
+                        stdlib_ret.unwrap_or_else(|| self.tcx.any())
                     }
                     Ty::Error => self.tcx.error(),
                     // #1586: heterogeneous-callable Union. `for C in set, list, ...:`
@@ -891,7 +897,11 @@ impl TypeChecker {
     /// from a concrete-scalar param. ADDITIVE: only ever *emits* an error; never
     /// changes any return type or inference. Skip-when-unsure at every step so
     /// correct calls (the ② behavior oracle) are never newly rejected.
-    fn check_stdlib_call(&mut self, func: &Spanned<Expr>, args: &[CallArg]) {
+    /// Returns the call's inferred return type (#887: `sig.ret` mapped through
+    /// `core_ty_to_type_id`) when resolvable, or `None` when the callee didn't
+    /// resolve to a known stdlib signature / its return isn't a modeled
+    /// concrete scalar — skip-when-unsure, same as the argument-side wall.
+    fn check_stdlib_call(&mut self, func: &Spanned<Expr>, args: &[CallArg]) -> Option<TypeId> {
         // "Expected to raise at runtime" carve-out: a probe statement whose
         // immediate sibling is a `raise` (the auto-ported manual-assertRaises
         // idiom) needs the call to raise at RUNTIME, not be rejected at compile
@@ -900,7 +910,7 @@ impl TypeChecker {
         // by a `print`), so this never costs a type gain. See
         // `SUPPRESS_STDLIB_ARG_CHECK`.
         if stdlib_arg_check_suppressed() {
-            return;
+            return None;
         }
         // Resolve callee -> a concrete `StdlibSig`. We resolve to the signature
         // directly (rather than a `(module, qualifier, name)` triple) because a
@@ -1006,7 +1016,11 @@ impl TypeChecker {
             _ => None,
         };
 
-        let Some(sig) = sig else { return };
+        let Some(sig) = sig else { return None };
+        // #887: the callee's typeshed return type, independent of argument
+        // enforceability below (a zero-arg call like `os.getcwd()` is never
+        // `enforceable`, but its `str` return still must flow into inference).
+        let ret_ty = self.core_ty_to_type_id(sig.ret);
         // #888 audit: keyword.iskeyword/issoftkeyword are typeshed-contracted
         // as `s: str`, which LOOKS like it should be a universal (ungated)
         // wall. It is deliberately kept fixture-only (`self.strict_type_fixture`)
@@ -1029,7 +1043,7 @@ impl TypeChecker {
             && sig.qualifier.is_empty()
             && matches!(sig.name, "iskeyword" | "issoftkeyword");
         if !sig.enforceable && !strict_keyword_wall {
-            return;
+            return ret_ty;
         }
 
         // Walk positional args against params. Stop at the first star/kwarg arg
@@ -1106,6 +1120,7 @@ impl TypeChecker {
             };
             self.check_stdlib_scalar_arg(param, value, false);
         }
+        ret_ty
     }
 
     /// Shared scalar/Typed check for a single (param, actual-arg) pair: the

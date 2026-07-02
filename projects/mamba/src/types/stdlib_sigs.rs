@@ -94,6 +94,16 @@ pub struct StdlibSig {
     /// false, the hook skips it wholesale (kept in the table as a documented
     /// negative test that it is NOT rejected).
     pub enforceable: bool,
+    /// #887: the callable's typeshed RETURN annotation, closed to the concrete
+    /// positive scalars [`CoreTy::core_ty_to_type_id`-mappable] (`Int`/`Float`/
+    /// `Str`/`Bool`/`None`); everything richer (Optional, Union, generics,
+    /// nominal classes, protocols, unannotated) is `CoreTy::Unknown`, which the
+    /// call-site hook skips — the return type is simply not fed into inference,
+    /// never guessed. Every hand-curated row in this file defaults to
+    /// `CoreTy::Unknown` (curation focuses on argument walls, not returns); only
+    /// the typeshed-generated table in `stdlib_sigs_generated.rs` populates real
+    /// return types.
+    pub ret: CoreTy,
 }
 
 const fn p(name: &'static str, ty: CoreTy) -> ParamSig {
@@ -115,6 +125,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("code", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: os.getenv(key: str, default=...) — bare-scalar module fn.
     // Only `key` is concrete (str); `default` is Unknown, so the hook stops
@@ -126,6 +137,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("key", CoreTy::Str), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: multiprocessing.reduction.duplicate(handle: int, ...).
     StdlibSig {
@@ -135,6 +147,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("handle", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.reduction",
@@ -143,6 +156,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("conn", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.reduction",
@@ -155,6 +169,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("destination_pid", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: html.parser.HTMLParser.handle_entityref(name: str) — method.
     StdlibSig {
@@ -164,6 +179,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("name", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: base64.b64encode(s: ReadableBuffer, altchars=...) — `s` is a
     // buffer protocol -> Unknown, so this is NOT enforceable. Kept as a
@@ -175,6 +191,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Unknown), p("altchars", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated bdb rows lose tuple/callable precision for these
     // strict wall probes. Tighten only the first argument so valid optional
@@ -186,6 +203,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("frame_lineno", CoreTy::Tuple), p("lprefix", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "bdb",
@@ -194,6 +212,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pdb",
@@ -202,6 +221,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pdb",
@@ -210,6 +230,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pdb",
@@ -221,6 +242,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("prompt_prefix", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pdb",
@@ -229,6 +251,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("count", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pipes",
@@ -237,6 +260,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("flag", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -245,6 +269,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -253,6 +278,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("p", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -261,6 +287,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("paths", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -269,6 +296,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("p", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -277,6 +305,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -285,6 +314,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -293,6 +323,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -301,6 +332,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -309,6 +341,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -317,6 +350,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("filename", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -325,6 +359,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed), p("start", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -333,6 +368,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("p", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -341,6 +377,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("p", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -349,6 +386,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("p", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "posixpath",
@@ -357,6 +395,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("p", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: bz2 filename arguments are overload/protocol unions
     // (path-like or file-object). A bare user instance cannot satisfy either,
@@ -368,6 +407,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "bz2",
@@ -376,6 +416,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: math.factorial(x: SupportsIndex) — protocol -> Unknown, NOT
     // enforceable. Kept as a regression guard that `factorial(obj)` and
@@ -387,6 +428,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: calendar.setfirstweekday(firstweekday) — CPython's body is
     // `if not MONDAY <= firstweekday <= SUNDAY`, so a str argument is a
@@ -399,6 +441,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("firstweekday", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: calendar.timegm(tuple) consumes a typed time tuple. A bare
     // user object is not a tuple/time tuple and must be rejected in strict mode.
@@ -409,6 +452,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("tuple", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated cgi/cgitb rows lose these first-argument walls to
     // Unknown/Callable collapse. Bare user objects and concrete scalars are
@@ -420,6 +464,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("type", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cgi",
@@ -428,6 +473,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("form", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cgitb",
@@ -436,6 +482,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("reader", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: cmath accepts complex-like `_C` / float-like `_F` protocols.
     // Use Typed, not Complex/Float, so valid int/float/complex values and
@@ -448,6 +495,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -456,6 +504,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -464,6 +513,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -472,6 +522,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -480,6 +531,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -488,6 +540,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -496,6 +549,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -504,6 +558,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -512,6 +567,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -520,6 +576,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -528,6 +585,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -536,6 +594,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -544,6 +603,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -552,6 +612,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -560,6 +621,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -568,6 +630,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -576,6 +639,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -584,6 +648,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("r", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -592,6 +657,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -600,6 +666,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -608,6 +675,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -616,6 +684,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmath",
@@ -624,6 +693,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("z", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: cmd/code constructors and methods where generated signatures
     // either collapse the first argument to Unknown or skip at a star-param
@@ -635,6 +705,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("intro", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmd",
@@ -643,6 +714,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("list", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmd",
@@ -651,6 +723,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("text", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "cmd",
@@ -659,6 +732,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("stop", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "code",
@@ -667,6 +741,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("locals", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "code",
@@ -675,6 +750,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("locals", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: typeshed models compile_path(skip_curdir) as bool, but the
     // generated row collapses it to Typed and therefore skips a wrong concrete
@@ -694,6 +770,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("invalidation_mode", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: concurrent.futures executor `max_workers` is `int | None`.
     // The generated rows either collapse it to Unknown or mark the row
@@ -711,6 +788,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("initargs", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "concurrent.futures.interpreter",
@@ -722,6 +800,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("initargs", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "concurrent.futures.interpreter",
@@ -733,6 +812,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("initargs", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "concurrent.futures.process",
@@ -744,6 +824,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("mp_context", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "concurrent.futures.thread",
@@ -755,6 +836,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("thread_name_prefix", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "concurrent.futures.thread",
@@ -766,6 +848,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("initargs", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "concurrent.futures.thread",
@@ -777,6 +860,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("initargs", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "concurrent.futures.thread",
@@ -788,6 +872,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("initargs", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: collections.ChainMap methods are mostly typevar/protocol
     // shaped in typeshed, so generated rows conservatively collapse them to
@@ -800,6 +885,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -808,6 +894,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -816,6 +903,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -824,6 +912,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -832,6 +921,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -840,6 +930,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -848,6 +939,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -856,6 +948,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("iterable", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -864,6 +957,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -872,6 +966,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("m", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -880,6 +975,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -888,6 +984,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: collections.Counter multiset operations and mutators are
     // nominal/protocol-shaped (`Counter`, `Mapping`, `Iterable`, typevars).
@@ -900,6 +997,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -908,6 +1006,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -916,6 +1015,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -924,6 +1024,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -932,6 +1033,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("iterable", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -940,6 +1042,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -948,6 +1051,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -956,6 +1060,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -964,6 +1069,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -972,6 +1078,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -980,6 +1087,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -988,6 +1096,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -996,6 +1105,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("iterable", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1004,6 +1114,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("m", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: OrderedDict key/value operations are typevar/protocol-shaped
     // in typeshed. Use `Typed` for key/iterable contracts, `Bool` for
@@ -1017,6 +1128,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1025,6 +1137,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1033,6 +1146,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("iterable", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1041,6 +1155,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("last", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1049,6 +1164,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1057,6 +1173,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("last", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1065,6 +1182,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: UserDict methods similarly collapse to Unknown in generated
     // rows. Bare user objects satisfy neither mapping/iterable protocols nor
@@ -1077,6 +1195,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1085,6 +1204,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1093,6 +1213,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("dict", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1101,6 +1222,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1109,6 +1231,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1117,6 +1240,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1125,6 +1249,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("item", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1133,6 +1258,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("iterable", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1141,6 +1267,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: UserList has several typevar/protocol/slice overloads that
     // generated rows collapse to Unknown. The strict fixtures probe those with
@@ -1153,6 +1280,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1161,6 +1289,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1169,6 +1298,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1177,6 +1307,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1185,6 +1316,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("initlist", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1193,6 +1325,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1201,6 +1334,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1209,6 +1343,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed), p("item", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1217,6 +1352,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("item", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1225,6 +1361,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("item", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1237,6 +1374,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("stop", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1245,6 +1383,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("item", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: UserString overloads collapse several first-argument walls to
     // Unknown/Typed generated rows. Restore the fixture-backed strict walls
@@ -1256,6 +1395,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("index", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1264,6 +1404,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("width", CoreTy::Int), p("fillchar", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1276,6 +1417,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1284,6 +1426,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("mapping", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1292,6 +1435,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("width", CoreTy::Int), p("fillchar", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1300,6 +1444,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("width", CoreTy::Int), p("fillchar", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1308,6 +1453,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1320,6 +1466,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: defaultdict typevar/default-factory and merge operands collapse
     // to Unknown or an empty generated row. The fixtures probe bare user objects
@@ -1332,6 +1479,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("default_factory", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1340,6 +1488,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1348,6 +1497,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1356,6 +1506,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: deque's typevar, Self, nominal-deque, and iterable contracts
     // collapse to Unknown/empty generated rows. The strict fixtures use bare
@@ -1368,6 +1519,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1376,6 +1528,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1384,6 +1537,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1392,6 +1546,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("iterable", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1400,6 +1555,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1408,6 +1564,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1416,6 +1573,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1424,6 +1582,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1432,6 +1591,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1444,6 +1604,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("stop", CoreTy::Int),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "collections",
@@ -1452,6 +1613,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
     // TypeError (normcase raises it); the dispatcher models that contract.
@@ -1462,6 +1624,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("pat", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: hashlib.new(name, data=b'') — `new(1)` is a RUNTIME
     // TypeError raised by the dispatcher (CPython: 'name must be a string'),
@@ -1473,6 +1636,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("name", CoreTy::Unknown), p("data", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: SyntaxError(msg: str, details=...) -- generated typeshed rows
     // collapse the overloaded constructor to Unknown, but the strict type wall
@@ -1484,6 +1648,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("msg", CoreTy::Str), p("details", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: anext(i, default=...) -- generated overload accounting
     // collapses the first argument to Unknown, but a bare user instance cannot
@@ -1495,6 +1660,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("i", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: asyncio.coroutines.iscoroutinefunction(func: Callable) - the
     // generated Callable row collapses to Unknown. A bare user instance cannot
@@ -1507,6 +1673,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: asyncio event/future helper signatures lose important strict
     // walls when Callable/Future-like types collapse to Unknown or too-broad
@@ -1523,6 +1690,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("context", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.exceptions",
@@ -1531,6 +1699,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("partial", CoreTy::Bytes), p("expected", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.futures",
@@ -1539,6 +1708,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("future", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.runners",
@@ -1547,6 +1717,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("main", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.subprocess",
@@ -1555,6 +1726,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("program", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.tasks",
@@ -1563,6 +1735,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("custom_task_constructor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.tasks",
@@ -1571,6 +1744,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("coro_or_future", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.tasks",
@@ -1579,6 +1753,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("args", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.tasks",
@@ -1587,6 +1762,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("coro", CoreTy::Typed), p("loop", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.threads",
@@ -1595,6 +1771,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.transports",
@@ -1603,6 +1780,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("extra", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: asyncio.trsock.TransportSocket is a private-but-importable
     // Py312 stdlib type used by asyncio transports. Generated rows either lose
@@ -1619,6 +1797,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("exc_tb", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.trsock",
@@ -1627,6 +1806,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("control", CoreTy::Int), p("option", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.trsock",
@@ -1635,6 +1815,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("msg", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.trsock",
@@ -1643,6 +1824,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("data", CoreTy::Bytes), p("address", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.trsock",
@@ -1651,6 +1833,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("inheritable", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.trsock",
@@ -1659,6 +1842,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("flag", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.trsock",
@@ -1667,6 +1851,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("process_id", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: atexit register/unregister require a callable target. The
     // generated Callable rows collapse to Unknown, but a bare user instance
@@ -1678,6 +1863,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "atexit",
@@ -1686,6 +1872,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: ast's deprecated Py312 literal-node helpers expose legacy
     // constructor/property contracts in typeshed. Generated rows either collapse
@@ -1698,6 +1885,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("s", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ast",
@@ -1706,6 +1894,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ast",
@@ -1714,6 +1903,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ast",
@@ -1722,6 +1912,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("n", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ast",
@@ -1730,6 +1921,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("posonlyargs", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: configparser's `_SectionName` alias is a string-shaped section
     // key in CPython's public API. The generated row keeps it Unknown, which
@@ -1742,6 +1934,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: the RawConfigParser generated rows keep several protocol-ish
     // arguments Unknown. For force typing, a bare user object cannot satisfy the
@@ -1757,6 +1950,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("dict_type", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "configparser",
@@ -1765,6 +1959,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "configparser",
@@ -1773,6 +1968,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "configparser",
@@ -1781,6 +1977,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "configparser",
@@ -1789,6 +1986,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("section", CoreTy::Str), p("option", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "configparser",
@@ -1797,6 +1995,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("section", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "configparser",
@@ -1808,6 +2007,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("encoding", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "configparser",
@@ -1816,6 +2016,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("dictionary", CoreTy::Typed), p("source", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: contextlib's decorator/context-manager contracts include
     // Callable, path-like, type-variable, and exception-type shapes that the
@@ -1829,6 +2030,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "contextlib",
@@ -1837,6 +2039,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "contextlib",
@@ -1849,6 +2052,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("traceback", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "contextlib",
@@ -1861,6 +2065,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("traceback", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "contextlib",
@@ -1869,6 +2074,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "contextlib",
@@ -1877,6 +2083,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("enter_result", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: copy/copyreg expose TypeVar, Hashable, Callable, and type
     // contracts that are not scalar rows in the generated table. A bare user
@@ -1889,6 +2096,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "copy",
@@ -1897,6 +2105,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Typed), p("memo", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "copyreg",
@@ -1909,6 +2118,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("code", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "copyreg",
@@ -1917,6 +2127,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("object", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "copyreg",
@@ -1929,6 +2140,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("constructor_ob", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "copyreg",
@@ -1941,6 +2153,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("code", CoreTy::Int),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: csv.DictReader consumes an iterable row source. The generated
     // row collapses the iterable protocol to Unknown; a bare user object has no
@@ -1958,6 +2171,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("dialect", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: curses.wrapper(func: Callable, *args) collapses to an
     // unenforceable generated row because Callable is non-scalar and the row is
@@ -1977,6 +2191,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: curses.ascii's `_CharT` helpers are int-or-1-char-string
     // contracts. A bare user instance can satisfy neither branch, while real
@@ -1988,6 +2203,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("c", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "curses.ascii",
@@ -1996,6 +2212,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("c", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "curses.ascii",
@@ -2004,6 +2221,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("c", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: Textbox.edit(validate: Callable | None) loses its callable
     // contract in the generated row. A bare `_W()` is neither callable nor the
@@ -2015,6 +2233,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("validate", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: dataclasses generated rows collapse dataclass-instance,
     // type-object, TypeVar, and overload-only contracts to Unknown. The mamba
@@ -2027,6 +2246,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dataclasses",
@@ -2035,6 +2255,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dataclasses",
@@ -2043,6 +2264,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("cls", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dataclasses",
@@ -2051,6 +2273,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dataclasses",
@@ -2068,6 +2291,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("kw_only", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dataclasses",
@@ -2076,6 +2300,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("owner", CoreTy::Type), p("name", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dataclasses",
@@ -2084,6 +2309,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("type", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dataclasses",
@@ -2092,6 +2318,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("type", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: datetime date/datetime subtraction accepts only compatible
     // date/datetime/timedelta operands. The generated overload union collapses
@@ -2104,6 +2331,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "datetime",
@@ -2112,6 +2340,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: decimal.Decimal.__round__ has a no-argument overload and an
     // `ndigits: SupportsIndex` overload. The generated overload row collapses
@@ -2124,6 +2353,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("ndigits", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: difflib callbacks/sequences are protocol/callable-heavy in
     // typeshed, so generated rows collapse them to Unknown or an empty
@@ -2139,6 +2369,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("charjunk", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "difflib",
@@ -2152,6 +2383,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("autojunk", CoreTy::Bool),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "difflib",
@@ -2170,6 +2402,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("lineterm", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "difflib",
@@ -2183,6 +2416,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("charjunk", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: dis accepts code/function/code-like inputs represented by
     // private protocols in typeshed. Generated rows collapse those to Unknown,
@@ -2194,6 +2428,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dis",
@@ -2202,6 +2437,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dis",
@@ -2210,6 +2446,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("co", CoreTy::Typed), p("lasti", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dis",
@@ -2218,6 +2455,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("code", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dis",
@@ -2226,6 +2464,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("code", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dis",
@@ -2234,6 +2473,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dis",
@@ -2242,6 +2482,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("co", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "dis",
@@ -2250,6 +2491,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("x", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: typeshed exposes distutils.archive_util.make_archive through a
     // path-like alias that the generator collapses to Unknown. Use a str wall
@@ -2270,6 +2512,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("group", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: distutils.ccompiler has long-tail aliases and optional flags
     // that generated rows collapse to Unknown. Curate the first strict walls
@@ -2281,6 +2524,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("macros", CoreTy::List), p("include_dirs", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.ccompiler",
@@ -2293,6 +2537,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("force", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: distutils.command submodules are Py312-deprecated but still
     // importable, and typeshed preserves strict argument walls for command
@@ -2305,6 +2550,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("include_bytecode", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.command.check",
@@ -2321,6 +2567,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("error_handler", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.command.config",
@@ -2335,6 +2582,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("lang", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: Distribution(attrs) accepts a mapping-shaped attrs object in
     // CPython's distutils contract. A bare user instance is not a mapping and
@@ -2346,6 +2594,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("attrs", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: distutils.file_util accepts str/bytes/path-like sources. The
     // generator sees only Unknown; reject bare user instances while keeping
@@ -2357,6 +2606,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("src", CoreTy::Typed), p("dst", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.file_util",
@@ -2365,6 +2615,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("src", CoreTy::Typed), p("dst", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: filelist pattern helpers are string-pattern boundaries in
     // distutils. Generated rows collapse translate/include/exclude to Unknown;
@@ -2377,6 +2628,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("pattern", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.filelist",
@@ -2385,6 +2637,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("warn", CoreTy::Typed), p("debug_print", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.filelist",
@@ -2393,6 +2646,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("pattern", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.filelist",
@@ -2401,6 +2655,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("pattern", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: distutils.log formatting helpers are variadic, which makes the
     // generated rows skip wholesale. Enforce the required `msg`/`level` prefix
@@ -2419,6 +2674,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2434,6 +2690,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2449,6 +2706,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2464,6 +2722,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2480,6 +2739,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2495,6 +2755,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2510,6 +2771,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2525,6 +2787,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2540,6 +2803,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2555,6 +2819,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2571,6 +2836,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.log",
@@ -2586,6 +2852,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: distutils.sysconfig generated rows lose Literal/string and
     // bool-ish flag walls. Restore the required prefix checks while leaving
@@ -2597,6 +2864,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("name", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.sysconfig",
@@ -2605,6 +2873,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("arg", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.sysconfig",
@@ -2613,6 +2882,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("plat_specific", CoreTy::Typed), p("prefix", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.sysconfig",
@@ -2625,6 +2895,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("prefix", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: distutils.util generated rows lose the concrete list/callable
     // prefix walls. Use Typed for Callable until the PoC table has a dedicated
@@ -2636,6 +2907,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("py_files", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.util",
@@ -2644,6 +2916,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: doctest generated rows collapse list/dict/bool constructor and
     // helper walls. Keep unknown leading values skip-safe while enforcing the
@@ -2655,6 +2928,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("f", CoreTy::Unknown), p("globs", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "doctest",
@@ -2663,6 +2937,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("examples", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "doctest",
@@ -2671,6 +2946,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("verbose", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: email top-level parser helpers take IO/bytes-like protocol
     // values. Generated rows collapse these to Unknown; Typed rejects the bare
@@ -2682,6 +2958,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("fp", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email",
@@ -2690,6 +2967,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email",
@@ -2698,6 +2976,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("fp", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.charset",
@@ -2706,6 +2985,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("string", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.feedparser",
@@ -2714,6 +2994,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("_factory", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.feedparser",
@@ -2722,6 +3003,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("_factory", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.generator",
@@ -2730,6 +3012,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("outfp", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.generator",
@@ -2738,6 +3021,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("outfp", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.generator",
@@ -2746,6 +3030,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("outfp", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.headerregistry",
@@ -2758,6 +3043,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("use_default_map", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.iterators",
@@ -2770,6 +3056,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("subtype", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2778,6 +3065,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("policy", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2786,6 +3074,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("payload", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2794,6 +3083,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("preferencelist", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2806,6 +3096,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("policy", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2814,6 +3105,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("policy", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2825,6 +3117,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("policy", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2836,6 +3129,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("charset", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2847,6 +3141,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("decode", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2855,6 +3150,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("failobj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2863,6 +3159,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("failobj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2871,6 +3168,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("failobj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2879,6 +3177,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("failobj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2887,6 +3186,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("failobj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.message",
@@ -2899,6 +3199,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("policy", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.mime.message",
@@ -2910,6 +3211,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("_subtype", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.policy",
@@ -2918,6 +3220,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("sourcelines", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.utils",
@@ -2926,6 +3229,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("params", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.utils",
@@ -2937,6 +3241,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("charset", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.utils",
@@ -2945,6 +3250,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("dt", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.utils",
@@ -2953,6 +3259,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("addr", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.utils",
@@ -2961,6 +3268,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("data", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.utils",
@@ -2969,6 +3277,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("data", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.parser",
@@ -2977,6 +3286,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("_class", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "email.parser",
@@ -2985,6 +3295,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("_class", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: enum's public typeshed surface uses several Self/typevar/
     // decorator contracts that the generated table keeps Unknown-skipped. These
@@ -2997,6 +3308,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Str), p("names", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3010,6 +3322,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("last_values", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3023,6 +3336,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("last_values", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3031,6 +3345,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3039,6 +3354,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3047,6 +3363,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3055,6 +3372,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3063,6 +3381,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("cls", CoreTy::Typed), p("update_str", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3071,6 +3390,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3079,6 +3399,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3087,6 +3408,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("self", CoreTy::Typed), p("proto", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "enum",
@@ -3095,6 +3417,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("enumeration", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: fancy_getopt uses list/sequence-shaped option tables and arg
     // lists. Generated rows collapse the key parameters to Unknown; curate the
@@ -3106,6 +3429,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("options", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.fancy_getopt",
@@ -3114,6 +3438,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("option_table", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "distutils.fancy_getopt",
@@ -3122,6 +3447,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("args", CoreTy::Typed), p("object", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: ctypes public factory helpers take ctypes type/class-like
     // values that generated rows collapse to Unknown or mark unenforceable. A
@@ -3134,6 +3460,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("typ", CoreTy::Type), p("len", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ctypes",
@@ -3142,6 +3469,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("restype", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ctypes",
@@ -3150,6 +3478,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("dlltype", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ctypes",
@@ -3158,6 +3487,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("cls", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ctypes",
@@ -3166,6 +3496,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("restype", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ctypes",
@@ -3174,6 +3505,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("pointer", CoreTy::Type), p("cls", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ctypes",
@@ -3182,6 +3514,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("restype", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ctypes",
@@ -3190,6 +3523,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: CPython 3.12 local builds may not expose the internal module,
     // but the typeshed-derived strict wall must still reject a bare user object
@@ -3201,6 +3535,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("unboundop", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_interpreters",
@@ -3209,6 +3544,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("exc", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated rows are too conservative for these extension-class
     // contracts. Keep the static wall strict and let the runtime shims cover
@@ -3225,6 +3561,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("builtins", CoreTy::Bool),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_lsprof",
@@ -3233,6 +3570,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("subcalls", CoreTy::Bool), p("builtins", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_multibytecodec",
@@ -3241,6 +3579,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("state", CoreTy::Tuple)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated typeshed collapses dict parameters to Unknown because
     // dict element types are richer than CoreTy. The container shape itself is
@@ -3253,6 +3592,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("_config_vars", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_osx_support",
@@ -3261,6 +3601,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("_config_vars", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_osx_support",
@@ -3274,6 +3615,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("machine", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: `_operator` has many protocol/typevar rows that generated
     // typeshed keeps Unknown-skipped. A bare user instance cannot satisfy these
@@ -3286,6 +3628,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3294,6 +3637,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3302,6 +3646,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3310,6 +3655,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3318,6 +3664,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3326,6 +3673,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3334,6 +3682,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3342,6 +3691,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3354,6 +3704,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("c", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_operator",
@@ -3362,6 +3713,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("a", CoreTy::Typed), p("b", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: `_posixsubprocess.fork_exec` accepts argv-like typed values for
     // `args`; generated typeshed collapses that first parameter to Unknown.
@@ -3398,6 +3750,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("allow_vfork", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_queue.SimpleQueue` rows keep `_T` and bool-like
     // extension parameters too loose for force-typed fixtures. Tighten only the
@@ -3410,6 +3763,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("block", CoreTy::Bool), p("timeout", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_queue",
@@ -3422,6 +3776,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("timeout", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_queue",
@@ -3430,6 +3785,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("item", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_remote_debugging` rows collapse callback/list/bool
     // contracts to Unknown/Typed. Tighten only the force-typed probes that the
@@ -3444,6 +3800,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("progress_callback", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_remote_debugging",
@@ -3455,6 +3812,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("timestamp_us", CoreTy::Int),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_remote_debugging",
@@ -3463,6 +3821,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("all_interpreters", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_socket.getnameinfo` keeps sockaddr as Unknown, so
     // the force-typed probe leaks to the runtime _socket surface gap. Tighten
@@ -3474,6 +3833,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("sockaddr", CoreTy::Typed), p("flags", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_sqlite3` rows either omit later typevar params or
     // collapse path/type/bool contracts. Tighten only the currently promoted
@@ -3490,6 +3850,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("alt", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_sqlite3",
@@ -3504,6 +3865,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("check_same_thread", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_sqlite3",
@@ -3512,6 +3874,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("enable", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_sqlite3",
@@ -3520,6 +3883,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("type", CoreTy::Typed), p("adapter", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_ssl.Certificate.public_bytes` currently loses its
     // `format` enum/int parameter. Enforce the scalar wall here; the
@@ -3531,6 +3895,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("format", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_struct.pack`/`pack_into` rows are variadic and
     // therefore skipped wholesale. Enforce only the fixed prefix; extra values
@@ -3542,6 +3907,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("fmt", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_struct",
@@ -3554,6 +3920,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("offset", CoreTy::Int),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_thread` rows lose Callable/bool/context-manager
     // precision, and some CPython-private aliases are not runtime importable on
@@ -3567,6 +3934,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("function", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3575,6 +3943,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("function", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3583,6 +3952,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("function", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3591,6 +3961,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("type", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3599,6 +3970,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("blocking", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3607,6 +3979,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("blocking", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3615,6 +3988,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("t", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3623,6 +3997,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("blocking", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3631,6 +4006,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("type", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3639,6 +4015,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("blocking", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_thread",
@@ -3647,6 +4024,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("blocking", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated `_tkinter.TkappType.wantobjects` loses the optional
     // setter argument, and local CPython builds may omit `_tkinter` entirely.
@@ -3658,6 +4036,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("wantobjects", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: typeshed exposes `_warnings.warn` / `warn_explicit` overloads
     // for `str` and `Warning` messages, while CPython accepts arbitrary runtime
@@ -3677,6 +4056,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("source", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "_warnings",
@@ -3694,6 +4074,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("source", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: `_weakrefset.WeakSet.__init__(data: Iterable | None)` is richer
     // than CoreTy can represent. A `Typed` wall rejects the generated bare
@@ -3706,6 +4087,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("data", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: complex(real=0, imag=0) accepts string/numeric/dynamic values.
     // `Typed` only rejects a provably bare user instance and leaves scalar
@@ -3717,6 +4099,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("real", CoreTy::Typed), p("imag", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: bytes/bytearray constructors are overload-heavy. The first
     // argument may be a size int, text str with encoding, bytes-like object, or
@@ -3734,6 +4117,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("errors", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3746,6 +4130,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("errors", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: filter(function, iterable) routes through filter.__new__ in
     // CPython. A bare user instance cannot satisfy Callable/None; the second
@@ -3757,6 +4142,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("function", CoreTy::Typed), p("iterable", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: map.__new__(cls, func, iterable, ...) requires a callable
     // function. Model the first iterable as Unknown and keep additional
@@ -3772,6 +4158,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("iterable", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: isinstance's second argument must be a class or tuple of
     // classes. A bare `_W()` instance cannot satisfy that classinfo contract.
@@ -3785,6 +4172,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("class_or_tuple", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: iter(object, sentinel) requires a callable object in CPython;
     // one-arg iter(object) similarly requires an iterable/getitem-capable object.
@@ -3797,6 +4185,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("object", CoreTy::Typed), p("sentinel", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3805,6 +4194,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("buffer", CoreTy::MemoryView)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: memoryview method contracts. Key/exception/order contracts are
     // represented as Typed so bare `_W()` probes are rejected while dynamic and
@@ -3822,6 +4212,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("traceback", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3830,6 +4221,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3838,6 +4230,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("buffer", CoreTy::MemoryView)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3846,6 +4239,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3854,6 +4248,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("order", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: complex arithmetic dunders accept complex-compatible numeric
     // values. A dedicated negative wall rejects impossible concrete scalars such
@@ -3865,6 +4260,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3873,6 +4269,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3881,6 +4278,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex), p("mod", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3889,6 +4287,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3897,6 +4296,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3905,6 +4305,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex), p("mod", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3913,6 +4314,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3921,6 +4323,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3929,6 +4332,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3937,6 +4341,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated float pow/round rows collapse overload/protocol
     // details to Unknown. The numeric dunders accept bool/int/float under
@@ -3950,6 +4355,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Float), p("mod", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3958,6 +4364,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("ndigits", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3966,6 +4373,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Float), p("mod", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: bytes/bytearray bytes-like methods accept bytes-like values or
     // tuples thereof. Concrete scalars such as int/str/bool are never bytes,
@@ -3977,6 +4385,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3985,6 +4394,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -3993,6 +4403,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4001,6 +4412,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4013,6 +4425,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4025,6 +4438,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4037,6 +4451,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4049,6 +4464,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: index/slice overloads are represented as Typed so a bare user
     // object is rejected without claiming a full slice/SupportsIndex model.
@@ -4059,6 +4475,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4067,6 +4484,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4075,6 +4493,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4083,6 +4502,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4091,6 +4511,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4099,6 +4520,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: str operator and string-method overloads collapse to Unknown in
     // the generated table because they involve LiteralString, SupportsIndex,
@@ -4113,6 +4535,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4121,6 +4544,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4129,6 +4553,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4137,6 +4562,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4150,6 +4576,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("errors", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4158,6 +4585,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4166,6 +4594,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("width", CoreTy::Typed), p("fillchar", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4178,6 +4607,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4186,6 +4616,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("tabsize", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4194,6 +4625,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("width", CoreTy::Typed), p("fillchar", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4202,6 +4634,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("chars", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4210,6 +4643,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("x", CoreTy::Str), p("y", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4218,6 +4652,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("sep", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4226,6 +4661,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("prefix", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4234,6 +4670,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("suffix", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4242,6 +4679,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("old", CoreTy::Str), p("new", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4250,6 +4688,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("width", CoreTy::Typed), p("fillchar", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4258,6 +4697,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("sep", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4266,6 +4706,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("sep", CoreTy::Str), p("maxsplit", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4274,6 +4715,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("chars", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4282,6 +4724,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("sep", CoreTy::Str), p("maxsplit", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4290,6 +4733,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("keepends", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4302,6 +4746,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("end", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4310,6 +4755,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("chars", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4318,6 +4764,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("width", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: list dunders have overloads for list-vs-list operations and
     // index/slice operations. Use a dedicated List negative scalar wall for
@@ -4330,6 +4777,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4338,6 +4786,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4346,6 +4795,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4354,6 +4804,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4362,6 +4813,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4370,6 +4822,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4378,6 +4831,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4386,6 +4840,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: tuple dunders mirror list's value/key contracts. Use a
     // dedicated Tuple negative scalar wall for tuple-valued operands and Typed
@@ -4397,6 +4852,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Tuple)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4405,6 +4861,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Tuple)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4413,6 +4870,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Tuple)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4421,6 +4879,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Tuple)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4429,6 +4888,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Tuple)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4437,6 +4897,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: type object constructors/descriptors. The strict fixtures call
     // `obj = object.__new__(type)` then bound methods on that object, so these
@@ -4453,6 +4914,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("namespace", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4461,6 +4923,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("subclass", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: zip.__new__(iter1, *iter2) requires iterable inputs. Model the
     // first iterable as a Typed negative wall so a provably bare `_W()` is
@@ -4472,6 +4935,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("iter1", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: range index/new overloads use SupportsIndex/slice protocols.
     // Typed rejects only a provably bare `_W()` while accepting ints, slices,
@@ -4483,6 +4947,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4496,6 +4961,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("step", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: property descriptors accept callable/dynamic/None values at
     // runtime. The strict wall only rejects a provably bare `_W()` for the
@@ -4507,6 +4973,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Typed), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4520,6 +4987,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("doc", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4528,6 +4996,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fdel", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4536,6 +5005,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fget", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4544,6 +5014,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fset", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: object.__subclasshook__(subclass) expects a type object. Reject
     // only a direct bare instance probe; class objects remain accepted by the
@@ -4555,6 +5026,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("subclass", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: reversed.__new__(sequence) accepts Reversible /
     // SupportsLenAndGetItem protocol values. Model that protocol contract as a
@@ -4567,6 +5039,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("cls", CoreTy::Typed), p("sequence", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: classmethod is descriptor-shaped. These curated rows only
     // reject a provably bare `_W()` for Callable/type-variable contracts; real
@@ -4578,6 +5051,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Typed), p("owner", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4586,6 +5060,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("f", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: staticmethod mirrors classmethod for force-typed descriptor
     // contracts: a bare user instance cannot satisfy Callable or a concrete
@@ -4598,6 +5073,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Typed), p("owner", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4606,6 +5082,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("f", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: Python function objects are not importable as
     // `builtins.function`, but every `def f(): ...` value is an instance of
@@ -4618,6 +5095,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: `int.__new__` is normally reached as a classmethod-style call,
     // so the explicit `cls` argument must be consumed before enforcing `x`.
@@ -4634,6 +5112,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("base", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated int.__pow__ collapses overloads/Literal aliases to
     // Unknown. The receiver method still requires an int exponent; `mod` stays
@@ -4645,6 +5124,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Int), p("mod", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: bool bitwise dunders accept bool/int operands. A single int
     // contract covers both overloads because bool is int-compatible in the type
@@ -4656,6 +5136,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4664,6 +5145,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4672,6 +5154,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4680,6 +5163,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4688,6 +5172,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4696,6 +5181,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: set rich/in-place operators mirror frozenset's AbstractSet
     // contract. Use a Typed negative wall until the type model has dedicated
@@ -4707,6 +5193,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4715,6 +5202,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4723,6 +5211,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4731,6 +5220,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4739,6 +5229,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4747,6 +5238,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4755,6 +5247,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4763,6 +5256,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4771,6 +5265,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4779,6 +5274,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4787,6 +5283,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4795,6 +5292,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: slice.__new__ carries type-variable start/stop contracts in
     // typeshed. Treat those as Typed negative walls so direct bare instances are
@@ -4811,6 +5309,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("step", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: frozenset rich/set operators accept AbstractSet-like values.
     // There is no dedicated Ty::Set/FrozenSet yet, so model the protocol as a
@@ -4824,6 +5323,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4832,6 +5332,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4840,6 +5341,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4848,6 +5350,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4856,6 +5359,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4864,6 +5368,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("cls", CoreTy::Typed), p("iterable", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4872,6 +5377,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4880,6 +5386,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4888,6 +5395,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: ExceptionGroup matcher/sequence methods use non-scalar
     // contracts in typeshed. A bare user instance cannot satisfy Callable,
@@ -4900,6 +5408,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("excs", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4908,6 +5417,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("matcher_value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4916,6 +5426,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("matcher_value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4924,6 +5435,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("matcher_value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "builtins",
@@ -4932,6 +5444,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("matcher_value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: unicodedata.name(chr[, default]) / category(chr) — a non-str
     // or multi-character argument is a RUNTIME TypeError (the dispatcher
@@ -4944,6 +5457,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("chr", CoreTy::Unknown), p("default", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "unicodedata",
@@ -4952,6 +5466,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("chr", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: colorsys conversions take three real numbers; a non-numeric
     // channel (`rgb_to_hsv("x", 0, 0)`) is a RUNTIME TypeError raised by the
@@ -4967,6 +5482,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("b", CoreTy::Unknown),
         ],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "colorsys",
@@ -4979,6 +5495,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("v", CoreTy::Unknown),
         ],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "colorsys",
@@ -4991,6 +5508,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("b", CoreTy::Unknown),
         ],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "colorsys",
@@ -5003,6 +5521,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("s", CoreTy::Unknown),
         ],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "colorsys",
@@ -5015,6 +5534,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("b", CoreTy::Unknown),
         ],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "colorsys",
@@ -5027,6 +5547,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("q", CoreTy::Unknown),
         ],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: textwrap.dedent(text) — `dedent(123)` is a RUNTIME TypeError
     // (CPython runs `_whitespace_only_re.sub` over a non-str → "expected string
@@ -5039,6 +5560,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("text", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // NOTE: textwrap.indent is deliberately NOT overridden. Its runtime raises
     // AttributeError on a non-str (CPython's `text.splitlines(True)`), but the
@@ -5056,6 +5578,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: os.umask(mask) — `umask("x")` is a RUNTIME TypeError ("'str'
     // object cannot be interpreted as an integer"); the dispatcher raises it.
@@ -5066,6 +5589,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("mask", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated os rows lose first-argument precision for variadic
     // wrappers, path/fd overloads, and protocol-heavy env/fd/sequence aliases.
@@ -5079,6 +5603,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5087,6 +5612,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5095,6 +5621,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5103,6 +5630,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("file", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5115,6 +5643,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("onerror", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5123,6 +5652,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("env", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5131,6 +5661,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("key", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5139,6 +5670,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::PathOrFd)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5147,6 +5679,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("name", CoreTy::Str), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5155,6 +5688,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5163,6 +5697,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::PathOrFd)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5171,6 +5706,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("out_fd", CoreTy::Int), p("in_fd", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5179,6 +5715,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("groups", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5192,6 +5729,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("args", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5205,6 +5743,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("args", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5218,6 +5757,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("args", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5231,6 +5771,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("args", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5239,6 +5780,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("name", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "os",
@@ -5252,6 +5794,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("followlinks", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: locale.setlocale(category, locale=None) — a non-int category
     // (`setlocale("not_a_category", ...)`) is a RUNTIME TypeError ("an integer
@@ -5263,6 +5806,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("category", CoreTy::Unknown), p("locale", CoreTy::Unknown)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: locale has several generated rows weakened by aliases,
     // deprecated helpers, or callable stubs. Keep strict fixtures in front of
@@ -5274,6 +5818,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("percent", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "locale",
@@ -5282,6 +5827,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("envvars", CoreTy::Tuple)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "locale",
@@ -5290,6 +5836,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("do_setlocale", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: logging has a large alias/protocol-heavy surface where the
     // generated table correctly collapses many rows to Unknown. The strict wall
@@ -5303,6 +5850,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("capture", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5311,6 +5859,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("level", CoreTy::IntOrStr)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5327,6 +5876,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5335,6 +5885,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("dict", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5343,6 +5894,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("factory", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5351,6 +5903,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("handlerList", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5359,6 +5912,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("records", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5367,6 +5921,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("records", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5375,6 +5930,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("records", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5383,6 +5939,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("stack_info", CoreTy::Bool), p("stacklevel", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5399,6 +5956,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5407,6 +5965,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("logger", CoreTy::Typed), p("extra", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5423,6 +5982,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5431,6 +5991,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("msg", CoreTy::Unknown), p("kwargs", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5439,6 +6000,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("factory", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5447,6 +6009,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("stream", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging",
@@ -5455,6 +6018,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("stream", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.handlers",
@@ -5467,6 +6031,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("traceback", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.handlers",
@@ -5482,6 +6047,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.handlers",
@@ -5490,6 +6056,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("block", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.handlers",
@@ -5506,6 +6073,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("timeout", CoreTy::Float),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.handlers",
@@ -5518,6 +6086,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("socktype", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -5526,6 +6095,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("config", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: lzma.open(filename) accepts path-like or file-like objects.
     // Bare user objects satisfy neither side of that overload/protocol union;
@@ -5537,6 +6107,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: mmap is a C-extension class not implemented in the runtime yet,
     // but the strict type wall can still reject impossible method arguments
@@ -5549,6 +6120,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "mmap",
@@ -5561,6 +6133,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("traceback", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "mmap",
@@ -5569,6 +6142,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "mmap",
@@ -5577,6 +6151,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("buffer", CoreTy::MemoryView)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "mmap",
@@ -5585,6 +6160,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "modulefinder",
@@ -5598,6 +6174,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("replace_paths", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.connection",
@@ -5610,6 +6187,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("authkey", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.connection",
@@ -5618,6 +6196,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("duplex", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.connection",
@@ -5629,6 +6208,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("authkey", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.connection",
@@ -5641,6 +6221,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("digest_name", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.context",
@@ -5649,6 +6230,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("popen", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.context",
@@ -5657,6 +6239,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("process_obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.context",
@@ -5665,6 +6248,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("process_obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.context",
@@ -5673,6 +6257,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("process_obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.context",
@@ -5681,6 +6266,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("process_obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.forkserver",
@@ -5689,6 +6275,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fds", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.forkserver",
@@ -5697,6 +6284,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("modules_names", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5705,6 +6293,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("x", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5713,6 +6302,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5721,6 +6311,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5729,6 +6320,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed), p("o", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5737,6 +6329,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("object", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5745,6 +6338,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5757,6 +6351,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("stop", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5765,6 +6360,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5773,6 +6369,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5781,6 +6378,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5789,6 +6387,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5797,6 +6396,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5805,6 +6405,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5818,6 +6419,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("serializer", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.managers",
@@ -5826,6 +6428,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.pool",
@@ -5834,6 +6437,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("ctx", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.shared_memory",
@@ -5842,6 +6446,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("sequence", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5853,6 +6458,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("size_or_initializer", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5864,6 +6470,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("size_or_initializer", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5872,6 +6479,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("typecode_or_type", CoreTy::Str), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5880,6 +6488,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("typecode_or_type", CoreTy::Str), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5888,6 +6497,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5900,6 +6510,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("ctx", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5908,6 +6519,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5916,6 +6528,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5928,6 +6541,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("exc_tb", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5936,6 +6550,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.sharedctypes",
@@ -5944,6 +6559,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("i", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.spawn",
@@ -5952,6 +6568,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("argv", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.spawn",
@@ -5960,6 +6577,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("data", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.util",
@@ -5968,6 +6586,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed), p("func", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.util",
@@ -5980,6 +6599,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("passfds", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.util",
@@ -5988,6 +6608,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("wr", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.util",
@@ -5996,6 +6617,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("obj", CoreTy::Typed), p("callback", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // POSITIVE: generated numbers rows collapse Optional[int] ndigits to
     // Unknown. The checker skips None sentinels, so an Int wall catches wrong
@@ -6007,6 +6629,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("ndigits", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "numbers",
@@ -6015,6 +6638,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("ndigits", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ntpath",
@@ -6023,6 +6647,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ntpath",
@@ -6031,6 +6656,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.dummy",
@@ -6043,6 +6669,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("lock", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.dummy",
@@ -6057,6 +6684,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("kwargs", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.dummy.connection",
@@ -6065,6 +6693,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("duplex", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.dummy.connection",
@@ -6077,6 +6706,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("exc_tb", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.dummy.connection",
@@ -6089,6 +6719,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("exc_tb", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6097,6 +6728,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("config", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6105,6 +6737,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6113,6 +6746,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("config", CoreTy::Dict)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6121,6 +6755,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6129,6 +6764,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6137,6 +6773,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed), p("default", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6145,6 +6782,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6157,6 +6795,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("replace", CoreTy::Bool),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "logging.config",
@@ -6165,6 +6804,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // NEGATIVE: signal.setitimer(which, seconds, interval=0.0) — a non-int
     // `which` (`setitimer("not_int", 1.0)`) is a RUNTIME TypeError; the
@@ -6180,6 +6820,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("interval", CoreTy::Unknown),
         ],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // keyword.iskeyword/issoftkeyword are force-typed as `s: str` for
     // strict-type fixtures. Runtime behavior stays CPython-compatible:
@@ -6191,6 +6832,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Str)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "keyword",
@@ -6199,6 +6841,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Str)],
         enforceable: false,
+        ret: CoreTy::Unknown,
     },
     // ipaddress network constructors have overload-heavy address parameters,
     // but `strict` is always a bool wall in typeshed.
@@ -6209,6 +6852,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("address", CoreTy::Unknown), p("strict", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ipaddress",
@@ -6217,6 +6861,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("address", CoreTy::Unknown), p("strict", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // ipaddress.get_mixed_type_key accepts IP address/network nominal types;
     // reject bare user instances in strict fixtures while keeping concrete
@@ -6228,6 +6873,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ipaddress",
@@ -6236,6 +6882,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("address", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ipaddress",
@@ -6244,6 +6891,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("address", CoreTy::Typed), p("strict", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "ipaddress",
@@ -6252,6 +6900,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("first", CoreTy::Typed), p("last", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // importlib.metadata._meta.SimplePath.read_text has optional encoding in
     // typeshed, but the generated row collapses to no params.
@@ -6262,6 +6911,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("encoding", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.readers",
@@ -6270,6 +6920,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("child", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._common",
@@ -6278,6 +6929,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._common",
@@ -6286,6 +6938,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._functional",
@@ -6294,6 +6947,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._functional",
@@ -6302,6 +6956,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._functional",
@@ -6310,6 +6965,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._functional",
@@ -6318,6 +6974,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._functional",
@@ -6326,6 +6983,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._functional",
@@ -6334,6 +6992,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources._functional",
@@ -6342,6 +7001,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("anchor", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources.abc",
@@ -6350,6 +7010,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("mode", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources.simple",
@@ -6358,6 +7019,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("name", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.resources.simple",
@@ -6366,6 +7028,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("mode", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // io.Writer.write is a contravariant typevar in typeshed, which generated
     // rows collapse to Unknown. Preserve the strict wall for bare invalid user
@@ -6377,6 +7040,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("data", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // lib2to3 is mostly a runtime stub in mamba today, but its typeshed surface
     // still participates in strict type walls. Keep these generated-Unknown
@@ -6389,6 +7053,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("options", CoreTy::Typed), p("log", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.fixer_base",
@@ -6397,6 +7062,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("node", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.main",
@@ -6412,6 +7078,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pgen2.literals",
@@ -6420,6 +7087,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("m", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pgen2.pgen",
@@ -6428,6 +7096,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("nfaset", CoreTy::Dict), p("final", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pgen2.pgen",
@@ -6443,6 +7112,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pgen2.pgen",
@@ -6451,6 +7121,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("dfa", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pgen2.tokenize",
@@ -6459,6 +7130,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("readline", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pgen2.tokenize",
@@ -6467,6 +7139,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("readline", CoreTy::Typed), p("tokeneater", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pgen2.tokenize",
@@ -6475,6 +7148,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("token", CoreTy::Tuple), p("iterable", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.pytree",
@@ -6483,6 +7157,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("new", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.refactor",
@@ -6498,6 +7173,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.refactor",
@@ -6513,6 +7189,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.refactor",
@@ -6528,6 +7205,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             },
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.refactor",
@@ -6541,6 +7219,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("filename", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "lib2to3.refactor",
@@ -6549,6 +7228,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("doctests_only", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // fractions.Fraction arithmetic partners are generated from overloaded
     // numeric aliases and collapse to Unknown. For strict-type fixtures, use
@@ -6561,6 +7241,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6569,6 +7250,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("a", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6577,6 +7259,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6585,6 +7268,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("a", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6593,6 +7277,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6601,6 +7286,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("a", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6609,6 +7295,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6617,6 +7304,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("a", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6625,6 +7313,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6633,6 +7322,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("a", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6641,6 +7331,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6649,6 +7340,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("a", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6657,6 +7349,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6665,6 +7358,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6673,6 +7367,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("b", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6681,6 +7376,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("a", CoreTy::Complex)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6689,6 +7385,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("ndigits", CoreTy::Int)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6697,6 +7394,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("_index", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "fractions",
@@ -6705,6 +7403,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("numerator", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // Misc stdlib strict-wall probes where generated rows collapse protocols,
     // literals, or overload-heavy constructor shapes to Unknown/Typed. Keep the
@@ -6716,6 +7415,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("m", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "glob",
@@ -6724,6 +7424,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("dirname", CoreTy::Typed), p("pattern", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "glob",
@@ -6732,6 +7433,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("dirname", CoreTy::Typed), p("pattern", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "graphlib",
@@ -6740,6 +7442,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("graph", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "gzip",
@@ -6748,6 +7451,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "gzip",
@@ -6756,6 +7460,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("filename", CoreTy::Typed), p("mode", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "imghdr",
@@ -6764,6 +7469,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("file", CoreTy::Typed), p("h", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.util",
@@ -6772,6 +7478,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("fxn", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.util",
@@ -6780,6 +7487,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("fxn", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "importlib.util",
@@ -6788,6 +7496,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("fxn", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6796,6 +7505,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("cls", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6804,6 +7514,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("parameters", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6826,6 +7537,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("formatannotation", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6843,6 +7555,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("formatvalue", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6851,6 +7564,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6859,6 +7573,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("agen", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6867,6 +7582,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("agen", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6875,6 +7591,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("lines", CoreTy::List)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6883,6 +7600,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed), p("args", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6891,6 +7609,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("coroutine", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6899,6 +7618,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("coroutine", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6907,6 +7627,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("generator", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6915,6 +7636,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("object", CoreTy::Unknown), p("predicate", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6923,6 +7645,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("object", CoreTy::Unknown), p("predicate", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6931,6 +7654,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("cls", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6939,6 +7663,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6947,6 +7672,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6955,6 +7681,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("obj", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6963,6 +7690,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6971,6 +7699,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "inspect",
@@ -6983,6 +7712,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("parent", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "http.client",
@@ -6991,6 +7721,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("fp", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "http.client",
@@ -6999,6 +7730,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("header", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "http.client",
@@ -7007,6 +7739,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("partial", CoreTy::Bytes), p("expected", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "http.cookiejar",
@@ -7015,6 +7748,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("blocked_domains", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "http.server",
@@ -7023,6 +7757,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("format", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "http.server",
@@ -7031,6 +7766,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("format", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "html.parser",
@@ -7039,6 +7775,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("end", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pkgutil",
@@ -7047,6 +7784,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("path", CoreTy::Typed), p("name", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "platform",
@@ -7055,6 +7793,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("aliased", CoreTy::Bool), p("terse", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pprint",
@@ -7068,6 +7807,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("level", CoreTy::Int),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "py_compile",
@@ -7081,6 +7821,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("msg", CoreTy::Str),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "time",
@@ -7089,6 +7830,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("name", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "asyncio.coroutines",
@@ -7097,6 +7839,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "http.cookies",
@@ -7105,6 +7848,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("val", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "multiprocessing.process",
@@ -7113,6 +7857,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("group", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "rlcompleter",
@@ -7121,6 +7866,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("namespace", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "unittest.runner",
@@ -7129,6 +7875,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("stream", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "uuid",
@@ -7137,6 +7884,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("name", CoreTy::Typed), p("value", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "webbrowser",
@@ -7145,6 +7893,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("name", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "xml.etree.ElementInclude",
@@ -7153,6 +7902,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("href", CoreTy::Typed), p("parse", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // imaplib.Idler.__exit__ uses Unused/Optional exception-state overload
     // pieces that the generated table collapses to Unknown. Keep the probed
@@ -7168,6 +7918,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("exc_tb", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // mailcap.findmatch(caps) is a Mapping in typeshed. The generated row
     // collapses it to Unknown, but the strict fixture's bare object must be
@@ -7185,6 +7936,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("plist", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // mailbox generated rows collapse StrPath/Literal/Mapping contracts that
     // matter for strict fixture walls. Keep these constructor and mutator walls
@@ -7200,6 +7952,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("create", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "mailbox",
@@ -7208,6 +7961,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("subdir", CoreTy::Str)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "mailbox",
@@ -7216,6 +7970,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("sequences", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // optparse generated rows collapse class objects and defaults mappings to
     // Unknown. Keep strict fixture walls enforceable while still skipping richer
@@ -7231,6 +7986,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("description", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "optparse",
@@ -7239,6 +7995,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("defaults", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // statistics sequence/protocol parameters collapse to Unknown in the
     // generated table. Keep strict-mode wrong-type probes from falling through
@@ -7250,6 +8007,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Typed), p("y", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "statistics",
@@ -7258,6 +8016,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("x", CoreTy::Typed), p("y", CoreTy::Unknown)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "statistics",
@@ -7270,6 +8029,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("kernel", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "statistics",
@@ -7282,6 +8042,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("kernel", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "statistics",
@@ -7293,6 +8054,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("dependent_variable", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // tkinter.dialog.Dialog.__init__(cnf) is Mapping-shaped. Keep master
     // skip-safe while checking cnf so the strict fixture does not depend on
@@ -7304,6 +8066,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("master", CoreTy::Unknown), p("cnf", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // unittest.case callable/context-manager/typevar parameters collapse to
     // Unknown. Treat bare user instances as strict wrong-type probes while
@@ -7315,6 +8078,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("function", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "unittest.case",
@@ -7323,6 +8087,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("cm", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "unittest.case",
@@ -7331,6 +8096,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::ModuleFn,
         params: &[p("test_item", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "unittest.case",
@@ -7344,6 +8110,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("description", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "unittest.case",
@@ -7352,6 +8119,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("function", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "unittest.case",
@@ -7360,6 +8128,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("cm", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // zipfile has several private/helper classes and Literal/protocol params
     // that the generated table leaves uncheckable. Keep strict type walls in
@@ -7371,6 +8140,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("source", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "zipfile",
@@ -7386,6 +8156,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("write_through", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "zipfile",
@@ -7399,6 +8170,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("pwd", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "zipfile",
@@ -7411,6 +8183,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("traceback", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "zipfile",
@@ -7425,6 +8198,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("compresslevel", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "zipfile",
@@ -7433,6 +8207,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("pwd", CoreTy::Bytes)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // pathlib generated rows intentionally collapse type variables, overload
     // literals, and Optional exception state to Unknown/Typed. Keep strict-mode
@@ -7449,6 +8224,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("tb", CoreTy::Typed),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7457,6 +8233,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("target", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7465,6 +8242,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("target_dir", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7473,6 +8251,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("target", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7481,6 +8260,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("target_dir", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7495,6 +8275,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("newline", CoreTy::Unknown),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7503,6 +8284,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("strict", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7511,6 +8293,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("missing_ok", CoreTy::Bool)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7523,6 +8306,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
             p("follow_symlinks", CoreTy::Bool),
         ],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "pathlib",
@@ -7531,6 +8315,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("other", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     // types module runtime exposes many descriptor/generator objects as stubs.
     // Generated rows are Unknown for these protocol-heavy contracts, so strict
@@ -7542,6 +8327,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("val", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7550,6 +8336,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("typ", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7558,6 +8345,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("arg", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7566,6 +8354,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("typ", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7574,6 +8363,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("arg", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7582,6 +8372,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("typ", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7590,6 +8381,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fget", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7598,6 +8390,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("ownerclass", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7606,6 +8399,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fget", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7614,6 +8408,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fset", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7622,6 +8417,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("fdel", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7630,6 +8426,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Typed), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7638,6 +8435,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7646,6 +8444,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7654,6 +8453,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7662,6 +8462,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7670,6 +8471,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7678,6 +8480,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("instance", CoreTy::Unknown), p("owner", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7686,6 +8489,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("func", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7694,6 +8498,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("origin", CoreTy::Type)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7702,6 +8507,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7710,6 +8516,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("key", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7718,6 +8525,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
     StdlibSig {
         module: "types",
@@ -7726,6 +8534,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         kind: SigKind::Method,
         params: &[p("value", CoreTy::Typed)],
         enforceable: true,
+        ret: CoreTy::Unknown,
     },
 ];
 
