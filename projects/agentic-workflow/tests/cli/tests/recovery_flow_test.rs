@@ -52,7 +52,7 @@ fn flow_b1_e2e_init_and_sync() {
 }
 
 /// B2 e2e: `aw td claim --from-path <spec.md>` advances phase to
-/// td_reviewed and emits a dispatch envelope to `aw td gen`.
+/// td_created and emits a dispatch envelope to `aw td gen`.
 /// Requires a temp git repo with the spec on disk.
 #[test]
 #[ignore = "requires temp git repo + git binary; run manually with --ignored"]
@@ -63,13 +63,13 @@ fn flow_b2_e2e_td_claim_from_path() {
 }
 
 /// B3 e2e: `aw td code-claim <code-path>` followed by
-/// `aw td claim <slug>` reaches td_reviewed. Requires fillback
+/// `aw td claim <slug>` reaches td_created. Requires fillback
 /// infrastructure (tree-sitter, codebase fixture).
 #[test]
 #[ignore = "requires fillback pipeline + tree-sitter fixtures; run manually with --ignored"]
 fn flow_b3_e2e_cb_then_td_claim() {
     // Reserved for e2e: td code-claim creates a spec from code, then td
-    // claim --from-path on that spec lands at td_reviewed.
+    // claim --from-path on that spec lands at td_created.
 }
 
 // CODEGEN-END

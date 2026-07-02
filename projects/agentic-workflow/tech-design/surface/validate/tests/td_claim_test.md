@@ -30,8 +30,8 @@ No public AST symbols.
 //!
 //! Tests for `aw td claim`.
 
-use clap::{CommandFactory, Parser};
 use agentic_workflow::cli::Commands;
+use clap::{CommandFactory, Parser};
 
 #[derive(Parser)]
 #[command(name = "aw")]
@@ -88,12 +88,21 @@ fn test_td_claim_trailer_const() {
     assert_eq!(lifecycle_trailer::TD_CLAIM, "Td-Claim");
 }
 
-/// Phase write target is `td_reviewed` (CRRR bypass).
+/// Phase write target is `td_created`: claim adopts an already-authored
+/// spec into the worktree, which is semantically the post-create state.
+/// `td_reviewed` has no outgoing transition in the linear lifecycle and
+/// would permanently deadlock (issue #843).
 #[test]
 fn test_td_claim_phase_target() {
     use agentic_workflow::issues::types::td_phase;
-    // td claim writes phase td_reviewed.
-    assert_eq!(td_phase::TD_REVIEWED, "td_reviewed");
+    assert_eq!(td_phase::TD_CREATED, "td_created");
+    // The linear lifecycle's next-command router must accept claim's
+    // written phase and route it to the same verb claim's own dispatch
+    // envelope names (`aw td gen`).
+    assert_eq!(
+        td_phase::next_phase_command("td_created"),
+        Some("aw td gen")
+    );
 }
 
 /// R6 e2e: B2 recovery happy path — `td claim --from-path <spec>` against
@@ -110,8 +119,8 @@ fn test_td_claim_e2e_phase_advance() {
         eprintln!("skipping: git binary not on PATH");
         return;
     };
-    let Ok(score_bin) = std::env::var("CARGO_BIN_EXE_score") else {
-        eprintln!("skipping: CARGO_BIN_EXE_score not set");
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
         return;
     };
 
@@ -174,8 +183,13 @@ fn test_td_claim_e2e_phase_advance() {
         .status()
         .unwrap();
 
-    // Write a TD spec on disk under a temporary location (outside .aw/).
-    let spec_src = root.join("external-spec.md");
+    // Write a TD spec on disk under a temporary location outside the repo
+    // working tree entirely. `td claim` activates a `td-<slug>` branch when
+    // launched from `main`, which requires a clean working tree; a spec file
+    // written inside `root` (even outside `.aw/`) shows up as an untracked
+    // change and trips that guard before claim ever runs.
+    let spec_dir = tempfile::tempdir().expect("spec tempdir");
+    let spec_src = spec_dir.path().join("external-spec.md");
     std::fs::write(
         &spec_src,
         "---\nslug: e2e-claim-test\n---\n\n# external spec\n",
@@ -183,7 +197,7 @@ fn test_td_claim_e2e_phase_advance() {
     .unwrap();
 
     let slug = "e2e-claim-test";
-    let status = Command::new(&score_bin)
+    let status = Command::new(&aw_bin)
         .arg("td")
         .arg("claim")
         .arg(slug)
@@ -194,11 +208,18 @@ fn test_td_claim_e2e_phase_advance() {
         .expect("run aw td claim");
     assert!(status.success(), "td claim --from-path should succeed");
 
-    // Stub MUST exist in the current checkout, with phase: td_reviewed.
-    let wt_stub = root.join(".aw/issues/open").join(format!("{}.md", slug));
+    // Stub MUST exist in the ephemeral issue working-copy store (issues live
+    // under `/tmp/aw/...`, not `.aw/issues/`; see LocalBackend::from_project_root),
+    // with phase: td_created (the linear lifecycle's post-create phase;
+    // `aw td gen`'s guard requires exactly this value — see issue #843).
+    use agentic_workflow::issues::backends::local::LocalBackend;
+    let wt_stub = LocalBackend::from_project_root(root)
+        .issues_dir()
+        .join("open")
+        .join(format!("{}.md", slug));
     assert!(
         wt_stub.exists(),
-        "stub missing in current checkout: {}",
+        "stub missing in issue store: {}",
         wt_stub.display()
     );
     assert!(
@@ -207,7 +228,7 @@ fn test_td_claim_e2e_phase_advance() {
     );
     let stub_body = std::fs::read_to_string(&wt_stub).unwrap();
     assert!(
-        stub_body.contains("phase: td_reviewed"),
+        stub_body.contains("phase: td_created"),
         "phase not advanced:\n{}",
         stub_body
     );
@@ -224,6 +245,137 @@ fn test_td_claim_e2e_phase_advance() {
         log_text.contains("Lifecycle-Stage: Td-Claim"),
         "Td-Claim trailer missing from log:\n{}",
         log_text
+    );
+}
+
+/// AC1/AC2: the exact command claim's dispatch envelope names (`aw td gen`)
+/// succeeds against the phase claim just wrote, and the resulting phase after
+/// gen is one with an outgoing transition (never a dead end) — no verb
+/// sequence starting from claim reaches a phase with no successor.
+///
+/// @spec projects/agentic-workflow/tech-design/surface/specs/remove-td-cb-crrr-collapse-to-linear-lifecycle.md
+#[test]
+fn test_td_claim_then_gen_succeeds() {
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["init", "-b", "main"])
+        .status()
+        .expect("git init");
+    for (k, v) in [
+        ("user.email", "test@test"),
+        ("user.name", "test"),
+        ("commit.gpgsign", "false"),
+    ] {
+        Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["config", k, v])
+            .status()
+            .unwrap();
+    }
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "seed"])
+        .status()
+        .unwrap();
+
+    std::fs::create_dir_all(root.join(".aw/issues/open")).unwrap();
+    std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
+    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap .aw"])
+        .status()
+        .unwrap();
+
+    let slug = "e2e-claim-gen-test";
+    // Spec must live fully outside the repo working tree (see comment in
+    // test_td_claim_e2e_phase_advance above) or the branch-activation clean
+    // tree guard rejects claim before it ever writes a phase.
+    let spec_dir = tempfile::tempdir().expect("spec tempdir");
+    let spec_src = spec_dir.path().join("external-spec.md");
+    std::fs::write(
+        &spec_src,
+        format!("---\nslug: {slug}\n---\n\n# external spec\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges: []\n```\n"),
+    )
+    .unwrap();
+
+    let claim_status = Command::new(&aw_bin)
+        .arg("td")
+        .arg("claim")
+        .arg(slug)
+        .arg("--from-path")
+        .arg(&spec_src)
+        .current_dir(root)
+        .status()
+        .expect("run aw td claim");
+    assert!(
+        claim_status.success(),
+        "td claim --from-path should succeed"
+    );
+
+    // The phase claim wrote must be exactly what `aw td gen`'s own guard
+    // requires (run_gen_code checks phase == "td_created").
+    use agentic_workflow::issues::backends::local::LocalBackend;
+    let wt_stub = LocalBackend::from_project_root(root)
+        .issues_dir()
+        .join("open")
+        .join(format!("{}.md", slug));
+    let stub_body = std::fs::read_to_string(&wt_stub).unwrap();
+    assert!(
+        stub_body.contains("phase: td_created"),
+        "claim must write td_created so gen's guard accepts it:\n{}",
+        stub_body
+    );
+
+    // Running exactly the command named in claim's dispatch envelope
+    // (`aw td gen`) must not hit the phase guard error.
+    let gen_output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("gen")
+        .arg(slug)
+        .arg("--spec-path")
+        .arg("external-spec.md")
+        .current_dir(root)
+        .output()
+        .expect("run aw td gen");
+    let gen_stdout = String::from_utf8_lossy(&gen_output.stdout);
+    let gen_stderr = String::from_utf8_lossy(&gen_output.stderr);
+    assert!(
+        !gen_stdout.contains("cannot gen-code: phase is"),
+        "td gen rejected claim's phase (deadlock):\nstdout:\n{}\nstderr:\n{}",
+        gen_stdout,
+        gen_stderr
     );
 }
 ```
