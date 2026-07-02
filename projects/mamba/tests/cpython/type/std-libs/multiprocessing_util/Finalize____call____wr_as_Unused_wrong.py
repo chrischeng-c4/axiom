@@ -9,12 +9,11 @@
 # case = "Finalize____call____wr_as_Unused_wrong"
 # subject = "multiprocessing.util.Finalize.__call__(wr: Unused)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed wr"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed wr
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.util.Finalize.__call__(wr: Unused); call it with the wrong type.
 
