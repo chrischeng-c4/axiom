@@ -1032,7 +1032,30 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
 // worktrees with no diff against base trivially pass (R5).
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
-async fn run_cb_check_gate(worktree_abs: &Path) -> std::result::Result<(), String> {
+pub(crate) async fn run_cb_check_gate(worktree_abs: &Path) -> std::result::Result<(), String> {
+    run_cb_check_gate_scoped(worktree_abs, &[]).await
+}
+
+// Scoped variant of [`run_cb_check_gate`] (issue #854) additionally
+// admitting `extra_scope` — repo-root-relative paths named by the
+// completing WI's own TD Changes section — into the marker gate's scope.
+// Used by the terminal `aw td code-check` gate (`run_check_lifecycle_terminal`
+// in cb.rs) so a slug whose branch diff against base is empty (HEAD already
+// on the base branch, or a `main` ref that can't be diffed from the current
+// checkout) is scoped by its own spec instead of falling back to a
+// whole-tree block that unrelated inherited markers can trip.
+///
+// The gate's scope is the union of the branch diff (`changed`) and
+// `extra_scope`. When that union is empty — no branch diff AND no WI Changes
+// entries to check against — the gate passes vacuously: a docs-only WI (or
+// one whose branch diff is unresolvable) must not be blocked by markers
+// inherited from unrelated, unmerged work elsewhere in the tree.
+///
+// @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
+pub(crate) async fn run_cb_check_gate_scoped(
+    worktree_abs: &Path,
+    extra_scope: &[String],
+) -> std::result::Result<(), String> {
     let remaining = enumerate_worktree_markers(worktree_abs);
     if remaining.is_empty() {
         return Ok(());
@@ -1040,26 +1063,32 @@ async fn run_cb_check_gate(worktree_abs: &Path) -> std::result::Result<(), Strin
 
     let base = resolve_base_branch();
     let changed = branch_changed_files(worktree_abs, &base);
-    if changed.is_empty() {
-        // Could not compute a branch diff (detached HEAD, missing base,
-        // or git error). Fall through to the legacy global check rather
-        // than silently passing on a worktree that may have real issues.
-        return Err(format!(
-            "{} HANDWRITE marker(s) still present after fill",
-            remaining.len()
-        ));
+
+    let mut scope: Vec<String> = changed.into_iter().collect();
+    scope.extend(extra_scope.iter().cloned());
+    scope.sort();
+    scope.dedup();
+
+    if scope.is_empty() {
+        // No branch diff against base and no WI-scope file list to check
+        // against — nothing identifies this worktree's own markers, so
+        // markers inherited from other unmerged work must not block
+        // (issue #854).
+        return Ok(());
     }
 
-    let slug_markers: Vec<&HandwriteMarkerEntry> = remaining
-        .iter()
-        .filter(|m| changed.contains(m.source_path.as_str()))
-        .collect();
+    let slug_markers = filter_markers_to_change_paths(&remaining, &scope);
     if !slug_markers.is_empty() {
+        let names: Vec<&str> = slug_markers
+            .iter()
+            .map(|m| m.source_path.as_str())
+            .collect();
         return Err(format!(
             "{} HANDWRITE marker(s) introduced by this branch still present after fill (\
-             {} inherited markers ignored)",
+             {} inherited markers ignored): {}",
             slug_markers.len(),
-            remaining.len() - slug_markers.len()
+            remaining.len() - slug_markers.len(),
+            names.join(", "),
         ));
     }
     Ok(())

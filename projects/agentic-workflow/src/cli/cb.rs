@@ -4266,7 +4266,21 @@ async fn run_check_lifecycle_terminal(
     }
 
     if !is_retry {
-        if let Err(message) = crate::cli::cb_fill::run_cb_check_gate(project_root).await {
+        // Scope both terminal gates to this WI's own TD spec (issue #854)
+        // instead of the whole worktree / whole `tech_design_path` tree —
+        // see `resolve_slug_spec_paths` below.
+        let slug_spec_paths = resolve_slug_spec_paths(project_root, &issue);
+        let mut marker_gate_scope: Vec<String> = Vec::new();
+        for spec_abs in &slug_spec_paths {
+            if let Ok(content) = std::fs::read_to_string(spec_abs) {
+                marker_gate_scope.extend(crate::cli::cb_fill::extract_change_paths_from_spec(
+                    &content,
+                ));
+            }
+        }
+        if let Err(message) =
+            crate::cli::cb_fill::run_cb_check_gate_scoped(project_root, &marker_gate_scope).await
+        {
             let env = serde_json::json!({
                 "action": "error",
                 "slug": slug,
@@ -4287,7 +4301,9 @@ async fn run_check_lifecycle_terminal(
             eprintln!(
                 "[td code-check] WARNING: --allow-empty-impl set; skipping empty-implementation gate"
             );
-        } else if let Some(message) = empty_implementation_gate_message(project_root, slug) {
+        } else if let Some(message) =
+            empty_implementation_gate_message(project_root, slug, &slug_spec_paths)
+        {
             let env = serde_json::json!({
                 "action": "error",
                 "slug": slug,
@@ -4406,46 +4422,84 @@ async fn run_check_lifecycle_terminal(
     Ok(true)
 }
 
+/// Resolve the completing slug's own TD spec file(s) (issue #854): every
+/// `.md` ref in `Issue.implements`; else the worktree's uniquely
+/// branch-diff-discovered TD spec (`td::discover_worktree_spec`); else the
+/// deterministic default path `aw td create` would have used for this issue
+/// (`td::default_spec_path_for_issue_in_project`) as a last resort, since
+/// `Issue.implements` is not yet populated by the real `aw td create`/`aw td
+/// gen` commands and a worktree already on its base branch has no branch
+/// diff to discover from. Both terminal gates below scope to exactly this
+/// set instead of the whole `tech_design_path` tree / whole worktree, so an
+/// unrelated stale spec or inherited HANDWRITE marker elsewhere in a
+/// monorepo checkout can no longer block this WI's own completion.
+///
+/// An empty result — no source resolves a spec (a fresh issue with a title
+/// that derives no spec filename) — is a legitimate "nothing to scope
+/// against" outcome. Callers must treat it as pass vacuously, not fall back
+/// to a whole-tree scan (that whole-tree fallback is exactly the bug issue
+/// #854 fixes). A resolved path that does not exist on disk (the default
+/// guess was wrong, or the spec genuinely has no Changes section) is
+/// likewise harmless — callers below already skip unreadable spec files.
+fn resolve_slug_spec_paths(
+    project_root: &std::path::Path,
+    issue: &crate::issues::Issue,
+) -> Vec<std::path::PathBuf> {
+    let mut rels: Vec<String> = issue
+        .implements
+        .iter()
+        .filter(|s| s.ends_with(".md"))
+        .cloned()
+        .collect();
+    if rels.is_empty() {
+        if let Some(discovered) = crate::cli::td::discover_worktree_spec(project_root) {
+            rels.push(discovered);
+        }
+    }
+    if rels.is_empty() {
+        rels.push(crate::cli::td::default_spec_path_for_issue_in_project(
+            project_root,
+            issue,
+            &issue.slug,
+        ));
+    }
+    rels.into_iter().map(|r| project_root.join(r)).collect()
+}
+
 /// Empty-implementation gate (issue #847, restoring the removed `aw td
-/// merge` "Bug 2" guard byte-for-byte in condition). Walks every `.md` file
-/// under the project's tech-design root — matching the removed `run_merge`
-/// exactly, this is a project-wide scan, not scoped to `slug`'s own spec —
-/// and sums each file's `action: create`/`modify` Changes entries via
-/// [`crate::generate::apply::extract_change_entries_count`] plus the subset
-/// missing from disk via
+/// merge` "Bug 2" guard byte-for-byte in condition). Scoped to `spec_paths`
+/// — the completing slug's own TD spec file(s), resolved by
+/// [`resolve_slug_spec_paths`] — instead of walking every `.md` file under
+/// the project's tech-design root (issue #854; the removed `run_merge`'s
+/// project-wide walk let an unrelated stale spec's 0-of-N signature block a
+/// clean slug's code-check). Sums each spec's `action: create`/`modify`
+/// Changes entries via [`crate::generate::apply::extract_change_entries_count`]
+/// plus the subset missing from disk via
 /// [`crate::generate::apply::missing_implementation_paths`].
 ///
 /// Returns `Some(message)` (block) only when the *entire* promised
-/// implementation across all scanned specs is missing (0-of-N,
+/// implementation across `spec_paths` is missing (0-of-N,
 /// `total_missing == entries_total`, with `entries_total > 0`) — the
 /// signature of gen-code having been skipped entirely. Partial presence
 /// (some but not all missing) is warn-only to stderr and returns `None`, as
-/// does the no-entries case.
-fn empty_implementation_gate_message(project_root: &std::path::Path, slug: &str) -> Option<String> {
+/// does the no-entries case — including when `spec_paths` itself is empty
+/// (nothing to scope against, see [`resolve_slug_spec_paths`]).
+fn empty_implementation_gate_message(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_paths: &[std::path::PathBuf],
+) -> Option<String> {
     let mut missing_total: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
     let mut entries_total = 0usize;
-    let td_root = crate::shared::workspace::tech_design_path(project_root);
-    if td_root.exists() {
-        for entry in walkdir::WalkDir::new(&td_root)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            if entry.path().extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            let Ok(content) = std::fs::read_to_string(entry.path()) else {
-                continue;
-            };
-            let total = crate::generate::apply::extract_change_entries_count(&content);
-            entries_total += total;
-            let missing =
-                crate::generate::apply::missing_implementation_paths(&content, project_root);
-            if !missing.is_empty() {
-                missing_total.push((entry.path().to_path_buf(), missing));
-            }
+    for spec_abs in spec_paths {
+        let Ok(content) = std::fs::read_to_string(spec_abs) else {
+            continue;
+        };
+        let total = crate::generate::apply::extract_change_entries_count(&content);
+        entries_total += total;
+        let missing = crate::generate::apply::missing_implementation_paths(&content, project_root);
+        if !missing.is_empty() {
+            missing_total.push((spec_abs.clone(), missing));
         }
     }
     if entries_total == 0 || missing_total.is_empty() {

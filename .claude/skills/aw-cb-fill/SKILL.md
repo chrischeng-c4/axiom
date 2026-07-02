@@ -96,17 +96,21 @@ current checkout untouched (no `Lifecycle-Stage: Cb-Fill` commit). Mainthread:
 The two-phase apply ≠ commit pattern guarantees no half-finished
 commits land in the current checkout.
 
-### Inherited-marker bypass (known td-fill gate pollution)
+### Marker gate scope (issue #854)
 
-`aw td code-check` counts ALL HANDWRITE markers in the current checkout,
-including markers inherited from earlier branch state that pre-dates this
-spec. If your TD spec produced 0 codegen blocks (all changes are
-`impl_mode: hand-written`) and `td fill` returns inherited markers
-unrelated to your changes, the gate will not pass cleanly. Bypass:
-mainthread commits `Lifecycle-Stage: Cb-Fill` directly via
-`git commit --allow-empty -m "Lifecycle-Stage: Cb-Fill\n\nNo new HANDWRITE markers introduced by this spec."`,
-manually advances `phase: cb_genned → cb_filled` in the issue
-frontmatter, then runs `aw td code-check <slug>` to finish.
+`aw td code-check`'s terminal marker gate scopes to this WI's own spec:
+the union of (a) the paths your TD spec's `## Changes` section names and
+(b) files your worktree branch actually changed versus base. An unfilled
+HANDWRITE marker outside that scope — e.g. inherited from other unmerged
+work on the same monorepo checkout — no longer blocks completion; no
+bypass is needed for that case. This depends on the issue recording
+`implements: [<td-spec-path>]` (`aw td create`/`aw td gen` set this), so
+the terminal step can still resolve your spec when the branch diff against
+base is empty (HEAD already on the base branch). If the gate still blocks,
+the offending marker is genuinely inside your WI's own scope (a file your
+spec's Changes section names, or one your branch touched) — fill it the
+normal way via `aw td fill <slug> --apply --marker <id>`; there is no
+separate escape hatch for an in-scope marker.
 
 ### What `aw td fill` does
 
