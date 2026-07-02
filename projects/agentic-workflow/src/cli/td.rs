@@ -3048,14 +3048,23 @@ async fn handle_terminal_lifecycle(
 
 /// Walk `git log` in the worktree for the most recent terminal lifecycle commit
 /// for this slug, and return its hash. Used by R8 backfill. New commits use
-/// `Cb-CodeCheck`.
+/// `Cb-CodeCheck`; commits from the removed `aw td merge` verb carry the
+/// legacy `Td-Merged` trailer, which [`lifecycle_trailer::normalize`]
+/// accepts as an alias — see [`lifecycle_trailer::body_has_stage_trailer`]
+/// (issue #853).
+///
+/// The `--grep` argument below is only a coarse, best-effort pre-filter to
+/// keep `git log` from scanning unrelated commits; git's grep is a
+/// substring/regex match, so it can over-include commits for a
+/// prefix-colliding slug (e.g. slug `41`'s pre-filter also matches slug
+/// `412`'s commits). Correctness comes from the per-commit exact-line check
+/// via [`lifecycle_trailer::body_has_slug_trailer`], not from `--grep`.
 /// @spec aw-td-validate-lifecycle-extension.md#logic
 fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Result<Option<String>> {
     use crate::issues::types::lifecycle_trailer;
 
     let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git not found"))?;
     let slug_needle = format!("Lifecycle-Slug: {}", slug);
-    let stage_needle = format!("Lifecycle-Stage: {}", lifecycle_trailer::CB_CODE_CHECK);
     let output = std::process::Command::new(&git_bin)
         .arg("-C")
         .arg(worktree_abs)
@@ -3063,6 +3072,7 @@ fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Resu
             "log",
             "--format=%H%x00%B%x1e",
             "--all",
+            "--fixed-strings",
             "--grep",
             &slug_needle,
         ])
@@ -3080,7 +3090,9 @@ fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Resu
         let mut parts = entry.splitn(2, '\x00');
         let hash = parts.next().unwrap_or("").trim();
         let body = parts.next().unwrap_or("");
-        if body.contains(&stage_needle) {
+        if lifecycle_trailer::body_has_slug_trailer(body, slug)
+            && lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::CB_CODE_CHECK)
+        {
             return Ok(Some(hash.to_string()));
         }
     }
@@ -4298,6 +4310,58 @@ label = "project:agentic-workflow"
         assert!(log.contains("Lifecycle-Slug: 123"));
         assert!(log.contains("Lifecycle-Stage: Td-Lock-Complete"));
         assert!(log.contains("Lifecycle-Phase: td_created"));
+    }
+
+    // issue #853 AC1: legacy `Td-Merged` terminal commits (written by the
+    // removed `aw td merge` verb) must still resolve a ship_commit backfill.
+    #[test]
+    fn find_ship_commit_from_log_accepts_legacy_td_merged_trailer() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_lifecycle_with_extra(root, "722", "merged + closed", "Td-Merged", &[], &[]).unwrap();
+
+        let found = find_ship_commit_from_log(root, "722").unwrap();
+        assert!(
+            found.is_some(),
+            "legacy Td-Merged trailer should backfill ship_commit"
+        );
+    }
+
+    // issue #853 AC2: slug `41` must never adopt slug `412`'s commit.
+    #[test]
+    fn find_ship_commit_from_log_does_not_adopt_prefix_colliding_slug() {
+        use crate::issues::types::lifecycle_trailer;
+
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        // Only slug 412 has a terminal commit; slug 41 has none.
+        commit_lifecycle_with_extra(
+            root,
+            "412",
+            "terminal",
+            lifecycle_trailer::CB_CODE_CHECK,
+            &[],
+            &[],
+        )
+        .unwrap();
+
+        let found = find_ship_commit_from_log(root, "41").unwrap();
+        assert!(
+            found.is_none(),
+            "slug 41 must not adopt slug 412's ship_commit"
+        );
+
+        // Sanity: the exact-matching slug still resolves.
+        let found_exact = find_ship_commit_from_log(root, "412").unwrap();
+        assert!(found_exact.is_some());
     }
 
     #[test]
