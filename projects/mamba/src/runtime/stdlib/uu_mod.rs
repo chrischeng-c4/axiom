@@ -299,28 +299,19 @@ unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbVa
     MbValue::from_ptr(MbObject::new_dict())
 }
 
+/// De-registered in favor of the vendored `py_src/uu.py` port (#868):
+/// registering a native module here would pre-seed `uu` into `MODULES` and
+/// permanently shadow the vendored source (see `vendor_lib.rs` precedence
+/// doc). `register()` is kept as a no-op call site (invoked from
+/// `stdlib::register_stdlib()`) so the migration didn't need to touch that
+/// call list. The dispatch functions/helpers below (including the
+/// mamba-only `encode_bytes`/`decode_bytes`/`test` extensions, which are not
+/// part of CPython's `uu.__all__`) are dead code kept for reference; nothing
+/// calls them anymore.
 pub fn register() {
-    let mut attrs: HashMap<String, MbValue> = HashMap::new();
-    let dispatchers: &[(&str, usize)] = &[
-        ("encode", dispatch_encode as *const () as usize),
-        ("decode", dispatch_decode as *const () as usize),
-        ("test", dispatch_test as *const () as usize),
-        ("encode_bytes", dispatch_encode_bytes as *const () as usize),
-        ("decode_bytes", dispatch_decode_bytes as *const () as usize),
-    ];
-    for (name, addr) in dispatchers {
-        attrs.insert((*name).into(), MbValue::from_func(*addr));
-    }
-    let shell = dispatch_class_shell as *const () as usize;
-    attrs.insert("Error".into(), MbValue::from_func(shell));
-    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        let mut set = s.borrow_mut();
-        for (_, addr) in dispatchers {
-            set.insert(*addr as u64);
-        }
-        set.insert(shell as u64);
-    });
-    super::register_module("uu", attrs);
+    // Intentionally empty: vendor_lib::register() (called earlier in
+    // stdlib::register_stdlib()) already materializes py_src/uu.py into the
+    // shared vendored search-path directory.
 }
 
 #[cfg(test)]
