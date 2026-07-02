@@ -344,6 +344,11 @@ pub struct EcCheckSummary {
     pub orphan_test_paths: Vec<String>,
     pub missing_tool_manifest_paths: Vec<String>,
     pub findings: Vec<String>,
+    /// #921 tier 1b: warn-only findings for `ec.*` cross-CLI bindings (e.g. a
+    /// vat.toml runner's `cmd[0]` binary is not built yet). Never affects
+    /// `clean` — only a missing/misconfigured runner id in `findings` does.
+    #[serde(default)]
+    pub ec_binding_warnings: Vec<String>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -499,6 +504,10 @@ pub struct EcProjectContext {
     pub doc_path: PathBuf,
     pub target: String,
     pub package_name: String,
+    /// #921 tier 1b: this project's `ec.<category>` cross-CLI bindings
+    /// (`.aw/config.toml`), for static validation against the vat.toml
+    /// runner registries they target.
+    pub ec_bindings: BTreeMap<String, crate::models::project::EcBinding>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1212,20 +1221,28 @@ fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
     let summary = check_ec_context(&ctx)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
-    } else if summary.clean {
-        if summary.configured {
-            println!(
-                "ec check {}: clean ({} case(s))",
-                summary.project, summary.case_count
-            );
-        } else {
-            println!(
-                "ec check {}: clean, no TD e2e-test or tool-contract sections found",
-                summary.project
-            );
-        }
     } else {
-        print_ec_findings(&summary);
+        if summary.clean {
+            if summary.configured {
+                println!(
+                    "ec check {}: clean ({} case(s))",
+                    summary.project, summary.case_count
+                );
+            } else {
+                println!(
+                    "ec check {}: clean, no TD e2e-test or tool-contract sections found",
+                    summary.project
+                );
+            }
+        } else {
+            print_ec_findings(&summary);
+        }
+        // #921 tier 1b: a vat.toml runner whose cmd[0] binary is not built
+        // yet is warn-only — surfaced regardless of `clean` so it's visible
+        // without failing the gate.
+        for warning in &summary.ec_binding_warnings {
+            eprintln!("warning: {warning}");
+        }
     }
     if !summary.clean {
         std::process::exit(1);
@@ -1884,6 +1901,10 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         .map(|workspace| language_target_name(workspace.target).to_string())
         .unwrap_or_else(|| "rust".to_string());
     let package_name = package_name_for(&source_root).unwrap_or_else(|| row.name.clone());
+    let ec_bindings = project_model
+        .as_ref()
+        .map(|project| project.ec.clone())
+        .unwrap_or_default();
 
     Ok(EcProjectContext {
         project_root: project_root.to_path_buf(),
@@ -1898,6 +1919,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         doc_path,
         target,
         package_name,
+        ec_bindings,
     })
 }
 
@@ -3514,6 +3536,23 @@ fn check_manifest_against_expected(
         }
     }
 
+    // #921 tier 1b: validate each `ec.*` cross-CLI binding's resolved command
+    // against the vat.toml runner registry it targets. A missing/misspelled
+    // runner id is a blocker (folded into `findings`, so it blocks `clean`
+    // like every other finding here); a runner whose `cmd[0]` binary isn't
+    // built yet is warn-only and travels separately in
+    // `ec_binding_warnings`.
+    let mut ec_binding_warnings = Vec::new();
+    for (category, binding) in &ctx.ec_bindings {
+        let Ok(command) = binding.command() else {
+            continue;
+        };
+        let (binding_blockers, binding_warnings) =
+            super::chain::check_ec_vat_runner_binding(&ctx.project_root, category, &command);
+        findings.extend(binding_blockers);
+        ec_binding_warnings.extend(binding_warnings);
+    }
+
     findings.sort();
     findings.dedup();
     missing_test_paths.sort();
@@ -3522,6 +3561,8 @@ fn check_manifest_against_expected(
     orphan_test_paths.dedup();
     missing_tool_manifest_paths.sort();
     missing_tool_manifest_paths.dedup();
+    ec_binding_warnings.sort();
+    ec_binding_warnings.dedup();
     let stale = actual
         .map(|manifest| manifest.generated_from_td_digest != expected.generated_from_td_digest)
         .unwrap_or(!expected.cases.is_empty() || !expected.tool_manifests.is_empty());
@@ -3542,6 +3583,7 @@ fn check_manifest_against_expected(
         orphan_test_paths,
         missing_tool_manifest_paths,
         findings,
+        ec_binding_warnings,
     })
 }
 
@@ -4560,6 +4602,7 @@ e2e_tests:
             doc_path: project_root.join("projects/demo/docs/aw-ec-manual.md"),
             target: "rust".to_string(),
             package_name: "demo-crate".to_string(),
+            ec_bindings: BTreeMap::new(),
         }
     }
 

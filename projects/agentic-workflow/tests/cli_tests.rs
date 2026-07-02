@@ -6,6 +6,8 @@ mod cb_claim_test;
 mod cb_fill_test;
 #[path = "cli/tests/cb_namespace_test.rs"]
 mod cb_namespace_test;
+#[path = "cli/tests/chain_liveness_test.rs"]
+mod chain_liveness_test;
 #[path = "cli/tests/in_place_lifecycle_test.rs"]
 mod in_place_lifecycle_test;
 #[path = "cli/tests/inplace_mode_test.rs"]
