@@ -571,9 +571,9 @@ fn test_sqlite3_full_workflow() {
     // through the registered Connection/Cursor methods (covered by the
     // tests/cpython sqlite3 conformance fixtures).
     let conn = mb_sqlite3_connect(s(":memory:"));
-    assert_eq!(instance_class(conn).as_deref(), Some("Connection"));
+    assert_eq!(instance_class(conn).as_deref(), Some("sqlite3.Connection"));
     let cur = mb_sqlite3_cursor(conn);
-    assert_eq!(instance_class(cur).as_deref(), Some("Cursor"));
+    assert_eq!(instance_class(cur).as_deref(), Some("sqlite3.Cursor"));
 }
 
 #[test]
@@ -594,7 +594,7 @@ fn test_sqlite3_cursor_returns_distinct_cursor_instance() {
     let conn = mb_sqlite3_connect(s(":memory:"));
     let cursor = mb_sqlite3_cursor(conn);
     assert_ne!(conn, cursor);
-    assert_eq!(instance_class(cursor).as_deref(), Some("Cursor"));
+    assert_eq!(instance_class(cursor).as_deref(), Some("sqlite3.Cursor"));
 }
 
 // ── unittest ──────────────────────────────────────────────────────────────────

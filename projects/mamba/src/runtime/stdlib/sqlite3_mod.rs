@@ -1,11 +1,13 @@
 use super::super::rc::{MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
 use super::super::value::MbValue;
 use rustc_hash::FxHashMap;
-/// sqlite3 module for Mamba (#444).
+/// sqlite3 module for Mamba (#444, #877).
 ///
 /// Provides: connect, Connection (execute, fetchall, commit, close)
-/// Stub implementation — stores data in-memory HashMap tables.
-/// No external dependency (no rusqlite).
+/// Real backend — SQL execution/storage is routed through `rusqlite`
+/// (bundled SQLite, no system lib required). See the "Real SQLite backend
+/// (rusqlite)" section below for the connection/cursor registries and
+/// value-mapping helpers.
 use std::collections::HashMap;
 
 const CONNECTION_CLASS: &str = "sqlite3.Connection";
