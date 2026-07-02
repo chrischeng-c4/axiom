@@ -9,12 +9,11 @@
 # case = "spawnv_passfds__path_as_bytes_wrong"
 # subject = "multiprocessing.util.spawnv_passfds(path: bytes)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.util.spawnv_passfds(path: bytes); call it with the wrong type.
 

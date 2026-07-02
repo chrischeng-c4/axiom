@@ -9,12 +9,11 @@
 # case = "Finalize__init__obj_as_typed_wrong"
 # subject = "multiprocessing.util.Finalize.__init__(obj: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/util.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed obj
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.util.Finalize.__init__(obj: typed); call it with the wrong type.
 
