@@ -116,25 +116,25 @@ fn project_option_propagates_to_nested_project_commands() {
         _ => panic!("expected capability command"),
     }
 
-    let command = parse_cli(["aw", "standardize", "managed", "run", "--project", "demo"]);
+    let command = parse_cli(["aw", "standardize", "audit", "check", "--project", "demo"]);
     match command {
         Commands::Standardize(args) => {
             assert_eq!(args.project.as_deref(), Some("demo"));
             assert!(matches!(
                 args.command,
-                Some(agentic_workflow::cli::standardize::StandardizeCommand::Managed(_))
+                agentic_workflow::cli::standardize::StandardizeCommand::Audit(_)
             ));
         }
         _ => panic!("expected standardize command"),
     }
 
-    let command = parse_cli(["aw", "standardize", "--project", "demo", "managed", "run"]);
+    let command = parse_cli(["aw", "standardize", "--project", "demo", "audit", "check"]);
     match command {
         Commands::Standardize(args) => {
             assert_eq!(args.project.as_deref(), Some("demo"));
             assert!(matches!(
                 args.command,
-                Some(agentic_workflow::cli::standardize::StandardizeCommand::Managed(_))
+                agentic_workflow::cli::standardize::StandardizeCommand::Audit(_)
             ));
         }
         _ => panic!("expected standardize command"),
@@ -865,7 +865,7 @@ fn project_health_summary_routes_managed_blockers_to_standardize() {
     assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
+        Some("aw td code-claim projects/demo/src/lib.rs")
     );
 }
 
@@ -908,7 +908,7 @@ fn project_health_next_reason_matches_managed_route_when_ec_has_no_expected_unit
 
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
+        Some("aw td code-claim projects/demo/src/lib.rs")
     );
     assert_eq!(
         summary["next"]["reason"].as_str(),
@@ -1101,7 +1101,7 @@ fn no_cold_rebuild_workspace_keeps_specific_repair_route() {
 
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
+        Some("aw td code-claim projects/demo/src/lib.rs")
     );
     let missing = summary["completion"]["missing"].as_array().unwrap();
     assert!(missing
@@ -1560,4 +1560,13 @@ changes:
     description: |
       Source-template promotion for the project health aggregation tests.
       Replays the issue-2119 test implementation without the temporary HANDWRITE wrapper.
+      #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
+      only, so the `managed run` parse-shape assertions now assert
+      `audit check` and `StandardizeCommand::Audit`. The three `next.command`
+      routing assertions that previously expected the retired
+      `aw standardize managed run --project demo --non-interactive
+      --max-ticks 1` layer driver now expect `aw td code-claim
+      projects/demo/src/lib.rs` -- `project_health_next_command` names the
+      slice-E worker verb for the top managed-layer gap directly via the new
+      `managed_health_worker_command` helper in `src/cli/standardize.rs`.
 ```

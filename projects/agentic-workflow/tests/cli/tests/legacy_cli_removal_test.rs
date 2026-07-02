@@ -198,6 +198,12 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw project health",
         "aw caps",
         "aw cb",
+        // #920 (epic #914 slice F): `aw standardize` is retired down to
+        // `audit` only; the `managed`/`semantic`/`traceability` layer
+        // `report`/`next`/`run` drivers are gone.
+        "aw standardize managed",
+        "aw standardize semantic",
+        "aw standardize traceability",
     ];
     for doc in docs {
         let Ok(content) = std::fs::read_to_string(&doc) else {
@@ -274,7 +280,10 @@ fn public_aggregation_points_remain_registered() {
     let standardize = cmd
         .find_subcommand("standardize")
         .expect("standardize namespace registered");
-    assert!(standardize.find_subcommand("semantic").is_some());
+    // #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
+    // only; `managed`/`semantic`/`traceability` layer drivers are gone.
+    assert!(standardize.find_subcommand("audit").is_some());
+    assert!(standardize.find_subcommand("semantic").is_none());
 
     let generator = cmd
         .find_subcommand("generator")

@@ -55,6 +55,12 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw td revise",
     "aw wi merge",
     "aw cb ",
+    // #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
+    // only; the `managed`/`semantic`/`traceability` layer `report`/`next`/
+    // `run` drivers are gone.
+    "aw standardize managed",
+    "aw standardize semantic",
+    "aw standardize traceability",
 ];
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
@@ -69,13 +75,22 @@ pub(crate) struct TraceabilityCli {
 }
 
 #[derive(Debug, Args)]
+// #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
+// only. `managed`/`semantic`/`traceability` `report`/`next`/`run` are gone --
+// `aw health` absorbs the read (coverage/next.command already sourced from
+// the same inventory/coverage library code below) and slice-E worker verbs
+// (`aw td promote`, `aw td code-claim`, `aw wi create`, ...) absorb the
+// mutating remediation. The subcommand is required (not `Option`): with only
+// `audit` left, a bare `aw standardize --project <p>` would just be a second,
+// narrower copy of `aw health --project <p>` -- exactly the duplicated read
+// surface this slice removes. Run `aw health --project <p>` instead.
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeArgs {
     /// Project name from .aw/config.toml.
     #[arg(long, global = true)]
     pub project: Option<String>,
     #[command(subcommand)]
-    pub command: Option<StandardizeCommand>,
+    pub command: StandardizeCommand,
 }
 
 #[derive(Debug, Subcommand)]
@@ -83,12 +98,6 @@ pub struct StandardizeArgs {
 pub enum StandardizeCommand {
     /// Audit-first preservation protocol for quality standardization.
     Audit(StandardizeAuditArgs),
-    /// Adoption layer: every in-scope file is CODEGEN or HANDWRITE.
-    Managed(StandardizeStageArgs),
-    /// Semantic layer: source behavior is covered by semantic TD and generator primitive gaps.
-    Semantic(StandardizeStageArgs),
-    /// Traceability layer: every TD/source/CB edge closes back to a README capability.
-    Traceability(StandardizeTraceabilityArgs),
 }
 
 #[derive(Debug, Args)]
@@ -144,248 +153,6 @@ pub struct StandardizeAuditRecordArgs {
     /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
     #[arg(long = "scope")]
     pub scopes: Vec<String>,
-    /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human-readable output.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON output.
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeStageArgs {
-    #[command(subcommand)]
-    pub command: StandardizeStageCommand,
-}
-
-#[derive(Debug, Subcommand)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub enum StandardizeStageCommand {
-    /// Emit coverage for an in-scope project or source scope.
-    Report(StandardizeReportArgs),
-    /// Emit the next deterministic action without mutating files.
-    Next(StandardizeNextArgs),
-    /// Run actions for a project until complete, blocked, or max ticks is reached.
-    Run(StandardizeRunArgs),
-}
-
-#[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
-managed report -> StandardizationCoverage:
-{
-  "scope": [string],
-  "total_files": number,
-  "managed_files": number,
-  "percent": number,
-  "by_language": object,
-  "by_marker": { "codegen": number, "handwrite": number },
-  "uncovered_files": [string]
-}
-
-semantic report -> SemanticCoverage:
-{
-  "scope": [string],
-  "total_files": number,
-  "percent": number,
-  "uncovered_files": [string],
-  "generator_primitive_gaps": [object],
-  "next_gap": object | null,
-  "blocked_gap_count": number,
-  "human_decision_required_count": number
-}"#)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeReportArgs {
-    /// Run every configured project. Required when multiple projects exist and PROJECT is omitted.
-    #[arg(long)]
-    pub all: bool,
-    /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
-    #[arg(long = "scope")]
-    pub scopes: Vec<String>,
-    /// Run CODEGEN audit/replay drift verification. Applies to `regenerable report`.
-    #[arg(long = "verify-cb")]
-    pub verify_cb: bool,
-    /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human-readable output.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON output.
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
-managed next -> aw.cli.v1 summary:
-{
-  "schema_version": "aw.cli.v1",
-  "status": "continue" | "blocked" | "done",
-  "action": "standardize",
-  "layer": "managed",
-  "completion": { "workflow_complete": bool, "requires_hitl": bool, "missing": [string] },
-  "next": { "kind": "run_command" | "hitl" | "blocked" | "done" | "error", "command": string?, "reason": string, "payload_path": string? },
-  "coverage": StandardizationCoverage,
-  "next_action": { "id": string, "kind": string, "target": string, "executor": string, "command": string, "reason": string, "requires_hitl": bool }
-}
-
-semantic next -> aw.cli.v1 summary:
-{
-  "schema_version": "aw.cli.v1",
-  "status": "continue" | "blocked" | "done",
-  "action": "standardize",
-  "layer": "semantic",
-  "completion": object,
-  "next": object,
-  "coverage": object,
-  "next_action": object,
-  "payload_path": "/tmp/aw/..."
-}"#)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeNextArgs {
-    /// Run every configured project. Required when multiple projects exist and PROJECT is omitted.
-    #[arg(long)]
-    pub all: bool,
-    /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
-    #[arg(long = "scope")]
-    pub scopes: Vec<String>,
-    /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human-readable output.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON output.
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
-Managed and semantic run emit the same aw.cli.v1 summary shape as their `next` command for blocked/complete states.
-Successful mutation ticks emit:
-{
-  "action": object,
-  "commit": object | null,
-  "next_action": object,
-  "complete": bool
-}"#)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeRunArgs {
-    /// Run every configured project. Required when multiple projects exist and PROJECT is omitted.
-    #[arg(long)]
-    pub all: bool,
-    /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
-    #[arg(long = "scope")]
-    pub scopes: Vec<String>,
-    /// Do not prompt; emit a blocked envelope and exit non-zero when HITL/mainthread work is required.
-    #[arg(long)]
-    pub non_interactive: bool,
-    /// Stop after N successful ticks. Omitted means loop until complete or blocked.
-    #[arg(long)]
-    pub max_ticks: Option<usize>,
-    /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human-readable output.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON output.
-    #[arg(long)]
-    pub pretty: bool,
-    /// Push after each successful per-action commit.
-    #[arg(long)]
-    pub push: bool,
-    /// Bootstrap work-item id this batch standardization run executes
-    /// under (Rule B: whole-repo/batch standardization is not anonymous
-    /// ticks — it runs under one bootstrap WI whose execution engine is
-    /// this tick loop). Batch standardize SHOULD be launched with `--wi
-    /// <id>`; when set, every per-action commit carries `Work-Item:` and
-    /// `Lifecycle-Slug:` trailers alongside the existing Standardize-*
-    /// trailers. Omitted for backward-compatible unattributed runs.
-    #[arg(long)]
-    pub wi: Option<String>,
-}
-
-#[derive(Debug, Args)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeTraceabilityArgs {
-    #[command(subcommand)]
-    pub command: StandardizeTraceabilityCommand,
-}
-
-#[derive(Debug, Subcommand)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub enum StandardizeTraceabilityCommand {
-    /// Emit TD/source/CB-to-capability closure coverage for one configured project.
-    Report(StandardizeTraceabilityReportArgs),
-    /// Emit the next traceability blocker without mutating files.
-    Next(StandardizeTraceabilityReportArgs),
-    /// Evaluate traceability and return blocked when classification is required.
-    Run(StandardizeTraceabilityRunArgs),
-}
-
-#[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
-traceability report -> compact summary:
-{
-  "action": "report",
-  "layer": "traceability",
-  "coverage": object,
-  "payload_path": "/tmp/aw/..."
-}
-
-traceability next -> compact summary:
-{
-  "schema_version": "aw.cli.v1",
-  "status": "continue" | "blocked" | "done",
-  "action": "standardize",
-  "layer": "traceability",
-  "completion": object,
-  "next": object,
-  "coverage": object,
-  "payload_path": "/tmp/aw/...",
-  "next_action": object,
-  "mainthread_task": object | null,
-  "agent_prompt_path": string | null,
-  "invoke": object | null
-}"#)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeTraceabilityReportArgs {
-    /// Override source scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
-    #[arg(long = "scope")]
-    pub scopes: Vec<String>,
-    /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human-readable output.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON output.
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
-Traceability run emits the same compact summary as `aw standardize traceability next`.
-If classification work is required, it exits non-zero with `next`, `next_action`, `mainthread_task`, and `agent_prompt_path`.
-"#)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct StandardizeTraceabilityRunArgs {
-    /// Override source scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
-    #[arg(long = "scope")]
-    pub scopes: Vec<String>,
-    /// Do not prompt; emit a blocked envelope and exit non-zero when classification is required.
-    #[arg(long)]
-    pub non_interactive: bool,
-    /// Accepted for protocol symmetry; traceability v1 does not auto-edit.
-    #[arg(long)]
-    pub max_ticks: Option<usize>,
     /// DEPRECATED compatibility no-op. Standardize emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -940,20 +707,7 @@ struct ActionOutcome {
 pub async fn run(args: StandardizeArgs) -> Result<()> {
     let project = args.project;
     match args.command {
-        Some(StandardizeCommand::Audit(a)) => run_audit_stage(project.as_deref(), a).await,
-        Some(StandardizeCommand::Managed(a)) => run_managed_stage(project.as_deref(), a).await,
-        Some(StandardizeCommand::Semantic(a)) => run_semantic_stage(project.as_deref(), a).await,
-        Some(StandardizeCommand::Traceability(a)) => {
-            run_traceability_stage(project.as_deref(), a).await
-        }
-        None => {
-            let project = project.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "use `aw standardize --project <project>` or `aw standardize <layer> <command> --project <project>`"
-                )
-            })?;
-            run_project_standardize_parent(project).await
-        }
+        StandardizeCommand::Audit(a) => run_audit_stage(project.as_deref(), a).await,
     }
 }
 
@@ -1015,360 +769,6 @@ fn write_traceability_payload<T: Serialize>(
     let path = traceability_payload_path(project, name);
     write_json_payload(&path, value)?;
     Ok(path.to_string_lossy().replace('\\', "/"))
-}
-
-async fn run_project_standardize_parent(project: &str) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_standardize_project_name(&project_root, project)?;
-    let report = crate::cli::project::build_health_report_with_options(
-        &project, true, false, false, false, false,
-    )?;
-    if project_standardize_layers_ready(&report) {
-        return run_project_standardize_health_gate(&project).await;
-    }
-
-    let payload_path = write_traceability_payload(&project, "project-standardize", &report)?;
-    let summary = project_standardize_parent_summary(&project, &report, &payload_path);
-    print_json(&summary, false)?;
-    if summary["status"] == "blocked" || summary["status"] == "hitl" {
-        std::process::exit(1);
-    }
-    Ok(())
-}
-
-async fn run_project_standardize_health_gate(project: &str) -> Result<()> {
-    let report = crate::cli::project::build_health_report_with_options(
-        project, true, true, true, true, true,
-    )?;
-    let payload_path = write_traceability_payload(project, "project-health", &report)?;
-    let health =
-        crate::cli::project::project_health_summary_with_payload_path(&report, &payload_path);
-    let summary = serde_json::json!({
-        "schema_version": "aw.cli.v1",
-        "status": health["status"].clone(),
-        "action": "standardize",
-        "layer": "health",
-        "project": report.project,
-        "completion": health["completion"].clone(),
-        "next": health["next"].clone(),
-        "readiness": health["readiness"].clone(),
-        "health": {
-            "axes": health["axes"].clone(),
-            "blockers": health["blockers"].clone(),
-        },
-        "payload_path": payload_path,
-    });
-    print_json(&summary, false)?;
-    if report.status == crate::cli::project::ProjectHealthStatus::Blocked {
-        std::process::exit(1);
-    }
-    Ok(())
-}
-
-fn project_standardize_layers_ready(report: &crate::cli::project::ProjectHealthReport) -> bool {
-    if crate::cli::project::project_health_caps_ec_only(&report.project) {
-        return report.capability_ready && report.ec.check_clean;
-    }
-    report.capability_ready
-        && report.managed_ready
-        && report.semantic_ready
-        && report.traceability_ready
-        && report.stack_migration_incomplete_workspaces == 0
-        && report.blocked_gap_count == 0
-        && report.human_decision_required_count == 0
-        && report.workflow_lock_count == 0
-}
-
-fn project_standardize_parent_summary(
-    project: &str,
-    report: &crate::cli::project::ProjectHealthReport,
-    payload_path: &str,
-) -> serde_json::Value {
-    let (layer, status, requires_hitl, command, reason) = project_standardize_parent_step(report);
-    let workflow_complete = report.production_ready;
-    let mut next = serde_json::Map::new();
-    next.insert(
-        "kind".to_string(),
-        serde_json::Value::String(project_standardize_next_kind(status, command.as_deref())),
-    );
-    if let Some(command) = command {
-        next.insert("command".to_string(), serde_json::Value::String(command));
-    }
-    next.insert(
-        "reason".to_string(),
-        serde_json::Value::String(reason.clone()),
-    );
-    next.insert(
-        "layer".to_string(),
-        serde_json::Value::String(layer.to_string()),
-    );
-    next.insert(
-        "payload_path".to_string(),
-        serde_json::Value::String(payload_path.to_string()),
-    );
-    let criteria = if crate::cli::project::project_health_caps_ec_only(project) {
-        vec![
-            "capability roots are defined and runnable",
-            "capability claims map to production EC cases",
-            "EC inventory/check is clean",
-        ]
-    } else {
-        vec![
-            "capability roots are defined and runnable",
-            "managed source ownership is complete",
-            "semantic TD coverage and stack migration are complete",
-            "TD/source/CB/command traceability is closed",
-            "full project health production gates pass",
-        ]
-    };
-
-    serde_json::json!({
-        "schema_version": "aw.cli.v1",
-        "status": status,
-        "action": "standardize",
-        "layer": layer,
-        "project": project,
-        "completion": {
-            "root_complete": workflow_complete,
-            "workflow_complete": workflow_complete,
-            "requires_hitl": requires_hitl,
-            "criteria": criteria,
-            "missing": if workflow_complete { Vec::<String>::new() } else { vec![reason] },
-        },
-        "next": serde_json::Value::Object(next),
-        "readiness": project_standardize_readiness_summary(report),
-        "health": report,
-        "payload_path": payload_path,
-    })
-}
-
-fn project_standardize_parent_step(
-    report: &crate::cli::project::ProjectHealthReport,
-) -> (&'static str, &'static str, bool, Option<String>, String) {
-    let caps_ec_only = crate::cli::project::project_health_caps_ec_only(&report.project);
-    if !caps_ec_only && report.workflow_lock_count > 0 {
-        let reason = report
-            .blockers
-            .iter()
-            .find(|blocker| blocker.starts_with("workflow lock:"))
-            .cloned()
-            .unwrap_or_else(|| {
-                "workflow lock requires current owner or HITL resolution".to_string()
-            });
-        return ("workflow_lock", "hitl", true, None, reason);
-    }
-    if !report.capability_ready {
-        let reason = report
-            .capability
-            .blockers
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "capability roots must be defined in cap_path".to_string());
-        let command = if matches!(
-            report.capability.format.as_str(),
-            "missing" | "unparseable" | "unresolved"
-        ) {
-            None
-        } else {
-            Some(format!(
-                "aw capability run --project {} --non-interactive --max-ticks 1",
-                report.project
-            ))
-        };
-        let status = if command.is_some() {
-            "continue"
-        } else {
-            "blocked"
-        };
-        return ("capability", status, false, command, reason);
-    }
-    if caps_ec_only {
-        if !report.ec.check_clean {
-            let reason = report
-                .ec
-                .note
-                .clone()
-                .unwrap_or_else(|| "EC inventory/check is blocked".to_string());
-            return (
-                "ec",
-                "blocked",
-                false,
-                Some(format!("aw health --project {} ec", report.project)),
-                reason,
-            );
-        }
-        return (
-            "health",
-            "continue",
-            false,
-            Some(format!("aw health --project {}", report.project)),
-            "self standardization is gated by capability and EC only".to_string(),
-        );
-    }
-    if !report.managed_ready {
-        return (
-            "managed",
-            "continue",
-            false,
-            Some(format!(
-                "aw standardize managed run --project {} --non-interactive --max-ticks 1",
-                report.project
-            )),
-            "source ownership is incomplete; advance managed takeover".to_string(),
-        );
-    }
-    if !report.semantic_ready
-        || report.stack_migration_incomplete_workspaces > 0
-        || report.blocked_gap_count > 0
-        || report.human_decision_required_count > 0
-    {
-        return (
-            "semantic",
-            "continue",
-            false,
-            Some(format!(
-                "aw standardize semantic run --project {} --non-interactive --max-ticks 1",
-                report.project
-            )),
-            "semantic coverage or stack migration is incomplete; advance semantic takeover"
-                .to_string(),
-        );
-    }
-    if !report.traceability_ready {
-        return (
-            "traceability",
-            "continue",
-            false,
-            Some(format!(
-                "aw standardize traceability run --project {} --non-interactive --max-ticks 1",
-                report.project
-            )),
-            "TD/source/command traceability is incomplete; advance traceability closure"
-                .to_string(),
-        );
-    }
-    (
-        "health",
-        "continue",
-        false,
-        Some(format!("aw health --project {}", report.project)),
-        "standardization layers are ready; run full project health production gates".to_string(),
-    )
-}
-
-fn project_standardize_next_kind(status: &str, command: Option<&str>) -> String {
-    match (status, command) {
-        ("done", _) => "done".to_string(),
-        ("hitl", _) => "hitl".to_string(),
-        ("blocked", _) => "blocked".to_string(),
-        (_, Some(_)) => "run_command".to_string(),
-        _ => "blocked".to_string(),
-    }
-}
-
-fn project_standardize_readiness_summary(
-    report: &crate::cli::project::ProjectHealthReport,
-) -> serde_json::Value {
-    let ec_gen_generated_units = report.ec.case_count + report.ec.tool_manifest_count;
-    let ec_gen_expected_units =
-        report.ec.expected_case_count + report.ec.expected_tool_manifest_count;
-    let td_gen_generated_units = report.codegen_files;
-    let td_gen_expected_units = report.codegen_eligible_files;
-    let ec_gen_status = if !report.ec.evaluated {
-        "not_evaluated"
-    } else if ec_gen_expected_units == 0 {
-        "not_configured"
-    } else if report.ec.check_clean
-        && report.ec.case_count == report.ec.expected_case_count
-        && report.ec.tool_manifest_count == report.ec.expected_tool_manifest_count
-    {
-        "passed"
-    } else {
-        "blocked"
-    };
-    let td_passed = report.managed_ready
-        && report.semantic_ready
-        && report.traceability_ready
-        && report.td_lock.clean;
-    let td_gen_status = if report.regenerability_authority.required_for_production
-        && report.regenerability_authority.gap_count > 0
-    {
-        "blocked"
-    } else if report.codegen_percent >= 100.0 {
-        "passed"
-    } else {
-        "partial"
-    };
-    serde_json::json!({
-        "production_ready": report.production_ready,
-        "production_status": &report.production_status,
-        "takeover_ready": report.takeover_ready,
-        "generator_request_ready": report.generator_request_ready,
-        "capability_ready": report.capability_ready,
-        "managed_ready": report.managed_ready,
-        "semantic_ready": report.semantic_ready,
-        "traceability_ready": report.traceability_ready,
-        "managed_percent": report.managed_percent,
-        "semantic_percent": report.semantic_percent,
-        "traceability_percent": report.traceability_percent,
-        "command_traceability_percent": report.command_traceability_percent,
-        "blocker_count": report.blockers.len(),
-        "production_blocker_count": report.production_blockers.len(),
-        "workflow_lock_count": report.workflow_lock_count,
-        "test_gate_status": &report.test_gates.status,
-        "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
-        "cold_rebuild_clean": report.cold_rebuild_clean,
-        "axes": {
-            "capability": {
-                "status": if report.capability.blocker_count + report.claim_closure.blocker_count == 0
-                    && report.capability.production_percent >= 100.0 {
-                    "passed"
-                } else {
-                    "blocked"
-                },
-                "production_percent": report.capability.production_percent,
-                "claim_closure_percent": report.claim_closure.claim_closure_percent,
-            },
-            "ec": {
-                "status": &report.ec.status,
-                "verified": report.ec.verify_evaluated,
-                "passed_commands": report.ec.passed_count,
-                "command_count": report.ec.command_count,
-            },
-            "ec_gen": {
-                "status": ec_gen_status,
-                "document_kind": "ec",
-                "generated_units": ec_gen_generated_units,
-                "expected_units": ec_gen_expected_units,
-                "generated_percent": if ec_gen_expected_units == 0 {
-                    0.0
-                } else {
-                    coverage_percent(ec_gen_generated_units, ec_gen_expected_units)
-                },
-                "handwrite_units": 0,
-                "missing_units": ec_gen_expected_units.saturating_sub(ec_gen_generated_units),
-            },
-            "td": {
-                "status": if td_passed { "passed" } else { "blocked" },
-                "managed_percent": report.managed_percent,
-                "semantic_percent": report.semantic_percent,
-                "traceability_percent": report.traceability_percent,
-                "td_lock_clean": report.td_lock.clean,
-            },
-            "td_gen": {
-                "status": td_gen_status,
-                "document_kind": "td",
-                "generated_units": td_gen_generated_units,
-                "expected_units": td_gen_expected_units,
-                "generated_percent": coverage_percent(
-                    td_gen_generated_units,
-                    td_gen_expected_units,
-                ),
-                "handwrite_units": report.cb_ownership.handwrite_files,
-                "missing_units": report.cb_ownership.unmarked_files,
-            },
-        },
-    })
 }
 
 fn semantic_coverage_summary(coverage: &SemanticCoverage) -> serde_json::Value {
@@ -1668,104 +1068,6 @@ fn audit_project_key(project: Option<&str>, scopes: &[String]) -> String {
     })
 }
 
-async fn run_managed_stage(project: Option<&str>, args: StandardizeStageArgs) -> Result<()> {
-    match args.command {
-        StandardizeStageCommand::Report(a) => run_report(project, a),
-        StandardizeStageCommand::Next(a) => run_next(project, a),
-        StandardizeStageCommand::Run(a) => run_loop(project, a).await,
-    }
-}
-
-async fn run_semantic_stage(project: Option<&str>, args: StandardizeStageArgs) -> Result<()> {
-    match args.command {
-        StandardizeStageCommand::Report(a) => run_semantic_report(project, a),
-        StandardizeStageCommand::Next(a) => run_semantic_next(project, a),
-        StandardizeStageCommand::Run(a) => run_semantic_loop(project, a).await,
-    }
-}
-
-async fn run_traceability_stage(
-    project: Option<&str>,
-    args: StandardizeTraceabilityArgs,
-) -> Result<()> {
-    match args.command {
-        StandardizeTraceabilityCommand::Report(a) => run_traceability_report(project, a),
-        StandardizeTraceabilityCommand::Next(a) => run_traceability_next(project, a),
-        StandardizeTraceabilityCommand::Run(a) => run_traceability_loop(project, a).await,
-    }
-}
-
-fn run_traceability_report(
-    project: Option<&str>,
-    args: StandardizeTraceabilityReportArgs,
-) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project =
-        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
-    let coverage = project_traceability_coverage_with_scopes(&project, &args.scopes)?;
-    if !args.human {
-        let payload_path =
-            write_traceability_payload(&coverage.project, "traceability-report", &coverage)?;
-        let summary = traceability_report_summary(&coverage, &payload_path);
-        print_json(&summary, args.pretty || args.json)?;
-    } else {
-        print_traceability_text(&coverage);
-    }
-    Ok(())
-}
-
-fn run_traceability_next(
-    project: Option<&str>,
-    args: StandardizeTraceabilityReportArgs,
-) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project =
-        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
-    let coverage = project_traceability_coverage_with_scopes(&project, &args.scopes)?;
-    let envelope = traceability_envelope("standardize", coverage);
-    if !args.human {
-        let payload_path =
-            write_traceability_payload(&envelope.coverage.project, "traceability-next", &envelope)?;
-        let summary = traceability_next_summary(&envelope, &payload_path);
-        print_json(&summary, args.pretty || args.json)?;
-    } else {
-        print_traceability_envelope_text(&envelope);
-    }
-    Ok(())
-}
-
-async fn run_traceability_loop(
-    project: Option<&str>,
-    args: StandardizeTraceabilityRunArgs,
-) -> Result<()> {
-    if args.max_ticks == Some(0) {
-        anyhow::bail!("--max-ticks must be greater than zero");
-    }
-    let project_root = crate::find_project_root()?;
-    let project =
-        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
-    let coverage = project_traceability_coverage_with_scopes(&project, &args.scopes)?;
-    let envelope = traceability_envelope("standardize", coverage);
-    if envelope.next_action.kind == StandardizeActionKind::None {
-        if !args.human {
-            let payload_path = write_traceability_payload(
-                &envelope.coverage.project,
-                "traceability-run",
-                &envelope,
-            )?;
-            let summary = traceability_next_summary(&envelope, &payload_path);
-            print_json(&summary, args.pretty || args.json)?;
-        } else {
-            print_traceability_envelope_text(&envelope);
-            eprintln!("standardize traceability: capability/TD/source closure is complete");
-        }
-        return Ok(());
-    }
-    let _ = args.non_interactive;
-    emit_traceability_blocked(&envelope, !args.human)?;
-    std::process::exit(1);
-}
-
 fn traceability_envelope(
     action: &'static str,
     coverage: TraceabilityCoverage,
@@ -1788,155 +1090,6 @@ fn traceability_envelope(
         agent_prompt,
         invoke,
     }
-}
-
-fn run_semantic_report(project: Option<&str>, args: StandardizeReportArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_optional_standardize_project_name(&project_root, project)?;
-    let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
-    let coverage = build_semantic_coverage(&project_root, &inventory)?;
-    if !args.human {
-        print_json(&coverage, args.pretty || args.json)?;
-    } else {
-        print_semantic_text(&coverage);
-    }
-    Ok(())
-}
-
-fn run_semantic_next(project: Option<&str>, args: StandardizeNextArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_optional_standardize_project_name(&project_root, project)?;
-    let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
-    let coverage = build_semantic_coverage(&project_root, &inventory)?;
-    let project_key = audit_project_key(project.as_deref(), &args.scopes);
-    let action = apply_audit_first_action(
-        &project_root,
-        project.as_deref(),
-        &args.scopes,
-        choose_semantic_action_with_project(&coverage, project.as_deref()),
-    );
-    let envelope = SemanticEnvelope {
-        action: "standardize",
-        layer: "semantic",
-        coverage,
-        next_action: action,
-    };
-    if !args.human {
-        let payload_path = write_semantic_payload(&project_key, "semantic-next", &envelope)?;
-        let summary = semantic_next_summary(&envelope, &payload_path);
-        print_json(&summary, args.pretty || args.json)?;
-    } else {
-        print_semantic_envelope_text(&envelope);
-    }
-    Ok(())
-}
-
-async fn run_semantic_loop(project: Option<&str>, args: StandardizeRunArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_optional_standardize_project_name(&project_root, project)?;
-    let mut ticks = 0usize;
-
-    loop {
-        let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
-        let coverage = build_semantic_coverage(&project_root, &inventory)?;
-        let action = apply_audit_first_action(
-            &project_root,
-            project.as_deref(),
-            &args.scopes,
-            choose_semantic_action_with_project(&coverage, project.as_deref()),
-        );
-        let envelope = SemanticEnvelope {
-            action: "standardize",
-            layer: "semantic",
-            coverage,
-            next_action: action.clone(),
-        };
-
-        match action.kind {
-            StandardizeActionKind::None => {
-                if !args.human {
-                    let project_key = audit_project_key(project.as_deref(), &args.scopes);
-                    let payload_path =
-                        write_semantic_payload(&project_key, "semantic-run", &envelope)?;
-                    let summary = semantic_next_summary(&envelope, &payload_path);
-                    print_json(&summary, args.pretty || args.json)?;
-                } else {
-                    print_semantic_envelope_text(&envelope);
-                    eprintln!("standardize semantic: no deterministic semantic gap remains");
-                }
-                return Ok(());
-            }
-            StandardizeActionKind::Blocked => {
-                let project_key = audit_project_key(project.as_deref(), &args.scopes);
-                emit_semantic_blocked(&project_key, &envelope, !args.human)?;
-                std::process::exit(1);
-            }
-            _ if action.requires_hitl || action.executor == "mainthread" => {
-                if args.non_interactive {
-                    let project_key = audit_project_key(project.as_deref(), &args.scopes);
-                    emit_semantic_blocked(&project_key, &envelope, !args.human)?;
-                    std::process::exit(1);
-                }
-                prompt_mainthread_action(&action)?;
-                continue;
-            }
-            _ => {}
-        }
-
-        ensure_no_staged_changes(&project_root)?;
-        let (outcome, tick_delta, action_for_commit) = execute_semantic_action(
-            &project_root,
-            &args,
-            ticks,
-            &action,
-            &inventory,
-            &envelope.coverage,
-        )?;
-        if !outcome.changed_paths.is_empty() {
-            commit_action(
-                &project_root,
-                &action_for_commit,
-                &outcome.changed_paths,
-                args.wi.as_deref(),
-            )?;
-            if args.push {
-                push_current_branch(&project_root)?;
-            }
-        }
-
-        ticks += tick_delta;
-        if !args.human {
-            let tick = serde_json::json!({
-                "action": "tick_done",
-                "layer": "semantic",
-                "tick": ticks,
-                "standardize_action": action_for_commit,
-                "message": outcome.message,
-            });
-            print_json(&tick, args.pretty || args.json)?;
-        } else {
-            eprintln!(
-                "standardize semantic tick {}: {} ({})",
-                ticks, action.id, outcome.message
-            );
-        }
-
-        if args.max_ticks.is_some_and(|max| ticks >= max) {
-            return Ok(());
-        }
-    }
-}
-
-fn run_report(project: Option<&str>, args: StandardizeReportArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_optional_standardize_project_name(&project_root, project)?;
-    let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
-    if !args.human {
-        print_json(&inventory.coverage, args.pretty || args.json)?;
-    } else {
-        print_coverage_text(&inventory.coverage);
-    }
-    Ok(())
 }
 
 // Return managed/adoption coverage for one configured project without
@@ -2124,114 +1277,51 @@ pub(crate) fn project_health_standardize_coverage(
     })
 }
 
-fn run_next(project: Option<&str>, args: StandardizeNextArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_optional_standardize_project_name(&project_root, project)?;
-    let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
-    let action = apply_audit_first_action(
-        &project_root,
-        project.as_deref(),
-        &args.scopes,
-        choose_action(&inventory),
-    );
-    let envelope = StandardizeEnvelope {
-        action: "standardize",
-        layer: "managed",
-        coverage: inventory.coverage,
-        next_action: action,
-    };
-    if !args.human {
-        let summary = standardize_envelope_summary(&envelope, None);
-        print_json(&summary, args.pretty || args.json)?;
-    } else {
-        print_envelope_text(&envelope);
+/// #920 (epic #914 slice F): `aw standardize managed run --project <p>
+/// --non-interactive --max-ticks 1` is retired. `project_health_next_command`
+/// (project.rs) names the concrete slice-E worker verb for the top
+/// managed-layer gap directly instead of looping back through a removed
+/// layer-run driver.
+///
+/// Only the `claim_code` action kind (an untracked/unmarked source file,
+/// `choose_action`'s own lowest-priority-but-cheapest-to-detect managed
+/// finding) is derivable here without a live filesystem inventory scan:
+/// `ProjectHealthReport` retains the first `uncovered_files` entry from the
+/// managed-coverage computation that already ran to produce the health
+/// report. `promote_handwrite`/`issue_marker_gap` need per-file HANDWRITE
+/// marker attributes (`tracker`, `needs_promotion`) that live on
+/// `Inventory::files[..].handwrite_gaps` and are not retained on
+/// `ProjectHealthReport`; those (and any other managed gap kind) fall back
+/// to the read-only `aw health --project <p> metrics --verbose` pointer,
+/// which surfaces the managed axis detail an agent needs to pick the next
+/// concrete `aw td code-claim`/`aw td promote` invocation by hand.
+pub(crate) fn managed_health_worker_command(
+    project: &str,
+    next_uncovered_file: Option<&str>,
+) -> String {
+    match next_uncovered_file {
+        Some(target) => format!("aw td code-claim {target}"),
+        None => format!("aw health --project {project} metrics --verbose"),
     }
-    Ok(())
 }
 
-async fn run_loop(project: Option<&str>, args: StandardizeRunArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let project = resolve_optional_standardize_project_name(&project_root, project)?;
-    let mut ticks = 0usize;
+/// #920: semantic-layer gap remediation (author a TD covering the target
+/// file, or resolve a generator-primitive design decision) needs a WI slug
+/// that `aw health` cannot fabricate from a bare file path, so this always
+/// routes to the read-only `aw health` pointer; `reason` already names the
+/// specific target via `project_health_next_reason`.
+pub(crate) fn semantic_health_worker_command(project: &str) -> String {
+    format!("aw health --project {project} metrics --verbose")
+}
 
-    loop {
-        let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
-        let action = apply_audit_first_action(
-            &project_root,
-            project.as_deref(),
-            &args.scopes,
-            choose_action(&inventory),
-        );
-        let envelope = StandardizeEnvelope {
-            action: "standardize",
-            layer: "managed",
-            coverage: inventory.coverage.clone(),
-            next_action: action.clone(),
-        };
-
-        match action.kind {
-            StandardizeActionKind::None => {
-                run_workspace_tests(&project_root, &envelope.coverage.scope)?;
-                if !args.human {
-                    let summary = standardize_envelope_summary(&envelope, None);
-                    print_json(&summary, args.pretty || args.json)?;
-                } else {
-                    print_envelope_text(&envelope);
-                    eprintln!("standardize managed: managed ownership reached");
-                }
-                return Ok(());
-            }
-            StandardizeActionKind::Blocked => {
-                emit_blocked(&envelope, !args.human)?;
-                std::process::exit(1);
-            }
-            _ if action.requires_hitl || action.executor == "mainthread" => {
-                if args.non_interactive {
-                    emit_blocked(&envelope, !args.human)?;
-                    std::process::exit(1);
-                }
-                prompt_mainthread_action(&action)?;
-                continue;
-            }
-            _ => {}
-        }
-
-        ensure_no_staged_changes(&project_root)?;
-        let (outcome, tick_delta, action_for_commit) =
-            execute_managed_action(&project_root, &args, ticks, &action, &inventory)?;
-        if !outcome.changed_paths.is_empty() {
-            commit_action(
-                &project_root,
-                &action_for_commit,
-                &outcome.changed_paths,
-                args.wi.as_deref(),
-            )?;
-            if args.push {
-                push_current_branch(&project_root)?;
-            }
-        }
-
-        ticks += tick_delta;
-        if !args.human {
-            let tick = serde_json::json!({
-                "action": "tick_done",
-                "layer": "managed",
-                "tick": ticks,
-                "standardize_action": action_for_commit,
-                "message": outcome.message,
-            });
-            print_json(&tick, args.pretty || args.json)?;
-        } else {
-            eprintln!(
-                "standardize tick {}: {} ({})",
-                ticks, action.id, outcome.message
-            );
-        }
-
-        if args.max_ticks.is_some_and(|max| ticks >= max) {
-            return Ok(());
-        }
-    }
+/// #920: traceability blockers (missing `capability_refs`, stale
+/// `command_refs`, hidden commands, ...) are HITL decisions -- there is no
+/// single deterministic worker verb that closes an arbitrary blocker kind,
+/// so this routes to the read-only `aw health --project <p> traceability
+/// --verbose` pointer, which lists the concrete blocker(s) to resolve by
+/// hand.
+pub(crate) fn traceability_health_worker_command(project: &str) -> String {
+    format!("aw health --project {project} traceability --verbose")
 }
 
 fn build_inventory(
@@ -7955,89 +7045,6 @@ fn execute_action(
     }
 }
 
-fn execute_managed_action(
-    project_root: &Path,
-    args: &StandardizeRunArgs,
-    ticks: usize,
-    action: &StandardizeAction,
-    inventory: &Inventory,
-) -> Result<(ActionOutcome, usize, StandardizeAction)> {
-    let remaining = args
-        .max_ticks
-        .and_then(|max| max.checked_sub(ticks))
-        .unwrap_or(1);
-    if action.kind == StandardizeActionKind::ClaimCode && remaining > 1 {
-        let (outcome, claimed) = claim_code_batch(project_root, inventory, remaining)?;
-        if claimed > 1 {
-            let mut batch_action = action.clone();
-            batch_action.id = format!("claimcode:batch-{}", claimed);
-            batch_action.target = format!("{} source files", claimed);
-            batch_action.command = format!(
-                "aw standardize managed run --scope {} --max-ticks {}",
-                args.scopes
-                    .first()
-                    .map(|scope| shell_quote(scope))
-                    .unwrap_or_else(|| "<resolved-scope>".to_string()),
-                claimed
-            );
-            batch_action.reason =
-                "source files are in scope but have no Score ownership marker".to_string();
-            return Ok((outcome, claimed, batch_action));
-        }
-        return Ok((outcome, claimed.max(1), action.clone()));
-    }
-
-    Ok((
-        execute_action(project_root, action, inventory)?,
-        1,
-        action.clone(),
-    ))
-}
-
-fn execute_semantic_action(
-    project_root: &Path,
-    args: &StandardizeRunArgs,
-    ticks: usize,
-    action: &StandardizeAction,
-    inventory: &Inventory,
-    coverage: &SemanticCoverage,
-) -> Result<(ActionOutcome, usize, StandardizeAction)> {
-    let remaining = args
-        .max_ticks
-        .and_then(|max| max.checked_sub(ticks))
-        .unwrap_or(1);
-    if action.kind == StandardizeActionKind::SemanticGap && remaining > 1 {
-        let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
-        let (outcome, refreshed) =
-            create_semantic_td_batch(project_root, inventory, coverage, &configured, remaining)?;
-        if refreshed > 1 {
-            let mut batch_action = action.clone();
-            batch_action.id = format!("semanticgap:batch-{refreshed}");
-            batch_action.target = format!("{refreshed} semantic TD group(s)");
-            batch_action.command = format!(
-                "aw standardize semantic run --scope {} --max-ticks {}",
-                args.scopes
-                    .first()
-                    .map(|scope| shell_quote(scope))
-                    .unwrap_or_else(|| "<resolved-scope>".to_string()),
-                refreshed
-            );
-            batch_action.reason =
-                "semantic TD groups need section-type coverage or evidence migration".to_string();
-            return Ok((outcome, refreshed, batch_action));
-        }
-        if refreshed == 1 {
-            return Ok((outcome, 1, action.clone()));
-        }
-    }
-
-    Ok((
-        execute_action(project_root, action, inventory)?,
-        1,
-        action.clone(),
-    ))
-}
-
 fn claim_code(
     project_root: &Path,
     action: &StandardizeAction,
@@ -13235,8 +12242,12 @@ command_refs:
             "aw td gen",
             "aw td code-check",
             "aw standardize",
-            "aw standardize traceability",
-            "aw standardize traceability report",
+            // #920 (epic #914 slice F): `aw standardize traceability` (and
+            // its `report`/`next`/`run` stage subcommands) are retired --
+            // only `aw standardize audit` (and its `check`/`record`
+            // subcommands) remain live.
+            "aw standardize audit",
+            "aw standardize audit check",
         ] {
             assert!(
                 inventory.contains_key(path),
@@ -13320,6 +12331,68 @@ command_refs:
             "Use `aw wi run 42` or `aw capability run demo:foo --project demo`.\n\
              The lifecycle transitions through the cb_filled phase before\n\
              `aw td code-check` closes the loop.\n",
+        );
+
+        let inventory = runtime_command_inventory();
+        let blockers = active_doc_command_blockers(tmp.path(), &inventory);
+        let deleted_targets: Vec<&str> = blockers
+            .iter()
+            .filter(|b| b.kind == TraceabilityBlockerKind::ActiveDocDeletedCommandRef)
+            .map(|b| b.target.as_str())
+            .collect();
+
+        assert!(
+            deleted_targets.is_empty(),
+            "expected no deleted-command hits, got {deleted_targets:?}"
+        );
+    }
+
+    #[test]
+    fn deleted_command_paths_920_hits_flag_active_doc_deleted_standardize_layer_ref() {
+        // #920 (epic #914 slice F): `aw standardize` is retired down to
+        // `audit` only. Each of the removed layer drivers must still be
+        // caught when a scanned active doc references them.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "AGENTS.md",
+            "Run `aw standardize managed run --project demo` to drive coverage.\n\
+             Follow with `aw standardize semantic next` and\n\
+             `aw standardize traceability report --project demo`.\n",
+        );
+
+        let inventory = runtime_command_inventory();
+        let blockers = active_doc_command_blockers(tmp.path(), &inventory);
+        let deleted_targets: BTreeSet<&str> = blockers
+            .iter()
+            .filter(|b| b.kind == TraceabilityBlockerKind::ActiveDocDeletedCommandRef)
+            .map(|b| b.target.as_str())
+            .collect();
+
+        for expected in [
+            "aw standardize managed",
+            "aw standardize semantic",
+            "aw standardize traceability",
+        ] {
+            assert!(
+                deleted_targets.contains(expected),
+                "expected {expected:?} to be flagged as a deleted-command ref, got {deleted_targets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deleted_command_paths_920_does_not_false_positive_on_standardize_audit() {
+        // `aw standardize audit` (and a bare `aw standardize --project <p>`
+        // reference) must not match the retired `managed`/`semantic`/
+        // `traceability` layer-driver literals.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "AGENTS.md",
+            "Run `aw standardize audit check --project demo` first, then\n\
+             `aw standardize audit record --project demo`. A bare\n\
+             `aw standardize --project demo` requires an explicit subcommand.\n",
         );
 
         let inventory = runtime_command_inventory();
