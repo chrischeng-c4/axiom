@@ -197,6 +197,7 @@ pub mod urllib3_mod;
 pub mod urllib_error_mod;
 pub mod uu_mod;
 pub mod uvicorn_mod;
+pub mod vendor_lib;
 pub mod webbrowser_mod;
 pub mod werkzeug_mod;
 pub mod wsgiref_mod;
@@ -208,6 +209,10 @@ use std::collections::HashMap;
 
 /// Register all standard library modules.
 pub fn register_stdlib() {
+    // Vendored CPython 3.12 Lib/ subtree (#867): register first so the
+    // shared search-path directory lands ahead of any per-module native
+    // registration order concerns. See vendor_lib.rs for precedence.
+    vendor_lib::register();
     sys_mod::register();
     os_mod::register();
     math_mod::register();
