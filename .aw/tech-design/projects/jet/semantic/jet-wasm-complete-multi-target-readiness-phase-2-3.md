@@ -52,38 +52,38 @@ flowchart TD
 
 ```mermaid
 ---
-id: jet-wasm-readiness-reconciliation-tests
+id: jet-wasm-readiness-contract-tests
 requirements:
   R1:
-    text: "README WASM rows reference real WI #818 instead of stale placeholders #3783, #4004, #4015, and #4072."
+    text: "README no longer uses stale placeholder WI refs for the WASM readiness claim."
     risk: medium
     verify: command
   R2:
-    text: "aw capability run for jet no longer asks to reconcile wasm-multi-target-readiness WI refs."
+    text: "README evidence paths resolve to real on-disk paths or command-only gate evidence."
     risk: medium
     verify: command
   R3:
-    text: "WASM readiness maturity wording matches the corrected real evidence paths and gates."
-    risk: low
-    verify: review
+    text: "AW capability check/run no longer requests stale WASM WI reconciliation."
+    risk: medium
+    verify: command
 ---
 requirementDiagram
 requirement R1 {
   id: R1
-  text: "stale README refs removed"
+  text: "no stale WASM WI refs"
   risk: Medium
   verifymethod: Test
 }
 requirement R2 {
   id: R2
-  text: "capability run has no stale reconcile action"
+  text: "README paths are real"
   risk: Medium
   verifymethod: Test
 }
 requirement R3 {
   id: R3
-  text: "maturity wording is accurate"
-  risk: Low
-  verifymethod: Inspection
+  text: "aw capability reconciliation passes"
+  risk: Medium
+  verifymethod: Test
 }
 ```
