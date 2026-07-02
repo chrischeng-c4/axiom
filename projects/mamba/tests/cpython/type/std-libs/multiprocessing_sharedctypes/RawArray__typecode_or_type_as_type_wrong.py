@@ -9,12 +9,11 @@
 # case = "RawArray__typecode_or_type_as_type_wrong"
 # subject = "multiprocessing.sharedctypes.RawArray(typecode_or_type: type)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typecode_or_type"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/sharedctypes.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed typecode_or_type
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.sharedctypes.RawArray(typecode_or_type: type); call it with the wrong type.
 
