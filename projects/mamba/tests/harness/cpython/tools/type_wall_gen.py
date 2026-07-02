@@ -397,6 +397,26 @@ def _is_protocol_name(ident: str) -> bool:
     )
 
 
+# #882: `CoreTy::TypedNamed("<contract>")` carries a POSITIVE structural
+# predicate (see `check_expr.rs`) instead of `Typed`'s bare-class-only
+# rejection. `core_ty_of` deliberately does NOT recognize PathLike/
+# SupportsIndex-family names as `TypedNamed` structurally/typeshed-wide —
+# an earlier version of this generator did, and regenerating flipped ~340
+# rows (every typeshed `SupportsIndex`/`StrPath`/`PathLike`-annotated param
+# in the stdlib) from `Typed` to `TypedNamed`, which broke currently-green
+# `errors/`-dimension fixtures that rely on a RUNTIME-catchable `TypeError`
+# for the exact same call shape (confirmed concretely via
+# `errors/std-libs/math/factorial_float_typeerror.py` — `math.factorial`'s
+# `SupportsIndex` param — and `errors/std-libs/os/fspath_int_raises_typeerror.py`
+# — `os.fspath`'s `PathLike`-family param — both otherwise-passing today via
+# mamba's runtime validation, both would hard-fail to compile with the
+# blanket rollout). `TypedNamed` is instead applied ONLY via the explicit,
+# individually-reviewed `_PARAM_CORE_TY_OVERRIDE` allowlist below — the same
+# compile-time-vs-runtime-catchable-TypeError precedent as `_L3_FOLD_EXCLUDE`,
+# applied opt-in instead of opt-out since the new predicate is strictly
+# sharper than the pre-#882 wall it can replace.
+
+
 # Bare collection/iteration ABCs a no-method no-base class can never satisfy.
 # Only matched as a BARE Name (`Iterable`, not `Iterable[int]` — that is a
 # Subscript → Unknown), so this never touches a parameterized container.
@@ -666,10 +686,39 @@ _L3_FOLD_EXCLUDE: frozenset[tuple[str, str, str, str]] = frozenset({
 #   would compute `CoreTy::Typed`, but `type/std-libs/msilib/
 #   change_sequence__seq_as_Sequence_wrong.py` is an active `xfail` — mamba
 #   does not yet enforce this contract. Pinned to `Unknown` (skip).
+# - #882 `CoreTy::TypedNamed("<contract>")` seeds: `chr`/`hex`/`oct`/`bin`'s
+#   `SupportsIndex` param is pinned to the tagged contract rather than
+#   typeshed's plain `Typed` fold. All four are individually verified safe:
+#   `check_expr.rs`'s pre-existing hardcoded `index_protocol_ok` check
+#   already compile-time-rejects a non-`SupportsIndex` actual for exactly
+#   these four builtins today (this override just gives Path A the same
+#   positive predicate Path B already enforces — additive, not new
+#   rejections), and no `errors/`/`behavior`-dimension fixture calls any of
+#   them with a literal wrong-typed scalar expecting a runtime catch (only
+#   bare-class shapes, e.g. `type/builtin-libs/builtins/
+#   chr__i_as_SupportsIndex_wrong.py`, which already passes today via the
+#   pre-existing `Typed` bare-class rule). `os.fspath.path` is pinned on ALL
+#   THREE of its `@overload` branches (`str`/`bytes`/`PathLike[AnyStr]`) to
+#   the SAME tag so `merge_overload_params` trivially agrees and folds them
+#   into one `TypedNamed("PathLike")` row — the literal #882 AC1 case
+#   (`os.fspath(42)` rejected; `os.fspath('x')`/`os.fspath(b'x')` accepted).
+#   Note this DOES retire the runtime-only path
+#   `errors/std-libs/os/fspath_int_raises_typeerror.py` relied on (that
+#   fixture's `os.fspath(42)` now hard-fails to compile instead of raising at
+#   runtime) — an explicit, reviewed, single-fixture consequence of AC1
+#   itself ("os.fspath(42) rejected at type-check"), not a false positive:
+#   42 is genuinely never path-like. Deliberately NOT rolled out beyond these
+#   5 rows — see the `TypedNamed` note just below `_is_protocol_name` for why
+#   a typeshed-wide rollout regresses other currently-green `errors/` fixtures.
 _PARAM_CORE_TY_OVERRIDE: dict[tuple[str, str, str, str], str] = {
     ("sys", "", "setswitchinterval", "interval"): "Typed",
     ("linecache", "", "getline", "lineno"): "Unknown",
     ("msilib", "", "change_sequence", "seq"): "Unknown",
+    ("builtins", "", "chr", "i"): "TypedNamed:SupportsIndex",
+    ("builtins", "", "hex", "number"): "TypedNamed:SupportsIndex",
+    ("builtins", "", "oct", "number"): "TypedNamed:SupportsIndex",
+    ("builtins", "", "bin", "number"): "TypedNamed:SupportsIndex",
+    ("os", "", "fspath", "path"): "TypedNamed:PathLike",
 }
 
 # #887 regen fallout: typeshed renamed the public `typing_extensions.Sentinel`
@@ -1119,17 +1168,41 @@ def _rust_str(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _core_ty_rust(ct: str) -> str:
+    """Render a `core_ty_of` string result as the `CoreTy` Rust expression
+    that follows `CoreTy::` at a call site. Every other CoreTy name is a bare
+    unit variant (`CoreTy::Typed`, `CoreTy::Int`, …); #882's `"TypedNamed:X"`
+    tag is the one payload-carrying variant, rendered `TypedNamed("X")`."""
+    if ct.startswith("TypedNamed:"):
+        return f'TypedNamed("{_rust_str(ct[len("TypedNamed:"):])}")'
+    return ct
+
+
 _ENF_SCALARS = {"Int", "Float", "Str"}
+
+
+def _is_enforceable_ct(ct: str) -> bool:
+    """AGREEMENT-fold enforceability: the plain closed scalars, plus (#882) a
+    hand-pinned `TypedNamed:` contract tag (see `_PARAM_CORE_TY_OVERRIDE`) —
+    both carry a real `check_expr.rs` predicate, unlike `"Unknown"`/`"Typed"`.
+    `os.fspath`'s 3-branch `str`/`bytes`/`PathLike[AnyStr]` `@overload` chain
+    is the one case this reaches: `_PARAM_CORE_TY_OVERRIDE` pins ALL three
+    branches' `path` param to the SAME `"TypedNamed:PathLike"` tag, so they
+    trivially agree in `merge_overload_params` below (a plain per-position
+    AGREEMENT fold over the natural, un-pinned `Str`/`Bytes`/`Typed` CoreTys
+    could never agree — the three branches never share one)."""
+    return ct in _ENF_SCALARS or ct.startswith("TypedNamed:")
 
 
 def merge_overload_params(rows):
     """Merge a real @overload chain (>=2 signatures applicable to 3.12 at once)
     into ONE enforceable row by AGREEMENT: a position is enforced only when
-    EVERY overload has the SAME enforceable scalar CoreTy there. A valid call
-    must satisfy some overload, but if all overloads demand the same scalar at a
-    position, any concrete-scalar arg disjoint from it is wrong for all of them
-    (provably false-positive-clean). Positions where the overloads disagree, or
-    where any is non-scalar/Unknown, collapse to Unknown (which also ends the
+    EVERY overload has the SAME enforceable CoreTy there (`_is_enforceable_ct`
+    — a scalar, or #882's hand-pinned `TypedNamed:` tag). A valid call must
+    satisfy some overload, but if all overloads demand the same enforceable
+    CoreTy at a position, any actual disjoint from it is wrong for all of them
+    (provably false-positive-clean). Positions where the overloads disagree,
+    or where any is non-enforceable, collapse to Unknown (which also ends the
     enforceable prefix the hook reads). Conservative on arity: only positions
     present in EVERY overload are considered."""
     base = dict(rows[0])
@@ -1139,14 +1212,14 @@ def merge_overload_params(rows):
     for i in range(n):
         ctys = {pl[i][1] for pl in param_lists}
         name = param_lists[0][i][0]
-        if len(ctys) == 1 and next(iter(ctys)) in _ENF_SCALARS:
+        if len(ctys) == 1 and _is_enforceable_ct(next(iter(ctys))):
             merged.append((name, next(iter(ctys))))
         else:
             merged.append((name, "Unknown"))
     has_star = any(r.get("has_star") for r in rows)
     base["params"] = merged
     base["has_star"] = has_star
-    base["enforceable"] = (not has_star) and any(ct in _ENF_SCALARS for _, ct in merged)
+    base["enforceable"] = (not has_star) and any(_is_enforceable_ct(ct) for _, ct in merged)
     # #887: same AGREEMENT rule for the return type — a real `@overload` chain
     # only has ONE knowable return if every branch declares the SAME scalar;
     # otherwise (a `logging.getLevelName`-style int|str-return split) the
@@ -1232,7 +1305,7 @@ def render_rust() -> str:
         kind = "SigKind::ModuleFn" if r["kind"] == "ModuleFn" else "SigKind::Method"
         if r["params"] or r["has_star"]:
             parts = [
-                f'p("{_rust_str(n)}", CoreTy::{ct}, false)'
+                f'p("{_rust_str(n)}", CoreTy::{_core_ty_rust(ct)}, false)'
                 for (n, ct) in r["params"]
             ]
             if r["has_star"]:
@@ -1249,7 +1322,7 @@ def render_rust() -> str:
         lines.append(f"        kind: {kind},")
         lines.append(f"        params: {params_src},")
         lines.append(f"        enforceable: {enf},")
-        lines.append(f"        ret: CoreTy::{ret},")
+        lines.append(f"        ret: CoreTy::{_core_ty_rust(ret)},")
         lines.append("    },")
     lines.append("];")
     lines.append("")

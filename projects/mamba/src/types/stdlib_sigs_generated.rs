@@ -18,7 +18,7 @@
 //! (Optional/Union/generics/nominal classes/no annotation) is
 //! `CoreTy::Unknown`, which the call-site hook skips — never guessed.
 //!
-//! rows: 13451  ·  enforceable (scalar): 6932  ·  unknown-skipped: 6519  ·  concrete return: 6447
+//! rows: 13451  ·  enforceable (scalar): 6933  ·  unknown-skipped: 6518  ·  concrete return: 6447
 
 
 use super::stdlib_sigs::{CoreTy, ParamSig, SigKind, StdlibSig};
@@ -21535,7 +21535,7 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "bin",
         kind: SigKind::ModuleFn,
-        params: &[p("number", CoreTy::Typed, false)],
+        params: &[p("number", CoreTy::TypedNamed("SupportsIndex"), false)],
         enforceable: true,
         ret: CoreTy::Str,
     },
@@ -21562,7 +21562,7 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "chr",
         kind: SigKind::ModuleFn,
-        params: &[p("i", CoreTy::Typed, false)],
+        params: &[p("i", CoreTy::TypedNamed("SupportsIndex"), false)],
         enforceable: true,
         ret: CoreTy::Str,
     },
@@ -21670,7 +21670,7 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "hex",
         kind: SigKind::ModuleFn,
-        params: &[p("number", CoreTy::Typed, false)],
+        params: &[p("number", CoreTy::TypedNamed("SupportsIndex"), false)],
         enforceable: true,
         ret: CoreTy::Str,
     },
@@ -21769,7 +21769,7 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "oct",
         kind: SigKind::ModuleFn,
-        params: &[p("number", CoreTy::Typed, false)],
+        params: &[p("number", CoreTy::TypedNamed("SupportsIndex"), false)],
         enforceable: true,
         ret: CoreTy::Str,
     },
@@ -72547,8 +72547,8 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "fspath",
         kind: SigKind::ModuleFn,
-        params: &[p("path", CoreTy::Unknown, false)],
-        enforceable: false,
+        params: &[p("path", CoreTy::TypedNamed("PathLike"), false)],
+        enforceable: true,
         ret: CoreTy::Unknown,
     },
     StdlibSig {
