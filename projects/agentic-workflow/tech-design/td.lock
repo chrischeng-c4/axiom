@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T15:26:52.909393+00:00"
-digest = "sha256:4a5c6a82834433a994fa2db6f88175545c4bc2a85680dea0b35baef4771b38e3"
-source_digest = "sha256:4a5c6a82834433a994fa2db6f88175545c4bc2a85680dea0b35baef4771b38e3"
-ir_digest = "sha256:825ca1b3bd2f597b114d3ae2483f2f550528c21702427ff2da9e46bb88f7a886"
+generated_at = "2026-07-02T15:52:43.426505+00:00"
+digest = "sha256:91e105cd0f589ab6750c931706bcdce8b058540b026308703b96c5ba2a2f1d53"
+source_digest = "sha256:91e105cd0f589ab6750c931706bcdce8b058540b026308703b96c5ba2a2f1d53"
+ir_digest = "sha256:54c1f2a03b9dd779ff0bf0033c8922275e4599c7e9d01fd64d65fa5ae362853a"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5807,8 +5807,8 @@ section_count = 1
 
 [[files]]
 path = "surface/validate/tests/legacy_cli_removal_test.md"
-digest = "sha256:74a7565dbeb2bc419dc3a1bdbcc3f11298cc28ed544268265fcc27038a4aa11f"
-ir_digest = "sha256:561eed4a9eaf027ec1f61ea1694620b0bbf2585e5307de90830b02e3f7865bbd"
+digest = "sha256:693e5d3d7920a68ba7cc3a6167176b690842eb530e999d4483f7bc5862861df4"
+ir_digest = "sha256:4882e3b46fb858997b941f81a4ad1423ebdcd935eee73b70d001feb73321fc2e"
 section_count = 2
 
 [[files]]
@@ -5849,8 +5849,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_no_merge_test.md"
-digest = "sha256:5d709795dfb1883c347adb779ce276b0a5d68e5a282b11a1920d57379279c91e"
-ir_digest = "sha256:f7845fc8d38441bd06f90c42fd8a15c37b94a2a2b5cac9abc5824cbb56186b20"
+digest = "sha256:290df5084bb3e06f49595c2fb24e5bb08361fe875e6435cec3f327dd7058020d"
+ir_digest = "sha256:3a8f96a9e825d6240a6c5a208782d88427f389eb74c81e8a420bee2521a2cf99"
 section_count = 2
 
 [[files]]

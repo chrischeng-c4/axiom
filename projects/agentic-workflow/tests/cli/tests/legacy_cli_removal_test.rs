@@ -208,6 +208,31 @@ fn deprecated_td_aliases_are_removed() {
     assert!(td.find_subcommand("arbitrate").is_none());
 }
 
+// Moved from td_no_merge_test.rs (issue #856f): consolidates the removed
+// `td merge` clap-parsing assertions onto this file's shared `Cli` harness
+// instead of a second, identical `#[derive(Parser)] struct Cli` copy.
+#[test]
+fn test_td_merge_subcommand_is_removed() {
+    let cmd = Cli::command();
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    assert!(
+        td.find_subcommand("merge").is_none(),
+        "removed TD merge command must not be registered"
+    );
+}
+
+#[test]
+fn test_td_merge_parse_fails() {
+    let err = match Cli::try_parse_from(["aw", "td", "merge", "4124"]) {
+        Ok(_) => panic!("removed TD merge command unexpectedly parsed"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string().contains("unrecognized subcommand 'merge'"),
+        "unexpected parse error: {err}"
+    );
+}
+
 #[test]
 fn code_artifact_commands_are_inherited_by_td() {
     let cmd = Cli::command();

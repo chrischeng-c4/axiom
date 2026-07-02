@@ -184,14 +184,12 @@ pub async fn run(args: CbArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
         CbCommand::Check(a) => {
+            // TODO(#860): this whole top-level `aw cb` dispatcher is dead
+            // (no `aw cb` CLI surface remains); pointed at the shared
+            // classifier here rather than left duplicated, but removal of
+            // the dispatcher itself is out of scope for #856d.
             if let Some(target) = a.target.as_deref() {
-                let target_path = std::path::Path::new(target);
-                let target_abs = if target_path.is_absolute() {
-                    target_path.to_path_buf()
-                } else {
-                    project_root.join(target_path)
-                };
-                if !target_abs.exists() {
+                if code_check_target_is_slug(&project_root, target) {
                     crate::cli::workflow_guard::guard_issue_mutation(
                         &project_root,
                         Some(("cb", target)),
@@ -4184,6 +4182,25 @@ pub fn signature_only() -> Result<()>
     }
 }
 
+/// True if `target` (an `aw td code-check <target>` argument, or the dead
+/// top-level `aw cb check <target>` dispatcher's) does not resolve to an
+/// on-disk path relative to `project_root` — i.e. it should be dispatched
+/// as a lifecycle slug (terminal code-check) rather than an audit path.
+///
+/// Shared by `run_check` below, td.rs's `TdCommand::CodeCheck` workflow-guard
+/// arm, and the dead top-level `CbCommand::Check` dispatcher arm (its
+/// removal is tracked separately by #860) — issue #856d, replacing three
+/// copies of the same `target_path.is_absolute() -> join -> exists()` check.
+pub(crate) fn code_check_target_is_slug(project_root: &std::path::Path, target: &str) -> bool {
+    let target_path = std::path::Path::new(target);
+    let target_abs = if target_path.is_absolute() {
+        target_path.to_path_buf()
+    } else {
+        project_root.join(target_path)
+    };
+    !target_abs.exists()
+}
+
 // Implementation of `aw td code-check` — delegates to the pre-existing
 // audit pipeline. Path defaults to `.` when omitted to match
 // the historical audit behaviour.
@@ -4192,13 +4209,7 @@ pub fn signature_only() -> Result<()>
 pub async fn run_check(args: CbCheckArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     if let Some(target) = args.target.as_deref() {
-        let target_path = std::path::Path::new(target);
-        let target_abs = if target_path.is_absolute() {
-            target_path.to_path_buf()
-        } else {
-            project_root.join(target_path)
-        };
-        if !target_abs.exists()
+        if code_check_target_is_slug(&project_root, target)
             && run_check_lifecycle_terminal(&project_root, target, args.allow_empty_impl).await?
         {
             return Ok(());
@@ -4233,6 +4244,18 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
 ///
 /// `allow_empty_impl` skips the empty-implementation gate (issue #847) on a
 /// fresh entry; it has no effect on a retry, which never runs that gate.
+///
+/// Envelopes below are hand-rolled `serde_json::json!` + compact
+/// `to_string` rather than td.rs's `TdEnvelope`/`print_envelope` (issue
+/// #856e considered this consolidation and deliberately left it out of
+/// scope): `TdEnvelope::Done` has no field for the `landing` payload the
+/// final envelope carries, and — more importantly — `print_envelope` uses
+/// `to_string_pretty` while every `td_no_merge_test.rs` assertion on this
+/// path matches compact-JSON substrings with no space after the colon
+/// (e.g. `"action":"done"`, `"status":"landed"`); switching to pretty
+/// output would break all of them. Extending `TdEnvelope` to also support a
+/// compact-with-extra-fields terminal shape is a real refactor of its own,
+/// not a drive-by inside #856.
 async fn run_check_lifecycle_terminal(
     project_root: &std::path::Path,
     slug: &str,
@@ -4427,14 +4450,11 @@ async fn run_check_lifecycle_terminal(
             phase: Some(td_phase::TD_MERGED.to_string()),
             ship_status: Some(ShipStatus::Step1Shipped),
             add_labels: vec![format!("phase:{}", td_phase::TD_MERGED)],
-            remove_labels: vec![
-                crate::cli::workflow_guard::LOCK_LABEL.to_string(),
-                crate::cli::workflow_guard::TD_LOCK_LABEL.to_string(),
-                crate::cli::workflow_guard::CB_LOCK_LABEL.to_string(),
-                format!("phase:{}", td_phase::CB_GENNED),
-                format!("phase:{}", td_phase::CB_FILLED),
-                "phase:td_gen_coded".to_string(),
-            ],
+            // Issue #856a: shared with td.rs's own test coverage instead of
+            // a second, narrower, drifted inline copy (this one was missing
+            // the retired `td_reviewed` / `cb_reviewed` CRRR-phase labels
+            // and hardcoded the `td_gen_coded` string literal).
+            remove_labels: td::terminal_code_check_labels_to_remove(),
             body: unlocked_body,
             flagged_sections: Some(vec![]),
             validation_errors: Some(vec![]),
@@ -4854,15 +4874,16 @@ fn land_td_lifecycle_branch(
 
 /// True if the worktree git log already has a terminal commit for `slug` —
 /// one whose message has an exact-line `Lifecycle-Slug: <slug>` AND an
-/// exact-line `Lifecycle-Stage: Cb-CodeCheck`. Used by the resumable retry
-/// path above to avoid re-committing a duplicate trailer when only the
-/// commit step failed on a prior attempt.
+/// exact-line `Lifecycle-Stage: Cb-CodeCheck` (accepting the legacy
+/// `Td-Merged` alias via [`lifecycle_trailer::normalize`]). Used by the
+/// resumable retry path above to avoid re-committing a duplicate trailer
+/// when only the commit step failed on a prior attempt.
 ///
-/// Deliberately line-exact (not substring) on both trailers: the ship-commit
-/// backfill scan in td.rs (`find_ship_commit_from_log`) substring-matches the
-/// stage trailer, which is fine for a best-effort backfill scan but not
-/// precise enough for an idempotency gate that decides whether to skip a
-/// commit.
+/// Shares the same exact-line matchers
+/// ([`lifecycle_trailer::body_has_slug_trailer`] /
+/// [`lifecycle_trailer::body_has_stage_trailer`]) as td.rs's
+/// `find_ship_commit_from_log` backfill scan, instead of a second
+/// hand-rolled per-line loop (issue #856c).
 fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) -> Result<bool> {
     use crate::issues::types::lifecycle_trailer;
 
@@ -4873,7 +4894,6 @@ fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) ->
         return Ok(false);
     };
     let slug_line = format!("Lifecycle-Slug: {}", slug);
-    let stage_line = format!("Lifecycle-Stage: {}", lifecycle_trailer::CB_CODE_CHECK);
     let output = std::process::Command::new(&git_bin)
         .arg("-C")
         .arg(project_root)
@@ -4892,18 +4912,9 @@ fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) ->
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     for entry in stdout.split('\x1e') {
-        let mut has_slug_line = false;
-        let mut has_stage_line = false;
-        for line in entry.lines() {
-            let line = line.trim_end();
-            if line == slug_line {
-                has_slug_line = true;
-            }
-            if line == stage_line {
-                has_stage_line = true;
-            }
-        }
-        if has_slug_line && has_stage_line {
+        if lifecycle_trailer::body_has_slug_trailer(entry, slug)
+            && lifecycle_trailer::body_has_stage_trailer(entry, lifecycle_trailer::CB_CODE_CHECK)
+        {
             return Ok(true);
         }
     }
@@ -4953,24 +4964,18 @@ fn commit_cb_code_check_terminal(
     slug: &str,
     issue_path: &std::path::Path,
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    if issue_path.starts_with(project_root) {
-        let add = std::process::Command::new(&git_bin)
-            .arg("-C")
-            .arg(project_root)
-            .args(["add"])
-            .arg(issue_path)
-            .output()
-            .context("git add")?;
-        if !add.status.success() {
-            anyhow::bail!(
-                "git add '{}' failed: {}",
-                issue_path.display(),
-                String::from_utf8_lossy(&add.stderr).trim()
-            );
-        }
-    }
+    // Issue #856b: reuse td.rs's shared staging + commit-invocation core
+    // (`commit_lifecycle_message` / `stage_lifecycle_paths`) instead of a
+    // second hand-rolled `git add` + `git commit` implementation. The
+    // subject line and trailer schema stay exactly as before — only
+    // `find_ship_commit_from_log` / `terminal_commit_already_landed` grep
+    // the `Lifecycle-Slug:` / `Lifecycle-Stage:` trailer lines, not the
+    // subject — and `--allow-empty` is unconditional here (unlike
+    // `commit_lifecycle`'s "only when nothing staged" default): the
+    // terminal `Cb-CodeCheck` commit is frequently trailer-only, since the
+    // phase advance + label update already landed via a separate
+    // `backend.update` write.
+    let issue_path_s = issue_path.to_string_lossy();
     let msg = format!(
         "cb({slug}) - code-check passed\n\n\
          Lifecycle-Slug: {slug}\n\
@@ -4978,19 +4983,12 @@ fn commit_cb_code_check_terminal(
          Lifecycle-Stage: {}",
         crate::issues::types::lifecycle_trailer::CB_CODE_CHECK,
     );
-    let out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(project_root)
-        .args(["commit", "--allow-empty", "-m", &msg])
-        .output()
-        .context("git commit")?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "{}",
-            String::from_utf8_lossy(&out.stderr).trim().to_string()
-        );
-    }
-    Ok(())
+    td::commit_lifecycle_message(
+        project_root,
+        &[issue_path_s.as_ref()],
+        &msg,
+        td::LifecycleCommitEmpty::Always,
+    )
 }
 
 // ── cb claim ────────────────────────────────────────────────────────
