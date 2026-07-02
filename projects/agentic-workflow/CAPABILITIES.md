@@ -16,7 +16,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Workflow Root Runner | - | implemented | verified | smoke | ready | verified; CLI workflow chain and root-to-child rollup contract |
 | Capability Control Plane | - | implemented | verified | smoke | ready | verified; CAPABILITIES.md capability map, `aw capability`, and verification summaries |
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
-| TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to CB to merge workflow |
+| TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to code-check terminal workflow |
 | Project-Local TD and EC Gates | #13 | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, EC contracts default to `<project.path>/external-contracts`, and generated tests/tool configs stay project-local |
 | Manual Evidence Artifacts | #57 | implemented | verified | smoke | ready | verified; generated product manuals are tracked as EC evidence artifacts with runner commands and optional media |
 | Repo View Desktop App | - | implemented | verified | smoke | ready | verified; exposes `aw view`, `aw view --layout left-right|top-bottom`, `aw view --snapshot`, `aw view --check`, `aw view --screenshot <png>`, and `aw view --app <app>` for the native repo reader, in-app layout toggle, EC snapshot, quick headless contract check, app-level visual debug capture, and macOS app bundle |
@@ -124,7 +124,7 @@ Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-Atomic change WIs can move through TD authoring, code generation, handwrite fill, and merge with CLI-emitted next steps. The lifecycle is linear (no review/revise ceremony); the gate that authorizes merge is EC, not review.
+Atomic change WIs can move through TD authoring, code generation, handwrite fill, and code-check with CLI-emitted next steps. The lifecycle is linear (no review/revise ceremony, no merge step); code-check is the terminal step, and the gate that authorizes it is EC, not review.
 Gate Inventory:
 - projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md
 

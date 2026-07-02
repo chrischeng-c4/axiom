@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T19:31:07.271922+00:00"
-digest = "sha256:cf21cf665be255177d46b248a3b66a9444580310d97a9c7df63b6a102546f1c5"
-source_digest = "sha256:cf21cf665be255177d46b248a3b66a9444580310d97a9c7df63b6a102546f1c5"
-ir_digest = "sha256:d1d453501e605adf9980baa0735db13afcbef1a4880c3170c8e4f10f372e8171"
+generated_at = "2026-07-02T19:44:50.241281+00:00"
+digest = "sha256:e3fab85e6a51c2235b9910b01c3d6939c8254c4dbaa384c81ce349b4706b997b"
+source_digest = "sha256:e3fab85e6a51c2235b9910b01c3d6939c8254c4dbaa384c81ce349b4706b997b"
+ir_digest = "sha256:04a2220aa6ec2dd289f2aa4909e60e8e610f4304c439afee7161f453c5927eeb"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -1784,8 +1784,8 @@ section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/issue-merge-target.md"
-digest = "sha256:9dfb7fffb102ec6b7672ac2f48e73d4f967b63e11b9a6d629f37bc565dc574d6"
-ir_digest = "sha256:e6c3576b5582ee1f7932b486012ce82c26c67ce43329f015414600763d0b4ec1"
+digest = "sha256:a8ea73cb60e0a3a87a9cd4da0714283de2a532d4c3404fbffaff5cf8a19dfa41"
+ir_digest = "sha256:d5f4d13eb8a09769e4ff60c9c950c1728353658e02c54678e57b69e4ad320248"
 section_count = 7
 
 [[files]]
@@ -4938,8 +4938,8 @@ section_count = 2
 
 [[files]]
 path = "logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md"
-digest = "sha256:30530ba3d014ab54eca79b2e3f03d4cb52073f1a30884b20dc2265962175ab04"
-ir_digest = "sha256:6d0b18b231d406c927d45bbb1512bfa5816ac61b11e42a52dec750991ebf31ba"
+digest = "sha256:da2cb6ee95556d65ff2767c785ec74401ad1307121d17dcb34692f2429613de4"
+ir_digest = "sha256:1fca07309ff94e9d63f58c8979672affdeece73681fa2c83d89d12559639065c"
 section_count = 2
 
 [[files]]
@@ -5570,9 +5570,9 @@ section_count = 4
 
 [[files]]
 path = "surface/specs/issue-crrr-state-machine.md"
-digest = "sha256:bf139f7ad63928b2c77e838c7379bef62c747e1339de73bdb088e65c24f65f55"
-ir_digest = "sha256:936138f3da0087350adcbbd76b40c7814f0a27564912138f58b6630d7446d889"
-section_count = 19
+digest = "sha256:696fcc754b7d18a57e8ba9cf7edc69d5f81cf6cc1ecf34e44afb3b9667278f4e"
+ir_digest = "sha256:f65272b244c85446d7355a8c289a1a483c13fa169e58668ccd83dcd46148a20e"
+section_count = 0
 
 [[files]]
 path = "surface/specs/issue-validator-placeholder-rejection.md"
@@ -5719,9 +5719,9 @@ section_count = 3
 
 [[files]]
 path = "surface/specs/score-td-merge-accepts-cb-reviewed.md"
-digest = "sha256:cf51f95779b50d9844d65f685b69f3404950de9c514641b14b86238d48a4cfc2"
-ir_digest = "sha256:3bd889402497657a6e44d157400086de47b009608903259a2621dfa33ef44e8d"
-section_count = 4
+digest = "sha256:73d26c9e2d14b27e782c1b41c4836149e628d6e6efbe0996c4c17bdaf604c94f"
+ir_digest = "sha256:9c94118dc4d6edf78bc023b602dd67b904bbe2d9f0c59a8e60039f738bf95eba"
+section_count = 0
 
 [[files]]
 path = "surface/specs/score-td-review-allow-dirty-spec.md"
