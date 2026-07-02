@@ -300,6 +300,15 @@ pub struct StandardizeRunArgs {
     /// Push after each successful per-action commit.
     #[arg(long)]
     pub push: bool,
+    /// Bootstrap work-item id this batch standardization run executes
+    /// under (Rule B: whole-repo/batch standardization is not anonymous
+    /// ticks — it runs under one bootstrap WI whose execution engine is
+    /// this tick loop). Batch standardize SHOULD be launched with `--wi
+    /// <id>`; when set, every per-action commit carries `Work-Item:` and
+    /// `Lifecycle-Slug:` trailers alongside the existing Standardize-*
+    /// trailers. Omitted for backward-compatible unattributed runs.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1884,7 +1893,12 @@ async fn run_semantic_loop(project: Option<&str>, args: StandardizeRunArgs) -> R
             &envelope.coverage,
         )?;
         if !outcome.changed_paths.is_empty() {
-            commit_action(&project_root, &action_for_commit, &outcome.changed_paths)?;
+            commit_action(
+                &project_root,
+                &action_for_commit,
+                &outcome.changed_paths,
+                args.wi.as_deref(),
+            )?;
             if args.push {
                 push_current_branch(&project_root)?;
             }
@@ -2186,7 +2200,12 @@ async fn run_loop(project: Option<&str>, args: StandardizeRunArgs) -> Result<()>
         let (outcome, tick_delta, action_for_commit) =
             execute_managed_action(&project_root, &args, ticks, &action, &inventory)?;
         if !outcome.changed_paths.is_empty() {
-            commit_action(&project_root, &action_for_commit, &outcome.changed_paths)?;
+            commit_action(
+                &project_root,
+                &action_for_commit,
+                &outcome.changed_paths,
+                args.wi.as_deref(),
+            )?;
             if args.push {
                 push_current_branch(&project_root)?;
             }
@@ -7916,7 +7935,7 @@ fn execute_action(
             claim_code(project_root, action, &configured)
         }
         StandardizeActionKind::PromoteHandwrite => {
-            promote_handwrite(project_root, action, inventory)
+            promote_handwrite_and_flip_if_ready(project_root, action, inventory)
         }
         StandardizeActionKind::FoldShadow => {
             wrap_file_as_handwrite(project_root, action, "fold-shadow")
@@ -10265,6 +10284,193 @@ fn promote_handwrite(
     })
 }
 
+/// Outcome of a real HANDWRITE→CODEGEN marker flip — distinct from
+/// `promote_handwrite` above, which repairs legacy marker *attributes*
+/// (a missing `gap`) and never changes the marker keyword itself.
+pub(crate) struct PromoteOutcome {
+    pub(crate) changed_paths: Vec<PathBuf>,
+    pub(crate) message: String,
+}
+
+/// Result of attempting the flip in "soft" (non-erroring) mode — used by
+/// `aw standardize managed run`'s `PromoteHandwrite` action, which must
+/// never fail the tick loop just because a marker isn't closure-ready yet.
+enum PromoteAttempt {
+    Promoted(PromoteOutcome),
+    NotReady(String),
+}
+
+/// Resolve a `aw td promote` target (a repo-relative path, or a HANDWRITE
+/// marker tracker id / default gap-slug) to the owning source file's
+/// repo-relative path.
+pub(crate) fn resolve_promote_target(project_root: &Path, target: &str) -> Result<String> {
+    let inventory = build_inventory(project_root, &[], None, true)?;
+    if inventory.files.iter().any(|f| f.rel == target) {
+        return Ok(target.to_string());
+    }
+    for file in &inventory.files {
+        if slug_for_path(&file.rel) == target {
+            return Ok(file.rel.clone());
+        }
+        let content = fs::read_to_string(&file.abs).unwrap_or_default();
+        if handwrite_block_open_attrs(&content)
+            .iter()
+            .any(|(_, _, tracker)| tracker == target)
+        {
+            return Ok(file.rel.clone());
+        }
+    }
+    bail!(
+        "no HANDWRITE marker found for target `{target}` (expected a repo-relative path or a marker tracker id)"
+    );
+}
+
+/// Default `<mirror>.md#anchor` spec reference for a promoted file's fresh
+/// SPEC-MANAGED header, derived the same way
+/// `promote_rust_mixed_source_generator_primitive` derives one for its own
+/// HANDWRITE-block flips.
+pub(crate) fn default_promote_spec_ref(project_root: &Path, rel: &str) -> String {
+    let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
+    format!("{}#schema", semantic_spec_rel_with_config(rel, &configured))
+}
+
+fn handwrite_block_open_attrs(content: &str) -> Vec<(usize, String, String)> {
+    let raw_string_lines = crate::generate::marker::rust_raw_string_line_mask(content);
+    let mut out = Vec::new();
+    for (idx, line) in content.lines().enumerate() {
+        if raw_string_lines.get(idx).copied().unwrap_or(false) {
+            continue;
+        }
+        let Some(body) = handwrite_marker_body(line) else {
+            continue;
+        };
+        let gap = extract_attr(body, "gap").unwrap_or_default();
+        let tracker = extract_attr(body, "tracker").unwrap_or_default();
+        out.push((idx, gap, tracker));
+    }
+    out
+}
+
+/// Non-marker, non-spec-header lines — used to prove a HANDWRITE→CODEGEN
+/// flip is byte-equivalence-safe: everything outside the marker delimiter
+/// lines (the actual HANDWRITE payload) must be byte-identical before and
+/// after the flip.
+fn non_marker_lines(content: &str) -> Vec<&str> {
+    content
+        .lines()
+        .filter(|line| {
+            let body = marker_comment_body(line);
+            let is_marker = body.is_some_and(|b| {
+                is_handwrite_marker_line_body(b) || b == "CODEGEN-BEGIN" || b == "CODEGEN-END"
+            });
+            let is_injected_spec = body.is_some_and(|b| b.starts_with("SPEC-MANAGED:"));
+            !(is_marker || is_injected_spec)
+        })
+        .collect()
+}
+
+/// Core promotion logic shared by `aw td promote` and (in soft mode)
+/// `aw standardize managed run`'s `PromoteHandwrite` action: flip every
+/// HANDWRITE block in `rel` to CODEGEN, but only when every block already
+/// carries a complete `gap` + durable `tracker` (closure-ready — the
+/// `issue_marker_gap` action attaches those first) and the flip is proven
+/// byte-equivalence-safe (every line outside the marker delimiters is
+/// unchanged). Otherwise reports not-ready without touching the file.
+fn try_promote_handwrite_marker_to_codegen(
+    project_root: &Path,
+    rel: &str,
+    fallback_spec_ref: &str,
+) -> Result<PromoteAttempt> {
+    let abs = project_root.join(rel);
+    let content =
+        fs::read_to_string(&abs).with_context(|| format!("failed to read {}", abs.display()))?;
+    let blocks = handwrite_block_open_attrs(&content);
+    if blocks.is_empty() {
+        return Ok(PromoteAttempt::NotReady(format!(
+            "`{rel}` has no HANDWRITE marker to promote"
+        )));
+    }
+    for (line_idx, gap, tracker) in &blocks {
+        if gap.trim().is_empty() {
+            return Ok(PromoteAttempt::NotReady(format!(
+                "`{rel}` line {}: HANDWRITE marker is missing a `gap` attribute — run `aw standardize managed run` (issue_marker_gap) before promoting",
+                line_idx + 1
+            )));
+        }
+        if is_missing_tracker(tracker) {
+            return Ok(PromoteAttempt::NotReady(format!(
+                "`{rel}` line {}: HANDWRITE marker has no durable tracker — run `aw standardize managed run` (issue_marker_gap) before promoting",
+                line_idx + 1
+            )));
+        }
+    }
+
+    let promoted = promote_handwrite_blocks_to_codegen(&abs, &content, fallback_spec_ref);
+    if promoted == content {
+        return Ok(PromoteAttempt::Promoted(PromoteOutcome {
+            changed_paths: Vec::new(),
+            message: "no HANDWRITE block required promotion".to_string(),
+        }));
+    }
+    if non_marker_lines(&content) != non_marker_lines(&promoted) {
+        return Ok(PromoteAttempt::NotReady(format!(
+            "`{rel}` promotion is not byte-equivalence-safe — the payload outside HANDWRITE markers would change; refusing to flip"
+        )));
+    }
+
+    fs::write(&abs, &promoted)?;
+    Ok(PromoteAttempt::Promoted(PromoteOutcome {
+        changed_paths: vec![PathBuf::from(rel)],
+        message: format!("promoted {} HANDWRITE block(s) to CODEGEN", blocks.len()),
+    }))
+}
+
+/// `aw td promote` entry point: the strict form of
+/// `try_promote_handwrite_marker_to_codegen` — a not-ready result is a hard
+/// error, since the caller explicitly asked to promote this one target.
+pub(crate) fn promote_handwrite_marker_to_codegen(
+    project_root: &Path,
+    rel: &str,
+    fallback_spec_ref: &str,
+) -> Result<PromoteOutcome> {
+    match try_promote_handwrite_marker_to_codegen(project_root, rel, fallback_spec_ref)? {
+        PromoteAttempt::Promoted(outcome) => Ok(outcome),
+        PromoteAttempt::NotReady(reason) => bail!(reason),
+    }
+}
+
+/// `aw standardize managed run`'s `PromoteHandwrite` action: repair legacy
+/// marker attributes via `promote_handwrite`, then delegate to the same
+/// shared flip logic `aw td promote` uses (in soft mode — a not-yet-ready
+/// marker is expected and must not fail the tick) so a marker that becomes
+/// closure-ready after attribute repair is promoted to CODEGEN in the same
+/// tick instead of waiting for a follow-up run.
+fn promote_handwrite_and_flip_if_ready(
+    project_root: &Path,
+    action: &StandardizeAction,
+    inventory: &Inventory,
+) -> Result<ActionOutcome> {
+    let repaired = promote_handwrite(project_root, action, inventory)?;
+    let rel = action.target.clone();
+    let fallback_spec_ref = default_promote_spec_ref(project_root, &rel);
+    let mut changed_paths = repaired.changed_paths;
+    let mut message = repaired.message;
+    if let PromoteAttempt::Promoted(flip) =
+        try_promote_handwrite_marker_to_codegen(project_root, &rel, &fallback_spec_ref)?
+    {
+        if !flip.changed_paths.is_empty() {
+            changed_paths.extend(flip.changed_paths);
+            changed_paths.sort();
+            changed_paths.dedup();
+            message = format!("{message}; {}", flip.message);
+        }
+    }
+    Ok(ActionOutcome {
+        changed_paths,
+        message,
+    })
+}
+
 fn fix_marker_gap(
     project_root: &Path,
     action: &StandardizeAction,
@@ -10386,19 +10592,160 @@ fn render_handwrite_marker_line(
     )
 }
 
-fn ensure_gap_issue(project_root: &Path, rel: &str) -> Result<String> {
-    let slug = format!("standardize-gap-{}", slug_for_path(rel));
-    let backend = crate::issues::LocalBackend::from_project_root(project_root);
-    let issue_dir = backend.issues_dir().join("open");
-    fs::create_dir_all(&issue_dir)?;
-    let issue = issue_dir.join(format!("{slug}.md"));
-    if !issue.exists() {
-        let content = format!(
-            "---\ntype: enhancement\ntitle: Standardize gap for {rel}\nstate: open\nlabels: [standardization]\n---\n\n# Standardize gap for `{rel}`\n\nCreated by `aw standardize managed run` because a HANDWRITE marker needed a durable tracker.\n"
-        );
-        fs::write(issue, content)?;
+/// Guards the process-wide cwd while `ensure_gap_issue` drives
+/// `crate::cli::issues::run` — that entry point resolves its project root
+/// from `std::env::current_dir()`, not a parameter, so this is the only
+/// (test-proven — see `find_project_root`'s own `CWD_LOCK`-guarded tests in
+/// `cli/mod.rs`) way to route through it without a subprocess. Restores the
+/// previous cwd on drop, including on error/panic unwind.
+struct CwdGuard {
+    prev: PathBuf,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl CwdGuard {
+    fn enter(dir: &Path) -> Result<Self> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev = std::env::current_dir().context("failed to read current directory")?;
+        std::env::set_current_dir(dir)
+            .with_context(|| format!("failed to switch cwd to {}", dir.display()))?;
+        Ok(Self { prev, _lock: lock })
     }
-    Ok(slug)
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.prev);
+    }
+}
+
+/// Run an async future to completion from sync code that may or may not
+/// already be inside a tokio runtime (production runs inside `aw`'s
+/// top-level multi-thread runtime; unit tests call in directly with none).
+fn block_on_bridge<F: std::future::Future>(fut: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        Err(_) => {
+            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+            rt.block_on(fut)
+        }
+    }
+}
+
+/// File (or reuse, if one already exists for the same title) a durable
+/// tracker work-item for a HANDWRITE marker gap, routed through the real
+/// `aw wi create` path (`crate::cli::issues::run`) instead of hand-writing
+/// a backend file — typed fields, bounded body sections, the same
+/// validation every `aw wi create` call goes through. Returns the created
+/// (or matched) work-item's slug for the marker's `tracker=` attribute.
+///
+/// Backend/durability note: this lands in whatever backend
+/// `.aw/config.toml` resolves for the owning project (local → ephemeral
+/// `/tmp/aw/...`, exactly like `aw wi create` itself; github/gitlab →
+/// durable tracker issue). Making the local case durable is #925, not this
+/// change — this slice only fixes the *routing*.
+fn ensure_gap_issue(project_root: &Path, rel: &str) -> Result<String> {
+    let project_name = configured_project_name_for_path(project_root, rel)?.with_context(|| {
+        format!("no configured project owns `{rel}` — cannot file a standardize gap work-item")
+    })?;
+    // Pre-resolve the exact `--project` label lookup `aw wi create` performs
+    // so a misconfigured project can be reported as a normal `Result::Err`
+    // instead of a hard `std::process::exit` from `run_create`'s validation
+    // path deep inside the tick loop.
+    crate::cli::issues::resolve_project_label(project_root, &project_name).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot file a standardize gap work-item for `{rel}`: {}",
+            e.to_envelope_message()
+        )
+    })?;
+
+    let title = gap_issue_title(rel);
+
+    let find_existing = |title: &str| {
+        let title = title.to_string();
+        block_on_bridge(async move {
+            let (kind, repo, host) = crate::issues::resolve_default_backend(project_root)?;
+            let backend = crate::issues::make_backend(&kind, project_root, repo, host)?;
+            let filter = crate::issues::IssueFilter {
+                state: None,
+                issue_type: Some(crate::issues::IssueType::Enhancement),
+                label: None,
+                author: None,
+            };
+            let issues = backend.list(&filter).await?;
+            Ok::<_, anyhow::Error>(
+                issues
+                    .into_iter()
+                    .filter(|issue| issue.title == title)
+                    .max_by(|a, b| a.created_at.cmp(&b.created_at)),
+            )
+        })
+    };
+
+    // Idempotent by title: a re-run over the same marker gap (e.g. a
+    // partial-resume tick) reuses the already-filed work-item instead of
+    // filing a duplicate every tick.
+    if let Some(existing) = find_existing(&title)? {
+        return Ok(existing.slug);
+    }
+
+    let issues_args = crate::cli::issues::IssuesArgs {
+        command: crate::cli::issues::IssuesCommand::Create(gap_issue_create_args(
+            &title,
+            project_name,
+        )),
+    };
+    {
+        let _cwd = CwdGuard::enter(project_root)?;
+        block_on_bridge(crate::cli::issues::run(issues_args))
+            .with_context(|| format!("aw wi create failed for standardize gap `{rel}`"))?;
+    }
+
+    let created = find_existing(&title)?
+        .context("aw wi create reported success but the work-item was not found via list")?;
+
+    Ok(created.slug)
+}
+
+/// The stable, deterministic title `ensure_gap_issue` files (and re-finds)
+/// a HANDWRITE marker gap work-item under.
+fn gap_issue_title(rel: &str) -> String {
+    format!("Standardize marker gap: {rel}")
+}
+
+/// Build the exact `CreateArgs` `ensure_gap_issue` hands to the real
+/// `aw wi create` internal path (`crate::cli::issues::run`) for a marker
+/// gap — typed `--type enhancement` + `--project <project_name>` fields, no
+/// free-form `--body` (so `run_create`'s own canonical structured skeleton,
+/// `## Capability Alignment` / `## Scope` / `## Acceptance Criteria` /
+/// `## Reference Context`, is what gets filed — the same bounded shape every
+/// other `aw wi create --title ... --type ...` call produces). Split out
+/// from `ensure_gap_issue` so the field/skeleton shape is unit-testable
+/// without a configured issue backend.
+fn gap_issue_create_args(title: &str, project_name: String) -> crate::cli::issues::CreateArgs {
+    crate::cli::issues::CreateArgs {
+        draft_path: None,
+        title: Some(title.to_string()),
+        issue_type: Some(crate::cli::issues::TypeFilter::Enhancement),
+        body: None,
+        body_file: None,
+        projects: vec![project_name],
+        priority: None,
+        agent: None,
+        remote: false,
+        // `false`, not the CLI default `true`: with `json: true`,
+        // `run_create`'s validation-failure and remote-backend-create-failure
+        // branches call `emit_create_envelope_error`/`emit_json_error`
+        // (`std::process::exit`, unrecoverable) instead of returning
+        // `Result::Err`. This call site runs deep inside the standardize
+        // tick loop / `aw td promote`, not as a direct CLI invocation, so it
+        // must never hard-exit the whole `aw` process on a validation edge
+        // case — `json: false` keeps both failure paths as ordinary
+        // `anyhow::bail!`s that propagate back through `Result`.
+        json: false,
+        repo: None,
+    }
 }
 
 fn insert_after_shebang(content: &str, insertion: &str) -> String {
@@ -10499,12 +10846,24 @@ fn ensure_no_staged_changes(project_root: &Path) -> Result<()> {
     crate::git::ensure_no_staged_changes(project_root)
 }
 
-fn commit_action(project_root: &Path, action: &StandardizeAction, paths: &[PathBuf]) -> Result<()> {
+// Rule B (epic #914): batch/whole-repo standardization runs under one
+// bootstrap WI root, not as anonymous ticks. `wi` carries that root's id
+// (from `StandardizeRunArgs::wi`) so every per-action commit is
+// attributable back to it; `None` keeps prior (unattributed) behavior.
+fn commit_action(
+    project_root: &Path,
+    action: &StandardizeAction,
+    paths: &[PathBuf],
+    wi: Option<&str>,
+) -> Result<()> {
     let title = format!("standardize: {}", action.target);
-    let body = format!(
+    let mut body = format!(
         "{}\n\nLifecycle-Stage: Standardize-{:?}\nStandardize-Action: {}\nStandardize-Target: {}\n",
         title, action.kind, action.id, action.target
     );
+    if let Some(wi) = wi {
+        body.push_str(&format!("Work-Item: {wi}\nLifecycle-Slug: {wi}\n"));
+    }
     crate::git::commit_scoped_paths(project_root, paths, &body)?;
     Ok(())
 }
@@ -10787,7 +11146,10 @@ fn rel_display(project_root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn slug_for_path(path: &str) -> String {
+/// `pub(crate)` (not just file-private) so `aw td promote` (td.rs) can derive
+/// the same stable slug the standardize path uses for its own action ids —
+/// one slug scheme, not a duplicate.
+pub(crate) fn slug_for_path(path: &str) -> String {
     let mut out = String::new();
     for ch in path.chars() {
         if ch.is_ascii_alphanumeric() {
@@ -10822,6 +11184,47 @@ mod tests {
         let path = root.join(rel);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
+    }
+
+    /// Initialise a bare-minimum git repo in `root` so `commit_action`
+    /// (issue #919, Rule B) and `git::commit_scoped_paths` have something
+    /// real to commit into. Mirrors `merge_target.rs`'s test-local
+    /// `init_repo` helper.
+    fn init_git_repo(root: &Path) {
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["init", "--initial-branch=main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .output()
+            .unwrap();
+    }
+
+    fn git_log_body(root: &Path) -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["log", "-1", "--format=%B"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     #[cfg(unix)]
@@ -15140,31 +15543,181 @@ target = "python"
     }
 
     #[test]
-    fn promote_then_issue_marker_repairs_legacy_begin_end() {
+    fn promote_then_issue_marker_gap_routes_through_wi_create_path() {
+        // Issue #919: `issue_marker_gap` now routes through the real
+        // `aw wi create` path (`ensure_gap_issue`) instead of hand-writing a
+        // `LocalBackend` file directly. That path resolves its destination
+        // backend from `.aw/config.toml` exactly like every other
+        // `aw wi create` call — with no `[agentic_workflow.repo_platform]`/
+        // `[agentic_workflow.issue_platform]` configured (as here), backend
+        // resolution itself fails. This must surface as a normal, recoverable
+        // `Result::Err` (the `CreateArgs.json = false` fix), never a process
+        // crash, and the marker file must stay byte-for-byte unchanged (no
+        // partial mutation) when the gap can't be filed.
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            "src/lib.rs",
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/src/lib.rs",
             "// HANDWRITE-BEGIN reason: legacy parser\npub fn answer() -> i32 { 42 }\n// HANDWRITE-END\n",
         );
-        let mut inventory = build_inventory(tmp.path(), &["src/**".into()], None, false).unwrap();
+        let mut inventory =
+            build_inventory(tmp.path(), &["projects/tool/**".into()], None, false).unwrap();
         let promote = choose_action(&inventory);
         assert_eq!(promote.kind, StandardizeActionKind::PromoteHandwrite);
         promote_handwrite(tmp.path(), &promote, &inventory).unwrap();
 
-        inventory = build_inventory(tmp.path(), &["src/**".into()], None, false).unwrap();
+        inventory = build_inventory(tmp.path(), &["projects/tool/**".into()], None, false).unwrap();
         let gap = choose_action(&inventory);
         assert_eq!(gap.kind, StandardizeActionKind::IssueMarkerGap);
-        fix_marker_gap(tmp.path(), &gap, &inventory).unwrap();
+        let before = fs::read_to_string(tmp.path().join("projects/tool/src/lib.rs")).unwrap();
 
-        let source = fs::read_to_string(tmp.path().join("src/lib.rs")).unwrap();
-        assert!(source.contains("// HANDWRITE-BEGIN gap=\"standardize:src-lib-rs\""));
-        assert!(source.contains("tracker=\"standardize-gap-src-lib-rs\""));
-        assert!(source.contains("reason=\"legacy parser\""));
-        assert!(source.contains("// HANDWRITE-END"));
-        assert!(crate::shared::workspace::issues_path(tmp.path())
-            .join("open/standardize-gap-src-lib-rs.md")
-            .exists());
+        let err = fix_marker_gap(tmp.path(), &gap, &inventory).unwrap_err();
+        assert!(
+            err.to_string().contains("repo_platform") || err.to_string().contains("issue_platform"),
+            "expected a backend-configuration error, got: {err}"
+        );
+
+        let after = fs::read_to_string(tmp.path().join("projects/tool/src/lib.rs")).unwrap();
+        assert_eq!(
+            before, after,
+            "failed gap-filing must not touch the marker file"
+        );
+    }
+
+    #[test]
+    fn gap_issue_create_args_uses_typed_fields_and_bounded_skeleton() {
+        // Issue #919: whatever backend a project resolves to, the gap
+        // work-item is always built from the same typed fields + implicit
+        // canonical structured skeleton every plain
+        // `aw wi create --title ... --type ...` call uses (no free-form
+        // `--body`) — this is what "creates a WI-shaped issue (bounded body
+        // sections)" means here, tested independent of any backend.
+        let title = gap_issue_title("projects/tool/src/lib.rs");
+        assert_eq!(title, "Standardize marker gap: projects/tool/src/lib.rs");
+
+        let args = gap_issue_create_args(&title, "tool".to_string());
+        assert_eq!(args.title.as_deref(), Some(title.as_str()));
+        assert!(matches!(
+            args.issue_type,
+            Some(crate::cli::issues::TypeFilter::Enhancement)
+        ));
+        assert_eq!(args.projects, vec!["tool".to_string()]);
+        assert!(
+            args.body.is_none(),
+            "no free-form body — let run_create's canonical structured skeleton fill it"
+        );
+        assert!(args.body_file.is_none());
+        assert!(args.draft_path.is_none());
+        // See the inline rationale on `gap_issue_create_args`: `json: false`
+        // is load-bearing (keeps `run_create`'s failure paths recoverable
+        // `Result::Err`s instead of `std::process::exit`).
+        assert!(!args.json);
+    }
+
+    #[test]
+    fn ensure_gap_issue_reports_recoverable_error_when_backend_unconfigured() {
+        // Same routing/error-recoverability contract as the marker-gap test
+        // above, exercised directly against `ensure_gap_issue` (idempotent
+        // find-before-create also lives behind this same backend
+        // resolution, so a misconfigured project fails at the very first
+        // step rather than partway through).
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+        write(tmp.path(), "projects/tool/src/lib.rs", "pub fn x() {}\n");
+
+        let err = ensure_gap_issue(tmp.path(), "projects/tool/src/lib.rs").unwrap_err();
+        assert!(
+            err.to_string().contains("repo_platform") || err.to_string().contains("issue_platform"),
+            "expected a backend-configuration error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn commit_action_without_wi_omits_work_item_trailer() {
+        // Issue #919, Rule B: without `--wi`, `commit_action`'s trailers are
+        // unchanged from before this change.
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write(tmp.path(), "src/lib.rs", "pub fn x() {}\n");
+        let action = StandardizeAction {
+            id: "a1".to_string(),
+            kind: StandardizeActionKind::PromoteHandwrite,
+            target: "src/lib.rs".to_string(),
+            executor: "mainthread".to_string(),
+            command: "aw td promote src/lib.rs".to_string(),
+            reason: "test".to_string(),
+            requires_hitl: false,
+        };
+        commit_action(tmp.path(), &action, &[PathBuf::from("src/lib.rs")], None).unwrap();
+        let body = git_log_body(tmp.path());
+        assert!(
+            body.contains("Standardize-Target: src/lib.rs"),
+            "body:\n{body}"
+        );
+        assert!(!body.contains("Work-Item:"), "body:\n{body}");
+        assert!(!body.contains("Lifecycle-Slug:"), "body:\n{body}");
+    }
+
+    #[test]
+    fn commit_action_with_wi_adds_work_item_trailer() {
+        // Issue #919, Rule B: batch standardization launched under a
+        // bootstrap WI root (`--wi <id>`) carries `Work-Item`/`Lifecycle-Slug`
+        // trailers on every per-tick commit.
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write(tmp.path(), "src/lib.rs", "pub fn x() {}\n");
+        let action = StandardizeAction {
+            id: "a1".to_string(),
+            kind: StandardizeActionKind::PromoteHandwrite,
+            target: "src/lib.rs".to_string(),
+            executor: "mainthread".to_string(),
+            command: "aw td promote src/lib.rs".to_string(),
+            reason: "test".to_string(),
+            requires_hitl: false,
+        };
+        commit_action(
+            tmp.path(),
+            &action,
+            &[PathBuf::from("src/lib.rs")],
+            Some("wi-42"),
+        )
+        .unwrap();
+        let body = git_log_body(tmp.path());
+        assert!(
+            body.contains("Standardize-Target: src/lib.rs"),
+            "body:\n{body}"
+        );
+        assert!(body.contains("Work-Item: wi-42"), "body:\n{body}");
+        assert!(body.contains("Lifecycle-Slug: wi-42"), "body:\n{body}");
     }
 
     #[test]

@@ -1610,6 +1610,9 @@ semantic_domain:
           - name: "CodeCheckArgs"
             kind: "struct"
             public: true
+          - name: "PromoteArgs"
+            kind: "struct"
+            public: true
           - name: "ArbitrateArgs"
             kind: "struct"
             public: true
@@ -1695,6 +1698,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "should_stage_lifecycle_path"
+            kind: "function"
+            public: false
+          - name: "run_promote"
+            kind: "function"
+            public: false
+          - name: "run_promote_at"
             kind: "function"
             public: false
         source_evidence_node:
@@ -2484,6 +2493,21 @@ semantic_domain:
           - name: "DeploymentFacetFinding"
             kind: "struct"
             public: true
+          - name: "PromoteOutcome"
+            kind: "struct"
+            public: false
+          - name: "resolve_promote_target"
+            kind: "function"
+            public: false
+          - name: "promote_handwrite_marker_to_codegen"
+            kind: "function"
+            public: false
+          - name: "gap_issue_title"
+            kind: "function"
+            public: false
+          - name: "gap_issue_create_args"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
