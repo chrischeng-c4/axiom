@@ -628,6 +628,11 @@ fn init_847_seed_repo(git: &std::path::Path, root: &std::path::Path) {
         .unwrap();
 }
 
+/// Repo-root-relative path `write_847_changes_spec` always writes to —
+/// shared by `#847`/`#854` tests as the `Issue.implements` entry that scopes
+/// both terminal gates to this WI's own spec (issue #854).
+const DEMO_SPEC_REL: &str = ".aw/tech-design/specs/demo.md";
+
 /// Write a minimal TD spec at `.aw/tech-design/specs/demo.md` (the default
 /// `tech_design_path` fallback for an empty `.aw/config.toml`) whose
 /// `## Changes` section lists the given `(path, action)` entries, each
@@ -651,8 +656,11 @@ fn write_847_changes_spec(root: &std::path::Path, entries: &[(&str, &str)]) {
 
 /// Seed an open issue at `phase` with no `td-<slug>` branch — the shape of a
 /// real `cb_genned`/`cb_filled` WI walking into `aw td code-check` for the
-/// first time (fresh entry, not the #846 retry path).
-async fn seed_847_open_issue(root: &std::path::Path, slug: &str, phase: &str) {
+/// first time (fresh entry, not the #846 retry path). `spec_rel` is recorded
+/// as `Issue.implements` (issue #854) so the terminal marker gate and
+/// empty-implementation gate scope to this WI's own spec instead of the
+/// whole worktree / whole `tech_design_path` tree.
+async fn seed_847_open_issue(root: &std::path::Path, slug: &str, phase: &str, spec_rel: &str) {
     use agentic_workflow::issues::types::IssueType;
     use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
 
@@ -672,7 +680,7 @@ async fn seed_847_open_issue(root: &std::path::Path, slug: &str, phase: &str) {
         slug: slug.to_string(),
         body: format!("# {slug} WI\n"),
         related: Vec::new(),
-        implements: Vec::new(),
+        implements: vec![spec_rel.to_string()],
         phase: Some(phase.to_string()),
         branch: None,
         target_branch: None,
@@ -724,7 +732,7 @@ async fn test_code_check_refuses_when_all_changes_paths_missing() {
     );
 
     let slug = "empty-impl-gate-test";
-    seed_847_open_issue(root, slug, td_phase::CB_FILLED).await;
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
         .arg("td")
@@ -796,7 +804,7 @@ async fn test_code_check_allow_empty_impl_skips_refusal() {
     write_847_changes_spec(root, &[("src/demo.rs", "create")]);
 
     let slug = "empty-impl-gate-override-test";
-    seed_847_open_issue(root, slug, td_phase::CB_FILLED).await;
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
         .arg("td")
@@ -867,7 +875,7 @@ async fn test_code_check_partial_implementation_completes() {
     std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
 
     let slug = "empty-impl-gate-partial-test";
-    seed_847_open_issue(root, slug, td_phase::CB_FILLED).await;
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
         .arg("td")
@@ -900,6 +908,236 @@ async fn test_code_check_partial_implementation_completes() {
         after.phase.as_deref(),
         Some(td_phase::TD_MERGED),
         "partial presence must still advance phase to td_merged"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #854 — the terminal marker gate (and, by the same scoping mechanism, the
+// #847 empty-implementation gate) must scope to the completing WI's own TD
+// spec instead of the whole worktree / whole `tech_design_path` tree, so an
+// unrelated inherited HANDWRITE marker elsewhere in a monorepo checkout can
+// no longer block this WI's own code-check.
+// ---------------------------------------------------------------------------
+
+/// Write an unfilled HANDWRITE marker at `rel_path` (comment-style
+/// begin/end, matching `crate::generate::apply::scaffold_handwrite_file`'s
+/// output) if `filled` is `false`, or a filled block (real body content, no
+/// `TODO: hand-write content` sentinel) if `filled` is `true`. Only unfilled
+/// markers are returned by `enumerate_worktree_markers`
+/// (`marker_body_is_unfilled` in `cb_fill.rs`).
+fn write_854_marker_file(root: &std::path::Path, rel_path: &str, gap: &str, filled: bool) {
+    let path = root.join(rel_path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let body = if filled {
+        format!(
+            "// HANDWRITE-BEGIN gap=\"{gap}\" tracker=\"none\" reason=\"filled\"\n\
+             // implemented\n\
+             // HANDWRITE-END\n"
+        )
+    } else {
+        format!(
+            "// HANDWRITE-BEGIN gap=\"{gap}\" tracker=\"none\" reason=\"unfilled\"\n\
+             // TODO: hand-write content for `{rel_path}`.\n\
+             // HANDWRITE-END\n"
+        )
+    };
+    std::fs::write(path, body).unwrap();
+}
+
+/// (a) An unfilled HANDWRITE marker outside the WI's own Changes-listed
+/// scope (`src/unrelated.rs`, e.g. inherited from other unmerged work on a
+/// monorepo `main`) must not block completion when the WI's own
+/// Changes-listed file (`src/demo.rs`) is present and filled.
+#[tokio::test]
+async fn test_code_check_ignores_unrelated_marker_outside_wi_scope() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    // WI's own Changes-listed file: present and filled.
+    write_854_marker_file(root, "src/demo.rs", "demo-marker", true);
+    // Unrelated stub marker elsewhere, outside the WI's Changes scope —
+    // the exact repro from issue #854 (an inherited unfilled marker from
+    // other unmerged work on the same checkout).
+    write_854_marker_file(root, "src/unrelated.rs", "unrelated-marker", false);
+
+    let slug = "marker-gate-scoped-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "code-check should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "an unrelated marker outside WI scope must not block completion, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "code-check must still advance phase to td_merged"
+    );
+}
+
+/// (b) An unfilled HANDWRITE marker in a file the WI's own Changes section
+/// names must still block completion, naming the file in the refusal.
+#[tokio::test]
+async fn test_code_check_blocks_on_marker_inside_wi_scope() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    // The WI's own Changes-listed file exists on disk (so the #847
+    // empty-implementation gate does not fire) but still carries an
+    // unfilled HANDWRITE marker.
+    write_854_marker_file(root, "src/demo.rs", "demo-marker", false);
+
+    let slug = "marker-gate-blocks-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "an unfilled marker inside WI scope must refuse with an error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("src/demo.rs"),
+        "error message must name the in-scope file carrying the unfilled marker, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::CB_FILLED),
+        "refused code-check must not advance phase past cb_filled"
+    );
+}
+
+/// (c) A docs-only WI (empty `## Changes` section) with an empty branch
+/// diff against base (HEAD already on `main`, matching every other fixture
+/// in this file) must pass vacuously — an unrelated unfilled marker
+/// elsewhere in the tree must not block a WI with nothing to scope against.
+#[tokio::test]
+async fn test_code_check_docs_only_wi_passes_vacuously() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    // Docs-only WI: no Changes entries at all.
+    write_847_changes_spec(root, &[]);
+    // Unrelated unfilled marker elsewhere in the tree.
+    write_854_marker_file(root, "src/unrelated.rs", "unrelated-marker", false);
+
+    let slug = "docs-only-wi-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "docs-only code-check should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "a docs-only WI with empty branch diff must pass vacuously, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "docs-only code-check must still advance phase to td_merged"
     );
 }
 ```

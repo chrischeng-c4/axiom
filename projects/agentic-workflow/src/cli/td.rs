@@ -1968,7 +1968,14 @@ fn default_spec_path_for_issue(issue: &Issue, fallback_slug: &str, target_dir: &
     format!(".aw/tech-design/{}{}.md", target_dir, filename)
 }
 
-fn default_spec_path_for_issue_in_project(
+// Deterministic default spec path for `issue` — the same derivation `aw td
+// create` uses when no explicit `--spec-path` is given. Exposed at
+// `pub(crate)` (issue #854) as a last-resort fallback for the terminal
+// `aw td code-check` gate's own-spec resolution
+// (`resolve_slug_spec_paths` in cb.rs), used only when neither
+// `Issue.implements` nor a branch-diff-discovered spec
+// (`discover_worktree_spec`) can identify the completing slug's spec.
+pub(crate) fn default_spec_path_for_issue_in_project(
     project_root: &std::path::Path,
     issue: &Issue,
     fallback_slug: &str,
