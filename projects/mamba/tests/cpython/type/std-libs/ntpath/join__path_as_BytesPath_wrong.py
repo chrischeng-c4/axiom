@@ -9,12 +9,11 @@
 # case = "join__path_as_BytesPath_wrong"
 # subject = "ntpath.join(path: BytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ntpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: ntpath.join(path: BytesPath); call it with the wrong type.
 

@@ -5645,6 +5645,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
     },
     StdlibSig {
+        module: "ntpath",
+        qualifier: "",
+        name: "join",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "ntpath",
+        qualifier: "",
+        name: "realpath",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
         module: "multiprocessing.dummy",
         qualifier: "",
         name: "Array",
@@ -9206,6 +9222,8 @@ mod tests {
                 "obj",
                 CoreTy::Typed,
             ),
+            ("ntpath", "", "join", 0, "path", CoreTy::Typed),
+            ("ntpath", "", "realpath", 0, "path", CoreTy::Typed),
             (
                 "multiprocessing.dummy",
                 "",
