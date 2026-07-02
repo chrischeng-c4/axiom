@@ -9,12 +9,11 @@
 # case = "dirname__p_as_AnyOrLiteralStr_wrong"
 # subject = "posixpath.dirname(p: AnyOrLiteralStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed p"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed p
 # mamba-strict-type: TypeError
 """Type wall: posixpath.dirname(p: AnyOrLiteralStr); call it with the wrong type.
 

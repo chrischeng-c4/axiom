@@ -9,12 +9,11 @@
 # case = "expanduser__path_as_PathLike_wrong"
 # subject = "posixpath.expanduser(path: PathLike)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: posixpath.expanduser(path: PathLike); call it with the wrong type.
 

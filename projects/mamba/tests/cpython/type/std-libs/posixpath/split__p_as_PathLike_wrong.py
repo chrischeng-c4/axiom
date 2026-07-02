@@ -9,12 +9,11 @@
 # case = "split__p_as_PathLike_wrong"
 # subject = "posixpath.split(p: PathLike)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed p"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed p
 # mamba-strict-type: TypeError
 """Type wall: posixpath.split(p: PathLike); call it with the wrong type.
 
