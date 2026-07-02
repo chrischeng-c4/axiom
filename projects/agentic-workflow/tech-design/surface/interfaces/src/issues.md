@@ -2326,7 +2326,7 @@ async fn run_create(args: CreateArgs) -> Result<()> {
         // dispatches the named subagent per CLAUDE.md protocol.
         // CRRR loop-fill dispatch: the create envelope kicks off ONE
         // author invocation that fills the full structured body, including
-        // capability alignment and agent estimate gates. The
+        // capability alignment, scope, and reference context gates. The
         // mainthread runs `--apply --section all`, then runs `validate` once
         // after the full-body merge.
         // @spec projects/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R3
@@ -5217,11 +5217,11 @@ async fn run_arbitrate(args: ArbitrateArgs) -> Result<()> {
         print_envelope(&IssueEnvelope::Error {
             slug: &slug,
             message: &format!(
-                "manual arbitration required for '{}'. Review .aw/issues/open/{}.md# Reviews and run one of: \
-                 `aw wi merge --slug {}` (force-merge), \
+                "manual arbitration required for '{}'. Review the temp issue working copy's Reviews section and run one of: \
                  `aw wi close <id>` (reject-close), or \
-                 `aw wi arbitrate --slug {} --send-back` (one more author pass).",
-                slug, slug, slug, slug
+                 `aw wi arbitrate --slug {} --send-back` (one more author pass). \
+                 There is no force-approve command yet; a human must edit the WI's phase/labels directly to force it forward.",
+                slug, slug
             ),
         })?;
         return Ok(());
