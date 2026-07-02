@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T10:45:50.933610+00:00"
-digest = "sha256:6255bdd4e7d3625ba58fd8ffaec5cbca17d33a9d820820e69916f827633fcec7"
-source_digest = "sha256:6255bdd4e7d3625ba58fd8ffaec5cbca17d33a9d820820e69916f827633fcec7"
-ir_digest = "sha256:c0ee97db7b4d56fe516fe99b911b58bf89cd49bf160c16161d4e111fcbf2861d"
+generated_at = "2026-07-02T13:56:14.758783+00:00"
+digest = "sha256:bb1f622eb4aecd961a9c393c4db31f45e63fb902c2138413d378e33bdfbbd698"
+source_digest = "sha256:bb1f622eb4aecd961a9c393c4db31f45e63fb902c2138413d378e33bdfbbd698"
+ir_digest = "sha256:3dfcd0905173735afa7b8f0b57d0e6869337ec55820f49d782dbc2decd8f816a"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5231,8 +5231,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/cb_fill.md"
-digest = "sha256:14172ffd30b49ea6f6d7363a1a04a3c28fcfd50d835ac349cc0779d2ae50ce1e"
-ir_digest = "sha256:15c5a2344f3e0ad4fc69fffe08f2f37129095810a303dbfff563e5d68bb1a64f"
+digest = "sha256:f151dfa624af491a6ec501b75afe19a29b750cab1096edbf6d369c59127d51a7"
+ir_digest = "sha256:4fe9a82be4394fe653f678333261ac5a741f039826cc3671377c656314343956"
 section_count = 2
 
 [[files]]
@@ -5381,8 +5381,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:bcf1ba38dd06fda3ad69f417a4080c1a33471b7d4801186046bdeef3f30d989c"
-ir_digest = "sha256:d427f214d0631493c992c9717e336d44b3b75c3b2429312b033964dad92f2b3a"
+digest = "sha256:4f57bd30040f8f9b9bb53f6cc764eeee2f5ee406fc33b6e2f30ae4f2c9fc21ce"
+ir_digest = "sha256:662a26d97f65760fd132a43c5c55df8d9cb960ae326b9d68610710aa68423a6e"
 section_count = 2
 
 [[files]]
@@ -5849,8 +5849,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_no_merge_test.md"
-digest = "sha256:acbf2060f268144e2c3e9b83026d63e6d9fb4974e5edf12dc37460559368bf98"
-ir_digest = "sha256:c4b8dd02e445ea23585bd12813dc61b2ba4fd1fce77f46c2ad57c827284da9b1"
+digest = "sha256:31990f581f4c3968b9bd6aaa4a455d8fa6ada7969ee80c44457ff83808140eb0"
+ir_digest = "sha256:d0be4f81dd3ca0f9df5d3c2d9452b939bfa06f058c7ec131150b966d9c74d0a2"
 section_count = 2
 
 [[files]]
