@@ -9,12 +9,11 @@
 # case = "realpath__filename_as_PathLike_wrong"
 # subject = "posixpath.realpath(filename: PathLike)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed filename
 # mamba-strict-type: TypeError
 """Type wall: posixpath.realpath(filename: PathLike); call it with the wrong type.
 

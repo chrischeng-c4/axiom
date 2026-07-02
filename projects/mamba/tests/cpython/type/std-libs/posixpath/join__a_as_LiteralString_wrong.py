@@ -9,12 +9,11 @@
 # case = "join__a_as_LiteralString_wrong"
 # subject = "posixpath.join(a: LiteralString)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed a
 # mamba-strict-type: TypeError
 """Type wall: posixpath.join(a: LiteralString); call it with the wrong type.
 

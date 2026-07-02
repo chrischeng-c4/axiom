@@ -9,12 +9,11 @@
 # case = "normcase__s_as_AnyOrLiteralStr_wrong"
 # subject = "posixpath.normcase(s: AnyOrLiteralStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed s
 # mamba-strict-type: TypeError
 """Type wall: posixpath.normcase(s: AnyOrLiteralStr); call it with the wrong type.
 

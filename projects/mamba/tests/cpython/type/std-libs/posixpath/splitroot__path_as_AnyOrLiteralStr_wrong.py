@@ -9,12 +9,11 @@
 # case = "splitroot__path_as_AnyOrLiteralStr_wrong"
 # subject = "posixpath.splitroot(path: AnyOrLiteralStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: posixpath.splitroot(path: AnyOrLiteralStr); call it with the wrong type.
 
