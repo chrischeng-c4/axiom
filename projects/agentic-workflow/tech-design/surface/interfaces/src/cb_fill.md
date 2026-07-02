@@ -1079,6 +1079,31 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
         .collect()
 }
 
+// Resolve the WI's touched file set: the union of the branch diff against
+// base (`branch_changed_files`) and `extra_scope` (typically a WI's own TD
+// `## Changes` paths), sorted and deduplicated. Repo-root-relative,
+// matching both `HandwriteMarkerEntry.source_path` and the paths a
+// managed-inventory scan reports.
+///
+// Issue #932 (touched-scope standardization gate): extracted from
+// `run_cb_check_gate_scoped` so a second caller (the terminal
+// standardization check in `cb.rs`) can consume the same touched-file set
+// the marker gate computes, without re-deriving the branch-diff ∪
+// Changes-paths union itself. `run_cb_check_gate_scoped` below now calls
+// this instead of inlining the union.
+///
+// @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
+pub(crate) fn resolve_touched_scope(worktree_abs: &Path, extra_scope: &[String]) -> Vec<String> {
+    let base = resolve_base_branch();
+    let changed = branch_changed_files(worktree_abs, &base);
+
+    let mut scope: Vec<String> = changed.into_iter().collect();
+    scope.extend(extra_scope.iter().cloned());
+    scope.sort();
+    scope.dedup();
+    scope
+}
+
 // Run code-check semantics against the worktree as a gate. Returns Ok(())
 // when no slug-introduced markers remain, Err(msg) on findings or
 // invocation error.
@@ -1113,13 +1138,7 @@ pub(crate) async fn run_cb_check_gate_scoped(
     worktree_abs: &Path,
     extra_scope: &[String],
 ) -> std::result::Result<(), String> {
-    let base = resolve_base_branch();
-    let changed = branch_changed_files(worktree_abs, &base);
-
-    let mut scope: Vec<String> = changed.into_iter().collect();
-    scope.extend(extra_scope.iter().cloned());
-    scope.sort();
-    scope.dedup();
+    let scope = resolve_touched_scope(worktree_abs, extra_scope);
 
     if scope.is_empty() {
         // No branch diff against base and no WI-scope file list to check
