@@ -364,6 +364,17 @@ except Exception as e:
 #   * NO concrete-scalar param     -> enforceable = false (nothing to check)
 # The row is still EMITTED in every case (documented negative / skip), exactly
 # like the PoC's b64encode/factorial guards — the hook reads `enforceable`.
+#
+# #887: each row ALSO carries `ret` — the callable's typeshed RETURN
+# annotation, closed to the same positive concrete scalars `check.rs`'s
+# `core_ty_to_type_id` maps to a real `Ty` (`Int`/`Float`/`Str`/`Bool`/
+# `None`; see `return_core_ty_of`). `ret` is INDEPENDENT of `enforceable`
+# (returns are fed into inference regardless of whether the call's ARGUMENTS
+# are enforceable — a zero-arg call like `os.getcwd()` is never enforceable
+# but its `str` return still matters) and deliberately narrower than the
+# param-position `CoreTy` map (no Bytes/List/Tuple/Dict/Type/Typed — those
+# are negative-scalar-wall concepts with no positive `Ty`, and class-typed
+# returns are out of scope; see the #887 issue thread).
 # --------------------------------------------------------------------------- #
 
 
@@ -634,6 +645,50 @@ _L3_FOLD_EXCLUDE: frozenset[tuple[str, str, str, str]] = frozenset({
     ("logging", "", "getLogger", "name"),
 })
 
+# Hand-pinned param CoreTy overrides that predate #887 and are NOT expressible
+# via `_L3_FOLD_EXCLUDE` (which only ever forces `Typed`). Same
+# compile-time-vs-runtime-catchable-TypeError rationale as `_L3_FOLD_EXCLUDE`,
+# but the target CoreTy differs per entry, so this is a direct
+# (module, qualifier, name, param) -> CoreTy override applied unconditionally
+# (regardless of the naturally-computed `ct`, including the `_L3_FOLD_EXCLUDE`
+# pass above) right before the enforceable/emit decision:
+#
+# - `sys.setswitchinterval.interval`: typeshed's bare `float` annotation would
+#   compute `CoreTy::Float`, but CPython's real implementation performs its own
+#   runtime check and raises a CATCHABLE `TypeError`/`ValueError` for a
+#   non-float `interval` (see `errors/std-libs/sys/setswitchinterval_str_raises.py`
+#   and `setswitchinterval_zero_raises.py`) that a full-`Float` compile-time wall
+#   would make unreachable. Pinned to `Typed` (bare-instance-only rejection).
+# - `linecache.getline.lineno`: typeshed's bare `int` would compute
+#   `CoreTy::Int`, but real callers pass runtime-validated values whose
+#   mistyped case must stay reachable at runtime. Pinned to `Unknown` (skip).
+# - `msilib.change_sequence.seq`: typeshed's `Sequence[...]`-ish annotation
+#   would compute `CoreTy::Typed`, but `type/std-libs/msilib/
+#   change_sequence__seq_as_Sequence_wrong.py` is an active `xfail` — mamba
+#   does not yet enforce this contract. Pinned to `Unknown` (skip).
+_PARAM_CORE_TY_OVERRIDE: dict[tuple[str, str, str, str], str] = {
+    ("sys", "", "setswitchinterval", "interval"): "Typed",
+    ("linecache", "", "getline", "lineno"): "Unknown",
+    ("msilib", "", "change_sequence", "seq"): "Unknown",
+}
+
+# #887 regen fallout: typeshed renamed the public `typing_extensions.Sentinel`
+# class to a lowercase `sentinel` implementation class, re-exported via a
+# module-level `Sentinel = sentinel` alias assignment (PEP 661, guarded by a
+# `sys.version_info >= (3, 15)` branch that swaps in `from builtins import
+# sentinel as sentinel` on 3.15+). This walker only understands `ClassDef` /
+# `FunctionDef` nodes, not alias `Assign` statements, so the class rows land
+# under qualifier `"sentinel"` and the public constructor call site
+# (`from typing_extensions import Sentinel; Sentinel(...)`, matched by the
+# call-site's literal imported name) no longer resolves. Rename the qualifier
+# back to the real public name for this one class so the existing
+# `type/std-libs/typing_extensions/Sentinel__init__name_as_str_wrong.py` wall
+# stays reachable — this is a qualifier rename, not a scope change (#887 is
+# only ret-modeling); a general alias-assignment walk is out of scope here.
+_QUALIFIER_ALIAS: dict[tuple[str, str], str] = {
+    ("typing_extensions", "sentinel"): "Sentinel",
+}
+
 
 def _union_core_ty(members: list[ast.expr]) -> str:
     """L2/L3 fold. Unknown the moment any non-`None` member is Unknown (a bare
@@ -766,6 +821,42 @@ def core_ty_of(node: ast.expr | None) -> str:
     return "Unknown"
 
 
+# #887: closed RETURN-position scalar map. Deliberately much narrower than
+# `SCALAR_CORE_TY` (params): a return type is fed FORWARD into inference at
+# every call site, so only the CoreTy variants `check.rs::core_ty_to_type_id`
+# maps to a real concrete `Ty` (`Int`/`Float`/`Str`/`Bool`) are safe to emit —
+# anything else has no positive `Ty` representation (`Bytes`/`Complex`/
+# `List`/`Tuple`/`Dict`/`Type`/`Typed` are NEGATIVE scalar-wall concepts, used
+# only to reject an impossible concrete arg, never to positively assert a
+# result's type). `None` is handled separately below (a literal `-> None`
+# return, not a bare annotation lookup).
+_RETURN_SCALAR_CORE_TY = {
+    "int": "Int",
+    "float": "Float",
+    "str": "Str",
+    "bool": "Bool",
+}
+
+
+def return_core_ty_of(node: ast.expr | None) -> str:
+    """Map a typeshed RETURN annotation to a closed, positively-assertable
+    CoreTy: bare `int`/`float`/`str`/`bool` and a literal `-> None` return map
+    to their concrete CoreTy (`core_ty_to_type_id` gives each of these a real
+    `Ty`); every richer annotation (Optional, Union, generics, nominal
+    classes/protocols, containers, or no annotation at all) stays `Unknown` so
+    the call-site hook never feeds a speculative type into inference — only
+    ADDS a concrete return type on a closed, false-positive-clean set. Class-
+    typed returns (unlocking the Method-receiver factory pattern) are out of
+    scope for this mapper; see #887's follow-up."""
+    if node is None:
+        return "Unknown"
+    if isinstance(node, ast.Constant) and node.value is None:
+        return "None"
+    if isinstance(node, ast.Name) and node.id in _RETURN_SCALAR_CORE_TY:
+        return _RETURN_SCALAR_CORE_TY[node.id]
+    return "Unknown"
+
+
 def _collect_params(fn: ast.FunctionDef | ast.AsyncFunctionDef, drop_first: bool):
     """Return (params, has_star) for a callable.
 
@@ -869,8 +960,12 @@ def _branch_v312(node, v312):
     yield node.orelse, (v312 and res is not True)
 
 
-def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True):
+def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True, ret="Unknown"):
     """Build a serializable signature row dict for the Rust table.
+
+    `qualifier` is passed through `_QUALIFIER_ALIAS` first (module-level
+    `Public = _impl` re-export aliases this walker doesn't track structurally
+    — see its docstring).
 
     An *all-scalar* star-free single-signature row is enforced in full. A row
     whose LEADING params are scalar but which is then interrupted by a non-scalar
@@ -880,7 +975,13 @@ def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True
     and the hook checks exactly those leading positions. Overloaded names and
     `*args` rows are never enforceable (which overload / where does positional
     alignment end?). A row with no leading scalar param is non-enforceable and
-    keeps its full param list for documentation."""
+    keeps its full param list for documentation.
+
+    `ret` (#887) is INDEPENDENT of `enforceable`: it is fed into the CALL
+    EXPRESSION's inferred type at the call site regardless of whether the
+    call's arguments are enforceable (a zero-arg call like `os.getcwd()` is
+    never `enforceable`, but its `str` return still must flow into
+    inference)."""
     # A sig is enforceable if it has ANY concrete-scalar param (not just a
     # LEADING run) and is neither `*args` nor overloaded. The ① hook walks params
     # in positional order and SKIPS Unknown params (`core_ty_to_type_id` -> None)
@@ -895,10 +996,15 @@ def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True
     # ordinary compatibility rule); a `Typed` protocol param is checked by the
     # bare-class rule. `core_ty_of` never emits anything else besides these and
     # `Unknown`, so "checkable" is exactly "not Unknown".
+    qualifier = _QUALIFIER_ALIAS.get((mod, qualifier), qualifier)
     if params:
         params = [
             (pn, "Typed") if (mod, qualifier, name, pn) in _L3_FOLD_EXCLUDE and ct != "Unknown"
             else (pn, ct)
+            for pn, ct in params
+        ]
+        params = [
+            (pn, _PARAM_CORE_TY_OVERRIDE.get((mod, qualifier, name, pn), ct))
             for pn, ct in params
         ]
     has_checkable = any(ct != "Unknown" for _name, ct in params)
@@ -913,6 +1019,7 @@ def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True
         has_star=has_star,
         enforceable=enforceable,
         v312=v312,
+        ret=ret,
     )
 
 
@@ -932,8 +1039,15 @@ def _walk_class_rust(body, mod, cls, counts, v312=True):
                 continue  # single-underscore private
             params, has_star = _collect_params(m, drop_first=not is_static)
             overloaded = counts.get((f"{mod}::{cls}", m.name), 0) >= 2
+            # #887: `__init__` is ALWAYS typeshed-annotated `-> None` (Python's
+            # own constructor contract), but a `Cls(...)` CALL actually
+            # produces an instance of `Cls` — feeding the literal `None`
+            # annotation into the call-site return type would be wrong (and
+            # class-typed construction returns are out of this issue's
+            # scope). Force `Unknown` for constructors specifically.
+            ret = "Unknown" if m.name == "__init__" else return_core_ty_of(m.returns)
             yield _sig_row(mod, cls.split(".")[0], m.name, "Method",
-                           params, has_star, overloaded, v312)
+                           params, has_star, overloaded, v312, ret=ret)
         elif isinstance(m, ast.ClassDef):
             if not m.name.startswith("_"):
                 yield from _walk_class_rust(m.body, mod, f"{cls}.{m.name}", counts, v312)
@@ -950,7 +1064,8 @@ def _walk_module_rust(body, mod, counts, v312=True):
                 params, has_star = _collect_params(node, drop_first=False)
                 overloaded = counts.get((mod, node.name), 0) >= 2
                 yield _sig_row(mod, "", node.name, "ModuleFn",
-                               params, has_star, overloaded, v312)
+                               params, has_star, overloaded, v312,
+                               ret=return_core_ty_of(node.returns))
         elif isinstance(node, ast.ClassDef):
             if not node.name.startswith("_"):
                 yield from _walk_class_rust(node.body, mod, node.name, counts, v312)
@@ -1032,6 +1147,13 @@ def merge_overload_params(rows):
     base["params"] = merged
     base["has_star"] = has_star
     base["enforceable"] = (not has_star) and any(ct in _ENF_SCALARS for _, ct in merged)
+    # #887: same AGREEMENT rule for the return type — a real `@overload` chain
+    # only has ONE knowable return if every branch declares the SAME scalar;
+    # otherwise (a `logging.getLevelName`-style int|str-return split) the
+    # actual return depends on which overload the call site matched, which
+    # this table cannot know, so collapse to Unknown.
+    ret_values = {r.get("ret", "Unknown") for r in rows}
+    base["ret"] = next(iter(ret_values)) if len(ret_values) == 1 else "Unknown"
     return base
 
 
@@ -1061,12 +1183,16 @@ def render_rust() -> str:
         elif len(rs) == 1:
             seen[key] = rs[0]
         else:
-            row = dict(rs[0]); row["enforceable"] = False
+            # No branch is definitively 3.12-applicable (unresolvable version
+            # guard) AND more than one candidate exists — genuinely ambiguous,
+            # so neither the args NOR the return type are trustworthy.
+            row = dict(rs[0]); row["enforceable"] = False; row["ret"] = "Unknown"
             seen[key] = row
     ordered = [seen[k] for k in sorted(seen.keys())]
 
     n_total = len(ordered)
     n_enf = sum(1 for r in ordered if r["enforceable"])
+    n_ret = sum(1 for r in ordered if r.get("ret", "Unknown") != "Unknown")
 
     lines: list[str] = []
     lines.append(
@@ -1081,9 +1207,17 @@ def render_rust() -> str:
         "//! A row is `enforceable` only when it is non-overloaded, star-free, and\n"
         "//! every positional param is a concrete scalar — otherwise the hook skips\n"
         "//! it (skip-when-unsure, zero false positives on correct calls).\n"
+        "//!\n"
+        "//! #887: each row also carries `ret`, the callable's typeshed RETURN\n"
+        "//! annotation closed to the concrete positive scalars (`Int`/`Float`/\n"
+        "//! `Str`/`Bool`/`None`) that `check.rs::core_ty_to_type_id` maps to a real\n"
+        "//! `Ty` — fed into inference at the call site (independent of\n"
+        "//! `enforceable`, which governs ARGUMENT checking only). Everything richer\n"
+        "//! (Optional/Union/generics/nominal classes/no annotation) is\n"
+        "//! `CoreTy::Unknown`, which the call-site hook skips — never guessed.\n"
         f"//!\n"
         f"//! rows: {n_total}  ·  enforceable (scalar): {n_enf}  ·  "
-        f"unknown-skipped: {n_total - n_enf}\n"
+        f"unknown-skipped: {n_total - n_enf}  ·  concrete return: {n_ret}\n"
     )
     lines.append("")
     lines.append("use super::stdlib_sigs::{CoreTy, ParamSig, SigKind, StdlibSig};")
@@ -1107,6 +1241,7 @@ def render_rust() -> str:
         else:
             params_src = "&[]"
         enf = "true" if r["enforceable"] else "false"
+        ret = r.get("ret", "Unknown")
         lines.append("    StdlibSig {")
         lines.append(f'        module: "{_rust_str(r["module"])}",')
         lines.append(f'        qualifier: "{_rust_str(r["qualifier"])}",')
@@ -1114,6 +1249,7 @@ def render_rust() -> str:
         lines.append(f"        kind: {kind},")
         lines.append(f"        params: {params_src},")
         lines.append(f"        enforceable: {enf},")
+        lines.append(f"        ret: CoreTy::{ret},")
         lines.append("    },")
     lines.append("];")
     lines.append("")
@@ -1135,7 +1271,8 @@ def emit_rust(check: bool) -> int:
     RUST_SIGS_OUT.write_text(text, encoding="utf-8")
     n_total = text.count("    StdlibSig {")
     n_enf = text.count("        enforceable: true,")
-    print(f"wrote {RUST_SIGS_OUT}  ({n_total} sigs, {n_enf} enforceable)")
+    n_ret = n_total - text.count("        ret: CoreTy::Unknown,")
+    print(f"wrote {RUST_SIGS_OUT}  ({n_total} sigs, {n_enf} enforceable, {n_ret} concrete return)")
     return 0
 
 
