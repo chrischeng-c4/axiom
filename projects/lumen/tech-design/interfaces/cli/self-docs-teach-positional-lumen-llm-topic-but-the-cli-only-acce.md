@@ -96,25 +96,25 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Update the agent-facing module documentation to point at the convention-canonical `lumen llm --topic outline` entry point."
+    description: "Change the module-level agent entry hint from `lumen llm outline` to `lumen llm --topic outline` and annotate it to this TD."
   - path: projects/lumen/src/spec.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Change `llm_outline_md()` and nearby cross-topic references so every advertised detail topic uses `lumen llm --topic <topic>`."
+    description: "Update `llm_outline_md()` topic bullets and nearby cross-topic references from positional `lumen llm <topic>` to canonical `lumen llm --topic <topic>` text."
   - path: projects/lumen/README.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Update README capability surfaces from positional topic examples to `--topic` examples."
+    description: "Update README brief and Agent Offline Integration surfaces to show `lumen llm --topic ...` examples."
   - path: projects/lumen/tests/spec_cli.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Assert the outline publishes canonical `--topic` commands and does not advertise rejected positional topic commands."
+    description: "Add #824 `@spec` regression assertions for canonical outline topic examples and absence of rejected positional examples."
   - path: projects/lumen/tests/cli_convention.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Run each topic command shape advertised by `llm_outline_md()` through the built lumen binary parser."
+    description: "Add #824 `@spec` binary smoke coverage that each advertised topic command parses through the built `lumen` binary."
 ```
