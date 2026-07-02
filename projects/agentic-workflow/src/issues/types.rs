@@ -324,13 +324,25 @@ pub mod td_phase {
     pub const LEGACY_TD_GEN_CODED: &str = "td_gen_coded";
 
     /// Normalize a phase string to its canonical form. Maps the legacy
-    /// `td_gen_coded` alias to `cb_genned`; passes everything else
-    /// through unchanged.
+    /// `td_gen_coded` alias to `cb_genned`, migrates retired CRRR phases
+    /// to their nearest live linear-lifecycle equivalent, and passes
+    /// everything else through unchanged.
+    ///
+    /// Retired-phase migration (issue #850): `td_reviewed` predates the
+    /// CRRR collapse and is pre-gen, so it migrates to `td_created`
+    /// (consistent with the `aw td claim` write path, issue #843).
+    /// `cb_reviewed` / `cb_revised` / `cb_arbitrated` are all post-fill
+    /// CRRR states, so they migrate to `cb_filled` — ready for terminal
+    /// `aw td code-check`. Applied at issue-load/read sites (not at
+    /// write sites) so both on-disk and on-platform state self-heals
+    /// without a separate backfill pass.
     ///
     /// @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#schema
     pub fn normalize(phase: &str) -> &str {
         match phase {
             LEGACY_TD_GEN_CODED => CB_GENNED,
+            TD_REVIEWED => TD_CREATED,
+            CB_REVIEWED | CB_REVISED | CB_ARBITRATED => CB_FILLED,
             other => other,
         }
     }
@@ -431,6 +443,67 @@ pub mod td_phase {
             // Entry and terminal phases have no successor.
             assert_eq!(next_phase_command(TD_INITED), None);
             assert_eq!(next_phase_command(TD_MERGED), None);
+        }
+
+        // issue #850: td_reviewed predates the CRRR collapse and is a
+        // pre-gen phase, so it migrates to td_created and routes to
+        // `aw td gen` — never to a rejecting verb.
+        #[test]
+        fn retired_pre_gen_phase_normalizes_to_td_created() {
+            assert_eq!(normalize(TD_REVIEWED), TD_CREATED);
+            assert_eq!(next_phase_command(TD_REVIEWED), Some("aw td gen"));
+        }
+
+        // issue #850: cb_reviewed / cb_revised / cb_arbitrated are all
+        // post-fill CRRR states, so they migrate to cb_filled and route
+        // to the terminal `aw td code-check` — which now accepts them
+        // (closes the cb_reviewed dispatch-loop bug).
+        #[test]
+        fn retired_post_fill_phases_normalize_to_cb_filled() {
+            for phase in [CB_REVIEWED, CB_REVISED, CB_ARBITRATED] {
+                assert_eq!(normalize(phase), CB_FILLED, "phase: {phase}");
+                assert_eq!(
+                    next_phase_command(phase),
+                    Some("aw td code-check"),
+                    "phase: {phase}"
+                );
+                assert!(
+                    is_terminal_code_checkable(normalize(phase)),
+                    "phase: {phase}"
+                );
+            }
+        }
+
+        // issues #916 / #850: guard-consistency property. Every phase whose
+        // next_phase_command routes to `aw td code-check` must pass the
+        // terminal code-check phase guard once normalized — i.e. no phase
+        // in this table may route to a verb that rejects it. This is the
+        // regression proof that retired CRRR phases no longer dispatch
+        // into an unrecoverable ping-pong.
+        #[test]
+        fn every_code_check_routed_phase_passes_the_terminal_guard() {
+            const ALL_PHASES: &[&str] = &[
+                TD_INITED,
+                TD_CREATED,
+                TD_REVIEWED,
+                TD_REVISED,
+                CB_GENNED,
+                CB_FILLED,
+                CB_REVIEWED,
+                CB_REVISED,
+                CB_ARBITRATED,
+                TD_MERGED,
+                LEGACY_TD_GEN_CODED,
+            ];
+            for phase in ALL_PHASES {
+                if next_phase_command(phase) == Some("aw td code-check") {
+                    assert!(
+                        is_terminal_code_checkable(normalize(phase)),
+                        "phase '{phase}' routes to code-check but normalized form '{}' fails the terminal guard",
+                        normalize(phase)
+                    );
+                }
+            }
         }
     }
 }
