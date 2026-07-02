@@ -954,6 +954,27 @@ pub fn mb_file_fileno(handle: MbValue) -> MbValue {
     handle
 }
 
+/// Resolve a mamba `open()`-table file handle id to its genuine OS-level raw
+/// fd (#871: `mmap.mmap(fileno, ...)` needs a real fd for `libc::mmap`;
+/// `file.fileno()` returns the table id itself, not an `AsRawFd`-derived
+/// value, so this bypasses that surrogate). Returns `None` if `handle` is
+/// not a live table id.
+pub fn mb_file_raw_fd(handle: MbValue) -> Option<i32> {
+    use std::os::unix::io::AsRawFd;
+    let id = handle.as_int()?;
+    FILES.with(|files| {
+        let files = files.borrow();
+        let f = files.get(&(id as u64))?;
+        if let Some(ref w) = f.writer {
+            return Some(w.as_raw_fd());
+        }
+        if let Some(ref r) = f.reader {
+            return Some(r.get_ref().as_raw_fd());
+        }
+        None
+    })
+}
+
 /// file.isatty() — regular file handles are never terminals in this runtime.
 pub fn mb_file_isatty(handle: MbValue) -> MbValue {
     if mb_file_raise_if_closed(handle) {
