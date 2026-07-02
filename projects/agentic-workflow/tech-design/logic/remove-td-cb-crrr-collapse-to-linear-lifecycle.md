@@ -23,7 +23,7 @@ entry: inited
 nodes:
   inited: { kind: start, label: "td_inited: handle_create_milestone" }
   created: { kind: process, label: "td_created: next_phase_command -> aw td gen (was: aw td review)" }
-  genned: { kind: process, label: "cb_genned: next_phase_command -> aw cb fill" }
+  genned: { kind: process, label: "cb_genned: next_phase_command -> aw td fill" }
   filled: { kind: process, label: "cb_filled: next_phase_command -> aw td code-check (no review)" }
   gengate: { kind: decision, label: "run_gen_code: phase == td_created?" }
   mergegate: { kind: decision, label: "is_terminal_code_checkable: cb_genned | cb_filled?" }
@@ -70,7 +70,7 @@ requirements:
     verify: test
   linear_chain:
     id: R3
-    text: "next_phase_command encodes the linear chain: cb_genned -> aw cb fill, cb_filled -> aw td code-check."
+    text: "next_phase_command encodes the linear chain: cb_genned -> aw td fill, cb_filled -> aw td code-check."
     kind: functional
     risk: medium
     verify: test
