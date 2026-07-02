@@ -5,7 +5,7 @@ capability_refs:
   - id: td-cb-lifecycle-automation
     role: primary
     gap: remove-td-merge-command
-    claim: td-merge-command-removed
+    claim: remove-td-merge-command
     coverage: full
     rationale: "Regression tests prove the TD merge command is absent from the CLI surface and terminal lifecycle closure uses Cb-CodeCheck."
 ---
