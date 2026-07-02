@@ -12,6 +12,17 @@ complete unless `completion.workflow_complete=true`; `action=done` can mean only
 the current child root is complete and the envelope is asking you to inspect the
 parent.
 
+For Agentic Workflow itself (`agentic-workflow` / `aw`), do not run the full
+AW loop against its own repo, and do not turn `aw health` or `aw standardize`
+into a self-takeover gate: a broken lifecycle cannot be required to fix
+itself (self-deadlock). Self-AW hard-gates only the capability contract —
+CAPABILITIES.md work-roots with resolvable gap/claim ids and closing WI/TD
+refs. EC claim verification becomes a hard gate only once an EC inventory is
+actually configured for aw; until then it is advisory. Changes to aw itself
+land as direct commits with `Refs #<issue>` trailers plus capability
+work-root registration — the sanctioned self-hosting mode, not a lifecycle
+bypass.
+
 ### Workflow CLI
 
 | CLI | Use it for |

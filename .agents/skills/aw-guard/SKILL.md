@@ -45,6 +45,19 @@ It must preserve unrelated hooks and settings.
 - Guard does not replace EC/TD locks. Use `aw ec lock`, `aw td lock`, and their
   clean checks for artifact-source consistency.
 
+## HANDWRITE fill still works with guard on
+
+Guard scopes denial to the project's registered `path` / `td_path` /
+`cap_path` / workspace globs (see `GuardScope` in `src/cli/guard.rs`).
+`.aw/payloads/<slug>/...` lives at the repo root, outside every project's
+registered scope, so writing a HANDWRITE marker payload there is always
+allowed even with guard on. The `aw td fill <slug> --apply --marker <id>`
+call that actually merges the payload into the guarded HANDWRITE block runs
+as a Bash-invoked binary, not as an `Edit`/`Write`/`MultiEdit`/`NotebookEdit`/
+`apply_patch` tool call — guard's PreToolUse hook only intercepts those tool
+names, never Bash, so the merge is never denied. This is the intended
+"use the AW CLI lifecycle" path from the deny message, not a bypass.
+
 ## Hook Entry Point
 
 The generated hook command is:
