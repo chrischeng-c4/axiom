@@ -381,10 +381,7 @@ fn infer_arrow_function_type(node: Node, source: &str) -> Option<String> {
     let params_node = node
         .child_by_field_name("parameters")
         .or_else(|| find_child_by_kind(node, "formal_parameters"))?;
-    let params = node_text(params_node, source).trim();
-    if !arrow_parameters_are_explicitly_typed(params) {
-        return None;
-    }
+    let params = normalize_arrow_parameters_for_type(node_text(params_node, source).trim())?;
 
     let ret_node = node.child_by_field_name("return_type")?;
     let ret = node_text(ret_node, source);
@@ -400,7 +397,7 @@ fn infer_arrow_function_type(node: Node, source: &str) -> Option<String> {
     Some(format!("{type_params}{params} => {ret}"))
 }
 
-fn arrow_parameters_are_explicitly_typed(params: &str) -> bool {
+fn normalize_arrow_parameters_for_type(params: &str) -> Option<String> {
     let inner = params
         .trim()
         .strip_prefix('(')
@@ -408,22 +405,52 @@ fn arrow_parameters_are_explicitly_typed(params: &str) -> bool {
         .unwrap_or(params)
         .trim();
     if inner.is_empty() {
-        return true;
+        return Some("()".to_string());
     }
 
+    let empty_param_types = HashMap::new();
+    let mut normalized = Vec::new();
     for raw_param in split_top_level(inner, ',') {
-        let param_head = split_once_top_level(&raw_param, '=')
-            .map(|(left, _)| left)
-            .unwrap_or(raw_param.as_str());
-        let param = param_head.trim().trim_start_matches("...").trim();
+        let raw_param = raw_param.trim();
+        let is_rest = raw_param.starts_with("...");
+        let param_without_rest = raw_param.trim_start_matches("...").trim();
+        let (param_head, default_value) = split_once_top_level(param_without_rest, '=')
+            .map(|(left, right)| (left.trim(), Some(right.trim())))
+            .unwrap_or((param_without_rest, None));
+        let param = param_head.trim();
         if param.is_empty() {
             continue;
         }
-        if split_once_top_level(param, ':').is_none() {
-            return false;
+        if let Some((name, ty)) = split_once_top_level(param, ':') {
+            let name = name.trim();
+            let ty = ty.trim();
+            if name.is_empty() || ty.is_empty() {
+                return None;
+            }
+            let optional = name.ends_with('?') || default_value.is_some();
+            let name = name.trim_end_matches('?').trim();
+            if !is_identifier(name) {
+                return None;
+            }
+            let rest = if is_rest { "..." } else { "" };
+            let marker = if optional && !is_rest { "?" } else { "" };
+            normalized.push(format!("{rest}{name}{marker}: {ty}"));
+            continue;
         }
+        let Some(default_value) = default_value else {
+            return None;
+        };
+        if is_rest {
+            return None;
+        }
+        let name = param.trim_end_matches('?').trim();
+        if !is_identifier(name) {
+            return None;
+        }
+        let ty = infer_expression_type(default_value, &empty_param_types)?;
+        normalized.push(format!("{name}?: {ty}"));
     }
-    true
+    Some(format!("({})", normalized.join(", ")))
 }
 
 fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
@@ -451,7 +478,8 @@ fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
         if !is_supported_object_literal_key(key) {
             return None;
         }
-        let ty = infer_expression_type(value.trim(), &empty_param_types)?;
+        let ty = infer_arrow_function_type_from_text(value.trim())
+            .or_else(|| infer_expression_type(value.trim(), &empty_param_types))?;
         members.push(format!("    {key}: {ty};"));
     }
 
@@ -463,6 +491,49 @@ fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
 
 fn is_supported_object_literal_key(key: &str) -> bool {
     is_identifier(key) || is_string_literal(key) || is_number_literal(key)
+}
+
+fn infer_arrow_function_type_from_text(expr: &str) -> Option<String> {
+    let (left, _) = split_once_top_level_arrow(expr)?;
+    let (params, ret) = split_once_top_level(left, ':')?;
+    let params = normalize_arrow_parameters_for_type(params.trim())?;
+    let ret = ret.trim();
+    if ret.is_empty() {
+        return None;
+    }
+    Some(format!("{params} => {ret}"))
+}
+
+fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth -= 1,
+            '=' if depth == 0 && text[idx..].starts_with("=>") => {
+                return Some((&text[..idx], &text[idx + 2..]));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Build a function signature string (name + type params + params + return
@@ -1361,6 +1432,30 @@ mod tests {
         assert!(
             dts.contains("export declare const delay: (ms: number) => Promise<void>;"),
             "typed arrow const should synthesize a callable declaration type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_default_param_type() {
+        let src = "export const withDefault = (a: number, b = 6): number => a + b;\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const withDefault: (a: number, b?: number) => number;"),
+            "default-valued arrow param should synthesize an optional parameter type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_literal_function_property_type() {
+        let src = r#"export const _Table = {
+    rowNo: (idx: number, page: number, pageSize: number): number =>
+        idx + 1 + (page - 1) * pageSize,
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("rowNo: (idx: number, page: number, pageSize: number) => number;"),
+            "object literal function property should synthesize a callable property type, got:\n{dts}"
         );
     }
 
