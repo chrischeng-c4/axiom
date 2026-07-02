@@ -201,6 +201,44 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests/cli/tests"
+      - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "skip_unless_binaries"
+            kind: "function"
+            public: false
+          - name: "init_seed_repo"
+            kind: "function"
+            public: false
+          - name: "write_demo_changes_spec"
+            kind: "function"
+            public: false
+          - name: "seed_open_issue_at_phase"
+            kind: "function"
+            public: false
+          - name: "seed_stranded_terminal_issue"
+            kind: "function"
+            public: false
+          - name: "count_cb_code_check_trailer_commits"
+            kind: "function"
+            public: false
+          - name: "chain_liveness_claim_never_lands_on_deadlock_phase"
+            kind: "function"
+            public: false
+          - name: "chain_liveness_code_check_terminates_within_tick_budget"
+            kind: "function"
+            public: false
+          - name: "chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "tests"
+          domain: "projects/agentic-workflow/tests/cli/tests"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -791,6 +829,7 @@ tests:
       - path: "projects/agentic-workflow/tests/cli/tests/recovery_flow_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/standardize_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_namespace_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
@@ -842,6 +881,39 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
+    action: create
+    section: schema
+    description: |
+      #921 tier 2 (epic #914 slice G): a bounded-tick ("livelock = failure")
+      chain-liveness proof for the internal-lifecycle-verb layer (`aw td
+      claim`, `aw td code-check` via `LocalBackend`, matching
+      `td_no_merge_test.rs`'s established pattern), driving the real `aw`
+      binary. Three tests: `chain_liveness_claim_never_lands_on_deadlock_phase`
+      asserts a repeated `aw td claim --from-path` / `--force-rebase` loop
+      never reports the `td_reviewed` phase (#843's fixed claim-deadlock) and
+      converges on `td_created` within budget;
+      `chain_liveness_code_check_terminates_within_tick_budget` asserts a clean
+      `cb_filled` WI reaches `"action":"done"` in a single tick (code-check is
+      the lifecycle's terminal step);
+      `chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget`
+      seeds a WI exactly where #846's partial-terminal-failure left one
+      (phase already `td_merged`, no `Cb-CodeCheck` trailer commit landed yet)
+      and asserts the retry converges within budget, lands exactly one
+      trailer commit, and a second bounded-tick pass is an immediate,
+      idempotent no-op (no duplicate commit). #842 (the `td-<slug>` branch
+      never landing) already has dedicated coverage in
+      `td_no_merge_test.rs::test_code_check_lands_td_slug_branch_onto_main`
+      and is cross-referenced rather than duplicated. AC2's full
+      `completion.workflow_complete=true` proof via `aw wi run` is
+      deliberately out of scope here: that field lives on the root-driven
+      runner envelope (`cli/run.rs`), and `aw wi`'s public verbs require a
+      configured `github`/`gitlab` `issue_platform`/`repo_platform` in
+      `.aw/config.toml` (`issues::resolve_default_backend` rejects `local`
+      there by design), so it cannot be driven offline against a from-scratch
+      sandbox repo — the internal-verb layer proven here is where #842/#843/
+      #846 actually manifested and is where a regression would reappear.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
     action: modify
