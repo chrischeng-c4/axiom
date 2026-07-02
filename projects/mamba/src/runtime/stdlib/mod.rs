@@ -157,6 +157,7 @@ pub mod long_tail_mod;
 pub mod main_mod;
 pub mod marshmallow_mod;
 pub mod mimetypes_mod;
+pub mod mmap_mod;
 pub mod mock_mod;
 pub mod msgpack_mod;
 pub mod multiprocessing_mod;
@@ -421,6 +422,7 @@ pub fn register_stdlib() {
     site_mod::register();
     fileinput_mod::register();
     fcntl_mod::register();
+    mmap_mod::register();
     wsgiref_mod::register();
     xmlrpc_mod::register();
     dev_tools_mod::register();

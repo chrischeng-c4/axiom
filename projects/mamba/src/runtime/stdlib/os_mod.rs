@@ -2513,6 +2513,14 @@ pub fn mb_os_fd_path(fd: i64) -> Option<String> {
     FD_TABLE.with(|t| t.borrow().get(&fd).map(|entry| entry.path.clone()))
 }
 
+/// Resolve an `os.open()`-table fd id to its genuine OS-level raw fd (#871:
+/// `mmap.mmap(fileno, ...)` needs a real fd for `libc::mmap`; the table id
+/// handed back to Python is a surrogate, not an `AsRawFd`-derived value).
+pub fn mb_os_fd_raw_fd(fd: i64) -> Option<i32> {
+    use std::os::unix::io::AsRawFd;
+    FD_TABLE.with(|t| t.borrow().get(&fd).map(|entry| entry.file.as_raw_fd()))
+}
+
 /// os.open(path, flags, mode=0o777) → int fd. Honors O_CREAT/O_WRONLY/O_RDWR/
 /// O_TRUNC/O_APPEND/O_EXCL well enough for round-trip I/O tests.
 fn mb_os_open_fd(args: &[MbValue]) -> MbValue {
