@@ -239,7 +239,7 @@ pub struct ServingBackupSpec {
 #[serde(rename_all = "camelCase")]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct Autoscaling {
-    /// Floor (also the Deployment's apply-time replica count).
+    /// Floor (also the StatefulSet's apply-time replica count in HPA mode).
     pub min_replicas: i32,
     /// Ceiling.
     pub max_replicas: i32,
@@ -269,7 +269,7 @@ pub struct LumenStatus {
     /// The `.metadata.generation` this status reflects (drift detection).
     #[serde(default)]
     pub observed_generation: i64,
-    /// Ready serving replicas (from the Deployment status).
+    /// Ready serving replicas (from the StatefulSet status).
     #[serde(default)]
     pub serving_ready_replicas: i32,
     /// Desired serving replicas (HPA floor at apply, or the live count).

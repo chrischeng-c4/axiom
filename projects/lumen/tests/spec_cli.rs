@@ -321,6 +321,34 @@ fn llm_storage_documents_unconditional_statefulset_pvc() {
     }
 }
 
+/// #834: clusters that reconciled `<=0.4.9` with the Deployment-backed
+/// single-replica topology need an explicit handoff because `>=0.4.10`
+/// renders the same serving fleet name as a StatefulSet and the operator does
+/// not prune the stale different-kind Deployment automatically.
+#[test]
+fn llm_storage_documents_deployment_to_statefulset_upgrade_handoff() {
+    let storage = llm_storage_md();
+    for needle in [
+        "<=0.4.9",
+        ">=0.4.10",
+        "Deployment/<name>",
+        "StatefulSet/<name>",
+        "does not prune a stale child object",
+        "Apply the new CRD first",
+        "GET /admin/backup",
+        "Pause the old `<=0.4.9` operator reconciliation",
+        "kubectl -n <ns> scale deployment/<name> --replicas=0",
+        "kubectl -n <ns> delete deployment/<name> --wait=true",
+        "kubectl -n <ns> rollout status statefulset/<name>",
+        "Do not run both",
+        "independent WAL",
+        "does not copy a Deployment pod's filesystem",
+        "restore an admin backup",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
 /// #808 R1: the manual admin backup/restore procedure, the optional
 /// `spec.serving.backup` CRD field, and the `lumen backup` CLI verb must all
 /// be discoverable offline via `lumen llm --topic storage`.

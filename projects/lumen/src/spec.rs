@@ -548,6 +548,50 @@ consensus; it never changes whether the WAL is durable.
 - This regime, including the PVC, is unchanged from before `replicasPerShard:
   1` also started getting a StatefulSet.
 
+## Upgrading `<=0.4.9` Deployment-backed instances to `>=0.4.10` (#834)
+Lumen `<=0.4.9` rendered `spec.replicasPerShard: 1` serving fleets as an
+`apps/v1` `Deployment` named `<name>`. Lumen `>=0.4.10` renders the serving
+fleet as an `apps/v1` `StatefulSet` with the same `<name>`. Kubernetes treats
+those as different resources, and the shared operator only server-side-applies
+the currently rendered child objects; it does not prune a stale child object
+whose API kind changed. Applying the new operator/image alone can therefore
+leave the old `Deployment/<name>` beside the new `StatefulSet/<name>`.
+
+Use an explicit handoff for any cluster that already reconciled the CR with
+`<=0.4.9`:
+
+1. Apply the new CRD first if needed. This only updates the schema and is safe
+   before the workload handoff.
+2. Schedule write downtime and take an admin backup (`GET /admin/backup`) if
+   you need to carry data into the new PVC-backed StatefulSet.
+3. Pause the old `<=0.4.9` operator reconciliation, for example by scaling the
+   operator `Deployment/lumen-operator` to zero or pausing the GitOps rollout
+   that runs it. Otherwise the old operator or old HPA can recreate/scale the
+   serving Deployment while you are migrating.
+4. Stop the old serving workload before the `>=0.4.10` operator reconciles:
+
+   ```
+   kubectl -n <ns> scale deployment/<name> --replicas=0
+   kubectl -n <ns> delete deployment/<name> --wait=true
+   ```
+
+   Scaling first is reversible; deleting with `--wait=true` makes the handoff
+   boundary explicit.
+5. Deploy or unpause the `>=0.4.10` operator/image and let it create
+   `StatefulSet/<name>` plus the `raft-<name>-<ordinal>` PVCs.
+6. Wait for the new fleet before resuming traffic or writes:
+
+   ```
+   kubectl -n <ns> rollout status statefulset/<name>
+   ```
+
+Do not run both the old `Deployment/<name>` pods and the new
+`StatefulSet/<name>` pods behind the same Service. They have independent WAL /
+engine storage, and the operator does not copy a Deployment pod's filesystem
+or local WAL into the new StatefulSet PVC. If you must preserve data from the
+old Deployment-backed pod, restore an admin backup into the new pod or rebuild
+from your upstream source-of-truth before reopening writes.
+
 ## Snapshot / backup (#808)
 The durable `raft` PVC protects against pod reschedule/eviction/node loss,
 but it is not an off-node backup: it does not protect against a bad write, a
