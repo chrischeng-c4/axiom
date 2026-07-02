@@ -1,92 +1,112 @@
 ---
 name: aw:standardize
-description: Bring an existing project under AW ownership one bounded standardization tick at a time.
+description: Bring an existing project under AW ownership using the audit-first preservation protocol, then follow aw health for bounded remediation.
 user-invocable: true
 aliases: [aw:standardize-run]
 ---
 
 # /aw:standardize
 
-Human-facing entrypoint for adopting, migrating, or standardizing an existing
-project under Agentic Workflow ownership. The user asks for the outcome; the
-agent uses `aw standardize ...` CLI commands as the bounded protocol surface.
+Human-facing entrypoint for adopting or standardizing an existing project
+under Agentic Workflow ownership. The user asks for the outcome; the agent
+uses `aw standardize audit` plus `aw health`-routed worker verbs as the
+bounded protocol surface.
 
-AW standardization has four layers:
-
-- `capability`: product-control layer. README capability roots use Markdown tables and can feed `aw capability run --project`.
-- `managed`: adoption layer. Every in-scope source file has `CODEGEN` or `HANDWRITE`.
-- `semantic`: coverage layer. Source IR is mapped to semantic TD sections and generator primitive gaps.
-- `regenerable`: automation-maturity layer. `HANDWRITE` shrinks as generator primitives mature, but this is not a production-readiness gate unless a capability explicitly declares it.
+`aw standardize` is reduced to the audit-first preservation protocol
+(`audit check` / `audit record`); it is not a parent-workflow loop driver.
+Project readiness metrics -- capability, managed, semantic, traceability,
+command traceability, and regenerable maturity, plus cb/cold verify and
+configured test gates -- live entirely in `aw health`, and `aw health`'s
+`next.command` already names the exact worker verb to run next
+(`aw td promote <target>`, `aw td code-claim <path>`, `aw td gen <slug>` /
+`aw td code-check <slug>`, `aw wi create ...`, `aw capability run --project
+<p>`, ...). There is no `aw standardize` layer-driver subcommand (`managed`,
+`semantic`, or `traceability`) anymore.
 
 ## Workflow
 
 1. Resolve the project from the prompt, current branch, or `.aw/config.toml`.
-2. Run:
+2. Run the audit-first preservation check before any remediation:
    ```bash
-   aw standardize capability run <project> --max-ticks 1 --json
+   aw standardize audit check --project <project>
    ```
-3. If `completion.complete=false`, inspect `completion.missing` and
-   `next_action.command`, do one bounded tick, and rerun `capability run`. Do
-   not proceed to managed standardization until capability completion is true.
-4. When capability has no deterministic next action, run:
+   If `audit_required=true`, record the preservation baseline once:
    ```bash
-   aw standardize managed run <project> --non-interactive --json
+   aw standardize audit record --project <project>
    ```
-5. If managed reports a deterministic next action, perform one bounded tick
-   and rerun `managed run`.
-6. When managed has no deterministic next action, run:
+   `surfaces_to_preserve` / `safe_levers` name the surfaces that must survive
+   remediation unchanged; treat them as guardrails for every later tick, not
+   optional advice.
+3. Run the project health report:
    ```bash
-   aw standardize semantic run <project> --non-interactive --json
+   aw health --project <project>
    ```
-7. If semantic reports a deterministic next action, perform one bounded tick
-   and rerun `semantic run`.
-8. When semantic has no deterministic next action, run the production gate:
-   ```bash
-   aw health --project <project> --verify-cold --json
-   ```
-9. If health reports `production_ready=false` or blockers, fix the reported
-   managed, semantic, cb verify, cold rebuild, stack, or workflow-lock gate and
-   rerun the layer that produced the blocker.
-10. When `production_ready=true`, the project can roll up as standardize-complete
-   even if `regenerable_percent < 100`. Run regenerability only as optional
-   automation-maturity work:
-   ```bash
-   aw standardize regenerable run <project> --non-interactive --json
-   ```
-11. If regenerable reports a deterministic next action, perform one bounded
-   maturity tick only when the user or capability asks for CODEGEN promotion.
-12. If any required layer reports a blocker, read `next_action` and do the mainthread
-   work directly:
-   - `capability-format-migration`: migrate YAML/legacy capability maps into Markdown tables.
-   - `fix_spec_rule`: edit the target TD spec until `aw td check <target>` passes.
-   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run `aw td code-check <target>`.
-   - `semantic_td_missing`: create or update the semantic TD only when AST/source evidence supports the claim.
-   - `generator_primitive_gap`: improve the generator primitive or open/update the work item that owns that gap.
-   - other blocked actions: answer the question in the envelope or make the indicated targeted edit.
-13. After each mainthread edit, rerun the layer that produced the blocker.
+4. Follow stdout exactly. If `completion.workflow_complete=true` (or
+   `production_ready=true`), stop. If `next.kind=run_command`, run the exact
+   `next.command` as one bounded tick, then rerun `aw health --project
+   <project>` to pick up the next `next.command`/`followups` entry.
+5. If a traceability blocker names a command or TD/source/CB edge, do one
+   bounded classification tick:
+   - For command blockers, decide `promote` by mapping command -> TD
+     `command_refs` -> README `capability_refs`, or `delete` by removing the
+     command from runtime, active docs, skills, templates, tests, and support
+     code.
+   - For TD/source/CB blockers, attach the edge to a capability-owned TD,
+     mark TDs `capability_scope: internal` only when no production
+     source/CB edge exists, or delete dead material.
+   - Do not bulk backfill unrelated TDs or commands.
+   Then rerun `aw health --project <project>`.
+6. When health reports `production_ready=true`, standardization can stop for
+   the current scope even if `regenerable_percent < 100`. Treat
+   regenerability as optional automation-maturity work unless the user or a
+   capability explicitly requires CODEGEN promotion; `aw health`'s
+   `followups` still lists any remaining regenerable-layer worker verb if the
+   user wants to keep going.
+7. If `next.command` is not obviously actionable, read `followups` /
+   `blockers` and do the mainthread work directly:
+   - `fix_spec_rule`: edit the target TD spec until `aw td check <target>`
+     passes.
+   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run
+     `aw td code-check <target>`.
+   - `semantic_td_missing` / `generator_primitive_gap`: create or update the
+     semantic TD only when AST/source evidence supports the claim, or open a
+     work item for the generator gap.
+   - `command_no_td_ref`: classify one command as promote/delete; promote by
+     adding a TD `command_refs` claim with valid `capability_refs`, or delete
+     it from the active surface.
+   - other blocked actions: answer the question in the envelope or make the
+     indicated targeted edit.
+8. After each mainthread edit, rerun `aw health --project <project>`.
 
 ## Rules
 
 - Do one bounded action at a time.
 - Do not skip verification after a mainthread edit.
-- Capability completion only means README root structure is runnable; it does
-  not imply source ownership or production readiness.
-- Capability standardize JSON completion is authoritative for this layer. A
-  `next_action.kind=none` without `completion.complete=true` is a blocker, not
-  a finished standardization layer.
+- `aw standardize audit` guardrails apply for the whole remediation loop: do
+  not remove or degrade a surface listed in `surfaces_to_preserve` while
+  chasing a health gap.
+- Capability completion only means README root structure is runnable; it
+  does not imply source ownership or production readiness.
 - Generated, vendored, or explicitly out-of-scope files still need binary
   ownership: use tracked `HANDWRITE` when the generator cannot produce them.
-- Managed completion only means ownership coverage; it does not imply semantic
-  completeness.
-- Semantic completion means no next deterministic Source IR -> TD coverage gap
-  remains without a human decision or generator design issue.
-- Production readiness is gated by capability, managed, semantic, cb verify,
-  cold verify, and unresolved blocker/HITL state. Regenerability percentage is
-  an automation-maturity signal, not a required 100% gate.
-- Regenerable completion means no next deterministic `HANDWRITE` -> `CODEGEN`
-  promotion remains; partial regenerability is acceptable when remaining gaps
-  are tracked or require generator design work.
-- Use `aw health --project <project> --json` to report `managed_percent`,
-  `semantic_percent`, `regenerable_percent`, `production_ready`, `next_gap`,
-  `blocked_gap_count`, `human_decision_required_count`, and optional
-  regenerability gaps.
+- Managed completion only means ownership coverage; it does not imply
+  semantic completeness.
+- Semantic completion means no next deterministic Source IR -> TD coverage
+  gap remains without a human decision or generator design issue.
+- Traceability completion means every active command, TD, source ref, and CB
+  block closes to at least one README capability unless the TD is valid
+  internal scope.
+- Production readiness is reported by `aw health`, not by `aw standardize`
+  itself. Health is gated by capability, managed, semantic, traceability, cb
+  verify, cold verify, configured test gates, and unresolved blocker/HITL
+  state. Regenerability percentage is an automation-maturity signal, not a
+  required 100% gate.
+- Regenerability maturity means deterministic `HANDWRITE` -> `CODEGEN`
+  promotions have been exhausted for the current generator surface; partial
+  regenerability is acceptable when remaining gaps are tracked or require
+  generator design work.
+- Use `aw health <project>` for the full metric surface: capability
+  readiness, `managed_percent`, `semantic_percent`, `traceability_percent`,
+  `command_traceability_percent`, `regenerable_percent`, cb verify, cold
+  verify, test gates, `production_ready`, `next_gap`, `blocked_gap_count`,
+  `human_decision_required_count`, and optional regenerability gaps.

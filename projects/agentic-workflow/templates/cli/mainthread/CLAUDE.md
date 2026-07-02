@@ -31,7 +31,7 @@ bypass.
 | `aw capability` | Product capability completion loop: `report`, `next`, `run`, and `check`; use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses `## Brief`, `## Capabilities`, `### Capability Index`, field-style capability contracts, and work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
 | `aw wi` | Work-item inventory and planning: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, and `fill-section`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. There is no `estimate`/`sprintize`; use `aw capability run --project <name>` as the run-to-end driver instead of cron-style sprint batches. |
 | `aw td` | Tech-design and code-artifact lifecycle. TD defines candidate implementation structure; capability and EC gates are the source of product truth. Primary verbs are `create`, `validate`, `check`, `ast`, `migrate-mermaid`, and `claim`; code-artifact verbs inherited by TD are `gen`, `gen-source`, `fill`, `code-check`, and `code-claim`. Terminal TD/CB completion is `code-check <slug>`. |
-| `aw standardize` | Existing-project takeover workflow and remediation guidance. `capability`, `managed`, `semantic`, `traceability`, and `regenerable` expose `report`, `next`, and `run` to drive bounded repair work; readiness metrics live in `aw health`. |
+| `aw standardize` | Existing-project takeover audit-first preservation protocol: `audit check` / `audit record`. Readiness layer metrics (`capability`, `managed`, `semantic`, `traceability`, `regenerable`) live entirely in `aw health`, whose `next.command` names the worker verb for the top gap. |
 | `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Use `--verify-traceability --verify-cb --verify-cold --verify-tests` when production readiness must be evaluated. |
 
 ### Support CLI
@@ -112,10 +112,14 @@ templates, and skills should not create them. Product explanation belongs in
 README capabilities or external docs; TD sections should exist only when they
 drive codegen, handwrite, or verification artifacts.
 
-Existing-project takeover uses `aw standardize` for bounded workflow guidance
-and `aw health` for the project-readiness metric surface.
+Existing-project takeover uses `aw standardize audit` (`check`/`record`) for
+the bounded preservation protocol and `aw health` for the project-readiness
+metric surface and remediation routing; `aw health`'s `next.command` names
+the concrete worker verb for the top gap directly (`aw td promote <target>`,
+`aw td code-claim <path>`, `aw td gen`/`aw td code-check`, `aw wi create ...`,
+`aw capability run --project <p>`, ...) instead of a layer-driver subcommand.
 
-Standardize workflow layers:
+Project health readiness layers:
 
 - `capability`: README capability roots are Markdown-table runnable.
 - `managed`: every in-scope file is marked `CODEGEN` or `HANDWRITE`.
