@@ -798,6 +798,19 @@ fn resolve_health_project_name(project_root: &std::path::Path, requested: &str) 
     )
 }
 
+/// True for Agentic Workflow's own self-hosted health run (project-aw
+/// implementing the lifecycle it also runs on). Self-AW must not be
+/// hard-gated by the machinery it implements (a broken lifecycle cannot be
+/// required to fix itself; see #843/#850). Under this mode:
+/// - the capability contract (work-roots with resolvable gap/claim ids and
+///   closing refs) is the sole unconditional hard gate;
+/// - managed/semantic/traceability/cb/cold/test coverage are advisory notes,
+///   never blockers;
+/// - EC claim verification is a hard axis ONLY once an EC inventory is
+///   actually configured (`report.ec.command_count > 0`, i.e. verification
+///   has actually resolved and run real commands). Until then EC renders as
+///   an advisory note like the other axes and never routes `next.command` to
+///   `--verify-ec` (see `apply_ec_to_report` and `build_claim_closure_report`).
 pub(crate) fn project_health_caps_ec_only(project: &str) -> bool {
     matches!(project, "agentic-workflow" | "aw")
 }
@@ -2053,6 +2066,21 @@ fn project_health_capability_axis(report: &ProjectHealthReport) -> serde_json::V
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    // Self-AW (#934): EC is advisory (like the td axis above) until a real
+    // command surface has actually been configured and evaluated.
+    // `apply_ec_to_report` already downgrades the underlying status to
+    // `NotEvaluated` in this case; render it as the same literal "advisory"
+    // status the other self-AW axes use instead of the raw enum value.
+    if project_health_caps_ec_only(&report.project) && report.ec.command_count == 0 {
+        return serde_json::json!({
+            "status": "advisory",
+            "verified": report.ec.verify_evaluated,
+            "lock_status": report.ec.lock_status,
+            "lock_clean": report.ec.lock_clean,
+            "passed_commands": report.ec.passed_count,
+            "command_count": report.ec.command_count,
+        });
+    }
     serde_json::json!({
         "status": &report.ec.status,
         "verified": report.ec.verify_evaluated,
@@ -2595,7 +2623,10 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     if !project_health_missing_evaluations(report).is_empty() {
         return Some(format!("aw health --project {} full", report.project));
     }
-    Some(format!("aw run --project {} --max-ticks 1", report.project))
+    Some(format!(
+        "aw capability run --project {} --non-interactive --max-ticks 1",
+        report.project
+    ))
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -2928,6 +2959,7 @@ pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Resul
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bool) -> Result<()> {
+    let caps_ec_only = project_health_caps_ec_only(&report.project);
     let summary = crate::cli::ec::project_ec_check_summary(&report.project)?;
     let mut ec_report = ProjectEcGateReport::from_check(summary);
     let lock_status = crate::cli::ec::project_ec_lock_status(&report.project)?;
@@ -2969,7 +3001,11 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
             ec_report.findings.push(finding.clone());
             ec_report.status = ProjectEcGateStatus::NotConfigured;
             ec_report.note = Some(finding.clone());
-            block_health_report(report, format!("ec verify: {finding}"));
+            // Self-AW (#934): an empty EC inventory is not yet "configured",
+            // so it stays advisory instead of hard-blocking production.
+            if !caps_ec_only {
+                block_health_report(report, format!("ec verify: {finding}"));
+            }
         } else {
             let Some((_inventory_path, manifest)) =
                 crate::cli::ec::load_project_ec_manifest(&report.project)?
@@ -3074,6 +3110,29 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
         }
     }
 
+    // Self-AW (#934): EC becomes a hard axis only once a real command
+    // surface has actually been configured and evaluated
+    // (`ec_report.command_count > 0`). Until then, downgrade a
+    // not-yet-configured/not-yet-verified status to `NotEvaluated` so it
+    // renders as an advisory note (like managed/semantic/cb/cold in this
+    // mode) and so `next.command` routing never targets `--verify-ec` for a
+    // gate that was never asked to run. A configured inventory
+    // (`command_count > 0`) or a real EC lock/check failure is unaffected —
+    // those keep blocking exactly as before.
+    if caps_ec_only
+        && ec_report.command_count == 0
+        && matches!(
+            ec_report.status,
+            ProjectEcGateStatus::NotConfigured | ProjectEcGateStatus::NotVerified
+        )
+    {
+        ec_report.status = ProjectEcGateStatus::NotEvaluated;
+        ec_report.note = Some(format!(
+            "EC is advisory for `{}` self-health; no configured EC command surface has been verified yet. Capability contract integrity is the unconditional gate; run `aw health --project {} --verify-ec` to opt into EC verification.",
+            report.project, report.project
+        ));
+    }
+
     report.ec = ec_report;
     report.refresh_takeover_readiness();
     Ok(())
@@ -3133,7 +3192,7 @@ fn build_project_claim_closure_report(
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn build_claim_closure_report(
-    _project: &str,
+    project: &str,
     document: &crate::cli::capability::CapabilityDocument,
     td_refs: &[crate::cli::capability::TdCapabilityEvidence],
     manifest: Option<&crate::cli::ec::EcManifest>,
@@ -3141,6 +3200,15 @@ fn build_claim_closure_report(
     artifact_evidence_ready: bool,
     require_td_artifact_evidence: bool,
 ) -> ProjectClaimClosureReport {
+    // Self-AW (#934): EC "not evaluated" is a per-claim blocker only once
+    // the project actually owes a configured, verified EC command surface.
+    // For self-AW with no configured commands yet, EC stays advisory (see
+    // `apply_ec_to_report`) and must not gate claim closure; the
+    // "missing required production EC case" / "no required EC case passed
+    // verification" checks below are unaffected — those are structural
+    // claim-closure gaps, not "hasn't been verified yet" gaps.
+    let ec_not_evaluated_blocks_claims =
+        !(project_health_caps_ec_only(project) && ec_report.command_count == 0);
     let ec_cases = manifest
         .map(|manifest| manifest.cases.as_slice())
         .unwrap_or(&[]);
@@ -3257,7 +3325,9 @@ fn build_claim_closure_report(
                 blockers.push("missing required production EC case".to_string());
             }
             if !ec_report.verify_evaluated {
-                blockers.push("EC verify not evaluated".to_string());
+                if ec_not_evaluated_blocks_claims {
+                    blockers.push("EC verify not evaluated".to_string());
+                }
             } else if passing_ec_case_ids.is_empty() {
                 blockers.push("no required EC case passed verification".to_string());
             }
@@ -4610,6 +4680,113 @@ mod tests {
 
         assert_eq!(report.closed_claim_count, 1);
         assert!(report.blockers.is_empty());
+    }
+
+    fn ec_report_unverified(project: &str, status: ProjectEcGateStatus) -> ProjectEcGateReport {
+        ProjectEcGateReport {
+            evaluated: true,
+            check_clean: true,
+            verify_evaluated: false,
+            status,
+            note: None,
+            lock_status: Some(crate::cli::ec::EcLockState::Locked),
+            lock_clean: true,
+            lock_path: format!("projects/{project}/external-contracts/ec.lock"),
+            lock_ir_digest: Some("sha256:lock".to_string()),
+            locked_lock_ir_digest: Some("sha256:lock".to_string()),
+            inventory_path: format!("projects/{project}/aw.toml"),
+            expected_case_count: 1,
+            case_count: 1,
+            expected_tool_manifest_count: 0,
+            tool_manifest_count: 0,
+            command_count: 0,
+            passed_count: 0,
+            failed_count: 0,
+            findings: Vec::new(),
+            commands: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn claim_closure_self_ec_not_evaluated_is_advisory_without_configured_commands() {
+        // Self-AW (#934): with `command_count == 0` (never verified), the
+        // "EC verify not evaluated" per-claim blocker must not fire —
+        // callers pass `require_td_artifact_evidence: false` for caps_ec_only
+        // projects (see `build_project_claim_closure_report`).
+        let document = claim_document(true);
+        let case = ec_case("behavior");
+        let manifest = ec_manifest(vec![case]);
+        let ec_report = ec_report_unverified("agentic-workflow", ProjectEcGateStatus::NotEvaluated);
+
+        let report = build_claim_closure_report(
+            "agentic-workflow",
+            &document,
+            &[],
+            Some(&manifest),
+            &ec_report,
+            true,
+            false,
+        );
+
+        assert_eq!(report.claim_total, 1);
+        assert_eq!(report.closed_claim_count, 1);
+        assert!(report.blockers.is_empty());
+    }
+
+    #[test]
+    fn claim_closure_self_missing_ec_case_still_blocks_without_configured_commands() {
+        // Self-AW (#934): a structurally missing EC case is a capability
+        // contract gap, not a "not yet verified" gap — it must keep
+        // blocking even while EC verification itself stays advisory.
+        let document = claim_document(true);
+        let manifest = ec_manifest(Vec::new());
+        let ec_report = ec_report_unverified("agentic-workflow", ProjectEcGateStatus::NotEvaluated);
+
+        let report = build_claim_closure_report(
+            "agentic-workflow",
+            &document,
+            &[],
+            Some(&manifest),
+            &ec_report,
+            true,
+            false,
+        );
+
+        assert_eq!(report.closed_claim_count, 0);
+        assert!(report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("missing required production EC case")));
+        assert!(!report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("EC verify not evaluated")));
+    }
+
+    #[test]
+    fn claim_closure_non_self_ec_not_evaluated_still_blocks() {
+        // Non-self-AW projects are unaffected by #934: an unconfigured EC
+        // verify state keeps blocking claim closure exactly as before.
+        let document = claim_document(true);
+        let case = ec_case("behavior");
+        let manifest = ec_manifest(vec![case]);
+        let ec_report = ec_report_unverified("demo", ProjectEcGateStatus::NotVerified);
+
+        let report = build_claim_closure_report(
+            "demo",
+            &document,
+            &[td_claim_ref()],
+            Some(&manifest),
+            &ec_report,
+            true,
+            true,
+        );
+
+        assert_eq!(report.closed_claim_count, 0);
+        assert!(report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("EC verify not evaluated")));
     }
 
     fn ec_case(category: &str) -> crate::cli::ec::EcManifestCase {
