@@ -621,6 +621,47 @@ already at the desired size, PVCs whose `StorageClass` does not allow
 expansion, and shrink requests are reported but never mutated. It needs the
 `operator` Cargo feature (`--features operator`), the same feature gate as
 `lumen k8s operator run`.
+
+## Choosing an SSD-backed StorageClass for `raftStorage` (#810)
+`spec.serving.raftStorageClass` (`ServingSpec.raft_storage_class` in
+`crd.rs`) is a free-text Kubernetes StorageClass name. Leaving it unset does
+not mean "no StorageClass" — it means "cluster default," and on most managed
+Kubernetes offerings **the cluster default is not SSD-backed**. Raft/WAL
+write latency is sensitive to disk performance, so a deployer who cares
+about that latency should set `raftStorageClass` explicitly rather than
+relying on whatever the cluster's default happens to be.
+
+There is no `serving.ssd` boolean toggle and no operator-side
+cloud-provider detection — `raftStorageClass` is the sole mechanism, by
+design (see Non-goals below). The table below is informational reference
+only; verify the actual StorageClass names available on your cluster
+(`kubectl get storageclass`) before setting this field, since names and
+defaults vary by provider, region, and cluster version.
+
+| Provider | Common default (usually NOT SSD) | Example SSD-backed class(es) |
+|----------|-----------------------------------|-------------------------------|
+| GKE | `standard-rwo` (pd-balanced) | `premium-rwo`, `pd-ssd` |
+| EKS | `gp2` (older clusters) | `gp3` (tune `iops`/`throughput` parameters) |
+| AKS | `default`/`managed-csi` (Standard SSD tier) | `managed-csi-premium` |
+| Self-hosted / on-prem | varies by CSI driver — no universal default | ask your cluster operator; there is no cross-cluster naming convention |
+
+```yaml
+spec:
+  serving:
+    raftStorageClass: premium-rwo   # example: GKE SSD-backed class
+```
+
+### Non-goals: no `serving.ssd` toggle, no provider-detection
+A `serving.ssd: true` boolean that maps to a hard-coded per-provider
+StorageClass name was considered and explicitly rejected: cloud-provider
+SSD class names change and vary across regions/versions, a hard-coded
+mapping cannot know a given cluster's actual class names, it would not
+cover on-prem/self-hosted Kubernetes at all, and a silently-wrong guess is
+worse for a raft/WAL workload than no guess. A second toggle field
+competing with the existing free-text `raftStorageClass` would also add
+CRD validation ambiguity (which one wins if both are set?) for no real
+gain. `raftStorageClass` already lets a deployer set any StorageClass name
+they want — the fix here is this guidance, not new API surface.
 "#
     .to_string()
 }

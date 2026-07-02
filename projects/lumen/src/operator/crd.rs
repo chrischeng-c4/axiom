@@ -167,7 +167,14 @@ pub struct ServingSpec {
     #[serde(default = "default_raft_storage")]
     pub raft_storage: String,
     /// PVC StorageClass for the WAL/raft hard-state volume. Unset means
-    /// cluster default.
+    /// cluster default — which, on most managed Kubernetes offerings, is
+    /// **not** SSD-backed (e.g. GKE's default `standard-rwo` is
+    /// pd-balanced, not pd-ssd). Raft/WAL write latency is sensitive to
+    /// disk performance, so a deployer who cares about that latency should
+    /// set this field explicitly to an SSD-backed StorageClass name rather
+    /// than relying on the cluster default (see `lumen llm storage` for
+    /// example StorageClass names per common provider — informational
+    /// reference only, not a value validated or defaulted by this field).
     #[serde(default)]
     pub raft_storage_class: Option<String>,
     /// Optional scheduled backup (#808). When set, the operator renders a

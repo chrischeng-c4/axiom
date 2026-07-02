@@ -331,6 +331,31 @@ fn llm_storage_documents_resize_gap() {
     }
 }
 
+/// #810: `serving.raftStorageClass` unset means cluster default, which is
+/// commonly not SSD-backed (e.g. GKE's `standard-rwo`) — a deployer with a
+/// raft/WAL write-latency workload needs this called out explicitly, plus
+/// reference example StorageClass names per common provider, rather than
+/// only in the CRD field doc comment. Documentation-only: no `serving.ssd`
+/// toggle, no new CRD field.
+/// @spec projects/lumen/tech-design/logic/expose-ssd-as-a-simple-toggle-serving-ssd-instead-of-requiring-a.md
+#[test]
+fn llm_storage_documents_ssd_guidance() {
+    let storage = llm_storage_md();
+    for needle in [
+        "raftStorageClass",
+        "cluster default is not SSD-backed",
+        "standard-rwo",
+        "premium-rwo",
+        "pd-ssd",
+        "gp3",
+        "managed-csi-premium",
+        "kubectl get storageclass",
+        "serving.ssd",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
 #[test]
 fn llm_workflow_covers_the_integration_model() {
     let g = llm_workflow_md();
