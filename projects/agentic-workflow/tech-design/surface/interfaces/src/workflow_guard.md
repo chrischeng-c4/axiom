@@ -22,7 +22,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/workflow_guard.rs` ge
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `CB_LOCK_LABEL` | projects/agentic-workflow/src/cli/workflow_guard.rs | constant | pub | 18 |  |
-| `HookDecision` | projects/agentic-workflow/src/cli/workflow_guard.rs | enum | pub | 524 |  |
+| `HookDecision` | projects/agentic-workflow/src/cli/workflow_guard.rs | enum | pub | 534 |  |
 | `IssueLockView` | projects/agentic-workflow/src/cli/workflow_guard.rs | struct | pub | 167 |  |
 | `LOCK_LABEL` | projects/agentic-workflow/src/cli/workflow_guard.rs | constant | pub | 16 |  |
 | `TD_LOCK_LABEL` | projects/agentic-workflow/src/cli/workflow_guard.rs | constant | pub | 17 |  |
@@ -30,13 +30,13 @@ Public API manifest for `projects/agentic-workflow/src/cli/workflow_guard.rs` ge
 | `WorkflowProjection` | projects/agentic-workflow/src/cli/workflow_guard.rs | struct | pub | 114 |  |
 | `complete_issue_lock` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 297 | complete_issue_lock(project_root: &Path, issue_id: &str, owner: &str) -> Result<()> |
 | `create_issue_lock` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 275 | create_issue_lock(project_root: &Path, lock: &TransitionLock) -> Result<()> |
-| `guard_issue_mutation` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 382 | guard_issue_mutation(     project_root: &Path,     allowed: Option<(&str, &str)>, ) -> Result<()> |
-| `hook_posttooluse_workflow_apply` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 468 | hook_posttooluse_workflow_apply(     project_root: &Path,     payload: &Value, ) -> Result<HookDecision> |
-| `hook_pretooluse_workflow_guard` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 422 | hook_pretooluse_workflow_guard(     project_root: &Path,     payload: &Value, ) -> Result<HookDecision> |
-| `issue_locks` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 408 | issue_locks(project_root: &Path) -> Result<Vec<IssueLockView>> |
+| `guard_issue_mutation` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 392 | guard_issue_mutation(     project_root: &Path,     allowed: Option<(&str, &str)>, ) -> Result<()> |
+| `hook_posttooluse_workflow_apply` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 478 | hook_posttooluse_workflow_apply(     project_root: &Path,     payload: &Value, ) -> Result<HookDecision> |
+| `hook_pretooluse_workflow_guard` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 432 | hook_pretooluse_workflow_guard(     project_root: &Path,     payload: &Value, ) -> Result<HookDecision> |
+| `issue_locks` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 418 | issue_locks(project_root: &Path) -> Result<Vec<IssueLockView>> |
 | `new` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 51 | new(         issue_id: impl Into<String>,         owner: impl Into<String>,         expected_command: impl Into<String>,     ) -> Self |
 | `parse_projection` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 217 | parse_projection(body: &str) -> Option<WorkflowProjection> |
-| `record_issue_blocker` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 348 | record_issue_blocker(     project_root: &Path,     issue_id: &str,     owner: &str,     message: &str, ) -> Result<()> |
+| `record_issue_blocker` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 358 | record_issue_blocker(     project_root: &Path,     issue_id: &str,     owner: &str,     message: &str, ) -> Result<()> |
 | `unlock_projection_for_closed_issue` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 251 | unlock_projection_for_closed_issue(body: &str, issue_id: &str) -> Result<Option<String>> |
 | `upsert_projection` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 227 | upsert_projection(body: &str, projection: &WorkflowProjection) -> Result<String> |
 | `with_active_branch` | projects/agentic-workflow/src/cli/workflow_guard.rs | function | pub | 88 | with_active_branch(mut self, branch: impl Into<String>) -> Self |
@@ -352,7 +352,17 @@ pub async fn complete_issue_lock(project_root: &Path, issue_id: &str, owner: &st
         Some(issue) => issue,
         None => return Ok(()),
     };
-    if !issue.labels.iter().any(|l| l == LOCK_LABEL) && parse_projection(&issue.body).is_none() {
+    // Issue #859 part b: a caller (terminal `aw td code-check`) may have
+    // already folded the unlock into its own single IssuePatch (labels +
+    // projection body) before calling here for retry/legacy safety. Treat
+    // "no lock label AND (no projection, or a projection that is already
+    // unlocked)" as a true no-op so that common case does not spend a
+    // second local write + remote push confirming work already done.
+    let has_lock_label = issue.labels.iter().any(|l| l == LOCK_LABEL);
+    let projection_already_unlocked = parse_projection(&issue.body)
+        .map(|p| !p.locked)
+        .unwrap_or(true);
+    if !has_lock_label && projection_already_unlocked {
         return Ok(());
     }
     let mut projection = parse_projection(&issue.body).unwrap_or_else(|| WorkflowProjection {
