@@ -59,3 +59,35 @@ flowchart TD
     canonical --> gate[test outline commands parse through clap]
     gate --> done([agent self-onboarding commands are runnable])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: lumen-llm-topic-invocation-verification
+requirements:
+  canonical_outline_commands:
+    id: R1
+    text: "`llm_outline_md()` advertises topic detail commands only in the convention-canonical `lumen llm --topic <topic>` form."
+    kind: functional
+    risk: high
+    verify: test
+  parser_accepts_advertised_commands:
+    id: R2
+    text: "Every `lumen llm --topic <topic>` command shown by `llm_outline_md()` parses successfully through the built lumen binary."
+    kind: functional
+    risk: high
+    verify: test
+  positional_form_not_reintroduced:
+    id: R3
+    text: "`llm_outline_md()` does not advertise positional `lumen llm <topic>` commands that clap rejects."
+    kind: regression
+    risk: high
+    verify: test
+---
+flowchart TD
+    r1[R1 outline publishes --topic commands] --> v1{all detail topics present with --topic?}
+    r2[R2 advertised commands parse] --> v2{binary accepts each outline command?}
+    r3[R3 no positional topic docs] --> v3{no rejected positional command shown?}
+```
