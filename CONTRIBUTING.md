@@ -573,6 +573,50 @@ builds. Reference adopters: `projects/jet` and `projects/lumen`.
   to that same label. The group is named `issue` (**not** `report`), leaving
   domain `report` verbs (`jet report` = HTML **test** reports) untouched.
 
+## CLI convention: stdout tells the agent the next step
+
+> Every CLI's machine-readable output must tell the agent what happens next —
+> a runnable command, or an explicit "done" — so the agent never has to guess
+> **what now?** after a command finishes.
+
+A CLI's structured/terminal output (its JSON payload or fixed final stdout
+line — not incidental logs) **MUST** carry either (a) `next` — a command
+string the agent can execute verbatim, or (b) an explicit terminal marker
+meaning "done — report completion to the user." There is no third state: an
+output that is neither runnable nor terminal is a defect. Errors **MUST**
+carry a remediation next step too; the runnable-or-terminal rule applies on
+the failure path exactly as it does on success.
+
+Emitted commands **MUST** be executable, not aspirational: multi-level verbs
+must exist on the real clap surface and chain-required positionals/flags must
+be present. A `next` that doesn't resolve against the binary's own `--help`
+is worse than no `next` at all.
+
+The reference implementation is `aw`'s `aw.cli.v1` envelope
+(`projects/agentic-workflow/src/runtime/envelope.rs`): `invoke.command` names
+the command an agent runs next, `next.command` carries the workflow loop's
+next step, and `completion.workflow_complete=true` is the only terminal
+marker — `action=done` on one child root is not workflow completion by
+itself. Executability is enforced, not just documented:
+`projects/agentic-workflow/src/cli/chain.rs`
+(`validate_aw_command_string` + the `EMIT_REGISTRY` catalogue of every
+command-emitting site) re-parses each emitted string through the real
+`Commands` clap tree plus a chain-policy table of positionals that are
+clap-optional but semantically required. This is chain-conformance tier 1a
+(aw only, today); per-CLI rollout WIs cite this section and its enforcement
+pattern as their acceptance contract.
+
+Simple CLIs without a full envelope **MAY** use a lighter conforming form —
+a single `next` field in JSON output, or a fixed trailing stdout line. The
+wire format is free; the runnable-or-terminal semantics are not.
+
+`aw health` and this convention measure different things. `aw health` asks
+whether a project is *complete* (是否做完 — capability/managed/semantic/
+traceability coverage); this convention asks whether one command's output is
+*executable by the next agent* (轉不轉得動 — handoff, not completeness). A
+CLI can be 100% complete by `aw health` and still emit unchainable output,
+and vice versa.
+
 ## Project build and release contract
 
 Every project build skill and project `build.sh` must use the same two-mode
