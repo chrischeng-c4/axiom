@@ -9,12 +9,11 @@
 # case = "is_forking__argv_as_Sequence_wrong"
 # subject = "multiprocessing.spawn.is_forking(argv: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed argv"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/spawn.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed argv
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.spawn.is_forking(argv: Sequence); call it with the wrong type.
 

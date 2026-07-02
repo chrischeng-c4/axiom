@@ -9,12 +9,11 @@
 # case = "prepare__data_as_Mapping_wrong"
 # subject = "multiprocessing.spawn.prepare(data: Mapping)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/spawn.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed data
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.spawn.prepare(data: Mapping); call it with the wrong type.
 
