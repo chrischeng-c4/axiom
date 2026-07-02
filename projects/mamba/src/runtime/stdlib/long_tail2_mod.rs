@@ -907,6 +907,20 @@ pub fn register() {
         &[],
     );
     register_with(
+        "multiprocessing.sharedctypes",
+        &["SynchronizedBase", "SynchronizedArray", "SynchronizedString"],
+        &[
+            ("Array", dispatch_noop as *const () as usize),
+            ("RawArray", dispatch_noop as *const () as usize),
+            ("RawValue", dispatch_noop as *const () as usize),
+            ("Value", dispatch_noop as *const () as usize),
+            ("copy", dispatch_noop as *const () as usize),
+            ("synchronized", dispatch_noop as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    register_with(
         "multiprocessing.connection",
         &[
             "Connection",
