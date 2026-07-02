@@ -580,6 +580,328 @@ async fn test_code_check_lands_td_slug_branch_onto_main() {
         "idempotent retry must not add a duplicate Cb-CodeCheck trailer commit"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #847: the removed `aw td merge` "Bug 2" empty-implementation gate, wired
+// back into the terminal `aw td code-check` fresh-entry path (before the
+// phase-advancing `backend.update`, so a refusal leaves the issue untouched).
+// ---------------------------------------------------------------------------
+
+/// Seed a fresh git repo + empty `.aw/config.toml`, matching the setup the
+/// `#846` retry tests above use, minus the `td_merged` issue seed (fresh
+/// #847 tests seed their own issue at a pre-terminal phase).
+fn init_847_seed_repo(git: &std::path::Path, root: &std::path::Path) {
+    use std::process::Command;
+
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["init", "-b", "main"])
+        .status()
+        .expect("git init");
+    for (k, v) in [
+        ("user.email", "test@test"),
+        ("user.name", "test"),
+        ("commit.gpgsign", "false"),
+    ] {
+        Command::new(git)
+            .arg("-C")
+            .arg(root)
+            .args(["config", k, v])
+            .status()
+            .unwrap();
+    }
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    std::fs::create_dir_all(root.join(".aw")).unwrap();
+    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "seed"])
+        .status()
+        .unwrap();
+}
+
+/// Write a minimal TD spec at `.aw/tech-design/specs/demo.md` (the default
+/// `tech_design_path` fallback for an empty `.aw/config.toml`) whose
+/// `## Changes` section lists the given `(path, action)` entries, each
+/// `impl_mode: hand-written` so `aw td gen` would have emitted nothing —
+/// the exact "gen-code skipped" shape the gate detects.
+fn write_847_changes_spec(root: &std::path::Path, entries: &[(&str, &str)]) {
+    let mut yaml = String::from("changes:\n");
+    for (path, action) in entries {
+        yaml.push_str(&format!(
+            "  - path: {path}\n    action: {action}\n    impl_mode: hand-written\n"
+        ));
+    }
+    let content = format!(
+        "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n\
+         <!-- type: changes lang: yaml -->\n\n```yaml\n{yaml}```\n"
+    );
+    let spec_dir = root.join(".aw/tech-design/specs");
+    std::fs::create_dir_all(&spec_dir).unwrap();
+    std::fs::write(spec_dir.join("demo.md"), content).unwrap();
+}
+
+/// Seed an open issue at `phase` with no `td-<slug>` branch — the shape of a
+/// real `cb_genned`/`cb_filled` WI walking into `aw td code-check` for the
+/// first time (fresh entry, not the #846 retry path).
+async fn seed_847_open_issue(root: &std::path::Path, slug: &str, phase: &str) {
+    use agentic_workflow::issues::types::IssueType;
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![format!("phase:{}", phase)],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: Vec::new(),
+        phase: Some(phase.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed open issue");
+}
+
+/// AC1/AC3: a TD whose `## Changes` section lists N `create`/`modify` paths
+/// with **all** N missing from disk (the 0-of-N "gen-code skipped" signature)
+/// must refuse terminal code-check completion, naming the missing paths, and
+/// must not advance phase / close the issue.
+#[tokio::test]
+async fn test_code_check_refuses_when_all_changes_paths_missing() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(
+        root,
+        &[("src/demo.rs", "create"), ("src/demo2.rs", "create")],
+    );
+
+    let slug = "empty-impl-gate-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "0-of-N missing paths must refuse with an error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("refusing to complete code-check"),
+        "error message must explain the empty-implementation refusal, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("src/demo.rs") && stdout.contains("src/demo2.rs"),
+        "error message must name the missing paths, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::CB_FILLED),
+        "refused code-check must not advance phase past cb_filled"
+    );
+    assert_eq!(
+        count_cb_code_check_trailer_commits(&git, root),
+        0,
+        "refused code-check must not land a Cb-CodeCheck trailer commit"
+    );
+}
+
+/// AC1: `--allow-empty-impl` is the restored escape hatch — it skips the
+/// refusal (with a warning) and lets the same 0-of-N spec complete.
+#[tokio::test]
+async fn test_code_check_allow_empty_impl_skips_refusal() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+
+    let slug = "empty-impl-gate-override-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .arg("--allow-empty-impl")
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check --allow-empty-impl");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "code-check --allow-empty-impl should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "--allow-empty-impl must let the 0-of-N spec complete, got:\n{}",
+        stdout
+    );
+    assert!(
+        stderr.contains("--allow-empty-impl"),
+        "--allow-empty-impl must emit a warning line, got stderr:\n{}",
+        stderr
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "--allow-empty-impl must still advance phase to td_merged"
+    );
+}
+
+/// Partial presence (some but not all Changes paths exist) is warn-only and
+/// must not block completion — only the 0-of-N signature blocks.
+#[tokio::test]
+async fn test_code_check_partial_implementation_completes() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(
+        root,
+        &[("src/demo.rs", "create"), ("src/demo2.rs", "create")],
+    );
+    // Partial presence: one of the two declared paths actually exists.
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/demo.rs"), "// implemented\n").unwrap();
+
+    let slug = "empty-impl-gate-partial-test";
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED).await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "partial-presence code-check should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "partial presence must not block completion, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "partial presence must still advance phase to td_merged"
+    );
+}
 ```
 
 ## Changes
@@ -602,4 +924,9 @@ changes:
       target (`main`) — implementation commit reachable from main, trailer
       commit on main, `td-<slug>` deleted — and that a second run after the
       branch is already gone is an idempotent landing no-op.
+      Also covers #847: the restored empty-implementation "Bug 2" gate on the
+      terminal code-check fresh-entry path — a TD Changes section whose paths
+      are 0-of-N present on disk refuses completion and names the missing
+      paths; `--allow-empty-impl` overrides the refusal; partial presence
+      (some but not all paths present) is warn-only and still completes.
 ```
