@@ -156,6 +156,40 @@ fn test_unbound_method_receiver_contract_rejected() {
 }
 
 #[test]
+fn test_keyword_iskeyword_wall_is_deliberately_fixture_only() {
+    // #888 audit: keyword.iskeyword/issoftkeyword LOOK like a universal type
+    // contract (typeshed says `s: str`), but CPython's real runtime never
+    // raises for a wrong-typed arg -- `keyword.iskeyword(123)` legitimately
+    // returns `False` (ported 1:1 from CPython's own test_keyword.py as
+    // tests/cpython/behavior/std-libs/keyword/iskeyword_non_string_returns_false.py).
+    // Plain (non-strict) source must therefore keep accepting the call...
+    let errors = check("from keyword import iskeyword\niskeyword(12345)\n");
+    assert!(
+        errors.is_empty(),
+        "non-strict code must keep CPython-compatible iskeyword(non-str) semantics, got: {errors:?}"
+    );
+    let errors = check("from keyword import issoftkeyword\nissoftkeyword(12345)\n");
+    assert!(
+        errors.is_empty(),
+        "non-strict code must keep CPython-compatible issoftkeyword(non-str) semantics, got: {errors:?}"
+    );
+
+    // ...while the `type/`-dimension harness fixture (which opts in via
+    // `# mamba-strict-type:`) still gets mamba's stricter hypothetical wall.
+    let errors = check_strict_type_fixture("from keyword import iskeyword\niskeyword(12345)\n");
+    assert!(
+        errors.iter().any(|e| e.contains("expected `str`, got `int`")),
+        "strict-type fixture should still reject a non-str iskeyword arg, got: {errors:?}"
+    );
+
+    let errors = check("from keyword import iskeyword\niskeyword(\"match\")\n");
+    assert!(
+        errors.is_empty(),
+        "keyword.iskeyword should accept a correctly-typed str arg, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_return_type_mismatch() {
     // Use a genuinely incompatible return type (str). `bool` is a subtype
     // of `int` per CPython semantics (#1680), so `return True` from an
