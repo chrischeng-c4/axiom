@@ -1,7 +1,7 @@
 ---
 id: semantic-jet-wasm-complete-multi-target-readiness-phase-2-3
 summary: Reconcile Jet WASM multi-target readiness capability refs and evidence
-fill_sections: [logic, unit-test]
+fill_sections: [logic, unit-test, changes]
 capability_refs:
   - id: wasm-multi-target
     role: primary
@@ -86,4 +86,22 @@ requirement R3 {
   risk: Medium
   verifymethod: Test
 }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/README.md"
+    action: modify
+    section: capability
+    description: |
+      Reconcile the WASM And Multi-Target Execution capability by anchoring
+      wasm-multi-target-readiness evidence to real WI #818, keeping the Advanced
+      track production state partial until broad DOM/WASM parity is complete,
+      and replacing missing projects/jet/fixtures/** citations with real
+      tests/fixtures, parity, examples, or command-only gate evidence.
+    impl_mode: hand-written
 ```
