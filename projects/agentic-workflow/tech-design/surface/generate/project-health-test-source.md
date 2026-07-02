@@ -1301,7 +1301,14 @@ fn tracked_handwrite_generator_gap_does_not_block_semantic_readiness() {
 }
 
 #[test]
-fn authoritative_regenerability_gaps_block_project_health() {
+fn authoritative_regenerability_gaps_are_advisory_for_self_aw() {
+    // Self-AW carve-out (root CLAUDE.md, #934): agentic-workflow hard-gates
+    // only the capability contract (+EC once an inventory is configured).
+    // Regenerability stays generator-authoritative as a POLICY reading, but
+    // its gaps no longer block self-AW health — a broken lifecycle cannot be
+    // required to fix itself. The authority fields still report the policy;
+    // only the blocker projection is suppressed (project.rs caps_ec_only
+    // gate on regenerability_authority.blockers).
     let report = ProjectHealthReport::from_components(
         "agentic-workflow",
         managed(100.0, Vec::new()),
@@ -1313,16 +1320,14 @@ fn authoritative_regenerability_gaps_block_project_health() {
         ProjectTestGateReport::passed_fixture("true"),
     );
 
-    assert_eq!(report.status, ProjectHealthStatus::Blocked);
-    assert!(!report.production_ready);
+    assert_eq!(report.status, ProjectHealthStatus::Healthy);
     assert_eq!(
         report.regenerability_authority.authority,
         RegenerabilityAuthority::GeneratorAuthoritative
     );
     assert!(report.regenerability_authority.required_for_production);
     assert_eq!(report.regenerability_authority.gap_count, 1);
-    assert!(report.optional_regenerability_gaps.is_empty());
-    assert!(report
+    assert!(!report
         .blockers
         .iter()
         .any(|blocker| blocker.contains("regenerability required")));
@@ -1545,7 +1550,6 @@ fn preflight_gate(severity: PreFlightGateSeverity) -> PreFlightGate {
     }
 }
 // CODEGEN-END
-
 ```
 
 ## Changes
