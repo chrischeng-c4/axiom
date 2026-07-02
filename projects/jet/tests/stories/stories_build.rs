@@ -354,12 +354,15 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
   "name": "@tw-tech/shared-assets",
   "version": "1.0.0",
   "exports": {
-    "./images/empty-default.png": "./images/empty-default.png"
+    "./images/empty-default.png": {
+      "import": "./dist/images/empty-default.png",
+      "default": "./dist/images/empty-default.png"
+    }
   }
 }"#,
     );
     write(
-        root.join("node_modules/@tw-tech/shared-assets/images/empty-default.png"),
+        root.join("node_modules/@tw-tech/shared-assets/dist/images/empty-default.png"),
         "png-bytes",
     );
 
@@ -380,7 +383,7 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
     let result = build_stories_static(root, &out).expect("build");
 
     let svg_rel = Path::new("modules/src/components/error.svg");
-    let png_rel = Path::new("deps/@tw-tech/shared-assets/images/empty-default.png");
+    let png_rel = Path::new("deps/@tw-tech/shared-assets/dist/images/empty-default.png");
     assert!(out.join(svg_rel).is_file(), "SVG asset must be copied");
     assert!(out.join(png_rel).is_file(), "PNG asset must be copied");
     assert!(result.emitted.iter().any(|p| p == svg_rel));
@@ -394,7 +397,7 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
     );
     assert!(
         component.contains(
-            r#"const defaultImage = "../../../deps/@tw-tech/shared-assets/images/empty-default.png";"#
+            r#"const defaultImage = "../../../deps/@tw-tech/shared-assets/dist/images/empty-default.png";"#
         ),
         "bare PNG import should become a URL string into deps/: {component}"
     );

@@ -458,11 +458,13 @@ export { ReactComponent as SuccessCircleIcon } from "./icons/success.svg";
 
     let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
     assert!(
-        dts.contains("export { ReactComponent as ErrorCircleIcon } from \"./icons/error.svg\";")
-            && dts.contains(
-                "export { ReactComponent as SuccessCircleIcon } from \"./icons/success.svg\";"
-            ),
-        "entry declaration must preserve source-level SVG re-exports, got:\n{dts}"
+        dts.contains("import type { FC, SVGProps } from \"react\";"),
+        "entry declaration should import React component types, got:\n{dts}"
+    );
+    assert!(
+        dts.contains("export declare const ErrorCircleIcon: FC<SVGProps<SVGSVGElement>>;")
+            && dts.contains("export declare const SuccessCircleIcon: FC<SVGProps<SVGSVGElement>>;"),
+        "entry declaration must emit concrete SVG component exports, got:\n{dts}"
     );
     assert!(
         !dts.contains("SvgErrorCircleIcon") && !dts.contains("SvgSuccessCircleIcon"),
