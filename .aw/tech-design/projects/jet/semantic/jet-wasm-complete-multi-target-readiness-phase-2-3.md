@@ -18,49 +18,34 @@ capability_refs:
 
 ```mermaid
 ---
-id: jet-wasm-readiness-reconciliation
-entry: readme_wasm_claim
+id: jet-wasm-readiness-contract
+entry: audit_wasm_readme
 nodes:
-  readme_wasm_claim: { kind: start, label: "Read projects/jet/README.md WASM capability rows" }
-  stale_refs: { kind: decision, label: "Root WI refs include stale placeholders?" }
-  replace_refs: { kind: process, label: "Replace wasm-multi-target-readiness refs with #818" }
-  keep_refs: { kind: process, label: "Keep existing real WI refs" }
-  audit_maturity: { kind: process, label: "Audit maturity and production wording against gate evidence" }
-  higher_maturity: { kind: decision, label: "Existing gates prove higher maturity?" }
-  document_raised: { kind: process, label: "Document raised maturity with real gates and evidence" }
-  document_partial: { kind: process, label: "Keep partial maturity and name tracked follow-up" }
-  verify: { kind: process, label: "Run aw capability check/run for jet" }
-  reconcile_done: { kind: decision, label: "reconcile_wi_refs still points at wasm-multi-target-readiness?" }
-  accepted: { kind: terminal, label: "README capability reconciliation is applicable" }
+  audit_wasm_readme: { kind: start, label: "Audit WASM capability README rows and stale refs" }
+  remove_placeholders: { kind: process, label: "Ensure #3783/#4004/#4015/#4072 are not used as WASM readiness work roots" }
+  anchor_real_wi: { kind: process, label: "Anchor WASM readiness phase 2/3 rows to #818" }
+  replace_fixture_paths: { kind: process, label: "Use real test/parity/example evidence paths instead of missing projects/jet/fixtures paths" }
+  preserve_partial: { kind: process, label: "Keep Production partial until broad Advanced DOM/WASM parity is ready" }
+  verify_readme: { kind: process, label: "Run README stale-ref and missing-path checks" }
+  verify_aw: { kind: process, label: "Run aw capability check/run for jet" }
+  done: { kind: terminal, label: "WASM readiness claim reconciled" }
 edges:
-  - { from: readme_wasm_claim, to: stale_refs }
-  - { from: stale_refs, to: replace_refs, label: "yes" }
-  - { from: stale_refs, to: keep_refs, label: "no" }
-  - { from: replace_refs, to: audit_maturity }
-  - { from: keep_refs, to: audit_maturity }
-  - { from: audit_maturity, to: higher_maturity }
-  - { from: higher_maturity, to: document_raised, label: "yes" }
-  - { from: higher_maturity, to: document_partial, label: "no" }
-  - { from: document_raised, to: verify }
-  - { from: document_partial, to: verify }
-  - { from: verify, to: reconcile_done }
-  - { from: reconcile_done, to: readme_wasm_claim, label: "yes" }
-  - { from: reconcile_done, to: accepted, label: "no" }
+  - { from: audit_wasm_readme, to: remove_placeholders }
+  - { from: remove_placeholders, to: anchor_real_wi }
+  - { from: anchor_real_wi, to: replace_fixture_paths }
+  - { from: replace_fixture_paths, to: preserve_partial }
+  - { from: preserve_partial, to: verify_readme }
+  - { from: verify_readme, to: verify_aw }
+  - { from: verify_aw, to: done }
 ---
 flowchart TD
-    A[Read projects/jet/README.md WASM capability rows] --> B{Root WI refs include stale placeholders?}
-    B -- yes --> C[Replace wasm-multi-target-readiness refs with #818]
-    B -- no --> D[Keep existing real WI refs]
-    C --> E[Audit maturity and production wording against existing gate evidence]
-    D --> E
-    E --> F{Existing gates prove higher maturity?}
-    F -- yes --> G[Document raised maturity with real gate commands and real evidence paths]
-    F -- no --> H[Keep Smoke or partial maturity and name the remaining tracked follow-up]
-    G --> I[Run aw capability check/run for jet]
-    H --> I
-    I --> J{reconcile_wi_refs still points at wasm-multi-target-readiness?}
-    J -- yes --> A
-    J -- no --> K[TD is applicable as a README capability reconciliation change]
+    audit_wasm_readme[Audit WASM capability README rows and stale refs] --> remove_placeholders[Remove stale placeholder WI refs]
+    remove_placeholders --> anchor_real_wi[Anchor readiness rows to #818]
+    anchor_real_wi --> replace_fixture_paths[Replace missing fixture evidence with real paths]
+    replace_fixture_paths --> preserve_partial[Keep Production partial until broad Advanced parity is complete]
+    preserve_partial --> verify_readme[Run README stale-ref and missing-path checks]
+    verify_readme --> verify_aw[Run aw capability check/run]
+    verify_aw --> done([WASM readiness claim reconciled])
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
