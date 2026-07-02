@@ -4,15 +4,17 @@
 //!
 //! - [`llm`] — offline self-documentation (how do I drive this?)
 //! - [`upgrade`] — self-update from the tool's GitHub releases (am I current?)
-//! - [`issue`] — search, view, and file diagnostics-rich GitHub issues (what is
-//!   already reported, and how do I file it?)
+//! - [`issue`] — search, view, file, and comment on diagnostics-rich GitHub
+//!   issues; comments automatically reopen issues for post-closure verification
+//!   failures.
 //!
 //! The logic is parameterized by a [`ToolInfo`] the calling binary fills from
 //! its own build stamps, and is **clap-agnostic**: each CLI keeps its own clap
 //! registration (derive or builder) and calls these `run` functions. The
-//! network paths (`upgrade` install, `issue` search/view/create) live behind the
+//! network paths (`upgrade` install, `issue` search/view/create/comment`) live behind the
 //! `online` feature; the offline paths (`llm`, `upgrade --check` messaging,
-//! `issue create --dry-run` / pre-filled-URL fallback) always build.
+//! `issue create --dry-run` / pre-filled-URL fallback, `issue comment --dry-run`
+//! / manual-comment fallback) always build.
 
 pub mod issue;
 pub mod llm;

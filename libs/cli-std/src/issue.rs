@@ -7,6 +7,9 @@
 //!   file a GitHub issue (`POST /repos/{repo}/issues` via `GITHUB_TOKEN`), or
 //!   print a pre-filled `issues/new` URL when no token is available.
 //!   `--dry-run` prints without submitting.
+//! - [`comment`] — add a diagnostics-rich follow-up comment and ensure the
+//!   issue is open first, for downstream/user verification failures after
+//!   closure.
 //!
 //! Body assembly / URL pre-fill / repo resolution / payload shaping are pure and
 //! unit-tested; everything network-facing lives behind the `online` feature.
@@ -29,6 +32,22 @@ pub struct CreateOptions {
     pub repo: Option<String>,
     pub label: Vec<String>,
     pub dry_run: bool,
+    pub yes: bool,
+}
+
+/// Flags for `issue comment`.
+#[derive(Clone, Debug, Default)]
+pub struct CommentOptions {
+    /// Issue number to comment on.
+    pub number: u64,
+    /// Optional operator/user verification note. When empty, a standard
+    /// "verification failed after closure" note is used.
+    pub message: Option<String>,
+    /// Override the target repo (`owner/name`); defaults to `tool.repo`.
+    pub repo: Option<String>,
+    /// Print the comment request without changing GitHub state.
+    pub dry_run: bool,
+    /// Skip the confirmation prompt.
     pub yes: bool,
 }
 
@@ -75,6 +94,30 @@ pub fn issue_payload(title: &str, body: &str, labels: &[String]) -> serde_json::
     serde_json::Value::Object(map)
 }
 
+/// The GitHub issue update payload for reopening an issue.
+#[cfg(feature = "online")]
+fn reopen_payload() -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("state".into(), "open".into());
+    serde_json::Value::Object(map)
+}
+
+/// The GitHub issue-comment JSON payload.
+pub fn comment_payload(body: &str) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("body".into(), body.into());
+    serde_json::Value::Object(map)
+}
+
+/// Assemble the follow-up comment used by `issue comment`.
+pub fn followup_comment_body(tool: &ToolInfo, message: Option<&str>) -> String {
+    let message = message
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("User-side verification failed after closure; reopening for follow-up.");
+    assemble_body(Some(message), &render_diagnostics(tool, None))
+}
+
 /// A browser-openable pre-filled `issues/new` URL (title + body + labels
 /// percent-encoded). Labels are comma-joined into the `labels` query param so
 /// the convention's `project:<name>` tag survives the no-token fallback path.
@@ -85,7 +128,10 @@ pub fn prefilled_url(repo: &str, title: &str, body: &str, labels: &[String]) -> 
         percent_encode_query(body),
     );
     if !labels.is_empty() {
-        url.push_str(&format!("&labels={}", percent_encode_query(&labels.join(","))));
+        url.push_str(&format!(
+            "&labels={}",
+            percent_encode_query(&labels.join(","))
+        ));
     }
     url
 }
@@ -122,6 +168,30 @@ fn print_fallback(repo: &str, title: &str, body: &str, labels: &[String]) {
     eprintln!("\n--- title ---\n{title}\n--- body ---\n{body}");
 }
 
+fn issue_url(repo: &str, number: u64) -> String {
+    format!("https://github.com/{repo}/issues/{number}")
+}
+
+fn print_comment_preview(repo: &str, number: u64, body: &str) {
+    println!("repo:  {repo}");
+    println!("issue: #{number}");
+    println!("state: open");
+    println!("---");
+    println!("{body}");
+}
+
+fn print_comment_fallback(repo: &str, number: u64, body: &str) {
+    println!("{}", issue_url(repo, number));
+    eprintln!("\n--- comment ---\n{body}");
+}
+
+fn validate_issue_number(number: u64) -> Result<()> {
+    if number == 0 {
+        anyhow::bail!("issue number must be positive");
+    }
+    Ok(())
+}
+
 /// Online build, but no GitHub credential was found anywhere.
 #[cfg(feature = "online")]
 fn note_no_credential() {
@@ -132,13 +202,33 @@ fn note_no_credential() {
     );
 }
 
+/// Online build, but no GitHub credential was found for a state-changing comment.
+#[cfg(feature = "online")]
+fn note_no_credential_comment() {
+    eprintln!(
+        "note: no GitHub credential found (checked $GH_TOKEN, $GITHUB_TOKEN, and `gh auth token`). \
+         Run `gh auth login` or set GITHUB_TOKEN to comment and reopen directly. \
+         Meanwhile, open this issue, reopen it if closed, and add the comment below:"
+    );
+}
+
 /// This binary was built without the `online` feature, so it cannot do network
 /// I/O at all — independent of whether a credential exists.
 #[cfg(not(feature = "online"))]
 fn note_offline_build() {
     eprintln!(
-        "note: this jet build has no `online` feature; it cannot file directly. \
+        "note: this build has no `online` feature; it cannot file directly. \
          Open this pre-filled issue:"
+    );
+}
+
+/// This binary was built without the `online` feature, so it cannot comment or
+/// reopen via the GitHub API.
+#[cfg(not(feature = "online"))]
+fn note_offline_comment_build() {
+    eprintln!(
+        "note: this build has no `online` feature; it cannot comment or reopen directly. \
+         Open this issue, reopen it if closed, and add the comment below:"
     );
 }
 
@@ -195,6 +285,57 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     } else {
         note_offline_build();
         print_fallback(&repo, &opts.title, &body, &opts.label);
+    }
+    Ok(())
+}
+
+/// `issue comment` — ensure an issue is open and attach a verification-failed note.
+#[cfg(feature = "online")]
+pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
+    validate_issue_number(opts.number)?;
+    let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let body = followup_comment_body(tool, opts.message.as_deref());
+
+    if opts.dry_run {
+        print_comment_preview(&repo, opts.number, &body);
+        return Ok(());
+    }
+
+    let Some(token) = crate::resolve_github_token() else {
+        note_no_credential_comment();
+        print_comment_fallback(&repo, opts.number, &body);
+        return Ok(());
+    };
+
+    if !opts.yes
+        && !crate::confirm(&format!(
+            "comment on issue #{} in {repo} and ensure it is open?",
+            opts.number
+        ))?
+    {
+        println!("aborted");
+        return Ok(());
+    }
+
+    let client = http_client(tool)?;
+    let url = reopen_issue(&client, &repo, opts.number, &token).await?;
+    println!("issue: {url}");
+    let comment_url = post_issue_comment(&client, &repo, opts.number, &token, &body).await?;
+    println!("commented: {comment_url}");
+    Ok(())
+}
+
+/// Offline build: print the issue URL and the comment to paste after reopening.
+#[cfg(not(feature = "online"))]
+pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
+    validate_issue_number(opts.number)?;
+    let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let body = followup_comment_body(tool, opts.message.as_deref());
+    if opts.dry_run {
+        print_comment_preview(&repo, opts.number, &body);
+    } else {
+        note_offline_comment_build();
+        print_comment_fallback(&repo, opts.number, &body);
     }
     Ok(())
 }
@@ -279,7 +420,10 @@ pub async fn search(_tool: &ToolInfo, _opts: SearchOptions) -> Result<()> {
 #[cfg(feature = "online")]
 pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
     use anyhow::Context;
-    let url = format!("https://api.github.com/repos/{}/issues/{}", tool.repo, number);
+    let url = format!(
+        "https://api.github.com/repos/{}/issues/{}",
+        tool.repo, number
+    );
     let client = http_client(tool)?;
     let v: serde_json::Value = crate::github_get(&client, &url)
         .await?
@@ -296,7 +440,14 @@ pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
         println!("{html}");
     }
     println!("---");
-    println!("{}", if body.trim().is_empty() { "(no description)" } else { body });
+    println!(
+        "{}",
+        if body.trim().is_empty() {
+            "(no description)"
+        } else {
+            body
+        }
+    );
     Ok(())
 }
 
@@ -374,6 +525,73 @@ async fn submit_issue(
         .to_string())
 }
 
+#[cfg(feature = "online")]
+async fn reopen_issue(
+    client: &reqwest::Client,
+    repo: &str,
+    number: u64,
+    token: &str,
+) -> Result<String> {
+    use anyhow::{bail, Context};
+    let url = format!("https://api.github.com/repos/{repo}/issues/{number}");
+    let resp = client
+        .patch(&url)
+        .header("Accept", "application/vnd.github+json")
+        .bearer_auth(token)
+        .json(&reopen_payload())
+        .send()
+        .await
+        .context("PATCH issue")?;
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.context("parse issue response")?;
+    if !status.is_success() {
+        let msg = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        bail!("GitHub returned {status}: {msg}");
+    }
+    Ok(value
+        .get("html_url")
+        .and_then(|u| u.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| issue_url(repo, number)))
+}
+
+#[cfg(feature = "online")]
+async fn post_issue_comment(
+    client: &reqwest::Client,
+    repo: &str,
+    number: u64,
+    token: &str,
+    body: &str,
+) -> Result<String> {
+    use anyhow::{bail, Context};
+    let url = format!("https://api.github.com/repos/{repo}/issues/{number}/comments");
+    let resp = client
+        .post(&url)
+        .header("Accept", "application/vnd.github+json")
+        .bearer_auth(token)
+        .json(&comment_payload(body))
+        .send()
+        .await
+        .context("POST issue comment")?;
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.context("parse comment response")?;
+    if !status.is_success() {
+        let msg = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        bail!("GitHub returned {status}: {msg}");
+    }
+    Ok(value
+        .get("html_url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("(comment created)")
+        .to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,5 +632,20 @@ mod tests {
         assert_eq!(p["title"], "t");
         assert_eq!(p["labels"], serde_json::json!(["bug"]));
         assert!(issue_payload("t", "b", &[]).get("labels").is_none());
+    }
+
+    #[test]
+    fn comment_payload_and_followup_body() {
+        #[cfg(feature = "online")]
+        assert_eq!(reopen_payload()["state"], "open");
+        assert_eq!(comment_payload("still failing")["body"], "still failing");
+
+        let body = followup_comment_body(&TOOL, Some("user verification still fails"));
+        assert!(body.contains("user verification still fails"));
+        assert!(body.contains("## Diagnostics"));
+        assert!(body.contains("lumen version: 0.4.3"));
+
+        let default_body = followup_comment_body(&TOOL, Some("  "));
+        assert!(default_body.contains("User-side verification failed after closure"));
     }
 }

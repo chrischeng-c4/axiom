@@ -80,7 +80,7 @@ fn outline_md(project: &str, topics: &[Topic]) -> String {
         "\n## Standard agent commands\n\n\
          - `{project} llm [--topic <t>] [--format md|json]` — this self-documentation (offline)\n\
          - `{project} upgrade [--version <tag>] [--check]` — self-update from GitHub releases\n\
-         - `{project} issue search [query]` · `view <n>` · `create [--title <t>] [message...]` — search, read, and file diagnostics-rich issues\n"
+         - `{project} issue search [query]` · `view <n>` · `create [--title <t>] [message...]` · `comment <n> [message...]` — search, read, file, and comment on diagnostics-rich issues; comment ensures the issue is open\n"
     ));
     s
 }
@@ -101,6 +101,7 @@ mod tests {
         assert!(o.contains("`workflow`"));
         assert!(o.contains("lumen upgrade"));
         assert!(o.contains("lumen issue search"));
+        assert!(o.contains("comment <n>"));
         assert!(!o.contains("report-issue"));
     }
 
