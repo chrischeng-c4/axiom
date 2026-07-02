@@ -63,31 +63,30 @@ flowchart TD
 ---
 id: lumen-llm-topic-invocation-verification
 requirements:
-  canonical_outline_commands:
+  outline_uses_topic_flag:
     id: R1
-    text: "`llm_outline_md()` advertises topic detail commands only in the convention-canonical `lumen llm --topic <topic>` form."
+    text: "`projects/lumen/tests/spec_cli.rs::llm_outline_maps_agent_topics` asserts all detail-topic examples use `lumen llm --topic <topic>`."
     kind: functional
     risk: high
     verify: test
-  parser_accepts_advertised_commands:
+  outline_rejects_positional_docs:
     id: R2
-    text: "Every `lumen llm --topic <topic>` command shown by `llm_outline_md()` parses successfully through the built lumen binary."
-    kind: functional
+    text: "`spec_cli` rejects the old `lumen llm workflow` / positional topic examples in `llm_outline_md()`."
+    kind: regression
     risk: high
     verify: test
-  positional_form_not_reintroduced:
+  advertised_commands_parse:
     id: R3
-    text: "`llm_outline_md()` does not advertise positional `lumen llm <topic>` commands that clap rejects."
-    kind: regression
+    text: "`projects/lumen/tests/cli_convention.rs` invokes the built lumen binary with each outline-advertised `--topic` command."
+    kind: functional
     risk: high
     verify: test
 ---
 flowchart TD
-    r1[R1 outline publishes --topic commands] --> v1{all detail topics present with --topic?}
-    r2[R2 advertised commands parse] --> v2{binary accepts each outline command?}
-    r3[R3 no positional topic docs] --> v3{no rejected positional command shown?}
+    r1[R1 canonical outline examples] --> spec_cli[cargo test -p lumen --test spec_cli]
+    r2[R2 positional docs not reintroduced] --> spec_cli
+    r3[R3 advertised commands parse] --> cli_convention[cargo test -p lumen --test cli_convention]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
