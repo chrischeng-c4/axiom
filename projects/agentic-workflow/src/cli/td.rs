@@ -733,6 +733,18 @@ pub(crate) fn discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<S
 
 // ── Lifecycle commit ─────────────────────────────────────────────────
 
+/// Which `--allow-empty` semantics a lifecycle commit invocation should use.
+/// Issue #856b.
+pub(crate) enum LifecycleCommitEmpty {
+    /// Only when nothing is staged — the ordinary lifecycle-commit case.
+    IfNothingStaged,
+    /// Unconditionally — a trailer-only terminal commit (issue #846) has
+    /// nothing new to stage in the common case (the phase advance already
+    /// landed via a separate `backend.update` write), so gating on
+    /// [`has_staged_changes`] would fail the commit outright.
+    Always,
+}
+
 fn commit_lifecycle(
     worktree_path: &std::path::Path,
     slug: &str,
@@ -740,25 +752,50 @@ fn commit_lifecycle(
     stage: &str,
     paths: &[&str],
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-
-    stage_lifecycle_paths(worktree_path, &git_bin, paths)?;
-
     let msg = format!(
         "td({slug}) \u{2014} {detail}\n\n\
          Lifecycle-Slug: {slug}\n\
          Work-Item: {slug}\n\
          Lifecycle-Stage: {stage}",
     );
+    commit_lifecycle_message(
+        worktree_path,
+        paths,
+        &msg,
+        LifecycleCommitEmpty::IfNothingStaged,
+    )
+}
+
+/// Shared lifecycle-commit core (issue #856b): stage `paths` via
+/// [`stage_lifecycle_paths`] (skipping the retired `.aw/issues` tree — see
+/// [`should_stage_lifecycle_path`]), then commit the caller-built `message`
+/// (already containing the full `Lifecycle-Slug` / `Work-Item` /
+/// `Lifecycle-Stage` trailer schema) with the requested `--allow-empty`
+/// semantics. [`commit_lifecycle`] above and `cb::commit_cb_code_check_
+/// terminal` (the `aw td code-check` terminal commit) both delegate here
+/// instead of each re-implementing the staging + git-commit invocation.
+pub(crate) fn commit_lifecycle_message(
+    worktree_path: &std::path::Path,
+    paths: &[&str],
+    message: &str,
+    allow_empty: LifecycleCommitEmpty,
+) -> Result<()> {
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+
+    stage_lifecycle_paths(worktree_path, &git_bin, paths)?;
 
     let mut command = std::process::Command::new(&git_bin);
     command.arg("-C").arg(worktree_path).arg("commit");
-    if !has_staged_changes(worktree_path, &git_bin)? {
+    let allow_empty = match allow_empty {
+        LifecycleCommitEmpty::Always => true,
+        LifecycleCommitEmpty::IfNothingStaged => !has_staged_changes(worktree_path, &git_bin)?,
+    };
+    if allow_empty {
         command.arg("--allow-empty");
     }
     let commit = command
-        .args(["-m", &msg])
+        .args(["-m", message])
         .output()
         .context("git commit failed")?;
     if !commit.status.success() {
@@ -770,7 +807,7 @@ fn commit_lifecycle(
     Ok(())
 }
 
-fn stage_lifecycle_paths(
+pub(crate) fn stage_lifecycle_paths(
     worktree_path: &std::path::Path,
     git_bin: &std::path::Path,
     paths: &[&str],
@@ -2205,14 +2242,11 @@ pub async fn run(args: TdArgs) -> Result<()> {
     match &args.command {
         TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) => {}
         TdCommand::CodeCheck(a) => {
+            // Issue #856d: shared slug-vs-path classifier with cb.rs's
+            // `run_check` (and its own dead `CbCommand::Check` arm) instead
+            // of a third copy of the same check.
             if let Some(target) = a.target.as_deref() {
-                let target_path = std::path::Path::new(target);
-                let target_abs = if target_path.is_absolute() {
-                    target_path.to_path_buf()
-                } else {
-                    project_root.join(target_path)
-                };
-                if !target_abs.exists() {
+                if super::cb::code_check_target_is_slug(&project_root, target) {
                     super::workflow_guard::guard_issue_mutation(
                         &project_root,
                         Some(("td", target)),
@@ -3459,17 +3493,31 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-fn terminal_code_check_labels_to_remove() -> Vec<String> {
+/// Labels stripped when a WI reaches terminal `aw td code-check` closure
+/// (issue #856a). The workflow-lock labels, plus every phase label that
+/// must not survive on a closed issue: the active pre-terminal phases
+/// (`cb_genned` / `cb_filled`), the legacy `td_gen_coded` alias, and the
+/// retired CRRR phases `td_reviewed` / `cb_reviewed` that #850's
+/// `td_phase::normalize` now migrates through the linear lifecycle rather
+/// than dead-ending — so a legacy-labeled issue closing here is correct to
+/// drop those labels too, not just the live ones.
+///
+/// The sole production caller is `run_check_lifecycle_terminal` (cb.rs).
+/// This was previously `#[cfg(test)]`-only while production carried its own
+/// narrower, drifted inline copy (missing `td_reviewed` / `cb_reviewed`,
+/// hardcoding the `td_gen_coded` string literal instead of
+/// [`td_phase::LEGACY_TD_GEN_CODED`]) — see #856.
+pub(crate) fn terminal_code_check_labels_to_remove() -> Vec<String> {
+    use crate::issues::types::td_phase;
     vec![
         super::workflow_guard::LOCK_LABEL.to_string(),
         super::workflow_guard::TD_LOCK_LABEL.to_string(),
         super::workflow_guard::CB_LOCK_LABEL.to_string(),
-        "phase:td_reviewed".to_string(),
-        "phase:td_gen_coded".to_string(),
-        "phase:cb_genned".to_string(),
-        "phase:cb_filled".to_string(),
-        "phase:cb_reviewed".to_string(),
+        format!("phase:{}", td_phase::TD_REVIEWED),
+        format!("phase:{}", td_phase::LEGACY_TD_GEN_CODED),
+        format!("phase:{}", td_phase::CB_GENNED),
+        format!("phase:{}", td_phase::CB_FILLED),
+        format!("phase:{}", td_phase::CB_REVIEWED),
     ]
 }
 
@@ -4371,6 +4419,52 @@ label = "project:agentic-workflow"
         assert!(found_exact.is_some());
     }
 
+    // issue #935 AC1: same defect class as #853 — a naive substring check on
+    // `Lifecycle-Stage: Td-Claim` also matches a prefix-colliding trailer
+    // value like `Td-Claim-Rebase`. branch_has_trailer must be line-exact.
+    #[test]
+    fn branch_has_trailer_rejects_prefix_colliding_stage_value() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_lifecycle_with_extra(root, "41", "prefix collision", "Td-Claim-Rebase", &[], &[])
+            .unwrap();
+
+        let branch = git_stdout(root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let found = branch_has_trailer(root, &branch, "Td-Claim");
+        assert_eq!(
+            found,
+            Some(false),
+            "Td-Claim-Rebase must not falsely match Td-Claim"
+        );
+    }
+
+    // issue #935 AC2: legacy trailer names are accepted through
+    // lifecycle_trailer::normalize(), not a second hardcoded needle.
+    #[test]
+    fn branch_has_trailer_accepts_legacy_trailer_via_normalize() {
+        use crate::issues::types::lifecycle_trailer;
+
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_lifecycle_with_extra(root, "722", "merged + closed", "Td-Merged", &[], &[]).unwrap();
+
+        let branch = git_stdout(root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let found = branch_has_trailer(root, &branch, lifecycle_trailer::CB_CODE_CHECK);
+        assert_eq!(
+            found,
+            Some(true),
+            "legacy Td-Merged trailer should be recognized as Cb-CodeCheck"
+        );
+    }
+
     #[test]
     fn dirty_payload_prefix_is_allowed_for_td_revise_apply() {
         if !git_available() {
@@ -4795,14 +4889,27 @@ label = "project:agentic-workflow"
         ));
     }
 
+    // issue #856a: this is now the sole label list — `run_check_lifecycle_
+    // terminal` (cb.rs) calls this function directly instead of carrying
+    // its own inline copy, so this test asserts the function production
+    // actually calls. The reconciled set is the superset of the two lists
+    // that had diverged: the live pre-terminal phases (`cb_genned`,
+    // `cb_filled`), the legacy `td_gen_coded` alias, and the retired CRRR
+    // phases (`td_reviewed`, `cb_reviewed`) that #850 now normalizes
+    // through the linear lifecycle rather than dead-ending.
     #[test]
     fn terminal_code_check_label_cleanup_removes_stale_phase_and_lock_labels() {
         let labels = terminal_code_check_labels_to_remove();
 
         assert!(labels.contains(&crate::cli::workflow_guard::LOCK_LABEL.to_string()));
         assert!(labels.contains(&crate::cli::workflow_guard::TD_LOCK_LABEL.to_string()));
+        assert!(labels.contains(&crate::cli::workflow_guard::CB_LOCK_LABEL.to_string()));
+        assert!(labels.contains(&"phase:td_reviewed".to_string()));
+        assert!(labels.contains(&"phase:td_gen_coded".to_string()));
         assert!(labels.contains(&"phase:cb_genned".to_string()));
+        assert!(labels.contains(&"phase:cb_filled".to_string()));
         assert!(labels.contains(&"phase:cb_reviewed".to_string()));
+        assert_eq!(labels.len(), 8, "no unexpected extra labels");
     }
 
     #[test]
@@ -5429,8 +5536,16 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
 }
 
 /// Check whether the given branch's git history contains a commit with the
-/// given `Lifecycle-Stage:` trailer value.
+/// given `Lifecycle-Stage:` trailer value. Line-exact (via
+/// [`lifecycle_trailer::body_has_stage_trailer`]), not substring — a naive
+/// substring check on `Lifecycle-Stage: Td-Claim` also matches unrelated
+/// lines that merely contain that text elsewhere in the body, and misses
+/// legacy trailer aliases that only [`lifecycle_trailer::normalize`] knows
+/// about. Same defect class as #853's `find_ship_commit_from_log` fix; see
+/// issue #935.
 fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Option<bool> {
+    use crate::issues::types::lifecycle_trailer;
+
     let git_bin = crate::git::find_git_bin()?;
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -5442,8 +5557,11 @@ fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Opti
         return Some(false);
     }
     let body = String::from_utf8_lossy(&out.stdout);
-    let needle = format!("Lifecycle-Stage: {}", stage);
-    Some(body.contains(&needle))
+    let expect_canonical = lifecycle_trailer::normalize(stage);
+    Some(lifecycle_trailer::body_has_stage_trailer(
+        &body,
+        expect_canonical,
+    ))
 }
 
 /// Like `commit_lifecycle` but appends extra trailers (e.g. `Claim-Source:`,
