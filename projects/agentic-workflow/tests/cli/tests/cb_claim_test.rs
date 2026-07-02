@@ -43,9 +43,10 @@ fn test_cb_claim_init_flag() {
         .expect("--init registered");
 }
 
-/// --issue-stub flag registered.
+/// Issue #925: tracker linkage is default-on; `--no-issue` is the
+/// documented opt-out (replaces the old opt-in `--issue-stub`).
 #[test]
-fn test_cb_claim_issue_stub_flag() {
+fn test_cb_claim_no_issue_flag() {
     let cmd = Cli::command();
     let claim = cmd
         .find_subcommand("td")
@@ -53,8 +54,14 @@ fn test_cb_claim_issue_stub_flag() {
         .expect("td code-claim");
     claim
         .get_arguments()
-        .find(|a: &&clap::Arg| a.get_id().as_str() == "issue_stub")
-        .expect("--issue-stub registered");
+        .find(|a: &&clap::Arg| a.get_id().as_str() == "no_issue")
+        .expect("--no-issue registered");
+    assert!(
+        claim
+            .get_arguments()
+            .all(|a: &clap::Arg| a.get_id().as_str() != "issue_stub"),
+        "--issue-stub should be fully replaced by --no-issue, not left dangling"
+    );
 }
 
 /// Cb-Claim trailer constant is exposed for downstream readers.
@@ -167,6 +174,146 @@ fn test_cb_claim_non_interactive_writes_spec() {
         spec_count > 0,
         "no spec files written under {}",
         td_dir.display()
+    );
+}
+
+/// Issue #925: tracker linkage is default-on, but must not block
+/// `aw td code-claim` when no issue backend is configured (offline /
+/// sandbox use). Reuses the synthesised tempdir crate from
+/// `test_cb_claim_non_interactive_writes_spec` (no `.aw/config.toml` is
+/// written, so backend resolution fails) and asserts the command still
+/// exits 0 while warning on stderr about the tracker-issue attempt.
+#[test]
+fn test_cb_claim_default_on_tracker_linkage_is_recoverable_offline() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub struct Bar {\n    pub name: String,\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"bar\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-claim")
+        .arg(".")
+        .arg("--non-interactive")
+        .arg("--init")
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aw td code-claim");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let output = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break child.wait_with_output().expect("wait_with_output"),
+            Ok(None) => {
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    panic!("aw td code-claim hung past 30s");
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => panic!("try_wait failed: {}", e),
+        }
+    };
+
+    assert!(
+        output.status.success(),
+        "default-on tracker linkage must not fail code-claim offline; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("tracker") || stderr.contains("issue"),
+        "expected a recoverable tracker-linkage warning on stderr, got:\n{stderr}"
+    );
+}
+
+/// Issue #925: `--no-issue` opts out of tracker linkage entirely and
+/// still warns (rather than silently doing nothing), so the operator
+/// knows no tracker root was created for the adopted code.
+#[test]
+fn test_cb_claim_no_issue_flag_skips_tracker_creation_with_warning() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub struct Baz {\n    pub name: String,\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"baz\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-claim")
+        .arg(".")
+        .arg("--non-interactive")
+        .arg("--init")
+        .arg("--no-issue")
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aw td code-claim --no-issue");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let output = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break child.wait_with_output().expect("wait_with_output"),
+            Ok(None) => {
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    panic!("aw td code-claim --no-issue hung past 30s");
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => panic!("try_wait failed: {}", e),
+        }
+    };
+
+    assert!(
+        output.status.success(),
+        "--no-issue must still complete the claim; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-issue") || stderr.contains("skip"),
+        "expected a skip-tracker-creation note on stderr, got:\n{stderr}"
     );
 }
 
