@@ -369,6 +369,9 @@ semantic_domain:
           - name: "llm_recipes_render_every_cookbook_shape_without_drift"
             kind: "function"
             public: false
+          - name: "llm_storage_documents_admin_backup_and_scheduled_cronjob"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1353,6 +1356,15 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "crd_yaml_emits_lumen_definition"
+            kind: "function"
+            public: false
+          - name: "no_backup_cronjob_when_unset"
+            kind: "function"
+            public: false
+          - name: "backup_cronjob_wires_schedule_and_destination"
+            kind: "function"
+            public: false
+          - name: "backup_cronjob_wires_retention_and_admin_token"
             kind: "function"
             public: false
         source_evidence_node:

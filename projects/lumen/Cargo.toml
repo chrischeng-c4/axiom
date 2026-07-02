@@ -110,6 +110,13 @@ jieba = ["dep:jieba-rs"]
 # raft-wal — lumen owns write ordering + replication via libs/raft-core (HA),
 # instead of an external broker. Peer RPCs use the h2c client. (#515)
 raft-wal = ["dep:raft-core", "dep:raft-host", "dep:reqwest"]
+# backup — `lumen backup` (#808): fetches a snapshot from a running fleet's
+# `/admin/backup` over HTTP and hands it to a `libs/service-backup`
+# destination sink. Needs an HTTP client; `raft-wal` already links one into
+# every release binary (build.sh / Dockerfile / lumen-release.yml all pass
+# `--features "... raft-wal operator ..."`), so this adds no new dependency to
+# what actually ships.
+backup = ["dep:reqwest"]
 # self-update / issue — enable the online (HTTPS) paths of the shared
 # CLI-ops lib. Offline builds still ship both commands (upgrade --check / the
 # issue create dry-run + pre-filled-URL fallback). The published binary enables
@@ -120,7 +127,7 @@ issue = ["cli-std/online"]
 # that have not yet renamed their feature set. The CLI command itself is
 # `lumen issue`, not `lumen report-issue`.
 report-issue = ["issue"]
-operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:operator"]
+operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:operator", "backup"]
 # OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
 # pass --features otel); off in plain dev builds so they don't pay the OTLP build
 # cost. At runtime it stays dormant unless LUMEN_OTLP_ENDPOINT is set.
@@ -149,6 +156,9 @@ tokio-postgres = "0.7"
 # the lockfile. Both are test-only.
 memory-stats = "1"
 libc = "0.2"
+# Mock HTTP server for the `backup` feature's unit tests (stands in for the
+# admin API's `/admin/backup`).
+wiremock = { workspace = true }
 
 [[bench]]
 name = "bench_index"

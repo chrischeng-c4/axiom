@@ -16,6 +16,7 @@ pub mod crd;
 pub mod lease;
 pub mod reconcile;
 pub mod render;
+pub mod resize;
 
 pub use crd::{Lumen, LumenSpec, LumenStatus};
 pub use reconcile::run;

@@ -31,14 +31,14 @@ No public AST symbols.
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
-//! configured write log. In single-node mode that log is local; in explicit
-//! broker mode it is Relay/NATS; in primary-replica mode Lumen owns ordering
-//! and replication via raft_core. Apply happens in the background subscribe
-//! loop — see `coordinator` / `wal`.
+//! configured write log. In single-node mode that log is local; in legacy
+//! NATS mode it is external; in primary-replica mode Lumen owns ordering and
+//! replication via raft_core. Apply happens in the background subscribe loop —
+//! see `coordinator` / `wal`.
 //!
 //! ```text
 //! lumen serve                          # single node, in-process log, :7373
-//! lumen serve --wal relay --relay-url http://relay:7000
+//! lumen serve --wal raft               # k8s StatefulSet / HA mode
 //! lumen serve --host 0.0.0.0 --port 7373 --log-format json
 //! ```
 
@@ -103,6 +103,14 @@ enum Command {
     /// files a diagnostics-rich issue tagged `project:lumen`.
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
+    /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
+    /// and ship it to a destination (`file://`, `s3://`, `gs://`) via
+    /// `libs/service-backup`. No new snapshot mechanism — this only
+    /// schedules and transports the existing admin API. Typically invoked by
+    /// the operator's optional backup CronJob (`spec.serving.backup`, see
+    /// `lumen llm storage`), but works standalone. Requires the `backup`
+    /// feature (pulled in transitively by `operator`).
+    Backup(BackupArgs),
 }
 
 #[derive(clap::Args)]
@@ -179,6 +187,13 @@ enum K8sOperatorCmd {
     Run,
     /// Render operator namespace/RBAC/deployment YAML.
     Render(K8sOperatorRenderArgs),
+    /// One-shot: grow a running instance's `raft-<name>-<n>` PVCs to match
+    /// its CR's `spec.serving.raftStorage` (#809). StatefulSet
+    /// `volumeClaimTemplates` are immutable, so a CR edit alone never
+    /// resizes existing PVCs; this patches them directly when the bound
+    /// `StorageClass` allows expansion. Never shrinks (unsupported by
+    /// Kubernetes) and never mutates the CR itself.
+    ResizeStorage(K8sOperatorResizeStorageArgs),
 }
 
 #[derive(clap::Args)]
@@ -190,6 +205,19 @@ struct K8sOperatorRenderArgs {
     /// `operator.yaml`.
     #[arg(long)]
     out: Option<PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorResizeStorageArgs {
+    /// Namespace of the `Lumen` instance to resize.
+    #[arg(long)]
+    namespace: String,
+    /// `Lumen` CR name.
+    #[arg(long)]
+    name: String,
+    /// Report what would be patched without mutating any PVC.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(clap::Args)]
@@ -218,12 +246,6 @@ struct K8sInstanceRenderArgs {
     /// Serving image. Defaults are profile-specific.
     #[arg(long)]
     image: Option<String>,
-    /// Managed Relay image for dev/staging/template profiles.
-    #[arg(long)]
-    relay_image: Option<String>,
-    /// External Relay URL. When set, the operator skips the managed broker.
-    #[arg(long)]
-    relay_url: Option<String>,
     /// Write to this path instead of stdout. A directory receives `lumen.yaml`.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -231,11 +253,11 @@ struct K8sInstanceRenderArgs {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum K8sInstanceProfile {
-    /// Small local/kind CR: one serving pod, managed Relay, auth disabled.
+    /// Small local/kind CR: one serving pod, embedded WAL, auth disabled.
     Dev,
-    /// Pre-prod CR: json logs, modest floor, observability enabled.
+    /// Pre-prod CR: json logs, raft data-plane shape, observability enabled.
     Staging,
-    /// Production-shape CR: auth required, json logs, external Relay by default.
+    /// Production-shape CR: auth required, json logs, raft data-plane shape.
     Prod,
     /// Fill-in-the-blanks CR skeleton for app teams.
     Template,
@@ -329,6 +351,29 @@ struct IssueCreateArgs {
     yes: bool,
 }
 
+/// `lumen backup` flags (#808): pulls a snapshot over HTTP from a running
+/// serving fleet and ships it to a destination via `libs/service-backup`.
+#[derive(clap::Args)]
+struct BackupArgs {
+    /// Base URL of a running lumen serving node, e.g.
+    /// `http://<name>.<namespace>.svc.cluster.local:7373` (what the operator's
+    /// backup CronJob passes) or `http://localhost:7373` for ad hoc use.
+    #[arg(long)]
+    url: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    #[arg(long)]
+    dest: String,
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
+    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    token: Option<String>,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Omit to keep everything.
+    #[arg(long)]
+    retention_secs: Option<u64>,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
     /// Topic map for agent context selection (default).
@@ -339,6 +384,11 @@ enum LlmTopic {
     Integration,
     /// A copy-paste create → index → search walkthrough.
     Quickstart,
+    /// Bearer-token auth, token registry schema, and Secret projection.
+    Auth,
+    /// Operator storage/ops contract: StatefulSet + durable PVC-backed WAL,
+    /// including at `replicasPerShard: 1`.
+    Storage,
     /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
     Recipes,
 }
@@ -372,9 +422,6 @@ enum WalBackend {
     Embedded,
     /// NATS JetStream legacy backend.
     Nats,
-    /// relay broadcast (#124). Explicit external broker mode.
-    #[cfg(feature = "relay-wal")]
-    Relay,
     /// Lumen-owned raft_core replication (#515). HA without an external broker.
     #[cfg(feature = "raft-wal")]
     Raft,
@@ -506,19 +553,6 @@ struct ServeArgs {
     /// rollout) retries with backoff instead of crash-looping.
     #[arg(long, env = "LUMEN_NATS_CONNECT_TIMEOUT_SECS", default_value_t = 120)]
     nats_connect_timeout_secs: u64,
-    /// relay base URL (used when `--wal relay`).
-    #[cfg(feature = "relay-wal")]
-    #[arg(long, env = "LUMEN_RELAY_URL", default_value = "http://localhost:7000")]
-    relay_url: String,
-    /// relay subject carrying the lumen WAL (used when `--wal relay`).
-    #[cfg(feature = "relay-wal")]
-    #[arg(long, env = "LUMEN_RELAY_SUBJECT", default_value = "lumen-wal")]
-    relay_subject: String,
-    /// relay broadcast subscriber id for this serving node. Defaults to POD_NAME
-    /// or HOSTNAME when unset, so every pod keeps an independent replay cursor.
-    #[cfg(feature = "relay-wal")]
-    #[arg(long, env = "LUMEN_RELAY_SUBSCRIBER_ID")]
-    relay_subscriber_id: Option<String>,
     /// Data dir for raft hard state (used when `--wal raft`). A PVC in k8s.
     #[cfg(feature = "raft-wal")]
     #[arg(
@@ -566,6 +600,7 @@ struct ServeArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    lumen::tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
         Command::Serve(args) => serve(args).await,
@@ -596,6 +631,8 @@ async fn main() -> Result<()> {
                 LlmTopic::Workflow => lumen::spec::llm_workflow_md(),
                 LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
+                LlmTopic::Auth => lumen::spec::llm_auth_md(),
+                LlmTopic::Storage => lumen::spec::llm_storage_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
             let out = match args.format {
@@ -618,6 +655,12 @@ async fn main() -> Result<()> {
                     LlmTopic::Quickstart => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "quickstart", "markdown": md }),
                     )?,
+                    LlmTopic::Auth => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "auth", "markdown": md }),
+                    )?,
+                    LlmTopic::Storage => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "storage", "markdown": md }),
+                    )?,
                 },
             };
             println!("{out}");
@@ -638,6 +681,7 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Issue(args) => issue(args).await,
+        Command::Backup(args) => dispatch_backup(args).await,
     }
 }
 
@@ -758,9 +802,10 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
     }
 }
 
-/// `lumen k8s` — cluster artifacts split by lifecycle layer. Only
-/// `operator run` needs kube-rs at runtime; the render paths are offline and
-/// work from the static manifests/CR templates embedded in the binary.
+/// `lumen k8s` — cluster artifacts split by lifecycle layer. `operator run`
+/// and `operator resize-storage` need kube-rs at runtime; the render paths
+/// are offline and work from the static manifests/CR templates embedded in
+/// the binary.
 async fn k8s(args: K8sArgs) -> Result<()> {
     match args.cmd {
         K8sCmd::Crd(args) => match args.cmd {
@@ -772,6 +817,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
                 let yaml = render_operator_yaml(&args.namespace);
                 write_or_print(args.out.as_deref(), "operator.yaml", &yaml)
             }
+            K8sOperatorCmd::ResizeStorage(args) => resize_storage(args).await,
         },
         K8sCmd::Instance(args) => match args.cmd {
             K8sInstanceCmd::Render(args) => {
@@ -800,6 +846,29 @@ async fn run_operator() -> Result<()> {
     )
 }
 
+/// `lumen k8s operator resize-storage` (#809): one-shot detect-and-patch for
+/// the `raft` PVC's `volumeClaimTemplates` immutability gap — see
+/// `lumen::operator::resize::resize_instance`.
+#[cfg(feature = "operator")]
+async fn resize_storage(args: K8sOperatorResizeStorageArgs) -> Result<()> {
+    let client = kube::Client::try_default()
+        .await
+        .context("build a kube client from the in-cluster/kubeconfig context")?;
+    let outcomes =
+        lumen::operator::resize::resize_instance(client, &args.namespace, &args.name, args.dry_run)
+            .await?;
+    println!("{}", serde_json::to_string_pretty(&outcomes)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "operator"))]
+async fn resize_storage(_args: K8sOperatorResizeStorageArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
+}
+
 #[cfg(feature = "operator")]
 fn crd_yaml() -> String {
     lumen::operator::crd_yaml()
@@ -808,6 +877,32 @@ fn crd_yaml() -> String {
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
     ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+}
+
+/// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
+/// `dest` via `libs/service-backup`, printing the resulting
+/// `BackupRunResult` as JSON. This is what the operator's optional backup
+/// CronJob (`spec.serving.backup`) invokes on a schedule; it works equally
+/// well ad hoc against any running serving node.
+#[cfg(feature = "backup")]
+async fn dispatch_backup(args: BackupArgs) -> Result<()> {
+    let dest = service_backup::BackupDestination::from_uri(&args.dest)?;
+    let retention = match args.retention_secs {
+        Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
+        None => service_backup::RetentionPolicy::default(),
+    };
+    let result = lumen::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without backup support; rebuild with \
+         `--features backup` (or `operator`, which pulls it in — the published \
+         image includes both)"
+    )
 }
 
 fn render_source_dockerfile() -> String {
@@ -902,46 +997,22 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     let name = args.name.as_deref().unwrap_or(default_name);
     let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
     let image = args.image.as_deref().unwrap_or(&default_image);
-    let relay_image = args.relay_image.as_deref().unwrap_or("relay:latest");
 
     let mut yaml = format!(
         "apiVersion: lumen.dev/v1alpha1\nkind: Lumen\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
     );
     match body {
         InstanceBody::Dev => {
-            yaml.push_str("  shardCount: 1\n  logFormat: pretty\n  serving:\n    autoscaling:\n      minReplicas: 1\n      maxReplicas: 3\n      targetCpuUtilization: 70\n  broker:\n");
-            if let Some(url) = args.relay_url.as_deref() {
-                yaml.push_str(&format!("    externalUrl: {url}\n"));
-            } else {
-                yaml.push_str(&format!("    image: {relay_image}\n    storage: 10Gi\n"));
-            }
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  serving:\n    autoscaling:\n      minReplicas: 1\n      maxReplicas: 3\n      targetCpuUtilization: 70\n");
         }
         InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 3\n      maxReplicas: 6\n      targetCpuUtilization: 70\n  broker:\n");
-            if let Some(url) = args.relay_url.as_deref() {
-                yaml.push_str(&format!("    externalUrl: {url}\n"));
-            } else {
-                yaml.push_str(&format!("    image: {relay_image}\n    storage: 20Gi\n"));
-            }
-            yaml.push_str("  observability: true\n");
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 3\n      maxReplicas: 6\n      targetCpuUtilization: 70\n  observability: true\n");
         }
         InstanceBody::Prod => {
-            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    autoscaling:\n      minReplicas: 6\n      maxReplicas: 12\n      targetCpuUtilization: 65\n    cpu: \"4\"\n    memory: 16Gi\n    graceSecs: 45\n  broker:\n");
-            let url = args
-                .relay_url
-                .as_deref()
-                .unwrap_or("http://relay.infra.svc:7000");
-            yaml.push_str(&format!(
-                "    externalUrl: {url}\n    subject: lumen-wal\n  observability: true\n"
-            ));
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    autoscaling:\n      minReplicas: 6\n      maxReplicas: 12\n      targetCpuUtilization: 65\n    cpu: \"4\"\n    memory: 16Gi\n    graceSecs: 45\n  observability: true\n");
         }
         InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 2\n      maxReplicas: 8\n      targetCpuUtilization: 70\n  broker:\n");
-            if let Some(url) = args.relay_url.as_deref() {
-                yaml.push_str(&format!("    externalUrl: {url}\n"));
-            } else {
-                yaml.push_str("    image: REPLACE_ME__REGISTRY/relay:REPLACE_ME__RELAY_IMAGE_TAG\n    storage: 20Gi\n");
-            }
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 2\n      maxReplicas: 8\n      targetCpuUtilization: 70\n");
         }
     }
     ensure_trailing_newline(&yaml)
@@ -1040,25 +1111,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
                     .await
                     .context("connect NATS write log")?,
             ))
-        }
-        #[cfg(feature = "relay-wal")]
-        WalBackend::Relay => {
-            tracing::info!(
-                url = %args.relay_url,
-                subject = %args.relay_subject,
-                subscriber_id = ?args.relay_subscriber_id,
-                "wal=relay (broadcast)"
-            );
-            let relay = match &args.relay_subscriber_id {
-                Some(id) => lumen::wal_relay::RelayWal::new_with_subscriber_id(
-                    &args.relay_url,
-                    &args.relay_subject,
-                    id,
-                ),
-                None => lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject),
-            }
-            .context("connect relay write log")?;
-            Some(Arc::new(relay))
         }
         #[cfg(feature = "raft-wal")]
         WalBackend::Raft => {
@@ -1639,7 +1691,6 @@ fn init_otel_meter(
     Ok(())
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
@@ -1650,8 +1701,11 @@ changes:
   - path: projects/lumen/src/bin/lumen.rs
     action: modify
     section: rust-source-unit
-    impl_mode: codegen
+    impl_mode: hand-written
     description: |
-      rust-source-unit (td_ast) source for `projects/lumen/src/bin/lumen.rs` captured during lumen
-      standardization onto the per-file codegen ladder.
+      #809: add `K8sOperatorCmd::ResizeStorage` + `K8sOperatorResizeStorageArgs`
+      (`--namespace`, `--name`, `--dry-run`), wire it into the `k8s()` dispatcher's
+      `K8sCmd::Operator` match, and add the feature-gated `resize_storage`
+      dispatch pair (real impl behind `operator`, `bail!` fallback otherwise)
+      alongside the existing `run_operator`/`crd_yaml`/`dispatch_backup` verbs.
 ```

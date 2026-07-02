@@ -1,569 +1,719 @@
-[project]
-name = "lumen"
-cap_path = "README.md"
-label = "project:lumen"
-
-[ec.efficiency]
-tool = "meter"
-meter = "projects/lumen"
-command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
-
-[ec.stability]
-tool = "rig"
-dir = "projects/lumen/tests/rig/cases/resilience"
-command = "cd projects/lumen && ../../target/debug/vat run rig-resilience"
-
-[capability.profile]
-traits = ["long_running", "cli_facing", "competitive_replacement", "network_exposed", "http2_api", "kubernetes_native"]
-
-[[workspaces]]
-name = "lumen"
-paths = ["**"]
-target = "rust"
-test_cmd = "cargo test -p lumen"
-codegen.profile = "rust/score-crate"
-
-# AW-EC-BEGIN
-[aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:a372df7cb75f2ffff0673709173a658c9174a352a4be79db0408ed1bc1f238f5"
+ir_kind = "ec"
+ec_path = "projects/lumen/external-contracts"
+inventory_path = "projects/lumen/aw.toml"
+generated_at = "2026-07-02T04:12:27.938655+00:00"
+ir_digest = "sha256:c6dfd6c2080f434a51e4ad35deeb7389e9c313482a415893d987578a832faeef"
+source_digest = "sha256:f9520d1d71314af58fedd12c10d4e9ecbb719000d536ab7eac9d33b5a01183d8"
 
-[[aw.ec.generated.cases]]
+[[sources]]
+path = "projects/lumen/external-contracts/claim-closure/production-claims.md"
+digest = "sha256:2cdc77f1d15c7b7c76d61447f44c2ffac54a92c285983e75a775c6b0b4d874f3"
+
+[[sources]]
+path = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
+digest = "sha256:aadd41a8a11a2a0b3c2eb97bebfd07f5e6852e0bb8b1c5dd869043859b784e92"
+
+[[sources]]
+path = "projects/lumen/external-contracts/competitor-feature-parity/behavior/serve-functional.md"
+digest = "sha256:03f0f9e2b7f72ad1c2ac707221fc48516123d6e266f86048c7c26b1a4f59ddc1"
+
+[[sources]]
+path = "projects/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
+digest = "sha256:31219c5406c431054b827518dfeafdfb04796f0a7f02cc8d51fe07ab3fbcba66"
+
+[[sources]]
+path = "projects/lumen/external-contracts/long-running-stability/behavior/devops-render.md"
+digest = "sha256:e339fca3895fcd04b5b0f0a4b0c5ffdc53d2d487d675fbe0bbe380c74a800947"
+
+[[sources]]
+path = "projects/lumen/external-contracts/long-running-stability/behavior/meta-api.md"
+digest = "sha256:f1e1841690f6fd4e58ef96c493db9986180c3c96db99c1aac0d6587cb1576edc"
+
+[[sources]]
+path = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md"
+digest = "sha256:b1e0b6eda050dfdcbddc4bde10735da41e4b52680fed72585df63e89991a4248"
+
+[[sources]]
+path = "projects/lumen/external-contracts/long-running-stability/stability/resilience-survival.md"
+digest = "sha256:7fdcbb894640edbce62b17dd8f248b103a0f7648487689125d0db1d42357d8af"
+
+[[sources]]
+path = "projects/lumen/external-contracts/security-hardening/security/access-control.md"
+digest = "sha256:2a1ad35fbaa3ba313b654f3766c78d9a9a23108cda38d8db0d2d442c5462c9ca"
+
+[[sources]]
+path = "projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md"
+digest = "sha256:bcd4dbdc117e2cadc7fc408fdb936c60d09dbbcb05bba59e2da1ee5dfdd2e953"
+
+[[cases]]
 id = "lumen-claim-agent-llm-topics"
 capability_id = "agent-offline-integration"
 claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
 contract_id = "agent-llm-topics"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-llm-topics"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-llm-topics"
 test_path = "projects/lumen/tests/behavior_lumen_claim_agent_llm_topics.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
 assertions = ["The offline LLM outline, workflow, integration, quickstart, and recipe topics remain available."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9d9ce6a3dad7cba00a38a9ca4c30eef056dc4f2105771058cd62fc9e882cccff"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-agent-offline-spec"
 capability_id = "agent-offline-integration"
 claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
 contract_id = "agent-offline-spec"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-offline-spec"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-offline-spec"
 test_path = "projects/lumen/tests/behavior_lumen_claim_agent_offline_spec.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
 assertions = ["Offline schema commands produce valid OpenAPI JSON/YAML and JSON-schema output for agents."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f29f1b809dbf4f1f9b879dc0c1e4cea429d8e22de73194e875029e5b17b47755"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-agent-query-catalog"
 capability_id = "agent-offline-integration"
 claim_id = "query-shape-cookbook-field-analyzer-catalog"
 contract_id = "agent-query-catalog"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-query-catalog"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-query-catalog"
 test_path = "projects/lumen/tests/behavior_lumen_claim_agent_query_catalog.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
 assertions = ["The offline query-shape and field/analyzer catalogs remain deterministic for agent ingestion."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3d57600ded491c6da599725e15df0a55351e7aa711ebb78934fffb7ac5c7893f"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-backup-periodic-snapshotter"
 capability_id = "backup-restore"
 claim_id = "periodic-snapshotter-serve"
 contract_id = "backup-periodic-snapshotter"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-periodic-snapshotter"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-periodic-snapshotter"
 test_path = "projects/lumen/tests/behavior_lumen_claim_backup_periodic_snapshotter.rs"
 command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
 required_for_production = true
 assertions = ["The serving process snapshot loop and restore path remain covered by the backup/restore e2e gate."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:62b8d63afbdc43fcde2d576599a5628320eed479da390dbb90dd6b962afc8c00"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-backup-rdb-store"
 capability_id = "backup-restore"
 claim_id = "rdb-snapshot-restore-localfsrdbstore"
 contract_id = "backup-rdb-store"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-rdb-store"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-rdb-store"
 test_path = "projects/lumen/tests/behavior_lumen_claim_backup_rdb_store.rs"
 command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
 required_for_production = true
 assertions = ["RDB snapshots restore through the LocalFsRdbStore baseline."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:900de5303e22fde8758d008243ab2b3b29b084b964d445fd0fc885170689ab91"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-cli-deployment-operator-command-surface"
 capability_id = "cli-interface"
 claim_id = "deployment-operator-command-surface"
 contract_id = "cli-deployment-operator-command-surface"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-deployment-operator-command-surface"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-deployment-operator-command-surface"
 test_path = "projects/lumen/tests/behavior_lumen_claim_cli_deployment_operator_command_surface.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
 assertions = ["The operator-facing command surface renders CRD and serving objects used by the deployment path."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a03e211b582a9f7c4b50953875e20afe7827975d656449ea471ff3b9e9f578ea"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-cli-service-process-interface"
 capability_id = "cli-interface"
 claim_id = "service-process-interface"
 contract_id = "cli-service-process-interface"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-service-process-interface"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-service-process-interface"
 test_path = "projects/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs"
 command = "cargo test -p lumen --test api_e2e -- --nocapture"
 required_for_production = true
 assertions = ["The long-running service exposes health, readiness, version, metrics, indexing, and search routes through the binary-served API."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d022e6c9c44b3019777ed857c90f365f6e7976a6c3e97889b11c0133fb08af93"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-competitor-feature-schema-metadata"
 capability_id = "competitor-feature-parity"
 claim_id = "schema-and-metadata-breadth"
 contract_id = "competitor-feature-schema-metadata"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-feature-schema-metadata"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-feature-schema-metadata"
 test_path = "projects/lumen/tests/behavior_lumen_claim_competitor_feature_schema_metadata.rs"
 command = "cargo test -p lumen --test drop_field_e2e --test reindex_stream_e2e --test stats_metadata_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Schema lifecycle, reindex/replay, and stats/metadata behavior pass the production conformance tests."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f68c132379e600c27ec26953d3f1caa0aa9902d7bd7cb8c22a0dfce23553d26d"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-competitor-feature-search-breadth"
 capability_id = "competitor-feature-parity"
 claim_id = "search-feature-breadth"
 contract_id = "competitor-feature-search-breadth"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-feature-search-breadth"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-feature-search-breadth"
 test_path = "projects/lumen/tests/behavior_lumen_claim_competitor_feature_search_breadth.rs"
 command = "cargo test -p lumen --test api_e2e --test vector_e2e --test hash_hamming --test collapse_nested -- --nocapture"
 required_for_production = true
 assertions = ["The API, vector, hash, duplicate, and nested search surfaces execute correctly across the replacement feature set."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:06320ad1784d261d579930424530ff32236fb0b8bb30e1596e692c999a9e7214"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-competitor-performance-depth-invariant"
 capability_id = "competitor-performance"
 claim_id = "depth-invariant-filter-sort-pagination"
 contract_id = "competitor-performance-depth-invariant"
-category = "efficiency"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-depth-invariant"
+dimension = "efficiency"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-depth-invariant"
 test_path = "projects/lumen/tests/efficiency_lumen_claim_competitor_performance_depth_invariant.rs"
 command = "cargo test -p lumen --test lumen_bench_cli --test perf_gate_vs_db -- --nocapture"
 required_for_production = true
 assertions = ["The Lumen-only deep-page and filter/sort perf gates stay depth-invariant against the retained calibrated floors without rerunning peer databases by default."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:53f2e79cd26a16a44e23cc0106c78f03bca9194bba7efeb688f3b0c37c83823f"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-competitor-performance-envelope"
 capability_id = "competitor-performance"
 claim_id = "perf-gate-envelope-absolute-latency-throughput-floors"
 contract_id = "competitor-performance-envelope"
-category = "efficiency"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-envelope"
+dimension = "efficiency"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-envelope"
 test_path = "projects/lumen/tests/efficiency_lumen_claim_competitor_performance_envelope.rs"
 command = "cargo test -p lumen --test perf_gate -- --nocapture"
 required_for_production = true
 assertions = ["Absolute latency and throughput floors stay within the ratcheted perf gate envelope."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:268270d1bd8a6409721ebac89d24624173d6ab960fbe025f4113d3afe3df811b"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-competitor-performance-external-comparison"
 capability_id = "competitor-performance"
 claim_id = "external-pg-and-opensearch-arena-comparison"
 contract_id = "competitor-performance-external-comparison"
-category = "efficiency"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-external-comparison"
+dimension = "efficiency"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-competitor-performance-external-comparison"
 test_path = "projects/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs"
 command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
 required_for_production = true
 assertions = ["The vat efficiency runner executes the Lumen-only regression path against retained Postgres/OpenSearch-calibrated floors; explicit calibration runners refresh peers only on demand."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:77a83c73513a58d4a0474298994c5e0090a2e80d99c4260261e6df92a45e5000"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-duplicates-group-by"
 capability_id = "duplicate-nested-search"
 claim_id = "duplicates-group-by"
 contract_id = "duplicates-group-by"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-duplicates-group-by"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-duplicates-group-by"
 test_path = "projects/lumen/tests/behavior_lumen_claim_duplicates_group_by.rs"
 command = "cargo test -p lumen --test api_e2e duplicates_finds_groups -- --exact --nocapture"
 required_for_production = true
 assertions = ["Duplicate detection returns groups of external IDs sharing a field value."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9f0b3bc8468a995de20a8721997e4e55bd0678c98dd26d1eb9f98335bb4d9d35"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-elastic-disk-tier"
 capability_id = "elastic-scale"
 claim_id = "ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log"
 contract_id = "elastic-disk-tier"
-category = "efficiency"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-elastic-disk-tier"
+dimension = "efficiency"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-elastic-disk-tier"
 test_path = "projects/lumen/tests/efficiency_lumen_claim_elastic_disk_tier.rs"
 command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
 required_for_production = true
 assertions = ["The disk-scale proof keeps the full corpus on disk-backed segments while bounded hot state remains in memory."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9eb0bc0df2e59b303f5304016867ff313f9ccd783bbd6b7016fa0a2c2d398e07"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-exact-term-range-set"
 capability_id = "exact-filter-search"
 claim_id = "term-range-set-early-termination"
 contract_id = "exact-term-range-set"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-term-range-set"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-term-range-set"
 test_path = "projects/lumen/tests/behavior_lumen_claim_exact_term_range_set.rs"
 command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
 required_for_production = true
 assertions = ["Term, range, and set filter behavior stays within the exact/filter search gate."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a64066aaffbbb9b8401e8e4d665d91adafb8ecb005a67d4766dc6ec5927f871f"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-exact-wide-range-filter"
 capability_id = "exact-filter-search"
 claim_id = "wide-range-filter-index-on-disk-sorted-value-range"
 contract_id = "exact-wide-range-filter"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-wide-range-filter"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-wide-range-filter"
 test_path = "projects/lumen/tests/behavior_lumen_claim_exact_wide_range_filter.rs"
 command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
 required_for_production = true
 assertions = ["Wide range filters over sorted disk-backed values pass the exact/filter gate."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4e4086ab773477a68a0a82afeaa6c30e4fe20ea4ae445e90b7982242cf2f3091"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-http2-client-route-list"
 capability_id = "http2-api-list"
 claim_id = "client-search-and-index-route-list"
 contract_id = "http2-client-route-list"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-client-route-list"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-client-route-list"
 test_path = "projects/lumen/tests/behavior_lumen_claim_http2_client_route_list.rs"
 command = "cargo test -p lumen --test api_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Search and index HTTP routes are exposed and exercised through the binary-served API tests."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ddd1cce1da28cfe77de09d5b347602a3aa3b18c7157ab51bdd93ce8d7ff80d06"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-http2-offline-spec-list"
 capability_id = "http2-api-list"
 claim_id = "offline-spec-openapi-list"
 contract_id = "http2-offline-spec-list"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-offline-spec-list"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-offline-spec-list"
 test_path = "projects/lumen/tests/behavior_lumen_claim_http2_offline_spec_list.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
 assertions = ["The offline spec commands publish the supported HTTP API inventory."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5066744abb96c1b844643e2973cc29481f99fc3ab1bc1d1d1533c8b6deec88f8"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-http2-ops-route-list"
 capability_id = "http2-api-list"
 claim_id = "ops-metadata-probe-and-metrics-route-list"
 contract_id = "http2-ops-route-list"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-ops-route-list"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-ops-route-list"
 test_path = "projects/lumen/tests/behavior_lumen_claim_http2_ops_route_list.rs"
 command = "cargo test -p lumen --test api_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Health, readiness, OpenAPI, metrics, and version routes are exposed and exercised."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:de87c90380884a639c3f76ea8feeabcdc24111af37faf4aab550dae4d5b2c253"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-hybrid-rrf"
 capability_id = "hybrid-search"
 claim_id = "rrf-fusion-node-planner-integration"
 contract_id = "hybrid-rrf-planner"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-hybrid-rrf"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-hybrid-rrf"
 test_path = "projects/lumen/tests/behavior_lumen_claim_hybrid_rrf.rs"
 command = "cargo test -p lumen --test hybrid_rrf -- --nocapture"
 required_for_production = true
 assertions = ["Lexical and semantic result lists are fused through RRF while preserving per-leg filters."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2953f8fad444b76b8594c9558b5c6db2a6d3ac00a461dfd5b75b88e6c6ddfe2d"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-k8s-kustomize-base"
 capability_id = "kubernetes-native-deployment"
 claim_id = "kustomize-base-overlays-hpa"
 contract_id = "k8s-kustomize-base-overlays"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-kustomize-base"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-kustomize-base"
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_kustomize_base.rs"
 command = "kustomize build projects/lumen/k8s/base && kustomize build projects/lumen/k8s/overlays/dev && kustomize build projects/lumen/k8s/overlays/staging && kustomize build projects/lumen/k8s/overlays/prod && kustomize build projects/lumen/k8s/operator"
 required_for_production = true
 assertions = ["The Kubernetes base, overlays, HPA/PDB, and operator manifests render successfully."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:69df55db0d4a0613eaec4f4198a48f8a55146fd8b6dfdc9ab90093729226ce90"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-k8s-operator-reconcile"
 capability_id = "kubernetes-native-deployment"
 claim_id = "lumen-crd-reconcile-loop-kube-rs-operator"
 contract_id = "k8s-operator-reconcile"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-operator-reconcile"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-operator-reconcile"
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_reconcile.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
 assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ea8b0eda46dcbaa6ed8cfa56b71e42a72a39c49e1ceddcfef012b11ec37849da"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-k8s-stateless-kind"
 capability_id = "kubernetes-native-deployment"
 claim_id = "kind-api-recovery-no-relay"
 contract_id = "k8s-stateless-kind-dogfood"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-stateless-kind"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-stateless-kind"
 test_path = "projects/lumen/tests/stability_lumen_claim_k8s_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
 assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:113a18f361506f3626fca74ba72b66eb1557efb49cbfa11e4bb68b58526d17c3"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-lexical-bm25"
 capability_id = "lexical-search"
 claim_id = "bm25-ranking-and-analyzers"
 contract_id = "lexical-bm25-ranking-analyzers"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-lexical-bm25"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-lexical-bm25"
 test_path = "projects/lumen/tests/behavior_lumen_claim_lexical_bm25.rs"
 command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
 required_for_production = true
 assertions = ["BM25 ranking and analyzer behavior pass the ratcheted performance/conformance comparison."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4dadc93e74d8a1c458e2e3ad0002bfeca798ac61757ee4f1ddecc32f285efd68"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-long-running-kustomize-base"
 capability_id = "long-running-stability"
 claim_id = "kustomize-base-overlays-hpa"
 contract_id = "long-running-kustomize-base-overlays"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-kustomize-base"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-kustomize-base"
 test_path = "projects/lumen/tests/behavior_lumen_claim_long_running_kustomize_base.rs"
 command = "kustomize build projects/lumen/k8s/base && kustomize build projects/lumen/k8s/overlays/dev && kustomize build projects/lumen/k8s/overlays/staging && kustomize build projects/lumen/k8s/overlays/prod && kustomize build projects/lumen/k8s/operator"
 required_for_production = true
 assertions = ["The base, dev, staging, prod, and operator kustomize surfaces render valid Kubernetes manifests."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e4a52f3487549e02aee5c707f885a30bd234a159a29089c621cec5f349995d74"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-long-running-log-fanout"
 capability_id = "long-running-stability"
 claim_id = "log-fan-out-rebuild-from-log"
 contract_id = "long-running-log-fanout"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-log-fanout"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-log-fanout"
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs"
 command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
 required_for_production = true
 assertions = ["A late or second node can replay the published write stream and converge with live writes."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f02421bd6d25de26bb6f418d0a54c8c448bbce467284dcc7b379f3faa929f868"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-long-running-stateless-kind"
 capability_id = "long-running-stability"
 claim_id = "kind-api-recovery-no-relay"
 contract_id = "long-running-stateless-kind-dogfood"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-stateless-kind"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-stateless-kind"
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
 assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:75629b1992cb64ca0f8b52203d4787abc541bd227d48d12320f2042cdc36ed87"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-nested-collapse"
 capability_id = "duplicate-nested-search"
 claim_id = "nested-group-has-child-collapse"
 contract_id = "nested-group-has-child-collapse"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-nested-collapse"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-nested-collapse"
 test_path = "projects/lumen/tests/behavior_lumen_claim_nested_collapse.rs"
 command = "cargo test -p lumen --test collapse_nested -- --nocapture"
 required_for_production = true
 assertions = ["Nested has_child/group/collapse behavior passes the data-table search tests."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:58271b7a49dd0f86968d41d491ce89acd018ea447a6e835c71531603f0d32c24"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-observability-otlp"
 capability_id = "observability"
 claim_id = "otlp-traces-and-metrics"
 contract_id = "observability-otlp"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-otlp"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-otlp"
 test_path = "projects/lumen/tests/behavior_lumen_claim_observability_otlp.rs"
 command = "cargo test -p lumen --test api_e2e -- --nocapture"
 required_for_production = true
 assertions = ["The serving process keeps observability configuration and metadata routes wired."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:573f1bee92e8ee18c3ee2810a09a7bb2151d2ac10edb944f4c7663f8663d5368"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-observability-prometheus-metrics"
 capability_id = "observability"
 claim_id = "prometheus-metrics-endpoint"
 contract_id = "observability-prometheus-metrics"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-prometheus-metrics"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-prometheus-metrics"
 test_path = "projects/lumen/tests/behavior_lumen_claim_observability_prometheus_metrics.rs"
 command = "cargo test -p lumen --test api_e2e metrics_exposes_prometheus_text -- --exact --nocapture"
 required_for_production = true
 assertions = ["The /metrics endpoint emits Prometheus text with the expected scrape content type."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2c19a63c32e4ae0fd238f852cdee11b2a2fac6e5c61c9e1d2fc113e79505d310"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-observability-servicemonitor-rule"
 capability_id = "observability"
 claim_id = "servicemonitor-prometheusrule-bundle"
 contract_id = "observability-servicemonitor-rule"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-servicemonitor-rule"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-observability-servicemonitor-rule"
 test_path = "projects/lumen/tests/behavior_lumen_claim_observability_servicemonitor_rule.rs"
 command = "kustomize build projects/lumen/k8s/overlays/prod"
 required_for_production = true
 assertions = ["The production overlay renders the ServiceMonitor and PrometheusRule bundle."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fac5e731ab907be7e917c3c6aec02d0d61c745ab4e8c7ad9b0dc02f74bc78431"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-schema-ddl-drop-field"
 capability_id = "schema-ops-lifecycle"
 claim_id = "schema-ddl-drop-field-drain"
 contract_id = "schema-ddl-drop-field-drain"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-ddl-drop-field"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-ddl-drop-field"
 test_path = "projects/lumen/tests/behavior_lumen_claim_schema_ddl_drop_field.rs"
 command = "cargo test -p lumen --test drop_field_e2e --test drop_drain_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Collection DDL, online drop-field drain, and drain readiness semantics pass."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9b708df06e6377715a6de348a6510b61096d9f27467bbd9c66308ce869490411"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-schema-reindex-replay"
 capability_id = "schema-ops-lifecycle"
 claim_id = "reindex-replay-stream"
 contract_id = "schema-reindex-replay"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-reindex-replay"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-reindex-replay"
 test_path = "projects/lumen/tests/behavior_lumen_claim_schema_reindex_replay.rs"
 command = "cargo test -p lumen --test reindex_stream_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Reindex/replay stream behavior indexes items and reports progress/errors correctly."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7fe80ac5fae88b02fc97f321f1d744d9a4174f8d8ec5482f1a8a9ab3eb4ee426"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-schema-stats-metadata"
 capability_id = "schema-ops-lifecycle"
 claim_id = "stats-metadata"
 contract_id = "schema-stats-metadata"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-stats-metadata"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-schema-stats-metadata"
 test_path = "projects/lumen/tests/behavior_lumen_claim_schema_stats_metadata.rs"
 command = "cargo test -p lumen --test stats_metadata_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Stats and per-field metadata match indexed data and byte attribution."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:49549586b25b549f4c68eed2445f6f673569ec7a1a42b9a498f183a1a8607ca2"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-search-core-filter-sort"
 capability_id = "search-core"
 claim_id = "filter-sort-early-termination"
 contract_id = "search-core-filter-sort"
-category = "efficiency"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-search-core-filter-sort"
+dimension = "efficiency"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-search-core-filter-sort"
 test_path = "projects/lumen/tests/efficiency_lumen_claim_search_core_filter_sort.rs"
 command = "cargo test -p lumen --test perf_gate_vs_db -- --nocapture"
 required_for_production = true
 assertions = ["Filter/sort early-termination behavior is covered by the ratcheted database comparison gate."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9c2d4514bf4cda7a406734404620cda1a0a2e9263586ada64264f163728d0445"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-search-core-planner"
 capability_id = "search-core"
 claim_id = "query-planner-boolean-eval-roaring-postings"
 contract_id = "search-core-planner"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-search-core-planner"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-search-core-planner"
 test_path = "projects/lumen/tests/behavior_lumen_claim_search_core_planner.rs"
 command = "cargo test -p lumen --test planner_diff -- --nocapture"
 required_for_production = true
 assertions = ["The planner keeps boolean evaluation and roaring-posting behavior aligned with brute-force expectations."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6ff92a1bb8a6926fa97d4ee9b39ad61b2f92ca8d976747a2535e020d2aaff93c"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-security-bearer-auth"
 capability_id = "security-hardening"
 claim_id = "bearer-token-auth-lumen-auth"
 contract_id = "security-bearer-auth"
-category = "security"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-bearer-auth"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-bearer-auth"
 test_path = "projects/lumen/tests/security_lumen_claim_security_bearer_auth.rs"
 command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Bearer-token auth rejects invalid callers and accepts valid tokens under LUMEN_AUTH=required."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e3db99915eea553bb395164ad3f6a341ffc086b872ccdbcd9ee9755a2058867e"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-security-query-safety"
 capability_id = "security-hardening"
 claim_id = "adversarial-query-safety"
 contract_id = "security-query-safety"
-category = "security"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-query-safety"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-query-safety"
 test_path = "projects/lumen/tests/security_lumen_claim_security_query_safety.rs"
 command = "cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture"
 required_for_production = true
 assertions = ["Malformed, deeply nested, and adversarial query shapes remain bounded and do not panic."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:24d96abd087dba88219c5d5110d76ac1f0cbe6777748224a98cee378818216e3"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-security-rbac-matrix"
 capability_id = "security-hardening"
 claim_id = "role-based-authz-matrix-per-route"
 contract_id = "security-rbac-matrix"
-category = "security"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-rbac-matrix"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-rbac-matrix"
 test_path = "projects/lumen/tests/security_lumen_claim_security_rbac_matrix.rs"
 command = "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Per-route RBAC enforces read/write/admin permissions and bounds result/page sizes."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:74a6f2c89c9481ac93500ac4a7283d7121599aed010bb08e22653fa57e2f3507"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-security-score-confidentiality"
 capability_id = "security-hardening"
 claim_id = "score-confidentiality"
 contract_id = "security-score-confidentiality"
-category = "security"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-score-confidentiality"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-score-confidentiality"
 test_path = "projects/lumen/tests/security_lumen_claim_security_score_confidentiality.rs"
 command = "cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture"
 required_for_production = true
 assertions = ["Scores and hit existence do not leak across collection boundaries."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b0abe99da5d666356379be4c46412bc9409d106aa5b9ea72643aea71fe393c4d"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-security-tls-rustls"
 capability_id = "security-hardening"
 claim_id = "tls-rustls"
 contract_id = "security-tls-rustls"
-category = "security"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-tls-rustls"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-security-tls-rustls"
 test_path = "projects/lumen/tests/security_lumen_claim_security_tls_rustls.rs"
 command = "cargo test -p lumen --lib tls"
 required_for_production = true
 assertions = ["The rustls-backed TLS surface passes the runtime TLS gate."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:8a892eaaceb1b3c1be9b5c556285863056f9d47db210259d49f107c5be52fa7c"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-vector-filtered-knn"
 capability_id = "vector-hash-search"
 claim_id = "filtered-knn-no-recall-collapse"
 contract_id = "vector-filtered-knn"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-filtered-knn"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-filtered-knn"
 test_path = "projects/lumen/tests/behavior_lumen_claim_vector_filtered_knn.rs"
 command = "cargo test -p lumen --test vector_e2e -- --nocapture"
 required_for_production = true
 assertions = ["Filtered kNN returns the nearest vector within the filter without recall collapse."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:bb033d2dbf0e351b5bc46c2dfefe57837f9dcaf0253625b6bd4384455a420b6a"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-vector-hash-hamming"
 capability_id = "vector-hash-search"
 claim_id = "hash-hamming-search"
 contract_id = "hash-hamming-search"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-hash-hamming"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-hash-hamming"
 test_path = "projects/lumen/tests/behavior_lumen_claim_vector_hash_hamming.rs"
 command = "cargo test -p lumen --test hash_hamming -- --nocapture"
 required_for_production = true
 assertions = ["Hash Hamming search returns bounded-distance matches over the hash index."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:026113b39577a34419a97386932129fbccc01d9056fad0afbdfef48aaeab1b0e"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-claim-vector-hnsw"
 capability_id = "vector-hash-search"
 claim_id = "hnsw-vector-knn-cpu"
 contract_id = "vector-hnsw-cpu"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-hnsw"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-vector-hnsw"
 test_path = "projects/lumen/tests/behavior_lumen_claim_vector_hnsw.rs"
 command = "cargo test -p lumen --test vector_e2e -- --nocapture"
 required_for_production = true
 assertions = ["CPU vector kNN returns ordered nearest-neighbor results and preserves restore behavior."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a43d8b0b41251fa3d422f162bd898b4190711b0966f59afeb4172ebebd5be139"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-cli-interface-generated-clients"
 capability_id = "cli-interface"
 claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
 contract_id = "spec-gen-generated-clients-public-api-journey"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients"
 test_path = "projects/lumen/tests/behavior_lumen_cli_interface_generated_clients.rs"
 command = "PATH=$HOME/.pyenv/shims:$PATH cargo test -p lumen --test spec_gen_e2e generated_client_live_h2c_public_api_journey -- --exact --ignored --nocapture"
 required_for_production = true
@@ -572,14 +722,17 @@ assertions = [
     "generated clients drive health, readiness, version, collection creation, indexing, search, duplicates, stats, and forced drop against a live h2c Lumen service.",
     "the generated Python client validates recursive pydantic QueryNode union shapes while using the bundled h2c runtime.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:250db48240dd8dfe5c8ab559f23e02fe646ebeaa79a56472d58bf3ef3891739a"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-cli-interface-llm-playbook"
 capability_id = "cli-interface"
 claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
 contract_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-llm-playbook"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-llm-playbook"
 test_path = "projects/lumen/tests/behavior_lumen_cli_interface_llm_playbook.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
@@ -588,14 +741,17 @@ assertions = [
     "lumen llm integration preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
     "agent-facing playbook output remains deterministic and offline.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6b213c5f081b95afaa3f5c5adf453450360e793b1cc2216b693ecd4e7d34bcc5"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-cli-interface-offline-cli"
 capability_id = "cli-interface"
 claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
 contract_id = "offline-cli-agent-onboarding"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-offline-cli"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-offline-cli"
 test_path = "projects/lumen/tests/behavior_lumen_cli_interface_offline_cli.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
@@ -605,14 +761,17 @@ assertions = [
     "lumen llm outline, workflow, integration, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals.",
     "lumen llm integration recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b5c8efc587a4bdb91816764224d180df09d42d28fc17d48a639504bf6dafa81a"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-cli-interface-query-catalog"
 capability_id = "cli-interface"
 claim_id = "query-shape-cookbook-field-analyzer-catalog"
 contract_id = "query-shape-cookbook-field-analyzer-catalog"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-query-catalog"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-query-catalog"
 test_path = "projects/lumen/tests/behavior_lumen_cli_interface_query_catalog.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
@@ -620,14 +779,17 @@ assertions = [
     "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
     "agent-facing query catalog output remains deterministic and offline.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ba8db5e4f662a2532956dcd78387807165742bf7eb3480ebd6ea08b31d5c7790"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-competitor-feature-parity-api-and-search"
 capability_id = "competitor-feature-parity"
 claim_id = "query-planner-boolean-eval-roaring-postings"
 contract_id = "serve-functional-api-and-search-correctness"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/competitor-feature-parity/behavior/serve-functional.md#lumen-competitor-feature-parity-api-and-search"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/competitor-feature-parity/behavior/serve-functional.md#lumen-competitor-feature-parity-api-and-search"
 test_path = "projects/lumen/tests/behavior_lumen_competitor_feature_parity_api_and_search.rs"
 command = "cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture"
 required_for_production = true
@@ -636,14 +798,17 @@ assertions = [
     "Vector kNN and filtered kNN return the nearest within the filter without recall collapse.",
     "The query planner produces byte-identical plans (planner_diff) across the search-flavor sub-capabilities.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:72c8dd31f69b3d97c09da4f0eaf02964fb8be4ed00e13e3093a3970f39d1f7d6"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-competitor-performance-competitive"
 capability_id = "competitor-performance"
 claim_id = "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
 contract_id = "search-efficiency-filtering-ranking-pagination"
-category = "efficiency"
-td_ref = "projects/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-competitor-performance-competitive"
+dimension = "efficiency"
+source_ref = "projects/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-competitor-performance-competitive"
 test_path = "projects/lumen/tests/benchmark_lumen_competitor_performance_competitive.rs"
 command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
 required_for_production = true
@@ -653,26 +818,32 @@ assertions = [
     "FILTERING/RANKING/PAGINATION/SORT cells still execute through the same release-mode Lumen search path and qps pin.",
     "Peer floors are ratcheted (perf-baseline.json, 0.8) and btree point-lookup cells stay EXEMPT unless LUMEN_GATE_COMPARE_PEERS=1 is explicitly set.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c3ac2f06c0ee04174d241cce9eb0b22e387cb9d73abb9939871702b7b83701bd"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-long-running-stability-latency-drift"
 capability_id = "long-running-stability"
 claim_id = "no-latency-drift-over-soak"
 contract_id = "search-stability-latency-drift"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-latency-drift"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-latency-drift"
 test_path = "projects/lumen/tests/stability_lumen_long_running_stability_latency_drift.rs"
 command = "cd projects/lumen && ../../target/debug/vat run rig-endurance"
 required_for_production = true
 assertions = ["(f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen)."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:be79c493398e3a9b8e7f88a15be36fc45914541f15a44a5c4b4c262c041bd0a8"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-long-running-stability-meta-api"
 capability_id = "long-running-stability"
 claim_id = "meta-api-health-ready-metrics-version"
 contract_id = "ops-meta-api-surface"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/long-running-stability/behavior/meta-api.md#lumen-long-running-stability-meta-api"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/long-running-stability/behavior/meta-api.md#lumen-long-running-stability-meta-api"
 test_path = "projects/lumen/tests/behavior_lumen_long_running_stability_meta_api.rs"
 command = "cargo test -p lumen --test api_e2e -- --nocapture"
 required_for_production = true
@@ -682,14 +853,17 @@ assertions = [
     "GET /version returns 200 with the build version (and git SHA / build time when available); bypasses auth.",
     "The k8s livenessProbe/startupProbe (/healthz) and readinessProbe (/readyz) paths match the actual endpoints; the Prometheus scrape path (/metrics) matches.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:317b5f52e757f8652c9b765a98443123cce218a472008c1d7407ae8872086bd1"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-long-running-stability-operator-render"
 capability_id = "long-running-stability"
 claim_id = "lumen-crd-reconcile-loop-kube-rs-operator"
 contract_id = "devops-operator-render-golden"
-category = "behavior"
-td_ref = "projects/lumen/external-contracts/long-running-stability/behavior/devops-render.md#lumen-long-running-stability-operator-render"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/long-running-stability/behavior/devops-render.md#lumen-long-running-stability-operator-render"
 test_path = "projects/lumen/tests/behavior_lumen_long_running_stability_operator_render.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
@@ -697,26 +871,32 @@ assertions = [
     "render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the Relay StatefulSet/Service/PDB when the broker is managed.",
     "BYO-Relay (broker.externalUrl) omits the managed Relay objects and wires the external URL into the serving env.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:00ce2c267d7e7b93f40439be02480be5381293b546591cc68e6fadd64fae2460"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-long-running-stability-overload-backpressure"
 capability_id = "long-running-stability"
 claim_id = "graceful-degradation-under-overload"
 contract_id = "search-stability-backpressure"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-overload-backpressure"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-overload-backpressure"
 test_path = "projects/lumen/tests/stability_lumen_long_running_stability_overload_backpressure.rs"
 command = "cd projects/lumen && ../../target/debug/vat run rig-load"
 required_for_production = true
 assertions = ["(d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen)."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:506b77976d87982cecab779decf22e0ca18ae296bc1cfe188624053d2f1f3353"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-long-running-stability-query-resilience"
 capability_id = "long-running-stability"
 claim_id = "search-p99-survives-fault-and-recovers"
 contract_id = "search-stability-fault-resilience"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-query-resilience"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-query-resilience"
 test_path = "projects/lumen/tests/stability_lumen_long_running_stability_query_resilience.rs"
 command = "cd projects/lumen && ../../target/debug/vat run rig-resilience"
 required_for_production = true
@@ -725,14 +905,17 @@ assertions = [
     "ALL: after a full network partition, search recovers within 10s and post-recovery p99 stays <= 2x baseline_p99 + 1ms.",
     "RSS plateau: over the bounded-keyspace soak, window-2 RSS <= 1.10x window-1 RSS (no leak).",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:236ad3e97b7df2e16ce43c6d258e6626fb7fdfff55478cee6ca019d84602c91b"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-long-running-stability-resilience-survival"
 capability_id = "long-running-stability"
 claim_id = "search-p99-survives-fault-and-recovers"
 contract_id = "search-p99-survives-fault-and-recovers"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-long-running-stability-resilience-survival"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-long-running-stability-resilience-survival"
 test_path = "projects/lumen/tests/stability_lumen_long_running_stability_resilience_survival.rs"
 command = "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
 required_for_production = true
@@ -740,26 +923,32 @@ assertions = [
     "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario).",
     "Search survives a full network partition and recovers within budget; post-recovery p99 stays within 2x baseline.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:057e7163be081dd7cb589fa99a7895c274ef82b57c9a0f5494b37b535d7dddf8"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-long-running-stability-resource-leak"
 capability_id = "long-running-stability"
 claim_id = "no-fd-socket-thread-leak"
 contract_id = "search-stability-resource-leak"
-category = "stability"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-resource-leak"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-long-running-stability-resource-leak"
 test_path = "projects/lumen/tests/stability_lumen_long_running_stability_resource_leak.rs"
 command = "cd projects/lumen && ../../target/debug/vat run rig-endurance"
 required_for_production = true
 assertions = ["(e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen)."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:26ffdaf402e896d774e321443f7d273e1ac5543ac4d03e95284bc597c07e9569"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-security-hardening-access-control"
 capability_id = "security-hardening"
 claim_id = "role-based-authz-matrix-per-route"
 contract_id = "search-security-rbac-and-limit"
-category = "security"
-td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-access-control"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-access-control"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_access_control.rs"
 command = "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
 required_for_production = true
@@ -767,14 +956,17 @@ assertions = [
     "FILTERING: search over a collection the token cannot read returns 403; results never leak rows outside the caller's RBAC scope.",
     "PAGINATION: bulk/index requests over MAX_INDEX_ITEMS return 413; result pages are bounded (cursor), not unbounded.",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b822ad4e9065999f1dbc596fd84924248d2ebb6a567bdf209c558f354f15f268"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-security-hardening-auth-bearer-rbac"
 capability_id = "security-hardening"
 claim_id = "bearer-token-auth-lumen-auth"
 contract_id = "bearer-token-auth-lumen-auth"
-category = "security"
-td_ref = "projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-security-hardening-auth-bearer-rbac"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-security-hardening-auth-bearer-rbac"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_auth_bearer_rbac.rs"
 command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
 required_for_production = true
@@ -782,91 +974,106 @@ assertions = [
     "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.",
     "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).",
 ]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c3fbf3832f52fde979c03a8e6758a2bff1ae5e6b3dbc762b6758143da50c5f75"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-security-hardening-query-injection"
 capability_id = "security-hardening"
 claim_id = "adversarial-query-safety"
 contract_id = "search-security-injection"
-category = "security"
-td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-query-injection"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-query-injection"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_query_injection.rs"
 command = "cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture"
 required_for_production = true
 assertions = ["C2: malformed JSON, deeply-nested JSON query DSL, special-char search text, inverted ranges, and range numeric overflow are rejected or evaluated safely (no panic, no 5xx, bounded work)."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f19955a6fbbf7e3bc31a7468f8029556bc291e6f9f013147ebc4e7d37bd63950"
 
-[[aw.ec.generated.cases]]
+[[cases]]
 id = "lumen-security-hardening-result-leak"
 capability_id = "security-hardening"
 claim_id = "score-confidentiality"
 contract_id = "search-security-result-leak"
-category = "security"
-td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-result-leak"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-security-hardening-result-leak"
 test_path = "projects/lumen/tests/security_lumen_security_hardening_result_leak.rs"
 command = "cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture"
 required_for_production = true
 assertions = ["C3: relevance scores and hit existence do not leak documents across collection boundaries; RBAC denial coverage remains pinned by the authz matrix case."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1a26739da22c09efcef7a2801e1380eef98c50fee60e5dfeefd4b150b9ff16ab"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "lumen-guard-auth-surface"
 tool = "guard"
-path = "projects/lumen/guard.toml"
-td_ref = "projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-guard-auth-surface"
-content_digest = "sha256:525edc47f13dc0feae7a3b484bfe2fa43847e69271f1686f5e1be5fea0fc4edd"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-guard-auth-surface"
+manifest_path = "projects/lumen/guard.toml"
 command = "target/debug/guard scan projects/lumen --compact --no-persist"
-category = "security"
+content_digest = "sha256:525edc47f13dc0feae7a3b484bfe2fa43847e69271f1686f5e1be5fea0fc4edd"
+digest = "sha256:437ee1cd5d52c8b13540245f6ed12b708a71ba2dddc565e6d7c50a211114bebe"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "lumen-guard-search-security"
 tool = "guard"
-path = "projects/lumen/guard-search.toml"
-td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-guard-search-security"
-content_digest = "sha256:277545539c5f0e73eefd6e3e09352f8224def803f0e4cb980b84e883e24d0dd6"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-guard-search-security"
+manifest_path = "projects/lumen/guard-search.toml"
 command = "target/debug/guard scan projects/lumen --compact --no-persist"
-category = "security"
+content_digest = "sha256:277545539c5f0e73eefd6e3e09352f8224def803f0e4cb980b84e883e24d0dd6"
+digest = "sha256:f940ec5c57eea0520cf488490dcad1792e3d6ad444638d7d086d5f3e4d283a6a"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "lumen-meter-search-efficiency"
 tool = "meter"
-path = "projects/lumen/meter-search-efficiency.toml"
-td_ref = "projects/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency"
-content_digest = "sha256:74040e3ae27665af7cb0e0ff468da8230db7ecbcac2d36e3255eaa68a67c4c7a"
+dimension = "efficiency"
+source_ref = "projects/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency"
+manifest_path = "projects/lumen/meter-search-efficiency.toml"
 command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
-category = "efficiency"
+content_digest = "sha256:74040e3ae27665af7cb0e0ff468da8230db7ecbcac2d36e3255eaa68a67c4c7a"
+digest = "sha256:29dbf4968fca2470a53a891a04d449cf11295eada2c8ce04957ef0ce0b5da0d0"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "lumen-meter-search-security"
 tool = "meter"
-path = "projects/lumen/meter-search-security.toml"
-td_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-meter-search-security"
-content_digest = "sha256:7f2b1940337d43560c50d5027aabda4c3ef938514825c56c5d29d88aa91236af"
+dimension = "security"
+source_ref = "projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-meter-search-security"
+manifest_path = "projects/lumen/meter-search-security.toml"
 command = "target/debug/meter test -- -p lumen --test api_e2e -- --ignored"
-category = "security"
+content_digest = "sha256:7f2b1940337d43560c50d5027aabda4c3ef938514825c56c5d29d88aa91236af"
+digest = "sha256:f13f1b22d0edc064c32575caaf0ed49490f641b0524ee9e7e20b8f5f23afa034"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "lumen-meter-search-stability"
 tool = "meter"
-path = "projects/lumen/meter-search-stability.toml"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-meter-search-stability"
-content_digest = "sha256:7ab3c60ccd66b463f9b5b430fbf95ce9852fc0ea123a872daeda2ea891358888"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-meter-search-stability"
+manifest_path = "projects/lumen/meter-search-stability.toml"
 command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
-category = "stability"
+content_digest = "sha256:7ab3c60ccd66b463f9b5b430fbf95ce9852fc0ea123a872daeda2ea891358888"
+digest = "sha256:2c4931e88b1317935aa38511f41bcfad790df9d5ecdcbc791b360ac50d767d74"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "lumen-rig-resilience"
 tool = "rig"
-path = "projects/lumen/rig.toml"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-rig-resilience"
-content_digest = "sha256:dc7385fcc2ce189e7f284bed20300def51c9af1dbf1a444f539262c6e1bc1e59"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-rig-resilience"
+manifest_path = "projects/lumen/rig.toml"
 command = "cd projects/lumen && ../../target/debug/vat run rig-resilience"
-category = "stability"
+content_digest = "sha256:dc7385fcc2ce189e7f284bed20300def51c9af1dbf1a444f539262c6e1bc1e59"
+digest = "sha256:98875f642de6d25914456afe12ee6c84c1e5fcc36ebe7cbf61efcc867738809d"
 
-[[aw.ec.generated.tool_manifests]]
+[[tool_contracts]]
 id = "lumen-rig-search-stability"
 tool = "rig"
-path = "projects/lumen/rig-search.toml"
-td_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-rig-search-stability"
-content_digest = "sha256:6e10998fdb5bc2a1a2f1b1914c193047591debd06c7f39bf9011d228d7e1d88e"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-rig-search-stability"
+manifest_path = "projects/lumen/rig-search.toml"
 command = "cd projects/lumen && ../../target/debug/vat run rig-resilience"
-category = "stability"
-# AW-EC-END
+content_digest = "sha256:6e10998fdb5bc2a1a2f1b1914c193047591debd06c7f39bf9011d228d7e1d88e"
+digest = "sha256:ef76443f1492f91226ca63879e080c3d6d426a445afb0024ff894a8713db628e"

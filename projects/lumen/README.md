@@ -31,9 +31,10 @@ concept, only the caller's `external_id` is.
   Shard count is install-time, not online-changeable.
 - **Agent-first offline integration surface**: `lumen spec` emits the exact
   machine schema, including `lumen spec --format openapi-yaml` for LLM-readable
-  OpenAPI, while `lumen llm outline|workflow|integration|quickstart|recipes`
-  lets an agent pick the smallest context needed to wire lumen into an app
-  without a docs site or running server.
+  OpenAPI, while `lumen llm --topic outline`, `lumen llm --topic workflow`,
+  `lumen llm --topic integration`, `lumen llm --topic quickstart`, and
+  `lumen llm --topic recipes` let an agent pick the smallest context needed to
+  wire lumen into an app without a docs site or running server.
 
 ## Capabilities
 
@@ -435,15 +436,15 @@ Gate Inventory:
 
 ID: agent-offline-integration
 Type: AgentFirst
-Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm outline` + `lumen llm workflow` + `lumen llm integration` + `lumen llm quickstart` + `lumen llm recipes` - offline self-description and agent onboarding commands.
+Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm --topic outline` + `lumen llm --topic workflow` + `lumen llm --topic integration` + `lumen llm --topic quickstart` + `lumen llm --topic recipes` - offline self-description and agent onboarding commands.
 EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline schema and LLM topic conformance
 Root WI: 4143
 Status: verified
 Required Verification: conformance
 Promise:
 An installed `lumen` binary self-onboards an agent offline: `lumen spec` emits
-machine schemas and query catalogs, while `lumen llm *` emits workflow,
-integration, quickstart, recipes, and non-goal topics.
+machine schemas and query catalogs, while `lumen llm --topic <topic>` emits
+workflow, integration, quickstart, recipes, and non-goal topics.
 Gate Inventory:
 - projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs
 
@@ -561,6 +562,7 @@ auto-inference.
 | `number`  | Sorted inverted index (range-scannable)                                       | `term`, `range`            | Yes                 |
 | `set`     | Multi-keyword (one posting per element)                                       | `term` (matches any element) | Yes (per element) |
 | `vector`  | Dense `[f32; dim]` + ANN graph (HNSW CPU default; exact flat CPU brute-force) | `knn { vector, k }` with `cosine` / `dot` / `l2` metric | No |
+| `hash`    | Caller-supplied 64-bit perceptual/structural hash stored as hex bits         | `hamming { hash, max_distance }` | No; use `hamming` for near-duplicate lookup |
 
 Analyzers available for `text`: `jieba` (Chinese), `whitespace_lower`
 (English / generic), `ngram` (configurable min/max). A field is bound
@@ -569,6 +571,24 @@ to one analyzer at declaration time.
 A field cannot be both `text` and `keyword`. If both are needed (e.g.
 "search by email substring *and* find duplicate emails"), declare two
 fields and write twice — this keeps write amplification predictable.
+
+## Search concept boundaries
+
+The parity promise is search-side breadth over Lumen's declared contract, not
+an implicit claim that every PostGIS/OpenSearch/MongoDB search feature already
+exists. These concepts are explicit so agents can choose the right engine or
+adapter boundary:
+
+| Concept | Disposition |
+|---------|-------------|
+| Geo / spatial search | **Roadmap candidate.** Use PostGIS/MongoDB/OpenSearch or a caller-owned geospatial prefilter today, then pass matching `external_id`s to lumen. |
+| Phrase / proximity queries | **Roadmap candidate.** Current `match` is bag-of-words BM25 over analyzer tokens, not phrase order or slop. |
+| Fuzzy / typo tolerance | **Roadmap candidate.** No edit-distance automaton today; for coarse prefix/substring recall, use the `ngram` analyzer recipe. |
+| Synonyms | **Caller-owned.** Expand queries before calling lumen or write normalized companion fields; there is no managed synonym dictionary/analyzer. |
+| Autocomplete / suggest | **Recipe.** Declare a dedicated `text` field with `analyzer: "ngram"` and run `match`; lumen returns candidate `external_id`s, not suggestion payloads. |
+| Highlighting | **Non-goal.** Search responses contain only `external_id` + `score`; lumen does not store source text to return snippets/fragments. |
+| Per-field / per-clause boost | **Boundary.** No arbitrary boost knob today; use separate fields/query legs plus `rrf`, then rerank in the caller if needed. |
+| Document TTL / expiry | **Caller-owned lifecycle.** Delete/reindex expired `external_id`s from the source-of-truth event stream; collection soft-delete grace is not per-document TTL. |
 
 ## API surface
 
@@ -588,10 +608,11 @@ PUT /collections/{id}
     "tags":      { "type": "keyword", "multi": true },
     "age":       { "type": "number" },
     "embedding": { "type": "vector",  "dim": 768, "metric": "cosine",
-                   "backend": "hnsw-cpu", "quantize": "sq" }
+                   "backend": "hnsw-cpu", "quantize": "sq" },
+    "avatar_phash": { "type": "hash" }
   }
 }
-→ 200 { "collection_id": "users", "version": 1, "fields_count": 5 }
+→ 200 { "collection_id": "users", "version": 1, "fields_count": 6 }
 ```
 
 Online: adding a new field is immediate (postings start empty).
@@ -599,7 +620,9 @@ Re-declaring an existing field with the same spec is a no-op (PUT is
 upsert-merge). Changing a field's type is rejected — drop the field
 (`DELETE /collections/{id}/fields/{name}`) and re-add. `vector` field
 configuration (`dim` / `metric` / `backend` / `quantize`) is immutable
-for the field's lifetime.
+for the field's lifetime. `hash` has no schema-time hash-kind parameter:
+the caller computes pHash, SimHash, b-bit MinHash, or another 64-bit signature
+and writes it as a 16-hex-character string (optional `0x` prefix accepted).
 
 ### Index (write)
 
@@ -609,11 +632,12 @@ POST /collections/{id}/index
   "items": [
     { "external_id": "u_123", "field": "bio",   "value": "senior engineer in Taipei" },
     { "external_id": "u_123", "field": "email", "value": "a@x.com" },
-    { "external_id": "u_123", "field": "tags",  "value": ["rust","db"] }
+    { "external_id": "u_123", "field": "tags",  "value": ["rust","db"] },
+    { "external_id": "u_123", "field": "avatar_phash", "value": "f0e1d2c3b4a59687" }
   ],
   "request_id": "..."        // optional, dedup TTL 5 min
 }
-→ 200 { "indexed": 3, "bytes_written": { "bio": 412, "email": 33, "tags": 88 }, "shard_lag_ms": 4 }
+→ 200 { "indexed": 4, "bytes_written": { "bio": 412, "email": 33, "tags": 88, "avatar_phash": 12 }, "shard_lag_ms": 4 }
 ```
 
 Re-writing `(external_id, field)` fully re-indexes that field. There

@@ -53,37 +53,24 @@ impl ManagedService for Lumen {
     }
 
     fn readiness_targets(&self) -> Vec<ReadinessTarget> {
+        // The serving fleet is always a StatefulSet (render::render), whether
+        // or not raft consensus (`replicasPerShard > 1`) is active.
         let name = self.name_any();
-        let mut targets = vec![ReadinessTarget {
-            kind: "Deployment",
-            name: name.clone(),
-        }];
-        // The managed broker is a StatefulSet `<name>-relay`; an external broker
-        // has no workload to poll (its serving pods' connect-retry covers blips).
-        if self.spec.broker.is_managed() {
-            targets.push(ReadinessTarget {
-                kind: "StatefulSet",
-                name: format!("{name}-relay"),
-            });
-        }
-        targets
+        vec![ReadinessTarget {
+            kind: "StatefulSet",
+            name,
+        }]
     }
 
     fn status_patch(&self, ready: &ReadyFacts) -> serde_json::Value {
         let name = self.name_any();
         let serving_ready = ready.ready.get(&name).copied().unwrap_or(0) as i32;
-        let broker_ready = if self.spec.broker.is_managed() {
-            ready
-                .ready
-                .get(&format!("{name}-relay"))
-                .copied()
-                .unwrap_or(0)
-                >= 1
+        let desired = if self.spec.replicas_per_shard > 1 {
+            (self.spec.shard_count * self.spec.replicas_per_shard) as i32
         } else {
-            true // external broker: assumed up.
+            self.spec.serving.autoscaling.min_replicas
         };
-        let desired = self.spec.serving.autoscaling.min_replicas;
-        let phase = if serving_ready >= desired && broker_ready {
+        let phase = if serving_ready >= desired {
             "Ready"
         } else if serving_ready > 0 {
             "Reconciling"
@@ -96,8 +83,7 @@ impl ManagedService for Lumen {
             "servingReadyReplicas": serving_ready,
             "desiredReplicas": desired,
             "shardCount": self.spec.shard_count,
-            "brokerReady": broker_ready,
-            "message": format!("{serving_ready}/{desired} serving pods ready; brokerReady={broker_ready}"),
+            "message": format!("{serving_ready}/{desired} serving pods ready"),
         }})
     }
 }
