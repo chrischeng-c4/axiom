@@ -574,20 +574,104 @@ def _is_none_member(e: ast.expr) -> bool:
     return False
 
 
+# #884: closed scalar-union folds for a PURE-scalar union (every non-`None`
+# member itself maps to one of the concrete `SCALAR_CORE_TY` variants, never a
+# nominal `Typed` contract). Each entry reuses a CoreTy variant `check_expr.rs`
+# already enforces for its OWN sake — no new CoreTy/enforcement code needed —
+# keyed by the set of concrete-scalar ACTUAL kinds
+# (`Int`/`Float`/`Str`/`Bool`) it accepts, per `check_stdlib_scalar_arg` /
+# `types_compatible`'s one-directional Bool->Int->Float promotion:
+#   CoreTy::Bool     accepts {Bool}
+#   CoreTy::Str      accepts {Str}
+#   CoreTy::Int      accepts {Int, Bool}
+#   CoreTy::Float    accepts {Int, Float, Bool}
+#   CoreTy::IntOrStr accepts {Int, Bool, Str}
+# Ordered smallest accept-set first so the fold picks the MOST PRECISE variant
+# whose accept-set safely covers the union's concrete members (never rejects a
+# value the union actually declares valid).
+_SCALAR_UNION_FOLD: list[tuple[str, frozenset[str]]] = [
+    ("Bool", frozenset({"Bool"})),
+    ("Str", frozenset({"Str"})),
+    ("Int", frozenset({"Int", "Bool"})),
+    ("Float", frozenset({"Int", "Float", "Bool"})),
+    ("IntOrStr", frozenset({"Int", "Bool", "Str"})),
+]
+
+# CoreTy variants whose `check_expr.rs` enforcement is a *negative scalar
+# wall*: reject EVERY concrete-scalar actual (Int/Float/Str/Bool) unconditionally,
+# with no promotion exception. They are therefore mutually interchangeable as a
+# fold target whenever a pure-scalar union has NO Int/Float/Str/Bool member (a
+# union of e.g. `list[...] | tuple[...]` or `tuple[...] | type[...]`) — any
+# member present is an exact-safe representative. Ordered by observed typeshed
+# prevalence for a stable, deterministic pick.
+_NEGWALL_CORE_TY = ("Tuple", "List", "Dict", "Type", "Bytes")
+
+# #884: known-runtime-catchable exceptions to the L3 scalar-union fold. Each
+# entry is a (module, qualifier, function-name, param-name) whose typeshed
+# annotation IS a pure scalar union (folds to a concrete CoreTy under
+# `_union_core_ty`, e.g. `str | None` -> `CoreTy::Str`) but whose REAL
+# implementation performs its OWN runtime type check and raises a CATCHABLE
+# `TypeError` that fixtures rely on catching at RUNTIME via `try/except`.
+# Folding these turns the ① hook into a compile-time-uncatchable wall, which
+# aborts the whole compile before the `try/except` ever runs -- flipping a
+# PASS (oracle raises+catches TypeError) into a hard compile FAIL. Confirmed
+# via `errors/std-libs/logging/getlogger_int_name_raises.py`
+# (`logging.getLogger(123)`: typeshed `name: str | None` folds to
+# `CoreTy::Str`, but CPython's real `Logger.manager.getLogger` runs its own
+# `isinstance(name, str)` check and raises `TypeError`, which the fixture
+# expects to observe and catch). Pinned back to the pre-#884 `Typed` wall
+# (bare-instance-only rejection) for exactly this param, so the runtime path
+# stays reachable -- mirrors this codebase's `strict_keyword_wall` precedent
+# in `check_expr.rs` for the identical compile-time-vs-runtime tension.
+#
+# Scoped to EXACTLY the confirmed case: `logging.Manager.getLogger` (the
+# method) has NO evidence of the same runtime-catchable path -- its own
+# `type/std-libs/logging/Manager__getLogger__name_as_str_wrong.py` fixture
+# (a `# mamba-strict-type:` conformance case) actively WANTS the strict
+# fold, and excluding it there breaks that fixture (MAMBA_TYPE_LEAKED) for
+# no offsetting benefit -- so only the module-level function is excluded.
+_L3_FOLD_EXCLUDE: frozenset[tuple[str, str, str, str]] = frozenset({
+    ("logging", "", "getLogger", "name"),
+})
+
+
 def _union_core_ty(members: list[ast.expr]) -> str:
-    """L2 fold: `Typed` iff EVERY non-`None` member is itself non-Unknown (a scalar
-    or a nominal `Typed`); Unknown the moment any member is Unknown. A bare class
-    inhabits the union iff it inhabits some member, so one Unknown (wildcard /
-    typevar / un-analyzable) member opens the door and must abort. A lone `None`
-    slice yields no checkable member -> Unknown."""
-    saw_real = False
+    """L2/L3 fold. Unknown the moment any non-`None` member is Unknown (a bare
+    class inhabits the union iff it inhabits some member, so one wildcard /
+    typevar / un-analyzable member opens the door and must abort). A lone
+    `None` slice yields no checkable member -> Unknown.
+
+    Otherwise: if any member is a nominal `Typed` contract, the union stays
+    `Typed` (unchanged L2 fold — bare-instance-only rejection; folding a
+    Typed-mixed union needs per-combination analysis out of this pass's
+    scope). Else EVERY member is a concrete scalar (#884 L3): fold into the
+    tightest existing closed scalar-union `CoreTy` whose accept-set safely
+    covers every member (`_SCALAR_UNION_FOLD` / `_NEGWALL_CORE_TY`) instead of
+    the weaker `Typed` bare-instance wall. A combination no existing variant
+    can safely cover (e.g. `float | str` — no `FloatOrStr` variant exists)
+    stays `Typed` rather than risk a false positive."""
+    tys: set[str] = set()
     for m in members:
         if _is_none_member(m):
             continue
-        saw_real = True
-        if core_ty_of(m) == "Unknown":
+        ct = core_ty_of(m)
+        if ct == "Unknown":
             return "Unknown"
-    return "Typed" if saw_real else "Unknown"
+        tys.add(ct)
+    if not tys:
+        return "Unknown"
+    if "Typed" in tys:
+        return "Typed"
+    concrete = tys & {"Int", "Float", "Str", "Bool"}
+    if not concrete:
+        for name in _NEGWALL_CORE_TY:
+            if name in tys:
+                return name
+        return "Typed"  # unreachable: SCALAR_CORE_TY has no other member
+    for name, accept in _SCALAR_UNION_FOLD:
+        if concrete <= accept:
+            return name
+    return "Typed"
 
 
 def core_ty_of(node: ast.expr | None) -> str:
@@ -811,6 +895,12 @@ def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True
     # ordinary compatibility rule); a `Typed` protocol param is checked by the
     # bare-class rule. `core_ty_of` never emits anything else besides these and
     # `Unknown`, so "checkable" is exactly "not Unknown".
+    if params:
+        params = [
+            (pn, "Typed") if (mod, qualifier, name, pn) in _L3_FOLD_EXCLUDE and ct != "Unknown"
+            else (pn, ct)
+            for pn, ct in params
+        ]
     has_checkable = any(ct != "Unknown" for _name, ct in params)
     enforceable = (not has_star) and (not overloaded) and has_checkable
     emitted_params = params
