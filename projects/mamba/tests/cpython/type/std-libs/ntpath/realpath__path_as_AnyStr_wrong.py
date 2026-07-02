@@ -9,12 +9,11 @@
 # case = "realpath__path_as_AnyStr_wrong"
 # subject = "ntpath.realpath(path: AnyStr)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/ntpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: ntpath.realpath(path: AnyStr); call it with the wrong type.
 
