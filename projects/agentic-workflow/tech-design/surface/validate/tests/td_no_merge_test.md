@@ -974,8 +974,12 @@ async fn test_code_check_ignores_unrelated_marker_outside_wi_scope() {
     // other unmerged work on the same checkout).
     write_854_marker_file(root, "src/unrelated.rs", "unrelated-marker", false);
 
+    // Issue #859 part a2: seeded at cb_genned (not cb_filled) so this
+    // fixture still exercises `run_cb_check_gate_scoped` at code-check's
+    // fresh entry — a cb_filled entry is now trusted-skipped (fill's own
+    // apply loop already proved this gate true before advancing phase).
     let slug = "marker-gate-scoped-test";
-    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+    seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
         .arg("td")
@@ -1037,8 +1041,10 @@ async fn test_code_check_blocks_on_marker_inside_wi_scope() {
     // unfilled HANDWRITE marker.
     write_854_marker_file(root, "src/demo.rs", "demo-marker", false);
 
+    // Issue #859 part a2: seeded at cb_genned — see comment in
+    // `test_code_check_ignores_unrelated_marker_outside_wi_scope` above.
     let slug = "marker-gate-blocks-test";
-    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+    seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
         .arg("td")
@@ -1072,8 +1078,8 @@ async fn test_code_check_blocks_on_marker_inside_wi_scope() {
         .expect("issue still present");
     assert_eq!(
         after.phase.as_deref(),
-        Some(td_phase::CB_FILLED),
-        "refused code-check must not advance phase past cb_filled"
+        Some(td_phase::CB_GENNED),
+        "refused code-check must not advance phase past cb_genned"
     );
 }
 
@@ -1104,8 +1110,11 @@ async fn test_code_check_docs_only_wi_passes_vacuously() {
     // Unrelated unfilled marker elsewhere in the tree.
     write_854_marker_file(root, "src/unrelated.rs", "unrelated-marker", false);
 
+    // Issue #859 part a2: seeded at cb_genned so this exercises the scoped
+    // gate's own vacuous-pass logic (empty scope union), not the separate
+    // cb_filled trusted-skip path.
     let slug = "docs-only-wi-test";
-    seed_847_open_issue(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL).await;
+    seed_847_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL).await;
 
     let output = Command::new(&aw_bin)
         .arg("td")
@@ -1140,6 +1149,266 @@ async fn test_code_check_docs_only_wi_passes_vacuously() {
         "docs-only code-check must still advance phase to td_merged"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #859: terminal code-check efficiency + robustness.
+// (a) the marker gate's underlying enumeration is scoped, not just its
+//     post-walk filter; (b) the terminal fresh-entry write folds the
+//     workflow-lock unlock into the same `IssuePatch` that advances phase and
+//     closes the issue; (c) a missing local issue emits an actionable
+//     rehydration envelope instead of misrouting into `td::run_audit`'s
+//     "audit target not found".
+// ---------------------------------------------------------------------------
+
+/// (a) `enumerate_markers_for_scope` walks only the given scope paths — a
+/// marker in a file outside the scope union is never read. Asserted via a
+/// direct call to the enumerator's own return value: through the full CLI,
+/// the old "walk everything then filter" and the new "walk only scope"
+/// approaches are pass/fail-equivalent, so only a direct call can prove the
+/// walk itself was bounded rather than just its filtered result.
+#[test]
+fn test_enumerate_markers_for_scope_excludes_out_of_scope_marker() {
+    use agentic_workflow::cli::cb_fill::enumerate_markers_for_scope;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_854_marker_file(root, "src/in_scope.rs", "in-scope-marker", false);
+    write_854_marker_file(root, "src/out_of_scope.rs", "out-of-scope-marker", false);
+
+    let scope = vec!["src/in_scope.rs".to_string()];
+    let found = enumerate_markers_for_scope(root, &scope);
+
+    assert_eq!(
+        found.len(),
+        1,
+        "scoped enumeration must find exactly the in-scope marker, got: {:?}",
+        found
+    );
+    assert_eq!(found[0].source_path, "src/in_scope.rs");
+    assert!(
+        !found.iter().any(|m| m.source_path == "src/out_of_scope.rs"),
+        "scoped enumeration must never read a marker outside its scope paths, got: {:?}",
+        found
+    );
+}
+
+/// (a) An empty scope union (no branch diff, no WI Changes paths — the
+/// vacuous-pass case `run_cb_check_gate_scoped` short-circuits on before
+/// calling the enumerator at all) must not find any marker even when one
+/// sits right at the worktree root, proving the enumerator itself performs
+/// zero filesystem walk work for an empty scope rather than relying on a
+/// post-walk filter to discard everything.
+#[test]
+fn test_enumerate_markers_for_scope_empty_scope_finds_nothing() {
+    use agentic_workflow::cli::cb_fill::enumerate_markers_for_scope;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_854_marker_file(root, "src/anything.rs", "any-marker", false);
+
+    let found = enumerate_markers_for_scope(root, &[]);
+    assert!(
+        found.is_empty(),
+        "an empty scope must enumerate zero markers, got: {:?}",
+        found
+    );
+}
+
+/// (b) Terminal completion of a fresh, lock-carrying WI must fold the
+/// workflow-lock projection unlock into the same `IssuePatch` that advances
+/// phase to `td_merged` and closes the issue, rather than a second
+/// local-write + remote-push cycle after the fact. "One write cycle" isn't
+/// directly observable from outside the process, so this asserts the
+/// observable equivalent: the lock is fully released (label AND projection
+/// body) after exactly ONE `aw td code-check` run against a fresh entry —
+/// no retry needed, and (unlike the #846 retry fixture) never previously
+/// closed.
+#[tokio::test]
+async fn test_code_check_folds_lock_release_into_single_write() {
+    use agentic_workflow::cli::workflow_guard::{
+        parse_projection, upsert_projection, WorkflowProjection,
+    };
+    use agentic_workflow::issues::types::{td_phase, IssueType};
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_847_changes_spec(root, &[("src/demo.rs", "create")]);
+    write_854_marker_file(root, "src/demo.rs", "demo-marker", true);
+
+    let slug = "fold-lock-release-test";
+    let projection = WorkflowProjection {
+        version: 1,
+        issue_id: slug.to_string(),
+        locked: true,
+        owner: Some("td".to_string()),
+        expected_command: Some("aw td code-check".to_string()),
+        ..Default::default()
+    };
+    let body =
+        upsert_projection(&format!("# {slug} WI\n"), &projection).expect("upsert projection");
+
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![
+            format!("phase:{}", td_phase::CB_GENNED),
+            "score:locked".to_string(),
+            "score:lock:td".to_string(),
+        ],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body,
+        related: Vec::new(),
+        implements: vec![DEMO_SPEC_REL.to_string()],
+        phase: Some(td_phase::CB_GENNED.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed locked issue");
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "code-check should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "a fresh, lock-carrying WI must complete in one run, got:\n{}",
+        stdout
+    );
+
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(after.state, IssueState::Closed, "must be closed");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "must advance to td_merged"
+    );
+    assert!(
+        !after
+            .labels
+            .iter()
+            .any(|l| l == "score:locked" || l == "score:lock:td" || l == "score:lock:cb"),
+        "all lock labels must be released by the single fresh-entry write, labels: {:?}",
+        after.labels
+    );
+    let after_projection =
+        parse_projection(&after.body).expect("projection block still present in body");
+    assert!(
+        !after_projection.locked,
+        "the projection's own locked flag must be false after the fold, got: {:?}",
+        after_projection
+    );
+    assert!(
+        after_projection.owner.is_none(),
+        "the projection's owner must be cleared after the fold, got: {:?}",
+        after_projection
+    );
+}
+
+/// (c) A slug with no local issue at all (never seeded, no lifecycle
+/// history) must refuse with an explicit, actionable envelope naming the
+/// issue and the right remediation — never the unrelated "audit target not
+/// found" path-lookup misroute a missing *issue* used to fall through to.
+#[tokio::test]
+async fn test_code_check_missing_local_issue_emits_actionable_envelope() {
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+
+    let slug = "never-seeded-wi";
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "missing-issue refusal still exits 0 (protocol is the stdout envelope):\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "a missing local issue must refuse with an error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(slug),
+        "the error envelope must name the missing issue's slug, got:\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("audit target not found"),
+        "a missing issue must not misroute into the audit path-lookup message, got:\n{}",
+        stdout
+    );
+}
 ```
 
 ## Changes
@@ -1167,4 +1436,17 @@ changes:
       are 0-of-N present on disk refuses completion and names the missing
       paths; `--allow-empty-impl` overrides the refusal; partial presence
       (some but not all paths present) is warn-only and still completes.
+      Also covers #854: the terminal marker gate (and the #847
+      empty-implementation gate) scope to the completing WI's own TD spec
+      instead of the whole worktree, so an unrelated inherited HANDWRITE
+      marker elsewhere in a monorepo checkout does not block completion.
+      Also covers #859: (a) `enumerate_markers_for_scope` bounds the marker
+      walk itself to the scope union rather than filtering a whole-tree walk
+      after the fact, and a fresh `cb_filled` entry trusts fill's own gate
+      instead of re-running it; (b) the terminal fresh-entry write folds the
+      workflow-lock projection unlock into the same `IssuePatch` that
+      advances phase and closes the issue, observed as full lock release in
+      one code-check run; (c) a missing local issue emits an explicit,
+      actionable envelope naming the remediation instead of misrouting into
+      `td::run_audit`'s unrelated "audit target not found" path lookup.
 ```

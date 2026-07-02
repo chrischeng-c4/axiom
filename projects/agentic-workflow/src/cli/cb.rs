@@ -4244,7 +4244,47 @@ async fn run_check_lifecycle_terminal(
 
     let backend = LocalBackend::from_project_root(project_root);
     let Some(issue) = backend.get(slug).await? else {
-        return Ok(false);
+        // Issue #859 part c: the local issue cache under `/tmp/aw` is
+        // ephemeral (cleared on reboot / a fresh checkout) while git history
+        // (`Lifecycle-Slug` trailers) and any remote backend issue persist.
+        // Returning `Ok(false)` here used to fall through to `run_check`'s
+        // `td::run_audit(...)` path lookup, which then misroutes this into
+        // an "audit target not found" message about a missing *path* —
+        // nothing to do with the real problem (a missing *issue*). Emit an
+        // explicit, actionable envelope instead and claim the dispatch
+        // (`Ok(true)`) so `run_check` never falls through.
+        //
+        // This deliberately does not attempt full rehydration via
+        // `td::bootstrap_td_issue`: that helper hard-bails when the remote
+        // issue's `state != Open`, which is exactly the shape a legitimate
+        // terminal *retry* can be in (a prior `aw td code-check` run already
+        // closed the remote issue via `backend.update`/`maybe_push_remote`
+        // and then failed before finishing its remaining steps) —
+        // unconditionally reusing it here would turn a resumable retry into
+        // a hard failure. It also carries side effects (workspace/branch
+        // activation, a `Td-Hydrate` commit) that don't belong behind a
+        // terminal-step entry point. A read-only git-log check is enough to
+        // tell the caller which remediation applies.
+        let message = if slug_has_lifecycle_history(project_root, slug)? {
+            format!(
+                "no local work-item '{slug}' found (the local issue cache is ephemeral and may \
+                 have been cleared); this slug has prior lifecycle commits in this worktree — \
+                 re-run `aw td gen {slug}` (or `aw td create {slug}` if gen was never reached) \
+                 to rehydrate the local issue before retrying `aw td code-check {slug}`"
+            )
+        } else {
+            format!(
+                "no local work-item '{slug}' found and no lifecycle history for it in this \
+                 worktree; nothing to code-check"
+            )
+        };
+        let env = serde_json::json!({
+            "action": "error",
+            "slug": slug,
+            "message": message,
+        });
+        println!("{}", serde_json::to_string(&env)?);
+        return Ok(true);
     };
     let phase = issue.phase.as_deref().unwrap_or("");
     let is_retry = td_phase::is_terminal_code_check_retry(phase);
@@ -4265,29 +4305,54 @@ async fn run_check_lifecycle_terminal(
         return Ok(true);
     }
 
-    if !is_retry {
+    // From here the sequence is resumable: a fresh entry advances phase to
+    // td_merged (and folds the workflow-lock unlock into that same write —
+    // issue #859 part b) below; a retry entry (phase already td_merged)
+    // reuses the issue exactly as read above. Every remaining step is
+    // self-checking so a partial failure at any point can be recovered by
+    // re-running `aw td code-check <slug>`.
+    let closed_issue = if is_retry {
+        issue
+    } else {
         // Scope both terminal gates to this WI's own TD spec (issue #854)
         // instead of the whole worktree / whole `tech_design_path` tree —
-        // see `resolve_slug_spec_paths` below.
+        // see `resolve_slug_spec_paths` below. Needed unconditionally
+        // (both the marker gate below and the empty-implementation gate
+        // that follows it consume `slug_spec_paths`).
         let slug_spec_paths = resolve_slug_spec_paths(project_root, &issue);
-        let mut marker_gate_scope: Vec<String> = Vec::new();
-        for spec_abs in &slug_spec_paths {
-            if let Ok(content) = std::fs::read_to_string(spec_abs) {
-                marker_gate_scope.extend(crate::cli::cb_fill::extract_change_paths_from_spec(
-                    &content,
-                ));
+
+        // Marker gate (issue #859 part a): `aw td fill`'s own apply loop
+        // already re-enumerates the whole worktree after every marker write
+        // and only advances phase to `cb_filled` once that re-enumeration
+        // finds zero unfilled markers (see `run_apply` in cb_fill.rs) — so a
+        // fresh entry that reaches this point at `cb_filled` has already had
+        // this exact gate proven true by construction. Re-running it here
+        // would be a third full/scoped walk of the same already-established
+        // fact. Only run it for `cb_genned` / legacy `td_gen_coded` entries,
+        // which reach terminal code-check WITHOUT ever going through fill's
+        // gate (e.g. a HANDWRITE-marker-free WI that skips `aw td fill`
+        // entirely).
+        if phase != td_phase::CB_FILLED {
+            let mut marker_gate_scope: Vec<String> = Vec::new();
+            for spec_abs in &slug_spec_paths {
+                if let Ok(content) = std::fs::read_to_string(spec_abs) {
+                    marker_gate_scope.extend(crate::cli::cb_fill::extract_change_paths_from_spec(
+                        &content,
+                    ));
+                }
             }
-        }
-        if let Err(message) =
-            crate::cli::cb_fill::run_cb_check_gate_scoped(project_root, &marker_gate_scope).await
-        {
-            let env = serde_json::json!({
-                "action": "error",
-                "slug": slug,
-                "message": format!("td code-check gate failed: {}", message),
-            });
-            println!("{}", serde_json::to_string(&env)?);
-            return Ok(true);
+            if let Err(message) =
+                crate::cli::cb_fill::run_cb_check_gate_scoped(project_root, &marker_gate_scope)
+                    .await
+            {
+                let env = serde_json::json!({
+                    "action": "error",
+                    "slug": slug,
+                    "message": format!("td code-check gate failed: {}", message),
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
         }
 
         // Empty-implementation gate (issue #847, restoring the removed `aw
@@ -4313,6 +4378,20 @@ async fn run_check_lifecycle_terminal(
             return Ok(true);
         }
 
+        // Issue #859 part b: fold the workflow-lock projection unlock into
+        // this same patch instead of a separate `complete_issue_lock`
+        // local write + remote push after the fact — `unlock_projection_for_
+        // closed_issue` returns `Ok(None)` (leaving `patch.body` untouched)
+        // when the issue body carries no projection block at all, so this
+        // is a no-op for issues that never had one. Step 4 below still
+        // calls `complete_issue_lock` unconditionally for retry/legacy
+        // safety (a prior run that advanced phase here but failed before
+        // this fold existed, or before it ran), but that function's own
+        // early-return now treats "already unlocked" as a true no-op, so
+        // the common case here does not pay for a second write + push.
+        let unlocked_body =
+            crate::cli::workflow_guard::unlock_projection_for_closed_issue(&issue.body, slug)?;
+
         let patch = IssuePatch {
             state: Some(IssueState::Closed),
             phase: Some(td_phase::TD_MERGED.to_string()),
@@ -4326,22 +4405,17 @@ async fn run_check_lifecycle_terminal(
                 format!("phase:{}", td_phase::CB_FILLED),
                 "phase:td_gen_coded".to_string(),
             ],
+            body: unlocked_body,
             flagged_sections: Some(vec![]),
             validation_errors: Some(vec![]),
             ..Default::default()
         };
-        backend.update(slug, &patch).await?;
-    }
-
-    // From here the sequence is resumable: a fresh entry has just advanced
-    // phase to td_merged above; a retry entry (phase already td_merged) skips
-    // straight here. Every remaining step is self-checking so a partial
-    // failure at any point can be recovered by re-running
-    // `aw td code-check <slug>`.
-    let closed_issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("closed issue '{}' was not readable", slug))?;
+        // Issue #859 part b: `update()` already returns the freshly patched
+        // `Issue` — reuse it directly instead of a redundant second
+        // `backend.get` that would just re-read the same write back off
+        // disk.
+        backend.update(slug, &patch).await?
+    };
     let closed_path = backend.issue_path(&closed_issue);
 
     // Step 1 — remote closure. `push_through` only *creates* on the remote
@@ -4714,6 +4788,44 @@ fn terminal_commit_already_landed(project_root: &std::path::Path, slug: &str) ->
             }
         }
         if has_slug_line && has_stage_line {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// True if the worktree git log has ANY commit with an exact-line
+/// `Lifecycle-Slug: <slug>` trailer, regardless of lifecycle stage. Used by
+/// `run_check_lifecycle_terminal` (issue #859 part c) to distinguish "this
+/// slug went through the aw lifecycle on this worktree before, its local
+/// issue cache was just cleared" (rehydration is the right remediation)
+/// from "this slug was never a real work-item here" (a plain not-found is
+/// the right remediation) when the local issue is missing. Deliberately
+/// read-only and side-effect-free, unlike `td::bootstrap_td_issue`.
+fn slug_has_lifecycle_history(project_root: &std::path::Path, slug: &str) -> Result<bool> {
+    let Some(git_bin) = crate::git::find_git_bin() else {
+        return Ok(false);
+    };
+    let slug_line = format!("Lifecycle-Slug: {}", slug);
+    let output = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args([
+            "log",
+            "--format=%B%x1e",
+            "--all",
+            "--fixed-strings",
+            "--grep",
+            &slug_line,
+        ])
+        .output()
+        .context("git log failed")?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for entry in stdout.split('\x1e') {
+        if entry.lines().any(|line| line.trim_end() == slug_line) {
             return Ok(true);
         }
     }

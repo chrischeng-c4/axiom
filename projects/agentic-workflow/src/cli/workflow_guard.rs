@@ -300,7 +300,17 @@ pub async fn complete_issue_lock(project_root: &Path, issue_id: &str, owner: &st
         Some(issue) => issue,
         None => return Ok(()),
     };
-    if !issue.labels.iter().any(|l| l == LOCK_LABEL) && parse_projection(&issue.body).is_none() {
+    // Issue #859 part b: a caller (terminal `aw td code-check`) may have
+    // already folded the unlock into its own single IssuePatch (labels +
+    // projection body) before calling here for retry/legacy safety. Treat
+    // "no lock label AND (no projection, or a projection that is already
+    // unlocked)" as a true no-op so that common case does not spend a
+    // second local write + remote push confirming work already done.
+    let has_lock_label = issue.labels.iter().any(|l| l == LOCK_LABEL);
+    let projection_already_unlocked = parse_projection(&issue.body)
+        .map(|p| !p.locked)
+        .unwrap_or(true);
+    if !has_lock_label && projection_already_unlocked {
         return Ok(());
     }
     let mut projection = parse_projection(&issue.body).unwrap_or_else(|| WorkflowProjection {
