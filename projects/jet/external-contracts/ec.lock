@@ -3,9 +3,9 @@ project = "jet"
 ir_kind = "ec"
 ec_path = "projects/jet/external-contracts"
 inventory_path = "projects/jet/aw.toml"
-generated_at = "2026-06-30T06:27:52.626223+00:00"
-ir_digest = "sha256:b1ade65188c1648b607638f32084ce74f531876df72c9c13542a29292856d3c5"
-source_digest = "sha256:2b3600a9709dd55729cfee0bbf85fd17750c784bd812bedd7adfa1a9d3d99cc0"
+generated_at = "2026-07-02T02:46:03.293645+00:00"
+ir_digest = "sha256:3ba0842d18487da26f55bff2c99d9b64507bd36cb6828531f30ea38fbd6518a2"
+source_digest = "sha256:d8da5fd87cd26b79f214fcafeb393f46d0adc266a0d46d84064b5e6d9c34cb4e"
 tool_contracts = []
 
 [[sources]]
@@ -15,6 +15,38 @@ digest = "sha256:22c2a514a609d8bc148a64e03ca60b23e52f77ae34e08f6125f032347984650
 [[sources]]
 path = ".aw/tech-design/projects/jet/logic/jet-browser-observation-bundle.md"
 digest = "sha256:c572867c42c6a79dbbbf6cc63f91b511910d14ab7d691bf7b0056de1b48fcc02"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md"
+digest = "sha256:fcabccc303d1be801ef1642adf040d4c65e92de6bf5bb8e02a5bb8e495bf44a9"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md"
+digest = "sha256:406e5b5920f146aaf609c7997f311435eee6a07ecedcef38002fe44579992fdc"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md"
+digest = "sha256:7ac09c8171ef15fdc09e28edea5f8c8801905035b8353c81e119c36783e47d0f"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md"
+digest = "sha256:4b2acfd0a47449d9bd006b6a08ba15e9b823f32e9d9b7ebadc4fa177cfe967be"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md"
+digest = "sha256:77f62f13d7efe8cc4310586f316cf57660ce0dd4ac5caada9aaeb54f93fc95de"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md"
+digest = "sha256:f15de30e0468feca8c7778d97c7f99206ecb120bc31ffb4c19a71a3d95199d6d"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md"
+digest = "sha256:f0abbda105f61e86c4244529c493f1996a9c9e8256cc2ffa4d69b8831e467788"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md"
+digest = "sha256:e8b4769b0bc49551fd9eb6924010f53484ec357ba075f21e8bb27b00fa598f68"
 
 [[sources]]
 path = ".aw/tech-design/projects/jet/logic/remove-optional-esbuild-from-phase-3-production-build-gate.md"
@@ -51,6 +83,10 @@ digest = "sha256:0e45006eb7e4b186201c7eba71adcc21b390b206b293856dd773b7ff1fe3fc8
 [[sources]]
 path = ".aw/tech-design/projects/jet/specs/3785.md"
 digest = "sha256:6b2a6adf1b706a422d374ee824e47ddee849e2f482aa337ebd0c23198e498597"
+
+[[sources]]
+path = ".aw/tech-design/projects/jet/specs/3786.md"
+digest = "sha256:5fe21aa94d70119fdc8f9dab82b8823aaccbbadd3b51ca2c5f609901bcf212a0"
 
 [[sources]]
 path = ".aw/tech-design/projects/jet/specs/3941.md"
@@ -93,6 +129,21 @@ path = ".aw/tech-design/projects/jet/validate/complete-package-management-replac
 digest = "sha256:a5d3011162a7669612b9b1e468c3b8e0291d0a3d0298e2dbb5436ad550a66f7d"
 
 [[cases]]
+id = "antd-visual-table-dom-wasm-parity"
+capability_id = "browser-trace-parity"
+claim_id = "antd-visual-table-dom-wasm-parity"
+contract_id = "antd-visual-table-dom-wasm-parity"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/specs/3786.md#antd-visual-table-dom-wasm-parity"
+test_path = "projects/jet/tests/behavior_antd_visual_table_dom_wasm_parity.rs"
+command = "cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:074c972367e9bb7d63a683946228b54e2810b3ed07b5834a60d047e1eca84536"
+
+[[cases]]
 id = "asset-sourcemap-negative-paths"
 capability_id = "bundler-production-build"
 claim_id = "asset-sourcemap-negative-paths"
@@ -108,6 +159,21 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:cfc3794002b08ef11a9f64c1c0f29c28e7436eb1e85e8f52faf8da2e1f7e3adb"
 
 [[cases]]
+id = "browser-trace-parity-readiness"
+capability_id = "browser-trace-parity"
+claim_id = "browser-trace-parity-readiness"
+contract_id = "browser-trace-parity-readiness"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/specs/3786.md#browser-trace-parity-readiness"
+test_path = "projects/jet/tests/behavior_browser_trace_parity_readiness.rs"
+command = "projects/jet/scripts/verify-basic-dom-gates.sh --phase browser"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:23c003ade9394877400c8c1d13a4e7d5dfb2c1705ca9ba6f1fc95c70c3cb2f2e"
+
+[[cases]]
 id = "built-in-ts-test-runtime"
 capability_id = "native-test-product-flow-e2e"
 claim_id = "built-in-ts-test-runtime"
@@ -121,6 +187,21 @@ assertions = []
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:c6c48c1872fbe40b76456ae01e7fde3e183fa22da1ccd0e92844ff8bb4d2a1e5"
+
+[[cases]]
+id = "component-workbench-readiness"
+capability_id = "component-workbench"
+claim_id = "component-workbench-readiness"
+contract_id = "component-workbench-readiness"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md#component-workbench-readiness"
+test_path = "projects/jet/tests/behavior_component_workbench_readiness.rs"
+command = "cargo test -p jet --test stories_build -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6c6e5a21642e362f813b9d517e64ff89a551d1a4c49bccd416855996d58afcdf"
 
 [[cases]]
 id = "counter-dom-wasm-parity-after-click"
@@ -141,6 +222,36 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:52bdeca41fc7cf4af98ead7050d7bfdfc1b5fe8f548a1c7e4c97795d5631e715"
+
+[[cases]]
+id = "csf-story-discovery"
+capability_id = "component-workbench"
+claim_id = "csf-story-discovery"
+contract_id = "csf-story-discovery"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-discover-and-parse-csf-stories-tsx-into-a-story-inde.md#csf-story-discovery"
+test_path = "projects/jet/tests/behavior_csf_story_discovery.rs"
+command = "cargo test -p jet --test csf_discovery -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b3163ae5a33c6368b248a09b6f10d6383db993cda66f02c6e26107bf70a5216c"
+
+[[cases]]
+id = "csf2-template-bind-re-exports"
+capability_id = "component-workbench"
+claim_id = "csf2-template-bind-re-exports"
+contract_id = "csf2-template-bind-re-exports"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-discovery-csf2-template-bind-re-exported-stories-and.md#csf2-template-bind-re-exports"
+test_path = "projects/jet/tests/behavior_csf2_template_bind_re_exports.rs"
+command = "cargo test -p jet --test csf_discovery -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1a34d4c54cd011b05b5f6c9a0b7b421790980fe57461f3e4309383bab84a9549"
 
 [[cases]]
 id = "dev-server-cli-contract"
@@ -286,6 +397,36 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:8036b6ed5e49ffc09b9e8597be358812a9682c5a2f648bbfdc8d653bf58d6108"
 
 [[cases]]
+id = "generic-cross-file-prop-controls"
+capability_id = "component-workbench"
+claim_id = "generic-cross-file-prop-controls"
+contract_id = "generic-cross-file-prop-controls"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-controls-generic-cross-file-and-intersection-prop-ty.md#generic-cross-file-prop-controls"
+test_path = "projects/jet/tests/behavior_generic_cross_file_prop_controls.rs"
+command = "cargo test -p jet --test controls -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7fcc35553df3ad288cbecf14b1eec9c2f3ddb622570313ff98d3746ddafc8ae8"
+
+[[cases]]
+id = "hook-state-preserving-refresh"
+capability_id = "component-workbench"
+claim_id = "hook-state-preserving-refresh"
+contract_id = "hook-state-preserving-refresh"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md#hook-state-preserving-refresh"
+test_path = "projects/jet/tests/behavior_hook_state_preserving_refresh.rs"
+command = "cargo test -p jet --test preview_hmr -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:3fa69c7760499573a86d382fdb017736468cbb67d88bcc674eb67de5a2cd3a25"
+
+[[cases]]
 id = "library-dom-wasm-parity"
 capability_id = "browser-trace-parity"
 claim_id = "library-dom-wasm-parity-fixtures"
@@ -307,6 +448,21 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:89859f3f58b1cb9d395035f2711f54c085273087f936785ba38d2d27c559dd30"
 
 [[cases]]
+id = "library-wasm-lowering-fixtures"
+capability_id = "browser-trace-parity"
+claim_id = "library-wasm-lowering-fixtures"
+contract_id = "library-wasm-lowering-fixtures"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/specs/3786.md#library-wasm-lowering-fixtures"
+test_path = "projects/jet/tests/behavior_library_wasm_lowering_fixtures.rs"
+command = "cargo test -p jet --test tsx_to_rust_imports -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d3cf9e901d6c65a6046270aaefc10dd6af66956c2cb3fe3bd8c9cf43f72fe347"
+
+[[cases]]
 id = "live-wasm-capture-after-click"
 capability_id = "browser-trace-parity"
 claim_id = "browser-automation-diagnostics"
@@ -326,6 +482,21 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:91f31a8aa7b3f7b8a6892658e26a7be53859487baeb2bc9c1571f418ad939520"
+
+[[cases]]
+id = "mui-visual-table-dom-wasm-parity"
+capability_id = "browser-trace-parity"
+claim_id = "mui-visual-table-dom-wasm-parity"
+contract_id = "mui-visual-table-dom-wasm-parity"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/specs/3786.md#mui-visual-table-dom-wasm-parity"
+test_path = "projects/jet/tests/behavior_mui_visual_table_dom_wasm_parity.rs"
+command = "cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0b6955fef7050c3c7358bc3d9c742c950968d7ffcf03049c75418dc923a4b906"
 
 [[cases]]
 id = "multi-fixture-dom-wasm-canvas-paint-parity"
@@ -647,6 +818,81 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:27d3066d1b57847c3c9cf93c45e6cce425d92b8691f1bbd6107e361ef34e7abf"
 
 [[cases]]
+id = "stories-bare-import-resolution"
+capability_id = "component-workbench"
+claim_id = "stories-bare-import-resolution"
+contract_id = "stories-bare-import-resolution"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-bare-import-node-modules-resolution-for-dev-preview.md#stories-bare-import-resolution"
+test_path = "projects/jet/tests/behavior_stories_bare_import_resolution.rs"
+command = "cargo test -p jet --test manager -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b4b21477babcabb867252badb6fd31d960851f668f2121e34e93889e1c6820f4"
+
+[[cases]]
+id = "stories-controls-panel"
+capability_id = "component-workbench"
+claim_id = "stories-controls-panel"
+contract_id = "stories-controls-panel"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-controls-args-panel-derived-from-ts-prop-types-argty.md#stories-controls-panel"
+test_path = "projects/jet/tests/behavior_stories_controls_panel.rs"
+command = "cargo test -p jet --test controls -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2fe3fc6542831ccf44c3139e664c0b5939c805ceabfee50be112e63427cfba47"
+
+[[cases]]
+id = "stories-dev-manager"
+capability_id = "component-workbench"
+claim_id = "stories-dev-manager"
+contract_id = "stories-dev-manager"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-dev-command-with-native-manager-ui-sidebar-preview-t.md#stories-dev-manager"
+test_path = "projects/jet/tests/behavior_stories_dev_manager.rs"
+command = "cargo test -p jet --test manager -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cb154417fdbf68a49f5621c58ff7727f040256113baa04e70c74dea62919f170"
+
+[[cases]]
+id = "stories-preview-hmr"
+capability_id = "component-workbench"
+claim_id = "stories-preview-hmr"
+contract_id = "stories-preview-hmr"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-preview-full-hook-state-preserving-react-refresh.md#stories-preview-hmr"
+test_path = "projects/jet/tests/behavior_stories_preview_hmr.rs"
+command = "cargo test -p jet --test preview_hmr -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4e3558b06950551d3554b1dc5e84a7f1dbbaf8bb47180ee3ff41e60f790553d5"
+
+[[cases]]
+id = "stories-static-export"
+capability_id = "component-workbench"
+claim_id = "stories-static-export"
+contract_id = "stories-static-export"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/logic/jet-stories-build-static-export-of-the-component-workbench-for-h.md#stories-static-export"
+test_path = "projects/jet/tests/behavior_stories_static_export.rs"
+command = "cargo test -p jet --test stories_build -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4241d5f1b650689479d2cfe8f198b741f7533e1e48b2953c88acb9fc788f6049"
+
+[[cases]]
 id = "task-runner-graph-cache"
 capability_id = "workspace-task-runner"
 claim_id = "task-runner-graph-cache"
@@ -660,6 +906,21 @@ assertions = []
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:1f399b12b35103e12a783638857fb5d42ac7352332fa8095d9ef5c1b52770002"
+
+[[cases]]
+id = "trace-evidence-artifacts"
+capability_id = "browser-trace-parity"
+claim_id = "trace-evidence-artifacts"
+contract_id = "trace-evidence-artifacts"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/specs/3786.md#trace-evidence-artifacts"
+test_path = "projects/jet/tests/behavior_trace_evidence_artifacts.rs"
+command = "cargo test -p jet --lib trace -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e08321adace57e1e890551daff003d8792d3857acf1ca1344cc6f24875c2698b"
 
 [[cases]]
 id = "trace-replay-evidence"
@@ -690,6 +951,36 @@ assertions = []
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:cf74d53b7c94962e00273841607391a5227bf309afc36845d18894a4c322df28"
+
+[[cases]]
+id = "webgpu-large-table-smoke"
+capability_id = "browser-trace-parity"
+claim_id = "webgpu-large-table-smoke"
+contract_id = "webgpu-large-table-smoke"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/specs/3786.md#webgpu-large-table-smoke"
+test_path = "projects/jet/tests/behavior_webgpu_large_table_smoke.rs"
+command = "cargo test -p jet --test wasm_build_end_to_end webgpu_renderer_reports_runtime_status_and_visual_probe_when_available -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1c2eaf25f30f67177eeb4c9156353fa8e2895d9d6a8b1b2ab08a97f0318f90b8"
+
+[[cases]]
+id = "webgpu-wasm-build-default"
+capability_id = "browser-trace-parity"
+claim_id = "webgpu-wasm-build-default"
+contract_id = "webgpu-wasm-build-default"
+dimension = "behavior"
+source_ref = ".aw/tech-design/projects/jet/specs/3786.md#webgpu-wasm-build-default"
+test_path = "projects/jet/tests/behavior_webgpu_wasm_build_default.rs"
+command = "cargo test -p jet --test wasm_build_end_to_end wasm_build_selects_webgpu_scaffold_by_default -- --nocapture"
+required_for_production = true
+assertions = []
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:182db55f3cac7e4f346e0829113097be5fd7eb4e498a2e0928b22e4784526f2d"
 
 [[cases]]
 id = "workspace-package-selection"
