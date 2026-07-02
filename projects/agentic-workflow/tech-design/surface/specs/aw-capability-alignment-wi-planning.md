@@ -58,7 +58,7 @@ capability_refs:
     coverage: full
     rationale: "This spec defines atomization and bounded WI planning flow."
 command_refs:
-  - command: aw run
+  - command: aw wi run
   - command: aw capability
   - command: aw capability apply-draft
   - command: aw capability check
@@ -113,7 +113,7 @@ scenarios:
   - id: S4
     title: "project run consumes readiness instead of sprint batches"
     given: ["project capability graph and issue backend contain open work"]
-    when: ["aw run --project P runs"]
+    when: ["aw capability run --project P runs"]
     then:
       - "the project root consumes the prioritize readiness lanes and selects the next ready_now WI"
       - "if no ready_now work exists, the project root dispatches atomize or blocks with a prioritize readiness artifact"
@@ -185,7 +185,7 @@ scenarios:
       - "aw wi plan adds tracker lookup evidence for README WI refs that are missing from the open issue inventory, without creating replacement WI candidates automatically"
   - id: S8
     title: "root runner rolls child completion upward"
-    given: ["agent invokes aw run with a project, capability, epic, or change root"]
+    given: ["agent invokes aw wi run or aw capability run with a project, capability, epic, or change root"]
     when: ["the current layer is complete or blocked"]
     then:
       - "JSON output includes next.kind, invoke.command, agent_prompt, and completion"
@@ -196,9 +196,9 @@ scenarios:
   - id: S9
     title: "root runner does not duplicate pending planning artifacts"
     given: ["aw wi epicize has produced a local /tmp/aw/{project}/epics artifact with agent_review_required=true and review_status=pending"]
-    when: ["aw run --project executes before the artifact is reviewed"]
+    when: ["aw capability run --project executes before the artifact is reviewed"]
     then:
-      - "aw run emits action=blocked instead of invoking epicize again"
+      - "aw capability run emits action=blocked instead of invoking epicize again"
       - "next.kind is review_planning_artifact and next.payload_path points at the pending artifact"
       - "hitl_question.tool_hint is ask_user_question so the decision is captured before tracker mutation"
 ```
@@ -215,7 +215,7 @@ stateDiagram-v2
     [*] --> capability_candidate : /aw:capability infer
     capability_candidate --> capability_confirmed : human confirms
     capability_candidate --> capability_candidate : human revises
-    capability_confirmed --> root_running : aw run --project
+    capability_confirmed --> root_running : aw capability run --project
     root_running --> epicized : aw wi epicize
     epicized --> epic_review : agent/HITL review
     epic_review --> atomized : aw wi atomize
@@ -240,7 +240,7 @@ nodes:
   human_confirm: { kind: decision, label: "human confirms cap_path update?" }
   write_cap_path: { kind: process, label: "write confirmed Markdown capability sections and contract/work-root tables to cap_path" }
   capability_command: { kind: process, label: "aw capability report/next/run/check evaluates capability/gap/claim graph" }
-  root_run: { kind: process, label: "aw run selects project/capability/wi root and emits invoke.command" }
+  root_run: { kind: process, label: "aw wi run / aw capability run selects project/capability/wi root and emits invoke.command" }
   wi_planning: { kind: process, label: "aw:wi routes gaps and required claims through planning operators" }
   epicize: { kind: process, label: "epicize roadmap-sized direction" }
   epic_review: { kind: decision, label: "pending epic artifact reviewed?" }
@@ -272,7 +272,7 @@ flowchart TD
     human_confirm -- revise --> infer_capability
     human_confirm -- confirm --> write_cap_path[write Markdown capability tables]
     write_cap_path --> capability_command[aw capability report/next/run/check]
-    capability_command --> root_run[aw run root envelope]
+    capability_command --> root_run[aw wi run / aw capability run root envelope]
     root_run --> wi_planning[aw wi planning]
     wi_planning --> epicize[epicize]
     epicize --> epic_review{pending artifact reviewed?}
@@ -286,9 +286,9 @@ flowchart TD
 
 `Capability` is a human-confirmed anchor. The model may infer and propose, but
 must not publish `cap_path` without confirmation. `aw capability` owns the
-read-only graph view and one-tick capability checks. `aw run` owns root
-selection and emits `invoke.command`/`agent_prompt` so agents can roll completed
-child work back up to the parent root. Its `completion` object is the
+read-only graph view and one-tick capability checks. `aw wi run`/`aw capability
+run` own root selection and emit `invoke.command`/`agent_prompt` so agents can
+roll completed child work back up to the parent root. Its `completion` object is the
 authoritative stop condition: `action=done` only means the current root is done,
 while `completion.workflow_complete=true` means the root workflow has reached
 project-level 100%. Planning artifacts stay local under

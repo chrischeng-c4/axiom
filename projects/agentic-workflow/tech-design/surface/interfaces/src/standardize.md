@@ -154,6 +154,16 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw chat agents",
     "aw handoff",
     "aw takeoff",
+    // #918: `aw run` full removal (superseded by `aw wi run` / `aw capability
+    // run`, #917) + #857 merge-era leftovers. `"aw cb "` keeps the trailing
+    // space so it does not false-positive on prose like "the aw cb_filled
+    // phase" while still catching a literal `aw cb ...` invocation.
+    "aw run",
+    "aw td merge",
+    "aw td review",
+    "aw td revise",
+    "aw wi merge",
+    "aw cb ",
 ];
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
@@ -3583,6 +3593,8 @@ fn active_doc_paths(project_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for rel in [
         "AGENTS.md",
+        "CLAUDE.md",
+        "CONTRIBUTING.md",
         "projects/agentic-workflow/templates/cli/README.md",
         "projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md",
     ] {
@@ -3593,6 +3605,11 @@ fn active_doc_paths(project_root: &Path) -> Vec<PathBuf> {
     }
     collect_markdown_paths(
         &project_root.join(".agents/skills"),
+        &mut paths,
+        Some("aw-"),
+    );
+    collect_markdown_paths(
+        &project_root.join(".claude/skills"),
         &mut paths,
         Some("aw-"),
     );
@@ -12959,6 +12976,70 @@ command_refs:
             .blockers
             .iter()
             .any(|blocker| blocker.kind == TraceabilityBlockerKind::ActiveDocUnknownCommandRef));
+    }
+
+    #[test]
+    fn deleted_command_paths_918_hits_flag_active_doc_deleted_command_ref() {
+        // #918: `aw run` full removal + #857 merge-era leftovers. Each of
+        // these literals must be caught when a scanned active doc still
+        // references the removed verb.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "AGENTS.md",
+            "Kick off the loop with `aw run --project demo`.\n\
+             Legacy artifact steps used `aw td merge`, `aw td review`, and `aw td revise`.\n\
+             Do not use `aw wi merge` or `aw cb fill` here.\n",
+        );
+
+        let inventory = runtime_command_inventory();
+        let blockers = active_doc_command_blockers(tmp.path(), &inventory);
+        let deleted_targets: BTreeSet<&str> = blockers
+            .iter()
+            .filter(|b| b.kind == TraceabilityBlockerKind::ActiveDocDeletedCommandRef)
+            .map(|b| b.target.as_str())
+            .collect();
+
+        for expected in [
+            "aw run",
+            "aw td merge",
+            "aw td review",
+            "aw td revise",
+            "aw wi merge",
+            "aw cb ",
+        ] {
+            assert!(
+                deleted_targets.contains(expected),
+                "expected {expected:?} to be flagged as a deleted-command ref, got {deleted_targets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deleted_command_paths_918_does_not_false_positive_on_new_runner_verbs() {
+        // `"aw run"` and `"aw cb "` must not match inside the new #917
+        // canonical runner shells or inside ordinary `cb_*` phase prose.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "AGENTS.md",
+            "Use `aw wi run 42` or `aw capability run demo:foo --project demo`.\n\
+             The lifecycle transitions through the cb_filled phase before\n\
+             `aw td code-check` closes the loop.\n",
+        );
+
+        let inventory = runtime_command_inventory();
+        let blockers = active_doc_command_blockers(tmp.path(), &inventory);
+        let deleted_targets: Vec<&str> = blockers
+            .iter()
+            .filter(|b| b.kind == TraceabilityBlockerKind::ActiveDocDeletedCommandRef)
+            .map(|b| b.target.as_str())
+            .collect();
+
+        assert!(
+            deleted_targets.is_empty(),
+            "expected no deleted-command hits, got {deleted_targets:?}"
+        );
     }
 
     #[test]

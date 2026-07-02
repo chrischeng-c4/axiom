@@ -1314,7 +1314,8 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         "aw-standardize-run",
         "aw-standardize-managed-loop",
         "aw-standardize-regenerable-loop",
-        // Removed: cron-style issue patrol is superseded by aw run --project.
+        // Removed: cron-style issue patrol is superseded by
+        // `aw capability run --project`.
         "aw-wi-patrol",
         "score-build-release",
         "score-chat-listen",

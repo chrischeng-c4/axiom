@@ -18,7 +18,7 @@ work to do next.
 
 The parent workflow coordinates these readiness layers and maturity signals:
 
-- `capability`: product-control layer routed through `aw capability`. README capability roots use Markdown tables and can feed `aw run --project`.
+- `capability`: product-control layer routed through `aw capability`. README capability roots use Markdown tables and can feed `aw capability run --project`.
 - `managed`: adoption layer. Every in-scope source file has `CODEGEN` or `HANDWRITE`.
 - `semantic`: coverage layer. Source IR is mapped to semantic TD sections and generator primitive gaps.
 - `traceability`: closure workflow. Active commands, TDs, source refs, and CB blocks must close to README capabilities through TD refs.

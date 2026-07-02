@@ -41,7 +41,6 @@ use crate::cli::generator;
 use crate::cli::init;
 use crate::cli::issues;
 use crate::cli::project;
-use crate::cli::run as run_root;
 use crate::cli::standardize;
 use crate::cli::sync;
 
@@ -78,9 +77,6 @@ pub enum Commands {
 
     /// Generator gap request surface after takeover readiness.
     Generator(generator::GeneratorArgs),
-
-    /// Root-driven workflow runner for project, capability, epic, or change scopes.
-    Run(run_root::RunArgs),
 
     /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
     Sync(sync::SyncArgs),
@@ -126,9 +122,6 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Generator(args) => {
             generator::run(args).await?;
-        }
-        Commands::Run(args) => {
-            run_root::run(args).await?;
         }
         Commands::Sync(args) => {
             sync::run(args)?;

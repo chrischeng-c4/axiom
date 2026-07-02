@@ -14,9 +14,9 @@ promises from inference alone.
 ## Contract
 
 - Human API: `/aw:capability <prompt>`.
-- Agent API: use `aw run`, `aw capability report|next|run|check`,
-  `aw standardize capability ...`, `aw wi list/show`, `aw td ...`, and
-  `aw cb ...` as needed to gather evidence.
+- Agent API: use `aw capability report|next|run|check`,
+  `aw standardize capability ...`, `aw wi list/show`, and `aw td ...` as
+  needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
   implied by `[[projects]].path`.
 - Canonical CLI namespace: `aw capability`. Do not use `aw cap`; `cap` is
@@ -29,11 +29,11 @@ promises from inference alone.
    sections, WI inventory, TD refs, and evidence.
 3. Run `aw capability next <project> --json` when deciding the next bounded
    action. Follow the single `next_action` unless it requires HITL.
-4. For root-driven execution, run `aw run --project <project> --max-ticks 1
-   --json` and follow `invoke.command` plus `agent_prompt` until
-   `completion.workflow_complete=true` or `requires_hitl=true`. Do not stop on
-   `action=done` alone; a child root can be done while the parent still needs
-   rollup.
+4. For root-driven execution, run `aw capability run --project <project>
+   --non-interactive --max-ticks 1 --json` and follow `invoke.command` plus
+   `agent_prompt` until `completion.workflow_complete=true` or
+   `requires_hitl=true`. Do not stop on `action=done` alone; a child root can
+   be done while the parent still needs rollup.
 5. Use `aw capability check <project> --json` after README or TD linkage edits.
 6. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
