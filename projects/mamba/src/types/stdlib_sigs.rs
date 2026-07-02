@@ -5644,6 +5644,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("obj", CoreTy::Typed), p("callback", CoreTy::Typed)],
         enforceable: true,
     },
+    // POSITIVE: generated numbers rows collapse Optional[int] ndigits to
+    // Unknown. The checker skips None sentinels, so an Int wall catches wrong
+    // concrete/user values while preserving round(x, None)-style calls.
+    StdlibSig {
+        module: "numbers",
+        qualifier: "Integral",
+        name: "__round__",
+        kind: SigKind::Method,
+        params: &[p("ndigits", CoreTy::Int)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "numbers",
+        qualifier: "Real",
+        name: "__round__",
+        kind: SigKind::Method,
+        params: &[p("ndigits", CoreTy::Int)],
+        enforceable: true,
+    },
     StdlibSig {
         module: "ntpath",
         qualifier: "",
@@ -9222,6 +9241,8 @@ mod tests {
                 "obj",
                 CoreTy::Typed,
             ),
+            ("numbers", "Integral", "__round__", 0, "ndigits", CoreTy::Int),
+            ("numbers", "Real", "__round__", 0, "ndigits", CoreTy::Int),
             ("ntpath", "", "join", 0, "path", CoreTy::Typed),
             ("ntpath", "", "realpath", 0, "path", CoreTy::Typed),
             (

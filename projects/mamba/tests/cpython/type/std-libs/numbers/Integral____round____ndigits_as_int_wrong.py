@@ -9,12 +9,11 @@
 # case = "Integral____round____ndigits_as_int_wrong"
 # subject = "numbers.Integral.__round__(ndigits: int)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ndigits"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/numbers.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed ndigits
 # mamba-strict-type: TypeError
 """Type wall: numbers.Integral.__round__(ndigits: int); call it with the wrong type.
 
