@@ -1334,7 +1334,8 @@ fn parse_loop_result(
 /// verifier verdict onto a LOCAL lifecycle work-item's `<!-- aw:loop-state -->`
 /// block (`apply_verification` -> the local backend's file). LOCAL-only by
 /// design: a remote tracker write is an outward step left out of this verb. The
-/// recorded `next_action` is then what `aw run`'s loop engine dispatches.
+/// recorded `next_action` is then what the `aw wi run` / `aw capability run`
+/// loop engine dispatches.
 fn run_record(args: EcRecordArgs) -> Result<()> {
     use crate::issues::IssueBackend;
     let project_root = crate::find_project_root()?;

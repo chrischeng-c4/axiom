@@ -239,21 +239,6 @@ struct EmitSite {
 #[cfg(test)]
 const EMIT_REGISTRY: &[EmitSite] = &[
     EmitSite {
-        source: "run.rs:resolve_run_root",
-        sample: "aw run --root wi:915",
-        note: "root resolution re-dispatch when --wi is given without --root",
-    },
-    EmitSite {
-        source: "run.rs:resolve_explicit_root",
-        sample: "aw run --project agentic-workflow",
-        note: "root resolution re-dispatch when --project is given",
-    },
-    EmitSite {
-        source: "run.rs:capability_root_command",
-        sample: "aw run --project agentic-workflow --root capability:work-item-planning",
-        note: "root resolution re-dispatch for a --capability root",
-    },
-    EmitSite {
         source: "run.rs:project_envelope (capability check gate)",
         sample: "aw capability check --project agentic-workflow --verify",
         note: "project-root envelope's capability verification gate command",

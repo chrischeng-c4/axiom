@@ -3611,7 +3611,7 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
     out.push_str("aw capability apply-draft --project <project> --draft <path> --reviewed\n");
     out.push_str("aw capability check --project <project>\n");
     out.push_str("aw wi plan --project <project>\n");
-    out.push_str("aw run --project <project> --max-ticks 1\n");
+    out.push_str("aw capability run --project <project> --non-interactive --max-ticks 1\n");
     out.push_str("```\n");
     out
 }

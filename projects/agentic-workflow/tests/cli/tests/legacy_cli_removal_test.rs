@@ -57,6 +57,9 @@ fn legacy_top_level_commands_are_removed() {
         "daemon",
         "serve",
         "context",
+        // #918: `aw run` fully removed from the clap tree (superseded by
+        // `aw wi run` / `aw capability run`, #917).
+        "run",
         "run-change",
         "workflow",
         "revise-artifact",
@@ -122,6 +125,9 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
     };
 
     for command in [
+        // #918: `aw run` fully removed from the clap tree (superseded by
+        // `aw wi run` / `aw capability run`, #917).
+        "run",
         "run-change",
         "workflow",
         "revise-artifact",
@@ -168,6 +174,13 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
     collect_markdown_files(&repo_root.join(".agents/skills"), &mut docs);
 
     let deleted = [
+        // #918: `aw run` fully removed from the clap tree (superseded by
+        // `aw wi run` / `aw capability run`, #917). NOT added here: this
+        // scan still walks `templates/cli/mainthread/skills/aw-wi/SKILL.md`,
+        // which is a pre-existing dirty file outside this change's scope
+        // (still carries `aw run` from an in-flight, unrelated edit) —
+        // adding the literal here would turn this assertion red for a file
+        // this change must not touch. See #918 report / #857 remnant.
         "aw run-change",
         "aw workflow",
         "aw revise-artifact",

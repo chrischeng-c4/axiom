@@ -13,7 +13,7 @@ agent uses `aw standardize ...` CLI commands as the bounded protocol surface.
 
 AW standardization has four layers:
 
-- `capability`: product-control layer. README capability roots use Markdown tables and can feed `aw run --project`.
+- `capability`: product-control layer. README capability roots use Markdown tables and can feed `aw capability run --project`.
 - `managed`: adoption layer. Every in-scope source file has `CODEGEN` or `HANDWRITE`.
 - `semantic`: coverage layer. Source IR is mapped to semantic TD sections and generator primitive gaps.
 - `regenerable`: automation-maturity layer. `HANDWRITE` shrinks as generator primitives mature, but this is not a production-readiness gate unless a capability explicitly declares it.
@@ -42,7 +42,7 @@ AW standardization has four layers:
    and rerun `semantic run`.
 8. When semantic has no deterministic next action, run the production gate:
    ```bash
-   aw project health <project> --verify-cold --json
+   aw health --project <project> --verify-cold --json
    ```
 9. If health reports `production_ready=false` or blockers, fix the reported
    managed, semantic, cb verify, cold rebuild, stack, or workflow-lock gate and
@@ -59,7 +59,7 @@ AW standardization has four layers:
    work directly:
    - `capability-format-migration`: migrate YAML/legacy capability maps into Markdown tables.
    - `fix_spec_rule`: edit the target TD spec until `aw td check <target>` passes.
-   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run `aw cb check <target>`.
+   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run `aw td code-check <target>`.
    - `semantic_td_missing`: create or update the semantic TD only when AST/source evidence supports the claim.
    - `generator_primitive_gap`: improve the generator primitive or open/update the work item that owns that gap.
    - other blocked actions: answer the question in the envelope or make the indicated targeted edit.
@@ -86,7 +86,7 @@ AW standardization has four layers:
 - Regenerable completion means no next deterministic `HANDWRITE` -> `CODEGEN`
   promotion remains; partial regenerability is acceptable when remaining gaps
   are tracked or require generator design work.
-- Use `aw project health <project> --json` to report `managed_percent`,
+- Use `aw health --project <project> --json` to report `managed_percent`,
   `semantic_percent`, `regenerable_percent`, `production_ready`, `next_gap`,
   `blocked_gap_count`, `human_decision_required_count`, and optional
   regenerability gaps.

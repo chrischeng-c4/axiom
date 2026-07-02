@@ -12,7 +12,6 @@ use crate::cli::init;
 use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::project;
-use crate::cli::run as run_root;
 use crate::cli::standard_cli;
 use crate::cli::standardize;
 use crate::cli::sync;
@@ -54,9 +53,6 @@ pub enum Commands {
 
     /// Agent-runtime direct edit/create guard for Codex and Claude Code.
     Guard(guard::GuardArgs),
-
-    /// Root-driven workflow runner for project, capability, epic, or change scopes.
-    Run(run_root::RunArgs),
 
     /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
     View(view::ViewArgs),
@@ -121,9 +117,6 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Guard(args) => {
             guard::run(args)?;
-        }
-        Commands::Run(args) => {
-            run_root::run(args).await?;
         }
         Commands::View(args) => {
             view::run(args).await?;

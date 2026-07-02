@@ -55,9 +55,9 @@ e2e_tests:
   - id: workflow-root-runner-cli-workflow-chain
     capability_id: workflow-root-runner
     claim_id: cli-workflow-chain
-    command: cargo test -p agentic-workflow --lib root_parser_accepts_capability_and_wi_roots -- --nocapture
+    command: cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture
     assertions:
-      - aw run root parser accepts capability and work-item roots
+      - CLI workflow chain emit sites resolve through the real clap tree for capability and work-item roots
   - id: workflow-root-runner-root-envelope-completion-contract
     capability_id: workflow-root-runner
     claim_id: root-envelope-completion-contract

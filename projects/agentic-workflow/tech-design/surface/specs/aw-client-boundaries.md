@@ -143,7 +143,7 @@ scenarios:
     given:
       - "a coding agent works inside a project checkout"
     when:
-      - "`aw run`, `aw wi`, `aw td`, or `aw cb` emits next steps"
+      - "`aw wi run`, `aw capability run`, `aw wi`, or `aw td` emits next steps"
     then:
       - "the CLI stays focused on repo-local lifecycle execution"
       - "enterprise approval queues, registry dashboards, and runtime ownership screens remain Cue surfaces"

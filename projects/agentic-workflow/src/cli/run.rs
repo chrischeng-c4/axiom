@@ -1,6 +1,6 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 // CODEGEN-BEGIN
-//! `aw run` -- root-driven workflow runner envelope.
+//! `aw wi run` / `aw capability run` -- root-driven workflow runner envelope.
 
 use crate::cli::capability::{
     self, CapabilityAction, CapabilityActionKind, CapabilityReport, CapabilityStatus, HitlChoice,
@@ -15,7 +15,6 @@ use crate::models::preflight::{
     default_preflight_gates, PreFlightEvidenceKind, PreFlightGateSeverity,
 };
 use anyhow::{Context, Result};
-use clap::Args;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -28,38 +27,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const GOAL_INLINE_LIMIT_BYTES: usize = 4000;
-
-/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-#[derive(Debug, Args, Clone)]
-pub struct RunArgs {
-    /// Root identity: `capability:<id>` or `wi:<id>`. Omit to run the current project root.
-    #[arg(long)]
-    pub root: Option<String>,
-    /// Run every capability under this configured project.
-    #[arg(long)]
-    pub project: Option<String>,
-    /// Deprecated compatibility: use `--root capability:<capability-id>`.
-    #[arg(long, hide = true)]
-    pub capability: Option<String>,
-    /// Deprecated compatibility: use `--root wi:<issue-id>`.
-    #[arg(long, hide = true)]
-    pub wi: Option<String>,
-    /// Stop after N bounded ticks. v1 emits one deterministic next command.
-    #[arg(long, default_value_t = 1)]
-    pub max_ticks: usize,
-    /// Deprecated compatibility no-op: machine JSON is the default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit human-readable text instead of the default agent JSON envelope.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the default JSON envelope for debugging.
-    #[arg(long)]
-    pub pretty: bool,
-    /// Generate a /goal-ready prompt for this workflow root instead of the normal run envelope.
-    #[arg(long)]
-    pub goal: bool,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedRunRoot {
@@ -297,9 +264,9 @@ struct WorkflowGoalEnvelope {
     goal_prompt: Option<String>,
 }
 
-/// Print options shared by every thin runner shell (`aw run`, `aw wi run`,
-/// `aw capability run <id>`). Mirrors the human/pretty/goal subset of
-/// [`RunArgs`] that actually affects output shape.
+/// Print options shared by every thin runner shell (`aw wi run`,
+/// `aw capability run <id>`). Mirrors the human/pretty/goal subset that
+/// actually affects output shape.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct RunPrintOptions {
@@ -308,27 +275,9 @@ pub(crate) struct RunPrintOptions {
     pub(crate) goal: bool,
 }
 
-/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-pub async fn run(args: RunArgs) -> Result<()> {
-    if args.max_ticks == 0 {
-        anyhow::bail!("--max-ticks must be greater than zero");
-    }
-    let root = resolve_run_root(&args)?;
-    print_run_deprecation_notice(&root);
-    run_resolved_root(
-        root,
-        RunPrintOptions {
-            human: args.human,
-            pretty: args.pretty,
-            goal: args.goal,
-        },
-    )
-    .await
-}
-
 /// One deterministic tick over a resolved workflow root -- the single
-/// implementation shared by the deprecated `aw run` alias, `aw wi run <id>`,
-/// and `aw capability run <capability-id>`. No caller duplicates this
+/// implementation shared by `aw wi run <id>` and
+/// `aw capability run <capability-id>`. No caller duplicates this
 /// dispatch; they only resolve a root and forward here.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 async fn run_resolved_root(root: ResolvedRunRoot, print: RunPrintOptions) -> Result<()> {
@@ -382,17 +331,14 @@ async fn run_resolved_root(root: ResolvedRunRoot, print: RunPrintOptions) -> Res
     Ok(())
 }
 
-/// Command string `aw wi run <id>` would print for the given work-item id --
-/// the canonical replacement for the deprecated `aw run --wi <id>` /
-/// `aw run --root wi:<id>` forms.
+/// Command string `aw wi run <id>` would print for the given work-item id.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn wi_run_command(id: &str) -> String {
     format!("aw wi run {id}")
 }
 
 /// Thin shell: `aw wi run <id>` -- drive one work item's next lifecycle tick
-/// via the shared root loop. Identical semantics to the deprecated
-/// `aw run --wi <id>`.
+/// via the shared root loop.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
     let root = ResolvedRunRoot::Wi {
@@ -403,8 +349,7 @@ pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> 
 }
 
 /// Command string `aw capability run <capability-id> --project <project>`
-/// would print -- the canonical replacement for the deprecated
-/// `aw run --root capability:<project>:<id>` forms.
+/// would print.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn capability_run_command(project: &str, capability_id: &str) -> String {
     format!("aw capability run {capability_id} --project {project}")
@@ -427,181 +372,10 @@ pub(crate) async fn run_capability_root(
 }
 
 /// Command string for the project-scoped capability completion loop that
-/// subsumes a project root -- the canonical replacement for the deprecated
-/// bare `aw run --project <project>` form.
+/// subsumes a project root.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn project_capability_rollup_command(project: &str) -> String {
     format!("aw capability run --project {project} --non-interactive --max-ticks 1")
-}
-
-/// `aw run` is a deprecated forwarding alias; every invocation prints one
-/// deprecation line naming the replacement `aw wi run` / `aw capability run`
-/// verb before forwarding to the shared loop unchanged.
-/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-fn print_run_deprecation_notice(root: &ResolvedRunRoot) {
-    let replacement = match root {
-        ResolvedRunRoot::Wi { wi, .. } => wi_run_command(wi),
-        ResolvedRunRoot::Capability {
-            project,
-            capability_id,
-            ..
-        } => capability_run_command(project, capability_id),
-        ResolvedRunRoot::Project { project, .. } => project_capability_rollup_command(project),
-    };
-    eprintln!("aw run is deprecated; use `{replacement}` instead.");
-}
-
-fn resolve_run_root(args: &RunArgs) -> Result<ResolvedRunRoot> {
-    if args.root.is_some() && (args.capability.is_some() || args.wi.is_some()) {
-        anyhow::bail!("use either --root or deprecated --capability/--wi, not both");
-    }
-    if args.capability.is_some() && args.wi.is_some() {
-        anyhow::bail!("choose only one workflow root");
-    }
-
-    if let Some(raw) = args.root.as_deref() {
-        return resolve_explicit_root(raw, args.project.as_deref());
-    }
-    if let Some(raw) = args.capability.as_deref() {
-        let (project, capability_id) = resolve_capability_root_parts(raw, args.project.as_deref())?;
-        return Ok(ResolvedRunRoot::Capability {
-            command: capability_root_command(args.project.as_deref(), &project, &capability_id),
-            project,
-            capability_id,
-        });
-    }
-    if let Some(wi) = args.wi.as_deref() {
-        return Ok(ResolvedRunRoot::Wi {
-            wi: wi.to_string(),
-            command: format!("aw run --root wi:{wi}"),
-        });
-    }
-    if let Some(project) = args.project.as_deref() {
-        let project = canonical_project_name_or_self(project);
-        return Ok(ResolvedRunRoot::Project {
-            project: project.clone(),
-            command: format!("aw run --project {project}"),
-        });
-    }
-
-    let project = infer_current_project()?;
-    Ok(ResolvedRunRoot::Project {
-        project,
-        command: "aw run".to_string(),
-    })
-}
-
-fn resolve_explicit_root(raw: &str, explicit_project: Option<&str>) -> Result<ResolvedRunRoot> {
-    if raw == "project" {
-        let project = explicit_project
-            .map(canonical_project_name_or_self)
-            .map(Ok)
-            .unwrap_or_else(infer_current_project)?;
-        return Ok(ResolvedRunRoot::Project {
-            command: explicit_project
-                .map(canonical_project_name_or_self)
-                .map(|project| format!("aw run --project {project}"))
-                .unwrap_or_else(|| "aw run".to_string()),
-            project,
-        });
-    }
-    if let Some(project) = raw.strip_prefix("project:") {
-        if project.trim().is_empty() {
-            anyhow::bail!("project root must be formatted as project:<project>");
-        }
-        let project = canonical_project_name_or_self(project);
-        return Ok(ResolvedRunRoot::Project {
-            project: project.clone(),
-            command: format!("aw run --project {project}"),
-        });
-    }
-    if let Some(capability_id) = raw.strip_prefix("capability:") {
-        if capability_id.trim().is_empty() {
-            anyhow::bail!("capability root must be formatted as capability:<capability-id>");
-        }
-        let project = explicit_project
-            .map(canonical_project_name_or_self)
-            .map(Ok)
-            .unwrap_or_else(infer_current_project)?;
-        return Ok(ResolvedRunRoot::Capability {
-            command: capability_root_command(explicit_project, &project, capability_id),
-            project,
-            capability_id: capability_id.to_string(),
-        });
-    }
-    if let Some(wi) = raw.strip_prefix("wi:") {
-        if wi.trim().is_empty() {
-            anyhow::bail!("WI root must be formatted as wi:<issue-id>");
-        }
-        return Ok(ResolvedRunRoot::Wi {
-            wi: wi.to_string(),
-            command: format!("aw run --root wi:{wi}"),
-        });
-    }
-    anyhow::bail!(
-        "unknown --root `{raw}`; expected capability:<id>, wi:<id>, project, or project:<project>"
-    )
-}
-
-fn resolve_capability_root_parts(
-    raw: &str,
-    explicit_project: Option<&str>,
-) -> Result<(String, String)> {
-    if let Some((project, capability_id)) = raw.split_once(':') {
-        if project.trim().is_empty() || capability_id.trim().is_empty() {
-            anyhow::bail!("capability roots must use <project>:<capability-id>");
-        }
-        return Ok((
-            canonical_project_name_or_self(project),
-            capability_id.to_string(),
-        ));
-    }
-    let project = explicit_project
-        .map(canonical_project_name_or_self)
-        .map(Ok)
-        .unwrap_or_else(infer_current_project)?;
-    Ok((project, raw.to_string()))
-}
-
-fn capability_root_command(
-    explicit_project: Option<&str>,
-    inferred_project: &str,
-    capability_id: &str,
-) -> String {
-    explicit_project
-        .map(|_| format!("aw run --project {inferred_project} --root capability:{capability_id}"))
-        .unwrap_or_else(|| format!("aw run --root capability:{capability_id}"))
-}
-
-fn infer_current_project() -> Result<String> {
-    let project_root = crate::find_project_root()?;
-    let config = load_run_project_config(&project_root)?;
-    if let Ok(branch) = crate::branch_switch::current_branch(&project_root) {
-        if let Some(branch_project) = branch.strip_prefix("project-") {
-            if let Some(row) = config
-                .projects
-                .iter()
-                .find(|row| row.matches(branch_project))
-            {
-                return Ok(row.name.clone());
-            }
-        }
-    }
-    match config.projects.as_slice() {
-        [only] => Ok(only.name.clone()),
-        [] => anyhow::bail!("no [[projects]] entry is configured in .aw/config.toml"),
-        _ => anyhow::bail!(
-            "aw run could not infer a project root; use --project <project> or run from a project-<name> branch"
-        ),
-    }
-}
-
-fn canonical_project_name_or_self(project: &str) -> String {
-    crate::find_project_root()
-        .ok()
-        .and_then(|project_root| load_run_project_config(&project_root).ok())
-        .and_then(|config| config.canonical_project_name(project).map(str::to_string))
-        .unwrap_or_else(|| project.to_string())
 }
 
 struct RunProgressSink {
@@ -807,7 +581,7 @@ Execution protocol:\n\
 - If stdout includes `next.payload_path`, read or update that path as instructed by the command.\n\
 {payload_line}\
 {hitl_line}\
-- Keep diagnostics/progress out of the final claim; prove completion with the latest `aw run` JSON.\n\n\
+- Keep diagnostics/progress out of the final claim; prove completion with the latest `{root_command}` JSON.\n\n\
 Initial state:\n\
 - action: `{action}`\n\
 - current: `{current_kind}:{current_id}`\n\
@@ -2067,7 +1841,7 @@ where
             Err(err) => blocked_envelope(
                 root.clone(),
                 root,
-                format!("aw run --project {project}"),
+                project_capability_rollup_command(project),
                 format!("project production readiness guard failed: {err}"),
                 true,
             ),
@@ -2086,7 +1860,7 @@ where
                             Err(err) => blocked_envelope(
                                 root.clone(),
                                 root,
-                                format!("aw run --project {project}"),
+                                project_capability_rollup_command(project),
                                 format!("project production readiness guard failed: {err}"),
                                 true,
                             ),
@@ -2098,7 +1872,7 @@ where
                     Err(err) => blocked_envelope(
                         root.clone(),
                         root,
-                        format!("aw run --project {project}"),
+                        project_capability_rollup_command(project),
                         format!("repo persistence guard failed after commit: {err}"),
                         true,
                     ),
@@ -2107,7 +1881,7 @@ where
                 Err(err) => blocked_envelope(
                     root.clone(),
                     root,
-                    format!("aw run --project {project}"),
+                    project_capability_rollup_command(project),
                     format!("repo persistence commit failed: {err}"),
                     true,
                 ),
@@ -2116,7 +1890,7 @@ where
         Err(err) => blocked_envelope(
             root.clone(),
             root,
-            format!("aw run --project {project}"),
+            project_capability_rollup_command(project),
             format!("repo persistence guard failed: {err}"),
             true,
         ),
@@ -2358,7 +2132,7 @@ fn commit_project_persistence_if_approved(
                 .map(|path| project_root.join(path))
                 .collect::<Vec<_>>();
             let message = format!(
-                "aw run({project}) lifecycle persistence\n\nProject: {project}\nLifecycle-Stage: Project-Persistence\nDirty-Paths: {}\n",
+                "aw capability run({project}) lifecycle persistence\n\nProject: {project}\nLifecycle-Stage: Project-Persistence\nDirty-Paths: {}\n",
                 dirty_paths.join(", ")
             );
             crate::git::commit_scoped_paths(project_root, &paths, &message)?;
@@ -3058,72 +2832,6 @@ mod tests {
         assert!(goal.prompt_size_bytes > goal.inline_limit_bytes);
         assert!(goal.goal_prompt.is_none());
         assert_eq!(goal.payload_path, "/tmp/aw/goals/aw-run-project-demo.md");
-    }
-
-    #[test]
-    fn root_parser_accepts_capability_and_wi_roots() {
-        let args = RunArgs {
-            root: Some("capability:py312-compatible".to_string()),
-            project: Some("mamba".to_string()),
-            capability: None,
-            wi: None,
-            max_ticks: 1,
-            json: true,
-            human: false,
-            pretty: false,
-            goal: false,
-        };
-        let root = resolve_run_root(&args).unwrap();
-        assert_eq!(
-            root,
-            ResolvedRunRoot::Capability {
-                project: "mamba".to_string(),
-                capability_id: "py312-compatible".to_string(),
-                command: "aw run --project mamba --root capability:py312-compatible".to_string(),
-            }
-        );
-
-        let args = RunArgs {
-            root: Some("wi:1123".to_string()),
-            project: None,
-            capability: None,
-            wi: None,
-            max_ticks: 1,
-            json: true,
-            human: false,
-            pretty: false,
-            goal: false,
-        };
-        assert_eq!(
-            resolve_run_root(&args).unwrap(),
-            ResolvedRunRoot::Wi {
-                wi: "1123".to_string(),
-                command: "aw run --root wi:1123".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn root_parser_accepts_project_option() {
-        let args = RunArgs {
-            root: None,
-            project: Some("cap".to_string()),
-            capability: None,
-            wi: None,
-            max_ticks: 1,
-            json: true,
-            human: false,
-            pretty: false,
-            goal: false,
-        };
-
-        assert_eq!(
-            resolve_run_root(&args).unwrap(),
-            ResolvedRunRoot::Project {
-                project: "cap".to_string(),
-                command: "aw run --project cap".to_string(),
-            }
-        );
     }
 
     #[test]

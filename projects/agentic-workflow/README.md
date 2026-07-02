@@ -29,15 +29,17 @@ WorkItem's target artifact route. See
 Milestone persistence is enforced by the CLI workflow state, not by agent memory
 or a separate agent-called commit command. Mutating TD, CB, and standardization
 verbs create scoped lifecycle commits when they change repo-owned artifacts, and
-`aw run` blocks project completion with structured persistence details when
-configured repo scopes still have uncommitted lifecycle changes. While those
-changes are dirty, the envelope must report repo commit and WI evidence as
-incomplete so agents do not mistake a local persistence request for published
-outward evidence.
+`aw wi run`/`aw capability run` block project completion with structured
+persistence details when configured repo scopes still have uncommitted
+lifecycle changes. While those changes are dirty, the envelope must report
+repo commit and WI evidence as incomplete so agents do not mistake a local
+persistence request for published outward evidence.
 
-`aw run` is the canonical root runner for coding agents. Omit `--root` to run
-the current project root, or pass `--root capability:<id>` / `--root wi:<id>` to
-scope the loop. Every JSON envelope uses `schema_version: aw.cli.v1`, exposes
+`aw wi run <id>` and `aw capability run [<cap-id>] --project <p>` are the
+canonical root runners for coding agents: `aw wi run <id>` drives one work
+item, `aw capability run <cap-id>` scopes to one capability's work-root WIs,
+and `aw capability run --project <p>` is the project-wide run-to-end driver.
+Every JSON envelope uses `schema_version: aw.cli.v1`, exposes
 `completion.workflow_complete` and `completion.requires_hitl`, and carries the
 only command the agent should run in `next.command`. Long project-root
 evaluation emits bounded JSONL `event=progress` records before the final

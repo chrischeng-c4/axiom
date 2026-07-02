@@ -142,7 +142,7 @@ aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"]
 aw wi epicize --project <name> [--title "<phase>"]
 aw wi atomize --project <name> [--title "<plan>"]
 aw wi prioritize --project <name> [--title "<plan>"]
-aw run --project <name> --max-ticks 1
+aw capability run --project <name> --non-interactive --max-ticks 1
 ```
 
 - `plan` reads the confirmed capability table from `--cap-path`, `[[projects]].cap_path`,
@@ -162,8 +162,9 @@ aw run --project <name> --max-ticks 1
   and deferred work.
   The artifact explicitly requires agent review before publishing priority
   label or ordering changes.
-- `aw run --project` is the run-to-end project root. It consumes capability
-  and prioritized WI readiness instead of relying on cron-style sprint batches.
+- `aw capability run --project` is the run-to-end project root. It consumes
+  capability and prioritized WI readiness instead of relying on cron-style
+  sprint batches.
 
 ### Bounded WI gate
 

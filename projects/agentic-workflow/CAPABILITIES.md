@@ -27,7 +27,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 ID: aw-core-client-model-workitem-first-artifact-lifecycle
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw wi` + `aw td` + `aw run` - standalone AW Core client entrypoints over the shared workflow protocol.
+- CLI: `aw wi` + `aw td` + `aw wi run`/`aw capability run` - standalone AW Core client entrypoints over the shared workflow protocol.
 EC Dimensions:
 - behavior: shared WorkItem-first artifact admission, client boundary, and rollup semantics from the AW Core TD set.
 Root WI: #3894
@@ -51,20 +51,20 @@ Gate Inventory:
 ID: workflow-root-runner
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw run` - root-scoped project, capability, and WI workflow runner for coding agents.
+- CLI: `aw wi run <id>` / `aw capability run [<cap-id>] --project <p>` - root-scoped WI, capability, and project workflow runners for coding agents.
 EC Dimensions:
-- behavior: `cargo test -p agentic-workflow --lib root_parser_accepts_capability_and_wi_roots` - root parsing and JSON envelope contract.
+- behavior: `cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid` - root parsing and JSON envelope contract.
 Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-`aw run` emits a CLI workflow chain from project, capability, epic, or change roots and keeps rolling work upward until the project root is complete or blocked.
+`aw wi run`/`aw capability run` emit a CLI workflow chain from project, capability, epic, or change roots and keep rolling work upward until the project root is complete or blocked.
 Gate Inventory:
 - projects/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| CLI workflow chain | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib root_parser_accepts_capability_and_wi_roots` |
+| CLI workflow chain | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid` |
 | Root envelope completion contract | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib create_wi_blocks_on_pending_epicize_artifact` |
 | Parent rollup routing | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection` |
 
