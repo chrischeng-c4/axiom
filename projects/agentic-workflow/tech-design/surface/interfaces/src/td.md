@@ -3164,18 +3164,36 @@ async fn handle_post_merge_lifecycle(
     Ok(())
 }
 
-/// Walk `git log` in the worktree for the most recent commit whose
-/// message contains `Lifecycle-Stage: Cb-CodeCheck` for this slug, and
-/// return its hash. Used by R8 backfill.
+/// Walk `git log` in the worktree for the most recent terminal lifecycle commit
+/// for this slug, and return its hash. Used by R8 backfill. New commits use
+/// `Cb-CodeCheck`; commits from the removed `aw td merge` verb carry the
+/// legacy `Td-Merged` trailer, which [`lifecycle_trailer::normalize`]
+/// accepts as an alias — see [`lifecycle_trailer::body_has_stage_trailer`]
+/// (issue #853).
+///
+/// The `--grep` argument below is only a coarse, best-effort pre-filter to
+/// keep `git log` from scanning unrelated commits; git's grep is a
+/// substring/regex match, so it can over-include commits for a
+/// prefix-colliding slug (e.g. slug `41`'s pre-filter also matches slug
+/// `412`'s commits). Correctness comes from the per-commit exact-line check
+/// via [`lifecycle_trailer::body_has_slug_trailer`], not from `--grep`.
 /// @spec aw-td-validate-lifecycle-extension.md#logic
 fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Result<Option<String>> {
+    use crate::issues::types::lifecycle_trailer;
+
     let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git not found"))?;
-    let needle = format!("Lifecycle-Stage: Cb-CodeCheck");
     let slug_needle = format!("Lifecycle-Slug: {}", slug);
     let output = std::process::Command::new(&git_bin)
         .arg("-C")
         .arg(worktree_abs)
-        .args(["log", "--format=%H%x00%B%x1e", "--all", "--grep", &needle])
+        .args([
+            "log",
+            "--format=%H%x00%B%x1e",
+            "--all",
+            "--fixed-strings",
+            "--grep",
+            &slug_needle,
+        ])
         .output()
         .context("git log failed")?;
     if !output.status.success() {
@@ -3190,7 +3208,9 @@ fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Resu
         let mut parts = entry.splitn(2, '\x00');
         let hash = parts.next().unwrap_or("").trim();
         let body = parts.next().unwrap_or("");
-        if body.contains(&slug_needle) {
+        if lifecycle_trailer::body_has_slug_trailer(body, slug)
+            && lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::CB_CODE_CHECK)
+        {
             return Ok(Some(hash.to_string()));
         }
     }
