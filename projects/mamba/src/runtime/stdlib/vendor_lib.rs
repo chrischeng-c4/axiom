@@ -49,6 +49,17 @@ const VENDORED_MODULES: &[(&str, &str)] = &[
     // all (as opposed to fileinput/plistlib/mailbox, which replaced a native
     // stub) — see #867 AC2.
     ("nturl2path", include_str!("py_src/nturl2path.py")),
+    // #868 de-registration first batch: `uu` is the sole module from the
+    // candidate set (getopt, colorsys, quopri, uu) whose fixtures stayed
+    // green from source. getopt/colorsys/quopri were tried and reverted —
+    // see the #868 report: cross-module dynamic calls into the vendored
+    // code corrupt parameter values (p0 #943), and getopt.py/quopri.py's
+    // `if __name__ == '__main__':` guards incorrectly fire on plain
+    // `import` (separate bug: imported modules get `__name__ == "__main__"`
+    // instead of their own module name). uu.py has the same guard but its
+    // two live fixtures are compile-time type-checks that never execute the
+    // module body, so the latent bug doesn't surface there.
+    ("uu", include_str!("py_src/uu.py")),
 ];
 
 /// Materialize the vendored tree (once) and add it to the import search path.
