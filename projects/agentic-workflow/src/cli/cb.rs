@@ -4550,10 +4550,10 @@ async fn run_check_lifecycle_terminal(
 /// `.md` ref in `Issue.implements`; else the worktree's uniquely
 /// branch-diff-discovered TD spec (`td::discover_worktree_spec`); else the
 /// deterministic default path `aw td create` would have used for this issue
-/// (`td::default_spec_path_for_issue_in_project`) as a last resort, since
-/// `Issue.implements` is not yet populated by the real `aw td create`/`aw td
-/// gen` commands and a worktree already on its base branch has no branch
-/// diff to discover from. Both terminal gates below scope to exactly this
+/// (`td::default_spec_path_for_issue_in_project`) as a last resort, for
+/// issues created before `aw td create`/`aw td claim` started populating
+/// `Issue.implements` (#939) or when a worktree already on its base branch
+/// has no branch diff to discover from. Both terminal gates below scope to exactly this
 /// set instead of the whole `tech_design_path` tree / whole worktree, so an
 /// unrelated stale spec or inherited HANDWRITE marker elsewhere in a
 /// monorepo checkout can no longer block this WI's own completion.
