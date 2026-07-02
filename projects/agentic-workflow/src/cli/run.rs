@@ -297,14 +297,43 @@ struct WorkflowGoalEnvelope {
     goal_prompt: Option<String>,
 }
 
+/// Print options shared by every thin runner shell (`aw run`, `aw wi run`,
+/// `aw capability run <id>`). Mirrors the human/pretty/goal subset of
+/// [`RunArgs`] that actually affects output shape.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RunPrintOptions {
+    pub(crate) human: bool,
+    pub(crate) pretty: bool,
+    pub(crate) goal: bool,
+}
+
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub async fn run(args: RunArgs) -> Result<()> {
     if args.max_ticks == 0 {
         anyhow::bail!("--max-ticks must be greater than zero");
     }
     let root = resolve_run_root(&args)?;
+    print_run_deprecation_notice(&root);
+    run_resolved_root(
+        root,
+        RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: args.goal,
+        },
+    )
+    .await
+}
+
+/// One deterministic tick over a resolved workflow root -- the single
+/// implementation shared by the deprecated `aw run` alias, `aw wi run <id>`,
+/// and `aw capability run <capability-id>`. No caller duplicates this
+/// dispatch; they only resolve a root and forward here.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+async fn run_resolved_root(root: ResolvedRunRoot, print: RunPrintOptions) -> Result<()> {
     let root_command = root.command().to_string();
-    let progress = RunProgressSink::new(&root, !args.human && !args.pretty && !args.goal);
+    let progress = RunProgressSink::new(&root, !print.human && !print.pretty && !print.goal);
     progress.emit(
         5,
         "start",
@@ -331,28 +360,95 @@ pub async fn run(args: RunArgs) -> Result<()> {
         summary_command,
     );
 
-    if args.goal {
+    if print.goal {
         let goal = workflow_goal_envelope(&envelope, &root_command)?;
-        if args.human {
+        if print.human {
             print_goal_text(&goal);
-        } else if args.pretty {
+        } else if print.pretty {
             println!("{}", serde_json::to_string_pretty(&goal)?);
         } else {
-            let _legacy_json = args.json;
             println!("{}", serde_json::to_string(&goal)?);
         }
         return Ok(());
     }
 
-    if args.human {
+    if print.human {
         print_text(&envelope);
-    } else if args.pretty {
+    } else if print.pretty {
         println!("{}", serde_json::to_string_pretty(&envelope)?);
     } else {
-        let _legacy_json = args.json;
         println!("{}", serde_json::to_string(&envelope)?);
     }
     Ok(())
+}
+
+/// Command string `aw wi run <id>` would print for the given work-item id --
+/// the canonical replacement for the deprecated `aw run --wi <id>` /
+/// `aw run --root wi:<id>` forms.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub(crate) fn wi_run_command(id: &str) -> String {
+    format!("aw wi run {id}")
+}
+
+/// Thin shell: `aw wi run <id>` -- drive one work item's next lifecycle tick
+/// via the shared root loop. Identical semantics to the deprecated
+/// `aw run --wi <id>`.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
+    let root = ResolvedRunRoot::Wi {
+        wi: id.to_string(),
+        command: wi_run_command(id),
+    };
+    run_resolved_root(root, print).await
+}
+
+/// Command string `aw capability run <capability-id> --project <project>`
+/// would print -- the canonical replacement for the deprecated
+/// `aw run --root capability:<project>:<id>` forms.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub(crate) fn capability_run_command(project: &str, capability_id: &str) -> String {
+    format!("aw capability run {capability_id} --project {project}")
+}
+
+/// Thin shell: `aw capability run <capability-id>` -- drive that
+/// capability's next work-root tick via the shared root loop.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub(crate) async fn run_capability_root(
+    project: &str,
+    capability_id: &str,
+    print: RunPrintOptions,
+) -> Result<()> {
+    let root = ResolvedRunRoot::Capability {
+        project: project.to_string(),
+        capability_id: capability_id.to_string(),
+        command: capability_run_command(project, capability_id),
+    };
+    run_resolved_root(root, print).await
+}
+
+/// Command string for the project-scoped capability completion loop that
+/// subsumes a project root -- the canonical replacement for the deprecated
+/// bare `aw run --project <project>` form.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub(crate) fn project_capability_rollup_command(project: &str) -> String {
+    format!("aw capability run --project {project} --non-interactive --max-ticks 1")
+}
+
+/// `aw run` is a deprecated forwarding alias; every invocation prints one
+/// deprecation line naming the replacement `aw wi run` / `aw capability run`
+/// verb before forwarding to the shared loop unchanged.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+fn print_run_deprecation_notice(root: &ResolvedRunRoot) {
+    let replacement = match root {
+        ResolvedRunRoot::Wi { wi, .. } => wi_run_command(wi),
+        ResolvedRunRoot::Capability {
+            project,
+            capability_id,
+            ..
+        } => capability_run_command(project, capability_id),
+        ResolvedRunRoot::Project { project, .. } => project_capability_rollup_command(project),
+    };
+    eprintln!("aw run is deprecated; use `{replacement}` instead.");
 }
 
 fn resolve_run_root(args: &RunArgs) -> Result<ResolvedRunRoot> {
@@ -905,7 +1001,7 @@ async fn project_envelope(project: &str, progress: &RunProgressSink) -> Workflow
                     return blocked_envelope(
                         root.clone(),
                         root,
-                        format!("aw run --project {project}"),
+                        project_capability_rollup_command(project),
                         format!("repo persistence guard could not resolve project root: {err}"),
                         true,
                     )
@@ -985,7 +1081,7 @@ fn project_done_or_dirty_envelope_with_capability_report(
                 Err(err) => blocked_envelope(
                     root.clone(),
                     root,
-                    format!("aw run --project {project}"),
+                    project_capability_rollup_command(project),
                     format!("project production readiness guard failed: {err}"),
                     true,
                 ),
@@ -1005,7 +1101,7 @@ fn project_done_or_dirty_envelope_with_capability_report(
                             Err(err) => blocked_envelope(
                                 root.clone(),
                                 root,
-                                format!("aw run --project {project}"),
+                                project_capability_rollup_command(project),
                                 format!("project production readiness guard failed: {err}"),
                                 true,
                             ),
@@ -1017,7 +1113,7 @@ fn project_done_or_dirty_envelope_with_capability_report(
                     Err(err) => blocked_envelope(
                         root.clone(),
                         root,
-                        format!("aw run --project {project}"),
+                        project_capability_rollup_command(project),
                         format!("repo persistence guard failed after commit: {err}"),
                         true,
                     ),
@@ -1026,7 +1122,7 @@ fn project_done_or_dirty_envelope_with_capability_report(
                 Err(err) => blocked_envelope(
                     root.clone(),
                     root,
-                    format!("aw run --project {project}"),
+                    project_capability_rollup_command(project),
                     format!("repo persistence commit failed: {err}"),
                     true,
                 ),
@@ -1035,7 +1131,7 @@ fn project_done_or_dirty_envelope_with_capability_report(
         Err(err) => blocked_envelope(
             root.clone(),
             root,
-            format!("aw run --project {project}"),
+            project_capability_rollup_command(project),
             format!("repo persistence guard failed: {err}"),
             true,
         ),
@@ -1140,7 +1236,7 @@ async fn capability_envelope(
                 );
             };
             if item.production_ready {
-                let command = format!("aw run --project {project}");
+                let command = project_capability_rollup_command(project);
                 return WorkflowEnvelope {
                     action: "done".to_string(),
                     current: root.clone(),
@@ -1401,9 +1497,9 @@ fn loop_state_envelope(
                             payload_path: None,
                         },
                         invoke: WorkflowInvoke { command },
-                        agent_prompt:
-                            "Loop engine: run next.command, then re-run `aw run --wi` to re-observe the loop state."
-                                .to_string(),
+                        agent_prompt: format!(
+                            "Loop engine: run next.command, then re-run `aw wi run {slug}` to re-observe the loop state."
+                        ),
                         requires_hitl: false,
                         artifact_quality_profile: None,
                         hitl_question: None,
@@ -1472,7 +1568,7 @@ fn closed_wi_envelope(issue: &Issue) -> WorkflowEnvelope {
 fn parent_inspection_command(issue: &Issue) -> String {
     if issue.issue_type == IssueType::Epic {
         if let Some(project) = project_from_labels(issue) {
-            return format!("aw run --project {project}");
+            return project_capability_rollup_command(&project);
         }
     }
     issue
@@ -1480,7 +1576,7 @@ fn parent_inspection_command(issue: &Issue) -> String {
         .iter()
         .chain(issue.implements.iter())
         .find_map(|reference| extract_issue_number(reference))
-        .map(|id| format!("aw run --root wi:{id}"))
+        .map(|id| wi_run_command(&id))
         .unwrap_or_else(|| format!("aw wi show {}", issue_cli_ref(issue)))
 }
 
@@ -1551,7 +1647,7 @@ fn capability_action_envelope_with_planning_base(
             if !completion.missing.iter().any(|missing| missing == &reason) {
                 completion.missing.push(reason.clone());
             }
-            let command = format!("aw run --project {project}");
+            let command = project_capability_rollup_command(project);
             return WorkflowEnvelope {
                 action: "blocked".to_string(),
                 root,
@@ -1796,7 +1892,7 @@ async fn project_backlog_envelope(
 
 fn project_ready_wi_envelope(project: &str, root: WorkflowNode, issue: &Issue) -> WorkflowEnvelope {
     let wi = issue_ref(issue);
-    let command = format!("aw run --root wi:{}", wi.trim_start_matches('#'));
+    let command = wi_run_command(wi.trim_start_matches('#'));
     WorkflowEnvelope {
         action: "dispatch".to_string(),
         root: root.clone(),
@@ -1907,7 +2003,7 @@ fn planning_artifact_hitl_question(project: &str, path: &Path, reason: &str) -> 
             path.display()
         ),
         target: path.display().to_string(),
-        resume_command: format!("aw run --project {project}"),
+        resume_command: project_capability_rollup_command(project),
         tool_hint: "ask_user_question".to_string(),
         choices: vec![
             HitlChoice {
@@ -2163,7 +2259,7 @@ fn persistence_blocked_envelope(
     dirty_paths: Vec<String>,
     scopes: Vec<String>,
 ) -> WorkflowEnvelope {
-    let command = format!("aw run --project {project}");
+    let command = project_capability_rollup_command(project);
     let reason = format!(
         "repo-side lifecycle changes are uncommitted under AW-owned scopes: {}",
         dirty_paths.join(", ")
@@ -3226,7 +3322,7 @@ cap_path = "projects/jet/README.md"
 
         assert_eq!(envelope.action, "dispatch");
         assert_eq!(envelope.next.kind, "execute_change");
-        assert_eq!(envelope.next.command, "aw run --root wi:4301");
+        assert_eq!(envelope.next.command, "aw wi run 4301");
         assert!(!envelope.requires_hitl);
         assert!(!envelope.completion.workflow_complete);
         assert_no_removed_wi_verbs(&envelope);
@@ -3852,7 +3948,7 @@ review_status: pending
         assert!(envelope.completion.root_complete);
         assert!(!envelope.completion.workflow_complete);
         assert_eq!(envelope.next.kind, "inspect_parent");
-        assert_eq!(envelope.next.command, "aw run --root wi:4101");
+        assert_eq!(envelope.next.command, "aw wi run 4101");
     }
 
     #[test]

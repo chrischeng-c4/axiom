@@ -190,6 +190,10 @@ Capability run emits the same aw.cli.v1 summary as `aw capability next`, with ru
 "#)]
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct CapabilityRunArgs {
+    /// Capability id to drive via the shared root-driven workflow runner
+    /// (delegates to the same loop as `aw wi run`). Omit to run the
+    /// existing project-scoped capability completion loop.
+    pub capability_id: Option<String>,
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
@@ -1390,7 +1394,12 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
         }
         CapabilityCommand::Run(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
-            run_capability_tick(&project, args).await
+            match args.capability_id.clone() {
+                Some(capability_id) => {
+                    run_capability_root_tick(&project, &capability_id, &args).await
+                }
+                None => run_capability_tick(&project, args).await,
+            }
         }
         CapabilityCommand::Migrate(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
@@ -4810,6 +4819,27 @@ fn upsert_capability_field_in_contract_table(
         return Some(true);
     }
     None
+}
+
+/// `aw capability run <capability-id>` -- thin shell over the shared
+/// root-driven workflow runner (`crate::cli::run`); delegates to the same
+/// loop as `aw wi run` with a `Capability` root instead of duplicating
+/// dispatch here.
+async fn run_capability_root_tick(
+    project: &str,
+    capability_id: &str,
+    args: &CapabilityRunArgs,
+) -> Result<()> {
+    crate::cli::run::run_capability_root(
+        project,
+        capability_id,
+        crate::cli::run::RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: false,
+        },
+    )
+    .await
 }
 
 async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
