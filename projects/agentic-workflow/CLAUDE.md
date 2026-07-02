@@ -33,7 +33,7 @@ SDD is the methodology + library that powers `score` and (eventually)
 
 | Workflow | Drives | Direction | Termination |
 |---|---|---|---|
-| **正流程 (forward, linear)** | One change at a time: issue → td (author → gen → fill) → merge. Linear — no review/revise; the gate is EC. | Forward, single-issue | Issue closes |
+| **正流程 (forward, linear)** | One change at a time: issue → td (author → gen → fill) → code-check. Linear — no review/revise; the gate is EC. | Forward, single-issue | Issue closes |
 | **標準化 (regenerability)** | Audit the whole repo + apply 1 fix per tick until invariant holds | Loop, cross-issue | coverage = 100% |
 
 A 標準化 fix often opens a 正流程 issue to land the change, but the two
@@ -56,8 +56,11 @@ priority order in `aw standardize managed next` (highest priority first):
 | 5 | **fold_shadow** | Spec exists but hand-written shadow code lives outside markers | none — hardest gap |
 | 6 | **claim_code** | Untracked in-scope code → write spec + wrap HANDWRITE | `aw td code-claim` covers code→spec; CODEGEN promotion is follow-up |
 
-After managed coverage reaches 100%, use `aw standardize regenerable run sdd`
-to drive the second layer: no remaining HANDWRITE blocks in SDD.
+After managed coverage reaches 100%, keep running `aw standardize managed run
+--project sdd` to drive remaining HANDWRITE→CODEGEN promotions: no remaining
+HANDWRITE blocks in SDD. There is no separate `aw standardize regenerable`
+subcommand — promotion is one of `managed`'s own action kinds
+(`promote_handwrite`); `regenerable` maturity is reported via `aw health`.
 
 ## Boundary
 
