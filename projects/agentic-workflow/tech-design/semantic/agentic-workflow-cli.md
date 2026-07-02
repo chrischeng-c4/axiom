@@ -3000,6 +3000,19 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      #921 tier 1b (epic #914 slice G): `EcProjectContext` gained an
+      `ec_bindings: BTreeMap<String, EcBinding>` field (populated in
+      `resolve_ec_project_context` from the already-loaded `Project.ec` map,
+      no new project-loading logic), and `EcCheckSummary` gained an
+      `ec_binding_warnings: Vec<String>` field (never affects `clean`).
+      `check_manifest_against_expected` now calls
+      `chain::check_ec_vat_runner_binding` once per `ec.*` binding before its
+      final sort/dedup pass, folding any blocker into the existing
+      `findings` (so a misspelled vat.toml runner id blocks `clean` like any
+      other finding) and collecting warn-only findings (e.g. an
+      as-yet-unbuilt runner binary) into `ec_binding_warnings`.
+      `run_check`'s non-JSON branch prints each warning to stderr regardless
+      of `clean`. See `chain.md#changes` for the validator implementation.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/tasks.rs"
     action: modify

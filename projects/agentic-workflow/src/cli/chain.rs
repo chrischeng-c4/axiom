@@ -342,6 +342,148 @@ const LEGACY_NEXT_ACTION_RULES: &[LegacyNextActionRule] = &[
     },
 ];
 
+// ---------------------------------------------------------------------------
+// #921 tier 1b: validate a cross-CLI `ec.*` binding's resolved command
+// against the vat.toml runner registry it targets. The 6 real production
+// bindings (`.aw/config.toml` `ec.<category> = { ..., command = "cd <dir> &&
+// ../../target/debug/vat run <runner-id>" }`) are dispatched by
+// `aw ec check` / `aw health --verify-ec` today with nobody validating the
+// runner id statically — a typo only ever surfaces as a runtime `Failed`
+// deep inside `--verify-ec`. This closes that gap for the common two-hop
+// shape (`vat run <runner-id>`); guard's `--meter-command` flag value is a
+// further, nested third hop this deliberately does not recurse into
+// (documented as executed-only, covered by `--verify-ec`).
+// ---------------------------------------------------------------------------
+
+/// One `[[runners]]` entry in a `vat.toml` file. Deserialized locally (no aw
+/// -> vat build dependency) — this only needs the two fields tier 1b cares
+/// about.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct VatRunnerEntry {
+    id: String,
+    #[serde(default)]
+    cmd: Vec<String>,
+}
+
+/// Top-level shape of a `vat.toml` file, restricted to `[[runners]]`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct VatRunnersFile {
+    #[serde(default)]
+    runners: Vec<VatRunnerEntry>,
+}
+
+/// The `cd <dir> && <bin> run <runner-id>` shape every real `ec.*` binding
+/// uses today. `dir`/`binary` are exactly as written in the command string
+/// (relative paths, not yet joined to anything).
+struct VatRunnerInvocation<'a> {
+    dir: &'a str,
+    binary: &'a str,
+    runner_id: &'a str,
+}
+
+/// Parse a resolved `ec.*` binding command string for the `cd <dir> &&
+/// <bin> run <runner-id>` shape. Returns `None` for anything else — this is
+/// deliberately narrow (not a general shell parser); a command that isn't
+/// shaped like this has nothing for tier 1b to validate.
+fn parse_vat_runner_invocation(command: &str) -> Option<VatRunnerInvocation<'_>> {
+    let (cd_part, run_part) = command.split_once("&&")?;
+    let dir = cd_part.trim().strip_prefix("cd ")?.trim();
+    if dir.is_empty() {
+        return None;
+    }
+    let run_tokens: Vec<&str> = run_part.trim().split_whitespace().collect();
+    if run_tokens.len() < 3 || run_tokens[1] != "run" {
+        return None;
+    }
+    let binary = run_tokens[0];
+    let is_vat_binary = std::path::Path::new(binary)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("vat");
+    if !is_vat_binary {
+        return None;
+    }
+    Some(VatRunnerInvocation {
+        dir,
+        binary,
+        runner_id: run_tokens[2],
+    })
+}
+
+/// #921 AC1: validate one `ec.<category>` binding's resolved command against
+/// the vat.toml runner registry it targets. `project_root` is the repo root
+/// (`dir` in the command is relative to it). Returns `(blockers, warnings)`:
+/// a blocker names the vat.toml path and the missing runner id (AC1); a
+/// path-shaped `cmd[0]` (e.g. `../../target/debug/meter`) missing on disk for
+/// an otherwise-valid runner is warn-only ("buildable, not built" —
+/// `--verify-ec` would catch an actually-broken binary at run time anyway). A
+/// bare `cmd[0]` command name (e.g. `sh`, `cargo`) is resolved via `PATH`, not
+/// relative to `dir`, so it is never checked for existence. A command that
+/// isn't shaped like `cd <dir> && vat run <runner-id>` returns `(vec![],
+/// vec![])` — nothing for tier 1b to validate there.
+pub(crate) fn check_ec_vat_runner_binding(
+    project_root: &std::path::Path,
+    category: &str,
+    command: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+    let Some(invocation) = parse_vat_runner_invocation(command) else {
+        return (blockers, warnings);
+    };
+    let dir = project_root.join(invocation.dir);
+    let vat_toml_path = dir.join("vat.toml");
+    let vat_toml_display = format!("{}/vat.toml", invocation.dir);
+    let content = match std::fs::read_to_string(&vat_toml_path) {
+        Ok(content) => content,
+        Err(_) => {
+            blockers.push(format!(
+                "ec binding `{category}`: {vat_toml_display} not found (referenced by `cd {} \
+                 && {} run {}`)",
+                invocation.dir, invocation.binary, invocation.runner_id
+            ));
+            return (blockers, warnings);
+        }
+    };
+    let runners_file: VatRunnersFile = match toml::from_str(&content) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            blockers.push(format!(
+                "ec binding `{category}`: {vat_toml_display} failed to parse as vat.toml: {err}"
+            ));
+            return (blockers, warnings);
+        }
+    };
+    match runners_file
+        .runners
+        .iter()
+        .find(|runner| runner.id == invocation.runner_id)
+    {
+        None => {
+            blockers.push(format!(
+                "ec binding `{category}`: {vat_toml_display} has no runner id `{}`",
+                invocation.runner_id
+            ));
+        }
+        Some(runner) => {
+            if let Some(bin) = runner.cmd.first() {
+                // Only meaningful for a path-shaped `cmd[0]` (e.g.
+                // `../../target/debug/meter`) — a bare command name like `sh`
+                // or `cargo` is resolved via `PATH` at run time, not relative
+                // to `dir`, so there is nothing on disk here to check.
+                if bin.contains('/') && !dir.join(bin).exists() {
+                    warnings.push(format!(
+                        "ec binding `{category}`: runner `{}` in {vat_toml_display} points to \
+                         `{bin}`, which is not built yet (buildable, not built)",
+                        invocation.runner_id
+                    ));
+                }
+            }
+        }
+    }
+    (blockers, warnings)
+}
+
 /// #917: repair a persisted `next_action` that used one of the now-deprecated
 /// `aw run` root-selection flag shapes, rewriting it to the equivalent
 /// `aw wi run <id>` / `aw capability run <capability-id> --project <project>`
@@ -625,6 +767,133 @@ mod tests {
             ),
             None
         );
+    }
+
+    // #921 AC1: a misspelled runner id in an otherwise-valid vat.toml is a
+    // blocker naming the vat.toml path and the bad id.
+    #[test]
+    fn vat_runner_binding_blocks_on_misspelled_runner_id() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("projects/demo")).unwrap();
+        std::fs::write(
+            root.join("projects/demo/vat.toml"),
+            "[[runners]]\nid = \"meter-perf\"\ncmd = [\"../../target/debug/meter\", \"test\"]\ntimeout_s = 600\n",
+        )
+        .unwrap();
+
+        let (blockers, warnings) = check_ec_vat_runner_binding(
+            root,
+            "efficiency",
+            "cd projects/demo && ../../target/debug/vat run meter-perf-typo",
+        );
+        assert!(warnings.is_empty());
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("projects/demo/vat.toml"));
+        assert!(blockers[0].contains("meter-perf-typo"));
+    }
+
+    // #921 AC1: a good runner id whose cmd[0] binary is present on disk is
+    // clean — no blocker, no warning.
+    #[test]
+    fn vat_runner_binding_clean_when_binary_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("projects/demo/bin")).unwrap();
+        std::fs::write(root.join("projects/demo/bin/meter"), "").unwrap();
+        std::fs::write(
+            root.join("projects/demo/vat.toml"),
+            "[[runners]]\nid = \"meter-perf\"\ncmd = [\"bin/meter\", \"test\"]\ntimeout_s = 600\n",
+        )
+        .unwrap();
+
+        let (blockers, warnings) = check_ec_vat_runner_binding(
+            root,
+            "efficiency",
+            "cd projects/demo && ../../target/debug/vat run meter-perf",
+        );
+        assert!(blockers.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    // #921: a good runner id whose cmd[0] binary is missing on disk is
+    // warn-only ("buildable, not built") — it must not block `clean`.
+    #[test]
+    fn vat_runner_binding_warns_when_binary_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("projects/demo")).unwrap();
+        std::fs::write(
+            root.join("projects/demo/vat.toml"),
+            "[[runners]]\nid = \"meter-perf\"\ncmd = [\"../../target/debug/meter\", \"test\"]\ntimeout_s = 600\n",
+        )
+        .unwrap();
+
+        let (blockers, warnings) = check_ec_vat_runner_binding(
+            root,
+            "efficiency",
+            "cd projects/demo && ../../target/debug/vat run meter-perf",
+        );
+        assert!(blockers.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("meter-perf"));
+        assert!(warnings[0].contains("not built yet"));
+    }
+
+    // A bare `cmd[0]` command name (no path separator) is resolved via `PATH`
+    // at run time, not relative to `dir` — never on-disk-checked, so it never
+    // produces a warning even though it doesn't exist as a file next to the
+    // runner's workdir. Regression coverage for a real false positive found
+    // smoke-testing against projects/lumen/vat.toml (`cmd = ["sh", "-c", ...]`).
+    #[test]
+    fn vat_runner_binding_skips_bare_command_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("projects/demo")).unwrap();
+        std::fs::write(
+            root.join("projects/demo/vat.toml"),
+            "[[runners]]\nid = \"rig-resilience\"\ncmd = [\"sh\", \"-c\", \"echo hi\"]\ntimeout_s = 600\n",
+        )
+        .unwrap();
+
+        let (blockers, warnings) = check_ec_vat_runner_binding(
+            root,
+            "stability",
+            "cd projects/demo && ../../target/debug/vat run rig-resilience",
+        );
+        assert!(blockers.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    // A command that isn't shaped like `cd <dir> && vat run <runner-id>` is
+    // out of tier 1b's narrow scope — never a blocker or a warning.
+    #[test]
+    fn non_vat_runner_shaped_command_is_not_applicable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let (blockers, warnings) =
+            check_ec_vat_runner_binding(root, "behavior", "cargo test -p demo");
+        assert!(blockers.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    // A missing vat.toml file (dangling `cd <dir>`) is also a blocker — a
+    // binding pointing at a directory with no vat.toml at all is a static
+    // mistake tier 1b should catch, not just a misspelled id within one.
+    #[test]
+    fn vat_runner_binding_blocks_on_missing_vat_toml() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("projects/demo")).unwrap();
+
+        let (blockers, warnings) = check_ec_vat_runner_binding(
+            root,
+            "efficiency",
+            "cd projects/demo && ../../target/debug/vat run meter-perf",
+        );
+        assert!(warnings.is_empty());
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("projects/demo/vat.toml"));
     }
 }
 // CODEGEN-END
