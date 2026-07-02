@@ -40,25 +40,56 @@ portable path.
    GPUs through Vulkan. The kernels, IVF-PQ, filtered search, CRUD — all run
    unchanged. This is real NVIDIA support; it is just not the *CUDA* API.
    Remaining work is **validation on NVIDIA hardware/CI**, not new code.
-2. **Native CUDA / cuVS (max perf) = B2, deferred.** For last-mile NVIDIA
-   performance (CAGRA-class graph index, cuVS kernels), a native CUDA backend
-   would sit behind the existing `VectorIndex` trait as a `cuda` cargo feature
-   (cudarc / cuVS FFI). It needs an NVIDIA GPU + CUDA toolkit to build and test,
-   which this dev environment lacks, so it is **scaffolded-in-design, not built**
-   — pursued once NVIDIA CI/hardware is available. Do not add a broken/untestable
-   CUDA dependency to the default build.
+2. **Native CUDA (max perf) = present as a compile-verified backend.** A native
+   CUDA backend now exists behind the optional `cuda` cargo feature — see the
+   next section. It is the CUDA driver-API path (cuVS/Faiss-GPU territory), for
+   last-mile NVIDIA performance, and sits behind the same `VectorIndex` trait as
+   every other backend.
+
+## Native CUDA backend (`--features cuda`) — compile-verified only
+
+`src/index/cuda.rs` adds `CudaFlatIndex`: the exact brute-force scan of
+`CpuFlatIndex` / `GpuFlatIndex`, but the per-row distances are computed by a
+**native CUDA C kernel** launched through the NVIDIA driver API (via the
+`cudarc` crate), not WGSL-on-Vulkan. It is behind the optional `cuda` cargo
+feature and is **NOT in the default build** — the Mac/CI default pulls no
+cudarc, so the normal build (and every existing test) is byte-for-byte
+unaffected.
+
+**Honest status — read this carefully:**
+
+- **Compiles on this Mac** (`aarch64-apple-darwin`):
+  `cargo check -p beam --features cuda` succeeds here. `cudarc` is pinned with
+  `default-features = false, features = ["cuda-12060", "dynamic-loading",
+  "driver", "nvrtc"]`, so `libcuda` / `libnvrtc` are `dlopen`ed lazily at
+  RUNTIME (no CUDA toolkit or `nvcc` needed at build time) and the distance
+  kernel is compiled to PTX at RUNTIME by NVRTC. That is why it builds with no
+  NVIDIA hardware, driver, or toolkit present.
+- **Requires an NVIDIA GPU + driver at RUNTIME.** With no driver present (this
+  Mac), `CudaContext::new(0)` returns an `Err`, so `CudaFlatIndex::new` fails
+  gracefully and the runtime-skip test skips — mirroring the wgpu tests'
+  GPU-less skip.
+- **NOT runtime-verified in this Mac dev environment.** The CUDA path has **not
+  been run on a GPU here** — it is **compile-verified only**. The parity
+  assertion (`CudaFlatIndex::search_knn == CpuFlatIndex::search_knn`, exact flat,
+  within 1e-3) is written and compiles, but only executes on an NVIDIA host;
+  do not read this as "run" or "benchmarked" on a GPU.
 
 ## Where the pluggability lives
 
 - `VectorIndex` trait (`src/index/mod.rs`) — the seam every backend implements.
 - `GpuContext` (`src/gpu/mod.rs`) — backend-agnostic device/adapter; add a
   `--backend` override here if forcing a specific wgpu backend is ever needed.
-- A future `CudaFlatIndex` / `CudaIvfIndex` (`#[cfg(feature = "cuda")]`) would
-  join `CpuFlatIndex` / `GpuFlatIndex` / `IvfPqIndex` behind the same trait.
+- `CudaFlatIndex` (`#[cfg(feature = "cuda")]`, `src/index/cuda.rs`) now joins
+  `CpuFlatIndex` / `GpuFlatIndex` / `IvfPqIndex` / `HnswIndex` behind the same
+  `VectorIndex` trait — the native-CUDA seam is filled (compile-verified). A
+  future `CudaIvfIndex` / CAGRA graph index would slot in the same way.
 
 ## Verdict
 
 Goal 3 ("support Mac and CUDA") is **architecturally met for the portable
 path**: one codebase, Metal on Mac (verified) + Vulkan on NVIDIA (same code,
-pending hardware validation). Native-CUDA/cuVS is an optional max-perf backend
-(B2) behind the trait, deferred until NVIDIA hardware is in the loop.
+pending hardware validation). The native-CUDA path is now present too, as an
+optional max-perf backend behind the `cuda` feature — **compile-verified on this
+Mac (cudarc dynamic-loading + runtime NVRTC), runtime requires an NVIDIA GPU +
+driver, and NOT runtime-verified in this Mac dev environment.**

@@ -37,6 +37,16 @@ bytemuck = { version = "1", features = ["derive"] }
 # Block on wgpu's async `request_adapter` / `request_device` from sync code.
 pollster = "0.4"
 
+# --- Native CUDA backend (optional, `--features cuda`) -------------------
+# NVIDIA the CUDA-native way, behind the `cuda` feature — NOT in the default
+# build (Mac/CI stays wgpu-only and pulls no cudarc). `dynamic-loading` dlopen's
+# libcuda / libnvrtc at RUNTIME (no CUDA toolkit needed at build time) and
+# `nvrtc` compiles the distance kernel at runtime on the NVIDIA host, so this
+# COMPILES on this Mac (aarch64-apple-darwin) even with no NVIDIA driver present;
+# it only *runs* on an NVIDIA GPU + driver. `cuda-12060` pins the driver API
+# surface. See `src/index/cuda.rs`.
+cudarc = { version = "0.16", default-features = false, features = ["cuda-12060", "dynamic-loading", "driver", "nvrtc"], optional = true }
+
 # --- HNSW graph ANN index (CPU) ------------------------------------------
 # The pure-Rust HNSW backend behind `HnswIndex`. Pinned to the SAME version +
 # features lumen uses (`projects/lumen`), so the shared workspace Cargo.lock
@@ -71,6 +81,10 @@ reqwest = { workspace = true }
 
 [features]
 default = []
+# Native CUDA backend (`CudaFlatIndex`, `src/index/cuda.rs`). Off by default so
+# the Mac/CI build pulls no cudarc; compile-check it with
+# `cargo check -p beam --features cuda`. Runtime requires an NVIDIA GPU + driver.
+cuda = ["dep:cudarc"]
 # Online (HTTPS) paths of the standard CLI ops: `upgrade` self-install and
 # `issue` search/view/create submit. Offline paths (llm, `upgrade --check`,
 # `issue create --dry-run` / pre-filled-URL fallback) always build; release

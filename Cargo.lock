@@ -1668,6 +1668,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "cli-std",
+ "cudarc",
  "h2c",
  "hnsw_rs",
  "pollster",
@@ -3605,6 +3606,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
 dependencies = [
  "cmov",
+]
+
+[[package]]
+name = "cudarc"
+version = "0.16.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17200eb07e7d85a243aa1bf4569a7aa998385ba98d14833973a817a63cc86e92"
+dependencies = [
+ "libloading",
 ]
 
 [[package]]

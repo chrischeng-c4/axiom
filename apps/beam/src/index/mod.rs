@@ -9,6 +9,10 @@
 //! - [`ivf_pq::IvfPqIndex`] — IVF-PQ (IVFADC) approximate index (GPU + CPU).
 //! - [`hnsw::HnswIndex`] — HNSW graph ANN (CPU), the default graph index every
 //!   mainstream vector DB ships.
+//! - `cuda::CudaFlatIndex` — the same exact scan on a **native CUDA** kernel
+//!   (NVRTC-compiled, driver-API launch), behind the optional `cuda` cargo
+//!   feature (`--features cuda`). Compiles on any host via `cudarc`
+//!   dynamic-loading; runs only on an NVIDIA GPU + driver.
 //!
 //! Both compute the SAME per-row score under a shared convention (see
 //! [`crate::collection::Metric::code`]) and hand it to [`topk`], so their result
@@ -30,6 +34,8 @@ use crate::collection::Metric;
 use crate::payload::{Filter, Payload};
 
 pub mod cpu_flat;
+#[cfg(feature = "cuda")]
+pub mod cuda;
 pub mod hnsw;
 pub mod ivf_pq;
 
