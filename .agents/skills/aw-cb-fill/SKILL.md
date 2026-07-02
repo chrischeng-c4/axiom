@@ -109,7 +109,7 @@ the union of (a) the paths your TD spec's `## Changes` section names and
 HANDWRITE marker outside that scope — e.g. inherited from other unmerged
 work on the same monorepo checkout — no longer blocks completion; no
 bypass is needed for that case. This depends on the issue recording
-`implements: [<td-spec-path>]` (`aw td create`/`aw td gen` set this), so
+`implements: [<td-spec-path>]` (`aw td create`/`aw td claim` set this), so
 the terminal step can still resolve your spec when the branch diff against
 base is empty (HEAD already on the base branch). If the gate still blocks,
 the offending marker is genuinely inside your WI's own scope (a file your
