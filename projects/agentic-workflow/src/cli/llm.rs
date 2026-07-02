@@ -161,9 +161,9 @@ ec. Passing ec verify == achieving caps, so td chases ec green, in any shape.
 
 ## Mental model
 
-- The lifecycle is LINEAR: `create -> gen -> merge`. There is no review/revise
-  step -- the gate is ec, not a reviewer. Logic and unit-test sections are
-  Mermaid Plus blocks (YAML IR + a rendered diagram).
+- The lifecycle is LINEAR: `create -> gen -> fill -> code-check`. There is no
+  review/revise step -- the gate is ec, not a reviewer. Logic and unit-test
+  sections are Mermaid Plus blocks (YAML IR + a rendered diagram).
 - `gen` turns the TD into code. Every in-scope region is either `CODEGEN`
   (emitted from the spec) or `HANDWRITE` (a named generator gap that codegen
   cannot yet cover). There is no skip state for source ownership.
@@ -202,7 +202,7 @@ iff ec is green; td chases ec green. So ec is the one artifact that decides
 - What to test is DERIVED FROM caps. That derivation is the single human +
   agent collaboration point (HITL) -- and the only place a review belongs,
   because a wrong ec yields a false green nothing downstream can catch.
-- ec green is the only merge gate. Code style / fmt are not gates.
+- ec green is the only code-check gate. Code style / fmt are not gates.
 - Wired per project via `.aw/config.toml` `ec.<category>`; absent -> the
   default test gate. Non-capability scope (delivery, docs) has no behavior ec
   and rides a zero-EC / cold-build lane instead.
@@ -240,7 +240,7 @@ loop converges on ec green.
 - `completion.requires_hitl=true` -> stop and ask a human.
 
 Drive it: `aw run --wi <id>` (or `--project` / `--capability`); the linear
-forward path is `wi -> td -> merge`.
+forward path is `wi -> td -> code-check`.
 
 For exact flags, run `aw run --help` or `aw wi --help`.
 "#;
