@@ -2,10 +2,10 @@ version = 2
 project = "keep"
 ir_kind = "td"
 td_path = "projects/keep/tech-design"
-generated_at = "2026-07-01T03:17:31.323003+00:00"
-digest = "sha256:76c8f40f9941d29056ff28a58ff3c20de9849af38c6815fdc1ac0ba99b6745da"
-source_digest = "sha256:76c8f40f9941d29056ff28a58ff3c20de9849af38c6815fdc1ac0ba99b6745da"
-ir_digest = "sha256:78f4549f8a92bfa70ac0e6b7844506b5f5b8eab9475ba4eb7b663c4f33cf24e8"
+generated_at = "2026-07-02T02:55:13.479665+00:00"
+digest = "sha256:140d716cc740f457cf854f2c5c9add73fc47eeba1bdba611ab7ee15590bd08a9"
+source_digest = "sha256:140d716cc740f457cf854f2c5c9add73fc47eeba1bdba611ab7ee15590bd08a9"
+ir_digest = "sha256:fc70b2cc2953d65d09bc14ebfff8c89536fe3637fbea38ab97b8c95911d16631"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-keep-k8s-crd-operator-instance-cli.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "interfaces/cli/migrate-keep-cli-from-report-issue-to-the-issue-group-cli-std-is.md"
 digest = "sha256:a36e9cbc3a2c500db4d02a408b395968a2d60d5018571062c8ca69c85cfe3776"
 ir_digest = "sha256:a66b22845f9153755420bf11970a2084c0e48ebad3a5fb7f2d78280224428ac6"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/resolve-dangling-openapi-refs-so-the-spec-is-self-complete.md"
+digest = "sha256:17a970d7b2d8e022dab128e09fba448bf01b1ba198014db24e92c411c9826d2a"
+ir_digest = "sha256:82409c74b20934065735614f63f2a83f3e23975629ab0242a3ea64bc2e7a37b4"
 section_count = 3
 
 [[files]]
