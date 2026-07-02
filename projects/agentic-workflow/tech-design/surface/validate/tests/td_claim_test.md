@@ -378,6 +378,140 @@ fn test_td_claim_then_gen_succeeds() {
         gen_stderr
     );
 }
+
+/// Recursively find a file named `name` under `dir` (skipping `.git`). Used
+/// to locate wherever `td claim`'s dest-path derivation copied the claimed
+/// spec, without hard-coding that derivation logic in the test itself.
+fn find_file_named(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().and_then(|s| s.to_str()) == Some(".git") {
+                continue;
+            }
+            if let Some(found) = find_file_named(&path, name) {
+                return Some(found);
+            }
+        } else if path.file_name().and_then(|s| s.to_str()) == Some(name) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Issue #939: `aw td claim --from-path` copies an already-authored spec
+/// into the worktree — it must also record that copied spec's
+/// repo-relative path in the issue's `implements`, the same way `aw td
+/// create` does (see `inplace_mode_test.rs`), so `cb.rs`'s tier-1
+/// `Issue.implements` scope resolution (#854) has real data to resolve a
+/// claimed spec from instead of always falling through to tier-3
+/// derived-path guessing.
+#[test]
+fn test_td_claim_records_implements() {
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["init", "-b", "main"])
+        .status()
+        .expect("git init");
+    for (k, v) in [
+        ("user.email", "test@test"),
+        ("user.name", "test"),
+        ("commit.gpgsign", "false"),
+    ] {
+        Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["config", k, v])
+            .status()
+            .unwrap();
+    }
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "seed"])
+        .status()
+        .unwrap();
+
+    std::fs::create_dir_all(root.join(".aw/issues/open")).unwrap();
+    std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
+    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap .aw"])
+        .status()
+        .unwrap();
+
+    let spec_dir = tempfile::tempdir().expect("spec tempdir");
+    let spec_src = spec_dir.path().join("implements-claim-spec.md");
+    std::fs::write(
+        &spec_src,
+        "---\nslug: e2e-claim-implements-test\n---\n\n# external spec\n",
+    )
+    .unwrap();
+
+    let slug = "e2e-claim-implements-test";
+    let status = Command::new(&aw_bin)
+        .arg("td")
+        .arg("claim")
+        .arg(slug)
+        .arg("--from-path")
+        .arg(&spec_src)
+        .current_dir(root)
+        .status()
+        .expect("run aw td claim");
+    assert!(status.success(), "td claim --from-path should succeed");
+
+    let copied = find_file_named(root, "implements-claim-spec.md")
+        .expect("claim must copy the --from-path spec somewhere into the worktree");
+    let dest_rel = copied
+        .strip_prefix(root)
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    use agentic_workflow::issues::backends::local::LocalBackend;
+    let wt_stub = LocalBackend::from_project_root(root)
+        .issues_dir()
+        .join("open")
+        .join(format!("{}.md", slug));
+    let stub_body = std::fs::read_to_string(&wt_stub).unwrap();
+    assert!(
+        stub_body.contains("implements:") && stub_body.contains(dest_rel.as_str()),
+        "claim must record the copied spec path '{}' in Issue.implements:\n{}",
+        dest_rel,
+        stub_body
+    );
+}
 ```
 
 ## Changes
