@@ -450,6 +450,17 @@ impl TypeChecker {
             }
             Expr::Attr { object, attr } => {
                 let obj_ty_id = self.check_expr(object);
+                // #888: harness-only shim, deliberately fixture-gated (do NOT
+                // ungate). `ClassName.method(x, ...)` is a genuine CPython
+                // pattern where `x` need not be a `ClassName` instance —
+                // unbound-style calls are never receiver-type-checked at
+                // runtime (see `test_unbound_method_receiver_contract_rejected`
+                // in tests/check.rs: `Box.get("not_a_box", 3)` executes fine in
+                // real CPython 3.12). This receiver-type wall exists solely so
+                // `type/` dimension fixtures (e.g.
+                // core/method_resolution/method_self_int_called_with_str.py)
+                // can assert mamba's stricter contract; ungating it would
+                // reject valid real-world unbound-call idioms.
                 if self.strict_type_fixture {
                     if let Some(method_ty) = self.resolve_unbound_class_method(object, attr) {
                         return method_ty;
@@ -940,6 +951,23 @@ impl TypeChecker {
         };
 
         let Some(sig) = sig else { return };
+        // #888 audit: keyword.iskeyword/issoftkeyword are typeshed-contracted
+        // as `s: str`, which LOOKS like it should be a universal (ungated)
+        // wall. It is deliberately kept fixture-only (`self.strict_type_fixture`)
+        // instead: CPython's REAL `keyword.iskeyword`/`issoftkeyword` never
+        // raise for a wrong-typed arg — a non-str compares unequal to every
+        // kwlist entry and returns `False` — and two behavior/ fixtures
+        // mechanically ported from CPython's own `Lib/test/test_keyword.py`
+        // assert exactly that at runtime:
+        // `behavior/std-libs/keyword/iskeyword_non_string_returns_false.py`
+        // (`keyword.iskeyword(123) is False`, no raise) and
+        // `.../test_iskeyword__test_none_value_is_not_a_keyword.py`. Ungating
+        // this wall (verified empirically) turns the first fixture from PASS
+        // to FAIL because the whole module fails to compile before it can
+        // reach its `assert`. So this stays scoped to `type/`-dimension
+        // fixtures carrying the marker, which intentionally assert mamba's
+        // stricter *hypothetical* contract rather than CPython's actual
+        // runtime behavior.
         let strict_keyword_wall = self.strict_type_fixture
             && sig.module == "keyword"
             && sig.qualifier.is_empty()
