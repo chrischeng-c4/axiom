@@ -293,8 +293,10 @@ impl Publisher {
         // clear filesystem error instead of a confusing registry rejection.
         self.prepare_for_packing(&mut pkg)?;
 
-        let registry = self.npmrc.registry_for(&name);
-        let auth_token = self.npmrc.auth_token_for(registry).ok_or_else(|| {
+        let registry = publish_config_registry(&pkg)
+            .unwrap_or_else(|| self.npmrc.registry_for(&name))
+            .to_string();
+        let auth_token = self.npmrc.auth_token_for(&registry).ok_or_else(|| {
             anyhow::anyhow!(
                 "No auth token found for registry {}. Add to .npmrc.",
                 registry
@@ -307,7 +309,7 @@ impl Publisher {
             pkg,
             name,
             version,
-            registry: registry.to_string(),
+            registry,
             auth_token: auth_token.to_string(),
             tag: tag.to_string(),
             access: access.unwrap_or("public").to_string(),
@@ -708,6 +710,15 @@ impl Publisher {
             }
         }
     }
+}
+
+// @spec .aw/tech-design/projects/jet/config/jet-publish-ignores-publishconfig-registry-and-npmrc-scope-regis.md#logic
+fn publish_config_registry(pkg: &serde_json::Value) -> Option<&str> {
+    pkg.get("publishConfig")
+        .and_then(|v| v.get("registry"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
 }
 
 /// @issue #172 — auto-fill absent `main`/`module`/`types` package.json fields

@@ -484,6 +484,76 @@ async fn publish_dry_run_previews_without_uploading_to_registry() {
 }
 
 #[tokio::test]
+// @spec .aw/tech-design/projects/jet/config/jet-publish-ignores-publishconfig-registry-and-npmrc-scope-regis.md#unit-test
+async fn publish_config_registry_overrides_scoped_npmrc_for_dry_run_and_publish() {
+    let (intended_registry, intended_store) = spawn_mock_registry().await;
+    let (wrong_registry, wrong_store) = spawn_mock_registry().await;
+
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let pkg_name = "@acme/private-widget";
+
+    std::fs::create_dir_all(root.join("dist")).unwrap();
+    std::fs::write(
+        root.join("dist/index.js"),
+        "export const privateWidget = true;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        format!(
+            r#"{{
+  "name": "{pkg_name}",
+  "version": "3.0.0",
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "publishConfig": {{
+    "registry": "{intended_registry}/"
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+
+    let intended_host = intended_registry.trim_start_matches("http://");
+    let wrong_host = wrong_registry.trim_start_matches("http://");
+    std::fs::write(
+        root.join(".npmrc"),
+        format!(
+            "@acme:registry={wrong_registry}/\n//{wrong_host}/:_authToken=wrong-token\n//{intended_host}/:_authToken=intended-token\n"
+        ),
+    )
+    .unwrap();
+
+    let preview = Publisher::new(root.to_path_buf())
+        .dry_run("beta", Some("restricted"))
+        .expect("publishConfig-routed dry-run preview");
+    assert!(
+        preview.registry.starts_with(&intended_registry),
+        "publishConfig.registry must win over scoped .npmrc in dry-run, got {}",
+        preview.registry
+    );
+
+    Publisher::new(root.to_path_buf())
+        .publish("beta", Some("restricted"))
+        .await
+        .expect("publishConfig-routed publish");
+
+    let intended = intended_store.lock().unwrap();
+    assert!(
+        intended.contains_key(pkg_name),
+        "publish must PUT to publishConfig.registry store"
+    );
+    drop(intended);
+
+    let wrong = wrong_store.lock().unwrap();
+    assert!(
+        wrong.is_empty(),
+        "scoped .npmrc fallback registry must not receive the publish when publishConfig.registry is set"
+    );
+}
+
+#[tokio::test]
 async fn publish_built_library_to_mock_registry_and_resolve_back() {
     // 1. Spawn the mock registry.
     let (base_url, store) = spawn_mock_registry().await;

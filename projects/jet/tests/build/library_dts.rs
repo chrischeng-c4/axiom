@@ -751,6 +751,61 @@ fn arrow_function_const_with_explicit_return_emits_dts() {
 }
 
 #[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#unit-test
+fn arrow_function_const_with_default_param_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "arrow-default-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const withDefault = (a: number, b = 6): number => a + b;
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("typed arrow default param must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare const withDefault: (a: number, b?: number) => number;"),
+        "default-valued arrow parameter must match TypeScript isolatedDeclarations output, got:\n{dts}"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#unit-test
+fn object_literal_function_property_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "object-function-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const _Table = {
+    rowNo: (idx: number, page: number, pageSize: number): number =>
+        idx + 1 + (page - 1) * pageSize,
+};
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("object function property must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("rowNo: (idx: number, page: number, pageSize: number) => number;"),
+        "object literal function property must emit a callable property type, got:\n{dts}"
+    );
+}
+
+#[test]
 fn exported_class_member_infers_string_return_type() {
     let dir = tempdir().unwrap();
     let root = dir.path();

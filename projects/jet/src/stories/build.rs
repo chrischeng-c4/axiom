@@ -227,6 +227,12 @@ struct StyleAsset {
     emitted_path: String,
 }
 
+#[derive(Clone)]
+struct RawAsset {
+    source_file: PathBuf,
+    emitted_path: String,
+}
+
 impl EmitItem {
     /// The out_dir-relative POSIX path this item is emitted to (`.js`-normalized).
     /// This is the stable identity used for dedup and for computing the relative
@@ -278,6 +284,14 @@ fn emit_module_graph(
                         }
                     }
                 }
+                for asset in emit.assets {
+                    match emit_raw_asset(root, &asset, out_dir) {
+                        Ok(rel_path) => result.emitted.push(rel_path),
+                        Err(err) => {
+                            result.diagnostics.push(format!("asset {err}"));
+                        }
+                    }
+                }
                 queue.extend(emit.imports);
             }
             Err(err) => {
@@ -295,6 +309,8 @@ struct EmittedItem {
     imports: Vec<EmitItem>,
     /// CSS/SCSS/Sass assets referenced by this module.
     styles: Vec<StyleAsset>,
+    /// Raw URL assets referenced by this module.
+    assets: Vec<RawAsset>,
 }
 
 /// Transform one emit item to browser JS, rewrite its relative + resolvable bare
@@ -335,6 +351,7 @@ fn emit_item(root: &Path, item: &EmitItem, out_dir: &Path) -> Result<EmittedItem
         rel_path: out_rel,
         imports: rewrite.imports,
         styles: rewrite.styles,
+        assets: rewrite.assets,
     })
 }
 
@@ -361,10 +378,29 @@ fn emit_style_asset(root: &Path, style: &StyleAsset, out_dir: &Path) -> Result<P
     Ok(out_rel)
 }
 
+// @spec .aw/tech-design/projects/jet/logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md#logic
+fn emit_raw_asset(_root: &Path, asset: &RawAsset, out_dir: &Path) -> Result<PathBuf> {
+    let out_rel = PathBuf::from(&asset.emitted_path);
+    let out_path = out_dir.join(&out_rel);
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating dir {}", parent.display()))?;
+    }
+    std::fs::copy(&asset.source_file, &out_path).with_context(|| {
+        format!(
+            "copying raw asset {} to {}",
+            asset.source_file.display(),
+            out_path.display()
+        )
+    })?;
+    Ok(out_rel)
+}
+
 struct RewriteResult {
     code: String,
     imports: Vec<EmitItem>,
     styles: Vec<StyleAsset>,
+    assets: Vec<RawAsset>,
 }
 
 /// Rewrite the import specifiers in transformed JS so they resolve to the
@@ -385,7 +421,9 @@ fn rewrite_imports(
 ) -> RewriteResult {
     let mut imports: Vec<EmitItem> = Vec::new();
     let mut styles: Vec<StyleAsset> = Vec::new();
+    let mut assets: Vec<RawAsset> = Vec::new();
     let mut style_specs: Vec<String> = Vec::new();
+    let mut asset_rewrites: BTreeMap<String, String> = BTreeMap::new();
     let mut rewrites: BTreeMap<String, String> = BTreeMap::new();
 
     for spec in super::deps::extract_all_import_specifiers(code) {
@@ -397,6 +435,13 @@ fn rewrite_imports(
             if is_style_path(&target_file) {
                 styles.push(style_asset_for_file(root, &target_file));
                 style_specs.push(spec.clone());
+                continue;
+            }
+            if is_raw_asset_path(&target_file) {
+                let asset = raw_asset_for_file(root, &target_file);
+                let new_spec = relative_emitted_specifier(importer_emitted, &asset.emitted_path);
+                asset_rewrites.insert(spec.clone(), new_spec);
+                assets.push(asset);
                 continue;
             }
             // A relative import inside a dep file resolves to another file in the
@@ -415,6 +460,13 @@ fn rewrite_imports(
             else {
                 continue; // not installed locally — leave for the importmap
             };
+            if is_raw_asset_path(&dep_file) {
+                let asset = raw_asset_for_file(root, &dep_file);
+                let new_spec = relative_emitted_specifier(importer_emitted, &asset.emitted_path);
+                asset_rewrites.insert(spec.clone(), new_spec);
+                assets.push(asset);
+                continue;
+            }
             let item = EmitItem::Dep(dep_file);
             let emitted = item.emitted_path(root);
             (item, emitted)
@@ -428,6 +480,9 @@ fn rewrite_imports(
     let mut out = code.to_string();
     for spec in &style_specs {
         out = remove_static_import_for_spec(&out, spec);
+    }
+    for (spec, new_spec) in &asset_rewrites {
+        out = rewrite_asset_import_for_spec(&out, spec, new_spec);
     }
 
     // Apply the rewrites textually. Only quoted forms are rewritten so we never
@@ -444,6 +499,7 @@ fn rewrite_imports(
         code: out,
         imports,
         styles,
+        assets,
     }
 }
 
@@ -460,6 +516,19 @@ fn style_asset_for_file(root: &Path, file: &Path) -> StyleAsset {
     }
 }
 
+fn raw_asset_for_file(root: &Path, file: &Path) -> RawAsset {
+    let emitted_path = if path_has_node_modules(file) {
+        format!("deps/{}", super::deps::dep_key(file))
+    } else {
+        let url = file_to_root_url(root, file);
+        format!("modules/{}", url.trim_start_matches('/'))
+    };
+    RawAsset {
+        source_file: file.to_path_buf(),
+        emitted_path,
+    }
+}
+
 fn is_style_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
@@ -467,6 +536,20 @@ fn is_style_path(path: &Path) -> bool {
             if ext.eq_ignore_ascii_case("css")
                 || ext.eq_ignore_ascii_case("scss")
                 || ext.eq_ignore_ascii_case("sass")
+    )
+}
+
+fn is_raw_asset_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("svg")
+                || ext.eq_ignore_ascii_case("png")
+                || ext.eq_ignore_ascii_case("jpg")
+                || ext.eq_ignore_ascii_case("jpeg")
+                || ext.eq_ignore_ascii_case("gif")
+                || ext.eq_ignore_ascii_case("webp")
+                || ext.eq_ignore_ascii_case("avif")
     )
 }
 
@@ -490,6 +573,82 @@ fn is_static_import_for_spec(trimmed_line: &str, spec: &str) -> bool {
             || trimmed_line.contains(&format!("'{spec}'")))
 }
 
+fn rewrite_asset_import_for_spec(code: &str, spec: &str, new_spec: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    for line in code.split_inclusive('\n') {
+        let newline = if line.ends_with('\n') { "\n" } else { "" };
+        let body = line.trim_end_matches('\n');
+        let leading_len = body.len() - body.trim_start().len();
+        let leading = &body[..leading_len];
+        let trimmed = body.trim_start();
+        if let Some(replacement) = asset_import_replacement(trimmed, spec, new_spec) {
+            out.push_str(leading);
+            out.push_str(&replacement);
+            out.push_str(newline);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+fn asset_import_replacement(trimmed_line: &str, spec: &str, new_spec: &str) -> Option<String> {
+    if !(trimmed_line.contains(&format!("\"{spec}\""))
+        || trimmed_line.contains(&format!("'{spec}'")))
+    {
+        return None;
+    }
+
+    if trimmed_line.starts_with("import ") {
+        let before_from = trimmed_line.split(" from ").next()?.trim();
+        let binding = before_from.trim_start_matches("import").trim();
+        if binding.is_empty() || binding.starts_with('{') || binding.starts_with('*') {
+            return Some(String::new());
+        }
+        let default_binding = binding.split(',').next()?.trim();
+        if !is_js_identifier(default_binding) {
+            return None;
+        }
+        return Some(format!("const {default_binding} = {new_spec:?};"));
+    }
+
+    if trimmed_line.starts_with("export ") && trimmed_line.contains(" from ") {
+        let clause = trimmed_line
+            .trim_start_matches("export")
+            .split(" from ")
+            .next()?
+            .trim();
+        if clause == "{ default }" {
+            return Some(
+                "const __jet_asset_default = ".to_string()
+                    + &format!("{new_spec:?}; export default __jet_asset_default;"),
+            );
+        }
+        if let Some(alias) = clause
+            .strip_prefix("{ default as ")
+            .and_then(|s| s.strip_suffix(" }"))
+        {
+            let alias = alias.trim();
+            if is_js_identifier(alias) {
+                return Some(format!(
+                    "const {alias} = {new_spec:?}; export {{ {alias} }};"
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+fn is_js_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
 /// Resolve a relative specifier (`./Button`, `../lib/x.tsx`) against the
 /// importer's on-disk file, probing the same extensions + `index.*` the dev
 /// server does. Returns the resolved on-disk file (which may be a project file
@@ -502,7 +661,8 @@ fn resolve_relative_file(importer_file: &Path, spec: &str) -> Option<PathBuf> {
         return Some(joined);
     }
     const EXTS: &[&str] = &[
-        "tsx", "ts", "jsx", "js", "mjs", "cjs", "json", "css", "scss", "sass",
+        "tsx", "ts", "jsx", "js", "mjs", "cjs", "json", "css", "scss", "sass", "svg", "png", "jpg",
+        "jpeg", "gif", "webp", "avif",
     ];
     for ext in EXTS {
         let candidate = joined.with_extension(ext);

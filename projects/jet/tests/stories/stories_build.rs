@@ -342,6 +342,68 @@ fn build_compiles_scss_side_effect_imports_to_static_css() {
     );
 }
 
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md#unit-test
+fn build_emits_svg_and_png_assets_as_url_strings() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/@tw-tech/shared-assets/package.json"),
+        r#"{
+  "name": "@tw-tech/shared-assets",
+  "version": "1.0.0",
+  "exports": {
+    "./images/empty-default.png": "./images/empty-default.png"
+  }
+}"#,
+    );
+    write(
+        root.join("node_modules/@tw-tech/shared-assets/images/empty-default.png"),
+        "png-bytes",
+    );
+
+    write(
+        root.join("src/components/AssetBox.stories.tsx"),
+        "import { AssetBox } from './AssetBox';\nexport default { title: 'Components/AssetBox', component: AssetBox };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/AssetBox.tsx"),
+        "import iconUrl from './error.svg';\nimport defaultImage from '@tw-tech/shared-assets/images/empty-default.png';\nexport const AssetBox = () => ({ iconUrl, defaultImage });\n",
+    );
+    write(
+        root.join("src/components/error.svg"),
+        r#"<svg viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>"#,
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    let svg_rel = Path::new("modules/src/components/error.svg");
+    let png_rel = Path::new("deps/@tw-tech/shared-assets/images/empty-default.png");
+    assert!(out.join(svg_rel).is_file(), "SVG asset must be copied");
+    assert!(out.join(png_rel).is_file(), "PNG asset must be copied");
+    assert!(result.emitted.iter().any(|p| p == svg_rel));
+    assert!(result.emitted.iter().any(|p| p == png_rel));
+
+    let component = fs::read_to_string(out.join("modules/src/components/AssetBox.js"))
+        .expect("read component module");
+    assert!(
+        component.contains(r#"const iconUrl = "./error.svg";"#),
+        "relative SVG import should become a URL string: {component}"
+    );
+    assert!(
+        component.contains(
+            r#"const defaultImage = "../../../deps/@tw-tech/shared-assets/images/empty-default.png";"#
+        ),
+        "bare PNG import should become a URL string into deps/: {component}"
+    );
+    assert!(
+        !component.contains("import iconUrl") && !component.contains("import defaultImage"),
+        "asset imports must not remain as browser module imports: {component}"
+    );
+}
+
 /// (d) The dev renderers' default output is unchanged (no absolute→relative
 /// regression for the dev server).
 #[test]

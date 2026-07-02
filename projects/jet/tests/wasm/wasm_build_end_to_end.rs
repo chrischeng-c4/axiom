@@ -633,6 +633,14 @@ async fn cue_artifact_studio_dom_wasm_loads_api_and_posts() {
         .join("projects")
         .join("cue")
         .join("artifact-studio");
+    if !root.join("jet.toml").exists() {
+        eprintln!(
+            "skipping Cue Artifact Studio DOM wasm e2e: fixture is absent at {}",
+            root.display()
+        );
+        return;
+    }
+
     let out_dir = Path::new(".jet").join("cue-wasm-e2e-dist");
     let _ = fs::remove_dir_all(root.join(&out_dir));
 
