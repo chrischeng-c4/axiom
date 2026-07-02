@@ -1409,6 +1409,433 @@ async fn test_code_check_missing_local_issue_emits_actionable_envelope() {
         stdout
     );
 }
+
+// ---------------------------------------------------------------------------
+// #932: code-check touched-scope standardization gate (Rule A — the forward
+// (正流程) loop carries 標準化). For the WI's own touched-file set (branch
+// diff ∪ Changes-listed paths, reusing #859's scoped enumeration via
+// `cb_fill::resolve_touched_scope`): every in-scope touched file must carry
+// a CODEGEN/HANDWRITE marker, and every touched HANDWRITE marker must have
+// valid gap/tracker/reason attrs. Fail-mode only once the *rest* of the
+// project (excluding this WI's own touched files) is already at 100%
+// managed coverage; below that baseline the same violation is warn-only.
+// Files outside the touched set never affect the verdict — no
+// reintroduction of the #854 inherited-marker class.
+// ---------------------------------------------------------------------------
+
+/// Configure a minimal standardize-scoped project (`[[projects]]` +
+/// `[[projects.workspaces]] paths = ["src/**"]`, no `path` — so
+/// project-root-artifact scanning stays a no-op and the managed inventory
+/// is exactly the files under `src/`) so
+/// `standardize::project_touched_scope_standardization` has a scope to
+/// walk. Overwrites the empty `.aw/config.toml` `init_847_seed_repo` seeds;
+/// standardize reads config straight off disk, so this does not need a
+/// commit (and the terminal gate's `branch_changed_files` diffs commits,
+/// not working-tree state, so it does not leak into any test's touched-file
+/// set either).
+fn write_932_project_config(root: &std::path::Path, project: &str) {
+    let content = format!(
+        "[[projects]]\nname = \"{project}\"\n\n[[projects.workspaces]]\npaths = [\"src/**\"]\n"
+    );
+    std::fs::create_dir_all(root.join(".aw")).unwrap();
+    std::fs::write(root.join(".aw/config.toml"), content).unwrap();
+}
+
+/// A managed, CODEGEN-marked source file — counts toward
+/// `StandardizationCoverage::managed_files`.
+fn write_932_codegen_file(root: &std::path::Path, rel_path: &str) {
+    let path = root.join(rel_path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        path,
+        "// SPEC-MANAGED: .aw/tech-design/specs/demo.md#source\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
+    )
+    .unwrap();
+}
+
+/// A plain source file with neither a CODEGEN nor a HANDWRITE marker — the
+/// "unmarked" violation shape.
+fn write_932_unmarked_file(root: &std::path::Path, rel_path: &str) {
+    let path = root.join(rel_path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, "pub fn unmarked() {}\n").unwrap();
+}
+
+/// A HANDWRITE-marked source file whose `tracker` attr is empty — managed
+/// (`markers.handwrite = true`, so never in the `unmarked` list) but flagged
+/// as an attr-gap violation (`detect_handwrite_gaps` / `is_missing_tracker`).
+/// The body is plain filled content (not the `TODO: hand-write content for`
+/// sentinel `marker_body_is_unfilled` looks for), so the pre-existing #859
+/// marker gate treats this block as filled and does not itself block —
+/// isolating the assertion to the new #932 gate.
+fn write_932_handwrite_missing_tracker_file(root: &std::path::Path, rel_path: &str) {
+    let path = root.join(rel_path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        path,
+        "// HANDWRITE-BEGIN gap=\"demo-gap\" tracker=\"\" reason=\"needs manual work\"\npub fn demo() {}\n// HANDWRITE-END\n",
+    )
+    .unwrap();
+}
+
+/// Identical to `seed_847_open_issue` but also carries a `project:<name>`
+/// label — the gate's activation key (`cb::project_label_for_wi`). Kept as
+/// a separate helper rather than widening `seed_847_open_issue` itself:
+/// every pre-#932 fixture in this file relies on that helper producing an
+/// issue with **no** project label, which is exactly what makes the new
+/// gate vacuously pass (no project configured to check against) for all of
+/// them without any fixture changes.
+async fn seed_932_open_issue(
+    root: &std::path::Path,
+    slug: &str,
+    phase: &str,
+    spec_rel: &str,
+    project: &str,
+) {
+    use agentic_workflow::issues::types::IssueType;
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![format!("phase:{}", phase), format!("project:{}", project)],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: vec![spec_rel.to_string()],
+        phase: Some(phase.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed open issue");
+}
+
+/// (a) AC1: once the rest of the project (excluding this WI's touched
+/// files) is already at 100% managed coverage, a touched in-scope file with
+/// no CODEGEN/HANDWRITE marker at all must refuse completion, naming the
+/// file and remediation, and must not advance phase.
+#[tokio::test]
+async fn test_code_check_blocks_touched_unmarked_file_post_bootstrap() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_932_project_config(root, "demo");
+    // Rest of the managed inventory (excluding the touched file below) is
+    // fully marked: baseline coverage excluding `src/touched.rs` is 100%.
+    write_932_codegen_file(root, "src/baseline.rs");
+    // The WI's own touched file: present on disk (so the #847
+    // empty-implementation gate does not fire) but carries no marker at all.
+    write_932_unmarked_file(root, "src/touched.rs");
+    write_847_changes_spec(root, &[("src/touched.rs", "create")]);
+
+    let slug = "touched-scope-unmarked-blocks-test";
+    seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "a touched unmarked file in a post-bootstrap (100%-baseline) project must refuse with an \
+         error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("src/touched.rs"),
+        "error message must name the offending touched file, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("marker"),
+        "error message must carry marker remediation, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::CB_GENNED),
+        "refused code-check must not advance phase past cb_genned"
+    );
+}
+
+/// (b) AC2: below the 100% baseline (a project still mid-標準化
+/// bootstrap — an unrelated, untouched file is also unmarked), the same
+/// touched-unmarked-file condition must warn to stderr, naming the file,
+/// without blocking completion.
+#[tokio::test]
+async fn test_code_check_warns_touched_unmarked_file_pre_bootstrap() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_932_project_config(root, "demo");
+    write_932_codegen_file(root, "src/baseline.rs");
+    // Unrelated, untouched, unmarked file — drags the baseline (excluding
+    // the touched file below) under 100%, the pre-bootstrap shape.
+    write_932_unmarked_file(root, "src/unrelated_untouched.rs");
+    // The WI's own touched file: also unmarked.
+    write_932_unmarked_file(root, "src/touched.rs");
+    write_847_changes_spec(root, &[("src/touched.rs", "create")]);
+
+    let slug = "touched-scope-unmarked-warns-test";
+    seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "code-check should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "below-baseline (pre-bootstrap) touched-scope violations must warn, not block, got:\n{}",
+        stdout
+    );
+    assert!(
+        stderr.contains("src/touched.rs"),
+        "stderr must carry a warning naming the touched violation, got:\n{}",
+        stderr
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "a warn-only touched-scope violation must still advance phase to td_merged"
+    );
+}
+
+/// (c) Post-bootstrap block variant for the HANDWRITE-attr-gap shape: a
+/// touched file that already carries a HANDWRITE marker (so it is
+/// "managed" and never lands in the unmarked list) but whose `tracker` attr
+/// is empty must still refuse completion once the rest of the project is at
+/// 100% baseline.
+#[tokio::test]
+async fn test_code_check_blocks_touched_handwrite_missing_tracker_post_bootstrap() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_932_project_config(root, "demo");
+    write_932_codegen_file(root, "src/baseline.rs");
+    write_932_handwrite_missing_tracker_file(root, "src/touched.rs");
+    write_847_changes_spec(root, &[("src/touched.rs", "modify")]);
+
+    let slug = "touched-scope-attr-gap-blocks-test";
+    seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "a touched HANDWRITE marker missing its tracker attr in a post-bootstrap project must \
+         refuse with an error envelope, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("src/touched.rs"),
+        "error message must name the offending touched file, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("tracker"),
+        "error message must call out the missing gap/tracker attrs, got:\n{}",
+        stdout
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::CB_GENNED),
+        "refused code-check must not advance phase past cb_genned"
+    );
+}
+
+/// (d) AC3: an unmarked file OUTSIDE the WI's touched set must never affect
+/// the verdict — a WI whose own touched file is fully, correctly marked
+/// must complete cleanly even while an unrelated unmarked file exists
+/// elsewhere in the same (would-be 100%-baseline) project, and the
+/// unrelated file's path must never appear in the completion output. This
+/// is the #932 counterpart to #854's inherited-marker fix: that issue
+/// scoped the *marker* gate to the touched set; this asserts the new
+/// *standardization* gate is scoped identically.
+#[tokio::test]
+async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    write_932_project_config(root, "demo");
+    write_932_codegen_file(root, "src/baseline.rs");
+    // Unrelated, untouched, unmarked file — must never affect this WI's
+    // verdict regardless of how it drags the whole-project baseline down.
+    write_932_unmarked_file(root, "src/unrelated_untouched.rs");
+    // The WI's own touched file: properly CODEGEN-marked, no violation.
+    write_932_codegen_file(root, "src/touched.rs");
+    write_847_changes_spec(root, &[("src/touched.rs", "modify")]);
+
+    let slug = "touched-scope-ignores-unrelated-test";
+    seed_932_open_issue(root, slug, td_phase::CB_GENNED, DEMO_SPEC_REL, "demo").await;
+
+    let output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "code-check should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains("\"action\":\"done\""),
+        "a WI whose own touched file is fully marked must complete cleanly regardless of \
+         unrelated untouched debt, got:\n{}",
+        stdout
+    );
+    assert!(
+        !stderr.contains("src/unrelated_untouched.rs"),
+        "an untouched file's marker status must never surface in this WI's output, got:\n{}",
+        stderr
+    );
+
+    let backend = LocalBackend::from_project_root(root);
+    let after = backend
+        .get(slug)
+        .await
+        .expect("read back issue")
+        .expect("issue still present");
+    assert_eq!(
+        after.phase.as_deref(),
+        Some(td_phase::TD_MERGED),
+        "code-check must still advance phase to td_merged"
+    );
+}
 ```
 
 ## Changes
@@ -1449,4 +1876,12 @@ changes:
       one code-check run; (c) a missing local issue emits an explicit,
       actionable envelope naming the remediation instead of misrouting into
       `td::run_audit`'s unrelated "audit target not found" path lookup.
+      Also covers #932: the touched-scope standardization gate — for a WI
+      carrying a `project:<name>` label, its own touched-file set (branch
+      diff ∪ TD Changes paths) must be fully CODEGEN/HANDWRITE-marked with
+      valid HANDWRITE gap/tracker attrs; once the rest of the project
+      (excluding the touched set) is already at 100% managed coverage a
+      violation refuses completion naming the offending file(s), below that
+      baseline the same violation only warns to stderr, and an unmarked file
+      outside the touched set never affects the verdict.
 ```

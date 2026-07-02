@@ -4317,9 +4317,23 @@ async fn run_check_lifecycle_terminal(
         // Scope both terminal gates to this WI's own TD spec (issue #854)
         // instead of the whole worktree / whole `tech_design_path` tree —
         // see `resolve_slug_spec_paths` below. Needed unconditionally
-        // (both the marker gate below and the empty-implementation gate
-        // that follows it consume `slug_spec_paths`).
+        // (the marker gate, the touched-scope standardization gate, and the
+        // empty-implementation gate that follows all consume
+        // `slug_spec_paths` / the scope it derives).
         let slug_spec_paths = resolve_slug_spec_paths(project_root, &issue);
+
+        // Issue #932: hoisted out of the `phase != CB_FILLED` marker-gate
+        // guard below so it's always available — the touched-scope
+        // standardization gate that follows needs this WI's own Changes
+        // paths regardless of which phase reached terminal code-check.
+        let mut marker_gate_scope: Vec<String> = Vec::new();
+        for spec_abs in &slug_spec_paths {
+            if let Ok(content) = std::fs::read_to_string(spec_abs) {
+                marker_gate_scope.extend(crate::cli::cb_fill::extract_change_paths_from_spec(
+                    &content,
+                ));
+            }
+        }
 
         // Marker gate (issue #859 part a): `aw td fill`'s own apply loop
         // already re-enumerates the whole worktree after every marker write
@@ -4333,14 +4347,6 @@ async fn run_check_lifecycle_terminal(
         // gate (e.g. a HANDWRITE-marker-free WI that skips `aw td fill`
         // entirely).
         if phase != td_phase::CB_FILLED {
-            let mut marker_gate_scope: Vec<String> = Vec::new();
-            for spec_abs in &slug_spec_paths {
-                if let Ok(content) = std::fs::read_to_string(spec_abs) {
-                    marker_gate_scope.extend(crate::cli::cb_fill::extract_change_paths_from_spec(
-                        &content,
-                    ));
-                }
-            }
             if let Err(message) =
                 crate::cli::cb_fill::run_cb_check_gate_scoped(project_root, &marker_gate_scope)
                     .await
@@ -4353,6 +4359,30 @@ async fn run_check_lifecycle_terminal(
                 println!("{}", serde_json::to_string(&env)?);
                 return Ok(true);
             }
+        }
+
+        // Touched-scope standardization gate (issue #932): the forward
+        // (正流程) loop is the only place that can catch a fresh
+        // regenerability regression before it lands — a WI that adds or
+        // touches an in-scope file without a CODEGEN/HANDWRITE marker (or
+        // leaves a HANDWRITE marker's gap/tracker attrs unfilled) is exactly
+        // the kind of drift 標準化 exists to prevent. Scoped to this WI's own
+        // touched-file set (same branch-diff ∪ Changes-paths union the
+        // marker gate above uses via `cb_fill::resolve_touched_scope`) so
+        // pre-existing unmarked files elsewhere in the tree never affect
+        // this WI's verdict (no reintroduction of the #854 inherited-marker
+        // class). Runs unconditionally (both `cb_filled` and
+        // `cb_genned`/legacy entries), unlike the marker gate above.
+        if let Some(message) =
+            touched_scope_standardization_gate_message(project_root, &issue, &marker_gate_scope)
+        {
+            let env = serde_json::json!({
+                "action": "error",
+                "slug": slug,
+                "message": message,
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
         }
 
         // Empty-implementation gate (issue #847, restoring the removed `aw
@@ -4538,6 +4568,92 @@ fn resolve_slug_spec_paths(
         ));
     }
     rels.into_iter().map(|r| project_root.join(r)).collect()
+}
+
+/// Resolve the owning project name from an issue's `project:<name>` label,
+/// the same convention `aw wi create --project` and the standardize/health
+/// surfaces use. Deliberately a small local duplicate of `td.rs`'s
+/// equivalent helper rather than widening that module's visibility — this
+/// is the only consumer in `cb.rs`.
+fn project_label_for_wi(issue: &crate::issues::Issue) -> Option<&str> {
+    issue.labels.iter().find_map(|label| {
+        let project = label.strip_prefix("project:")?.trim();
+        (!project.is_empty()).then_some(project)
+    })
+}
+
+/// Touched-scope standardization gate (issue #932, the 正流程 forward loop
+/// enforcing 標準化): for this WI's own touched-file set — the branch diff
+/// against base unioned with the WI's TD `## Changes` paths
+/// (`cb_fill::resolve_touched_scope`, the same union the marker gate above
+/// consumes) — require every in-scope touched file to carry a CODEGEN or
+/// HANDWRITE marker, and every HANDWRITE marker in a touched file to have
+/// valid gap/tracker/reason attrs
+/// (`standardize::project_touched_scope_standardization`).
+///
+/// Activation policy: fail-mode only applies once the *rest* of the
+/// project's managed inventory (excluding this WI's own touched files) is
+/// already at 100% coverage — i.e. this WI would be introducing a fresh
+/// regression into an otherwise-standardized project. Below that baseline
+/// (a project still mid-標準化 bootstrap), the same violation is
+/// warn-only: `Some` is never returned, and a remediation note is emitted
+/// to stderr instead so the bootstrap loop is not blocked by pre-existing
+/// debt this WI didn't create.
+///
+/// Vacuous-passes (returns `None`, no stderr warning) when: the issue
+/// carries no `project:<name>` label (nothing configured to check against
+/// — every pre-#932 WI fixture and any WI created outside `aw wi create
+/// --project` falls here); the touched-file set is empty (docs-only WI, or
+/// unresolvable branch diff — same rationale as the marker gate's vacuous
+/// pass); or the owning project's standardize inventory can't be resolved
+/// (e.g. no `.aw/config.toml` workspace scope configured for it) — an
+/// unconfigured project must never brick code-check.
+fn touched_scope_standardization_gate_message(
+    project_root: &std::path::Path,
+    issue: &crate::issues::Issue,
+    marker_gate_scope: &[String],
+) -> Option<String> {
+    let project = project_label_for_wi(issue)?;
+    let touched = crate::cli::cb_fill::resolve_touched_scope(project_root, marker_gate_scope);
+    if touched.is_empty() {
+        return None;
+    }
+    let verdict =
+        crate::cli::standardize::project_touched_scope_standardization(project, &touched).ok()?;
+    if verdict.unmarked.is_empty() && verdict.attr_gap.is_empty() {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+    for path in &verdict.unmarked {
+        lines.push(format!(
+            "  - {path}: no CODEGEN/HANDWRITE marker — add one (`// SPEC-MANAGED: <mirror>.md#source` \
+             + CODEGEN-BEGIN/END, or HANDWRITE-BEGIN gap=\"...\" tracker=\"...\" reason=\"...\")"
+        ));
+    }
+    for path in &verdict.attr_gap {
+        lines.push(format!(
+            "  - {path}: HANDWRITE marker missing required gap/tracker attrs — fill them in, \
+             or `aw td promote` once the gap-blocker is closed"
+        ));
+    }
+    let message = format!(
+        "td code-check touched-scope standardization: {} touched file(s) in project '{}' are not \
+         standardized:\n{}",
+        lines.len(),
+        project,
+        lines.join("\n")
+    );
+
+    if verdict.baseline_percent >= 100.0 {
+        Some(message)
+    } else {
+        eprintln!(
+            "[td code-check] WARNING: {message}\n(project '{project}' managed coverage is below \
+             100% excluding this WI's touched files — warning only, not blocking)"
+        );
+        None
+    }
 }
 
 /// Empty-implementation gate (issue #847, restoring the removed `aw td
