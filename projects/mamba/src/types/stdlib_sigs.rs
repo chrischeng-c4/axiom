@@ -8660,11 +8660,12 @@ mod tests {
     #[test]
     fn generated_enforceable_rows_have_a_scalar_and_no_star() {
         // The invariant: every row the hook will ENFORCE must (a) carry at least
-        // one checkable param (Int/Float/Str/Typed/Bytes/List/Tuple/Dict) and (b) have no
-        // star param (positional alignment past `*args` is uncertain).
-        // Unknown/None params are skipped, while Bytes/MemoryView/Complex/List/Tuple/Dict
+        // one checkable param (Int/Float/Str/Typed/Bytes/Bool/Complex/List/Tuple/Dict/Type)
+        // and (b) have no star param (positional alignment past `*args` is uncertain).
+        // Unknown/None params are skipped, while Bytes/MemoryView/Complex/List/Tuple/Dict/Type
         // are negative scalar walls that reject impossible concrete scalars and leave
-        // dynamic/buffer/object values as Any-skips.
+        // dynamic/buffer/object values as Any-skips; Bool goes through the generic
+        // types_compatible mismatch check instead (stricter: e.g. rejects int-for-bool).
         // This is what lets a scalar param sitting BEHIND an Unknown param
         // enforce at its real position; a full uncapped 28k-fixture ② FP scan
         // confirms 0 false positives from the skipped params. (Earlier the
@@ -8691,6 +8692,8 @@ mod tests {
                         | CoreTy::List
                         | CoreTy::Tuple
                         | CoreTy::Dict
+                        | CoreTy::Bool
+                        | CoreTy::Type
                 )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,

@@ -40,29 +40,54 @@ OUT_DIR = MAMBA_DIR / "tests" / "cpython" / "type"
 # src/types/stdlib_sigs.rs (the ① Type-wall call-site hook).
 RUST_SIGS_OUT = MAMBA_DIR / "src" / "types" / "stdlib_sigs_generated.rs"
 
-# Closed scalar map: the ONLY typeshed annotations we encode as a concrete,
-# *enforceable* CoreTy. EVERYTHING else (Any, object, unions, Optional,
-# typevars, generics, forward-refs, protocols, path-likes,
-# Sequence/Iterable/Type/Callable, …) collapses to CoreTy::Unknown so the hook
-# skips-when-unsure (zero false positives).
+# Closed scalar map: the ONLY typeshed BARE (non-subscripted) annotations we
+# encode as a concrete, *enforceable* CoreTy. EVERYTHING else (Any, object,
+# unions, Optional, typevars, generics, forward-refs, protocols, path-likes,
+# Sequence/Iterable/Callable, …) collapses to CoreTy::Unknown so the hook
+# skips-when-unsure (zero false positives). `list`/`tuple`/`dict`/`type` are
+# almost always SUBSCRIPTED in typeshed (`list[str]`, `type[C]`); those forms
+# are mapped separately by `_CONTAINER_SUBSCRIPT_CORE_TY` below, to the same
+# CoreTy their bare identifier maps to here (the type ARGUMENT is irrelevant
+# to a negative scalar wall).
 #
-# DELIBERATELY EXCLUDED from the enforceable scalar set (mapped to Unknown):
-#   * bool  — Python's `bool` is a subclass of `int`, so a `bool`-annotated
-#             parameter accepts `0`/`1`/any int at the call site (`html.escape
-#             ("x", 1)` is valid). The hook's compatibility rule allows
-#             Bool->Int but NOT Int->Bool, so enforcing a Bool param would
-#             reject those correct int calls — a false positive. Honesty over
-#             coverage: bool params are NON-enforceable.
-#   * bytes — there is no concrete `Ty::Bytes` scalar (bytes literals infer to
-#             `Any`), so `core_ty_to_type_id` already treats it as
-#             non-enforceable. We map it to Unknown so the whole row is honestly
-#             marked non-enforceable rather than silently skipped per-param.
-#   * None  — a bare `None` annotation is vanishingly rare as a real positional
-#             contract and never worth a row; left to Unknown.
+# bytes/bool/complex/list/tuple/dict/type each already have a dedicated
+# `CoreTy` variant that `check_expr.rs`'s ① hook enforces: Bytes/Complex/
+# List/Tuple/Dict/Type as a *negative scalar wall* (reject a concrete
+# int/float/str/bool/None actual that can provably never be that type; skip
+# every richer/dynamic value), and Bool via the ordinary scalar-compatibility
+# rule (mamba is force-typed, so a genuinely wrong scalar — a str/int literal
+# fed to a `bool` param — MUST raise even where CPython's duck typing would
+# accept it; see `types_compatible`'s Bool<->Int promotion, which is
+# intentionally one-directional).
+#
+# `memoryview` stays mapped to Unknown (no positive mapping wired here — out
+# of this generator pass's scope) and so does a bare `None` annotation (a
+# vanishingly rare real positional contract, never worth a row).
 SCALAR_CORE_TY = {
     "int": "Int",
     "float": "Float",
     "str": "Str",
+    "bytes": "Bytes",
+    "bool": "Bool",
+    "complex": "Complex",
+    "list": "List",
+    "tuple": "Tuple",
+    "dict": "Dict",
+    "type": "Type",
+}
+
+# Subscripted container/type-object annotations (`list[str]`, `dict[str,
+# int]`, `type[C]`) map to the SAME CoreTy as their bare form above — the
+# type argument is irrelevant to a negative scalar wall (a concrete
+# int/float/str/bool/None actual can never BE a list, no matter what it would
+# hold). Consulted from the `ast.Subscript` arm of `core_ty_of`, mirroring how
+# `_SUBSCRIPT_TYPED_BASES` (IO/TextIO/BinaryIO) already folds through
+# `core_ty_of` regardless of its own subscript argument.
+_CONTAINER_SUBSCRIPT_CORE_TY = {
+    "list": "List",
+    "tuple": "Tuple",
+    "dict": "Dict",
+    "type": "Type",
 }
 
 WRONG_VALUE = {
@@ -496,14 +521,23 @@ def _collect_global_exclusions() -> set[str]:
 # never inhabit, regardless of the type argument: `IO`/`TextIO`/`BinaryIO` (a
 # class instance is not an open stream).
 #
-# `type[...]` and `Callable[...]` are DELIBERATELY EXCLUDED: a CLASS OBJECT is a
-# valid `type` and is callable, and mamba's checker types a bare class VALUE
-# (`C`) identically to an instance (`C()`) — both `Ty::Class{name}` — so the
-# bare-class hook would reject `webbrowser.register('x', ExampleBrowser)` /
+# `type[...]` is DELIBERATELY EXCLUDED from THIS allowlist (mapped to
+# `CoreTy::Type` by `_CONTAINER_SUBSCRIPT_CORE_TY` instead — see `core_ty_of`
+# L3a, above L3b): a CLASS OBJECT is a valid `type`, and mamba's checker types
+# a bare class VALUE (`C`) identically to an instance (`C()`) — both
+# `Ty::Class{name}` — so `webbrowser.register('x', ExampleBrowser)` /
 # `copyreg.pickle(C, ...)` / `inspect.unwrap(C)` / `dataclasses.fields(@dataclass
-# class)`, all of which pass the class itself and which CPython accepts. (Caught
-# as 9 real FPs by the full behavior gate.) `tuple`/`list`/`dict`/`set` are also
-# excluded — the scalar map declines them and a bare class is not one anyway.
+# class)` all pass the class itself, which CPython accepts, and which the hook
+# must not reject. `CoreTy::Type`'s bare-instance rejection only fires on a
+# CALL-shaped actual (`_W()`), never a bare class name reference (`C`), so it
+# stays false-positive-clean for exactly these calls (verified by the ②
+# behavior gate — this comment used to warn of 9 real FPs from an earlier,
+# less precise bare-class detector). `Callable[...]` is still excluded — a
+# class object is callable too, and there is no `CoreTy::Callable`.
+# `tuple`/`list`/`dict`/`set` protocol/ABC bases are also excluded from THIS
+# allowlist: `list`/`tuple`/`dict` map to their own CoreTy via
+# `_CONTAINER_SUBSCRIPT_CORE_TY`; `set` has no CoreTy — a bare class is not
+# one anyway, so it stays Unknown.
 _SUBSCRIPT_TYPED_BASES = frozenset({
     "IO", "TextIO", "BinaryIO",
 })
@@ -559,13 +593,15 @@ def _union_core_ty(members: list[ast.expr]) -> str:
 def core_ty_of(node: ast.expr | None) -> str:
     """Map a typeshed annotation to a closed CoreTy variant name.
 
-    Bare scalar builtins (int/float/str) map to a concrete scalar CoreTy. Every
-    NOMINAL contract a bare `_W()` cannot inhabit — `Supports*`/`*Like` protocols,
-    collection ABCs, and any nominal class name or concrete alias — maps to
-    `Typed` (the hook rejects a bare class instance against it). Wildcards
-    (object/Any/Unused/Never/…), typevars (a bare class is a valid binding), and
-    richer shapes whose membership needs analysis (subscripted generics, unions)
-    stay Unknown so the hook never enforces against them — skip-when-unsure."""
+    Bare scalar builtins (int/float/str/bytes/bool/complex) and bare/subscripted
+    `list`/`tuple`/`dict`/`type` map to a concrete CoreTy (see `SCALAR_CORE_TY`
+    / `_CONTAINER_SUBSCRIPT_CORE_TY`). Every NOMINAL contract a bare `_W()`
+    cannot inhabit — `Supports*`/`*Like` protocols, collection ABCs, and any
+    other nominal class name or concrete alias — maps to `Typed` (the hook
+    rejects a bare class instance against it). Wildcards (object/Any/Unused/
+    Never/…), typevars (a bare class is a valid binding), and richer shapes
+    whose membership needs analysis (other subscripted generics, unions) stay
+    Unknown so the hook never enforces against them — skip-when-unsure."""
     if node is None:
         return "Unknown"
     if isinstance(node, ast.Name):
@@ -607,28 +643,38 @@ def core_ty_of(node: ast.expr | None) -> str:
             sub = node.slice
             members = sub.elts if isinstance(sub, ast.Tuple) else [sub]
             return _union_core_ty(members)
-        # ---- L3: non-inhabitable subscripted protocol / container -> Typed. --
-        # `Iterable[str]`, `Sequence[int]`, `Callable[..., T]`, `type[C]`,
-        # `IO[str]`, `SupportsRead[bytes]`, `os.PathLike[str]` — the type ARG is
+        # A typevar / cross-module wildcard-alias base is excluded from BOTH
+        # branches below (a bare class IS a valid typevar binding, so neither
+        # the container scalar map nor the nominal-protocol allowlist may fire).
+        if (
+            not base_name
+            or base_name in _CTX_EXCLUDE
+            or base_name in _GLOBAL_EXCLUDE
+            or _typevar_convention(base_name)
+        ):
+            return "Unknown"
+        # ---- L3a: subscripted container/type-object -> its own negative
+        # scalar-wall CoreTy. `list[str]`, `dict[str, int]`, `type[C]` — the
+        # type ARGUMENT is irrelevant to the hook (a concrete int/float/str/
+        # bool/None actual can never BE a list no matter what it would hold),
+        # so every subscript of these bases carries the SAME CoreTy as its
+        # bare form (`_CONTAINER_SUBSCRIPT_CORE_TY`, mirrors `SCALAR_CORE_TY`).
+        if base_name in _CONTAINER_SUBSCRIPT_CORE_TY:
+            return _CONTAINER_SUBSCRIPT_CORE_TY[base_name]
+        # ---- L3b: non-inhabitable subscripted protocol -> Typed. -------------
+        # `Iterable[str]`, `Sequence[int]`, `Callable[..., T]`, `IO[str]`,
+        # `SupportsRead[bytes]`, `os.PathLike[str]` — the type ARG is
         # irrelevant: a bare no-base no-method class instance has no `__iter__`/
-        # `__call__`/`write`, and is not a `type` object / open stream, so it
-        # inhabits none of these. The positive predicate is a CLOSED allowlist
-        # (the same bare-class-can't-inhabit names the bare-`Name` path trusts —
+        # `__call__`/`write`, and is not an open stream, so it inhabits none of
+        # these. The positive predicate is a CLOSED allowlist (the same
+        # bare-class-can't-inhabit names the bare-`Name` path trusts —
         # `_ABC_PROTOCOLS` / `_is_protocol_name` = Supports*/`*Like`/`*Buffer` —
-        # plus the closed Callable/type/IO set). The base is still excluded if it
-        # is a typevar / cross-module wildcard alias (a bare class IS a valid
-        # typevar binding). Union/Optional bases handled above; tuple/list/dict/
+        # plus the closed IO set). Union/Optional bases handled above;
         # Sequence/Mapping bases stay Unknown.
         if (
-            base_name
-            and base_name not in _CTX_EXCLUDE
-            and base_name not in _GLOBAL_EXCLUDE
-            and not _typevar_convention(base_name)
-            and (
-                base_name in _ABC_PROTOCOLS
-                or _is_protocol_name(base_name)
-                or base_name in _SUBSCRIPT_TYPED_BASES
-            )
+            base_name in _ABC_PROTOCOLS
+            or _is_protocol_name(base_name)
+            or base_name in _SUBSCRIPT_TYPED_BASES
         ):
             return "Typed"
         return "Unknown"
@@ -760,9 +806,12 @@ def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True
     # (the `logging.getLevelName` int|str overload is exactly the false-positive
     # hazard a wholesale enforce would hit). Emit the FULL param list so the hook
     # aligns positions past the skipped Unknowns.
-    # A scalar (Int/Float/Str) param is checked by value; a `Typed` protocol
-    # param is checked by the bare-class rule. Either makes the sig enforceable.
-    has_checkable = any(ct in ("Int", "Float", "Str", "Typed") for _name, ct in params)
+    # A scalar (Int/Float/Str/Bytes/Bool/Complex/List/Tuple/Dict/Type) param is
+    # checked by value (a negative scalar wall, or — Int/Float/Str/Bool — the
+    # ordinary compatibility rule); a `Typed` protocol param is checked by the
+    # bare-class rule. `core_ty_of` never emits anything else besides these and
+    # `Unknown`, so "checkable" is exactly "not Unknown".
+    has_checkable = any(ct != "Unknown" for _name, ct in params)
     enforceable = (not has_star) and (not overloaded) and has_checkable
     emitted_params = params
     return dict(
@@ -937,7 +986,8 @@ def render_rust() -> str:
         "//!\n"
         "//! Typeshed-derived ① Type-wall stdlib signature table. Each row maps a\n"
         "//! stdlib callable's positional params to the closed [`CoreTy`] scalar set\n"
-        "//! (int/float/str/bytes/bool/None); everything richer is `CoreTy::Unknown`.\n"
+        "//! (int/float/str/bytes/bool/complex/list/tuple/dict/type/None); everything\n"
+        "//! richer is `CoreTy::Unknown`.\n"
         "//! A row is `enforceable` only when it is non-overloaded, star-free, and\n"
         "//! every positional param is a concrete scalar — otherwise the hook skips\n"
         "//! it (skip-when-unsure, zero false positives on correct calls).\n"
