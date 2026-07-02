@@ -1081,6 +1081,7 @@ pub fn register() {
             ("register_after_fork", dispatch_noop as *const () as usize),
             ("is_exiting", dispatch_false as *const () as usize),
             ("close_all_fds_except", dispatch_noop as *const () as usize),
+            ("spawnv_passfds", dispatch_int_zero as *const () as usize),
         ],
         &[
             ("SUBDEBUG", 5),
