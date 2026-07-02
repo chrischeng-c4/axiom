@@ -8660,12 +8660,17 @@ mod tests {
     #[test]
     fn generated_enforceable_rows_have_a_scalar_and_no_star() {
         // The invariant: every row the hook will ENFORCE must (a) carry at least
-        // one checkable param (Int/Float/Str/Typed/Bytes/Bool/Complex/List/Tuple/Dict/Type)
-        // and (b) have no star param (positional alignment past `*args` is uncertain).
+        // one checkable param (Int/Float/Str/Typed/Bytes/Bool/Complex/List/Tuple/Dict/
+        // Type/IntOrStr) and (b) have no star param (positional alignment past
+        // `*args` is uncertain).
         // Unknown/None params are skipped, while Bytes/MemoryView/Complex/List/Tuple/Dict/Type
         // are negative scalar walls that reject impossible concrete scalars and leave
         // dynamic/buffer/object values as Any-skips; Bool goes through the generic
         // types_compatible mismatch check instead (stricter: e.g. rejects int-for-bool).
+        // #884: IntOrStr is the generator's closed scalar-union fold for a PURE
+        // scalar union whose concrete-actual accept-set is exactly {Int,Bool,Str}
+        // (e.g. typeshed's `int | str`) — same enforcement PathOrFd already uses,
+        // reused rather than adding a new CoreTy variant.
         // This is what lets a scalar param sitting BEHIND an Unknown param
         // enforce at its real position; a full uncapped 28k-fixture ② FP scan
         // confirms 0 false positives from the skipped params. (Earlier the
@@ -8694,6 +8699,7 @@ mod tests {
                         | CoreTy::Dict
                         | CoreTy::Bool
                         | CoreTy::Type
+                        | CoreTy::IntOrStr
                 )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,
