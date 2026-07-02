@@ -1006,6 +1006,20 @@ fn is_library_source_path(path: &Path) -> bool {
     )
 }
 
+fn is_library_asset_path(path: &Path) -> bool {
+    path.is_file() && !is_library_source_path(path)
+}
+
+fn is_library_style_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("css")
+                || ext.eq_ignore_ascii_case("scss")
+                || ext.eq_ignore_ascii_case("sass")
+    )
+}
+
 fn specifier_path_part(spec: &str) -> &str {
     spec.split(['?', '#']).next().unwrap_or(spec)
 }
@@ -1888,6 +1902,11 @@ fn inline_module(
                 inline_svg_named_reexport(path, &spec, stmt_text, external_imports, seen_external)?
             {
                 out.push_str(&svg_reexport);
+            } else if resolve_relative_asset(path, &spec)
+                .filter(|p| is_library_asset_path(p))
+                .is_some()
+            {
+                out.push_str(stmt_text);
             } else if let Some(target) = resolve_relative(path, &spec)? {
                 if is_star_reexport(stmt_text) {
                     // `export * from "./m"` — inline keeping export keywords so
@@ -1929,7 +1948,18 @@ fn inline_module(
             // place so the bundled entry stays self-contained. The target's
             // own `export` keywords are kept (verbatim inline), matching the
             // pre-existing single-file behaviour.
-            if let Some(target) = resolve_relative(path, &spec)? {
+            if let Some(asset_path) =
+                resolve_relative_asset(path, &spec).filter(|p| is_library_asset_path(p))
+            {
+                if is_library_style_path(&asset_path) {
+                    // Style side-effect imports are not JS modules. Library
+                    // asset emission is handled by `[lib].css_merge` or the
+                    // package's own published CSS exports, so do not inline or
+                    // preserve a browser-unresolvable SCSS import here.
+                } else {
+                    out.push_str(stmt_text);
+                }
+            } else if let Some(target) = resolve_relative(path, &spec)? {
                 let inlined = inline_module(
                     &target,
                     externals,

@@ -131,6 +131,39 @@ export function go(a, b) {
     );
 }
 
+#[test]
+fn lib_build_consumes_local_scss_side_effect_imports() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "style-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        "import './style.scss';\nexport const Button = (): string => 'button';\n",
+    );
+    write_file(root, "src/style.scss", ".button { color: red; }\n");
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm]);
+    let code = &result.entries[0].code;
+    assert!(
+        !code.contains("style.scss"),
+        "SCSS side-effect imports should not survive as JS imports, got:\n{code}"
+    );
+    assert!(
+        code.contains("Button"),
+        "entry source should still be bundled, got:\n{code}"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (b) Optional CJS emission
 // ──────────────────────────────────────────────────────────────────────────
@@ -326,7 +359,7 @@ export function client() { return useState(0); }
 }
 
 #[test]
-fn lib_build_fails_loudly_for_unsupported_local_asset_imports() {
+fn lib_build_consumes_js_side_effect_scss_imports() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -360,12 +393,11 @@ fn lib_build_fails_loudly_for_unsupported_local_asset_imports() {
         raw_copy: Vec::new(),
         sourcemap: SourceMapOption::None,
     };
-    let err = build_library(options).expect_err("SCSS import must fail loudly");
-    let msg = format!("{err:#}");
+    let result = build_library(options).expect("SCSS side-effect import should build");
+    let code = &result.entries[0].code;
     assert!(
-        msg.contains("unsupported local import extension '.scss'")
-            && msg.contains("css_merge/raw_copy"),
-        "error should tell the operator why the asset import is unsupported, got:\n{msg}"
+        !code.contains("styles.scss") && code.contains("Box"),
+        "SCSS side-effect import should be consumed without dropping the entry, got:\n{code}"
     );
 }
 
