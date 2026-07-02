@@ -1659,20 +1659,42 @@ pub fn mb_os_urandom(n: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_bytes(buf))
 }
 
-/// os.getuid() / geteuid() / getgid() / getegid() / getppid() — stub 0.
-/// Mamba doesn't expose real POSIX IDs to Python yet.
+/// os.getuid() / geteuid() / getgid() / getegid() — real POSIX ids (#874:
+/// pwd.getpwuid(os.getuid()) needs the real uid to resolve to the calling
+/// user, matching CPython; mirrors the already-correct posix_mod.rs impl).
+#[cfg(unix)]
+pub fn mb_os_getuid() -> MbValue {
+    MbValue::from_int(unsafe { libc::getuid() } as i64)
+}
+#[cfg(not(unix))]
 pub fn mb_os_getuid() -> MbValue {
     MbValue::from_int(0)
 }
+#[cfg(unix)]
+pub fn mb_os_geteuid() -> MbValue {
+    MbValue::from_int(unsafe { libc::geteuid() } as i64)
+}
+#[cfg(not(unix))]
 pub fn mb_os_geteuid() -> MbValue {
     MbValue::from_int(0)
 }
+#[cfg(unix)]
+pub fn mb_os_getgid() -> MbValue {
+    MbValue::from_int(unsafe { libc::getgid() } as i64)
+}
+#[cfg(not(unix))]
 pub fn mb_os_getgid() -> MbValue {
     MbValue::from_int(0)
 }
+#[cfg(unix)]
+pub fn mb_os_getegid() -> MbValue {
+    MbValue::from_int(unsafe { libc::getegid() } as i64)
+}
+#[cfg(not(unix))]
 pub fn mb_os_getegid() -> MbValue {
     MbValue::from_int(0)
 }
+/// os.getppid() — stub 1. Mamba doesn't expose the real parent pid yet.
 pub fn mb_os_getppid() -> MbValue {
     MbValue::from_int(1)
 }

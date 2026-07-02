@@ -132,6 +132,7 @@ pub mod google_cloud_pubsub_mod;
 pub mod google_cloud_storage_mod;
 pub mod googleapis_common_protos_mod;
 pub mod graphlib_mod;
+pub mod grp_mod;
 pub mod grpcio_mod;
 pub mod grpclib_mod;
 pub mod gunicorn_mod;
@@ -167,6 +168,7 @@ pub mod posix_mod;
 pub mod posixpath_mod;
 pub mod protobuf_mod;
 pub mod psycopg_mod;
+pub mod pwd_mod;
 pub mod pydantic_core_mod;
 pub mod pydantic_mod;
 pub mod pyopenssl_mod;
@@ -320,6 +322,8 @@ pub fn register_stdlib() {
     // (it mutates the already-registered test.support* modules in place).
     support_mod::register();
     posix_mod::register();
+    pwd_mod::register();
+    grp_mod::register();
     keyword_mod::register();
     stat_mod::register();
     token_mod::register();
