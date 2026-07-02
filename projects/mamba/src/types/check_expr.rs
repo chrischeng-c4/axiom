@@ -1168,6 +1168,18 @@ impl TypeChecker {
             if matches!(param.ty, super::stdlib_sigs::CoreTy::Type) {
                 return None;
             }
+            // The type model gives the class object `_W` and an instance
+            // `_W()` the identical `Ty::Class`, so an ident that NAMES a
+            // known class is the class object itself
+            // (`object.__subclasshook__(_W)`, `slice.__new__(slice, ...)`)
+            // — curated `Typed` rows rely on those staying accepted. Only
+            // differently-named idents (variables holding constructor
+            // results) count as instances here.
+            if let Expr::Ident(id) = &a.node {
+                if self.user_bare_classes.contains(id) || self.class_methods.contains_key(id) {
+                    return None;
+                }
+            }
             match self.tcx.get(actual) {
                 Ty::Class { name, .. } if self.user_bare_classes.contains(name) => {
                     Some(name.clone())
