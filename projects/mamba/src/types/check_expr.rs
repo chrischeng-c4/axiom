@@ -194,6 +194,45 @@ impl TypeChecker {
                             .iter()
                             .any(|a| matches!(a, CallArg::StarArg(_) | CallArg::DoubleStarArg(_)));
                         let has_kwargs = args.iter().any(|a| matches!(a, CallArg::Keyword { .. }));
+                        // #924: a handful of core builtins registered through
+                        // `def_builtin` (a separate mechanism from the
+                        // StdlibSig/`check_stdlib_call` path above) are
+                        // genuinely positional-only in CPython — no
+                        // `**kwargs`, no keyword-visible parameter names at
+                        // the C level. `chr(i=65)` raises `TypeError: chr()
+                        // takes no keyword arguments` even though `65` is
+                        // well-typed for `i`. The general Ty::Fn walk below
+                        // only checks types by param *position*/*name*; it has
+                        // no notion of "positional-only", so a well-typed
+                        // keyword call previously fell through uncaught to the
+                        // runtime dispatch, which packs the kwargs dict into
+                        // the positional slot and raises an unrelated
+                        // dict-shaped TypeError instead. Name-gated (mirrors
+                        // the `index_protocol_ok` name check below) and only
+                        // fires for the *unshadowed* builtin symbol — a
+                        // user-defined `def chr(...):` is unaffected.
+                        const POSITIONAL_ONLY_BUILTINS: &[&str] = &[
+                            "chr",
+                            "ord",
+                            "getattr",
+                            "hasattr",
+                            "setattr",
+                            "format",
+                            "isinstance",
+                            "issubclass",
+                        ];
+                        if has_kwargs {
+                            if let Some(name) = func_name.as_deref() {
+                                if POSITIONAL_ONLY_BUILTINS.contains(&name)
+                                    && self.is_unshadowed_builtin(name)
+                                {
+                                    self.error(
+                                        expr.span,
+                                        format!("{name}() takes no keyword arguments"),
+                                    );
+                                }
+                            }
+                        }
                         let positional_count = args
                             .iter()
                             .filter(|a| matches!(a, CallArg::Positional(_)))
