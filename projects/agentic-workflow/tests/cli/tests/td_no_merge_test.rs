@@ -1360,6 +1360,175 @@ async fn test_code_check_missing_local_issue_emits_actionable_envelope() {
     );
 }
 
+/// Issue #939: prove `Issue.implements`, once populated by a REAL `aw td
+/// create` call (not a hand-seeded test fixture), is actually consumed by
+/// `aw td code-check`'s tier-1 `Issue.implements` scope resolution (#854,
+/// `resolve_slug_spec_paths` in `cb.rs`). Uses a custom `--spec-path` that
+/// differs from what tier-3's derived-default guess would produce for this
+/// issue's labels (`.aw/tech-design/projects/score/logic/...`, per the
+/// derivation `td_claim_test.rs` observes for a bare `project:
+/// agentic-workflow`-labeled issue): if tier-1 were broken or ignored and the
+/// resolver silently fell through to tier-3, code-check would find no
+/// `## Changes` content at that (wrong) path and vacuously pass
+/// (`"action":"done"`) instead of refusing over the missing file this test
+/// declares at the tier-1 (`implements`) path.
+#[tokio::test]
+async fn test_code_check_consumes_implements_populated_by_real_td_create() {
+    use agentic_workflow::issues::types::{td_phase, IssueType};
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+
+    let slug = "create-then-code-check-tier1-test";
+    let custom_spec_rel = "custom/td-939-tier1-chain-test.md";
+
+    // Seed a bare open issue the way `aw wi create` would leave one before
+    // tech-design ever starts — no `implements` yet.
+    let backend = LocalBackend::from_project_root(root);
+    let seed_issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec!["project:agentic-workflow".to_string()],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: Vec::new(),
+        phase: None,
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    // `write` (not `create`) — `create` force-downgrades a local-only,
+    // github_id/gitlab_id-less issue to `draft` state, which would trip `aw
+    // td create`'s own state:open guard for reasons unrelated to this test.
+    backend
+        .write(&seed_issue)
+        .await
+        .expect("seed bare open issue");
+
+    // Real production code (issue #939's fix): `aw td create --spec-path`
+    // must record `custom_spec_rel` in `Issue.implements`.
+    let create_out = Command::new(&aw_bin)
+        .arg("td")
+        .arg("create")
+        .arg(slug)
+        .arg("--spec-path")
+        .arg(custom_spec_rel)
+        .current_dir(root)
+        .output()
+        .expect("run aw td create");
+    assert!(
+        create_out.status.success(),
+        "aw td create should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&create_out.stdout),
+        String::from_utf8_lossy(&create_out.stderr),
+    );
+
+    let created = backend
+        .get(slug)
+        .await
+        .expect("read back issue after create")
+        .expect("issue still present after create");
+    assert!(
+        created.implements.iter().any(|p| p == custom_spec_rel),
+        "aw td create must have recorded {} in Issue.implements, got: {:?}",
+        custom_spec_rel,
+        created.implements
+    );
+
+    // Bypass the full gen/fill lifecycle (matching the #847/#932 fixture
+    // convention elsewhere in this file): rewrite the issue as a fresh,
+    // lock-free `cb_filled` entry that carries forward the
+    // create-populated `implements`, the exact shape a real WI has by the
+    // time it reaches terminal code-check.
+    let mut chained = created;
+    chained.labels = vec![format!("phase:{}", td_phase::CB_FILLED)];
+    chained.phase = Some(td_phase::CB_FILLED.to_string());
+    chained.body = format!("# {slug} WI\n");
+    backend
+        .write(&chained)
+        .await
+        .expect("rewrite issue as fresh cb_filled entry");
+
+    // Write `## Changes` content at the tier-1 (implements) path only,
+    // declaring one file that does not exist on disk — the "gen-code
+    // skipped" refusal signature `write_847_changes_spec` also uses, but
+    // written directly here since it targets a custom path.
+    let spec_abs = root.join(custom_spec_rel);
+    std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+    let spec_content = "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n\
+         <!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/tier1_demo.rs\n    action: create\n    impl_mode: hand-written\n```\n";
+    std::fs::write(&spec_abs, spec_content).unwrap();
+
+    let check_out = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-check")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&check_out.stdout);
+    assert!(
+        check_out.status.success(),
+        "code-check refusal still exits 0 (protocol is the stdout envelope): {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\":\"error\""),
+        "tier-1 resolution must find the custom-path spec's missing Changes \
+         entry and refuse; a tier-3 fallback would instead vacuously pass. \
+         got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("refusing to complete code-check"),
+        "error message must explain the empty-implementation refusal, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("src/tier1_demo.rs"),
+        "error message must name the missing path declared at the tier-1 \
+         (implements) spec, proving that path (not a tier-3 guess) was \
+         resolved, got:\n{}",
+        stdout
+    );
+}
+
 // ---------------------------------------------------------------------------
 // #932: code-check touched-scope standardization gate (Rule A — the forward
 // (正流程) loop carries 標準化). For the WI's own touched-file set (branch

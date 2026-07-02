@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T15:52:43.426505+00:00"
-digest = "sha256:91e105cd0f589ab6750c931706bcdce8b058540b026308703b96c5ba2a2f1d53"
-source_digest = "sha256:91e105cd0f589ab6750c931706bcdce8b058540b026308703b96c5ba2a2f1d53"
-ir_digest = "sha256:54c1f2a03b9dd779ff0bf0033c8922275e4599c7e9d01fd64d65fa5ae362853a"
+generated_at = "2026-07-02T16:41:48.275848+00:00"
+digest = "sha256:3f343befdf752b11732d164c0fe31ed2243e367fce0c8aba2f4bed6fedfa4c9f"
+source_digest = "sha256:3f343befdf752b11732d164c0fe31ed2243e367fce0c8aba2f4bed6fedfa4c9f"
+ir_digest = "sha256:8818dd95b2296924766960d9feafe2d740c771d0f89e07bdacebeb05065b78ea"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5381,8 +5381,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:4f57bd30040f8f9b9bb53f6cc764eeee2f5ee406fc33b6e2f30ae4f2c9fc21ce"
-ir_digest = "sha256:662a26d97f65760fd132a43c5c55df8d9cb960ae326b9d68610710aa68423a6e"
+digest = "sha256:e32b17ce5c68719edfc78046d656a13d27cd2aa05b708de17e2701d6bad8d8ed"
+ir_digest = "sha256:6709091375f6ff6b4352dcd8d6dee5deca5632ab5c2353024be92cbf300a1393"
 section_count = 2
 
 [[files]]
@@ -5801,9 +5801,9 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/inplace_mode_test.md"
-digest = "sha256:ec5a8976bc251c45703200a2f5c28b39d0faf9460403a30b05e68469710f90f4"
-ir_digest = "sha256:5f6d5f48dcad72a1222cb478b5a69185c2b51442a1c976f243d75cbab3bf1981"
-section_count = 1
+digest = "sha256:9a1236b7dbee6c20fd29ce5a9e768c8b3fb4c6513fe715dc65ce7f33efffc491"
+ir_digest = "sha256:24a64ba3caa99999efdcdda76298b24417dd822a75229669b148ef84665d3e1c"
+section_count = 2
 
 [[files]]
 path = "surface/validate/tests/legacy_cli_removal_test.md"
@@ -5843,14 +5843,14 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_claim_test.md"
-digest = "sha256:c1069a87158ff2f5db677278e3a8fb1075d276caac7101ffaac9188a42485e9a"
-ir_digest = "sha256:a1b0e3fbab3e925499e70813e1d69ce6fa2d181b476d1eadfebeb828073cfc1c"
+digest = "sha256:196855f205145842afdba36a0ce0c6f1aceac6b71882c3478ee6ed321abfab96"
+ir_digest = "sha256:76eb7771fd0ed2e702080d6f6bb2d1fd94d6f510b8458d2b3c9a7bde2f963850"
 section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_no_merge_test.md"
-digest = "sha256:290df5084bb3e06f49595c2fb24e5bb08361fe875e6435cec3f327dd7058020d"
-ir_digest = "sha256:3a8f96a9e825d6240a6c5a208782d88427f389eb74c81e8a420bee2521a2cf99"
+digest = "sha256:9b95a5ce9ac7907ae2410bb7a226ddc104621c98df9dc936eb548eef10794afc"
+ir_digest = "sha256:9b8a6842be879e4e132a33e6a61e78b21ab281b43bcb5dc4e1f861ec37c92ab0"
 section_count = 2
 
 [[files]]
