@@ -9,12 +9,11 @@
 # case = "commonpath__paths_as_Iterable_wrong"
 # subject = "posixpath.commonpath(paths: Iterable)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed paths"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed paths
 # mamba-strict-type: TypeError
 """Type wall: posixpath.commonpath(paths: Iterable); call it with the wrong type.
 
