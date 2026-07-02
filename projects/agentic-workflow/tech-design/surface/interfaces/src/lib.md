@@ -69,6 +69,7 @@ pub mod cb_arbitrate;
 pub mod cb_fill;
 pub mod cb_review;
 pub mod cb_revise;
+pub(crate) mod chain;
 #[path = "chat.rs"]
 pub mod chat;
 pub mod check_alignment;

@@ -140,6 +140,7 @@ pub fn upsert_loop_state(body: &str, state: &LoopState) -> Result<String> {
 /// engine has an up-to-date block to read (#188 E1/E4).
 pub fn apply_verification(
     body: &str,
+    wi: &str,
     result: LastResult,
     summary: Option<String>,
 ) -> Result<String> {
@@ -147,19 +148,39 @@ pub fn apply_verification(
     if state.version == 0 {
         state.version = 1;
     }
+    // #844: the block's `issue_id` is what `decide_next_action` uses to
+    // carry the slug into the emitted `next_action` command (e.g. `aw td
+    // code-check <slug>`). A fresh block has no `issue_id` yet — seed it from
+    // the caller's WI id rather than leaving it empty, or the converged arm
+    // would emit a slug-less command a chain-policy check must reject.
+    if state.issue_id.is_empty() {
+        state.issue_id = wi.to_string();
+    }
     state.record_verification(result, summary);
     upsert_loop_state(body, &state)
 }
 
 /// The loop's decision, given the latest verification (EC) result: the status
-/// the loop is now in, and the next command to run. Green = converged (terminal code-check);
-/// Red = keep iterating (adapt and re-gen); Blocked = HITL (no auto next).
-/// This is the loop-engineering "decide" step — it reads the verifier, not a
-/// reviewer.
-pub fn decide_next_action(last: &LastResult) -> (LoopStatus, Option<&'static str>) {
+/// the loop is now in, and the next command to run. Green = converged
+/// (terminal code-check, carrying `issue_id` as the target — #844: a
+/// slug-less `aw td code-check` is chain-invalid, see
+/// `chain::CHAIN_REQUIRED_POSITIONALS`); Red = keep iterating (adapt and
+/// re-gen); Blocked = HITL (no auto next). This is the loop-engineering
+/// "decide" step — it reads the verifier, not a reviewer.
+pub fn decide_next_action(last: &LastResult, issue_id: &str) -> (LoopStatus, Option<String>) {
     match last {
-        LastResult::Green => (LoopStatus::Converged, Some("aw td code-check")),
-        LastResult::Red { .. } => (LoopStatus::Iterating, Some("aw td gen")),
+        LastResult::Green => {
+            let command = if issue_id.is_empty() {
+                // Defensive fallback only: `apply_verification` always seeds
+                // `issue_id`, so this arm should not be reachable from the
+                // real `aw ec record` producer path.
+                "aw td code-check".to_string()
+            } else {
+                format!("aw td code-check {issue_id}")
+            };
+            (LoopStatus::Converged, Some(command))
+        }
+        LastResult::Red { .. } => (LoopStatus::Iterating, Some("aw td gen".to_string())),
         LastResult::Blocked { .. } => (LoopStatus::Blocked, None),
         LastResult::None => (LoopStatus::Iterating, None),
     }
@@ -184,9 +205,9 @@ impl LoopState {
             outcome,
             summary,
         });
-        let (status, next) = decide_next_action(&result);
+        let (status, next) = decide_next_action(&result, &self.issue_id);
         self.status = status;
-        self.next_action = next.map(str::to_string);
+        self.next_action = next;
         self.last_result = result;
     }
 }
@@ -199,8 +220,22 @@ mod tests {
     #[test]
     fn decide_green_converges_to_code_check() {
         assert_eq!(
-            decide_next_action(&LastResult::Green),
-            (LoopStatus::Converged, Some("aw td code-check"))
+            decide_next_action(&LastResult::Green, "42"),
+            (
+                LoopStatus::Converged,
+                Some("aw td code-check 42".to_string())
+            )
+        );
+    }
+
+    // #844: an empty issue_id must not silently produce the bare, chain-invalid
+    // `aw td code-check` (see chain::CHAIN_REQUIRED_POSITIONALS); this only
+    // happens if a caller bypasses `apply_verification`'s seeding.
+    #[test]
+    fn decide_green_with_no_issue_id_falls_back_to_bare_command() {
+        assert_eq!(
+            decide_next_action(&LastResult::Green, ""),
+            (LoopStatus::Converged, Some("aw td code-check".to_string()))
         );
     }
 
@@ -211,8 +246,8 @@ mod tests {
             why: "t failed".into(),
         };
         assert_eq!(
-            decide_next_action(&red),
-            (LoopStatus::Iterating, Some("aw td gen"))
+            decide_next_action(&red, "42"),
+            (LoopStatus::Iterating, Some("aw td gen".to_string()))
         );
     }
 
@@ -221,7 +256,10 @@ mod tests {
         let blocked = LastResult::Blocked {
             reason: "ec undefined".into(),
         };
-        assert_eq!(decide_next_action(&blocked), (LoopStatus::Blocked, None));
+        assert_eq!(
+            decide_next_action(&blocked, "42"),
+            (LoopStatus::Blocked, None)
+        );
     }
 
     #[test]
@@ -246,7 +284,7 @@ mod tests {
         s.record_verification(LastResult::Green, None);
         assert_eq!(s.iterations.len(), 2);
         assert_eq!(s.status, LoopStatus::Converged);
-        assert_eq!(s.next_action.as_deref(), Some("aw td code-check"));
+        assert_eq!(s.next_action.as_deref(), Some("aw td code-check 1"));
         assert_eq!(s.last_result, LastResult::Green);
     }
 
@@ -352,6 +390,7 @@ mod tests {
         let body = "# WI 188\n\nsome description\n";
         let out = apply_verification(
             body,
+            "188",
             LastResult::Red {
                 dimension: "behavior".into(),
                 why: "t failed".into(),
@@ -363,17 +402,19 @@ mod tests {
         assert!(out.contains("some description"));
         let s = parse_loop_state(&out).unwrap();
         assert_eq!(s.version, 1);
+        assert_eq!(s.issue_id, "188");
         assert_eq!(s.iterations.len(), 1);
         assert_eq!(s.status, LoopStatus::Iterating);
         assert_eq!(s.next_action.as_deref(), Some("aw td gen"));
 
         // Re-apply a Green verdict on the same body -> converged, 2nd iteration,
-        // block replaced in place (not duplicated).
-        let out2 = apply_verification(&out, LastResult::Green, None).unwrap();
+        // block replaced in place (not duplicated). `issue_id` is already
+        // seeded from the first call, so it carries through unchanged.
+        let out2 = apply_verification(&out, "188", LastResult::Green, None).unwrap();
         let s2 = parse_loop_state(&out2).unwrap();
         assert_eq!(s2.iterations.len(), 2);
         assert_eq!(s2.status, LoopStatus::Converged);
-        assert_eq!(s2.next_action.as_deref(), Some("aw td code-check"));
+        assert_eq!(s2.next_action.as_deref(), Some("aw td code-check 188"));
         assert_eq!(out2.matches(LOOP_START).count(), 1);
     }
 }
