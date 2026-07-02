@@ -9,11 +9,12 @@
 # case = "IncrementalDecoder___buffer_decode__data_as_ReadableBuffer_wrong"
 # subject = "encodings.utf_32_le.IncrementalDecoder._buffer_decode(data: ReadableBuffer)"
 # kind = "semantic"
-# xfail = ""
+# xfail = "force-typed arg enforcement pending; needs curated IncrementalDecoder._buffer_decode wall (#861) — pre-#905 pass was a silent-None false positive"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/encodings/utf_32_le.pyi"
 # status = "filled"
 # ///
+# mamba-xfail: force-typed arg enforcement pending; needs curated IncrementalDecoder._buffer_decode wall (#861) — pre-#905 pass was a silent-None false positive
 # mamba-strict-type: TypeError
 """Type wall: encodings.utf_32_le.IncrementalDecoder._buffer_decode(data: ReadableBuffer); call it with the wrong type.
 
