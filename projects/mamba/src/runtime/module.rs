@@ -2776,6 +2776,89 @@ mod tests {
         cleanup_all_modules();
     }
 
+    // ── #867: Vendored Lib/ Tree Precedence ──
+    //
+    // Documents the full search order the vendored-loader design relies on
+    // (see stdlib/vendor_lib.rs): native > script-dir > vendored > user.
+    // "vendored" and "user" are both just SEARCH_PATHS entries — the only
+    // thing that separates them is *position*: vendor_lib::register() calls
+    // mb_insert_search_path(0, ...) once at startup (before PYTHONPATH is
+    // read), so the vendored directory always lands ahead of the default
+    // "." entry and anything PYTHONPATH/mb_add_search_path appends later.
+    #[test]
+    fn test_vendored_lib_precedence_native_script_vendored_user() {
+        cleanup_all_modules();
+
+        // "user" layer: appended like a PYTHONPATH entry (mb_add_search_path
+        // pushes to the end of SEARCH_PATHS).
+        let user_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            user_dir.path().join("precedence_mod.py"),
+            "layer = 'user'\n",
+        )
+        .unwrap();
+        mb_add_search_path(s(&user_dir.path().display().to_string()));
+
+        // Vendored beats a plain user/PYTHONPATH search path.
+        let found = find_module("precedence_mod");
+        assert!(found.is_some(), "module should resolve from the user path");
+        assert!(
+            found.unwrap().starts_with(user_dir.path()),
+            "with nothing else registered, the user path should resolve"
+        );
+
+        // "vendored" layer: inserted at index 0 — the exact mechanism
+        // vendor_lib::register() uses — so it lands ahead of the user path.
+        let vendored_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            vendored_dir.path().join("precedence_mod.py"),
+            "layer = 'vendored'\n",
+        )
+        .unwrap();
+        mb_insert_search_path(0, &vendored_dir.path().display().to_string());
+
+        let found = find_module("precedence_mod");
+        assert!(
+            found.unwrap().starts_with(vendored_dir.path()),
+            "vendored path should shadow a plain user/PYTHONPATH search path"
+        );
+
+        // "script-dir" layer: a same-named file in SCRIPT_DIR outranks the
+        // vendored tree (checked first inside find_module()).
+        let script_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            script_dir.path().join("precedence_mod.py"),
+            "layer = 'script_dir'\n",
+        )
+        .unwrap();
+        mb_set_script_dir(script_dir.path().to_path_buf());
+
+        let found = find_module("precedence_mod");
+        assert!(
+            found.unwrap().starts_with(script_dir.path()),
+            "SCRIPT_DIR should shadow the vendored tree"
+        );
+
+        // "native" layer: a pre-registered module outranks everything,
+        // including SCRIPT_DIR — mb_import's cache check returns it before
+        // find_module() (and therefore SCRIPT_DIR/SEARCH_PATHS) is ever
+        // consulted.
+        let mut attrs = HashMap::new();
+        attrs.insert("layer".into(), s("native"));
+        mb_module_register("precedence_mod", attrs);
+        let val = mb_import(s("precedence_mod"));
+        assert!(val.is_ptr());
+        let layer = mb_module_getattr(s("precedence_mod"), s("layer"));
+        assert_eq!(
+            extract_str(layer).as_deref(),
+            Some("native"),
+            "native pre-registration should be what mb_import serves, \
+             bypassing find_module entirely"
+        );
+
+        cleanup_all_modules();
+    }
+
     // ── mb_import_star tests ──
 
     // @spec .aw/changes/mamba-all-support/groups/all-support/specs/mamba-all-support-spec.md#test_import_star_with_all

@@ -140,7 +140,9 @@ pub fn register() {
     register_imaplib();
     register_telnetlib();
     register_nntplib();
-    register_mailbox();
+    // mailbox is provided by the shared vendored Lib/ tree (vendor_lib,
+    // #867), which materializes py_src/mailbox.py once for the whole
+    // process instead of this module's own per-call materialize_mailbox_src.
     // cgi is registered as a real module (cgi_mod) elsewhere; the
     // long_tail stub returned empty dicts/lists for every parse_*
     // function and empty strings for escape, breaking any old CGI
@@ -332,59 +334,14 @@ fn register_nntplib() {
     super::register_module("nntplib", attrs);
 }
 
-/// The pure-Python `mailbox` source (CPython 3.12), embedded at compile time.
-///
-/// The old stub registered a bare dict whose every class was a `lambda`-style
-/// shell and whose `_ProxyFile`/`_PartialFile`/`Mailbox` mapping protocol did
-/// nothing, so `mailbox._ProxyFile(...)`, `mailbox.Mailbox('path').add(...)`,
-/// the mbox From-delimited store, and the Message/mboxMessage flag machinery
-/// all returned `None`/empty. Instead we ship the real CPython source and let
-/// Mamba's own compiler execute it (same approach as `plistlib_mod`): the file
-/// is materialized to a per-build temp directory at startup and that directory
-/// is added to the import search path, so `import mailbox` resolves to the real
-/// implementation. Its only heavy dependency, `email`, is a real Mamba module.
-const MAILBOX_SRC: &str = include_str!("py_src/mailbox.py");
-
-fn register_mailbox() {
-    // Materialize the embedded source to a stable temp directory and add that
-    // directory to the import search path. We deliberately do NOT register a
-    // native stub here: a registered module is pre-seeded into MODULES and wins
-    // the import cache before find_module() is ever consulted, which would
-    // shadow the real source. With no stub, `import mailbox` falls through to
-    // the search path and loads py_src/mailbox.py. A user-supplied mailbox.py in
-    // the running script's directory still wins (SCRIPT_DIR precedes SEARCH_PATHS).
-    if let Some(dir) = materialize_mailbox_src() {
-        super::super::module::mb_insert_search_path(0, &dir.display().to_string());
-    }
-}
-
-fn materialize_mailbox_src() -> Option<std::path::PathBuf> {
-    use std::hash::{Hash, Hasher};
-    use std::io::Write;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    MAILBOX_SRC.hash(&mut hasher);
-    let h = hasher.finish();
-
-    let mut dir = std::env::temp_dir();
-    dir.push(format!("mamba_mailbox_{h:016x}"));
-    if std::fs::create_dir_all(&dir).is_err() {
-        return None;
-    }
-    let file = dir.join("mailbox.py");
-    let needs_write = match std::fs::read_to_string(&file) {
-        Ok(existing) => existing != MAILBOX_SRC,
-        Err(_) => true,
-    };
-    if needs_write {
-        let tmp = dir.join(format!("mailbox.{}.tmp", std::process::id()));
-        if let Ok(mut f) = std::fs::File::create(&tmp) {
-            if f.write_all(MAILBOX_SRC.as_bytes()).is_ok() {
-                let _ = std::fs::rename(&tmp, &file);
-            }
-        }
-    }
-    Some(dir)
-}
+/// `mailbox` is provided by the shared vendored Lib/ tree (`vendor_lib`,
+/// #867): `py_src/mailbox.py`, adapted from CPython 3.12, materialized once
+/// for the whole process. The old stub registered a bare dict whose every
+/// class was a `lambda`-style shell and whose `_ProxyFile`/`_PartialFile`/
+/// `Mailbox` mapping protocol did nothing, so `mailbox._ProxyFile(...)`,
+/// `mailbox.Mailbox('path').add(...)`, the mbox From-delimited store, and the
+/// Message/mboxMessage flag machinery all returned `None`/empty. Its only
+/// heavy dependency, `email`, is a real Mamba module.
 
 fn register_cgitb() {
     let attrs = build_attrs(
