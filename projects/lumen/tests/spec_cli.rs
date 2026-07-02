@@ -6,7 +6,8 @@
 
 use lumen::spec::{
     field_catalog, json_schema_json, llm_auth_md, llm_integration_md, llm_outline_md,
-    llm_quickstart_md, llm_recipes_md, llm_workflow_md, openapi_json, openapi_yaml, query_shapes,
+    llm_quickstart_md, llm_recipes_md, llm_storage_md, llm_workflow_md, openapi_json, openapi_yaml,
+    query_shapes,
 };
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
@@ -125,6 +126,7 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
         "terms",
         "range",
         "match_bm25",
+        "autocomplete_ngram",
         "boolean_and",
         "boolean_not",
         "knn",
@@ -214,24 +216,63 @@ fn field_catalog_matches_the_real_enums() {
             "vector metric `{m}` listed: {metrics:?}"
         );
     }
+
+    // #825: the `lumen spec --fields` catalog must document how to declare
+    // and query hash fields, matching the README field-type table.
+    let hash = v["field_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["type"] == "hash")
+        .unwrap();
+    assert_eq!(hash["schema"], json!({ "type": "hash" }));
+    assert!(
+        hash["value"].as_str().unwrap().contains("16-hex"),
+        "hash catalog should document the 64-bit hex value shape: {hash}"
+    );
+    assert!(
+        hash["queries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|q| q == "hamming"),
+        "hash catalog should name hamming query support: {hash}"
+    );
 }
 
 // --- `lumen llm *` agent integration topics (offline) ----------------------
 
+/// #824: the outline must teach the convention-canonical `--topic` form, not
+/// the positional form rejected by clap.
+/// @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#unit-test
 #[test]
 fn llm_outline_maps_agent_topics() {
     let outline = llm_outline_md();
     assert!(!outline.trim().is_empty(), "outline is non-empty");
     for needle in [
-        "lumen llm workflow",
-        "lumen llm integration",
-        "lumen llm quickstart",
-        "lumen llm auth",
-        "lumen llm recipes",
+        "lumen llm --topic workflow",
+        "lumen llm --topic integration",
+        "lumen llm --topic quickstart",
+        "lumen llm --topic auth",
+        "lumen llm --topic storage",
+        "lumen llm --topic recipes",
         "lumen spec --format openapi-yaml",
         "lumen spec",
     ] {
         assert!(outline.contains(needle), "outline missing `{needle}`");
+    }
+    for rejected in [
+        "`lumen llm workflow`",
+        "`lumen llm integration`",
+        "`lumen llm quickstart`",
+        "`lumen llm auth`",
+        "`lumen llm storage`",
+        "`lumen llm recipes`",
+    ] {
+        assert!(
+            !outline.contains(rejected),
+            "outline advertises rejected positional command `{rejected}`"
+        );
     }
 }
 
@@ -258,6 +299,102 @@ fn llm_auth_publishes_token_registry_shape() {
     }
 }
 
+/// #812: the serving fleet is always a StatefulSet with a durable PVC-backed
+/// WAL, including at `replicasPerShard: 1` — this must be discoverable
+/// offline via `lumen llm --topic storage`, not only in the CRD doc comments.
+/// @spec projects/lumen/tech-design/logic/render-serving-as-a-statefulset-unconditionally-even-at-replicas.md
+#[test]
+fn llm_storage_documents_unconditional_statefulset_pvc() {
+    let storage = llm_storage_md();
+    assert!(!storage.trim().is_empty(), "storage topic is non-empty");
+    for needle in [
+        "StatefulSet",
+        "volumeClaimTemplates",
+        "raft",
+        "/var/lib/lumen",
+        "replicasPerShard: 1",
+        "20Gi",
+        "no raft consensus",
+        "HorizontalPodAutoscaler",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #808 R1: the manual admin backup/restore procedure, the optional
+/// `spec.serving.backup` CRD field, and the `lumen backup` CLI verb must all
+/// be discoverable offline via `lumen llm --topic storage`.
+/// @spec projects/lumen/tech-design/logic/no-snapshot-backup-mechanism-for-lumen-s-wal-any-replicaspershar.md
+#[test]
+fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
+    let storage = llm_storage_md();
+    for needle in [
+        "GET /admin/backup",
+        "POST /admin/backup/local",
+        "POST /admin/restore",
+        "Role::Admin",
+        "spec.serving.backup",
+        "schedule",
+        "destination",
+        "retentionSecs",
+        "adminTokenSecret",
+        "lumen backup",
+        "LUMEN_BACKUP_TOKEN",
+        "--retention-secs",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #809: a `spec.serving.raftStorage` CR edit does not, by itself, resize
+/// existing per-pod PVCs (StatefulSet `volumeClaimTemplates` are immutable
+/// after creation) — the manual patch procedure, its `StorageClass`
+/// precondition, the shrink limitation, and the `resize-storage` CLI helper
+/// must all be discoverable offline via `lumen llm --topic storage`.
+/// @spec projects/lumen/tech-design/logic/raftstorage-pvc-has-no-auto-expansion-cr-field-change-doesn-t-re.md
+#[test]
+fn llm_storage_documents_resize_gap() {
+    let storage = llm_storage_md();
+    for needle in [
+        "Resizing",
+        "volumeClaimTemplates",
+        "immutable",
+        "kubectl patch pvc",
+        "allowVolumeExpansion: true",
+        "does not support shrinking",
+        "lumen k8s operator resize-storage",
+        "--namespace",
+        "--dry-run",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #810: `serving.raftStorageClass` unset means cluster default, which is
+/// commonly not SSD-backed (e.g. GKE's `standard-rwo`) — a deployer with a
+/// raft/WAL write-latency workload needs this called out explicitly, plus
+/// reference example StorageClass names per common provider, rather than
+/// only in the CRD field doc comment. Documentation-only: no `serving.ssd`
+/// toggle, no new CRD field.
+/// @spec projects/lumen/tech-design/logic/expose-ssd-as-a-simple-toggle-serving-ssd-instead-of-requiring-a.md
+#[test]
+fn llm_storage_documents_ssd_guidance() {
+    let storage = llm_storage_md();
+    for needle in [
+        "raftStorageClass",
+        "cluster default is not SSD-backed",
+        "standard-rwo",
+        "premium-rwo",
+        "pd-ssd",
+        "gp3",
+        "managed-csi-premium",
+        "kubectl get storageclass",
+        "serving.ssd",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
 #[test]
 fn llm_workflow_covers_the_integration_model() {
     let g = llm_workflow_md();
@@ -273,6 +410,14 @@ fn llm_workflow_covers_the_integration_model() {
         "Hydrate",             // step 4
         "Which \"find\"",      // flavor decision guide
         "parent-field `sort`", // has_child + parent-field sort support
+        "Geo / spatial search", // explicit unsupported/search-boundary list
+        "Phrase / proximity queries",
+        "Fuzzy / typo tolerance",
+        "Synonyms",
+        "Autocomplete / suggest",
+        "Highlighting",
+        "Per-field / per-clause boost",
+        "Document TTL / expiry",
         ":7373",               // connection
         "Authorization: Bearer",
         "LUMEN_TOKEN_REGISTRY_FILE",

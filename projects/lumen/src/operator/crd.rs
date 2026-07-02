@@ -2,10 +2,13 @@
 // CODEGEN-BEGIN
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
 //!
-//! One `Lumen` object declares a full deployment. Single-replica instances use
-//! an embedded WAL; multi-replica instances use Lumen-owned raft replication via
-//! a serving StatefulSet. The reconcile loop in [`super::reconcile`] turns this
-//! spec into Deployment/StatefulSet, Service, ConfigMap, HPA, PDB, and
+//! One `Lumen` object declares a full deployment. Single-replica instances
+//! write to a local WAL with no raft consensus; multi-replica instances add
+//! Lumen-owned raft replication on top. Both regimes render the serving fleet
+//! as a StatefulSet with a durable per-pod `raft` PVC backing the WAL —
+//! `replicasPerShard` only gates raft consensus, never persistence. The
+//! reconcile loop in [`super::reconcile`] turns this spec into StatefulSet,
+//! Service, ConfigMap, HPA (single-member regime only), PDB, and
 //! ServiceAccount objects, garbage-collected via owner references.
 
 use kube::CustomResource;
@@ -45,9 +48,11 @@ pub struct LumenSpec {
     #[serde(default = "default_shard_count")]
     pub shard_count: u32,
 
-    /// Raft replicas per shard. `1` (default) = stateless serving (a Deployment +
-    /// HPA). `> 1` switches the serving fleet to a raft-HA **StatefulSet** whose
-    /// pods inject the downward-API env `raft_host::cluster` reads.
+    /// Raft replicas per shard. `1` (default) = a single-member serving
+    /// StatefulSet with no raft consensus (still durable — the same
+    /// PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds
+    /// raft-HA: a fixed peer set whose pods inject the downward-API env
+    /// `raft_host::cluster` reads (no HPA — raft needs a known membership).
     #[serde(default = "default_replicas_per_shard")]
     pub replicas_per_shard: u32,
 
@@ -155,13 +160,33 @@ pub struct ServingSpec {
     /// `terminationGracePeriodSeconds`.
     #[serde(default = "default_grace_secs")]
     pub grace_secs: u64,
-    /// Per-pod raft hard-state PVC size. Used only when
-    /// `replicasPerShard > 1`.
+    /// Per-pod WAL/raft hard-state PVC size. Always applied — the serving
+    /// StatefulSet's `raft` volumeClaimTemplate exists at every
+    /// `replicasPerShard` value, not only when raft consensus (`> 1`) is
+    /// active.
     #[serde(default = "default_raft_storage")]
     pub raft_storage: String,
-    /// PVC StorageClass for raft hard state. Unset means cluster default.
+    /// PVC StorageClass for the WAL/raft hard-state volume. Unset means
+    /// cluster default — which, on most managed Kubernetes offerings, is
+    /// **not** SSD-backed (e.g. GKE's default `standard-rwo` is
+    /// pd-balanced, not pd-ssd). Raft/WAL write latency is sensitive to
+    /// disk performance, so a deployer who cares about that latency should
+    /// set this field explicitly to an SSD-backed StorageClass name rather
+    /// than relying on the cluster default (see `lumen llm --topic storage` for
+    /// example StorageClass names per common provider — informational
+    /// reference only, not a value validated or defaulted by this field).
     #[serde(default)]
     pub raft_storage_class: Option<String>,
+    /// Optional scheduled backup (#808). When set, the operator renders a
+    /// `<name>-backup` CronJob (see [`super::render::backup_cron_job`]) that
+    /// invokes `lumen backup` on this schedule against the running serving
+    /// fleet's own already-existing `/admin/backup` endpoint — no new
+    /// snapshot mechanism, only scheduling + transport. Absent means no
+    /// CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`,
+    /// `POST /admin/restore`) is still reachable for manual/scripted use
+    /// either way (see `lumen llm --topic storage`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<ServingBackupSpec>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
@@ -174,8 +199,39 @@ impl Default for ServingSpec {
             grace_secs: default_grace_secs(),
             raft_storage: default_raft_storage(),
             raft_storage_class: None,
+            backup: None,
         }
     }
+}
+
+/// Declarative backup policy for the serving fleet (#808).
+///
+/// The runner contract lives in `libs/service-backup`
+/// (`BackupDestination`/`BackupSink`/`run_backup_once`); `lumen backup` parses
+/// `destination` back into a `service_backup::BackupDestination` via
+/// `from_uri`. This CRD-facing shape carries the destination as a URI string
+/// (rather than the shared tagged-union `BackupDestination` schema, which
+/// Kubernetes structural schemas cannot represent — a `prefix` property
+/// shared across variants), mirroring keep's `KeepBackupSpec` (#776).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
+pub struct ServingBackupSpec {
+    /// Cron schedule (`CronJob.spec.schedule`) for the backup runner.
+    pub schedule: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    pub destination: String,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Absent keeps everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_secs: Option<u64>,
+    /// Name of a Secret whose `token` key holds a bearer token with
+    /// `Role::Admin` on `*`, injected into the CronJob as `LUMEN_BACKUP_TOKEN`.
+    /// Needed when `spec.auth: required`; ignored (the admin API needs no
+    /// token) when `spec.auth: off`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_token_secret: Option<String>,
 }
 
 /// HPA bounds for the serving fleet.

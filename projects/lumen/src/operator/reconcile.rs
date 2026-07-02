@@ -26,13 +26,13 @@ impl ManagedService for Lumen {
     }
 
     fn readiness_targets(&self) -> Vec<ReadinessTarget> {
+        // The serving fleet is always a StatefulSet (render::render), whether
+        // or not raft consensus (`replicasPerShard > 1`) is active.
         let name = self.name_any();
-        let kind = if self.spec.replicas_per_shard > 1 {
-            "StatefulSet"
-        } else {
-            "Deployment"
-        };
-        vec![ReadinessTarget { kind, name }]
+        vec![ReadinessTarget {
+            kind: "StatefulSet",
+            name,
+        }]
     }
 
     fn status_patch(&self, ready: &ReadyFacts) -> serde_json::Value {

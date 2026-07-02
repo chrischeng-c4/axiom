@@ -36,6 +36,12 @@ semantic_domain:
           - name: "json_schema_json"
             kind: "function"
             public: true
+          - name: "token_registry_schema"
+            kind: "function"
+            public: true
+          - name: "token_registry_example_json"
+            kind: "function"
+            public: true
           - name: "query_shapes"
             kind: "function"
             public: true
@@ -43,6 +49,9 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "llm_outline_md"
+            kind: "function"
+            public: true
+          - name: "llm_auth_md"
             kind: "function"
             public: true
           - name: "llm_workflow_md"
@@ -55,6 +64,9 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "llm_recipes_md"
+            kind: "function"
+            public: true
+          - name: "llm_storage_md"
             kind: "function"
             public: true
         source_evidence_node:
@@ -562,6 +574,9 @@ semantic_domain:
           - name: "auth"
             kind: "module"
             public: true
+          - name: "backup"
+            kind: "module"
+            public: true
           - name: "backup_sink"
             kind: "module"
             public: true
@@ -628,9 +643,6 @@ semantic_domain:
           - name: "wal_nats"
             kind: "module"
             public: true
-          - name: "wal_relay"
-            kind: "module"
-            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -643,6 +655,12 @@ semantic_domain:
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "WILDCARD_COLLECTION"
+            kind: "constant"
+            public: false
+          - name: "TOKEN_REGISTRY_FILE_ENV"
+            kind: "constant"
+            public: false
+          - name: "LEGACY_TOKENS_ENV"
             kind: "constant"
             public: false
           - name: "Role"
@@ -664,6 +682,18 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "lookup"
+            kind: "function"
+            public: false
+          - name: "LumenVerifier"
+            kind: "struct"
+            public: true
+          - name: "new"
+            kind: "function"
+            public: true
+          - name: "authenticate"
+            kind: "function"
+            public: false
+          - name: "required"
             kind: "function"
             public: false
           - name: "AuthContext"
@@ -880,6 +910,23 @@ semantic_domain:
           - name: "FlatCpuIndex"
             kind: "struct"
             public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen/src"
+      - path: "projects/lumen/src/backup.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "run_backup"
+            kind: "function"
+            public: true
+          - name: "tests"
+            kind: "module"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1585,68 +1632,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/lumen/src"
-      - path: "projects/lumen/src/wal_relay.rs"
-        language: "rust"
-        ownership_state: "handwrite"
-        generator_primitives: ["config_surface", "data_model", "service_method"]
-        symbols:
-          - name: "RelayWal"
-            kind: "struct"
-            public: true
-          - name: "WAL_BINARY_FORMAT"
-            kind: "constant"
-            public: false
-          - name: "WAL_BINARY_PREFIX"
-            kind: "constant"
-            public: false
-          - name: "WAL_BINARY_FORMAT_KEY"
-            kind: "constant"
-            public: false
-          - name: "WAL_BINARY_BYTES_KEY"
-            kind: "constant"
-            public: false
-          - name: "next_client_id"
-            kind: "function"
-            public: false
-          - name: "default_subscriber_id"
-            kind: "function"
-            public: false
-          - name: "default_publisher_id"
-            kind: "function"
-            public: false
-          - name: "wal_payload"
-            kind: "function"
-            public: false
-          - name: "decode_wal_payload"
-            kind: "function"
-            public: false
-          - name: "decode_binary_wal_payload"
-            kind: "function"
-            public: false
-          - name: "new"
-            kind: "function"
-            public: true
-          - name: "new_with_subscriber_id"
-            kind: "function"
-            public: true
-          - name: "new_with_ids"
-            kind: "function"
-            public: true
-          - name: "publish"
-            kind: "function"
-            public: false
-          - name: "subscribe"
-            kind: "function"
-            public: false
-          - name: "latest_seq"
-            kind: "function"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/lumen/src"
       - path: "projects/lumen/src/api.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -1706,6 +1691,18 @@ semantic_domain:
           - name: "ApiDoc"
             kind: "struct"
             public: true
+          - name: "SecurityAddon"
+            kind: "struct"
+            public: false
+          - name: "modify"
+            kind: "function"
+            public: false
+          - name: "is_draining"
+            kind: "function"
+            public: false
+          - name: "render_metrics"
+            kind: "function"
+            public: false
           - name: "router"
             kind: "function"
             public: true
@@ -1760,18 +1757,6 @@ semantic_domain:
           - name: "reindex_stream"
             kind: "function"
             public: false
-          - name: "drop_field"
-            kind: "function"
-            public: false
-          - name: "backup"
-            kind: "function"
-            public: false
-          - name: "LocalBackupRequest"
-            kind: "struct"
-            public: false
-          - name: "default_backup_prefix"
-            kind: "function"
-            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1800,7 +1785,7 @@ semantic_domain:
             public: true
           - name: "install_default_crypto_provider"
             kind: "function"
-            public: false
+            public: true
           - name: "load_cert_chain"
             kind: "function"
             public: false
@@ -1822,26 +1807,7 @@ semantic_domain:
       - path: "projects/lumen/src/backup_sink.rs"
         language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method"]
-        symbols:
-          - name: "LocalFsSink"
-            kind: "struct"
-            public: true
-          - name: "new"
-            kind: "function"
-            public: true
-          - name: "put"
-            kind: "function"
-            public: false
-          - name: "prune"
-            kind: "function"
-            public: false
-          - name: "identity"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
-            public: false
+        generator_primitives: ["source_unit"]
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1950,6 +1916,12 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/lumen/src/backup.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
   - path: "projects/lumen/src/coordinator.rs"
     action: modify
     section: schema
@@ -2004,14 +1976,6 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/lumen/src/wal_relay.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:standardize-gap-projects-lumen-src-wal-relay-rs>"
   - path: "projects/lumen/src/api.rs"
     action: modify
     section: schema

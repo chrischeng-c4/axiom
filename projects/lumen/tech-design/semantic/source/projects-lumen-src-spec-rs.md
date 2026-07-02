@@ -65,8 +65,80 @@ pub fn openapi_yaml() -> String {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
-    serde_json::to_string_pretty(&json!({ "components": api.components }))
-        .expect("components serialize to JSON")
+    serde_json::to_string_pretty(&json!({
+        "components": api.components,
+        "operationalSchemas": {
+            "TokenRegistry": token_registry_schema()
+        }
+    }))
+    .expect("components serialize to JSON")
+}
+
+/// The deployment-side token registry file schema. This is not an HTTP request
+/// body, so it lives under `operationalSchemas` in `lumen spec --format
+/// json-schema` and in `lumen llm auth`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn token_registry_schema() -> Value {
+    json!({
+        "description": "JSON object mounted as token-registry.json; each property name is the bearer token string.",
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "required": ["subject"],
+            "additionalProperties": false,
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "description": "Human-readable or service-account identity attached to requests authenticated with this token."
+                },
+                "roles": {
+                    "type": "object",
+                    "description": "Map collection id to the maximum role. The literal key `*` grants the role across all collections.",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": ["read", "write", "admin"]
+                    },
+                    "default": {}
+                }
+            }
+        },
+        "examples": [
+            {
+                "admin-token": {
+                    "subject": "platform-admin",
+                    "roles": { "*": "admin" }
+                },
+                "product-reader-token": {
+                    "subject": "products-reader",
+                    "roles": { "products": "read" }
+                },
+                "product-writer-token": {
+                    "subject": "products-writer",
+                    "roles": { "products": "write" }
+                }
+            }
+        ]
+    })
+}
+
+/// Pretty JSON example for `token-registry.json`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn token_registry_example_json() -> String {
+    serde_json::to_string_pretty(&json!({
+        "admin-token": {
+            "subject": "platform-admin",
+            "roles": { "*": "admin" }
+        },
+        "product-reader-token": {
+            "subject": "products-reader",
+            "roles": { "products": "read" }
+        },
+        "product-writer-token": {
+            "subject": "products-writer",
+            "roles": { "products": "write" }
+        }
+    }))
+    .expect("token registry example serializes")
 }
 
 /// A cookbook of canonical query shapes. Each entry is a ready-to-POST
@@ -175,12 +247,82 @@ Use the smallest topic that answers the task:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
 - `lumen llm quickstart` — copy-paste local create → index → search flow.
+- `lumen llm auth` — bearer-token auth contract, token-registry.json schema,
+  Secret Manager / Kubernetes Secret projection, and client header wiring.
+- `lumen llm storage` — operator storage/ops contract: the serving fleet is
+  always a StatefulSet with a durable PVC-backed WAL, including at
+  `replicasPerShard: 1`.
 - `lumen llm recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
 "#
     .to_string()
+}
+
+/// Bearer-token auth + deployment secret contract (`lumen llm auth`) as
+/// Markdown.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn llm_auth_md() -> String {
+    format!(
+        r#"# lumen auth
+
+## Runtime contract
+Production servers should run with:
+
+```env
+LUMEN_AUTH=required
+LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
+```
+
+Clients only need:
+
+```env
+LUMEN_URL=http://lumen.<namespace>.svc.cluster.local:7373
+LUMEN_TOKEN=<token>
+```
+
+Send the token on data/admin API calls:
+
+```http
+Authorization: Bearer <LUMEN_TOKEN>
+```
+
+Probe/spec/scrape routes stay auth-exempt: `/healthz`, `/readyz`, `/metrics`,
+`/openapi.json`, and `/docs`.
+
+## token-registry.json
+The registry file is a JSON object. Each top-level key is the exact bearer token
+string. Each value declares the authenticated subject and optional collection
+roles:
+
+```json
+{}
+```
+
+Role values are `read`, `write`, or `admin`; `admin` covers `write` and `read`,
+and `write` covers `read`. Role keys are collection ids. The literal key `*`
+grants the role across all collections. A missing collection role rejects that
+request with 403.
+
+## Kubernetes / cloud secret ownership
+The Lumen CRD field `spec.tokensSecret` names a Kubernetes Secret containing a
+`token-registry.json` key. The operator mounts that key at
+`/var/run/secrets/lumen/token-registry.json` and sets
+`LUMEN_TOKEN_REGISTRY_FILE` for serving pods when `auth: required`.
+
+On GKE, keep GCP Secret Manager as the source of truth and materialize the file
+through External Secrets Operator, Secret Store CSI, or a platform-approved
+Secret sync. Lumen reads the registry at startup; token rotation should roll the
+serving pods or use a Secret reloader controller.
+
+## Generated clients
+Generated Python clients accept either `auth_token="<token>"` or
+`default_headers={{"Authorization": "Bearer <token>"}}` in `Client` and
+`AsyncClient`. Other clients send the same `Authorization: Bearer` header.
+"#,
+        token_registry_example_json()
+    )
 }
 
 /// The agent workflow model (`lumen llm workflow`) as Markdown — the mental
@@ -367,8 +509,199 @@ pub fn llm_recipes_md() -> String {
     }
     out
 }
-// CODEGEN-END
 
+/// Operator storage/ops contract (`lumen llm storage`) as Markdown: the
+/// serving fleet's workload kind and PVC durability guarantee, independent of
+/// `replicasPerShard`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn llm_storage_md() -> String {
+    r#"# lumen storage
+
+## The serving fleet is always a StatefulSet
+The operator (`lumen::operator::render`) renders the serving fleet as a
+Kubernetes `StatefulSet` unconditionally — never a `Deployment` — regardless
+of `spec.replicasPerShard`. Every serving pod mounts a durable
+`volumeClaimTemplates`-backed PVC named `raft` at `/var/lib/lumen`, sized by
+`spec.serving.raftStorage` (default `20Gi`) and optionally pinned to
+`spec.serving.raftStorageClass`.
+
+This means a pod reschedule, eviction, or node loss never wipes the WAL —
+including for a `replicasPerShard: 1` deployer who doesn't want or need raft
+consensus. `replicasPerShard` only changes whether the fleet runs raft
+consensus; it never changes whether the WAL is durable.
+
+## `replicasPerShard: 1` (default) — single member, no raft consensus
+- One StatefulSet member per shard, with the durable `raft` PVC.
+- No raft peer-identity env — the pod runs a local WAL with no consensus
+  overhead.
+- A `HorizontalPodAutoscaler` (`scaleTargetRef.kind: StatefulSet`) still owns
+  the live replica count between `spec.serving.autoscaling.minReplicas` and
+  `maxReplicas`, exactly as it did before the fleet became a StatefulSet.
+
+## `replicasPerShard > 1` — raft-HA
+- Fixed replica count `shardCount * replicasPerShard` (raft needs a known,
+  stable peer set) — no HPA is attached.
+- Each pod additionally gets the downward-API env quartet
+  `raft_host::cluster::ClusterTopology::from_env` reads (`POD_NAME`,
+  `POD_NAMESPACE`, `REPLICAS_PER_SHARD`, `VOTER_COUNT`,
+  `LUMEN_HEADLESS_SERVICE`) and a stable DNS identity via the serving
+  headless Service (`<name>-headless`), required for the StatefulSet's
+  `serviceName`.
+- This regime, including the PVC, is unchanged from before `replicasPerShard:
+  1` also started getting a StatefulSet.
+
+## Snapshot / backup (#808)
+The durable `raft` PVC protects against pod reschedule/eviction/node loss,
+but it is not an off-node backup: it does not protect against a bad write, a
+namespace deletion, or a lost PVC/PV. Lumen already exposes a safe,
+consistent, manual snapshot-restore procedure over its admin API; the
+operator can optionally schedule it.
+
+### Manual admin API (always available)
+Every serving node — regardless of `replicasPerShard` — answers three admin
+routes, each requiring `Role::Admin` on `*` (the wildcard subject, not a
+per-collection grant) when `spec.auth: required`:
+
+- `GET /admin/backup` — snapshots the live engine (`Engine::snapshot()`, the
+  same quiesce-free call the raft snapshotter itself uses — no separate
+  flush/quiesce step needed) and returns it as a `SnapshotV1` JSON document.
+  Safe to call against any replica at any time; it does not pause writes.
+- `POST /admin/backup/local` — same snapshot, written directly to a path on
+  the pod's own filesystem via a `LocalFsSink` (`{"path": "...", "prefix":
+  "lumen-backup"}` request body). Useful when the pod already has a mounted
+  destination volume.
+- `POST /admin/restore` — replaces *all* engine state with a `SnapshotV1`
+  document (the same shape `/admin/backup` returns). Destructive; there is no
+  merge or partial-restore mode.
+
+These three routes are the safe procedure for ad hoc or scripted
+snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
+like, push back with `POST /admin/restore` to recover.
+
+### Optional scheduled backup: `spec.serving.backup`
+Set `spec.serving.backup` on the CR to make the operator render a
+`<name>-backup` `batch/v1` CronJob that runs `lumen backup` on a schedule.
+This adds no new snapshot mechanism — it only *schedules and transports* the
+same `GET /admin/backup` bytes above to a destination:
+
+```yaml
+spec:
+  serving:
+    backup:
+      schedule: "0 * * * *"        # CronJob.spec.schedule
+      destination: "s3://my-bucket/lumen-backups"  # file:// | s3:// | gs://
+      retentionSecs: 604800        # optional; drop objects older than this
+      adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
+```
+
+Omitting `spec.serving.backup` renders no CronJob; the admin API above is
+still reachable manually either way.
+
+### `lumen backup` CLI verb
+The CronJob (and any ad hoc invocation) drives the same verb:
+
+```
+lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 \
+  --dest s3://my-bucket/lumen-backups \
+  [--token <admin-bearer-token>] \
+  [--retention-secs 604800]
+```
+
+`--url` points at the serving Service (not a specific pod); `--token` falls
+back to the `LUMEN_BACKUP_TOKEN` env var, which is how the CronJob injects
+`spec.serving.backup.adminTokenSecret` (`secretKeyRef` into that env var —
+skip it when `spec.auth: off`). The verb GETs `/admin/backup`, hands the
+bytes to the `libs/service-backup` destination sink named by `--dest`, prunes
+by `--retention-secs` if given, and prints the resulting `BackupRunResult` as
+JSON. It needs the `backup` Cargo feature (pulled in transitively by
+`operator`; the published image includes both).
+
+## Resizing `raftStorage` (#809)
+`spec.serving.raftStorage` is baked into the StatefulSet's
+`volumeClaimTemplates` at first apply. Kubernetes treats
+`volumeClaimTemplates` as **immutable** after creation, so editing
+`spec.serving.raftStorage` on a live CR and letting the operator reconcile
+does **not** resize anything — the StatefulSet `apply` is a silent no-op for
+that field, and the pods' existing PVCs stay at their original size. This is
+true for every `replicasPerShard` value, including the default
+`replicasPerShard: 1` single-member topology.
+
+Growing storage requires patching each per-pod PVC directly:
+
+```
+kubectl patch pvc raft-<name>-<n> --type merge \
+  -p '{"spec":{"resources":{"requests":{"storage":"<new size>"}}}}'
+```
+
+This only succeeds if the PVC's bound `StorageClass` has
+`allowVolumeExpansion: true`; otherwise the API server rejects the patch.
+Kubernetes does not support shrinking a bound PVC — a smaller
+`raftStorage` value only affects newly created PVCs (a fresh instance or a
+recreated pod), never an existing one.
+
+### `lumen k8s operator resize-storage` CLI verb
+Rather than patching PVCs by hand, run the automated form of the same
+procedure:
+
+```
+lumen k8s operator resize-storage --namespace <ns> --name <name> [--dry-run]
+```
+
+This fetches the named `Lumen` CR's declared `spec.serving.raftStorage`,
+lists that instance's live `raft-<name>-<n>` PVCs, and for each PVC whose
+current size is smaller: checks the bound `StorageClass.allowVolumeExpansion`
+and, when it's `true`, patches only `spec.resources.requests.storage`
+(`Patch::Merge`, no other PVC field touched) — unless `--dry-run` is given,
+in which case it reports what it would do without patching anything. PVCs
+already at the desired size, PVCs whose `StorageClass` does not allow
+expansion, and shrink requests are reported but never mutated. It needs the
+`operator` Cargo feature (`--features operator`), the same feature gate as
+`lumen k8s operator run`.
+
+## Choosing an SSD-backed StorageClass for `raftStorage` (#810)
+`spec.serving.raftStorageClass` (`ServingSpec.raft_storage_class` in
+`crd.rs`) is a free-text Kubernetes StorageClass name. Leaving it unset does
+not mean "no StorageClass" — it means "cluster default," and on most managed
+Kubernetes offerings **the cluster default is not SSD-backed**. Raft/WAL
+write latency is sensitive to disk performance, so a deployer who cares
+about that latency should set `raftStorageClass` explicitly rather than
+relying on whatever the cluster's default happens to be.
+
+There is no `serving.ssd` boolean toggle and no operator-side
+cloud-provider detection — `raftStorageClass` is the sole mechanism, by
+design (see Non-goals below). The table below is informational reference
+only; verify the actual StorageClass names available on your cluster
+(`kubectl get storageclass`) before setting this field, since names and
+defaults vary by provider, region, and cluster version.
+
+| Provider | Common default (usually NOT SSD) | Example SSD-backed class(es) |
+|----------|-----------------------------------|-------------------------------|
+| GKE | `standard-rwo` (pd-balanced) | `premium-rwo`, `pd-ssd` |
+| EKS | `gp2` (older clusters) | `gp3` (tune `iops`/`throughput` parameters) |
+| AKS | `default`/`managed-csi` (Standard SSD tier) | `managed-csi-premium` |
+| Self-hosted / on-prem | varies by CSI driver — no universal default | ask your cluster operator; there is no cross-cluster naming convention |
+
+```yaml
+spec:
+  serving:
+    raftStorageClass: premium-rwo   # example: GKE SSD-backed class
+```
+
+### Non-goals: no `serving.ssd` toggle, no provider-detection
+A `serving.ssd: true` boolean that maps to a hard-coded per-provider
+StorageClass name was considered and explicitly rejected: cloud-provider
+SSD class names change and vary across regions/versions, a hard-coded
+mapping cannot know a given cluster's actual class names, it would not
+cover on-prem/self-hosted Kubernetes at all, and a silently-wrong guess is
+worse for a raft/WAL workload than no guess. A second toggle field
+competing with the existing free-text `raftStorageClass` would also add
+CRD validation ambiguity (which one wins if both are set?) for no real
+gain. `raftStorageClass` already lets a deployer set any StorageClass name
+they want — the fix here is this guidance, not new API surface.
+"#
+    .to_string()
+}
+// CODEGEN-END
 ````
 
 ## Changes
@@ -379,8 +712,11 @@ changes:
   - path: projects/lumen/src/spec.rs
     action: modify
     section: rust-source-unit
-    impl_mode: codegen
+    impl_mode: hand-written
     description: |
-      rust-source-unit (td_ast) source for `projects/lumen/src/spec.rs` captured during lumen
-      standardization onto the per-file codegen ladder.
+      #809: add a "Resizing `raftStorage`" section to `llm_storage_md()`
+      documenting StatefulSet `volumeClaimTemplates` immutability, the manual
+      `kubectl patch pvc` procedure and its `allowVolumeExpansion: true`
+      precondition, that PVC shrink is unsupported, and the new
+      `lumen k8s operator resize-storage` CLI verb.
 ```

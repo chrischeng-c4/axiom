@@ -6,10 +6,12 @@
 //! owner reference), and `spec`/`data`. This is the operator's source of truth
 //! and its primary test surface: assert the rendered objects, no kind needed.
 //!
-//! The objects mirror `k8s/base` + the staging/prod overlays exactly: serving
-//! Deployment or StatefulSet, Service, ConfigMap, HPA when applicable, PDB, and
-//! ServiceAccount. The reconcile loop in [`super::reconcile`] server-side-applies
-//! whatever this returns.
+//! The objects mirror `k8s/base` + the staging/prod overlays exactly: a
+//! serving StatefulSet (always — its `volumeClaimTemplates`-backed `raft` PVC
+//! is the WAL's only durable home, even at `replicasPerShard:1`), its
+//! headless Service, a ClusterIP Service, ConfigMap, HPA when applicable,
+//! PDB, and ServiceAccount. The reconcile loop in [`super::reconcile`]
+//! server-side-applies whatever this returns.
 
 use serde_json::{json, Value};
 
@@ -20,6 +22,7 @@ const APP: &str = "lumen";
 const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
 const CLIENT_PORT: i32 = 7373;
+const BACKUP_COMPONENT: &str = "backup";
 const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
@@ -97,28 +100,105 @@ fn meta(name: &str, ns: &str, labels: Value, owner: &Option<Value>) -> Value {
 
 /// Render every child object for `lumen`, in dependency order (namespace-scoped
 /// config first, then workloads).
+///
+/// The serving fleet is always a StatefulSet — with its durable
+/// `volumeClaimTemplates`-backed `raft` PVC and headless Service — regardless
+/// of `replicasPerShard`. `replicasPerShard <= 1` means a single member with
+/// no raft consensus (HPA still owns the live replica count); `> 1` means
+/// raft-HA with a fixed peer set (no HPA).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let mut out = vec![service_account(lumen), serving_configmap(lumen)];
-    if lumen.spec.replicas_per_shard > 1 {
-        // raft-HA serving: a StatefulSet (stable peer identity) + its headless
-        // Service; no HPA (raft needs a fixed membership).
-        out.push(serving_statefulset(lumen));
-        out.push(serving_headless_service(lumen));
-        out.push(serving_service(lumen));
-        out.push(serving_pdb(lumen));
-    } else {
-        // stateless serving: a Deployment + HPA (today's default).
-        out.push(serving_deployment(lumen));
-        out.push(serving_service(lumen));
+    out.push(serving_statefulset(lumen));
+    out.push(serving_headless_service(lumen));
+    out.push(serving_service(lumen));
+    if lumen.spec.replicas_per_shard <= 1 {
+        // Single member, no raft consensus: HPA owns the live replica count
+        // (unchanged from the pre-StatefulSet-unconditional Deployment path).
         out.push(serving_hpa(lumen));
-        out.push(serving_pdb(lumen));
     }
+    // raft-HA (`replicasPerShard > 1`): no HPA — raft needs a fixed membership.
+    out.push(serving_pdb(lumen));
     if lumen.spec.observability {
         out.push(service_monitor(lumen));
         out.push(prometheus_rule(lumen));
     }
+    // Optional scheduled backup runner: only when a policy is configured (#808).
+    if let Some(cj) = backup_cron_job(lumen) {
+        out.push(cj);
+    }
     out
+}
+
+/// The optional backup CronJob (#808): rendered only when
+/// `spec.serving.backup` is set. Lumen already produces a consistent
+/// point-in-time snapshot over HTTP (`GET /admin/backup`, see
+/// `projects/lumen/src/api.rs`); this CronJob adds nothing new to the
+/// WAL/snapshot path, it only *schedules and transports* that existing
+/// endpoint's bytes to a destination via `lumen backup`
+/// (`libs/service-backup`). The shared [`operator::render::cron_job`] helper
+/// stays manifest-only.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+fn backup_cron_job(lumen: &Lumen) -> Option<Value> {
+    let policy = lumen.spec.serving.backup.as_ref()?;
+    let name = instance(lumen);
+    let ns = namespace(lumen);
+    let cx = RenderCtx {
+        app: APP,
+        manager: "lumen-operator",
+        api_version: API_VERSION,
+        kind: KIND,
+        name: &name,
+        ns: &ns,
+        owner: owner_ref(lumen),
+    };
+    let cron_name = format!("{name}-backup");
+    // Cluster-DNS FQDN of the serving ClusterIP Service (`serving_service`),
+    // reachable from any namespace's CronJob pod regardless of the operator's
+    // own DNS search suffix.
+    let url = format!("http://{name}.{ns}.svc.cluster.local:{CLIENT_PORT}");
+    let mut args = vec![
+        "backup".to_string(),
+        "--url".to_string(),
+        url,
+        "--dest".to_string(),
+        policy.destination.clone(),
+    ];
+    if let Some(secs) = policy.retention_secs {
+        args.push("--retention-secs".to_string());
+        args.push(secs.to_string());
+    }
+    let mut env = Vec::new();
+    if let Some(secret) = &policy.admin_token_secret {
+        env.push(json!({
+            "name": "LUMEN_BACKUP_TOKEN",
+            "valueFrom": { "secretKeyRef": { "name": secret, "key": "token" } },
+        }));
+    }
+    let image_pull_policy = lumen
+        .spec
+        .image_pull_policy
+        .clone()
+        .unwrap_or_else(|| "IfNotPresent".to_string());
+    Some(operator::render::cron_job(operator::render::CronJob {
+        cx: &cx,
+        name: &cron_name,
+        component: BACKUP_COMPONENT,
+        schedule: &policy.schedule,
+        image: lumen.spec.image.as_str(),
+        image_pull_policy: &image_pull_policy,
+        command: vec!["lumen".into()],
+        args,
+        env,
+        env_from: vec![],
+        volumes: vec![],
+        volume_mounts: vec![],
+        service_account_name: Some(&name),
+        cpu: "100m",
+        memory: "128Mi",
+        successful_jobs_history_limit: 3,
+        failed_jobs_history_limit: 3,
+    }))
 }
 
 /// The downward-API env the raft-HA serving pods carry on top of `serving_env`:
@@ -134,16 +214,21 @@ fn downward_api_env(lumen: &Lumen) -> Vec<Value> {
     ]
 }
 
-/// The raft-HA serving fleet: the serving Deployment recast as a StatefulSet —
-/// stable per-pod identity for raft peers, no HPA, replicas = shards × replicas,
-/// + the downward-API env. Rendered instead of the Deployment when
-/// `replicasPerShard > 1`. Derived from [`serving_deployment`] so the pod
-/// template (image/probes/security/env) stays in one place.
+/// The serving fleet: the serving pod template recast as a StatefulSet —
+/// stable per-pod identity + a durable `raft` PVC mounted at
+/// `/var/lib/lumen`, rendered unconditionally. Derived from
+/// [`serving_deployment`] so the pod template (image/probes/security/env)
+/// stays in one place. At `replicasPerShard > 1` (raft-HA) it additionally
+/// gets a fixed replica count (`shard_count * replicas_per_shard`) and the
+/// raft peer-identity downward-API env; at `replicasPerShard <= 1` it's a
+/// single member with no raft consensus and the replica count stays owned by
+/// the HPA (same floor `serving_deployment` sets).
 fn serving_statefulset(lumen: &Lumen) -> Value {
     let name = instance(lumen);
     let mut sts = serving_deployment(lumen);
     sts["kind"] = json!("StatefulSet");
     let s = &lumen.spec.serving;
+    let raft_ha = lumen.spec.replicas_per_shard > 1;
     {
         let spec = sts["spec"]
             .as_object_mut()
@@ -152,13 +237,20 @@ fn serving_statefulset(lumen: &Lumen) -> Value {
         spec.insert("serviceName".into(), json!(format!("{name}-headless")));
         spec.insert("podManagementPolicy".into(), json!("Parallel"));
         spec.insert("updateStrategy".into(), json!({ "type": "RollingUpdate" }));
-        spec.insert(
-            "replicas".into(),
-            json!(lumen.spec.shard_count * lumen.spec.replicas_per_shard),
-        );
+        if raft_ha {
+            // Raft needs a fixed, known peer set; the HPA is not attached in
+            // this regime (see `render`).
+            spec.insert(
+                "replicas".into(),
+                json!(lumen.spec.shard_count * lumen.spec.replicas_per_shard),
+            );
+        }
     }
-    if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
-        env.extend(downward_api_env(lumen));
+    if raft_ha {
+        if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut()
+        {
+            env.extend(downward_api_env(lumen));
+        }
     }
     if let Some(mounts) =
         sts["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].as_array_mut()
@@ -386,7 +478,10 @@ fn serving_hpa(lumen: &Lumen) -> Value {
         "kind": "HorizontalPodAutoscaler",
         "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
         "spec": {
-            "scaleTargetRef": { "apiVersion": "apps/v1", "kind": "Deployment", "name": name },
+            // The serving fleet is always a StatefulSet (see `render`); the
+            // HPA is only attached at replicasPerShard <= 1 (single member,
+            // no raft consensus), where it still owns the live replica count.
+            "scaleTargetRef": { "apiVersion": "apps/v1", "kind": "StatefulSet", "name": name },
             "minReplicas": a.min_replicas,
             "maxReplicas": a.max_replicas,
             "metrics": [{

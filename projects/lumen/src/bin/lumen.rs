@@ -2,7 +2,8 @@
 // CODEGEN-BEGIN
 //! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
 //! `llm` (offline integration contract + agent topics), and `k8s` (operator
-//! + CRD generation). Agents start here: `lumen llm outline`.
+//! + CRD generation). Agents start here: `lumen llm --topic outline`.
+//! @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
@@ -78,6 +79,14 @@ enum Command {
     /// files a diagnostics-rich issue tagged `project:lumen`.
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
+    /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
+    /// and ship it to a destination (`file://`, `s3://`, `gs://`) via
+    /// `libs/service-backup`. No new snapshot mechanism — this only
+    /// schedules and transports the existing admin API. Typically invoked by
+    /// the operator's optional backup CronJob (`spec.serving.backup`, see
+    /// `lumen llm --topic storage`), but works standalone. Requires the `backup`
+    /// feature (pulled in transitively by `operator`).
+    Backup(BackupArgs),
 }
 
 #[derive(clap::Args)]
@@ -154,6 +163,13 @@ enum K8sOperatorCmd {
     Run,
     /// Render operator namespace/RBAC/deployment YAML.
     Render(K8sOperatorRenderArgs),
+    /// One-shot: grow a running instance's `raft-<name>-<n>` PVCs to match
+    /// its CR's `spec.serving.raftStorage` (#809). StatefulSet
+    /// `volumeClaimTemplates` are immutable, so a CR edit alone never
+    /// resizes existing PVCs; this patches them directly when the bound
+    /// `StorageClass` allows expansion. Never shrinks (unsupported by
+    /// Kubernetes) and never mutates the CR itself.
+    ResizeStorage(K8sOperatorResizeStorageArgs),
 }
 
 #[derive(clap::Args)]
@@ -165,6 +181,19 @@ struct K8sOperatorRenderArgs {
     /// `operator.yaml`.
     #[arg(long)]
     out: Option<PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorResizeStorageArgs {
+    /// Namespace of the `Lumen` instance to resize.
+    #[arg(long)]
+    namespace: String,
+    /// `Lumen` CR name.
+    #[arg(long)]
+    name: String,
+    /// Report what would be patched without mutating any PVC.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(clap::Args)]
@@ -298,6 +327,29 @@ struct IssueCreateArgs {
     yes: bool,
 }
 
+/// `lumen backup` flags (#808): pulls a snapshot over HTTP from a running
+/// serving fleet and ships it to a destination via `libs/service-backup`.
+#[derive(clap::Args)]
+struct BackupArgs {
+    /// Base URL of a running lumen serving node, e.g.
+    /// `http://<name>.<namespace>.svc.cluster.local:7373` (what the operator's
+    /// backup CronJob passes) or `http://localhost:7373` for ad hoc use.
+    #[arg(long)]
+    url: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    #[arg(long)]
+    dest: String,
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
+    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    token: Option<String>,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Omit to keep everything.
+    #[arg(long)]
+    retention_secs: Option<u64>,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
     /// Topic map for agent context selection (default).
@@ -310,6 +362,9 @@ enum LlmTopic {
     Quickstart,
     /// Bearer-token auth, token registry schema, and Secret projection.
     Auth,
+    /// Operator storage/ops contract: StatefulSet + durable PVC-backed WAL,
+    /// including at `replicasPerShard: 1`.
+    Storage,
     /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
     Recipes,
 }
@@ -553,6 +608,7 @@ async fn main() -> Result<()> {
                 LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
                 LlmTopic::Auth => lumen::spec::llm_auth_md(),
+                LlmTopic::Storage => lumen::spec::llm_storage_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
             let out = match args.format {
@@ -578,6 +634,9 @@ async fn main() -> Result<()> {
                     LlmTopic::Auth => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "auth", "markdown": md }),
                     )?,
+                    LlmTopic::Storage => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "storage", "markdown": md }),
+                    )?,
                 },
             };
             println!("{out}");
@@ -598,6 +657,7 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Issue(args) => issue(args).await,
+        Command::Backup(args) => dispatch_backup(args).await,
     }
 }
 
@@ -718,9 +778,10 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
     }
 }
 
-/// `lumen k8s` — cluster artifacts split by lifecycle layer. Only
-/// `operator run` needs kube-rs at runtime; the render paths are offline and
-/// work from the static manifests/CR templates embedded in the binary.
+/// `lumen k8s` — cluster artifacts split by lifecycle layer. `operator run`
+/// and `operator resize-storage` need kube-rs at runtime; the render paths
+/// are offline and work from the static manifests/CR templates embedded in
+/// the binary.
 async fn k8s(args: K8sArgs) -> Result<()> {
     match args.cmd {
         K8sCmd::Crd(args) => match args.cmd {
@@ -732,6 +793,7 @@ async fn k8s(args: K8sArgs) -> Result<()> {
                 let yaml = render_operator_yaml(&args.namespace);
                 write_or_print(args.out.as_deref(), "operator.yaml", &yaml)
             }
+            K8sOperatorCmd::ResizeStorage(args) => resize_storage(args).await,
         },
         K8sCmd::Instance(args) => match args.cmd {
             K8sInstanceCmd::Render(args) => {
@@ -760,6 +822,29 @@ async fn run_operator() -> Result<()> {
     )
 }
 
+/// `lumen k8s operator resize-storage` (#809): one-shot detect-and-patch for
+/// the `raft` PVC's `volumeClaimTemplates` immutability gap — see
+/// `lumen::operator::resize::resize_instance`.
+#[cfg(feature = "operator")]
+async fn resize_storage(args: K8sOperatorResizeStorageArgs) -> Result<()> {
+    let client = kube::Client::try_default()
+        .await
+        .context("build a kube client from the in-cluster/kubeconfig context")?;
+    let outcomes =
+        lumen::operator::resize::resize_instance(client, &args.namespace, &args.name, args.dry_run)
+            .await?;
+    println!("{}", serde_json::to_string_pretty(&outcomes)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "operator"))]
+async fn resize_storage(_args: K8sOperatorResizeStorageArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
+}
+
 #[cfg(feature = "operator")]
 fn crd_yaml() -> String {
     lumen::operator::crd_yaml()
@@ -768,6 +853,32 @@ fn crd_yaml() -> String {
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
     ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+}
+
+/// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
+/// `dest` via `libs/service-backup`, printing the resulting
+/// `BackupRunResult` as JSON. This is what the operator's optional backup
+/// CronJob (`spec.serving.backup`) invokes on a schedule; it works equally
+/// well ad hoc against any running serving node.
+#[cfg(feature = "backup")]
+async fn dispatch_backup(args: BackupArgs) -> Result<()> {
+    let dest = service_backup::BackupDestination::from_uri(&args.dest)?;
+    let retention = match args.retention_secs {
+        Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
+        None => service_backup::RetentionPolicy::default(),
+    };
+    let result = lumen::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without backup support; rebuild with \
+         `--features backup` (or `operator`, which pulls it in — the published \
+         image includes both)"
+    )
 }
 
 fn render_source_dockerfile() -> String {
