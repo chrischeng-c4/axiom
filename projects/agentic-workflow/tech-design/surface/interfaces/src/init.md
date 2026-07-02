@@ -1319,6 +1319,9 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         "score-build-release",
         "score-chat-listen",
         "score-fillback-main-specs",
+        // Removed: `aw td merge` no longer exists (LINEAR lifecycle;
+        // `aw td code-check` is the terminal step).
+        "aw-merge",
     ];
 
     for deprecated in &deprecated_skills {
@@ -2119,6 +2122,26 @@ auth_method = "cli"
                 skill
             );
         }
+    }
+
+    // REQ: R14 — install_claude_skills prunes the removed aw-merge skill
+    // (`aw td merge` no longer exists; the terminal step is code-check).
+    #[test]
+    fn test_install_claude_skills_prunes_aw_merge() {
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let aw_merge_dir = skills_dir.join("aw-merge");
+        fs::create_dir_all(&aw_merge_dir).unwrap();
+        fs::write(aw_merge_dir.join("SKILL.md"), "# aw-merge").unwrap();
+
+        install_claude_skills(&skills_dir).unwrap();
+
+        assert!(
+            !skills_dir.join("aw-merge").exists(),
+            "removed aw-merge skill should be pruned"
+        );
     }
 
     #[test]
