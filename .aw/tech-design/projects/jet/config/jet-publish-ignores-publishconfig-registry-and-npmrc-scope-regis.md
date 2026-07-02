@@ -90,7 +90,6 @@ requirement R3 {
   verifymethod: Test
 }
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
