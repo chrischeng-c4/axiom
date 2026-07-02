@@ -4209,8 +4209,8 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
 
 /// Terminal `aw td code-check <slug>` — advances a fresh `cb_genned` /
 /// `cb_filled` (or legacy `td_gen_coded`) issue to `td_merged`, then runs the
-/// resumable terminal step sequence (remote closure, `Cb-CodeCheck` trailer
-/// commit, workflow-lock release).
+/// resumable terminal step sequence (remote closure, `td-<slug>` branch
+/// landing, `Cb-CodeCheck` trailer commit, workflow-lock release).
 ///
 /// `td_merged` itself is accepted as a **retry** entry (issue #846): a prior
 /// run may have advanced phase + closed the issue via `backend.update` and
@@ -4220,8 +4220,7 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
 /// the marker gate and the phase-advancing `backend.update` are skipped
 /// (they already ran on the attempt that reached `td_merged`), and each
 /// remaining step is re-attempted idempotently — see the per-step comments
-/// below for how each one avoids redoing already-completed work. A future
-/// branch-landing step (#842) slots in between steps 1 and 2.
+/// below for how each one avoids redoing already-completed work.
 async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str) -> Result<bool> {
     use crate::cli::remote_push::maybe_push_remote;
     use crate::issues::types::{td_phase, ShipStatus};
@@ -4299,18 +4298,62 @@ async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str
     // is a safe, idempotent write — no separate "already happened" gate.
     maybe_push_remote(project_root, &closed_path, slug).await?;
 
-    // Step 2 — terminal lifecycle commit. NOT naturally idempotent: calling
+    // Step 2 — land the `td-<slug>` lifecycle branch (issue #842), ordered
+    // before the trailer commit so the trailer (and every implementation
+    // commit already on `td-<slug>`) end up reachable from the landing
+    // target instead of stranded on the lifecycle branch. No-ops for
+    // in-place/off-main lifecycles, which never create `td-<slug>`.
+    // Naturally idempotent: `land_td_lifecycle_branch` returns `NoBranch`
+    // once a prior run has already deleted the branch, so a retry after the
+    // trailer/lock steps failed does not attempt a second merge.
+    let landing = match land_td_lifecycle_branch(project_root, slug, &closed_issue) {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            let env = serde_json::json!({
+                "action": "error",
+                "slug": slug,
+                "message": format!(
+                    "td code-check landing failed: {}; resolve and re-run `aw td code-check {}`",
+                    e, slug
+                ),
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+    };
+
+    // Step 3 — terminal lifecycle commit. NOT naturally idempotent: calling
     // `commit_cb_code_check_terminal` unconditionally on every retry would
     // spam duplicate --allow-empty commits. Gate it on whether a commit with
     // the exact `Lifecycle-Slug` + `Lifecycle-Stage: Cb-CodeCheck` trailer
-    // pair already exists in the log.
+    // pair already exists in the log. Runs after landing, so it commits on
+    // the landing target (or on the current branch when there was nothing
+    // to land).
     if !terminal_commit_already_landed(project_root, slug)? {
         commit_cb_code_check_terminal(project_root, slug, &closed_path)?;
     }
 
-    // Step 3 — lock release. `complete_issue_lock` already no-ops when the
+    // Step 4 — lock release. `complete_issue_lock` already no-ops when the
     // lock label / projection is already clear, so it's safe to re-run.
     crate::cli::workflow_guard::complete_issue_lock(project_root, slug, "td").await?;
+
+    let landing_json = match &landing {
+        BranchLandingOutcome::NoBranch => serde_json::json!({
+            "status": "skipped",
+            "branch": null,
+            "target": null,
+        }),
+        BranchLandingOutcome::AlreadyMerged { branch, target } => serde_json::json!({
+            "status": "already_merged",
+            "branch": branch,
+            "target": target,
+        }),
+        BranchLandingOutcome::Landed { branch, target } => serde_json::json!({
+            "status": "landed",
+            "branch": branch,
+            "target": target,
+        }),
+    };
 
     let env = serde_json::json!({
         "action": "done",
@@ -4320,9 +4363,132 @@ async fn run_check_lifecycle_terminal(project_root: &std::path::Path, slug: &str
         } else {
             "td code-check passed; lifecycle closed"
         },
+        "landing": landing_json,
     });
     println!("{}", serde_json::to_string(&env)?);
     Ok(true)
+}
+
+/// Outcome of [`land_td_lifecycle_branch`] — reported in the terminal `done`
+/// envelope's `landing` field so `aw run` output is auditable (issue #842).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BranchLandingOutcome {
+    /// No local `td-<slug>` branch exists — an in-place/off-main lifecycle
+    /// never creates one (`td-<slug>` is only provisioned when the
+    /// lifecycle launched from `main`), so there is nothing to land.
+    NoBranch,
+    /// `td-<slug>` existed but its tip was already an ancestor of the
+    /// landing target (a previous run already merged it, or it was landed
+    /// by other means) — the stale branch was deleted and nothing else
+    /// happened.
+    AlreadyMerged { branch: String, target: String },
+    /// `td-<slug>` was merged into the landing target with a `--no-ff`
+    /// commit carrying `Lifecycle-Slug`/`Work-Item` trailers, then deleted.
+    /// HEAD ends on `target`.
+    Landed { branch: String, target: String },
+}
+
+/// Land the `td-<slug>` lifecycle branch (issue #842): resolve the branch's
+/// launch target via `merge_target::resolve_merge_target`, merge with
+/// `--no-ff` (mirroring the removed `run_merge` behaviour so the merge
+/// commit carries lifecycle trailers), and delete the branch. Returns
+/// `Ok(BranchLandingOutcome::NoBranch)` immediately when `td-<slug>` does
+/// not exist locally — the common case for in-place/off-main lifecycles.
+///
+/// Errors (dirty tree, unresolved merge conflict, target resolution
+/// failure, self-referencing target) are returned as `Err` for the caller
+/// to surface as a `td code-check landing failed` error envelope; the
+/// dirty-tree check here is a minimal guard naming the offending paths —
+/// full dirty-tree semantics is issue #807's scope.
+fn land_td_lifecycle_branch(
+    project_root: &std::path::Path,
+    slug: &str,
+    closed_issue: &crate::issues::Issue,
+) -> Result<BranchLandingOutcome> {
+    let td_branch = format!("td-{}", slug);
+    if !crate::branch_switch::branch_exists_local(project_root, &td_branch)? {
+        return Ok(BranchLandingOutcome::NoBranch);
+    }
+
+    if let Err(e) = crate::branch_switch::ensure_branch_clean(project_root) {
+        anyhow::bail!(
+            "cannot land '{}': working tree is not clean: {}",
+            td_branch,
+            e
+        );
+    }
+
+    // `td-<slug>` is only ever created when the lifecycle launched from
+    // `main` (`should_use_td_branch` in td.rs), and every TD/CB verb since
+    // then stays on it — so if we're currently sitting on `td-<slug>`
+    // itself, `resolve_merge_target`'s current-branch detection (step 3)
+    // would self-reference. Feed the deterministic "main" default through
+    // as the frontmatter fallback in that case; an explicit
+    // `issue.target_branch` override, if ever set, still wins.
+    let current = crate::branch_switch::current_branch(project_root)?;
+    let frontmatter_branch = closed_issue.target_branch.clone().or_else(|| {
+        if current == td_branch {
+            Some("main".to_string())
+        } else {
+            None
+        }
+    });
+    let target =
+        crate::cli::merge_target::resolve_merge_target(None, frontmatter_branch, project_root)
+            .map_err(|e| anyhow::anyhow!("resolving landing target for '{}': {}", td_branch, e))?;
+    if target == td_branch {
+        anyhow::bail!(
+            "landing target for '{}' resolved to the lifecycle branch itself; refusing to merge a branch into itself",
+            td_branch
+        );
+    }
+
+    crate::branch_switch::switch_or_create_branch(project_root, &target, &target)
+        .map_err(|e| anyhow::anyhow!("checking out landing target '{}': {}", target, e))?;
+
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let already_merged = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["merge-base", "--is-ancestor", &td_branch, &target])
+        .status()
+        .context("git merge-base --is-ancestor")?
+        .success();
+    if already_merged {
+        crate::branch_switch::delete_local_branch(project_root, &td_branch)?;
+        return Ok(BranchLandingOutcome::AlreadyMerged {
+            branch: td_branch,
+            target,
+        });
+    }
+
+    let msg = format!(
+        "Merge {} into {} (td code-check)\n\n\
+         Lifecycle-Slug: {}\n\
+         Work-Item: {}",
+        td_branch, target, slug, slug,
+    );
+    let merge = std::process::Command::new(&git_bin)
+        .arg("-C")
+        .arg(project_root)
+        .args(["merge", "--no-ff", "-m", &msg, &td_branch])
+        .output()
+        .context("git merge --no-ff")?;
+    if !merge.status.success() {
+        anyhow::bail!(
+            "merge conflict landing '{}' into '{}': {}",
+            td_branch,
+            target,
+            String::from_utf8_lossy(&merge.stderr).trim()
+        );
+    }
+
+    crate::branch_switch::delete_local_branch(project_root, &td_branch)?;
+    Ok(BranchLandingOutcome::Landed {
+        branch: td_branch,
+        target,
+    })
 }
 
 /// True if the worktree git log already has a terminal commit for `slug` —
