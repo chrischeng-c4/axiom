@@ -9,12 +9,11 @@
 # case = "setgroups__groups_as_Sequence_wrong"
 # subject = "os.setgroups(groups: Sequence)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed groups"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed groups
 # mamba-strict-type: TypeError
 """Type wall: os.setgroups(groups: Sequence); call it with the wrong type.
 

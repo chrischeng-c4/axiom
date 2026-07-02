@@ -1017,6 +1017,7 @@ impl TypeChecker {
                     | super::stdlib_sigs::CoreTy::MemoryView
                     | super::stdlib_sigs::CoreTy::Complex
                     | super::stdlib_sigs::CoreTy::IntOrStr
+                    | super::stdlib_sigs::CoreTy::PathOrFd
                     | super::stdlib_sigs::CoreTy::List
                     | super::stdlib_sigs::CoreTy::Tuple
                     | super::stdlib_sigs::CoreTy::Dict
@@ -1077,6 +1078,18 @@ impl TypeChecker {
                         a.span,
                         format!(
                             "argument type mismatch: expected `int | str`, got `{}`",
+                            self.ty_name(actual),
+                        ),
+                    );
+                } else if matches!(param.ty, super::stdlib_sigs::CoreTy::PathOrFd)
+                    && !actual_is_none
+                    && self.is_concrete_scalar(actual)
+                    && !matches!(self.tcx.get(actual), Ty::Int | Ty::Bool | Ty::Str)
+                {
+                    self.error(
+                        a.span,
+                        format!(
+                            "argument type mismatch: expected `str | bytes | os.PathLike | int`, got `{}`",
                             self.ty_name(actual),
                         ),
                     );

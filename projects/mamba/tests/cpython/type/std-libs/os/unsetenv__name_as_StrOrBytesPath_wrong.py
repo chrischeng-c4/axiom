@@ -9,12 +9,11 @@
 # case = "unsetenv__name_as_StrOrBytesPath_wrong"
 # subject = "os.unsetenv(name: StrOrBytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed name
 # mamba-strict-type: TypeError
 """Type wall: os.unsetenv(name: StrOrBytesPath); call it with the wrong type.
 

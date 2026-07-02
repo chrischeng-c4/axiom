@@ -9,12 +9,11 @@
 # case = "get_exec_path__env_as_typed_wrong"
 # subject = "os.get_exec_path(env: typed)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed env"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed env
 # mamba-strict-type: TypeError
 """Type wall: os.get_exec_path(env: typed); call it with the wrong type.
 

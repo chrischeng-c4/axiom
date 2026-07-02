@@ -9,12 +9,11 @@
 # case = "readlink__path_as_GenericPath_wrong"
 # subject = "os.readlink(path: GenericPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/os.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: os.readlink(path: GenericPath); call it with the wrong type.
 
