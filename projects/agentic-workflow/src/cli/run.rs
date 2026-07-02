@@ -2648,6 +2648,7 @@ mod tests {
             },
             optional_regenerability_gaps: Vec::new(),
             blockers: Vec::new(),
+            managed_next_uncovered_file: None,
         }
     }
 

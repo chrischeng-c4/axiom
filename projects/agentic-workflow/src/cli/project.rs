@@ -176,6 +176,11 @@ pub struct ProjectHealthReport {
     pub regenerability_authority: RegenerabilityAuthorityReport,
     pub optional_regenerability_gaps: Vec<String>,
     pub blockers: Vec<String>,
+    // #920 (epic #914 slice F): first managed-layer uncovered (unmarked)
+    // source file, if any. `project_health_next_command` uses this to name
+    // the slice-E `aw td code-claim <path>` worker verb directly instead of
+    // the retired `aw standardize managed run` layer driver.
+    pub managed_next_uncovered_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -1337,6 +1342,7 @@ impl ProjectHealthReport {
             regenerability_authority: regenerability_authority.clone(),
             optional_regenerability_gaps: regenerability_authority.advisory_gaps.clone(),
             blockers,
+            managed_next_uncovered_file: managed.uncovered_files.first().cloned(),
         }
     }
 
@@ -2599,9 +2605,9 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             .map(|_| format!("aw health --project {} claims", report.project));
     }
     if !report.managed_ready {
-        return Some(format!(
-            "aw standardize managed run --project {} --non-interactive --max-ticks 1",
-            report.project
+        return Some(crate::cli::standardize::managed_health_worker_command(
+            &report.project,
+            report.managed_next_uncovered_file.as_deref(),
         ));
     }
     if !report.semantic_ready
@@ -2609,15 +2615,13 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         || report.blocked_gap_count > 0
         || report.human_decision_required_count > 0
     {
-        return Some(format!(
-            "aw standardize semantic run --project {} --non-interactive --max-ticks 1",
-            report.project
+        return Some(crate::cli::standardize::semantic_health_worker_command(
+            &report.project,
         ));
     }
     if !report.traceability_ready {
-        return Some(format!(
-            "aw standardize traceability run --project {} --non-interactive --max-ticks 1",
-            report.project
+        return Some(crate::cli::standardize::traceability_health_worker_command(
+            &report.project,
         ));
     }
     if !project_health_missing_evaluations(report).is_empty() {
