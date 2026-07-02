@@ -16460,6 +16460,8 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     | "patch"
                     | "zipfile.ZipInfo"
                     | "chain"
+                    | "epoll"
+                    | "kqueue"
             ) {
                 let m = lookup_method(&nt, &name);
                 if let Some(maddr) = m.as_func() {
