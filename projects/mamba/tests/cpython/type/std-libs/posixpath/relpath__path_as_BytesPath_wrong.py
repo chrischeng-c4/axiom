@@ -9,12 +9,11 @@
 # case = "relpath__path_as_BytesPath_wrong"
 # subject = "posixpath.relpath(path: BytesPath)"
 # kind = "semantic"
-# xfail = "force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path"
+# xfail = ""
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/posixpath.pyi"
 # status = "filled"
 # ///
-# mamba-xfail: force-typed arg enforcement pending; mamba must raise TypeError on wrong-typed path
 # mamba-strict-type: TypeError
 """Type wall: posixpath.relpath(path: BytesPath); call it with the wrong type.
 

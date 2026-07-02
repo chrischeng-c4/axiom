@@ -238,6 +238,126 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("flag", CoreTy::Bool)],
         enforceable: true,
     },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "abspath",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "basename",
+        kind: SigKind::ModuleFn,
+        params: &[p("p", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "commonpath",
+        kind: SigKind::ModuleFn,
+        params: &[p("paths", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "dirname",
+        kind: SigKind::ModuleFn,
+        params: &[p("p", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "expanduser",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "expandvars",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "join",
+        kind: SigKind::ModuleFn,
+        params: &[p("a", CoreTy::Typed), p("args", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "normcase",
+        kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "normpath",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "realpath",
+        kind: SigKind::ModuleFn,
+        params: &[p("filename", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "relpath",
+        kind: SigKind::ModuleFn,
+        params: &[p("path", CoreTy::Typed), p("start", CoreTy::Unknown)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "split",
+        kind: SigKind::ModuleFn,
+        params: &[p("p", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "splitdrive",
+        kind: SigKind::ModuleFn,
+        params: &[p("p", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "splitext",
+        kind: SigKind::ModuleFn,
+        params: &[p("p", CoreTy::Typed)],
+        enforceable: true,
+    },
+    StdlibSig {
+        module: "posixpath",
+        qualifier: "",
+        name: "splitroot",
+        kind: SigKind::ModuleFn,
+        params: &[p("p", CoreTy::Typed)],
+        enforceable: true,
+    },
     // POSITIVE: bz2 filename arguments are overload/protocol unions
     // (path-like or file-object). A bare user instance cannot satisfy either,
     // while real strings/bytes/path/file-like objects stay skip-safe.
@@ -8627,6 +8747,40 @@ mod tests {
         let walk = get("pathlib", "Path", "walk").expect("Path.walk row present");
         assert_eq!(walk.params[2].name, "follow_symlinks");
         assert_eq!(walk.params[2].ty, CoreTy::Bool);
+    }
+
+    #[test]
+    fn curated_posixpath_walls_override_unknown_generated_rows() {
+        for (name, first_param) in [
+            ("abspath", "path"),
+            ("basename", "p"),
+            ("commonpath", "paths"),
+            ("dirname", "p"),
+            ("expanduser", "path"),
+            ("expandvars", "path"),
+            ("join", "a"),
+            ("normcase", "s"),
+            ("normpath", "path"),
+            ("realpath", "filename"),
+            ("relpath", "path"),
+            ("split", "p"),
+            ("splitdrive", "p"),
+            ("splitext", "p"),
+            ("splitroot", "p"),
+        ] {
+            let sig = get("posixpath", "", name).expect("posixpath row present");
+            assert!(sig.enforceable, "posixpath.{name} must stay enforceable");
+            assert_eq!(sig.params[0].name, first_param);
+            assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        let join = get("posixpath", "", "join").expect("posixpath.join present");
+        assert_eq!(join.params[1].name, "args");
+        assert_eq!(join.params[1].ty, CoreTy::Unknown);
+
+        let relpath = get("posixpath", "", "relpath").expect("posixpath.relpath present");
+        assert_eq!(relpath.params[1].name, "start");
+        assert_eq!(relpath.params[1].ty, CoreTy::Unknown);
     }
 
     #[test]
