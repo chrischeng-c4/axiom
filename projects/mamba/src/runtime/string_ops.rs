@@ -2784,6 +2784,12 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
     if spec.is_empty() {
         return value_to_string(val);
     }
+    // complex has its own per-part sign/precision mini-language (#902) —
+    // dispatch to a self-contained formatter rather than threading it
+    // through the scalar (str/int/float) parser below.
+    if let Some((re, im)) = unsafe { as_complex_parts(val) } {
+        return format_complex_spec(re, im, spec);
+    }
     let chars: Vec<char> = spec.chars().collect();
     let mut i = 0;
 
@@ -3272,6 +3278,296 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
     } else {
         formatted
     }
+}
+
+// ── Complex Format Spec (#902) ──
+//
+// `complex.__format__` has its own mini-language, distinct from the scalar
+// (str/int/float) engine above: `[[fill]align][sign][#][width][,_][.precision][type]`
+// with `type` restricted to `e/E/f/F/g/G/n` or empty. The imaginary part
+// always carries an explicit sign (there's no separator between the two
+// parts); the real part follows the ordinary sign-flag rules. Zero-padding,
+// `=` alignment, and any other presentation type (the integer codes, `s`,
+// `%`, ...) are rejected with `ValueError`, matching CPython.
+
+/// Extract `(re, im)` from a complex value, or `None` if `val` isn't complex.
+unsafe fn as_complex_parts(val: MbValue) -> Option<(f64, f64)> {
+    val.as_ptr().and_then(|ptr| {
+        if let ObjData::Complex(re, im) = (*ptr).data {
+            Some((re, im))
+        } else {
+            None
+        }
+    })
+}
+
+/// Group the digits of a non-negative integer string with `sep` every 3
+/// digits from the right (mirrors `apply_format_spec`'s own `,`/`_` helper).
+fn complex_group_digits(digits: &str, sep: char) -> String {
+    let bytes = digits.as_bytes();
+    let mut out = Vec::with_capacity(digits.len() + digits.len() / 3);
+    let first_group = bytes.len() % 3;
+    for (idx, b) in bytes.iter().enumerate() {
+        if idx > 0 && idx >= first_group && (idx - first_group) % 3 == 0 {
+            out.push(sep as u8);
+        }
+        out.push(*b);
+    }
+    String::from_utf8(out).unwrap_or_else(|_| digits.to_string())
+}
+
+/// Group the integer portion of an already-formatted (unsigned) numeric
+/// string, leaving any fractional part untouched.
+fn complex_group_number(raw: &str, sep: char) -> String {
+    if let Some((int_part, frac)) = raw.split_once('.') {
+        format!("{}.{}", complex_group_digits(int_part, sep), frac)
+    } else {
+        complex_group_digits(raw, sep)
+    }
+}
+
+/// Non-finite word for a complex component, matching CPython's case rule:
+/// lowercase presentation types (or none) render `nan`/`inf`; uppercase
+/// types render `NAN`/`INF`. Sign is applied separately by the caller.
+fn complex_nonfinite_word(v: f64, upper: bool) -> &'static str {
+    if v.is_nan() {
+        if upper {
+            "NAN"
+        } else {
+            "nan"
+        }
+    } else if upper {
+        "INF"
+    } else {
+        "inf"
+    }
+}
+
+/// Repr-style body (no sign) for a non-negative finite float component,
+/// used for the empty presentation type (matches `str()`/`repr()`, which
+/// prints whole-number components without a trailing `.0`, unlike `float`).
+fn complex_part_repr_abs(f: f64) -> String {
+    if f.is_nan() {
+        "nan".to_string()
+    } else {
+        format!("{f}")
+    }
+}
+
+/// Format the unsigned magnitude of one complex component under an
+/// explicit `e`/`E`/`f`/`F`/`g`/`G`/`n` presentation type.
+fn complex_part_body(
+    magnitude: f64,
+    type_char: char,
+    precision: Option<usize>,
+    alternate: bool,
+    thousands: Option<char>,
+) -> String {
+    match type_char {
+        'f' | 'F' => {
+            let prec = precision.unwrap_or(6);
+            let raw = format!("{:.prec$}", magnitude, prec = prec);
+            let raw = if alternate && !raw.contains('.') {
+                format!("{raw}.")
+            } else {
+                raw
+            };
+            match thousands {
+                Some(sep) => complex_group_number(&raw, sep),
+                None => raw,
+            }
+        }
+        'e' | 'E' => {
+            let prec = precision.unwrap_or(6);
+            let raw = if type_char == 'e' {
+                format!("{:.prec$e}", magnitude, prec = prec)
+            } else {
+                format!("{:.prec$E}", magnitude, prec = prec)
+            };
+            pythonize_exponent(&raw, type_char == 'E')
+        }
+        _ => {
+            // 'g' / 'G' / 'n' — 'n' behaves like 'g' (no locale support).
+            let upper = type_char == 'G';
+            let raw = format_g_magnitude(magnitude, precision, upper, alternate, false);
+            match thousands {
+                Some(sep) => complex_group_number(&raw, sep),
+                None => raw,
+            }
+        }
+    }
+}
+
+/// Left/right/center-pad an already-assembled complex body to `width`,
+/// defaulting to right alignment (complex is a numeric type).
+fn complex_pad(body: &str, width: usize, fill: char, align: char) -> String {
+    let len = body.len();
+    if width <= len {
+        return body.to_string();
+    }
+    let padding = width - len;
+    match if align == '\0' { '>' } else { align } {
+        '<' => format!(
+            "{body}{}",
+            std::iter::repeat(fill).take(padding).collect::<String>()
+        ),
+        '^' => {
+            let left = padding / 2;
+            let right = padding - left;
+            format!(
+                "{}{body}{}",
+                std::iter::repeat(fill).take(left).collect::<String>(),
+                std::iter::repeat(fill).take(right).collect::<String>()
+            )
+        }
+        _ => format!(
+            "{}{body}",
+            std::iter::repeat(fill).take(padding).collect::<String>()
+        ),
+    }
+}
+
+/// Apply a Python format spec to a complex value (see module note above).
+fn format_complex_spec(re: f64, im: f64, spec: &str) -> String {
+    let chars: Vec<char> = spec.chars().collect();
+    let mut i = 0;
+
+    let (fill, align) = if chars.len() >= 2 && matches!(chars[1], '<' | '>' | '^' | '=') {
+        i = 2;
+        (chars[0], chars[1])
+    } else if !chars.is_empty() && matches!(chars[0], '<' | '>' | '^' | '=') {
+        i = 1;
+        (' ', chars[0])
+    } else {
+        (' ', '\0')
+    };
+    if align == '=' {
+        super::exception::mb_raise(
+            new_str("ValueError".to_string()),
+            new_str("'=' alignment not allowed in complex format specifier".to_string()),
+        );
+        return String::new();
+    }
+
+    let user_sign = if i < chars.len() && matches!(chars[i], '+' | '-' | ' ') {
+        i += 1;
+        chars[i - 1]
+    } else {
+        '-'
+    };
+
+    let alternate = if i < chars.len() && chars[i] == '#' {
+        i += 1;
+        true
+    } else {
+        false
+    };
+
+    if i < chars.len() && chars[i] == '0' {
+        super::exception::mb_raise(
+            new_str("ValueError".to_string()),
+            new_str("Zero padding is not allowed in complex format specifier".to_string()),
+        );
+        return String::new();
+    }
+
+    let width_start = i;
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+    let width: usize = if i > width_start {
+        chars[width_start..i]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let thousands = if i < chars.len() && (chars[i] == ',' || chars[i] == '_') {
+        let sep = chars[i];
+        i += 1;
+        Some(sep)
+    } else {
+        None
+    };
+
+    let precision: Option<usize> = if i < chars.len() && chars[i] == '.' {
+        i += 1;
+        let prec_start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        Some(
+            chars[prec_start..i]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0),
+        )
+    } else {
+        None
+    };
+
+    let type_char = if i < chars.len() { chars[i] } else { '\0' };
+    if i < chars.len() {
+        i += 1;
+    }
+
+    if i != chars.len() || !matches!(type_char, '\0' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | 'n') {
+        super::exception::mb_raise(
+            new_str("ValueError".to_string()),
+            new_str(format!(
+                "Unknown format code '{type_char}' for object of type 'complex'"
+            )),
+        );
+        return String::new();
+    }
+
+    let add_parens = type_char == '\0';
+    let skip_re = add_parens && re == 0.0 && re.is_sign_positive();
+    let upper = matches!(type_char, 'F' | 'E' | 'G');
+
+    let format_one = |v: f64, forced_plus: bool| -> String {
+        let neg = v.is_sign_negative();
+        let prefix = if neg {
+            "-"
+        } else if forced_plus {
+            "+"
+        } else {
+            match user_sign {
+                '+' => "+",
+                ' ' => " ",
+                _ => "",
+            }
+        };
+        let magnitude = v.abs();
+        let body = if !v.is_finite() {
+            complex_nonfinite_word(v, upper).to_string()
+        } else if add_parens {
+            complex_part_repr_abs(magnitude)
+        } else {
+            complex_part_body(magnitude, type_char, precision, alternate, thousands)
+        };
+        format!("{prefix}{body}")
+    };
+
+    let re_str = format_one(re, false);
+    let im_str = format!("{}j", format_one(im, true));
+
+    let inner = if skip_re {
+        im_str
+    } else {
+        format!("{re_str}{im_str}")
+    };
+    let body = if add_parens && !skip_re {
+        format!("({inner})")
+    } else {
+        inner
+    };
+
+    complex_pad(&body, width, fill, align)
 }
 
 /// `"template" % args` — CPython's printf-style formatter. `args` is either
