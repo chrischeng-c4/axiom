@@ -65,6 +65,7 @@ pub mod platform_mod;
 pub mod pprint_mod;
 pub mod queue_mod;
 pub mod secrets_mod;
+pub mod select_mod;
 pub mod selectors_mod;
 pub mod shlex_mod;
 pub mod signal_mod;
@@ -297,6 +298,7 @@ pub fn register_stdlib() {
     queue_mod::register();
     signal_mod::register();
     selectors_mod::register();
+    select_mod::register();
     secrets_mod::register();
     asyncio_mod::register();
     // P1 stdlib modules
