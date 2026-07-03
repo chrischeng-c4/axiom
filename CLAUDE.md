@@ -152,9 +152,14 @@ deliberately separate commands.
 <!-- aw:cli-table:support:end -->
 
 `aw init` bootstraps or refreshes `.aw/` config, skills, and settings; it is
-idempotent (`--check` verifies without writing). `aw chat
-post/list/read/members/listen` is cross-checkout coordination through the
-shared Agentic Workflow chat channel.
+idempotent (`--check` verifies without writing). The installed `aw-*` skill
+copies under `.claude/skills/` and `.agents/skills/` are projections written
+by `aw init` from the `aw` CLI's own skill template source, kept identical
+(modulo a declared per-runtime transform) across both trees; edit the
+template source and re-run `aw init` rather than hand-editing an installed
+copy — `aw init --check` flags a hand-edited installed copy in either tree.
+`aw chat post/list/read/members/listen` is cross-checkout coordination
+through the shared Agentic Workflow chat channel.
 
 `aw llm`, `aw upgrade`, and `aw issue` are the CLI-convention trio every
 ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,

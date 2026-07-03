@@ -11,6 +11,14 @@
 //! fmt --check` semantics: it must detect a tampered managed section and
 //! name the stale file without writing, and a subsequent write-mode
 //! `aw init` must restore it.
+//!
+//! Issue #986 (init-projector slice 3/3) extends the same projector/checker
+//! contract to every `aw-*` skill: `aw init` installs the identical
+//! `templates/cli/mainthread/skills/` source into BOTH `.claude/skills/` and
+//! `.agents/skills/` (the latter via
+//! `doc_mirror::agents_skill_body_from_claude_skill_body`), `--check` flags a
+//! hand-edited installed copy in either tree without writing, and the same
+//! deprecated-skill prune list applies to both trees.
 
 use std::path::Path;
 use std::process::Command;
@@ -448,6 +456,238 @@ fn init_emits_chainable_next_step() {
     assert!(
         check_stdout.contains("next: done"),
         "aw init --check should also end with a chainable next step when clean:\n{check_stdout}"
+    );
+}
+
+/// Issue #986 (init-projector slice 3/3), AC1/AC3: a fresh `aw init` installs
+/// every `aw-*` skill into BOTH `.claude/skills/` and `.agents/skills/`, with
+/// the `.agents` copy equal to `doc_mirror::agents_skill_body_from_claude_skill_body`
+/// applied to the `.claude` copy — the same function `aw init` itself calls —
+/// so no skill content exists only in one installed tree.
+#[test]
+fn fresh_init_installs_aw_skills_into_both_claude_and_agents_trees() {
+    let Some(bin) = skip_unless_ready() else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let out = run_init(&bin, root, &[]);
+    assert!(
+        out.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out)
+    );
+
+    // A representative sample across "no divergence", "path transform", and
+    // "doc-ref transform" skills (issue #986's three-tree diff classes).
+    for skill in ["aw-health", "aw-build-debug", "aw-wi", "aw-guard"] {
+        let claude_skill = root.join(".claude/skills").join(skill).join("SKILL.md");
+        let agents_skill = root.join(".agents/skills").join(skill).join("SKILL.md");
+        assert!(
+            claude_skill.exists(),
+            "aw init must install {skill} under .claude/skills/"
+        );
+        assert!(
+            agents_skill.exists(),
+            "aw init must install {skill} under .agents/skills/"
+        );
+
+        let claude_body = std::fs::read_to_string(&claude_skill).unwrap();
+        let agents_body = std::fs::read_to_string(&agents_skill).unwrap();
+        let expected_agents_body =
+            agentic_workflow::cli::doc_mirror::agents_skill_body_from_claude_skill_body(
+                &claude_body,
+            );
+        assert_eq!(
+            agents_body, expected_agents_body,
+            "{skill}'s .agents/skills copy must equal doc_mirror's projection of its .claude/skills copy"
+        );
+    }
+
+    // Companion scripts install identically into both trees (no transform).
+    let claude_script = root
+        .join(".claude/skills/aw-build-debug/scripts/build.sh")
+        .to_owned();
+    let agents_script = root.join(".agents/skills/aw-build-debug/scripts/build.sh");
+    assert!(claude_script.exists());
+    assert!(agents_script.exists());
+    assert_eq!(
+        std::fs::read_to_string(&claude_script).unwrap(),
+        std::fs::read_to_string(&agents_script).unwrap(),
+        "companion scripts need no .agents transform"
+    );
+
+    let check = run_init(&bin, root, &["--check"]);
+    assert!(
+        check.status.success(),
+        "aw init --check should be clean right after a fresh init (both skill trees):\n{}",
+        combined_output(&check)
+    );
+}
+
+/// Issue #986 AC2: hand-editing an installed skill under `.claude/skills/`
+/// must be flagged by `aw init --check` (naming the stale path, without
+/// writing), and a follow-up write-mode `aw init` must restore it.
+#[test]
+fn init_check_detects_claude_skill_tamper_and_init_restores_it() {
+    let Some(bin) = skip_unless_ready() else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let out = run_init(&bin, root, &[]);
+    assert!(
+        out.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out)
+    );
+
+    let skill_path = root.join(".claude/skills/aw-wi/SKILL.md");
+    let before = std::fs::read_to_string(&skill_path).unwrap();
+    let tampered = format!("{before}\nHAND-EDITED TAMPER\n");
+    std::fs::write(&skill_path, &tampered).unwrap();
+
+    let check_tampered = run_init(&bin, root, &["--check"]);
+    assert!(
+        !check_tampered.status.success(),
+        "aw init --check must fail when a .claude/skills SKILL.md is hand-edited"
+    );
+    let check_tampered_out = combined_output(&check_tampered);
+    assert!(
+        check_tampered_out.contains(".claude") && check_tampered_out.contains("aw-wi"),
+        "aw init --check must name the stale skill path:\n{check_tampered_out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&skill_path).unwrap(),
+        tampered,
+        "aw init --check must never write"
+    );
+
+    let restore = run_init(&bin, root, &[]);
+    assert!(
+        restore.status.success(),
+        "aw init should succeed restoring the tampered skill:\n{}",
+        combined_output(&restore)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&skill_path).unwrap().trim(),
+        before.trim(),
+        "aw init must restore the tampered .claude/skills SKILL.md"
+    );
+
+    let check_clean = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_clean.status.success(),
+        "aw init --check should be clean after restore:\n{}",
+        combined_output(&check_clean)
+    );
+}
+
+/// Issue #986 AC2: the same tamper/detect/restore contract holds for the
+/// `.agents/skills/` tree — proving `--check` covers skill freshness in both
+/// installed trees, not just `.claude`.
+#[test]
+fn init_check_detects_agents_skill_tamper_and_init_restores_it() {
+    let Some(bin) = skip_unless_ready() else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let out = run_init(&bin, root, &[]);
+    assert!(
+        out.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out)
+    );
+
+    let skill_path = root.join(".agents/skills/aw-wi/SKILL.md");
+    let before = std::fs::read_to_string(&skill_path).unwrap();
+    let tampered = format!("{before}\nHAND-EDITED TAMPER\n");
+    std::fs::write(&skill_path, &tampered).unwrap();
+
+    let check_tampered = run_init(&bin, root, &["--check"]);
+    assert!(
+        !check_tampered.status.success(),
+        "aw init --check must fail when an .agents/skills SKILL.md is hand-edited"
+    );
+    let check_tampered_out = combined_output(&check_tampered);
+    assert!(
+        check_tampered_out.contains(".agents") && check_tampered_out.contains("aw-wi"),
+        "aw init --check must name the stale skill path:\n{check_tampered_out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&skill_path).unwrap(),
+        tampered,
+        "aw init --check must never write"
+    );
+
+    let restore = run_init(&bin, root, &[]);
+    assert!(
+        restore.status.success(),
+        "aw init should succeed restoring the tampered skill:\n{}",
+        combined_output(&restore)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&skill_path).unwrap().trim(),
+        before.trim(),
+        "aw init must restore the tampered .agents/skills SKILL.md"
+    );
+
+    let check_clean = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_clean.status.success(),
+        "aw init --check should be clean after restore:\n{}",
+        combined_output(&check_clean)
+    );
+}
+
+/// Issue #986: the deprecated-skill prune list applies identically to both
+/// installed trees. Seed a fake retired skill directory under
+/// `.agents/skills/` (not just `.claude/skills/`) and prove `aw init` prunes
+/// it there too.
+#[test]
+fn init_prunes_deprecated_skill_from_agents_tree() {
+    let Some(bin) = skip_unless_ready() else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let out = run_init(&bin, root, &[]);
+    assert!(
+        out.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out)
+    );
+
+    let legacy_dir = root.join(".agents/skills/aw-merge");
+    std::fs::create_dir_all(&legacy_dir).unwrap();
+    std::fs::write(legacy_dir.join("SKILL.md"), "# retired aw-merge").unwrap();
+    assert!(legacy_dir.exists());
+
+    let rerun = run_init(&bin, root, &[]);
+    assert!(
+        rerun.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&rerun)
+    );
+    assert!(
+        !legacy_dir.exists(),
+        "aw init must prune the deprecated aw-merge skill from .agents/skills/ too"
+    );
+
+    let check_clean = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_clean.status.success(),
+        "aw init --check should be clean after pruning:\n{}",
+        combined_output(&check_clean)
     );
 }
 // CODEGEN-END

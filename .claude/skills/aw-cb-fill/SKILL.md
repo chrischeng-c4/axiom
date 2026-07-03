@@ -64,6 +64,12 @@ For each envelope:
   from mainthread directly. On pass it commits terminal lifecycle closure. On
   fail it emits an `error` envelope; mainthread re-writes the offending marker
   payload and re-applies.
+  If the dispatch or parent runner (`aw wi run` / `aw capability run`)
+  envelope includes an `Artifact Quality Gate`, the produced code/test
+  artifacts must satisfy its hard preflight evidence before this lifecycle can
+  be considered complete. Frontend/UI work needs desktop and mobile viewport
+  evidence, interaction smoke proof, accessibility/readability smoke, and
+  placeholder-free primary-state evidence.
 
 - **dispatch with `agent: ...` non-null** — legacy compatibility. Treat
   as if `agent` were `null` and run `invoke.command` directly. The
@@ -115,7 +121,7 @@ separate escape hatch for an in-scope marker.
 ### What `aw td fill` does
 
 - **Brief mode** (default): walks the current checkout for HANDWRITE-BEGIN/END
-  blocks, builds a `CbFillBrief`, prints the brief to stdout, and emits
+  blocks, builds a fill brief, prints the brief to stdout, and emits
   a dispatch envelope with `agent: null` and a marker list. Zero-marker
   fast-path emits a direct dispatch to `aw td code-check <slug>`.
 - **Apply mode** (`--apply --marker <id>`): merges the expected marker payload

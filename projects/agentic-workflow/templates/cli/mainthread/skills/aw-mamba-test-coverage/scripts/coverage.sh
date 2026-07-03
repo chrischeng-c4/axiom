@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# coverage.sh — Analyze cclab-mamba test coverage
+# coverage.sh — Analyze mamba test coverage
+#
+# Rewired 2026-05-19 (#2538): package renamed `cclab-mamba` → `mamba` and
+# moved from `crates/cclab-mamba/` to `projects/mamba/`. The script stays
+# inventory-only — it calls `cargo test -p mamba -- --list` (no full
+# build) and reads `*.rs` from disk, so it works without a populated
+# tarpaulin report.
 set -euo pipefail
 
-CRATE="cclab-mamba"
-CRATE_DIR="crates/$CRATE"
+CRATE="mamba"
+CRATE_DIR="projects/mamba"
 SRC="$CRATE_DIR/src"
 TESTS="$CRATE_DIR/tests"
 STDLIB="$SRC/runtime/stdlib"
 
 G='\033[0;32m'; Y='\033[0;33m'; R='\033[0;31m'; B='\033[1m'; N='\033[0m'
 
-echo -e "${B}=== cclab-mamba Test Coverage ===${N}"
+echo -e "${B}=== mamba Test Coverage (package: $CRATE, path: $CRATE_DIR) ===${N}"
 echo ""
 
 # 1. Collect test list once
@@ -194,5 +200,5 @@ PYEOF
 else
   echo ""
   echo -e "${Y}Line coverage (tarpaulin): no report found.${N}"
-  echo "  Run: cargo tarpaulin -p cclab-mamba --skip-clean --out Json --output-dir /tmp/tarp"
+  echo "  Run: cargo tarpaulin -p mamba --skip-clean --out Json --output-dir /tmp/tarp"
 fi
