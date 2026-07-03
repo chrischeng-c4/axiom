@@ -1049,6 +1049,27 @@ pub fn is_boxed_return_func(addr: u64) -> bool {
 
 // ── Built-in Module Registration ──
 
+/// Set the startup signal dispositions CPython sets in `Python/pylifecycle.c`
+/// (`initsigs()`) before any user code runs, so process-terminating default
+/// behavior matches the oracle (#947):
+///   - `SIGPIPE` → `SIG_IGN`: writing to a closed pipe/socket raises a
+///     catchable `BrokenPipeError`/`OSError` instead of killing the process.
+///   - `SIGXFSZ` → `SIG_IGN`: exceeding an `RLIMIT_FSIZE` file-size limit
+///     raises a catchable `OSError` (`EFBIG`) instead of killing the process
+///     (see `behavior/std-libs/resource/resource_test__test_fsize_enforced`).
+/// Both dispositions were empirically confirmed against the CPython 3.12
+/// oracle (`signal.getsignal(...) == SIG_IGN` for both signals at startup).
+#[cfg(unix)]
+fn init_process_signal_dispositions() {
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+        libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
+    }
+}
+
+#[cfg(not(unix))]
+fn init_process_signal_dispositions() {}
+
 /// Register built-in modules (builtins, sys, os, math, json).
 ///
 /// GC auto-collection is disabled during registration to prevent the
@@ -1070,6 +1091,8 @@ pub fn mb_register_builtins() {
     if already_registered {
         return;
     }
+
+    init_process_signal_dispositions();
 
     // Disable GC auto-collection during the allocation-heavy registration.
     // Stdlib modules create 700+ GC-tracked containers that lack GC roots
