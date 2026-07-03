@@ -22,41 +22,51 @@ Public API manifest for `projects/agentic-workflow/src/cli/mod.rs` generated fro
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `capability` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 9 |  |
-| `cb` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 10 |  |
-| `cb_arbitrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 11 |  |
+| `capability_type` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 10 |  |
+| `cb` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 11 |  |
 | `cb_fill` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 12 |  |
-| `cb_review` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 13 |  |
-| `cb_revise` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 14 |  |
-| `chat` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 16 |  |
-| `check_alignment` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 17 |  |
-| `commands` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 18 |  |
+| `chain` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 13 |  |
+| `chat` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 15 |  |
+| `check_alignment` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 16 |  |
+| `commands` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 17 |  |
+| `ec` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 18 |  |
 | `fillback` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 19 |  |
-| `find_project_root` | projects/agentic-workflow/src/cli/mod.rs | function | pub | 66 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
+| `find_project_root` | projects/agentic-workflow/src/cli/mod.rs | function | pub | 75 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
 | `generator` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
-| `hook` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
-| `init` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
-| `issues` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
-| `merge_target` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
-| `migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 39 |  |
-| `production` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
-| `project` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
-| `regenerability_policy` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 26 |  |
-| `remote_push` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 27 |  |
-| `run` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 28 |  |
-| `slug_workspace` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 29 |  |
-| `standardize` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 30 |  |
-| `td` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 31 |  |
-| `td_check_section_type` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 32 |  |
-| `td_migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 33 |  |
-| `update` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 34 |  |
-| `validate_spec_structure` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 35 |  |
-| `workflow_guard` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 36 |  |
+| `guard` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
+| `hook` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
+| `init` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
+| `issues` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
+| `llm` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
+| `loop_state` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 26 |  |
+| `merge_target` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 52 |  |
+| `migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 47 |  |
+| `production` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 27 |  |
+| `project` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 28 |  |
+| `regenerability_policy` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 29 |  |
+| `remote_push` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 30 |  |
+| `run` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 31 |  |
+| `shell_env` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 32 |  |
+| `slug_workspace` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 33 |  |
+| `standard_cli` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 34 |  |
+| `standardize` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 35 |  |
+| `sync` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 36 |  |
+| `td` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 37 |  |
+| `td_check_section_type` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 38 |  |
+| `td_lock` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 39 |  |
+| `td_migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 40 |  |
+| `update` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
+| `validate_spec_structure` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
+| `view` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
+| `workflow_guard` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/cli/mod.rs -->
 ```rust
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/lib.md#source
+// CODEGEN-BEGIN
 //! Agentic Workflow — local spec-governed workflow orchestrator.
 //!
 //! Standalone binary + library. The binary entry point is `src/bin/aw.rs`;
@@ -64,39 +74,47 @@ Public API manifest for `projects/agentic-workflow/src/cli/mod.rs` generated fro
 //! programmatic consumers and for the binary itself.
 
 pub mod capability;
+pub mod capability_type;
 pub mod cb;
-pub mod cb_arbitrate;
 pub mod cb_fill;
-pub mod cb_review;
-pub mod cb_revise;
 pub(crate) mod chain;
 #[path = "chat.rs"]
 pub mod chat;
 pub mod check_alignment;
 pub mod commands;
+pub mod ec;
 pub mod fillback;
 pub mod generator;
+pub mod guard;
 pub mod hook;
 pub mod init;
 pub mod issues;
+pub mod llm;
+pub mod loop_state;
 pub mod production;
 pub mod project;
 pub mod regenerability_policy;
 pub mod remote_push;
 pub mod run;
+pub(crate) mod shell_env;
 pub mod slug_workspace;
+pub mod standard_cli;
 pub mod standardize;
+pub mod sync;
 pub mod td;
 pub mod td_check_section_type;
+pub mod td_lock;
 pub mod td_migrate;
 pub mod update;
 pub mod validate_spec_structure;
+pub mod view;
 pub mod workflow_guard;
 
 // Legacy modules kept for init.rs / update.rs dependencies
 pub(crate) mod migrate;
 
-// Shared merge-target resolution logic for `aw td code-check` and `aw wi merge`.
+// Legacy merge-target resolution logic retained for older merge-style recovery
+// surfaces while those APIs age out.
 // Public so integration tests in tests/ can call resolve_merge_target directly.
 pub mod merge_target;
 
@@ -289,6 +307,8 @@ mod tests {
         let _f: fn() -> anyhow::Result<std::path::PathBuf> = find_project_root;
     }
 }
+
+// CODEGEN-END
 ```
 
 ## Changes
@@ -302,4 +322,13 @@ changes:
     section: source
     description: |
       Whole-file source template generated from the standardized target body.
+  - path: projects/agentic-workflow/src/cli/mod.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #848: whole-file resync to the current module list (adds
+      capability_type, chain, ec, guard, llm, loop_state, shell_env,
+      standard_cli, sync, td_lock, view; drops the removed cb_arbitrate,
+      cb_review, cb_revise modules) and current find_project_root body.
 ```
