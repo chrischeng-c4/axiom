@@ -31,6 +31,7 @@ import hashlib
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -88,17 +89,31 @@ def _parse_time(stderr: str) -> tuple[int | None, int | None]:
 
 def _timed_run(cmd: list[str], *, timeout: int) -> tuple[int, int | None, int | None]:
     """Run `cmd` under /usr/bin/time. Return (rc, cpu_ns, rss_bytes). rc is the
-    child's status (best-effort; the wrapper exits 128+N on a signal death)."""
+    child's status (best-effort; the wrapper exits 128+N on a signal death).
+
+    Spawned as its own process group (#964): /usr/bin/time's own child (the
+    actually-measured process) is a grandchild that inherits the group via
+    fork but isn't reachable through Popen.kill()/subprocess.run(timeout=)'s
+    default reap-direct-child-only behavior; on timeout the whole group is
+    killpg'd so a hang can't leak an orphaned 100%-CPU grandchild.
+    """
     argv = [_USR_BIN_TIME, "-l" if sys.platform == "darwin" else "-v", *cmd]
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     try:
-        p = subprocess.run(argv, capture_output=True, text=True,
-                           timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
-        return 124, None, None
+        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, env=env, start_new_session=True)
     except FileNotFoundError:
         return -2, None, None
-    cpu_ns, rss = _parse_time(p.stderr)
+    try:
+        _, stderr = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.communicate()
+        return 124, None, None
+    cpu_ns, rss = _parse_time(stderr)
     return p.returncode, cpu_ns, rss
 
 
