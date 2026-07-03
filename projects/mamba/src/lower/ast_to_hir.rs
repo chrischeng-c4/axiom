@@ -1079,6 +1079,37 @@ fn collect_call_arg_hints(
                 ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. } => {
                     walk_stmts(body, env, func_ret, out, seen);
                 }
+                // #948: a call site whose ONLY appearance in the module is
+                // inside a `try`/`except`/`finally` or `with` body was
+                // invisible to this scan (fell through to the `_ => {}` catch
+                // -all below), so the callee's unannotated params never got a
+                // `FloatHint::Float` and silently kept the raw-int default
+                // convention — a float argument's bits are then reinterpreted
+                // as an int at that (sole) call site instead of flowing
+                // through as a real float. This is exactly the shape of the
+                // CPython-ported `try: f(bad_arg); raise ... except TypeError:`
+                // probe idiom, so try-wrapped calls need the same visibility
+                // as every other control-flow body walked above.
+                ast::Stmt::Try {
+                    body,
+                    handlers,
+                    else_body,
+                    finally_body,
+                } => {
+                    walk_stmts(body, env, func_ret, out, seen);
+                    for h in handlers {
+                        walk_stmts(&h.body, env, func_ret, out, seen);
+                    }
+                    if let Some(els) = else_body {
+                        walk_stmts(els, env, func_ret, out, seen);
+                    }
+                    if let Some(fin) = finally_body {
+                        walk_stmts(fin, env, func_ret, out, seen);
+                    }
+                }
+                ast::Stmt::With { body, .. } | ast::Stmt::AsyncWith { body, .. } => {
+                    walk_stmts(body, env, func_ret, out, seen);
+                }
                 _ => {}
             }
         }
