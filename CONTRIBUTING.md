@@ -239,13 +239,16 @@ project.
 | Lib | Role |
 |-----|------|
 | **`libs/raft-core`** | the step-driven raft **consensus core** (serde-only; replaced openraft). |
-| **`libs/raft-host`** | the raft **host**: h2c peer transport, the single apply loop, **snapshot + log compaction** (the "backup layer"), read-your-write `propose`, and **k8s topology + auto-mode** (`cluster::ClusterTopology::from_env` + `replica_mode`). A service supplies a `RaftStateMachine` (`apply`/`snapshot`/`restore`/`applied_index`) and gets HA + backup for free. |
-| **`libs/operator`** | the **k8s operator scaffold + render toolkit**: `ManagedService`, `ClusterSpec`, `ResourceSpec`, owner refs, labels/selectors, ServiceAccount, client/headless Services, PDB, CronJob, and `sharded_statefulset` with the exact downward-API env that `raft-host` reads. |
+| **`libs/raft-host`** | the raft **host**: h2c peer transport, the single apply loop, **snapshot + log compaction** (the "backup layer"), read-your-write `propose`, and **k8s topology + auto-mode** (`cluster::ClusterTopology::from_env` + `replica_mode`, plus the reusable `ClusterDims`/`peer_ordinal`/`parse_peer_overrides` primitives — never re-derive the ordinal math locally). A service supplies a `RaftStateMachine` (`apply`/`snapshot`/`restore`/`applied_index`) and gets HA + backup for free. Also ships the read-side companions: the `X-Read-Consistency` header contract (`ReadConsistency`), the `RaftRole`/cluster-view introspection model, and `OutcomeWindow` (the bounded index→outcome window behind rich read-your-write results). |
+| **`libs/operator`** | the **k8s operator scaffold + render toolkit**: `ManagedService`, `ClusterSpec`, `ResourceSpec`, owner refs, labels/selectors, ServiceAccount, client/headless Services, PDB, CronJob, and `sharded_statefulset` with the exact downward-API env that `raft-host` reads — plus `resize` (k8s storage-quantity parsing + live-PVC expansion around immutable `volumeClaimTemplates`). |
 | **`libs/h2c`** | the **transport**: `h2c::serve` (server, feature `server`) + `h2c_client`/`H2cPool` (client). |
-| **`libs/service-http`** | the **HTTP service shell**: standard probe/admin routes, tracing init, graceful drain, metrics/readiness hooks, and h2c serving composition. |
-| **`libs/service-auth`** | the **request-auth shell**: shared `Authorization: Bearer` extraction, reject/inject middleware, and the `Verifier` trait every service implements. Token crypto belongs in **`libs/claimtoken`** when signed tokens are needed; per-resource RBAC/tenant policy stays in the service handlers. |
+| **`libs/service-http`** | the **HTTP service shell**: standard probe/admin routes, tracing init, graceful drain, metrics/readiness hooks, h2c serving composition, and the shared **HTTP error envelope** (`ErrorEnvelope` + the `ApiErr` status/kind builder) so error JSON is uniform across services. |
+| **`libs/service-auth`** | the **request-auth shell**: shared `Authorization: Bearer` extraction, reject/inject middleware, the `Verifier` trait every service implements, and **`role_map`** — the standard token-registry verifier (`Role` hierarchy, `TokenClaims` with wildcard grants, registry-file loader, `StaticRoleMapVerifier`) implementing the archetype's `<SVC>_TOKEN_REGISTRY_FILE` contract. Token crypto belongs in **`libs/claimtoken`** when signed tokens are needed; resource-policy *decisions* stay in the service handlers (`role_map` supplies the mechanism). |
 | **`libs/service-backup`** | the **backup contract**: destination/policy schema, `BackupSink`, local sink, and a runner primitive. Services produce consistent snapshot bytes; runners upload them; operators schedule/manage the runner. |
+| **`libs/service-tls`** | **peer mTLS material loading**: `PeerTlsConfig::from_env(<PREFIX>)`, PEM cert/key/CA loaders, rustls server/client config builders, and the Once-guarded default-crypto-provider install. (h2c stays cleartext by design; this covers the mutually-authenticated peer/replication port.) |
+| **`libs/service-metrics`** | the **metrics registry**: dep-free counter/gauge primitives + the Prometheus text-format encoder — the standard implementation behind `service-http`'s `MetricsProvider` seam and the `/metrics` endpoint. |
 | **`libs/cli-std`** | the **standard CLI** commands (`llm` / `upgrade` / `issue`). |
+| **`libs/build-stamp`** | the **build stamp** (a `[build-dependencies]` crate): `stamp("<PREFIX>")` emits the `<PREFIX>_GIT_SHA` / `<PREFIX>_BUILT_AT` / `<PREFIX>_TARGET` rustc-env lines that feed `cli-std`'s `ToolInfo` — one implementation instead of a per-service `build.rs` copy. |
 
 **k8s-native auto-mode + discovery.** A service defaults to single-node and turns
 on raft **only when the StatefulSet scales out** — `raft_host::cluster::
@@ -454,9 +457,10 @@ Service auth is shared infrastructure, not a per-project design space. Every
 long-running service uses `libs/service-auth` for request authentication:
 extract `Authorization: Bearer <token>`, verify it through a service-supplied
 `Verifier`, reject with the shared JSON error shape, and inject the authenticated
-principal into handlers. Services may use a simple token-registry verifier or
-signed tokens through `libs/claimtoken`, but the HTTP contract and middleware
-shape stay the same.
+principal into handlers. Services use the shared registry verifier
+(`service_auth::role_map::StaticRoleMapVerifier` — role hierarchy, wildcard
+grants, registry-file loader) or signed tokens through `libs/claimtoken`, but
+the HTTP contract and middleware shape stay the same.
 
 Production server config follows one env pattern:
 
@@ -545,12 +549,13 @@ The logic for all three lives in the shared **`libs/cli-std`** crate (`cli_std`)
 which is **clap-agnostic**: each CLI keeps its own clap registration — so it owns
 the convention's flag shape (`--topic`, not a positional) — and delegates the
 behavior to the crate, parameterized by a `cli_std::ToolInfo` it fills from its
-own `build.rs` stamps (project, repo, target triple, version, git sha). A tool
+own `build.rs` stamps (project, repo, target triple, version, git sha — emit
+them with `libs/build-stamp`'s `stamp("<PREFIX>")`, not a hand-rolled
+`build.rs`). A tool
 provides only its clap surface, that `ToolInfo`, and (for `llm`) its topic list;
 the crate does the rest. The network paths (`upgrade` install, `issue`
 search/view/create) sit behind cli-std's `online` feature — enable it in release
-builds. Reference adopter: `projects/jet` (keep/loom/lumen still on the
-deprecated `report-issue` shim, migrating to `issue`).
+builds. Reference adopters: `projects/jet` and `projects/lumen`.
 
 - **`llm`** — `cli_std::llm::render(project, version, topics, topic, format)`. The
   tool supplies `&[cli_std::llm::Topic]` (`id`/`summary`/`body` — the one in-code
