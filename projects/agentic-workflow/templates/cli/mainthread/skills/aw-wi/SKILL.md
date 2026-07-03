@@ -34,11 +34,11 @@ old references to `aw wi`.
 /aw:wi update <slug>
 /aw:wi list [--state open|closed] [--project <name>]
 /aw:wi show <slug>
-/aw:wi plan --project <name> [--cap-path <path>] [--title "<plan>"]
-/aw:wi epicize --project <name> [--title "<phase>"]
-/aw:wi atomize --project <name> [--title "<plan>"]
-/aw:wi prioritize --project <name> [--title "<plan>"]
-aw run --project <name> --max-ticks 1
+/aw:wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
+/aw:wi epicize --project <name> [--title "<phase>"] [--json]
+/aw:wi atomize --project <name> [--title "<plan>"] [--json]
+/aw:wi prioritize --project <name> [--title "<plan>"] [--json]
+aw capability run --project <name> --non-interactive --max-ticks 1
 ```
 
 `--label` is rejected on create. Labels are derived from typed flags:
@@ -62,8 +62,8 @@ Unknown `--project` / `--agent` names → error envelope on stdout, exit 2.
 3. Read the stdout envelope. The CLI returns a `dispatch`
    envelope with `agent: null` and
    `invoke.args.sections: ["all"]`. Mainthread fills the full structured
-   body directly, including capability alignment, acceptance criteria, and
-   agent estimate gates.
+   body directly, including capability alignment, scope, acceptance
+   criteria, and reference context gates.
 4. **Run the mainthread loop below.** No Agent dispatch is needed; the
    per-envelope handler always writes the payload and runs `--apply`
    itself.
@@ -111,6 +111,14 @@ When `aw wi validate` rejects mainthread's output, it emits an
 - `[retry=N]` (N >= 3) → terminal. Surface the error to the
   user and stop. Don't auto-retry further.
 
+### Manual escalation: review / arbitrate
+
+`aw wi review --slug <slug> [--apply]` and
+`aw wi arbitrate --slug <slug> [--send-back]` still exist as CLI commands,
+but no envelope in the create/validate loop above ever dispatches to them —
+they are manual-only escalation verbs for a human to invoke directly against
+a stalled work-item, not steps the mainthread loop drives on its own.
+
 ## update
 
 Currently non-envelope (legacy). Run `aw wi update <slug> --body-file -`
@@ -139,11 +147,11 @@ roadmap-sized request. Large work must stay as `type=epic` or a local planning
 artifact until atomized into bounded WI candidates.
 
 ```bash
-aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"]
-aw wi epicize --project <name> [--title "<phase>"]
-aw wi atomize --project <name> [--title "<plan>"]
-aw wi prioritize --project <name> [--title "<plan>"]
-aw run --project <name> --max-ticks 1
+aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
+aw wi epicize --project <name> [--title "<phase>"] [--json]
+aw wi atomize --project <name> [--title "<plan>"] [--json]
+aw wi prioritize --project <name> [--title "<plan>"] [--json]
+aw capability run --project <name> --non-interactive --max-ticks 1
 ```
 
 - `plan` reads the confirmed capability table from `--cap-path`, `[[projects]].cap_path`,
@@ -163,8 +171,10 @@ aw run --project <name> --max-ticks 1
   `needs_triage`, and `deferred` lanes.
   The artifact explicitly requires agent review before publishing priority
   label or ordering changes.
-- `aw run --project` is the run-to-end project root. It consumes capability
-  status and prioritized WI readiness instead of cron sprint batches.
+- `aw capability run --project` is the run-to-end project root. It consumes
+  capability status and prioritized WI readiness instead of relying on
+  cron-style sprint batches. There is no `estimate`/`sprintize` verb — those
+  were removed.
 
 ### Bounded WI gate
 
