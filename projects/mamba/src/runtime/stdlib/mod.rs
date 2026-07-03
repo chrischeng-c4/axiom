@@ -18,6 +18,7 @@ pub mod datetime_mod;
 pub mod decimal_mod;
 pub mod enum_class;
 pub mod enum_mod;
+pub mod faulthandler_mod;
 pub mod fractions_mod;
 pub mod functools_mod;
 pub mod glob_mod;
@@ -49,6 +50,7 @@ pub mod colorsys_mod;
 pub mod compressed_file;
 pub mod configparser_mod;
 pub mod csv_mod;
+pub mod ctypes_mod;
 pub mod difflib_mod;
 pub mod gzip_mod;
 pub mod heapq_mod;
@@ -302,6 +304,7 @@ pub fn register_stdlib() {
     lzma_mod::register();
     queue_mod::register();
     signal_mod::register();
+    faulthandler_mod::register();
     selectors_mod::register();
     select_mod::register();
     secrets_mod::register();
@@ -436,6 +439,7 @@ pub fn register_stdlib() {
     long_tail3_mod::register();
     long_tail4_mod::register();
     thirdparty_shells_mod::register();
+    ctypes_mod::register();
 }
 
 /// Helper: create a module with given attributes.
