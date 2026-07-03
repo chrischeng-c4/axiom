@@ -146,7 +146,6 @@ pub async fn auth_middleware(
 #[derive(Debug)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub enum AuthErr {
-    Unauthenticated,
     Forbidden {
         subject: String,
         needed: Role,
@@ -169,14 +168,6 @@ impl From<RoleMapDenied> for AuthErr {
 impl IntoResponse for AuthErr {
     fn into_response(self) -> Response {
         match self {
-            AuthErr::Unauthenticated => (
-                StatusCode::UNAUTHORIZED,
-                Json(ApiError {
-                    error: "unauthenticated".into(),
-                    message: "valid bearer token required".into(),
-                }),
-            )
-                .into_response(),
             AuthErr::Forbidden {
                 subject,
                 needed,
