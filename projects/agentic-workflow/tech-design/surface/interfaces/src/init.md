@@ -22,12 +22,12 @@ Public API manifest for `projects/agentic-workflow/src/cli/init.rs` generated fr
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `WorkspaceType` | projects/agentic-workflow/src/cli/init.rs | enum | pub(crate) | 641 |  |
-| `check_and_auto_upgrade` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1241 | check_and_auto_upgrade(auto_upgrade: bool) -> bool |
+| `check_and_auto_upgrade` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1330 | check_and_auto_upgrade(auto_upgrade: bool) -> bool |
 | `detect_workspace_type` | projects/agentic-workflow/src/cli/init.rs | function | pub(crate) | 657 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
-| `get_current_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1347 | get_current_version() -> &'static str |
-| `get_installed_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1309 | get_installed_version() -> Option<String> |
+| `get_current_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1436 | get_current_version() -> &'static str |
+| `get_installed_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1398 | get_installed_version() -> Option<String> |
 | `run` | projects/agentic-workflow/src/cli/init.rs | function | pub | 65 | run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> Result<()> |
-| `run_check` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1155 | run_check() -> Result<()> |
+| `run_check` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1241 | run_check() -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -830,6 +830,9 @@ fn run_fresh_install(
     // root docs project from the same template + shared whitelist).
     generate_claude_md(project_root, sdd_dir)?;
     generate_agents_md(project_root)?;
+    // Regenerate the repo-root README's Projects table when opted in
+    // (issue #985; no-op when README.md is absent or has no markers).
+    update_readme_projects_table(project_root)?;
 
     if print_success_message {
         print_init_success();
@@ -924,6 +927,9 @@ fn run_update(
     // both root docs project from the same template + shared whitelist).
     generate_claude_md(project_root, sdd_dir)?;
     generate_agents_md(project_root)?;
+    // Regenerate the repo-root README's Projects table when opted in
+    // (issue #985; no-op when README.md is absent or has no markers).
+    update_readme_projects_table(project_root)?;
 
     // Clean up legacy .version file (version now lives in config.toml)
     let legacy_version_file = sdd_dir.join(".version");
@@ -1013,14 +1019,46 @@ fn print_init_success() {
 const GENESIS_START_MARKER: &str = "<!-- aw:start -->";
 const GENESIS_END_MARKER: &str = "<!-- aw:end -->";
 
-// Extract the SDD section from template (between markers)
-fn get_sdd_section() -> &'static str {
+// Split the raw CLAUDE.md template into (before, `aw:start`..`aw:end`
+// section, after) around the genesis markers, so both the section-only and
+// whole-document projections below slice at exactly the same offsets.
+fn split_claude_template() -> (&'static str, &'static str, &'static str) {
     let start = CLAUDE_TEMPLATE.find(GENESIS_START_MARKER).unwrap_or(0);
     let end = CLAUDE_TEMPLATE
         .find(GENESIS_END_MARKER)
         .map(|i| i + GENESIS_END_MARKER.len())
         .unwrap_or(CLAUDE_TEMPLATE.len());
-    &CLAUDE_TEMPLATE[start..end]
+    (
+        &CLAUDE_TEMPLATE[..start],
+        &CLAUDE_TEMPLATE[start..end],
+        &CLAUDE_TEMPLATE[end..],
+    )
+}
+
+// Extract the SDD section from the template (between markers) and render its
+// fine-grained generated CLI tables (issue #985, init-projector slice 2/3).
+// Rendering happens here, before any of the whole-block diff/upsert/
+// staleness machinery below ever sees the section text, so CLI-table drift
+// is covered by that existing machinery for free.
+fn get_sdd_section() -> String {
+    let (_, section, _) = split_claude_template();
+    doc_mirror::render_cli_tables(section)
+}
+
+// The full CLAUDE.md document with its CLI tables rendered, for the
+// fresh-install path (no CLAUDE.md exists yet). Must stay content-equivalent
+// to what `managed_section_is_stale`/`run_check` recompute afterwards — the
+// raw `CLAUDE_TEMPLATE` constant is NOT a valid substitute once `get_sdd_section`
+// performs real rendering, since the raw template still carries unrendered
+// markers/seed rows (issue #985 fresh-install regression).
+fn rendered_claude_doc() -> String {
+    let (before, section, after) = split_claude_template();
+    format!(
+        "{}{}{}",
+        before,
+        doc_mirror::render_cli_tables(section),
+        after
+    )
 }
 
 // Remove old SDD sections (without markers) from content
@@ -1140,7 +1178,13 @@ fn upsert_managed_section(
 fn generate_claude_md(project_root: &Path, _sdd_dir: &Path) -> Result<()> {
     let claude_md_path = project_root.join("CLAUDE.md");
     let sdd_section = get_sdd_section();
-    upsert_managed_section(&claude_md_path, sdd_section, CLAUDE_TEMPLATE, "CLAUDE.md")?;
+    let full_doc_if_missing = rendered_claude_doc();
+    upsert_managed_section(
+        &claude_md_path,
+        &sdd_section,
+        &full_doc_if_missing,
+        "CLAUDE.md",
+    )?;
     Ok(())
 }
 
@@ -1149,7 +1193,7 @@ fn generate_claude_md(project_root: &Path, _sdd_dir: &Path) -> Result<()> {
 // `doc_mirror::agents_block_from_claude_block` (issue #984, the one shared
 // whitelist consumed by both this projection and `root_doc_mirror_test`).
 fn get_agents_sdd_section() -> String {
-    doc_mirror::agents_block_from_claude_block(get_sdd_section())
+    doc_mirror::agents_block_from_claude_block(&get_sdd_section())
 }
 
 // Generate or update AGENTS.md with the same SDD-managed section as
@@ -1183,10 +1227,52 @@ fn managed_section_is_stale(doc_path: &Path, section: &str) -> Result<bool> {
     Ok(new_content.trim() != existing_content.trim())
 }
 
+// Regenerate the repo-root README.md's generated Projects table between
+// `<!-- aw:projects-table:start/end -->` markers from `.aw/config.toml`
+// (issue #985, init-projector slice 2/3). Only touches README.md when it
+// exists AND already carries the markers: the table is opt-in per document
+// (project scaffolds created via `aw new` have no README yet, and existing
+// non-marker READMEs are left alone rather than force-inserting a table
+// nobody asked for).
+fn update_readme_projects_table(project_root: &Path) -> Result<()> {
+    let readme_path = project_root.join("README.md");
+    let Ok(existing) = std::fs::read_to_string(&readme_path) else {
+        return Ok(());
+    };
+    if !existing.contains(doc_mirror::PROJECTS_TABLE_START) {
+        return Ok(());
+    }
+    let updated = doc_mirror::upsert_projects_table(project_root, &existing)?;
+    if updated.trim() == existing.trim() {
+        println!("   {} README.md (Projects table up to date)", "✓".green());
+    } else {
+        std::fs::write(&readme_path, updated)?;
+        println!("   {} README.md (Projects table updated)", "✓".green());
+    }
+    Ok(())
+}
+
+// True if `project_root`'s README.md carries the generated Projects-table
+// markers and its table would change if regenerated right now (issue #985
+// AC1/AC2), mirroring [`managed_section_is_stale`]'s read-only contract. A
+// README without the markers is not opted in, so it is never stale.
+fn readme_projects_table_is_stale(project_root: &Path) -> Result<bool> {
+    let readme_path = project_root.join("README.md");
+    let Ok(existing) = std::fs::read_to_string(&readme_path) else {
+        return Ok(false);
+    };
+    if !existing.contains(doc_mirror::PROJECTS_TABLE_START) {
+        return Ok(false);
+    }
+    let updated = doc_mirror::upsert_projects_table(project_root, &existing)?;
+    Ok(updated.trim() != existing.trim())
+}
+
 // Read-only staleness check for CLAUDE.md's and AGENTS.md's managed
-// `aw:start` sections (issue #984 AC2/AC4). Never writes; exits non-zero
-// (via `Err`) and names the stale file(s) when a projection is out of date,
-// analogous to `cargo fmt --check`.
+// `aw:start` sections (issue #984 AC2/AC4), plus the repo-root README's
+// generated Projects table when it is opted in via markers (issue #985).
+// Never writes; exits non-zero (via `Err`) and names the stale file(s) when
+// a projection is out of date, analogous to `cargo fmt --check`.
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
 pub fn run_check() -> Result<()> {
     let project_root = env::current_dir()?;
@@ -1197,11 +1283,14 @@ pub fn run_check() -> Result<()> {
     let agents_section = get_agents_sdd_section();
 
     let mut stale = Vec::new();
-    if managed_section_is_stale(&claude_md_path, sdd_section)? {
+    if managed_section_is_stale(&claude_md_path, &sdd_section)? {
         stale.push("CLAUDE.md");
     }
     if managed_section_is_stale(&agents_md_path, &agents_section)? {
         stale.push("AGENTS.md");
+    }
+    if readme_projects_table_is_stale(&project_root)? {
+        stale.push("README.md");
     }
 
     if stale.is_empty() {
@@ -2488,4 +2577,36 @@ changes:
       output ends with a chainable `next: aw health --project <name>` (or
       `next: done` when zero/multiple projects are registered, since
       `--project` is required and the hint must always be runnable).
+
+      Issue #985 (init-projector slice 2/3): `get_sdd_section` now returns
+      the template's `aw:start` section run through
+      `doc_mirror::render_cli_tables`, so the pre-existing whole-block
+      diff/upsert/staleness machinery (`managed_section_is_stale`,
+      `run_check`) covers the new fine-grained
+      `<!-- aw:cli-table:{workflow,support}:start/end -->` CLI-table
+      markers for free — no new detection code needed. Added
+      `update_readme_projects_table`/`readme_projects_table_is_stale`
+      (wired into `run_fresh_install`, `run_update`, and `run_check`): the
+      repo-root README's `<!-- aw:projects-table:start/end -->` Projects
+      table (rendered by `doc_mirror::upsert_projects_table` from
+      `.aw/config.toml`) is opt-in per document — `aw init` only touches
+      README.md when it already exists AND already carries the markers, so
+      a README without them (or no README at all, e.g. a fresh `aw new`
+      scaffold) is left untouched.
+
+      Fresh-install fix (still #985): once `get_sdd_section` performs real
+      rendering, `generate_claude_md` could no longer pass the raw
+      `CLAUDE_TEMPLATE` constant as `upsert_managed_section`'s
+      `full_doc_if_missing` fallback — a brand-new CLAUDE.md would be
+      seeded with the template's unrendered markers/seed rows, which
+      `run_check`'s freshly-rendered comparison then immediately flagged as
+      stale (and which `agents_block_from_claude_block` would also project
+      forward into a fresh AGENTS.md, corrupting it too). Extracted
+      `split_claude_template` (shared before/section/after split at the
+      `aw:start`/`aw:end` marker offsets) and added `rendered_claude_doc`
+      (the same split, with the section rendered) so `generate_claude_md`'s
+      fresh-install fallback is now content-equivalent to what
+      `managed_section_is_stale`/`run_check` recompute afterwards, mirroring
+      how `generate_agents_md` already built its fallback from the rendered
+      `sdd_section` rather than a raw constant.
 ```

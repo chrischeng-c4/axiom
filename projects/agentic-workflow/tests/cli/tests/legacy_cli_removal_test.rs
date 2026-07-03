@@ -187,7 +187,12 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw artifact",
         "aw validate-spec-structure",
         "aw check-alignment",
-        "aw iss",
+        // Trailing space (like `standardize.rs`'s `DELETED_COMMAND_PATHS`
+        // `"aw cb "` entry): the deleted legacy abbreviation was `aw iss
+        // <...>`, not a prefix match — a bare substring would also flag the
+        // current, active `aw issue` verb (issue #985's CLI table renders
+        // `` `aw issue` `` verbatim).
+        "aw iss ",
         "aw issues",
         "aw chat agents",
         "aw handoff",
