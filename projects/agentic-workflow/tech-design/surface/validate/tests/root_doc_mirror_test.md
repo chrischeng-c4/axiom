@@ -35,14 +35,16 @@ No public AST symbols.
 //! outside that whitelist is drift — the two files are ONE implementation
 //! quick-reference maintained in two agent-runtime flavors, and this test
 //! replaces "remember to edit both" with an executable contract.
+//!
+//! The whitelist constants come from `agentic_workflow::cli::doc_mirror` —
+//! the SAME module `aw init`'s AGENTS.md projection consumes (issue #984
+//! AC3), so the projector and this checker can never disagree.
 
+use agentic_workflow::cli::doc_mirror::{
+    AGENTS_TITLE, CLAUDE_TITLE, CODEX_RULES_HEADING, CODEX_TRANSLATE_PREFIX,
+};
 use std::fs;
 use std::path::PathBuf;
-
-const CLAUDE_TITLE: &str = "# CLAUDE.md - Implementation Essentials";
-const AGENTS_TITLE: &str = "# AGENTS.md - Implementation Essentials";
-const CODEX_RULES_HEADING: &str = "## Codex Operational Rules";
-const CODEX_TRANSLATE_PREFIX: &str = "Codex should translate Claude slash-command references";
 
 fn repo_root() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -159,13 +161,16 @@ fn agents_md_is_claude_md_plus_codex_whitelist() {
 ```yaml
 changes:
   - path: projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs
-    action: create
+    action: modify
     section: source
     description: |
       Mirror-contract test agents_md_is_claude_md_plus_codex_whitelist
       (meta-doc sheet 1): the title-line swap, the Codex Operational Rules
       section, and the slash-command translation paragraph are the only
       permitted AGENTS.md/CLAUDE.md divergences; anything else fails the
-      suite with the first divergent line named.
+      suite with the first divergent line named. Issue #984 (AC3): the
+      whitelist constants now import from `agentic_workflow::cli::doc_mirror`
+      instead of duplicating them as private consts, so this checker and
+      `aw init`'s AGENTS.md projection share one definition.
     impl_mode: hand-written
 ```

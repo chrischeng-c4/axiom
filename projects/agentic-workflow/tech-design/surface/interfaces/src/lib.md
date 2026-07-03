@@ -29,36 +29,37 @@ Public API manifest for `projects/agentic-workflow/src/cli/mod.rs` generated fro
 | `chat` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 15 |  |
 | `check_alignment` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 16 |  |
 | `commands` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 17 |  |
-| `ec` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 18 |  |
-| `fillback` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 19 |  |
-| `find_project_root` | projects/agentic-workflow/src/cli/mod.rs | function | pub | 75 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
-| `generator` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
-| `guard` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
-| `hook` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
-| `init` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
-| `issues` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
-| `llm` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
-| `loop_state` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 26 |  |
-| `merge_target` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 52 |  |
-| `migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 47 |  |
-| `production` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 27 |  |
-| `project` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 28 |  |
-| `regenerability_policy` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 29 |  |
-| `remote_push` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 30 |  |
-| `run` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 31 |  |
-| `shell_env` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 32 |  |
-| `slug_workspace` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 33 |  |
-| `standard_cli` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 34 |  |
-| `standardize` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 35 |  |
-| `sync` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 36 |  |
-| `td` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 37 |  |
-| `td_check_section_type` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 38 |  |
-| `td_lock` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 39 |  |
-| `td_migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 40 |  |
-| `update` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
-| `validate_spec_structure` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
-| `view` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
-| `workflow_guard` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
+| `doc_mirror` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 18 |  |
+| `ec` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 19 |  |
+| `fillback` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
+| `find_project_root` | projects/agentic-workflow/src/cli/mod.rs | function | pub | 76 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
+| `generator` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
+| `guard` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
+| `hook` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
+| `init` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
+| `issues` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
+| `llm` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 26 |  |
+| `loop_state` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 27 |  |
+| `merge_target` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 53 |  |
+| `migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 48 |  |
+| `production` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 28 |  |
+| `project` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 29 |  |
+| `regenerability_policy` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 30 |  |
+| `remote_push` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 31 |  |
+| `run` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 32 |  |
+| `shell_env` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 33 |  |
+| `slug_workspace` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 34 |  |
+| `standard_cli` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 35 |  |
+| `standardize` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 36 |  |
+| `sync` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 37 |  |
+| `td` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 38 |  |
+| `td_check_section_type` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 39 |  |
+| `td_lock` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 40 |  |
+| `td_migrate` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
+| `update` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
+| `validate_spec_structure` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
+| `view` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
+| `workflow_guard` | projects/agentic-workflow/src/cli/mod.rs | module | pub | 45 |  |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -82,6 +83,7 @@ pub(crate) mod chain;
 pub mod chat;
 pub mod check_alignment;
 pub mod commands;
+pub mod doc_mirror;
 pub mod ec;
 pub mod fillback;
 pub mod generator;
@@ -331,4 +333,12 @@ changes:
       capability_type, chain, ec, guard, llm, loop_state, shell_env,
       standard_cli, sync, td_lock, view; drops the removed cb_arbitrate,
       cb_review, cb_revise modules) and current find_project_root body.
+  - path: projects/agentic-workflow/src/cli/mod.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #984 (init-projector slice 1/3): registers the new `doc_mirror`
+      module — the one shared whitelist definition consumed by both `aw
+      init`'s AGENTS.md projection and `root_doc_mirror_test`.
 ```

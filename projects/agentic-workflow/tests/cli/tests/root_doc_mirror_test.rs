@@ -8,14 +8,16 @@
 //! outside that whitelist is drift — the two files are ONE implementation
 //! quick-reference maintained in two agent-runtime flavors, and this test
 //! replaces "remember to edit both" with an executable contract.
+//!
+//! The whitelist constants come from `agentic_workflow::cli::doc_mirror` —
+//! the SAME module `aw init`'s AGENTS.md projection consumes (issue #984
+//! AC3), so the projector and this checker can never disagree.
 
+use agentic_workflow::cli::doc_mirror::{
+    AGENTS_TITLE, CLAUDE_TITLE, CODEX_RULES_HEADING, CODEX_TRANSLATE_PREFIX,
+};
 use std::fs;
 use std::path::PathBuf;
-
-const CLAUDE_TITLE: &str = "# CLAUDE.md - Implementation Essentials";
-const AGENTS_TITLE: &str = "# AGENTS.md - Implementation Essentials";
-const CODEX_RULES_HEADING: &str = "## Codex Operational Rules";
-const CODEX_TRANSLATE_PREFIX: &str = "Codex should translate Claude slash-command references";
 
 fn repo_root() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

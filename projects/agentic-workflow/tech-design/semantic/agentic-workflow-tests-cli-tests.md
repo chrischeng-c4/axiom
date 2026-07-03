@@ -344,6 +344,41 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests/cli/tests"
+      - path: "projects/agentic-workflow/tests/cli/tests/init_doc_projection_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "skip_unless_ready"
+            kind: "function"
+            public: false
+          - name: "run_init"
+            kind: "function"
+            public: false
+          - name: "aw_start_block"
+            kind: "function"
+            public: false
+          - name: "combined_output"
+            kind: "function"
+            public: false
+          - name: "fresh_init_creates_both_root_docs_and_check_is_clean"
+            kind: "function"
+            public: false
+          - name: "fresh_init_agents_md_block_matches_doc_mirror_projection_of_claude_md_block"
+            kind: "function"
+            public: false
+          - name: "init_check_detects_tamper_without_writing_and_init_restores_it"
+            kind: "function"
+            public: false
+          - name: "init_emits_chainable_next_step"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "tests"
+          domain: "projects/agentic-workflow/tests/cli/tests"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -847,6 +882,7 @@ tests:
       - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/init_doc_projection_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/merge_target_branch.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/td_claim_test.rs"
@@ -950,6 +986,28 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/init_doc_projection_test.rs"
+    action: create
+    section: schema
+    description: |
+      Issue #984 (init-projector slice 1/3): real-binary smoke coverage for
+      `aw init`'s dual root-doc projection. Drives the actual `aw` binary in
+      a sandboxed tempdir (no repo git state needed — `aw init` does not
+      require a git repository): a fresh `aw init` creates both CLAUDE.md
+      and AGENTS.md and a follow-up `aw init --check` is clean (AC1);
+      AGENTS.md's projected `aw:start` block equals
+      `doc_mirror::agents_block_from_claude_block` applied to CLAUDE.md's
+      block, proving the fresh-install output matches the projector's own
+      contract rather than merely "some content got written"; tampering
+      either root doc's managed section makes `aw init --check` fail,
+      name the stale file, and leave the file byte-unchanged on disk, and a
+      follow-up write-mode `aw init` restores it with `aw init --check`
+      clean again (AC2, read-only + restore proof); and `aw init` /
+      `aw init --check` both end with a chainable `next:` step, using the
+      terminal `next: done` marker in a from-scratch sandbox with no
+      registered `[[projects]]` entry rather than guessing an unexecutable
+      `aw health --project <name>` invocation.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify
