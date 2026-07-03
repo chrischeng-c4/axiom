@@ -5,11 +5,16 @@
 //! implements. It owns the transport-level shape of authentication, not the
 //! crypto and not per-resource authorization:
 //!
-//! - **Token crypto is elsewhere.** keep and loom share scoped claim-check
-//!   HMAC tokens via `libs/claimtoken`; a service's [`Verifier`] *composes*
-//!   that (its `authenticate` calls `claimtoken::verify`). lumen's verifier
-//!   instead uses a static role-map. This lib depends on neither — it only
-//!   defines the trait those impls satisfy.
+//! - **Token crypto is elsewhere, except the static role-map.** keep and loom
+//!   share scoped claim-check HMAC tokens via `libs/claimtoken`; a service's
+//!   [`Verifier`] *composes* that (its `authenticate` calls
+//!   `claimtoken::verify`). Services that instead want a static,
+//!   config-driven token→role registry (the archetype's
+//!   `<SVC>_AUTH=off|required` + `<SVC>_TOKEN_REGISTRY_FILE` shape) can use
+//!   [`role_map::StaticRoleMapVerifier`] directly — lumen's original
+//!   hand-rolled role-map RBAC, generalized here so keep/loom/relay/beam
+//!   don't each fork it. This lib has no opinion on which scheme a service
+//!   picks.
 //! - **Authorization stays in handlers.** Per-resource policy (lumen's
 //!   per-collection RBAC, keep's scope-vs-key) runs in the service's handlers
 //!   on the concrete [`Verifier::Principal`], not here. The middleware only
@@ -59,10 +64,14 @@
 
 mod error;
 mod middleware;
+pub mod role_map;
 mod verifier;
 
 pub use error::AuthError;
 pub use middleware::{auth_middleware, bearer_token};
+pub use role_map::{
+    load_registry, Role, RoleMapDenied, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims,
+};
 pub use verifier::Verifier;
 
 #[cfg(test)]
