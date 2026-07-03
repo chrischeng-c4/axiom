@@ -1212,6 +1212,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "build-stamp"
+version = "0.4.3"
+
+[[package]]
 name = "built"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6325,6 +6329,7 @@ dependencies = [
  "axum 0.8.9",
  "axum-test",
  "base64 0.22.1",
+ "build-stamp",
  "bytemuck",
  "byteorder",
  "cclab-openapi-codegen",
