@@ -2099,17 +2099,20 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
         ret: CoreTy::Unknown,
     },
-    // POSITIVE: copy/copyreg expose TypeVar, Hashable, Callable, and type
-    // contracts that are not scalar rows in the generated table. A bare user
-    // object cannot satisfy those contracts in strict mode; valid callables,
-    // types, hashable builtins, and richer protocol objects remain skip-safe.
+    // NEGATIVE (#955 regression fix): copy.copy/deepcopy take a plain TypeVar
+    // `_T` — a bare class instance IS a valid binding, so `Typed` here was a
+    // false contract that only survived while the wall was shape-limited to
+    // literal `_W()` probes. #885's inferred-type widening made it fire on
+    // legitimate `c = C(); copy.copy(c)` code (7 copy fixtures regressed).
+    // Unknown per the TypeVar doctrine; copyreg rows below keep their walls
+    // (their params are genuinely nominal/protocol-typed).
     StdlibSig {
         module: "copy",
         qualifier: "",
         name: "copy",
         kind: SigKind::ModuleFn,
-        params: &[p("x", CoreTy::Typed)],
-        enforceable: true,
+        params: &[p("x", CoreTy::Unknown)],
+        enforceable: false,
         ret: CoreTy::Unknown,
     },
     StdlibSig {
@@ -2117,8 +2120,8 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "",
         name: "deepcopy",
         kind: SigKind::ModuleFn,
-        params: &[p("x", CoreTy::Typed), p("memo", CoreTy::Unknown)],
-        enforceable: true,
+        params: &[p("x", CoreTy::Unknown), p("memo", CoreTy::Unknown)],
+        enforceable: false,
         ret: CoreTy::Unknown,
     },
     StdlibSig {
@@ -6504,13 +6507,15 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
         ret: CoreTy::Unknown,
     },
+    // NEGATIVE (#955 regression fix): sharedctypes.copy takes TypeVar `_CT` —
+    // same TypeVar-doctrine reasoning as copy.copy above.
     StdlibSig {
         module: "multiprocessing.sharedctypes",
         qualifier: "",
         name: "copy",
         kind: SigKind::ModuleFn,
-        params: &[p("obj", CoreTy::Typed)],
-        enforceable: true,
+        params: &[p("obj", CoreTy::Unknown)],
+        enforceable: false,
         ret: CoreTy::Unknown,
     },
     StdlibSig {
@@ -9370,8 +9375,6 @@ mod tests {
     #[test]
     fn curated_copy_copyreg_walls_override_unknown_rows() {
         for (module, name, param) in [
-            ("copy", "copy", "x"),
-            ("copy", "deepcopy", "x"),
             ("copyreg", "add_extension", "module"),
             ("copyreg", "constructor", "object"),
             ("copyreg", "pickle", "ob_type"),
@@ -9382,6 +9385,15 @@ mod tests {
             assert_eq!(sig.kind, SigKind::ModuleFn);
             assert_eq!(sig.params[0].name, param);
             assert_eq!(sig.params[0].ty, CoreTy::Typed);
+        }
+
+        // #955 regression fix: copy.copy/deepcopy take a plain TypeVar, so a
+        // bare instance is a VALID argument — the rows must stay unwalled or
+        // #885's inferred-type widening rejects legitimate copies.
+        for name in ["copy", "deepcopy"] {
+            let sig = get("copy", "", name).expect("copy function present");
+            assert!(!sig.enforceable, "copy.{name} must not be enforceable");
+            assert_eq!(sig.params[0].ty, CoreTy::Unknown);
         }
 
         let remove_extension =
@@ -10387,14 +10399,8 @@ mod tests {
                 "typecode_or_type",
                 CoreTy::Str,
             ),
-            (
-                "multiprocessing.sharedctypes",
-                "",
-                "copy",
-                0,
-                "obj",
-                CoreTy::Typed,
-            ),
+            // multiprocessing.sharedctypes.copy removed from this walled list:
+            // its param is TypeVar `_CT` — unwalled per the #955 regression fix.
             (
                 "multiprocessing.sharedctypes",
                 "",
