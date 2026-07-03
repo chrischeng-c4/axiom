@@ -43,6 +43,7 @@ members = [
     "libs/service-auth",
     "libs/service-backup",
     "libs/service-tls",
+    "libs/service-metrics",
     "libs/build-stamp",
     "projects/cap",
     "projects/vat",
