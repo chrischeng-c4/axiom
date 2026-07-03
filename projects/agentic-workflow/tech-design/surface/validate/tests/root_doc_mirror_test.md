@@ -130,7 +130,12 @@ fn agents_md_is_claude_md_plus_codex_whitelist() {
             .zip(claude.lines())
             .enumerate()
             .find(|(_, (a, c))| a != c)
-            .map(|(i, (a, c))| format!("line {}:\n  AGENTS(normalized): {a}\n  CLAUDE:             {c}", i + 1))
+            .map(|(i, (a, c))| {
+                format!(
+                    "line {}:\n  AGENTS(normalized): {a}\n  CLAUDE:             {c}",
+                    i + 1
+                )
+            })
             .unwrap_or_else(|| {
                 format!(
                     "files diverge in length only (normalized AGENTS {} lines vs CLAUDE {} lines)",
