@@ -12,6 +12,7 @@
 //! mem_floor = 1.0
 //! samples = 1            # 1 = single shot; N>=3 = median-of-N
 //! prereq_imports = []    # e.g. ["aiofiles", "google.protobuf"]
+//! timeout_secs = 120      # optional; per-pin override (default 120s, #964)
 //! ```
 //!
 //! The runner is `#[ignore]`-equivalent by default: it lives in an integration
@@ -33,14 +34,43 @@
 //! `perf_pin` substring filter match every pin in one go.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use datatest_stable::harness;
 use serde::Deserialize;
 
 #[path = "harness_common.rs"]
 mod common;
-use common::{fixture_sha256, mamba_bin, python3_available, python3_can_import};
+use common::{
+    fixture_sha256, mamba_bin, python3_available, python3_can_import, wait_with_timeout,
+    TimeoutPolicy, WaitOutcome,
+};
+
+/// Default per-pin external wall-clock timeout (#964): a hung fixture must
+/// not wedge the whole perf-pin gate with an orphaned 100%-CPU grandchild.
+/// Overridable per-pin via the `timeout_secs` TOML field.
+const DEFAULT_PIN_TIMEOUT_SECS: u64 = 120;
+
+/// Put a spawned child in its own process group before exec, so a timeout
+/// kill can `killpg` the whole spawn tree. Mirrors `runner.rs`'s
+/// `apply_child_limits`: when the child is `/usr/bin/time`-wrapped, the
+/// actual measured process is a *grandchild* that inherits the group via
+/// fork (and is not itself a group leader), so killing the group takes down
+/// both.
+#[cfg(unix)]
+fn own_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        command.pre_exec(|| {
+            let _ = libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn own_process_group(_command: &mut Command) {}
 
 #[derive(Debug, Deserialize)]
 struct Pin {
@@ -57,6 +87,11 @@ struct Pin {
     /// than CPython at floor 1.0x).
     #[serde(default)]
     mem_floor: Option<f64>,
+    /// Per-pin external wall-clock timeout override, in seconds (#964).
+    /// Defaults to `DEFAULT_PIN_TIMEOUT_SECS` when absent. Guards against a
+    /// fixture hang wedging the whole gate.
+    #[serde(default)]
+    timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -180,20 +215,47 @@ fn time_wrapper() -> Option<(&'static str, &'static str)> {
 }
 
 /// Run `cmd args...` once, optionally wrapped by `/usr/bin/time` so the
-/// child's CPU time and peak RSS can be parsed.
-fn run_once_with_metrics(cmd: &str, args: &[&str]) -> Measurement {
+/// child's CPU time and peak RSS can be parsed. `timeout` bounds the whole
+/// external wall-clock run (#964): the child is spawned as its own process
+/// group leader and, on timeout, the whole group is `killpg`'d so a hang
+/// never leaks an orphaned 100%-CPU grandchild or wedges the gate forever.
+fn run_once_with_metrics(cmd: &str, args: &[&str], timeout: Duration) -> Measurement {
     let cpu_before = child_cpu_time_ns();
-    let (out, wrapped) = if let Some((time_bin, flag)) = time_wrapper() {
-        let mut all_args: Vec<&str> = Vec::with_capacity(args.len() + 2);
-        all_args.push(flag);
-        all_args.push(cmd);
-        all_args.extend(args.iter().copied());
-        (Command::new(time_bin).args(&all_args).output(), true)
-    } else {
-        (Command::new(cmd).args(args).output(), false)
-    };
+    let (spawn_cmd, spawn_args, wrapped): (&str, Vec<&str>, bool) =
+        if let Some((time_bin, flag)) = time_wrapper() {
+            let mut all_args: Vec<&str> = Vec::with_capacity(args.len() + 2);
+            all_args.push(flag);
+            all_args.push(cmd);
+            all_args.extend(args.iter().copied());
+            (time_bin, all_args, true)
+        } else {
+            (cmd, args.to_vec(), false)
+        };
+
+    let mut command = Command::new(spawn_cmd);
+    command
+        .args(&spawn_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    own_process_group(&mut command);
+    let child = command
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn {cmd}: {e}"));
+
+    let policy = TimeoutPolicy::fixed(timeout);
+    let wait_result = wait_with_timeout(child, policy);
     let cpu_after = child_cpu_time_ns();
-    let out = out.unwrap_or_else(|e| panic!("failed to spawn {cmd}: {e}"));
+    let out = match wait_result {
+        Ok(WaitOutcome::Finished(output)) => output,
+        Ok(WaitOutcome::TimedOut(output)) => panic!(
+            "{cmd} TIMEOUT after {}s (killed process group); args={:?}\nstdout={}\nstderr={}",
+            policy.timeout().as_secs(),
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ),
+        Err(e) => panic!("failed to wait for {cmd}: {e}"),
+    };
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -229,13 +291,13 @@ fn median(values: &mut [u64]) -> u64 {
     values[values.len() / 2]
 }
 
-fn measure_n(cmd: &str, args: &[&str], n: usize) -> Measurement {
+fn measure_n(cmd: &str, args: &[&str], n: usize, timeout: Duration) -> Measurement {
     assert!(n > 0, "samples must be >= 1");
     let mut cpu_samples = Vec::with_capacity(n);
     let mut rss_samples = Vec::with_capacity(n);
 
     for _ in 0..n {
-        let measurement = run_once_with_metrics(cmd, args);
+        let measurement = run_once_with_metrics(cmd, args, timeout);
         if let Some(cpu) = measurement.cpu_time_ns {
             cpu_samples.push(cpu);
         }
@@ -406,12 +468,13 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
         .expect("mamba binary path is not valid UTF-8");
 
     let samples = pin.samples.max(1);
+    let timeout = Duration::from_secs(pin.timeout_secs.unwrap_or(DEFAULT_PIN_TIMEOUT_SECS));
     let cpy = if let Some(baseline) = &baseline {
         cpython_measurement_from_baseline(baseline)
     } else {
-        measure_n("python3", &[fixture_str], samples)
+        measure_n("python3", &[fixture_str], samples, timeout)
     };
-    let mb = measure_n(mamba_bin_str, &["run", fixture_str], samples);
+    let mb = measure_n(mamba_bin_str, &["run", fixture_str], samples, timeout);
 
     let mode = if samples <= 1 {
         "single-shot".to_string()
