@@ -60,22 +60,110 @@ not a lifecycle bypass.
 
 ### Workflow CLI
 
-| CLI | Use it for |
-|-----|------------|
-| `aw wi run <id>` / `aw capability run [<cap-id>] --project <p>` | Root-driven workflow runners on the delivery nouns: `aw wi run <id>` drives one WI to terminal; `aw capability run <cap-id>` drives one capability's work-root WIs; `aw capability run --project <p>` is the project-wide run-to-end driver. Follow `invoke.command` and `agent_prompt` until `completion.workflow_complete=true` or `requires_hitl=true`. (The old top-level runner verb is deprecated and slated for removal.) |
-| `aw wi` | Work-item inventory, planning, and CRRR: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, `fill-section`, `review`, `arbitrate`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. There is no `estimate`/`sprintize`; use `aw capability run --project <name>` as the run-to-end driver instead of cron-style sprint batches. |
-| `aw td` | Tech-design + generated-code lifecycle (LINEAR — no review/revise; the gate is EC via `code-check`): `create`, `validate`, `gen`, `fill`, plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `lock`, `claim`, `gen-source`, `code-check`, `code-claim`. (Code-artifact verbs are folded in here; the former standalone code-artifact namespace and the merge verb were removed — `code-check` is the terminal step.) TD defines candidate implementation structure; capability and EC gates remain the source of product truth. |
-| `aw standardize` | Existing-project takeover audit-first preservation protocol: `audit check` / `audit record` is the ONLY surviving surface. Readiness layer metrics (`capability`, `managed`, `semantic`, `traceability`, `regenerable`) live entirely in `aw health`, whose `next.command` names the worker verb for the top gap (`aw td promote`, `aw td code-claim`, `aw td gen`, `aw wi create`, ...). Capability remediation is `aw capability`; HANDWRITE→CODEGEN promotion is `aw td promote`. |
-| `aw capability` | Product capability completion loop: `report`, `next`, `draft`, `apply-draft`, `init`, `migrate`, `run`, `check`, and `sweep`. For multi-project README rollout, run `sweep --write-rollout --human --skip-issue-inventory` first, then use the rollout/draft/WI/action queue artifacts instead of freehand README edits. Treat `create_wi:issue_inventory_skipped` as tracker-sync work, not WI backlog. Use `migrate` only for YAML/legacy-to-canonical Markdown conversion, and use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses `## Brief`, `## Capabilities`, `### Capability Index`, field-style capability contracts, and work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
-| `aw health` | Read-only aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Run `aw health --project <project>` for the full picture, or pass a focused `[SECTION]` (e.g. `regenerable`, `gates`, `blockers`) plus `-v/--verbose` when only one area needs detail. Use `--verify-traceability --verify-cb --verify-cold --verify-tests` when production readiness must be evaluated. `aw health` never mutates; its `next.command` field already names the exact remediation command to run next (`aw capability run`, `aw td promote <path>`, `aw ec gen --verify`, ...), so there is no `aw health fix` — diagnosis and remediation are deliberately separate commands. |
+<!-- aw:cli-table:workflow:start -->
+| Verb | About |
+|------|-------|
+| `aw wi` | Manage work-items — list/show/create/validate across local + GitHub backends |
+| `aw capability` | Product capability completion loop: report/next/run/check |
+| `aw td` | Tech-design and generated-code lifecycle |
+| `aw ec` | External-contract lifecycle: generate tests/tool configs and verify EC gates |
+| `aw health` | Aggregate project readiness, production gates, and blocker status |
+| `aw standardize` | Existing-project workflow guidance and bounded remediation |
+<!-- aw:cli-table:workflow:end -->
+
+`aw wi run <id>` drives one work item to terminal, and `aw capability run
+[<cap-id>] --project <project>` drives one capability's work-root WIs (omit
+`<cap-id>` to run the whole project end to end). Follow `invoke.command` and
+`agent_prompt` from either until `completion.workflow_complete=true` or
+`requires_hitl=true`. (The old top-level `aw run` verb is deprecated and
+slated for removal.)
+
+`aw wi` is work-item inventory, planning, and CRRR: `draft`, `list`, `show`,
+`create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
+`enrich`, `validate`, `fill-section`, `review`, `arbitrate`, plus the `run`
+driver above. Planning commands write local artifacts under
+`/tmp/aw/{project}/...` and do not publish tracker changes. There is no
+`estimate`/`sprintize`; use `aw capability run --project <name>` as the
+run-to-end driver instead of cron-style sprint batches.
+
+`aw td` is the tech-design + generated-code lifecycle (LINEAR — no
+review/revise; the gate is EC via `code-check`): `create`, `validate`,
+`gen`, `fill`, plus read-only/utility verbs `check`, `ast`,
+`migrate-mermaid`, `lock`, `claim`, `gen-source`, `code-check`,
+`code-claim`. (Code-artifact verbs are folded in here; the former
+standalone code-artifact namespace and the merge verb were removed —
+`code-check` is the terminal step.) `aw td check` specifically checks
+TD/spec files for structure, section-format rules, and logical consistency.
+TD defines candidate implementation structure; capability and EC gates
+remain the source of product truth.
+
+`aw ec` is the external-contract lifecycle: generate the tests/tool configs
+an EC-gated capability needs and verify its EC gates. `aw health`'s
+`next.command` names `aw ec gen --verify` when an EC gate is the top
+remaining production blocker.
+
+`aw standardize` is the existing-project takeover audit-first preservation
+protocol: `audit check` / `audit record` is the ONLY surviving surface.
+Readiness layer metrics (`capability`, `managed`, `semantic`,
+`traceability`, `regenerable`) live entirely in `aw health`, whose
+`next.command` names the worker verb for the top gap (`aw td promote`,
+`aw td code-claim`, `aw td gen`, `aw wi create`, ...). Capability
+remediation is `aw capability`; HANDWRITE→CODEGEN promotion is
+`aw td promote`.
+
+`aw capability` is the product capability completion loop: `report`,
+`next`, `draft`, `apply-draft`, `init`, `migrate`, `run`, `check`, and
+`sweep`. For multi-project README rollout, run `sweep --write-rollout
+--human --skip-issue-inventory` first, then use the rollout/draft/WI/action
+queue artifacts instead of freehand README edits. Treat
+`create_wi:issue_inventory_skipped` as tracker-sync work, not WI backlog.
+Use `migrate` only for YAML/legacy-to-canonical Markdown conversion, and
+use `check --verify` when capability proof should include configured test
+gates. README is the default `cap_path` and uses `## Brief`,
+`## Capabilities`, `### Capability Index`, field-style capability
+contracts, and work-root tables. YAML `## Capability:` sections and legacy
+capability tables are migration input only.
+
+`aw health` is a read-only aggregate of project readiness metrics:
+capability readiness, managed/semantic/traceability coverage, command
+traceability, regenerable maturity, cb verify, cold verify, configured test
+gates, and HITL status. Run `aw health --project <project>` for the full
+picture, or pass a focused `[SECTION]` (e.g. `regenerable`, `gates`,
+`blockers`) plus `-v/--verbose` when only one area needs detail. Use
+`--verify-traceability --verify-cb --verify-cold --verify-tests` when
+production readiness must be evaluated. `aw health` never mutates; its
+`next.command` field already names the exact remediation command to run
+next (`aw capability run`, `aw td promote <path>`, `aw ec gen --verify`,
+...), so there is no `aw health fix` — diagnosis and remediation are
+deliberately separate commands.
 
 ### Support CLI
 
-| CLI | Use it for |
-|-----|------------|
-| `aw init` | Bootstrap or refresh `.aw/` config, skills, and settings. |
-| `aw chat post/list/read/members/listen` | Cross-checkout coordination through the shared Agentic Workflow chat channel. |
-| `aw td check` | Check TD/spec files for structure, section-format rules, and logical consistency. |
+<!-- aw:cli-table:support:start -->
+| Verb | About |
+|------|-------|
+| `aw init` | Bootstrap .aw/ config and installed workflow skills/settings |
+| `aw chat` | Cross-checkout agent messaging via shared plain-text channel |
+| `aw guard` | Agent-runtime direct edit/create guard for Codex and Claude Code |
+| `aw llm` | Offline agent orientation: outline + capability/td/ec pillars + loop |
+| `aw upgrade` | Self-update this binary from a published GitHub release |
+| `aw issue` | Search, view, or create Agentic Workflow issues |
+| `aw view` | Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app |
+<!-- aw:cli-table:support:end -->
+
+`aw init` bootstraps or refreshes `.aw/` config, skills, and settings; it is
+idempotent (`--check` verifies without writing). `aw chat
+post/list/read/members/listen` is cross-checkout coordination through the
+shared Agentic Workflow chat channel.
+
+`aw llm`, `aw upgrade`, and `aw issue` are the CLI-convention trio every
+ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
+`upgrade`, `issue`" below for the full contract.
+
+`aw guard` is the agent-runtime direct edit/create guard for Codex and
+Claude Code (live-denies out-of-lifecycle writes). `aw view` is the
+read-only repo reader: projects/libs catalog, README capabilities, EC, TD,
+and the native desktop app.
 
 When the user asks for `aw wi`, `sdd issues`, `sdd gh issue`, or similar
 wording after the merge, inspect Agentic Workflow-managed GitHub issues for the
