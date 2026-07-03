@@ -1,0 +1,328 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-preview-src-render-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+use std::collections::BTreeMap;
+
+use anyhow::Result;
+use serde_json::json;
+
+use crate::model::{
+    CleanupAction, CleanupPlan, GkeSpec, Label, PreviewEnvironment, PreviewMetadata, PreviewPhase,
+    PreviewSpec, PreviewStatus, RouteSpec,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderInput {
+    pub mr: u32,
+    pub sha: String,
+    pub image: String,
+    pub app: String,
+    pub host: String,
+    pub owner: String,
+    pub ttl_hours: u32,
+    pub control_namespace: String,
+    pub workload_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderFile {
+    pub path: String,
+    pub contents: String,
+}
+
+pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
+    let env = preview_environment(input);
+    let cleanup = cleanup_plan(&env, false);
+
+    Ok(vec![
+        RenderFile {
+            path: "spec/preview-environment.yaml".to_string(),
+            contents: serde_yaml::to_string(&env)?,
+        },
+        RenderFile {
+            path: "k8s/namespace.yaml".to_string(),
+            contents: yaml(&namespace(&env))?,
+        },
+        RenderFile {
+            path: "k8s/deployment.yaml".to_string(),
+            contents: yaml(&deployment(&env))?,
+        },
+        RenderFile {
+            path: "k8s/service.yaml".to_string(),
+            contents: yaml(&service(&env))?,
+        },
+        RenderFile {
+            path: "router/route-binding.yaml".to_string(),
+            contents: yaml(&route_binding(&env))?,
+        },
+        RenderFile {
+            path: "mr-comment.md".to_string(),
+            contents: mr_comment(&env),
+        },
+        RenderFile {
+            path: "cleanup-plan.json".to_string(),
+            contents: serde_json::to_string_pretty(&cleanup)? + "\n",
+        },
+    ])
+}
+
+pub fn preview_environment(input: &RenderInput) -> PreviewEnvironment {
+    let namespace = format!("uat-mr-{}", input.mr);
+    let target = format!("mr-{}", input.mr);
+    let app = input.app.clone();
+
+    PreviewEnvironment {
+        api_version: "uat.cclab.dev/v1alpha1".to_string(),
+        kind: "PreviewEnvironment".to_string(),
+        metadata: PreviewMetadata {
+            name: target.clone(),
+            labels: labels(input.mr, &input.sha, &input.owner, &app),
+        },
+        spec: PreviewSpec {
+            mr: input.mr,
+            sha: input.sha.clone(),
+            image: input.image.clone(),
+            app: app.clone(),
+            namespace,
+            owner: input.owner.clone(),
+            ttl_hours: input.ttl_hours,
+            route: RouteSpec {
+                host: input.host.clone(),
+                target,
+                cookie: "uat_target".to_string(),
+                header: "X-UAT-Target".to_string(),
+                service: app,
+                service_port: 80,
+            },
+            gke: GkeSpec {
+                control_namespace: input.control_namespace.clone(),
+                workload_identity: input.workload_identity.clone(),
+            },
+        },
+        status: PreviewStatus {
+            phase: PreviewPhase::Pending,
+            message: "rendered; not applied".to_string(),
+        },
+    }
+}
+
+pub fn cleanup_plan(env: &PreviewEnvironment, mr_closed: bool) -> CleanupPlan {
+    let action = if mr_closed {
+        CleanupAction::Delete
+    } else if matches!(
+        env.status.phase,
+        PreviewPhase::Draining | PreviewPhase::Deleted
+    ) {
+        CleanupAction::Delete
+    } else {
+        CleanupAction::Keep
+    };
+
+    CleanupPlan {
+        mr: env.spec.mr,
+        namespace: env.spec.namespace.clone(),
+        route_target: env.spec.route.target.clone(),
+        action,
+        reason: if action == CleanupAction::Delete {
+            "MR is closed or preview is already draining/deleted".to_string()
+        } else {
+            "MR remains active; keep preview resources".to_string()
+        },
+        delete_namespace: action == CleanupAction::Delete,
+        delete_route_binding: action == CleanupAction::Delete,
+    }
+}
+
+pub fn mr_comment(env: &PreviewEnvironment) -> String {
+    format!(
+        r#"### UAT Preview
+
+Status: `{}`
+MR: `{}`
+SHA: `{}`
+Image: `{}`
+Namespace: `{}`
+Route target: `{}`
+
+Browser entry:
+`https://{}/_preview/{}`
+
+Manual/API routing:
+`{}: {}`
+
+Cleanup TTL: `{}` hours
+"#,
+        phase_name(env.status.phase),
+        env.spec.mr,
+        env.spec.sha,
+        env.spec.image,
+        env.spec.namespace,
+        env.spec.route.target,
+        env.spec.route.host,
+        env.spec.route.target,
+        env.spec.route.header,
+        env.spec.route.target,
+        env.spec.ttl_hours,
+    )
+}
+
+fn phase_name(phase: PreviewPhase) -> &'static str {
+    match phase {
+        PreviewPhase::Pending => "pending",
+        PreviewPhase::Provisioning => "provisioning",
+        PreviewPhase::Ready => "ready",
+        PreviewPhase::Failed => "failed",
+        PreviewPhase::Draining => "draining",
+        PreviewPhase::Deleted => "deleted",
+    }
+}
+
+fn labels(mr: u32, sha: &str, owner: &str, app: &str) -> Vec<Label> {
+    vec![
+        Label {
+            key: "app.kubernetes.io/name".to_string(),
+            value: app.to_string(),
+        },
+        Label {
+            key: "preview.cclab.dev/mr".to_string(),
+            value: mr.to_string(),
+        },
+        Label {
+            key: "preview.cclab.dev/sha".to_string(),
+            value: sha.to_string(),
+        },
+        Label {
+            key: "preview.cclab.dev/owner".to_string(),
+            value: owner.to_string(),
+        },
+    ]
+}
+
+fn label_map(env: &PreviewEnvironment) -> BTreeMap<String, String> {
+    env.metadata
+        .labels
+        .iter()
+        .map(|label| (label.key.clone(), label.value.clone()))
+        .collect()
+}
+
+fn selector(env: &PreviewEnvironment) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("app.kubernetes.io/name".to_string(), env.spec.app.clone()),
+        (
+            "preview.cclab.dev/target".to_string(),
+            env.spec.route.target.clone(),
+        ),
+    ])
+}
+
+fn namespace(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {
+            "name": env.spec.namespace,
+            "labels": label_map(env),
+            "annotations": {
+                "preview.cclab.dev/ttl-hours": env.spec.ttl_hours.to_string(),
+                "preview.cclab.dev/route-target": env.spec.route.target,
+            }
+        }
+    })
+}
+
+fn deployment(env: &PreviewEnvironment) -> serde_json::Value {
+    let mut labels = selector(env);
+    labels.extend(label_map(env));
+
+    json!({
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": env.spec.app,
+            "namespace": env.spec.namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "replicas": 1,
+            "selector": { "matchLabels": selector(env) },
+            "template": {
+                "metadata": { "labels": labels },
+                "spec": {
+                    "serviceAccountName": env.spec.gke.workload_identity,
+                    "containers": [{
+                        "name": env.spec.app,
+                        "image": env.spec.image,
+                        "ports": [{ "containerPort": 8080 }],
+                        "env": [
+                            { "name": "PREVIEW_MR", "value": env.spec.mr.to_string() },
+                            { "name": "PREVIEW_SHA", "value": env.spec.sha },
+                            { "name": "UAT_ROUTE_TARGET", "value": env.spec.route.target }
+                        ],
+                        "readinessProbe": {
+                            "httpGet": { "path": "/readyz", "port": 8080 },
+                            "initialDelaySeconds": 5,
+                            "periodSeconds": 5
+                        },
+                        "livenessProbe": {
+                            "httpGet": { "path": "/healthz", "port": 8080 },
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 10
+                        }
+                    }]
+                }
+            }
+        }
+    })
+}
+
+fn service(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": env.spec.route.service,
+            "namespace": env.spec.namespace,
+            "labels": label_map(env),
+        },
+        "spec": {
+            "type": "ClusterIP",
+            "selector": selector(env),
+            "ports": [{
+                "name": "http",
+                "port": env.spec.route.service_port,
+                "targetPort": 8080
+            }]
+        }
+    })
+}
+
+fn route_binding(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": format!("routebinding-{}", env.spec.route.target),
+            "namespace": env.spec.gke.control_namespace,
+            "labels": {
+                "preview.cclab.dev/kind": "route-binding",
+                "preview.cclab.dev/target": env.spec.route.target,
+                "preview.cclab.dev/mr": env.spec.mr.to_string()
+            }
+        },
+        "data": {
+            "target": env.spec.route.target,
+            "host": env.spec.route.host,
+            "cookie": env.spec.route.cookie,
+            "header": env.spec.route.header,
+            "namespace": env.spec.namespace,
+            "service": env.spec.route.service,
+            "servicePort": env.spec.route.service_port.to_string(),
+            "sha": env.spec.sha
+        }
+    })
+}
+
+fn yaml(value: &serde_json::Value) -> Result<String> {
+    Ok(serde_yaml::to_string(value)?)
+}
+
+// </HANDWRITE>
