@@ -5,5 +5,5 @@ lib = "csv"
 fixture = "tests/cpython/_regression/std-libs/csv/bench/quote_all_const_hot.py"
 floor = 1.0
 mem_floor = 1.0
-samples = 1
+samples = 9
 prereq_imports = []

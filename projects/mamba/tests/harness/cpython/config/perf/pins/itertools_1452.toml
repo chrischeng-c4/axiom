@@ -5,5 +5,5 @@ lib = "itertools"
 fixture = "tests/cpython/_regression/std-libs/itertools/bench/accumulate_sum_hot.py"
 floor = 1.0
 mem_floor = 1.0
-samples = 1
+samples = 9
 prereq_imports = []
