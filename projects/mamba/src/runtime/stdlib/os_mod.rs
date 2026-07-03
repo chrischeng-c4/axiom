@@ -123,6 +123,7 @@ dispatch_varargs!(dispatch_write_fd, mb_os_write_fd);
 dispatch_varargs!(dispatch_read_fd, mb_os_read_fd);
 dispatch_varargs!(dispatch_close_fd, mb_os_close_fd);
 dispatch_varargs!(dispatch_lseek_fd, mb_os_lseek_fd);
+dispatch_varargs!(dispatch_pipe, mb_os_pipe);
 dispatch_varargs!(dispatch_access_v, mb_os_access_v);
 
 // os.DirEntry: a runtime class. The bare `os.DirEntry` symbol is a constructor
@@ -669,7 +670,7 @@ pub fn register() {
         ("preadv", dispatch_w_zero as *const () as usize),
         ("pwritev", dispatch_w_zero as *const () as usize),
         ("fdopen", dispatch_noop_none as *const () as usize),
-        ("pipe", dispatch_noop_none as *const () as usize),
+        ("pipe", dispatch_pipe as *const () as usize),
         ("openpty", dispatch_noop_none as *const () as usize),
         ("device_encoding", dispatch_noop_none as *const () as usize),
         (
@@ -2665,6 +2666,48 @@ fn mb_os_close_fd(args: &[MbValue]) -> MbValue {
         FD_TABLE.with(|t| t.borrow_mut().remove(&fd));
     }
     MbValue::none()
+}
+
+/// os.pipe() → (read_fd, write_fd), backed by a real `libc::pipe(2)` pair
+/// (#944). The two ends are folded into the shared `FD_TABLE` keyed by their
+/// *own* real OS fd number rather than a `NEXT_FD` surrogate: os.read/
+/// os.write/os.close already resolve fds by `FD_TABLE` lookup, and
+/// `select.select`'s `extract_fd` (select_mod.rs) treats the Python-visible
+/// int as the raw poll(2) fd directly with no surrogate resolution — keying
+/// by the real fd makes both paths agree without touching either module.
+fn mb_os_pipe(_args: &[MbValue]) -> MbValue {
+    let mut fds: [libc::c_int; 2] = [0; 2];
+    let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        let errno = err.raw_os_error().unwrap_or(0);
+        return raise("OSError", format!("[Errno {errno}] {err}"));
+    }
+    use std::os::unix::io::FromRawFd;
+    let (r, w) = (fds[0] as i64, fds[1] as i64);
+    let rfile = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    let wfile = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+    FD_TABLE.with(|t| {
+        let mut tb = t.borrow_mut();
+        tb.insert(
+            r,
+            OsFdFile {
+                file: rfile,
+                path: String::new(),
+            },
+        );
+        tb.insert(
+            w,
+            OsFdFile {
+                file: wfile,
+                path: String::new(),
+            },
+        );
+    });
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_int(r),
+        MbValue::from_int(w),
+    ]))
 }
 
 /// os.access(path, mode) — F_OK→exists; R_OK/W_OK/X_OK probe permission bits.
