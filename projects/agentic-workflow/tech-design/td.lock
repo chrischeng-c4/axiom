@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-03T04:56:05.642114+00:00"
-digest = "sha256:f0461bc04edd384b5504ae99da605ce3ef35d16f397c61dccf720e756ead1431"
-source_digest = "sha256:f0461bc04edd384b5504ae99da605ce3ef35d16f397c61dccf720e756ead1431"
-ir_digest = "sha256:302116bea5f121c957002585da39c8ba3f997770274708a60e5daecf76853777"
+generated_at = "2026-07-03T15:51:28.801800+00:00"
+digest = "sha256:0cd6b57040350537a8e009d9cb77cef9b9b5e7b105b06247bfa17ceca1c6e913"
+source_digest = "sha256:0cd6b57040350537a8e009d9cb77cef9b9b5e7b105b06247bfa17ceca1c6e913"
+ir_digest = "sha256:39ed8aae97e3b834a1a9d4e50fb53b5098972155ddf0ec068b6b25de0af01def"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5112,14 +5112,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/agentic-workflow-tests-cli-tests.md"
-digest = "sha256:6f159be2844c9891410ea8a8df69f4f78029557a0da2811457760a64d42db665"
-ir_digest = "sha256:213f2a42c972e400cce8002ca6b22f84a9745155b0780b8d18336a823f17d76f"
+digest = "sha256:79ab737f0d89ede70e52fa6c12e575d54ccac90dc4596e290d3dd9f9ecb226a9"
+ir_digest = "sha256:188ce4512d0fb2443de77b414a99305e5d2af7844d1342843968e5a0b5692b56"
 section_count = 3
 
 [[files]]
 path = "semantic/agentic-workflow-tests.md"
-digest = "sha256:bd7e66dd3a058d1ef3fc2e21610a22e38c9548f7445e907f509bedbc89e88d16"
-ir_digest = "sha256:9918b7c26e77d99f83f0a1809aa9f4fd25cae2c8c2b7bdf18316831c19cdd7a7"
+digest = "sha256:fe0e0b403e5ece9257079ee8d08a06cdfdcafe0ac292427ad313292e8a6073ed"
+ir_digest = "sha256:3d304c48f86001523282569e9d3981a0100bd89e827304de91525a333abd8a2e"
 section_count = 3
 
 [[files]]
@@ -5285,8 +5285,14 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/commands.md"
-digest = "sha256:e7203e8251a32290d3996411755148680329318b994e3355bca29a2db6d6f398"
-ir_digest = "sha256:e99ca5c151551dd523cf99a07b296e240ae6cab56c14b33c14f2f2ee898a204e"
+digest = "sha256:3de8ebdb2b0d2a51b6dcbb4778b9f0dae568fe17d9ed70cf34a420bf2153518c"
+ir_digest = "sha256:02f3726bb67245bcebef977750b4bae7852077283af1e69a639a7c74283b14af"
+section_count = 2
+
+[[files]]
+path = "surface/interfaces/src/doc_mirror.md"
+digest = "sha256:2f3c8b5d40835630a8ca5c5ef17e9d6d3c3e381b31145b42627d4f4fbe063dc7"
+ir_digest = "sha256:cde5120f6e297336790ace9aaac740acc3a228680dc08af9e4a97f1815596b8b"
 section_count = 2
 
 [[files]]
@@ -5309,8 +5315,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/init.md"
-digest = "sha256:4a8cbf305680a6f2aae9a76ad8079b219223b3133a34759aee32ef7b269f3097"
-ir_digest = "sha256:40e344996312e4f99f66b3f13127f71c4b425022794a151bfc4459cadb0c2b92"
+digest = "sha256:42488b4271ce2addb5c6f64c3ccc6f68bd242034e78e8ee550fa4aaf2d07c1de"
+ir_digest = "sha256:ebed915cd5ea518391d3a99e6a9edef3e27365ad1687b36a4e7db9d821d308fc"
 section_count = 2
 
 [[files]]
@@ -5321,8 +5327,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/lib.md"
-digest = "sha256:5c4ee37d9b0929d1ecccb27246959c64de5e4be80ff0323c0ecc91035b7bb978"
-ir_digest = "sha256:719f16684d51672a80aa77d1c0bfd8572072492fac9eea79c459959b3b97af77"
+digest = "sha256:6c60fb8fde8b6f36d94b79d9e903e25042559dc8d8b463fa38edba7e2522d417"
+ir_digest = "sha256:301648e7aa3b9546367c90379d2d0d015cbd5425ade99806c118ba2224fe67ac"
 section_count = 2
 
 [[files]]
@@ -5806,6 +5812,12 @@ ir_digest = "sha256:b5f07e8e11e30986b02422d877aa2e281c62f0194a86e0cb7f4424935fa5
 section_count = 2
 
 [[files]]
+path = "surface/validate/tests/init_doc_projection_test.md"
+digest = "sha256:d81100cb2400a54175c760e458d6b260f692c20375e4bbf9ae4cc21d185ee642"
+ir_digest = "sha256:528fa16a6fe90755f0fa9cc248dac542bca88b747aeb34549694aeef84615bb9"
+section_count = 2
+
+[[files]]
 path = "surface/validate/tests/inplace_mode_test.md"
 digest = "sha256:27a2134d56906951b6cedc3e97f5ff9672cf3a6886ecd6fb4ef0fa378390a07e"
 ir_digest = "sha256:ca6bf8bbbc54e1c2a1c6e6461d9f07484638da6fbdd47f78db64352863e12f46"
@@ -5837,8 +5849,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/root_doc_mirror_test.md"
-digest = "sha256:1b1e22a2bc523c129a4aa171892b1cad106151b22452820440b1fd394ecae235"
-ir_digest = "sha256:1736ff78917ed4ac13f2c7475fa70fcb765692913887456b20f6f4ed9b1d271e"
+digest = "sha256:fe97037e4b7191708e631b37f1f9f1cdfcf68368d81880f092df55a0d52394f9"
+ir_digest = "sha256:1e64fe6b53bd60961b3df6824e7b99d4a1bf11fb98f40678954c8854a61a794b"
 section_count = 2
 
 [[files]]

@@ -35,6 +35,10 @@ pub enum Commands {
         /// Override version downgrade protection and force-replace all assets
         #[arg(short, long)]
         force: bool,
+
+        /// Read-only: report stale CLAUDE.md/AGENTS.md projections without writing (issue #984)
+        #[arg(long)]
+        check: bool,
     },
 
     /// Create a greenfield project directory and bootstrap Agentic Workflow.
@@ -99,8 +103,12 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         // Project initialization
         // =================================================================
         // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R2
-        Commands::Init { name, force } => {
-            init::run(name.as_deref(), force, None).await?;
+        Commands::Init { name, force, check } => {
+            if check {
+                init::run_check()?;
+            } else {
+                init::run(name.as_deref(), force, None).await?;
+            }
         }
         Commands::New(args) => {
             init::run_new(args).await?;

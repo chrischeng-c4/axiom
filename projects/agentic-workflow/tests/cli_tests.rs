@@ -10,6 +10,8 @@ mod cb_namespace_test;
 mod chain_liveness_test;
 #[path = "cli/tests/in_place_lifecycle_test.rs"]
 mod in_place_lifecycle_test;
+#[path = "cli/tests/init_doc_projection_test.rs"]
+mod init_doc_projection_test;
 #[path = "cli/tests/inplace_mode_test.rs"]
 mod inplace_mode_test;
 #[path = "cli/tests/legacy_cli_removal_test.rs"]
