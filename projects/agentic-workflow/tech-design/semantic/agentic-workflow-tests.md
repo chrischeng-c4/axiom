@@ -165,6 +165,9 @@ semantic_domain:
           - name: "phase_migration_test"
             kind: "module"
             public: false
+          - name: "root_doc_mirror_test"
+            kind: "module"
+            public: false
           - name: "project_health_test"
             kind: "module"
             public: false

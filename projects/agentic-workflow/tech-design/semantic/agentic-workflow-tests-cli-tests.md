@@ -201,6 +201,20 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests/cli/tests"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        symbols:
+          - name: "repo_root"
+            kind: "function"
+            public: false
+          - name: "strip_codex_only_blocks"
+            kind: "function"
+            public: false
+          - name: "agents_md_is_claude_md_plus_codex_whitelist"
+            kind: "function"
+            public: false
       - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -829,6 +843,7 @@ tests:
       - path: "projects/agentic-workflow/tests/cli/tests/recovery_flow_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/standardize_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_namespace_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
@@ -881,6 +896,15 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
+    action: create
+    section: schema
+    description: |
+      Root doc mirror contract (meta-doc sheet 1): AGENTS.md must equal
+      CLAUDE.md plus the fixed Codex-only whitelist (title swap, Codex
+      Operational Rules section, slash-command translation paragraph);
+      drift outside the whitelist fails the suite.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
     action: create

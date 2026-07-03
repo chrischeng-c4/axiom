@@ -18,6 +18,8 @@ mod legacy_cli_removal_test;
 mod merge_target_branch;
 #[path = "cli/tests/phase_migration_test.rs"]
 mod phase_migration_test;
+#[path = "cli/tests/root_doc_mirror_test.rs"]
+mod root_doc_mirror_test;
 #[path = "cli/tests/project_health_test.rs"]
 mod project_health_test;
 #[path = "cli/tests/recovery_flow_test.rs"]
