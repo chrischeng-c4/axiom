@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-02T04:11:57.172941+00:00"
-digest = "sha256:1ae0045146bee94c06c51b152e7570f63c9c92d7c3c47e4a70ef74461cae7482"
-source_digest = "sha256:1ae0045146bee94c06c51b152e7570f63c9c92d7c3c47e4a70ef74461cae7482"
-ir_digest = "sha256:2b581a53837b70d6f8979b133081e0ea645151c91852eb7139d3ab5a91b9131d"
+generated_at = "2026-07-03T10:57:01.316822+00:00"
+digest = "sha256:314fa8b4ba59d0278567e3be4a3ffab2478fb6d0122d60bf1450a9a0ba81e256"
+source_digest = "sha256:314fa8b4ba59d0278567e3be4a3ffab2478fb6d0122d60bf1450a9a0ba81e256"
+ir_digest = "sha256:cdbf18e895ece97a97d0d927fcf0820d72f3c8f2ef93a1a7b249892da0983f4d"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-consolidation-single-binary-serve-spec-llm-k8s-operato.md"
@@ -249,8 +249,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-tests.md"
-digest = "sha256:587fcce1ab7b4b7050647810d93f324ecc3bd77ce3aa45d6afb27ff5a4b16e80"
-ir_digest = "sha256:82d5156ddf0da8deea41dfc6a471ac664aa1b4bd812b698338d8e1055b94abe4"
+digest = "sha256:a7822200f1bc66a2ffa2e04101d894404738dbc849ba3555eed15730441c172b"
+ir_digest = "sha256:c435cee70c6d6d682b8bc709d8371dd2a468ee0770bd3b6729cb108e644676cb"
 section_count = 3
 
 [[files]]
@@ -297,8 +297,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-bin-lumen-rs.md"
-digest = "sha256:fc88ef6f5e863e2c7815a3d12e8e7a0c85c5362992983a9984eb88230c363677"
-ir_digest = "sha256:b92d3f2320b62e938f95c38ce7cb8b0121a0a1991db2bf5c82f3e81bee939d80"
+digest = "sha256:a2bf6682e56e11f1b044bd1e772100988c825545266968c14426dd8007a2ee66"
+ir_digest = "sha256:4eb9f4c0dd01fc745b973f10fc162dd6c3f814402202e40ef801b84e987539ba"
 section_count = 3
 
 [[files]]
