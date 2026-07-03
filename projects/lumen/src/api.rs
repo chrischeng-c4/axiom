@@ -1167,11 +1167,6 @@ impl IntoResponse for ApiErr {
 impl From<crate::auth::AuthErr> for ApiErr {
     fn from(e: crate::auth::AuthErr) -> Self {
         match e {
-            crate::auth::AuthErr::Unauthenticated => Self::new(
-                StatusCode::UNAUTHORIZED,
-                "unauthenticated",
-                "valid bearer token required",
-            ),
             crate::auth::AuthErr::Forbidden {
                 subject,
                 needed,
