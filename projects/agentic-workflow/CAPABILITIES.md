@@ -134,6 +134,7 @@ Gate Inventory:
 | CB lifecycle dispatch | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_force_regen_verify_parses_without_slug` |
 | CRRR removal (linear lifecycle) | change | #191 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib td_created_dispatches_to_gen`; projects/agentic-workflow/tech-design/logic/remove-td-cb-crrr-collapse-to-linear-lifecycle.md |
 | Remove TD merge command | change | #914 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests test_td_merge_subcommand_is_removed`; projects/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md; refs #851 |
+| Chain liveness proof | change | #914 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests chain_liveness`; projects/agentic-workflow/tech-design/surface/validate/tests/chain_liveness_test.md; refs #921 |
 
 ### Project-Local TD and EC Gates
 
