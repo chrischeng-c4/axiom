@@ -502,9 +502,20 @@ fn parse_cookie_string(input: &str) -> Result<Vec<ParsedItem>, ()> {
     Ok(items)
 }
 
-/// Lazily fetch (creating if absent) the `_data` backing dict that a BaseCookie /
-/// SimpleCookie uses to map cookie name -> Morsel. Keeping creation lazy keeps
-/// the `BaseCookie()` constructor a single allocation (perf gate #1477 Gate 2).
+/// Lazily fetch (creating if absent) the `_data` backing dict that a BaseCookie
+/// / SimpleCookie / Morsel uses to map cookie name -> Morsel (or, for a
+/// Morsel, reserved-attribute key -> current string value). Keeping creation
+/// lazy keeps the `BaseCookie()` constructor a single allocation (perf gate
+/// #1477 Gate 2). A Morsel's `_data` is additionally pre-seeded with the
+/// reserved keys (each defaulting to "") on first touch — deferred from
+/// construction time (#1477 cliff fix: `SimpleCookie(payload)` mints one
+/// Morsel per parsed key=value pair, and the parse hot path never reads a
+/// Morsel's reserved attributes back, so eagerly building + populating a
+/// full reserved-key dict per Morsel was pure waste — CPython's own
+/// `Morsel.__init__` pays this same cost, but only mamba was paying it on
+/// every discarded Morsel of every `copy_context`-shaped hot loop). Any
+/// actual read or write still observes the full reserved-key set, exactly
+/// matching the previous eager behavior — only the timing moves.
 fn cookie_data(self_v: MbValue) -> MbValue {
     if let Some(d) = get_field(self_v, "_data") {
         if !d.is_none() {
@@ -512,20 +523,27 @@ fn cookie_data(self_v: MbValue) -> MbValue {
         }
     }
     let d = new_dict();
+    if is_morsel(self_v) {
+        for (k, _hdr) in RESERVED {
+            super::super::dict_ops::mb_dict_setitem(d, new_str(k), new_str(""));
+        }
+    }
     set_field(self_v, "_data", d);
     d
 }
 
-/// Build a fresh Morsel instance pre-populated with the reserved keys
-/// (each defaulting to "") and None key/value/coded_value, mirroring
-/// CPython's `Morsel.__init__`.
+fn is_morsel(self_v: MbValue) -> bool {
+    self_v.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "Morsel")
+    })
+}
+
+/// Build a fresh Morsel instance with None key/value/coded_value, mirroring
+/// CPython's `Morsel.__init__`. The reserved-key `_data` dict is NOT built
+/// here — `cookie_data()` builds and pre-seeds it lazily on first touch (see
+/// its doc comment).
 fn make_morsel() -> MbValue {
     let m = make_class_shell("Morsel");
-    let data = new_dict();
-    for (k, _hdr) in RESERVED {
-        super::super::dict_ops::mb_dict_setitem(data, new_str(k), new_str(""));
-    }
-    set_field(m, "_data", data);
     set_field(m, "key", MbValue::none());
     set_field(m, "value", MbValue::none());
     set_field(m, "coded_value", MbValue::none());
@@ -809,7 +827,13 @@ unsafe extern "C" fn morsel_eq(self_v: MbValue, other: MbValue) -> MbValue {
 
 /// Shared `BaseCookie.__set`: build/refresh the Morsel for `key` with
 /// CPython's key validation (reserved + legal chars), raising CookieError.
-fn cookie_set_inner(self_v: MbValue, key: &str, real: MbValue, coded: MbValue) -> Result<(), ()> {
+/// Sets `self[key] = Morsel(real, coded)`, returning the (possibly reused)
+/// Morsel on success. Returning it lets callers that need the just-set
+/// Morsel (e.g. `cookie_load_value`'s attribute-attachment loop) skip a
+/// second, redundant dict lookup by key (#1477: the key string is also
+/// built once here and reused across the lookup/field/setitem instead of
+/// being allocated three separate times).
+fn cookie_set_inner(self_v: MbValue, key: &str, real: MbValue, coded: MbValue) -> Result<MbValue, ()> {
     let lower = key.to_lowercase();
     if RESERVED.iter().any(|(k, _)| *k == lower) {
         raise_cookie_error(&format!("Attempt to set a reserved key {key:?}"));
@@ -820,17 +844,18 @@ fn cookie_set_inner(self_v: MbValue, key: &str, real: MbValue, coded: MbValue) -
         return Err(());
     }
     let data = cookie_data(self_v);
-    let existing = super::super::dict_ops::mb_dict_get(data, new_str(key), MbValue::none());
+    let key_v = new_str(key);
+    let existing = super::super::dict_ops::mb_dict_get(data, key_v, MbValue::none());
     let morsel = if existing.is_none() {
         make_morsel()
     } else {
         existing
     };
-    set_field(morsel, "key", new_str(key));
+    set_field(morsel, "key", key_v);
     set_field(morsel, "value", real);
     set_field(morsel, "coded_value", coded);
-    super::super::dict_ops::mb_dict_setitem(data, new_str(key), morsel);
-    Ok(())
+    super::super::dict_ops::mb_dict_setitem(data, key_v, morsel);
+    Ok(morsel)
 }
 
 unsafe extern "C" fn cookie_setitem(self_v: MbValue, args: MbValue) -> MbValue {
@@ -984,21 +1009,28 @@ unsafe extern "C" fn cookie_get(self_v: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn cookie_load(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
     let raw = items.first().copied().unwrap_or_else(MbValue::none);
+    cookie_load_value(self_v, raw)
+}
+
+/// Core of `cookie_load`, taking the raw value directly instead of the
+/// variadic-call args list — lets the constructor hot path
+/// (`cookie_ctor_load`, #1477) feed a parsed cookie string straight in
+/// without allocating a one-element list wrapper it would immediately
+/// discard.
+unsafe fn cookie_load_value(self_v: MbValue, raw: MbValue) -> MbValue {
     if let Some(s) = extract_str(raw) {
         let parsed = match parse_cookie_string(&s) {
             Ok(p) => p,
             Err(()) => return MbValue::none(), // invalid string: leave untouched
         };
-        let data = cookie_data(self_v);
         let mut current: MbValue = MbValue::none();
         for item in parsed {
             match item {
                 ParsedItem::KeyVal(key, real, coded) => {
-                    if cookie_set_inner(self_v, &key, new_str(&real), new_str(&coded)).is_err() {
-                        return MbValue::none(); // CookieError pending
+                    match cookie_set_inner(self_v, &key, new_str(&real), new_str(&coded)) {
+                        Ok(morsel) => current = morsel,
+                        Err(()) => return MbValue::none(), // CookieError pending
                     }
-                    current =
-                        super::super::dict_ops::mb_dict_get(data, new_str(&key), MbValue::none());
                 }
                 ParsedItem::Attr(key, value) => {
                     if current.is_none() {
@@ -1228,12 +1260,13 @@ pub fn mb_http_cookies_base_cookie_new(args: &[MbValue]) -> MbValue {
 
 /// `SimpleCookie(input)` / `BaseCookie(input)` — a non-None ctor arg is
 /// loaded exactly like `.load(input)`. Zero-arg stays a single allocation
-/// (perf gate #1477 Gate 2).
+/// (perf gate #1477 Gate 2). Calls `cookie_load_value` directly (no
+/// one-element list wrapper — #1477 cliff fix) since the constructor
+/// already has the raw value in hand.
 fn cookie_ctor_load(c: MbValue, args: &[MbValue]) {
     if let Some(first) = args.first().copied() {
         if !first.is_none() {
-            let args_list = MbValue::from_ptr(MbObject::new_list(vec![first]));
-            unsafe { cookie_load(c, args_list) };
+            unsafe { cookie_load_value(c, first) };
         }
     }
 }
