@@ -23,12 +23,12 @@
 //! back as the original `anyhow::Error` — carrying the `StorageError` —
 //! so the handler still maps them to the right HTTP status.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use futures::{FutureExt, StreamExt};
+use raft_host::OutcomeWindow;
 use rustc_hash::FxHashMap;
 use tokio::sync::oneshot;
 
@@ -36,10 +36,10 @@ use crate::log_entry::RaftLogEntry;
 use crate::storage::{ApplyOutcome, Engine};
 use crate::wal::{SharedWal, WalRecord};
 
-/// How many recent outcomes to retain. A publisher reads its outcome
-/// within microseconds of the apply loop reaching its sequence, far
-/// inside this window; outcomes for sequences no local handler is
-/// waiting on (writes that originated on other nodes) age out.
+/// How many recent outcomes to retain, via [`OutcomeWindow`]. A publisher
+/// reads its outcome within microseconds of the apply loop reaching its
+/// sequence, far inside this window; outcomes for sequences no local
+/// handler is waiting on (writes that originated on other nodes) age out.
 const OUTCOME_WINDOW: u64 = 8192;
 const APPLY_LOOP_BATCH: usize = 128;
 
@@ -50,7 +50,7 @@ struct PendingApply {
 }
 
 struct CompletionState {
-    outcomes: BTreeMap<u64, Result<ApplyOutcome>>,
+    outcomes: OutcomeWindow<Result<ApplyOutcome>>,
     waiters: FxHashMap<u64, oneshot::Sender<Result<ApplyOutcome>>>,
 }
 
@@ -114,7 +114,7 @@ impl WriteCoordinator {
             wal: wal.clone(),
             applied: AtomicU64::new(from_seq),
             completions: Mutex::new(CompletionState {
-                outcomes: BTreeMap::new(),
+                outcomes: OutcomeWindow::new(OUTCOME_WINDOW),
                 waiters: FxHashMap::default(),
             }),
         });
@@ -262,14 +262,7 @@ impl WriteCoordinator {
                 m.outcomes.insert(seq, outcome);
             }
             // Prune everything older than the retention window.
-            let cutoff = seq.saturating_sub(OUTCOME_WINDOW);
-            while let Some((&k, _)) = m.outcomes.iter().next() {
-                if k < cutoff {
-                    m.outcomes.remove(&k);
-                } else {
-                    break;
-                }
-            }
+            m.outcomes.advance(seq);
         }
         // Publish the new applied head AFTER the outcome is stored, so checkpoint
         // readers never see a seq before its engine mutation has been applied.
@@ -281,7 +274,7 @@ impl WriteCoordinator {
 
     fn register_waiter(&self, seq: u64) -> Result<oneshot::Receiver<Result<ApplyOutcome>>> {
         let mut m = self.completions.lock().expect("completions poisoned");
-        if let Some(result) = m.outcomes.remove(&seq) {
+        if let Some(result) = m.outcomes.claim(seq) {
             let (tx, rx) = oneshot::channel();
             let _ = tx.send(result);
             return Ok(rx);
