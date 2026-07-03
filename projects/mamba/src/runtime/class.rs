@@ -3751,6 +3751,46 @@ pub(crate) fn object_init_unbound(items: &[MbValue]) -> MbValue {
     MbValue::none()
 }
 
+/// Generic `cls.__new__(cls, *args)` dispatch (#955): copyreg's `__newobj__`,
+/// `__newobj_ex__`, and `_reconstructor` shims need to invoke a class's
+/// effective `__new__` — honoring a user-defined override when present —
+/// without also running `__init__` (unlike the full `C(...)` call pipeline
+/// in `instance_new_with_init_impl`).
+pub(crate) fn class_new_unbound(items: &[MbValue]) -> MbValue {
+    let class_name = items.first().copied().and_then(resolve_class_name);
+    if let Some(ref name) = class_name {
+        let new_func = custom_new_method(name);
+        if !new_func.is_none() {
+            let args_list = MbValue::from_ptr(MbObject::new_list(items.to_vec()));
+            return super::builtins::mb_call_spread(new_func, args_list);
+        }
+    }
+    object_new_unbound(items)
+}
+
+/// Keyword-argument counterpart of `class_new_unbound`, for
+/// `__newobj_ex__(cls, args, kwargs)`.
+pub(crate) fn class_new_unbound_kwargs(items: &[MbValue], kwargs_dict: MbValue) -> MbValue {
+    let class_name = items.first().copied().and_then(resolve_class_name);
+    if let Some(ref name) = class_name {
+        let new_func = custom_new_method(name);
+        if !new_func.is_none() {
+            let args_list = MbValue::from_ptr(MbObject::new_list(items.to_vec()));
+            return super::builtins::mb_call_spread_kwargs(new_func, args_list, kwargs_dict);
+        }
+    }
+    if kwargs_dict_has_entries(kwargs_dict) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "object.__new__() takes no keyword arguments".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    object_new_unbound(items)
+}
+
 pub(crate) fn object_setattr_unbound(items: &[MbValue]) -> MbValue {
     if items.len() != 3 {
         super::exception::mb_raise(
