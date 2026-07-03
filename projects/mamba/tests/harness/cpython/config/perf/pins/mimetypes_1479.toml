@@ -5,5 +5,5 @@ lib = "mimetypes"
 fixture = "tests/cpython/_regression/std-libs/mimetypes/bench/guess_type_bulk.py"
 floor = 1.0
 mem_floor = 1.0
-samples = 1
+samples = 9
 prereq_imports = []
