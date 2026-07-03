@@ -21,7 +21,7 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Analyzer` | projects/lumen/src/types.rs | enum | pub | 147 |  |
-| `ApiError` | projects/lumen/src/types.rs | struct | pub | 606 |  |
+| `ApiError` | projects/lumen/src/types.rs | struct | pub | 615 |  |
 | `CacheStats` | projects/lumen/src/types.rs | struct | pub | 594 |  |
 | `CreateCollectionRequest` | projects/lumen/src/types.rs | struct | pub | 21 |  |
 | `CreateCollectionResponse` | projects/lumen/src/types.rs | struct | pub | 28 |  |
@@ -60,8 +60,8 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | `VectorMetric` | projects/lumen/src/types.rs | enum | pub | 90 |  |
 | `VectorQuantize` | projects/lumen/src/types.rs | enum | pub | 127 |  |
 | `VectorSpec` | projects/lumen/src/types.rs | struct | pub | 136 |  |
-| `normalize` | projects/lumen/src/types.rs | function | pub | 620 | normalize(mut self) -> Self |
-| `vector_spec` | projects/lumen/src/types.rs | function | pub | 638 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
+| `normalize` | projects/lumen/src/types.rs | function | pub | 629 | normalize(mut self) -> Self |
+| `vector_spec` | projects/lumen/src/types.rs | function | pub | 647 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -669,6 +669,15 @@ pub struct CacheStats {
 // Errors
 // ---------------------------------------------------------------------------
 
+// The runtime `{error, message}` envelope this shape describes now lives in
+// `service_http::ErrorEnvelope` (`src/api.rs`'s `ApiErr` renders it); this
+// struct stays a distinct local definition purely to keep the OpenAPI schema
+// name (`ApiError`) and its doc-comment-derived `description` byte-identical
+// — `#[derive(ToSchema)]` fixes both at the type's own definition site, so
+// neither a `pub type` alias nor a `#[schema(as = ...)]` override on the
+// shared struct can reproduce lumen's pre-existing name/description without
+// baking lumen's spec-path text into the generic `libs/service-http` crate
+// (see #1005).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
 pub struct ApiError {
@@ -856,7 +865,6 @@ mod tests {
 // CODEGEN-END
 
 ````
-
 ## Changes
 <!-- type: changes lang: yaml -->
 

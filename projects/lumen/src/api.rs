@@ -949,10 +949,12 @@ async fn reindex_stream(
         .status(StatusCode::OK)
         .header("content-type", "application/x-ndjson")
         .body(Body::from_stream(stream))
-        .map_err(|e| ApiErr {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            kind: "stream_init",
-            message: e.to_string(),
+        .map_err(|e| {
+            ApiErr::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "stream_init",
+                e.to_string(),
+            )
         })?;
     Ok(resp)
 }
@@ -1037,23 +1039,13 @@ async fn backup_to_local(
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure("*", Role::Admin)?;
     let snap = state.engine.snapshot().map_err(ApiErr::from)?;
-    let payload = serde_json::to_vec(&snap).map_err(|e| ApiErr {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        kind: "encode",
-        message: e.to_string(),
-    })?;
-    let sink = LocalFsSink::new(&req.path, &req.prefix).map_err(|e| ApiErr {
-        status: StatusCode::BAD_REQUEST,
-        kind: "bad_sink",
-        message: e.to_string(),
-    })?;
+    let payload = serde_json::to_vec(&snap)
+        .map_err(|e| ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "encode", e.to_string()))?;
+    let sink = LocalFsSink::new(&req.path, &req.prefix)
+        .map_err(|e| ApiErr::new(StatusCode::BAD_REQUEST, "bad_sink", e.to_string()))?;
     let key = sink
         .put(std::time::SystemTime::now(), &payload)
-        .map_err(|e| ApiErr {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            kind: "sink_put",
-            message: e.to_string(),
-        })?;
+        .map_err(|e| ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "sink_put", e.to_string()))?;
     tracing::info!(
         target: "lumen.audit",
         event = "backup_local",
@@ -1102,21 +1094,23 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 // ---------------------------------------------------------------------------
 
 /// HTTP-friendly wrapper that classifies storage errors to status codes.
+/// A newtype over the shared `service_http::ApiErr` (status + kind +
+/// message, `IntoResponse` renders `service_http::ErrorEnvelope` JSON) —
+/// this file keeps only the `StorageError` / `AuthErr` → (status, kind)
+/// classification arms. (`crate::types::ApiError` stays a distinct local
+/// struct of the same `{error, message}` shape purely for OpenAPI schema
+/// identity — see its doc comment.)
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub struct ApiErr {
-    status: StatusCode,
-    kind: &'static str,
-    message: String,
-}
+pub struct ApiErr(service_http::ApiErr);
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl ApiErr {
+    fn new(status: StatusCode, kind: &'static str, message: impl Into<String>) -> Self {
+        Self(service_http::ApiErr::new(status, kind, message))
+    }
+
     fn not_found(msg: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            kind: "not_found",
-            message: msg.into(),
-        }
+        Self::new(StatusCode::NOT_FOUND, "not_found", msg)
     }
 }
 
@@ -1125,72 +1119,47 @@ impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
         if let Some(se) = e.downcast_ref::<StorageError>() {
             return match se {
-                StorageError::CollectionNotFound(_) => Self {
-                    status: StatusCode::NOT_FOUND,
-                    kind: "not_found",
-                    message: e.to_string(),
-                },
-                StorageError::UnknownField { .. } => Self {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    kind: "unknown_field",
-                    message: e.to_string(),
-                },
-                StorageError::TypeMismatch { .. } => Self {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    kind: "type_mismatch",
-                    message: e.to_string(),
-                },
-                StorageError::DuplicatesOnText(_) => Self {
-                    status: StatusCode::BAD_REQUEST,
-                    kind: "bad_request",
-                    message: e.to_string(),
-                },
-                StorageError::InvalidNumber(_) => Self {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    kind: "invalid_number",
-                    message: e.to_string(),
-                },
-                StorageError::BulkLimit { .. } => Self {
-                    status: StatusCode::PAYLOAD_TOO_LARGE,
-                    kind: "bulk_limit",
-                    message: e.to_string(),
-                },
-                StorageError::QueryTooComplex(_) => Self {
-                    status: StatusCode::BAD_REQUEST,
-                    kind: "query_too_complex",
-                    message: e.to_string(),
-                },
-                StorageError::Gone(_) => Self {
-                    status: StatusCode::GONE,
-                    kind: "gone",
-                    message: e.to_string(),
-                },
-                StorageError::UnsupportedSort(_) => Self {
-                    status: StatusCode::BAD_REQUEST,
-                    kind: "unsupported_sort",
-                    message: e.to_string(),
-                },
+                StorageError::CollectionNotFound(_) => {
+                    Self::new(StatusCode::NOT_FOUND, "not_found", e.to_string())
+                }
+                StorageError::UnknownField { .. } => Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "unknown_field",
+                    e.to_string(),
+                ),
+                StorageError::TypeMismatch { .. } => Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "type_mismatch",
+                    e.to_string(),
+                ),
+                StorageError::DuplicatesOnText(_) => {
+                    Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
+                }
+                StorageError::InvalidNumber(_) => Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_number",
+                    e.to_string(),
+                ),
+                StorageError::BulkLimit { .. } => {
+                    Self::new(StatusCode::PAYLOAD_TOO_LARGE, "bulk_limit", e.to_string())
+                }
+                StorageError::QueryTooComplex(_) => {
+                    Self::new(StatusCode::BAD_REQUEST, "query_too_complex", e.to_string())
+                }
+                StorageError::Gone(_) => Self::new(StatusCode::GONE, "gone", e.to_string()),
+                StorageError::UnsupportedSort(_) => {
+                    Self::new(StatusCode::BAD_REQUEST, "unsupported_sort", e.to_string())
+                }
             };
         }
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            kind: "bad_request",
-            message: e.to_string(),
-        }
+        Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
     }
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl IntoResponse for ApiErr {
     fn into_response(self) -> axum::response::Response {
-        (
-            self.status,
-            Json(ApiError {
-                error: self.kind.to_string(),
-                message: self.message,
-            }),
-        )
-            .into_response()
+        self.0.into_response()
     }
 }
 
@@ -1198,20 +1167,20 @@ impl IntoResponse for ApiErr {
 impl From<crate::auth::AuthErr> for ApiErr {
     fn from(e: crate::auth::AuthErr) -> Self {
         match e {
-            crate::auth::AuthErr::Unauthenticated => Self {
-                status: StatusCode::UNAUTHORIZED,
-                kind: "unauthenticated",
-                message: "valid bearer token required".into(),
-            },
+            crate::auth::AuthErr::Unauthenticated => Self::new(
+                StatusCode::UNAUTHORIZED,
+                "unauthenticated",
+                "valid bearer token required",
+            ),
             crate::auth::AuthErr::Forbidden {
                 subject,
                 needed,
                 collection_id,
-            } => Self {
-                status: StatusCode::FORBIDDEN,
-                kind: "forbidden",
-                message: format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
-            },
+            } => Self::new(
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
+            ),
         }
     }
 }
