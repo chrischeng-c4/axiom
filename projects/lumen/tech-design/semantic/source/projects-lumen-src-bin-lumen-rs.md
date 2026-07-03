@@ -27,7 +27,8 @@ No public AST symbols.
 // CODEGEN-BEGIN
 //! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
 //! `llm` (offline integration contract + agent topics), and `k8s` (operator
-//! + CRD generation). Agents start here: `lumen llm outline`.
+//! + CRD generation). Agents start here: `lumen llm --topic outline`.
+//! @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
@@ -108,7 +109,7 @@ enum Command {
     /// `libs/service-backup`. No new snapshot mechanism — this only
     /// schedules and transports the existing admin API. Typically invoked by
     /// the operator's optional backup CronJob (`spec.serving.backup`, see
-    /// `lumen llm storage`), but works standalone. Requires the `backup`
+    /// `lumen llm --topic storage`), but works standalone. Requires the `backup`
     /// feature (pulled in transitively by `operator`).
     Backup(BackupArgs),
 }
@@ -781,6 +782,15 @@ fn spec_gen(args: GenArgs) -> Result<()> {
         std::fs::write(&path, &file.contents)?;
         println!("generated {}", path.display());
     }
+    // Chainable output (#963): point at the generated client's entrypoint
+    // module — the one file every language always emits (unconditionally
+    // pushed by each emitter regardless of `--emit-*` selection).
+    let entry_file = match lang {
+        Lang::Ts => "index.ts",
+        Lang::Py => "__init__.py",
+        Lang::Rust => "mod.rs",
+    };
+    println!("next: {}", args.out.join(entry_file).display());
     Ok(())
 }
 
@@ -797,7 +807,31 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
                     render_release_dockerfile(args.version.as_deref()),
                 ),
             };
-            write_or_print(args.out.as_deref(), file_name, &body)
+            let variant = args.variant;
+            let version = args.version.clone();
+            write_or_print(args.out.as_deref(), file_name, &body, move |target| {
+                dockerfile_next_command(variant, version.as_deref(), target)
+            })
+        }
+    }
+}
+
+/// `next:` builder for `dockerfile render --out` (#963): the matching
+/// `docker build` invocation for the variant that was just written.
+fn dockerfile_next_command(
+    variant: DockerfileVariant,
+    version: Option<&str>,
+    target: &Path,
+) -> String {
+    match variant {
+        DockerfileVariant::Source => format!("docker build -f {} -t lumen:dev .", target.display()),
+        DockerfileVariant::Release => {
+            let tag = normalize_lumen_tag(version);
+            let ver = tag.trim_start_matches("lumen@");
+            format!(
+                "docker build -f {} -t lumen:{ver} --build-arg LUMEN_VERSION={tag} .",
+                target.display()
+            )
         }
     }
 }
@@ -809,20 +843,30 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
 async fn k8s(args: K8sArgs) -> Result<()> {
     match args.cmd {
         K8sCmd::Crd(args) => match args.cmd {
-            K8sCrdCmd::Render(args) => write_or_print(args.out.as_deref(), "crd.yaml", &crd_yaml()),
+            K8sCrdCmd::Render(args) => write_or_print(
+                args.out.as_deref(),
+                "crd.yaml",
+                &crd_yaml(),
+                kubectl_apply_next,
+            ),
         },
         K8sCmd::Operator(args) => match args.cmd.unwrap_or(K8sOperatorCmd::Run) {
             K8sOperatorCmd::Run => run_operator().await,
             K8sOperatorCmd::Render(args) => {
                 let yaml = render_operator_yaml(&args.namespace);
-                write_or_print(args.out.as_deref(), "operator.yaml", &yaml)
+                write_or_print(
+                    args.out.as_deref(),
+                    "operator.yaml",
+                    &yaml,
+                    kubectl_apply_next,
+                )
             }
             K8sOperatorCmd::ResizeStorage(args) => resize_storage(args).await,
         },
         K8sCmd::Instance(args) => match args.cmd {
             K8sInstanceCmd::Render(args) => {
                 let yaml = render_instance_yaml(&args);
-                write_or_print(args.out.as_deref(), "lumen.yaml", &yaml)
+                write_or_print(args.out.as_deref(), "lumen.yaml", &yaml, kubectl_apply_next)
             }
         },
     }
@@ -891,9 +935,50 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
         Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
         None => service_backup::RetentionPolicy::default(),
     };
-    let result = lumen::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    let result =
+        lumen::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+    // Chainable output (#963): `lumen backup` always emits a single JSON
+    // object, so the contract's "next" is a top-level field, not a text tail
+    // line. `service_backup::BackupRunResult` stays untouched (shared type) —
+    // this widens only the ad hoc `Value` this CLI prints.
+    let mut out = serde_json::to_value(&result)?;
+    if let serde_json::Value::Object(ref mut map) = out {
+        map.insert(
+            "next".to_string(),
+            serde_json::Value::String(restore_next_command(&args, &result)),
+        );
+    }
+    println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
+}
+
+/// The matching restore step for a `lumen backup` run (#963): POST the
+/// just-written snapshot bytes back to `/admin/restore` on the same fleet.
+/// Only `file://` destinations resolve to a concrete local path today — the
+/// only sink `service_backup::sink_from_destination` actually implements
+/// (`s3://`/`gs://` bail with "requires a cloud adapter feature", so
+/// `run_backup` never reaches here for those); the fallback covers a future
+/// cloud sink without guessing a wrong command. The token, when set, is never
+/// echoed — the command references the same env var the flag reads.
+#[cfg(feature = "backup")]
+fn restore_next_command(args: &BackupArgs, result: &service_backup::BackupRunResult) -> String {
+    let url = args.url.trim_end_matches('/');
+    let auth = if args.token.is_some() {
+        " -H \"Authorization: Bearer $LUMEN_BACKUP_TOKEN\""
+    } else {
+        ""
+    };
+    match result.object.sink.strip_prefix("local:") {
+        Some(root) => format!(
+            "curl -sS -X POST {url}/admin/restore{auth} -H 'Content-Type: application/json' --data-binary @{}/{}",
+            root.trim_end_matches('/'),
+            result.object.key
+        ),
+        None => format!(
+            "fetch {} from {} then: curl -sS -X POST {url}/admin/restore{auth} -H 'Content-Type: application/json' --data-binary @<downloaded-file>",
+            result.object.key, result.object.sink
+        ),
+    }
 }
 
 #[cfg(not(feature = "backup"))]
@@ -1041,7 +1126,17 @@ fn strip_ownership_markers(input: &str) -> String {
     out
 }
 
-fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
+/// Write `body` to `--out` (or stream it to stdout when `out` is `None`).
+/// Chainable output (#963): the file-writing branch ends with exactly one
+/// deterministic `next: <command>` line built from the resolved target path,
+/// so an agent can copy-paste the follow-up; the stream-to-stdout branch
+/// never emits one (nothing would separate it from the artifact bytes).
+fn write_or_print(
+    out: Option<&Path>,
+    default_file: &str,
+    body: &str,
+    next: impl FnOnce(&Path) -> String,
+) -> Result<()> {
     if let Some(path) = out {
         let target = if path.extension().is_some() {
             path.to_path_buf()
@@ -1053,10 +1148,17 @@ fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<
         }
         std::fs::write(&target, body)?;
         println!("wrote {}", target.display());
+        println!("next: {}", next(&target));
     } else {
         print!("{body}");
     }
     Ok(())
+}
+
+/// `next:` builder shared by every k8s render verb: the rendered manifest's
+/// only sensible follow-up is applying it.
+fn kubectl_apply_next(target: &Path) -> String {
+    format!("kubectl apply -f {}", target.display())
 }
 
 fn ensure_trailing_newline(input: &str) -> String {
@@ -1703,9 +1805,17 @@ changes:
     section: rust-source-unit
     impl_mode: hand-written
     description: |
-      #809: add `K8sOperatorCmd::ResizeStorage` + `K8sOperatorResizeStorageArgs`
-      (`--namespace`, `--name`, `--dry-run`), wire it into the `k8s()` dispatcher's
-      `K8sCmd::Operator` match, and add the feature-gated `resize_storage`
-      dispatch pair (real impl behind `operator`, `bail!` fallback otherwise)
-      alongside the existing `run_operator`/`crd_yaml`/`dispatch_backup` verbs.
+      #963: chainable output — `write_or_print` now takes a `next: impl
+      FnOnce(&Path) -> String` closure and prints one `next: <command>` line
+      after `wrote <target>` in the file-writing branch only (stream branch
+      unchanged); added `kubectl_apply_next` (shared by the three k8s render
+      verbs), `dockerfile_next_command` (matching `docker build` per
+      variant/version), a `next:` pointer at the generated entrypoint module
+      appended to `spec_gen`'s stdout, and `restore_next_command`
+      (feature `backup`) which folds a `"next"` field into `dispatch_backup`'s
+      printed JSON (the shared `service_backup::BackupRunResult` type is
+      untouched). `upgrade --check` is intentionally not wired: `cli_std`'s
+      `run()` never surfaces the up-to-date/needs-update decision needed to
+      decide whether to print a line at all, and widening that return type is
+      an out-of-scope `libs/cli-std` change shared by every CLI on it.
 ```

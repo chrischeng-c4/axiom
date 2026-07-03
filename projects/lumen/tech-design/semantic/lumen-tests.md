@@ -401,6 +401,9 @@ semantic_domain:
           - name: "k8s_instance_render_prod_accepts_app_namespace_overrides"
             kind: "function"
             public: false
+          - name: "chainable_output_next_line_file_writing_vs_stream"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1532,7 +1535,12 @@ changes:
     action: modify
     section: unit-test
     description: |
-      Standard CLI convention help-surface smoke tests cover the lumen issue group.
+      Standard CLI convention help-surface smoke tests cover the lumen issue
+      group; #963 adds the offline chainable-output conformance test
+      (`chainable_output_next_line_file_writing_vs_stream`) asserting the
+      `^next: \S` tail line is present-and-last in file-writing modes
+      (k8s crd/operator/instance render --out, dockerfile render --out,
+      spec gen --out) and absent in stream-to-stdout modes.
     impl_mode: hand-written
   - path: "projects/lumen/tests/drop_field_e2e.rs"
     action: modify
