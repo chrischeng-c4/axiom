@@ -24,13 +24,18 @@
 //!   (or the `Token.MISSING` sentinel) and a `_used` flag; `reset`
 //!   validates ownership / reuse like CPython (ValueError / RuntimeError).
 //! - `copy_context()` snapshots the current map into a `Context` Instance
-//!   carrying parallel `_ids` / `_vars` / `_vals` lists (var ids, the actual
-//!   `ContextVar` objects, and their values) plus a real `_data` dict mapping
-//!   each captured `ContextVar` → value. The `_data` dict makes the Context a
-//!   mapping for `dict(ctx)` / membership / `ctx[var]` (recognised by
-//!   `unwrap_dictlike_data`). `Context.run(fn, *args)` installs the snapshot,
-//!   invokes the callable, captures writes back into the Context, and restores
-//!   the caller's context (writes do not leak).
+//!   carrying a single real `_data` dict mapping each captured `ContextVar` →
+//!   value. The `_data` dict makes the Context a mapping for `dict(ctx)` /
+//!   membership / `ctx[var]` (recognised by `unwrap_dictlike_data`) and is
+//!   also the sole source of truth for reconstructing the internal
+//!   `var_id → (ContextVar, value)` map (`context_snapshot_map`), so an empty
+//!   `Context` allocates exactly one GC-tracked container instead of four
+//!   (#965 — the prior `_ids`/`_vars`/`_vals` parallel-list design made
+//!   `copy_context()` allocate 4 tracked containers per call; at hot-loop
+//!   volume that quadrupled the trial-deletion GC's per-collection rescan
+//!   cost, the dominant cost in the 119x cliff). `Context.run(fn, *args)`
+//!   installs the snapshot, invokes the callable, captures writes back into
+//!   the Context, and restores the caller's context (writes do not leak).
 //!
 //! Carve-outs (documented gaps from CPython parity):
 //!
@@ -55,6 +60,36 @@ thread_local! {
     /// process is enough for `is` checks because the sentinel never crosses
     /// the API except through this module).
     static MISSING: RefCell<Option<MbValue>> = const { RefCell::new(None) };
+    /// Lazily-created, per-thread immortal empty dict shared by every
+    /// `Context` snapshot with zero captured vars (#965). `_data` is
+    /// write-once at construction (nothing mutates an existing Context's
+    /// `_data` in place — `Context` exposes no `__setitem__`, and
+    /// `mb_context_run` rebuilds a fresh dict rather than mutating the old
+    /// one), so aliasing this one empty dict across many empty Contexts is
+    /// observably identical to giving each its own and skips both the heap
+    /// allocation and all future retain/release traffic on the hot
+    /// `copy_context()` path (the overwhelmingly common case for a thread
+    /// that hasn't set any `ContextVar`).
+    static EMPTY_DATA: RefCell<Option<MbValue>> = const { RefCell::new(None) };
+}
+
+/// The shared immortal empty `_data` dict (see `EMPTY_DATA` above).
+fn empty_context_data() -> MbValue {
+    EMPTY_DATA.with(|slot| {
+        let mut s = slot.borrow_mut();
+        if let Some(v) = *s {
+            return v;
+        }
+        let ptr = MbObject::new_dict();
+        unsafe {
+            (*ptr).header.rc.store(super::super::rc::IMMORTAL_REFCOUNT, Ordering::Relaxed);
+        }
+        // Immortal — never freed, so it doesn't need cycle tracking either.
+        super::super::gc::gc_untrack(ptr);
+        let v = MbValue::from_ptr(ptr);
+        *s = Some(v);
+        v
+    })
 }
 
 pub(crate) type ContextMap = FxHashMap<u64, (MbValue, MbValue)>;
@@ -296,44 +331,27 @@ pub fn mb_contextvar_reset(var: MbValue, token: MbValue) -> MbValue {
 
 /// Build a `Context` Instance from `(var_id, ContextVar, value)` triples.
 ///
-/// Stores parallel `_ids` / `_vars` / `_vals` lists (var ids, the real
-/// `ContextVar` objects, and their values — the lists keep the GC aware of
-/// the held objects) **and** a real `_data` dict mapping each `ContextVar`
-/// → value. The `_data` dict makes the Context a mapping that
-/// `unwrap_dictlike_data` recognises, so `dict(ctx)`, membership, and
-/// `ctx[var]` all reflect the captured snapshot. Each held object is
-/// retained once per field it lands in.
+/// Stores a single real `_data` dict mapping each `ContextVar` → value.
+/// `mb_dict_setitem` retains both the key and the value itself, so no
+/// separate parallel lists are needed to keep the GC aware of the held
+/// objects (#965: the old `_ids`/`_vars`/`_vals` design quadrupled the
+/// number of GC-tracked containers allocated per `copy_context()` call for
+/// no observable benefit — `var_id`s and vars/vals are cheaply recoverable
+/// from `_data`'s keys, see `context_snapshot_map`). The `_data` dict makes
+/// the Context a mapping that `unwrap_dictlike_data` recognises, so
+/// `dict(ctx)`, membership, and `ctx[var]` all reflect the captured
+/// snapshot.
 fn make_context(triples: &[(u64, MbValue, MbValue)]) -> MbValue {
-    let mut ids = Vec::with_capacity(triples.len());
-    let mut vars = Vec::with_capacity(triples.len());
-    let mut vals = Vec::with_capacity(triples.len());
-    let data = MbValue::from_ptr(MbObject::new_dict());
-    for (id, var, val) in triples {
-        ids.push(MbValue::from_int(*id as i64));
-        unsafe {
-            // Each object lands in the `_vars`/`_vals` list (one explicit
-            // retain here) plus the `_data` dict (mb_dict_setitem retains the
-            // key and value itself), so one explicit retain each is correct.
-            super::super::rc::retain_if_ptr(*var);
-            super::super::rc::retain_if_ptr(*val);
+    let data = if triples.is_empty() {
+        empty_context_data()
+    } else {
+        let data = MbValue::from_ptr(MbObject::new_dict_with_capacity(triples.len()));
+        for (_id, var, val) in triples {
+            super::super::dict_ops::mb_dict_setitem(data, *var, *val);
         }
-        vars.push(*var);
-        vals.push(*val);
-        super::super::dict_ops::mb_dict_setitem(data, *var, *val);
-    }
+        data
+    };
     let mut fields = InstanceFields::default();
-    fields.insert(
-        "_ids".to_string(),
-        MbValue::from_ptr(MbObject::new_list(ids)),
-    );
-    fields.insert(
-        "_vars".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vars)),
-    );
-    fields.insert(
-        "_vals".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vals)),
-    );
     fields.insert("_data".to_string(), data);
     new_instance("Context", fields)
 }
@@ -349,33 +367,27 @@ pub fn mb_contextvars_copy_context() -> MbValue {
     make_context(&triples)
 }
 
-fn list_items(v: MbValue) -> Vec<MbValue> {
-    v.as_ptr()
-        .and_then(|p| unsafe {
-            if let ObjData::List(ref lock) = (*p).data {
-                Some(lock.read().unwrap().iter().copied().collect())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default()
-}
-
 /// Reconstruct the `var_id → (ContextVar, value)` map captured in a Context's
-/// parallel `_ids` / `_vars` / `_vals` lists.
+/// `_data` dict. Keys are always `ContextVar` instances (`DictKey::Instance`),
+/// so the var and its id are recovered directly from the key's stored
+/// pointer — borrowed from `_data`'s own ownership (matching CPython-style
+/// snapshot semantics: no extra retain, valid for the ctx's lifetime).
 fn context_snapshot_map(ctx: MbValue) -> ContextMap {
-    let ids = list_items(inst_field(ctx, "_ids").unwrap_or(MbValue::none()));
-    let vars = list_items(inst_field(ctx, "_vars").unwrap_or(MbValue::none()));
-    let vals = list_items(inst_field(ctx, "_vals").unwrap_or(MbValue::none()));
-    ids.iter()
-        .enumerate()
-        .filter_map(|(i, id)| {
-            let id = id.as_int()? as u64;
-            let var = vars.get(i).copied().unwrap_or_else(MbValue::none);
-            let val = vals.get(i).copied().unwrap_or_else(MbValue::none);
-            Some((id, (var, val)))
-        })
-        .collect()
+    let data = inst_field(ctx, "_data").unwrap_or_else(MbValue::none);
+    let mut map = ContextMap::default();
+    if let Some(ptr) = data.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                for (k, v) in lock.read().unwrap().iter() {
+                    if let super::super::dict_ops::DictKey::Instance { ptr: var_ptr, .. } = k {
+                        let var = MbValue::from_ptr(*var_ptr as *mut super::super::rc::MbObject);
+                        map.insert(var_id(var), (var, *v));
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 /// `ctx.run(callable, *args)` — execute under the snapshot, capture writes
@@ -400,11 +412,9 @@ pub fn mb_context_run(ctx: MbValue, func: MbValue, args: Vec<MbValue>) -> MbValu
         .map(|(id, (var, val))| (*id, *var, *val))
         .collect();
     let rebuilt = make_context(&triples);
-    // Move the rebuilt fields onto `ctx` so its identity is preserved.
-    for key in ["_ids", "_vars", "_vals", "_data"] {
-        if let Some(v) = inst_field(rebuilt, key) {
-            inst_set_field(ctx, key, v);
-        }
+    // Move the rebuilt `_data` dict onto `ctx` so its identity is preserved.
+    if let Some(v) = inst_field(rebuilt, "_data") {
+        inst_set_field(ctx, "_data", v);
     }
     result
 }
@@ -641,7 +651,7 @@ mod tests {
         mb_contextvar_set(var, s("captured"));
         let ctx = mb_contextvars_copy_context();
         assert_eq!(instance_class(ctx).as_deref(), Some("Context"));
-        let ids = list_items(inst_field(ctx, "_ids").unwrap());
-        assert!(ids.iter().any(|v| v.as_int() == Some(var_id(var) as i64)));
+        let snapshot = context_snapshot_map(ctx);
+        assert!(snapshot.contains_key(&var_id(var)));
     }
 }
