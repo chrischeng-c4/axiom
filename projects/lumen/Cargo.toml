@@ -108,6 +108,9 @@ opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true
 tracing-opentelemetry = { version = "0.22", optional = true }
 utoipa = { workspace = true, features = ["axum_extras"] }
 
+[build-dependencies]
+build-stamp = { path = "../../libs/build-stamp" }
+
 [features]
 default = []
 jieba = ["dep:jieba-rs"]
