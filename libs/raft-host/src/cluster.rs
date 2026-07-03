@@ -23,6 +23,84 @@ pub fn replica_mode() -> bool {
         > 1
 }
 
+/// The scalar shard/replica/voter derivation from the standard downward-API
+/// quartet (`SHARD_COUNT`, `REPLICAS_PER_SHARD`, `VOTER_COUNT`, `POD_NAME`) —
+/// the piece [`ClusterTopology::from_env`] shares with a caller that only
+/// needs the scalars, not peer URLs (e.g. lumen's `ClusterConfig`, which
+/// stays compiled outside the `raft-wal` feature; #1002).
+#[derive(Debug, Clone)]
+pub struct ClusterDims {
+    pub shard_count: u32,
+    pub replicas_per_shard: u32,
+    pub voter_count: u32,
+    pub pod_name: String,
+}
+
+impl ClusterDims {
+    /// Read the standard downward-API quartet.
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            shard_count: parse_env("SHARD_COUNT")?,
+            replicas_per_shard: parse_env("REPLICAS_PER_SHARD")?,
+            voter_count: parse_env("VOTER_COUNT")?,
+            pod_name: std::env::var("POD_NAME").context("POD_NAME not set")?,
+        })
+    }
+
+    /// The trailing `-<N>` ordinal in `pod_name` — the StatefulSet identity.
+    pub fn pod_ordinal(&self) -> Result<u32> {
+        let (_, suffix) = self
+            .pod_name
+            .rsplit_once('-')
+            .context("POD_NAME has no '-<ordinal>' suffix")?;
+        suffix
+            .parse()
+            .with_context(|| format!("POD_NAME ordinal '{suffix}' is not a u32"))
+    }
+
+    /// `ordinal % shard_count` — which shard this pod belongs to.
+    pub fn shard_index(&self) -> Result<u32> {
+        Ok(self.pod_ordinal()? % self.shard_count)
+    }
+
+    /// `ordinal / shard_count` — this pod's replica index within its shard
+    /// (== the raft node id).
+    pub fn replica_index(&self) -> Result<u32> {
+        Ok(self.pod_ordinal()? / self.shard_count)
+    }
+
+    /// Whether this replica votes (`replica_index < voter_count`); the rest
+    /// are learners.
+    pub fn is_voter(&self) -> Result<bool> {
+        Ok(self.replica_index()? < self.voter_count)
+    }
+}
+
+/// The StatefulSet pod ordinal for `replica` within a shard
+/// (`replica * shard_count + shard_index`) — the peer-DNS math shared by
+/// every peer enumeration: [`ClusterTopology::from_env`]'s peer URLs and a
+/// caller's own richer per-peer record (e.g. lumen's `RaftGroup`/`PeerAddr`).
+pub fn peer_ordinal(shard_count: u32, shard_index: u32, replica: u32) -> u32 {
+    replica * shard_count + shard_index
+}
+
+/// Parse a `LUMEN_PEERS`-style override env var (`host[:port],host[:port],...`,
+/// empty entries filtered) into an `index -> host[:port]` override list.
+/// Empty when `env_var` is unset — callers then use the DNS-derived
+/// addresses unmodified. Shared by [`ClusterTopology::from_env`] and any
+/// caller enumerating its own peer records with the same override contract.
+pub fn parse_peer_overrides(env_var: &str) -> Vec<String> {
+    std::env::var(env_var)
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// One raft group's topology, derived from the StatefulSet downward API.
 #[derive(Debug, Clone)]
 pub struct ClusterTopology {
@@ -48,30 +126,16 @@ impl ClusterTopology {
         peer_port: u16,
         peers_override: &str,
     ) -> Result<Self> {
-        let shard_count: u32 = parse_env("SHARD_COUNT")?;
-        let replicas_per_shard: u32 = parse_env("REPLICAS_PER_SHARD")?;
-        let voter_count: u32 = parse_env("VOTER_COUNT")?;
-        let pod_name = std::env::var("POD_NAME").context("POD_NAME not set")?;
-        let ordinal: u32 = pod_name
-            .rsplit_once('-')
-            .context("POD_NAME has no '-<ordinal>' suffix")?
-            .1
-            .parse()
-            .context("POD_NAME ordinal is not a u32")?;
-        let shard_index = ordinal % shard_count;
-        let node_id = (ordinal / shard_count) as NodeId; // replica index
+        let dims = ClusterDims::from_env()?;
+        let shard_count = dims.shard_count;
+        let replicas_per_shard = dims.replicas_per_shard;
+        let voter_count = dims.voter_count;
+        let shard_index = dims.shard_index()?;
+        let node_id = dims.replica_index()? as NodeId;
 
         // pod ordinal → (shard, replica) is pure integer math, so peers are found
         // via headless DNS with no discovery service. `index N → replica N`.
-        let overrides: Vec<String> = std::env::var(peers_override)
-            .ok()
-            .map(|raw| {
-                raw.split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let overrides = parse_peer_overrides(peers_override);
 
         let mut peers = HashMap::new();
         for replica in 0..replicas_per_shard {
@@ -83,8 +147,8 @@ impl ClusterTopology {
                 Some(addr) if addr.contains(':') => format!("http://{addr}"),
                 Some(addr) => format!("http://{addr}:{peer_port}"),
                 None => {
-                    let peer_ordinal = replica * shard_count + shard_index;
-                    format!("http://{prefix}-{peer_ordinal}.{headless_service}:{peer_port}")
+                    let ordinal = peer_ordinal(shard_count, shard_index, replica);
+                    format!("http://{prefix}-{ordinal}.{headless_service}:{peer_port}")
                 }
             };
             peers.insert(id, url);
@@ -155,5 +219,59 @@ mod tests {
         ] {
             std::env::remove_var(k);
         }
+    }
+
+    fn dims(shard_count: u32, replicas_per_shard: u32, voter_count: u32, pod: &str) -> ClusterDims {
+        ClusterDims {
+            shard_count,
+            replicas_per_shard,
+            voter_count,
+            pod_name: pod.into(),
+        }
+    }
+
+    #[test]
+    fn cluster_dims_derives_shard_and_replica_from_pod_ordinal() {
+        // 3 shards × 3 replicas: pod-7 → shard 1, replica 2.
+        let d = dims(3, 3, 3, "svc-7");
+        assert_eq!(d.pod_ordinal().unwrap(), 7);
+        assert_eq!(d.shard_index().unwrap(), 1);
+        assert_eq!(d.replica_index().unwrap(), 2);
+        assert!(d.is_voter().unwrap());
+
+        let d = dims(3, 3, 2, "svc-8");
+        assert_eq!(d.shard_index().unwrap(), 2);
+        assert_eq!(d.replica_index().unwrap(), 2);
+        assert!(
+            !d.is_voter().unwrap(),
+            "replica 2 is a learner when voter_count=2"
+        );
+    }
+
+    #[test]
+    fn cluster_dims_pod_ordinal_rejects_bad_suffix() {
+        assert!(dims(3, 3, 3, "svc-").pod_ordinal().is_err());
+        assert!(dims(3, 3, 3, "svc-abc").pod_ordinal().is_err());
+        assert!(dims(3, 3, 3, "svc").pod_ordinal().is_err());
+    }
+
+    #[test]
+    fn peer_ordinal_matches_replica_times_shard_count_plus_shard() {
+        assert_eq!(peer_ordinal(3, 1, 2), 7); // 2*3+1
+        assert_eq!(peer_ordinal(1, 0, 4), 4);
+    }
+
+    #[test]
+    fn parse_peer_overrides_splits_trims_and_filters_empty() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("TEST_PEERS");
+        assert!(parse_peer_overrides("TEST_PEERS").is_empty());
+
+        std::env::set_var("TEST_PEERS", " a:1, b:2 ,,c:3");
+        assert_eq!(
+            parse_peer_overrides("TEST_PEERS"),
+            vec!["a:1".to_string(), "b:2".to_string(), "c:3".to_string()]
+        );
+        std::env::remove_var("TEST_PEERS");
     }
 }

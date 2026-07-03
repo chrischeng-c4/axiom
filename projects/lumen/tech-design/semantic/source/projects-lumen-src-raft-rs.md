@@ -22,12 +22,12 @@ Public API manifest for `projects/lumen/src/raft.rs` generated from AST during S
 |------|--------|------|------------|------|-----------|
 | `ClusterState` | projects/lumen/src/raft.rs | struct | pub | 163 |  |
 | `ClusterStateView` | projects/lumen/src/raft.rs | struct | pub | 214 |  |
-| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub | 83 |  |
-| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub | 76 |  |
-| `RaftRole` | projects/lumen/src/raft.rs | enum | pub | 25 |  |
-| `ReadConsistency` | projects/lumen/src/raft.rs | enum | pub | 37 |  |
-| `from_config` | projects/lumen/src/raft.rs | function | pub | 93 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
-| `from_header` | projects/lumen/src/raft.rs | function | pub | 49 | from_header(raw: Option<&str>) -> Self |
+| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub | 86 |  |
+| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub | 79 |  |
+| `RaftRole` | projects/lumen/src/raft.rs | enum | pub | 28 |  |
+| `ReadConsistency` | projects/lumen/src/raft.rs | enum | pub | 40 |  |
+| `from_config` | projects/lumen/src/raft.rs | function | pub | 96 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
+| `from_header` | projects/lumen/src/raft.rs | function | pub | 52 | from_header(raw: Option<&str>) -> Self |
 | `leader` | projects/lumen/src/raft.rs | function | pub | 154 | leader(&self) -> Option<&PeerAddr> |
 | `new` | projects/lumen/src/raft.rs | function | pub | 176 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
 | `snapshot` | projects/lumen/src/raft.rs | function | pub | 198 | snapshot(&self) -> ClusterStateView |
@@ -45,9 +45,12 @@ Public API manifest for `projects/lumen/src/raft.rs` generated from AST during S
 //! `libs/raft-core` so multi-pod Lumen owns write ordering and primary/replica
 //! synchronization itself.
 //!
-//! The old broker-owned framing is stale: Relay remains an explicit external
-//! broker mode, but Lumen's multi-pod auto path should use Lumen-owned
-//! primary/replica replication.
+//! Lumen's multi-pod auto path uses Lumen-owned primary/replica replication.
+//!
+//! `RaftGroup::from_config`'s peer enumeration (pod-ordinal math + the
+//! `LUMEN_PEERS` override parsing) delegates to `libs/raft-host::cluster`
+//! (#1002) so it can't drift from `raft_host::cluster::ClusterTopology::
+//! from_env`, the implementation the actual raft-wal peer wiring uses.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -137,7 +140,9 @@ impl RaftGroup {
         let shard = cfg.shard_index()?;
         let mut peers = Vec::with_capacity(cfg.replicas_per_shard as usize);
         for replica in 0..cfg.replicas_per_shard {
-            let ordinal = replica * cfg.shard_count + shard;
+            // Pod-ordinal math shared with `raft_host::cluster::ClusterTopology`
+            // (#1002) — no local `%`/`/` peer-DNS arithmetic.
+            let ordinal = raft_host::cluster::peer_ordinal(cfg.shard_count, shard, replica);
             let pod_name = format!("{prefix}-{ordinal}");
             let host = format!("{pod_name}.{headless_service}");
             let role = if replica < cfg.voter_count {
@@ -163,21 +168,16 @@ impl RaftGroup {
         // Local-dev override: `LUMEN_PEERS=host:peer-port,host:peer-port,...`
         // replaces the K8s headless-DNS addresses with explicit
         // host:port pairs. Useful for running a 3-pod cluster on a
-        // single machine; index N maps to replica N in this shard.
-        if let Ok(raw) = std::env::var("LUMEN_PEERS") {
-            let overrides: Vec<&str> = raw
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            for (i, peer) in peers.iter_mut().enumerate() {
-                if let Some(addr) = overrides.get(i) {
-                    if let Some((host, port)) = addr.rsplit_once(':') {
-                        peer.host = host.to_string();
-                        peer.raft_port = port.parse().unwrap_or(peer.raft_port);
-                    } else {
-                        peer.host = (*addr).to_string();
-                    }
+        // single machine; index N maps to replica N in this shard. Parsing
+        // is shared with `ClusterTopology::from_env`'s peer override (#1002).
+        let overrides = raft_host::cluster::parse_peer_overrides("LUMEN_PEERS");
+        for (i, peer) in peers.iter_mut().enumerate() {
+            if let Some(addr) = overrides.get(i) {
+                if let Some((host, port)) = addr.rsplit_once(':') {
+                    peer.host = host.to_string();
+                    peer.raft_port = port.parse().unwrap_or(peer.raft_port);
+                } else {
+                    peer.host = addr.clone();
                 }
             }
         }
@@ -399,7 +399,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

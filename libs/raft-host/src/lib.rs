@@ -16,7 +16,7 @@ mod host;
 mod state_machine;
 mod store;
 
-pub use cluster::{replica_mode, ClusterTopology};
+pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims, ClusterTopology};
 pub use config::{HostConfig, SnapshotPolicy};
 pub use host::RaftHost;
 pub use state_machine::{Command, RaftStateMachine};
