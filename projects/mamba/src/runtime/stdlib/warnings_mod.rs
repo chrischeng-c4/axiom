@@ -59,7 +59,7 @@ fn extract_str(val: MbValue) -> Option<String> {
 /// A single warning filter entry, mirroring CPython's
 /// `(action, message_regex, category, module_regex, lineno)` 5-tuple.
 /// `message`/`module` are compiled-as-needed regex source strings (None == match-all).
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Filter {
     action: String,
     message: Option<String>,
@@ -127,10 +127,12 @@ fn read_module_showwarning() -> Option<MbValue> {
     // registry-backed `attrs` that `mb_module_getattr` reads. Prefer the
     // namespace dict so the override is observed; fall back to the registry.
     let v = super::super::module::mb_module_value_getattr("warnings", "showwarning")
-        .unwrap_or_else(|| super::super::module::mb_module_getattr(
-            mod_name(),
-            MbValue::from_ptr(MbObject::new_str("showwarning".to_string())),
-        ));
+        .unwrap_or_else(|| {
+            super::super::module::mb_module_getattr(
+                mod_name(),
+                MbValue::from_ptr(MbObject::new_str("showwarning".to_string())),
+            )
+        });
     // The default hook is a native dispatcher fn-pointer. If user code replaced
     // it with a Python function/closure, route warnings through it.
     if let Some(addr) = v.as_func() {
@@ -733,12 +735,26 @@ pub fn mb_warnings_warn_explicit(
 
 /// Append a filter entry. `prepend` puts it at the front (default), matching
 /// `filterwarnings(append=False)`; `append=True` puts it at the back.
+///
+/// Mirrors CPython's `warnings._add_filter`: an existing filter with
+/// identical fields is removed first (prepend case) or the insert is
+/// skipped entirely if a duplicate is already present (append case), so
+/// repeated `simplefilter()`/`filterwarnings()` calls with the same
+/// arguments don't grow the filter list unboundedly (#1445 Gate 2 —
+/// `simplefilter_hot.py` hammers `simplefilter("ignore")` 200_000 times
+/// with identical args; CPython's own `filters` list stays at a handful
+/// of entries because of this dedup, while the previous unconditional
+/// insert here grew to 200_000 entries, turning the O(n) `sync_filters_attr`
+/// rebuild below into O(n^2) and hanging mamba indefinitely).
 fn push_filter(filt: Filter, prepend: bool) {
     FILTERS.with(|f| {
         let mut filters = f.borrow_mut();
         if prepend {
+            if let Some(pos) = filters.iter().position(|existing| existing == &filt) {
+                filters.remove(pos);
+            }
             filters.insert(0, filt);
-        } else {
+        } else if !filters.contains(&filt) {
             filters.push(filt);
         }
     });

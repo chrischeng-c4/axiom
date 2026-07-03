@@ -22,6 +22,7 @@ import platform
 import re
 import resource
 import shlex
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -124,21 +125,44 @@ def missing_prereq_imports(pin: dict, python: str) -> list[str]:
     ]
 
 
-def measure_once(python: str, fixture: Path) -> dict:
+def measure_once(python: str, fixture: Path, timeout: float = 120.0) -> dict:
     argv = [*default_time_prefix(), python, str(fixture)]
     if not argv:
         argv = [python, str(fixture)]
     started = time.time()
     before_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    result = subprocess.run(argv, text=True, capture_output=True, timeout=120)
-    after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    if result.returncode != 0:
+    # Own process group (#964): when wrapped by /usr/bin/time, the actually
+    # measured process is a *grandchild* that inherits the group but isn't
+    # reachable via proc.kill(); plain subprocess.run(timeout=) only reaps
+    # the direct child on TimeoutExpired, leaking an orphaned 100%-CPU
+    # grandchild if the fixture hangs. killpg the whole group instead.
+    proc = subprocess.Popen(
+        argv,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = proc.communicate()
         raise RuntimeError(
-            f"{fixture}: CPython run failed rc={result.returncode}\n"
-            f"stdout={result.stdout}\nstderr={result.stderr}"
+            f"{fixture}: CPython run TIMEOUT after {timeout}s "
+            "(killed process group, no orphan)"
+        ) from None
+    after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"{fixture}: CPython run failed rc={proc.returncode}\n"
+            f"stdout={stdout}\nstderr={stderr}"
         )
     try:
-        internal_time_ns = parse_internal_time(result.stdout, result.stderr)
+        internal_time_ns = parse_internal_time(stdout, stderr)
     except RuntimeError:
         # D5.2 (see perf_pin.rs): fixtures are pure and no longer emit a
         # self-timing marker; internal_time_ns is retained only for
@@ -154,8 +178,8 @@ def measure_once(python: str, fixture: Path) -> dict:
     )
     return {
         "internal_time_ns": internal_time_ns,
-        "cpu_time_ns": child_cpu_time_ns or parse_cpu_time_ns(result.stderr),
-        "peak_rss_bytes": parse_peak_rss(result.stderr),
+        "cpu_time_ns": child_cpu_time_ns or parse_cpu_time_ns(stderr),
+        "peak_rss_bytes": parse_peak_rss(stderr),
         "captured_at_unix": int(started),
     }
 
