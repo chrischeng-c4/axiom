@@ -5,5 +5,5 @@ lib = "pickle"
 fixture = "tests/cpython/_regression/std-libs/pickle/bench/highest_protocol_const_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
-samples = 1
+samples = 9
 prereq_imports = []

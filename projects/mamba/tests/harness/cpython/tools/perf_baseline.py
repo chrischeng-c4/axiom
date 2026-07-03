@@ -132,22 +132,19 @@ def measure_once(python: str, fixture: Path) -> dict:
     before_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     result = subprocess.run(argv, text=True, capture_output=True, timeout=120)
     after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{fixture}: CPython run failed rc={result.returncode}\n"
+            f"stdout={result.stdout}\nstderr={result.stderr}"
+        )
     try:
         internal_time_ns = parse_internal_time(result.stdout, result.stderr)
     except RuntimeError:
-        internal_time_ns = None
-
-    if internal_time_ns is None:
-        raise RuntimeError(
-            f"{fixture}: CPython output missing INTERNAL_TIME_NS rc={result.returncode}\n"
-            f"stdout={result.stdout}\nstderr={result.stderr}"
-        )
-    if result.returncode != 0:
-        print(
-            f"WARN {fixture}: timing wrapper returned rc={result.returncode} "
-            "after fixture emitted INTERNAL_TIME_NS",
-            file=sys.stderr,
-        )
+        # D5.2 (see perf_pin.rs): fixtures are pure and no longer emit a
+        # self-timing marker; internal_time_ns is retained only for
+        # sqlite-row deserialization compatibility and is not used by the
+        # gate, which measures external CPU time via /usr/bin/time.
+        internal_time_ns = 0
     child_cpu_time_ns = int(
         (
             (after_usage.ru_utime - before_usage.ru_utime)

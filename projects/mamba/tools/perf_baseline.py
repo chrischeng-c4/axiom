@@ -40,7 +40,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CPYTHON_DIR = HERE.parent / "tests" / "cpython"
-FIXTURES_ROOT = CPYTHON_DIR / "fixtures"
+# Bench fixtures live directly under tests/cpython/<bucket>/<lib>/bench/*.py
+# (there is no separate "fixtures/" subdir post-reorg; keep FIXTURES_ROOT ==
+# CPYTHON_DIR so bench_fixtures() actually finds the corpus).
+FIXTURES_ROOT = CPYTHON_DIR
 DB_PATH = CPYTHON_DIR / ".cache" / "perf.db"
 
 SPEED_FLOOR = 1.0
@@ -140,6 +143,8 @@ def bench_fixtures(lib: str | None):
     Bench fixtures live at <bucket>/<lib>/bench/<case>.py."""
     for path in sorted(FIXTURES_ROOT.rglob("bench/*.py")):
         if path.name.endswith("_stub.py"):
+            continue
+        if ".cache" in path.parts:
             continue
         # lib = the dir that contains bench/
         lib_name = path.parent.parent.name

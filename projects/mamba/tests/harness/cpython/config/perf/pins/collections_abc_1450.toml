@@ -5,5 +5,5 @@ lib = "collections_abc"
 fixture = "tests/cpython/_regression/std-libs/collections_abc/bench/abc_type_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
-samples = 1
+samples = 9
 prereq_imports = []
