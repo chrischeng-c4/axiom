@@ -15,6 +15,7 @@
 pub mod controller;
 pub mod lease;
 pub mod render;
+pub mod resize;
 pub mod service;
 
 pub use controller::{run, Error};
