@@ -236,6 +236,187 @@ fn init_check_detects_tamper_without_writing_and_init_restores_it() {
     );
 }
 
+/// Issue #985 (init-projector slice 2/3): `aw init` renders the Workflow/
+/// Support CLI tables inside CLAUDE.md's `aw:start` block between
+/// fine-grained `<!-- aw:cli-table:{workflow,support}:start/end -->`
+/// markers. Tampering a row inside one of those markers must be caught by
+/// `aw init --check` (naming CLAUDE.md, without writing) and repaired by a
+/// follow-up write-mode `aw init`, exactly like the outer whole-block
+/// contract proven above.
+#[test]
+fn init_check_detects_cli_table_row_tamper_and_init_restores_it() {
+    let Some(bin) = skip_unless_ready() else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let out = run_init(&bin, root, &[]);
+    assert!(
+        out.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out)
+    );
+
+    let claude_path = root.join("CLAUDE.md");
+    let claude_before = std::fs::read_to_string(&claude_path).unwrap();
+    assert!(
+        claude_before.contains("<!-- aw:cli-table:workflow:start -->"),
+        "fresh-installed CLAUDE.md must carry the workflow CLI-table markers:\n{claude_before}"
+    );
+    assert!(
+        claude_before.contains("| `aw wi` |"),
+        "the workflow CLI table must carry a rendered `aw wi` row:\n{claude_before}"
+    );
+
+    let tampered = claude_before.replace(
+        "| `aw wi` | Manage work-items",
+        "| `aw wi` | TAMPERED ROW TEXT",
+    );
+    assert_ne!(
+        tampered, claude_before,
+        "fixture row must exist in the fresh-installed CLAUDE.md"
+    );
+    std::fs::write(&claude_path, &tampered).unwrap();
+
+    let check_tampered = run_init(&bin, root, &["--check"]);
+    assert!(
+        !check_tampered.status.success(),
+        "aw init --check must fail when a CLI-table row is tampered"
+    );
+    let check_tampered_out = combined_output(&check_tampered);
+    assert!(
+        check_tampered_out.contains("CLAUDE.md"),
+        "aw init --check must name the stale file:\n{check_tampered_out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&claude_path).unwrap(),
+        tampered,
+        "aw init --check must never write"
+    );
+
+    let restore = run_init(&bin, root, &[]);
+    assert!(
+        restore.status.success(),
+        "aw init should succeed restoring CLAUDE.md:\n{}",
+        combined_output(&restore)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&claude_path).unwrap().trim(),
+        claude_before.trim(),
+        "aw init must restore the tampered CLI-table row in CLAUDE.md"
+    );
+
+    let check_clean = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_clean.status.success(),
+        "aw init --check should be clean after restore:\n{}",
+        combined_output(&check_clean)
+    );
+}
+
+/// Issue #985 (init-projector slice 2/3): when a project's README.md already
+/// carries `<!-- aw:projects-table:start/end -->` markers, `aw init`
+/// regenerates the enclosed table from `.aw/config.toml`'s top-level
+/// `[[projects]]` entries and `aw init --check` covers its freshness the
+/// same way it covers CLAUDE.md/AGENTS.md — without ever inserting the
+/// table into a README that never opted in.
+#[test]
+fn init_projects_table_is_opt_in_and_tamper_is_detected_and_restored() {
+    let Some(bin) = skip_unless_ready() else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // A README with no markers is left alone (opt-in, not force-inserted).
+    let plain_readme = "# demo\n\nno markers here.\n";
+    std::fs::write(root.join("README.md"), plain_readme).unwrap();
+
+    let out = run_init(&bin, root, &[]);
+    assert!(
+        out.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out)
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("README.md")).unwrap(),
+        plain_readme,
+        "aw init must not touch a README without the Projects-table markers"
+    );
+    let check_no_markers = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_no_markers.status.success(),
+        "a marker-less README must never be reported stale:\n{}",
+        combined_output(&check_no_markers)
+    );
+
+    // Opt in: seed a stale Projects table between the markers, then re-run.
+    let seeded_readme = format!(
+        "# demo\n\n## Projects\n\n{}\n| Project | What it is |\n|---------|------------|\n| [stale](stale) | stale row |\n{}\n\n## Other\n",
+        "<!-- aw:projects-table:start -->", "<!-- aw:projects-table:end -->"
+    );
+    std::fs::write(root.join("README.md"), &seeded_readme).unwrap();
+
+    let out2 = run_init(&bin, root, &[]);
+    assert!(
+        out2.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out2)
+    );
+    let readme_after = std::fs::read_to_string(root.join("README.md")).unwrap();
+    assert!(
+        !readme_after.contains("stale row"),
+        "aw init must regenerate the opted-in Projects table, dropping stale rows:\n{readme_after}"
+    );
+    assert!(
+        readme_after.contains("## Other"),
+        "content outside the markers must be preserved byte-for-byte:\n{readme_after}"
+    );
+
+    let check_clean = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_clean.status.success(),
+        "aw init --check should be clean right after regenerating the Projects table:\n{}",
+        combined_output(&check_clean)
+    );
+
+    // Tamper the now-generated table and prove detection + restore.
+    let tampered_readme = readme_after.replace(
+        "<!-- aw:projects-table:start -->",
+        "<!-- aw:projects-table:start -->\n| TAMPERED | ROW |",
+    );
+    assert_ne!(tampered_readme, readme_after);
+    std::fs::write(root.join("README.md"), &tampered_readme).unwrap();
+
+    let check_tampered = run_init(&bin, root, &["--check"]);
+    assert!(
+        !check_tampered.status.success(),
+        "aw init --check must fail when the Projects table is tampered"
+    );
+    assert!(
+        combined_output(&check_tampered).contains("README.md"),
+        "aw init --check must name README.md as stale:\n{}",
+        combined_output(&check_tampered)
+    );
+
+    let restore = run_init(&bin, root, &[]);
+    assert!(
+        restore.status.success(),
+        "aw init should succeed restoring README.md:\n{}",
+        combined_output(&restore)
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("README.md"))
+            .unwrap()
+            .trim(),
+        readme_after.trim(),
+        "aw init must restore the tampered Projects table in README.md"
+    );
+}
+
 /// `aw init` output must end with a chainable next step (CONTRIBUTING's
 /// chainable-output convention). A from-scratch sandbox has no registered
 /// `[[projects]]` entry, so the emitted hint must be the terminal `next:

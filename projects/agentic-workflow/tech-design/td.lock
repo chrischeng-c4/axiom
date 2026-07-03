@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-03T15:51:28.801800+00:00"
-digest = "sha256:0cd6b57040350537a8e009d9cb77cef9b9b5e7b105b06247bfa17ceca1c6e913"
-source_digest = "sha256:0cd6b57040350537a8e009d9cb77cef9b9b5e7b105b06247bfa17ceca1c6e913"
-ir_digest = "sha256:39ed8aae97e3b834a1a9d4e50fb53b5098972155ddf0ec068b6b25de0af01def"
+generated_at = "2026-07-03T16:54:34.999071+00:00"
+digest = "sha256:5453f99da6acc72f54431952b2c1582efd4a2e635176421f215aa4de1d048331"
+source_digest = "sha256:5453f99da6acc72f54431952b2c1582efd4a2e635176421f215aa4de1d048331"
+ir_digest = "sha256:277738304092826812ba57ba0eb9278ca622825d4ca3e580d359013ca38f7dbd"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5291,8 +5291,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/doc_mirror.md"
-digest = "sha256:2f3c8b5d40835630a8ca5c5ef17e9d6d3c3e381b31145b42627d4f4fbe063dc7"
-ir_digest = "sha256:cde5120f6e297336790ace9aaac740acc3a228680dc08af9e4a97f1815596b8b"
+digest = "sha256:edec0b8e6b1415fbdccc9b098724b470f8abd07f2cdf6ce2cb9c492a45049656"
+ir_digest = "sha256:1a6711be723919ed8422d743a9bf14a8752bd6fd4bafa1d5aa9ac0e9d3075d69"
 section_count = 2
 
 [[files]]
@@ -5315,8 +5315,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/init.md"
-digest = "sha256:42488b4271ce2addb5c6f64c3ccc6f68bd242034e78e8ee550fa4aaf2d07c1de"
-ir_digest = "sha256:ebed915cd5ea518391d3a99e6a9edef3e27365ad1687b36a4e7db9d821d308fc"
+digest = "sha256:b5c14b50e86b80a05aac11487615a5465b7ae8a1bfb20f9d46b03862dfa7616c"
+ir_digest = "sha256:eab37e266dc33f72365061c5fad18904e6ba917757d0f0df5f3bd9478b4bd952"
 section_count = 2
 
 [[files]]
@@ -5813,8 +5813,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/init_doc_projection_test.md"
-digest = "sha256:d81100cb2400a54175c760e458d6b260f692c20375e4bbf9ae4cc21d185ee642"
-ir_digest = "sha256:528fa16a6fe90755f0fa9cc248dac542bca88b747aeb34549694aeef84615bb9"
+digest = "sha256:4f13f5b8c5d4c62121b67230c079d5596da2ec3a7f4accca081260d52d419f04"
+ir_digest = "sha256:340b15c5e354b1d26748f7c5498ff440a1342097168ddceb4ac40aba25caabea"
 section_count = 2
 
 [[files]]
@@ -5825,8 +5825,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/legacy_cli_removal_test.md"
-digest = "sha256:f2dcf640fd7fdeea288b79bea3b01827fa29e712500ff59d5452f354f94c0d03"
-ir_digest = "sha256:5e2375c1325a799f501e399cc301a8b84c587011c8c04951f5e018ef2d0d3488"
+digest = "sha256:cdd405e93f70eecc9ba64e71d1018c669b51ce92e67a542f9d480a1e2c03b779"
+ir_digest = "sha256:b82fbf9ac419334c14d71ce2010ff58247b6f753ed24910240623a3d2b919c73"
 section_count = 2
 
 [[files]]
