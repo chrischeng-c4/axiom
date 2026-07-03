@@ -9,12 +9,11 @@
 # case = "resource_test__test_freebsd_contants"
 # subject = "cpython.test_resource.ResourceTest.test_freebsd_contants"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_resource.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_resource.py::ResourceTest::test_freebsd_contants
 """Auto-ported test: ResourceTest::test_freebsd_contants (CPython 3.12 oracle)."""
 
