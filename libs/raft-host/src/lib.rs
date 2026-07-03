@@ -13,14 +13,18 @@
 pub mod cluster;
 mod config;
 mod host;
+mod read_consistency;
 mod state_machine;
 mod store;
+mod view;
 
 pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims, ClusterTopology};
 pub use config::{HostConfig, SnapshotPolicy};
 pub use host::RaftHost;
+pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};
+pub use view::{ClusterStateView, PeerAddr, RaftRole};
 
 // Re-export the raft_core surface a host consumer needs (membership, ids).
 pub use raft_core::{auto_membership, Index, Membership, NodeId, Term};
