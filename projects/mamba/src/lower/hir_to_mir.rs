@@ -1218,8 +1218,19 @@ pub fn lower_hir_to_mir_with_symbols_src(
         let body = lowerer.lower_function(func);
         lowerer.bodies.push(body);
     }
-    // Always emit a __main__ body when there are classes or top_level stmts
-    if !hir.top_level.is_empty() || !hir.classes.is_empty() {
+    // Always emit a __main__ body when there are classes, top_level stmts,
+    // or functions. A defs-only module (e.g. a file/import whose only
+    // top-level content is `def g(...): ...`, no other statements) has an
+    // empty `top_level` and no classes, so without this arm no module body
+    // is pushed at all. `CraneliftJitBackend::codegen` then picks
+    // `module.bodies.last()` as the "entry point" — which, with no __main__
+    // body present, is some *user function* instead. Executing the module
+    // then means calling that function with whatever garbage happens to be
+    // in its argument register, corrupting cross-boundary calls into it
+    // (#943). Emitting a (possibly trivial, immediately-returning)
+    // __main__ body whenever there are functions too guarantees
+    // `module.bodies.last()` is always the real module entry point.
+    if !hir.top_level.is_empty() || !hir.classes.is_empty() || !hir.functions.is_empty() {
         let main_body = lowerer.lower_top_level(&hir.top_level);
         lowerer.bodies.push(main_body);
     }
