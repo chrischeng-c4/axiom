@@ -273,6 +273,18 @@ unsafe extern "C" fn m_runeval(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn dispatch_breakpoint(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    // #954: this body must NOT be byte-identical to the many other trivial
+    // `{ MbValue::from_ptr(MbObject::new_dict()) }`-bodied dispatcher stubs
+    // scattered across the stdlib shims (e.g. long_tail_mod::dispatch_class_shell).
+    // Breakpoint's address is registered into NATIVE_TYPE_NAMES below and used
+    // as its runtime type identity; if the optimizer's identical-function
+    // folding merges this stub onto an unrelated module's stub, that other
+    // module's callable becomes indistinguishable from Breakpoint's (its
+    // NATIVE_TYPE_NAMES lookup silently returns "Breakpoint" for a totally
+    // different class — see #954). The black_box below is an optimization
+    // barrier that keeps this function's compiled body distinct so its
+    // address stays exclusively Breakpoint's.
+    std::hint::black_box(0xB2EA_u32);
     MbValue::from_ptr(MbObject::new_dict())
 }
 
