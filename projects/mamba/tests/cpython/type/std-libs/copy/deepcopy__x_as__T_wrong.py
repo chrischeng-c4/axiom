@@ -9,10 +9,12 @@
 # case = "deepcopy__x_as__T_wrong"
 # subject = "copy.deepcopy(x: _T)"
 # kind = "semantic"
+# xfail = "force-typed arg enforcement pending; TypeVar param must stay unwalled (#955 regression fix) — needs a different probe design (#861)"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/copy.pyi"
 # status = "filled"
 # ///
+# mamba-xfail: force-typed arg enforcement pending; TypeVar param must stay unwalled (#955 regression fix) — needs a different probe design (#861)
 # mamba-strict-type: TypeError
 """Type wall: copy.deepcopy(x: _T); call it with the wrong type.
 

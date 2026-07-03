@@ -10,10 +10,12 @@
 # subject = "multiprocessing.sharedctypes.copy(obj: _CT)"
 # kind = "semantic"
 # xfail = ""
+# xfail = "force-typed arg enforcement pending; TypeVar param must stay unwalled (#955 regression fix) — needs a different probe design (#861)"
 # mem_carveout = ""
 # source = "vendor/typeshed/stdlib/multiprocessing/sharedctypes.pyi"
 # status = "filled"
 # ///
+# mamba-xfail: force-typed arg enforcement pending; TypeVar param must stay unwalled (#955 regression fix) — needs a different probe design (#861)
 # mamba-strict-type: TypeError
 """Type wall: multiprocessing.sharedctypes.copy(obj: _CT); call it with the wrong type.
 
