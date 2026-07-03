@@ -643,10 +643,28 @@ pub fn mb_traceback_reset_stack() {
     TRACE_FRAME_STACK.with(|stack| stack.borrow_mut().clear());
 }
 
+/// Snapshot of the active call-stack TraceFrames, module frame first through
+/// the current innermost frame last. Consumed by inspect_mod's frame-chain
+/// builder (`sys._getframe` / `inspect.currentframe`, #889) to wire up a real
+/// `f_back` chain from mamba's existing push/pop call-stack tracking.
+pub(crate) fn trace_stack_snapshot() -> Vec<(String, u32, String)> {
+    TRACE_FRAME_STACK.with(|stack| {
+        stack
+            .borrow()
+            .iter()
+            .map(|f| (f.filename.clone(), f.lineno, f.name.clone()))
+            .collect()
+    })
+}
+
 pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue) {
     let filename = extract_str(filename).unwrap_or_else(|| "<string>".to_string());
     let name = extract_str(name).unwrap_or_else(|| "<module>".to_string());
     let lineno = trace_lineno(lineno);
+    // #878: deterministic cProfile/profile backend hook — every compiled
+    // function call reaches here at entry, giving an exact (not sampled)
+    // per-function call count including for recursion.
+    super::cprofile_mod::on_call_enter(&filename, lineno, &name);
     TRACE_FRAME_STACK.with(|stack| {
         stack.borrow_mut().push(TraceFrame {
             filename,
