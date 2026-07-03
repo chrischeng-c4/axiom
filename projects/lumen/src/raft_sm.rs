@@ -12,12 +12,11 @@
 //! The raft log index **is** the WAL seq (both 1-based), so `apply_raft_entry`,
 //! the RDB `up_to_seq` tag, and the outcome key all share the same `Index`.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use raft_host::{Index, RaftStateMachine};
+use raft_host::{Index, OutcomeWindow, RaftStateMachine};
 
 use crate::coordinator::WriteSink;
 use crate::log_entry::RaftLogEntry;
@@ -26,14 +25,15 @@ use crate::storage::{ApplyOutcome, Engine};
 use crate::wal::WalRecord;
 use raft_host::RaftHost;
 
-/// How many recent apply outcomes to retain for the write handler to claim.
+/// How many recent apply outcomes to retain for the write handler to claim,
+/// via [`OutcomeWindow`].
 const OUTCOME_WINDOW: u64 = 8192;
 
 /// lumen's engine driven as a raft state machine.
 pub struct EngineSm {
     engine: Arc<Engine>,
     applied: AtomicU64,
-    outcomes: Mutex<BTreeMap<u64, Result<ApplyOutcome>>>,
+    outcomes: Mutex<OutcomeWindow<Result<ApplyOutcome>>>,
 }
 
 impl EngineSm {
@@ -43,7 +43,7 @@ impl EngineSm {
         Arc::new(EngineSm {
             engine,
             applied: AtomicU64::new(from_seq),
-            outcomes: Mutex::new(BTreeMap::new()),
+            outcomes: Mutex::new(OutcomeWindow::new(OUTCOME_WINDOW)),
         })
     }
 
@@ -53,7 +53,7 @@ impl EngineSm {
         self.outcomes
             .lock()
             .expect("outcomes poisoned")
-            .remove(&index)
+            .claim(index)
             .unwrap_or_else(|| Err(anyhow::anyhow!("outcome for seq {index} unavailable")))
     }
 }
@@ -68,14 +68,7 @@ impl RaftStateMachine for EngineSm {
         {
             let mut m = self.outcomes.lock().expect("outcomes poisoned");
             m.insert(index, outcome);
-            let cutoff = index.saturating_sub(OUTCOME_WINDOW);
-            while let Some((&k, _)) = m.iter().next() {
-                if k < cutoff {
-                    m.remove(&k);
-                } else {
-                    break;
-                }
-            }
+            m.advance(index);
         }
         self.applied.store(index, Ordering::Release);
         Ok(()) // the entry is "applied" (a failed apply no-ops the engine + is surfaced via the outcome)

@@ -13,6 +13,7 @@
 pub mod cluster;
 mod config;
 mod host;
+mod outcome_window;
 mod read_consistency;
 mod state_machine;
 mod store;
@@ -21,6 +22,7 @@ mod view;
 pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims, ClusterTopology};
 pub use config::{HostConfig, SnapshotPolicy};
 pub use host::RaftHost;
+pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};
