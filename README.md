@@ -6,6 +6,7 @@ details.
 
 ## Projects
 
+<!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
 | [agentic-workflow](projects/agentic-workflow/README.md) | Workflow protocol and `aw` CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle, and production-readiness rollup. |
@@ -24,6 +25,7 @@ details.
 | [cap](projects/cap/README.md) | Resource-protection wrapper — throttles heavy local commands (and the Bash an agent fires) by watching free memory and pausing/resuming/killing, so nothing OOMs the box. |
 | [meter](projects/meter/README.md) | Local resource measurement for agents — `measure` observes external executables for cpu/wall/RSS and sampled hot spots; `profile` folds embedded/source-aware phase data. |
 | [guard](projects/guard/README.md) | Security posture gate — turns compass static findings plus future vat/rig/meter/arena evidence into one agent-readable security report. |
+<!-- aw:projects-table:end -->
 
 ## Install
 
