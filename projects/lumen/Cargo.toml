@@ -61,7 +61,15 @@ service-backup = { path = "../../libs/service-backup" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }
-raft-host = { path = "../../libs/raft-host", optional = true }
+# Non-optional (#1002): `src/config.rs`/`src/raft.rs` delegate the StatefulSet
+# shard/replica/voter math + peer-DNS/`LUMEN_PEERS` override parsing to
+# `raft_host::cluster` unconditionally (those modules compile with no
+# feature), so the actual raft engine and lumen's serving-side topology
+# surface can't fork the derivation. Adds no new crate to the default build:
+# every transitive dep it pulls in (raft-core, h2c, axum, tokio, reqwest via
+# h2c) is already unconditional in this graph; only `raft-wal` still gates the
+# replication engine (raft-core) + peer-RPC HTTP client (reqwest) themselves.
+raft-host = { path = "../../libs/raft-host" }
 # `lumen spec gen` — generate a typed client from lumen's own OpenAPI.
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 rayon = "1.10"
@@ -120,7 +128,10 @@ default = []
 jieba = ["dep:jieba-rs"]
 # raft-wal — lumen owns write ordering + replication via libs/raft-core (HA),
 # instead of an external broker. Peer RPCs use the h2c client. (#515)
-raft-wal = ["dep:raft-core", "dep:raft-host", "dep:reqwest"]
+# raft-host itself is non-optional (#1002; see the dependency comment above) —
+# only the engine (raft-core) and its peer-RPC HTTP client (reqwest) are
+# feature-gated here.
+raft-wal = ["dep:raft-core", "dep:reqwest"]
 # backup — `lumen backup` (#808): fetches a snapshot from a running fleet's
 # `/admin/backup` over HTTP and hands it to a `libs/service-backup`
 # destination sink. Needs an HTTP client; `raft-wal` already links one into
