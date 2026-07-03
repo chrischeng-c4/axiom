@@ -3085,6 +3085,33 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      #860 cleanup (epic #914 dead-code pass, orphans called out in #918/#920
+      follow-up comments): removed the `ResolvedRunRoot::Project` variant and
+      its match arms (the `aw run --project` root-rollup path that
+      `aw capability run --project` now owns via `capability.rs`'s own
+      `run_capability_tick`), and deleted the dead
+      `RunProjectConfig::canonical_project_name` method plus its direct test.
+      Deleted 5 fully-dead functions with zero callers anywhere
+      (`project_envelope`,
+      `project_done_or_dirty_envelope_with_capability_report`,
+      `project_production_blocked_from_health_report`,
+      `project_backlog_envelope`, `completion_missing_from_capability_action`).
+      The remaining lower-level helpers under that superseded tree
+      (`project_completion`, `project_done_envelope`,
+      `persistence_blocked_envelope`, `project_repo_side_dirty_paths_at`,
+      `project_repo_side_scopes`, `commit_project_persistence_if_approved`,
+      `project_persistence_request_path`, `stable_project_root_hash`,
+      `write_project_persistence_request`, `load_run_project_config`,
+      `scope_strings`, `ProjectPersistenceRequest`, `RunProjectConfig`,
+      `RunProjectRow`, `project_ready_wi_envelope`,
+      `project_atomize_backlog_envelope`,
+      `project_prioritize_blocked_envelope`) lost their only production
+      caller but retain direct `#[test]` or test-twin
+      (`project_done_or_dirty_envelope_with_health`/
+      `project_production_blocked_envelope`) coverage, so they are now
+      `#[cfg(test)]`-gated rather than deleted; the `wi_cli`/`Deserialize`/
+      `DefaultHasher`/`Hash`/`Hasher` imports they depend on are
+      `#[cfg(test)]`-gated to match. Zero-warning plain `cargo build`.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/production.rs"
     action: modify

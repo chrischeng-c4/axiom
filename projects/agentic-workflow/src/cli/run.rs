@@ -3,9 +3,9 @@
 //! `aw wi run` / `aw capability run` -- root-driven workflow runner envelope.
 
 use crate::cli::capability::{
-    self, CapabilityAction, CapabilityActionKind, CapabilityReport, CapabilityStatus, HitlChoice,
-    HitlQuestion,
+    self, CapabilityAction, CapabilityActionKind, CapabilityStatus, HitlChoice, HitlQuestion,
 };
+#[cfg(test)]
 use crate::cli::issues as wi_cli;
 use crate::issues::{make_backend, resolve_default_backend, Issue, IssueState, IssueType};
 use crate::models::artifact_quality::{
@@ -15,10 +15,14 @@ use crate::models::preflight::{
     default_preflight_gates, PreFlightEvidenceKind, PreFlightGateSeverity,
 };
 use anyhow::{Context, Result};
-use serde::{ser::SerializeStruct, Deserialize, Serialize};
+#[cfg(test)]
+use serde::Deserialize;
+use serde::{ser::SerializeStruct, Serialize};
+#[cfg(test)]
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::future::Future;
+#[cfg(test)]
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -30,10 +34,6 @@ const GOAL_INLINE_LIMIT_BYTES: usize = 4000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedRunRoot {
-    Project {
-        project: String,
-        command: String,
-    },
     Capability {
         project: String,
         capability_id: String,
@@ -50,9 +50,9 @@ impl ResolvedRunRoot {
     /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
     fn command(&self) -> &str {
         match self {
-            ResolvedRunRoot::Project { command, .. }
-            | ResolvedRunRoot::Capability { command, .. }
-            | ResolvedRunRoot::Wi { command, .. } => command,
+            ResolvedRunRoot::Capability { command, .. } | ResolvedRunRoot::Wi { command, .. } => {
+                command
+            }
         }
     }
 }
@@ -290,7 +290,6 @@ async fn run_resolved_root(root: ResolvedRunRoot, print: RunPrintOptions) -> Res
         Some(root_command.as_str()),
     );
     let mut envelope = match &root {
-        ResolvedRunRoot::Project { project, .. } => project_envelope(project, &progress).await,
         ResolvedRunRoot::Capability {
             project,
             capability_id,
@@ -389,7 +388,6 @@ struct RunProgressSink {
 impl RunProgressSink {
     fn new(root: &ResolvedRunRoot, enabled: bool) -> Self {
         let (root_kind, root_id) = match root {
-            ResolvedRunRoot::Project { project, .. } => ("project", project.as_str()),
             ResolvedRunRoot::Capability { capability_id, .. } => {
                 ("capability", capability_id.as_str())
             }
@@ -743,223 +741,6 @@ fn preflight_evidence_label(kind: PreFlightEvidenceKind) -> &'static str {
         PreFlightEvidenceKind::LinkCheck => "link-check",
         PreFlightEvidenceKind::SourceAnnotation => "source-annotation",
         PreFlightEvidenceKind::ReviewNote => "review-note",
-    }
-}
-
-async fn project_envelope(project: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
-    let root = WorkflowNode {
-        kind: "project".to_string(),
-        id: project.to_string(),
-    };
-    progress.emit(
-        20,
-        "capability",
-        "evaluating capability claims and verification gates",
-        Some(format!("aw capability check --project {project} --verify").as_str()),
-    );
-    let capability_command = format!("aw capability check --project {project} --verify");
-    let report_result = await_with_progress(
-        progress,
-        20,
-        "capability",
-        "still evaluating capability claims and verification gates",
-        Some(capability_command),
-        capability::build_capability_report(project, None, true, true),
-    )
-    .await;
-    match report_result {
-        Ok(report) if report.next_action.kind == CapabilityActionKind::None => {
-            let project_root = match crate::find_project_root() {
-                Ok(project_root) => project_root,
-                Err(err) => {
-                    return blocked_envelope(
-                        root.clone(),
-                        root,
-                        project_capability_rollup_command(project),
-                        format!("repo persistence guard could not resolve project root: {err}"),
-                        true,
-                    )
-                }
-            };
-            progress.emit(
-                50,
-                "work_items",
-                "loading project work-item readiness inventory",
-                Some(format!("aw wi prioritize --project {project}").as_str()),
-            );
-            let work_item_command = format!("aw wi prioritize --project {project}");
-            let backlog_result = await_with_progress(
-                progress,
-                50,
-                "work_items",
-                "still loading project work-item readiness inventory",
-                Some(work_item_command),
-                project_backlog_envelope(project, root.clone(), &project_root),
-            )
-            .await;
-            match backlog_result {
-                Ok(Some(envelope)) => envelope,
-                Ok(None) => {
-                    progress.emit(
-                        75,
-                        "persistence",
-                        "checking repo persistence and production readiness",
-                        Some(format!("aw health --project {project}").as_str()),
-                    );
-                    project_done_or_dirty_envelope_with_capability_report(
-                        project,
-                        root,
-                        &project_root,
-                        &report,
-                    )
-                }
-                Err(err) => blocked_envelope(
-                    root.clone(),
-                    root,
-                    format!("aw wi prioritize --project {project}"),
-                    format!("work-item readiness inventory is unavailable: {err}"),
-                    true,
-                ),
-            }
-        }
-        Ok(report) => capability_action_envelope(
-            root.clone(),
-            WorkflowNode {
-                kind: "project".to_string(),
-                id: project.to_string(),
-            },
-            project,
-            &report.next_action,
-            project_completion(
-                false,
-                completion_missing_from_capability_action(&report.next_action, &report.blockers),
-            ),
-        ),
-        Err(err) => capability_root_unrunnable_envelope(root.clone(), root, err),
-    }
-}
-
-fn project_done_or_dirty_envelope_with_capability_report(
-    project: &str,
-    root: WorkflowNode,
-    project_root: &Path,
-    _report: &CapabilityReport,
-) -> WorkflowEnvelope {
-    match project_repo_side_dirty_paths_at(project_root, project) {
-        Ok((paths, scopes)) if paths.is_empty() => {
-            match crate::cli::project::build_health_report(project) {
-                Ok(health) if health.production_ready => project_done_envelope(root, scopes),
-                Ok(health) => {
-                    project_production_blocked_from_health_report(project, root, health, scopes)
-                }
-                Err(err) => blocked_envelope(
-                    root.clone(),
-                    root,
-                    project_capability_rollup_command(project),
-                    format!("project production readiness guard failed: {err}"),
-                    true,
-                ),
-            }
-        }
-        Ok((paths, scopes)) => {
-            match commit_project_persistence_if_approved(project_root, project, &paths, &scopes) {
-                Ok(true) => match project_repo_side_dirty_paths_at(project_root, project) {
-                    Ok((remaining_paths, scopes)) if remaining_paths.is_empty() => {
-                        match crate::cli::project::build_health_report(project) {
-                            Ok(health) if health.production_ready => {
-                                project_done_envelope(root, scopes)
-                            }
-                            Ok(health) => project_production_blocked_from_health_report(
-                                project, root, health, scopes,
-                            ),
-                            Err(err) => blocked_envelope(
-                                root.clone(),
-                                root,
-                                project_capability_rollup_command(project),
-                                format!("project production readiness guard failed: {err}"),
-                                true,
-                            ),
-                        }
-                    }
-                    Ok((remaining_paths, scopes)) => {
-                        persistence_blocked_envelope(project, root, remaining_paths, scopes)
-                    }
-                    Err(err) => blocked_envelope(
-                        root.clone(),
-                        root,
-                        project_capability_rollup_command(project),
-                        format!("repo persistence guard failed after commit: {err}"),
-                        true,
-                    ),
-                },
-                Ok(false) => persistence_blocked_envelope(project, root, paths, scopes),
-                Err(err) => blocked_envelope(
-                    root.clone(),
-                    root,
-                    project_capability_rollup_command(project),
-                    format!("repo persistence commit failed: {err}"),
-                    true,
-                ),
-            }
-        }
-        Err(err) => blocked_envelope(
-            root.clone(),
-            root,
-            project_capability_rollup_command(project),
-            format!("repo persistence guard failed: {err}"),
-            true,
-        ),
-    }
-}
-
-fn project_production_blocked_from_health_report(
-    project: &str,
-    root: WorkflowNode,
-    health: crate::cli::project::ProjectHealthReport,
-    scopes: Vec<String>,
-) -> WorkflowEnvelope {
-    let command = format!("aw health --project {project}");
-    let reason = if health.production_blockers.is_empty() {
-        "project production readiness is blocked".to_string()
-    } else {
-        format!(
-            "project production readiness is blocked: {}",
-            health
-                .production_blockers
-                .iter()
-                .take(5)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("; ")
-        )
-    };
-    WorkflowEnvelope {
-        action: "blocked".to_string(),
-        root: root.clone(),
-        current: root,
-        completed: None,
-        completion: project_completion(false, health.production_blockers.clone()),
-        next: WorkflowNext {
-            kind: "production_verification".to_string(),
-            command: command.clone(),
-            reason: reason.clone(),
-            payload_path: None,
-        },
-        invoke: WorkflowInvoke { command },
-        agent_prompt:
-            "Run next.command to inspect scoped production readiness, then resolve the listed TD/CB/test/semantic blockers through existing AW lifecycle commands."
-                .to_string(),
-        requires_hitl: true,
-        artifact_quality_profile: None,
-        hitl_question: None,
-        persistence: Some(WorkflowPersistence {
-            status: "production_blocked".to_string(),
-            commit_complete: true,
-            wi_evidence_complete: true,
-            dirty_paths: Vec::new(),
-            scopes,
-            reason,
-        }),
     }
 }
 
@@ -1634,36 +1415,10 @@ fn markdown_section<'a>(body: &'a str, heading: &str) -> Option<&'a str> {
     start.map(|start| &body[start..end])
 }
 
-async fn project_backlog_envelope(
-    project: &str,
-    root: WorkflowNode,
-    project_root: &Path,
-) -> Result<Option<WorkflowEnvelope>> {
-    let (_, _, issues) = wi_cli::load_project_open_issues(project_root, project, None).await?;
-    if issues.is_empty() {
-        return Ok(None);
-    }
-
-    let lanes = wi_cli::prioritize_lanes(&issues);
-    if let Some(issue) = lanes.ready_now.first() {
-        return Ok(Some(project_ready_wi_envelope(project, root, issue)));
-    }
-    if !lanes.needs_atomize.is_empty() {
-        return Ok(Some(project_atomize_backlog_envelope(
-            project, root, &lanes,
-        )));
-    }
-    if !lanes.blocked_by_dependency.is_empty()
-        || !lanes.needs_triage.is_empty()
-        || !lanes.deferred.is_empty()
-    {
-        return Ok(Some(project_prioritize_blocked_envelope(
-            project, root, &lanes,
-        )));
-    }
-    Ok(None)
-}
-
+// Kept test-only (issue #860 cleanup): the only production caller
+// (project_backlog_envelope, part of the now-removed `aw run --project`
+// root) was deleted; the direct `#[test]` coverage below is retained.
+#[cfg(test)]
 fn project_ready_wi_envelope(project: &str, root: WorkflowNode, issue: &Issue) -> WorkflowEnvelope {
     let wi = issue_ref(issue);
     let command = wi_run_command(wi.trim_start_matches('#'));
@@ -1698,6 +1453,8 @@ fn project_ready_wi_envelope(project: &str, root: WorkflowNode, issue: &Issue) -
     }
 }
 
+// Kept test-only (issue #860 cleanup): see project_ready_wi_envelope.
+#[cfg(test)]
 fn project_atomize_backlog_envelope(
     project: &str,
     root: WorkflowNode,
@@ -1734,6 +1491,8 @@ fn project_atomize_backlog_envelope(
     }
 }
 
+// Kept test-only (issue #860 cleanup): see project_ready_wi_envelope.
+#[cfg(test)]
 fn project_prioritize_blocked_envelope(
     project: &str,
     root: WorkflowNode,
@@ -1806,6 +1565,11 @@ fn planning_artifact_hitl_question(project: &str, path: &Path, reason: &str) -> 
     }
 }
 
+// Kept test-only (issue #860 cleanup): the only production caller was inside
+// the now-deleted project_envelope tree; direct `#[test]` coverage and the
+// project_done_or_dirty_envelope_with_health/project_production_blocked_envelope
+// test-twin helpers are retained.
+#[cfg(test)]
 fn project_completion(root_complete: bool, missing: Vec<String>) -> WorkflowCompletion {
     WorkflowCompletion {
         root_complete,
@@ -1996,6 +1760,8 @@ fn capability_production_blocked_envelope(
     }
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn project_done_envelope(root: WorkflowNode, scopes: Vec<String>) -> WorkflowEnvelope {
     WorkflowEnvelope {
         action: "done".to_string(),
@@ -2027,6 +1793,8 @@ fn project_done_envelope(root: WorkflowNode, scopes: Vec<String>) -> WorkflowEnv
     }
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn persistence_blocked_envelope(
     project: &str,
     root: WorkflowNode,
@@ -2066,6 +1834,8 @@ fn persistence_blocked_envelope(
     }
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn project_repo_side_dirty_paths_at(
     project_root: &Path,
     project: &str,
@@ -2075,6 +1845,9 @@ fn project_repo_side_dirty_paths_at(
     Ok((dirty_paths, scope_strings(project_root, &scopes)))
 }
 
+// Kept test-only (issue #860 cleanup): retains its own direct `#[test]`
+// coverage in addition to the project_repo_side_dirty_paths_at caller above.
+#[cfg(test)]
 fn project_repo_side_scopes(project_root: &Path, project: &str) -> Result<Vec<PathBuf>> {
     let config = load_run_project_config(project_root)?;
     let Some(row) = config.projects.iter().find(|row| row.matches(project)) else {
@@ -2104,6 +1877,8 @@ fn project_repo_side_scopes(project_root: &Path, project: &str) -> Result<Vec<Pa
     Ok(scopes)
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct ProjectPersistenceRequest {
     project: String,
@@ -2112,6 +1887,8 @@ struct ProjectPersistenceRequest {
     scopes: Vec<String>,
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn commit_project_persistence_if_approved(
     project_root: &Path,
     project: &str,
@@ -2144,6 +1921,8 @@ fn commit_project_persistence_if_approved(
     Ok(false)
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn project_persistence_request_path(project_root: &Path, project: &str) -> PathBuf {
     crate::shared::workspace::aw_tmp_path()
         .join(project)
@@ -2154,12 +1933,16 @@ fn project_persistence_request_path(project_root: &Path, project: &str) -> PathB
         ))
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn stable_project_root_hash(project_root: &Path) -> u64 {
     let mut hasher = DefaultHasher::new();
     project_root.display().to_string().hash(&mut hasher);
     hasher.finish()
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn write_project_persistence_request(
     path: &Path,
     request: &ProjectPersistenceRequest,
@@ -2183,12 +1966,16 @@ fn write_project_persistence_request(
     Ok(())
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn load_run_project_config(project_root: &Path) -> Result<RunProjectConfig> {
     let config_path = project_root.join(".aw/config.toml");
     let content = std::fs::read_to_string(&config_path)?;
     toml::from_str(&content).with_context(|| format!("parse {}", config_path.display()))
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 fn scope_strings(project_root: &Path, scopes: &[PathBuf]) -> Vec<String> {
     scopes
         .iter()
@@ -2197,12 +1984,16 @@ fn scope_strings(project_root: &Path, scopes: &[PathBuf]) -> Vec<String> {
         .collect()
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 #[derive(Debug, Default, Deserialize)]
 struct RunProjectConfig {
     #[serde(default)]
     projects: Vec<RunProjectRow>,
 }
 
+// Kept test-only (issue #860 cleanup): see project_completion.
+#[cfg(test)]
 #[derive(Debug, Default, Deserialize)]
 struct RunProjectRow {
     name: String,
@@ -2217,19 +2008,10 @@ struct RunProjectRow {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[cfg(test)]
 impl RunProjectRow {
     fn matches(&self, project: &str) -> bool {
         self.name == project || self.aliases.iter().any(|alias| alias == project)
-    }
-}
-
-/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-impl RunProjectConfig {
-    fn canonical_project_name(&self, project: &str) -> Option<&str> {
-        self.projects
-            .iter()
-            .find(|row| row.matches(project))
-            .map(|row| row.name.as_str())
     }
 }
 
@@ -2270,20 +2052,6 @@ fn blocked_completion(reason: String) -> WorkflowCompletion {
         criteria: vec!["blocker is resolved".to_string()],
         missing: vec![reason],
     }
-}
-
-fn completion_missing_from_capability_action(
-    action: &CapabilityAction,
-    blockers: &[String],
-) -> Vec<String> {
-    let mut missing = Vec::new();
-    if !action.reason.trim().is_empty() {
-        missing.push(action.reason.clone());
-    }
-    missing.extend(blockers.iter().cloned());
-    missing.sort();
-    missing.dedup();
-    missing
 }
 
 fn capability_missing(
@@ -2859,29 +2627,6 @@ mod tests {
         assert_eq!(json["next"]["kind"], "blocked");
         assert!(json["next"].get("command").is_none());
         assert!(json.get("hitl_question").is_none());
-    }
-
-    #[test]
-    fn project_config_canonicalizes_aliases() {
-        let config = RunProjectConfig {
-            projects: vec![RunProjectRow {
-                name: "agentic-workflow".to_string(),
-                aliases: vec!["aw".to_string()],
-                path: None,
-                td_path: None,
-                cap_path: None,
-            }],
-        };
-
-        assert_eq!(
-            config.canonical_project_name("aw"),
-            Some("agentic-workflow")
-        );
-        assert_eq!(
-            config.canonical_project_name("agentic-workflow"),
-            Some("agentic-workflow")
-        );
-        assert_eq!(config.canonical_project_name("missing"), None);
     }
 
     #[test]

@@ -9,7 +9,9 @@
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
 
 use anyhow::{Context, Result};
-use clap::{Args, Subcommand};
+use clap::Args;
+#[cfg(test)]
+use clap::Subcommand;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,20 +19,15 @@ use crate::cli::td::{self, AuditArgs, AuditGroupBy, GenCodeArgs};
 
 const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
-// Args group for code-artifact verbs now mounted under `aw td`.
-///
-// @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-#[derive(Debug, Args)]
-pub struct CbArgs {
-    #[command(subcommand)]
-    pub command: CbCommand,
-}
-
-// Code-artifact subcommands inherited by `aw td`.
-///
-// @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
+// Kept test-only (issue #860 cleanup): the production `CbArgs`/`run`
+// dispatcher this enum backed had zero callers (no `aw cb` CLI surface
+// remains; `aw td` mounts `run_gen`/`run_gen_source`/`run_check`/`run_claim`/
+// `cb_fill::run` directly) and was deleted. This enum is retained only as
+// the `#[command(subcommand)]` type for the `TestCbCli` clap-parsing test
+// harness below (see `cb_gen_force_regen_parses_without_slug` and friends).
+#[cfg(test)]
 #[derive(Debug, Subcommand)]
-pub enum CbCommand {
+enum CbCommand {
     // Generate implementation code from an approved TD spec.
     Gen(CbGenArgs),
     // Forward-generate a target source file from a per-file rust-source-unit
@@ -43,10 +40,6 @@ pub enum CbCommand {
     // fillback pipeline.
     Claim(CbClaimArgs),
     // Fill handwrite marker blocks in generated code (Phase 3).
-    // Brief mode: lock the next marker payload in WI projection.
-    // `--apply --marker <id>` mode: merge and commit one marker, then
-    // lock the next marker or dispatch `aw td code-check`.
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#cli
     Fill(CbFillArgs),
 }
 
@@ -76,11 +69,6 @@ pub struct CbFillArgs {
     // Force brief mode to re-enumerate even if a dispatch was emitted earlier.
     #[arg(long)]
     pub force: bool,
-    // Deprecated compatibility no-op. The CB review loop and TD merge phase
-    // are retired; terminal completion runs through `aw td code-check`.
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
-    #[arg(long)]
-    pub no_review: bool,
 }
 
 // Args for `aw td code-claim <code-path>`.
@@ -180,53 +168,6 @@ pub struct CbCheckArgs {
     // completions.
     #[arg(long)]
     pub allow_empty_impl: bool,
-}
-
-// Dispatch for code-artifact verbs.
-///
-// @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-pub async fn run(args: CbArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    match &args.command {
-        CbCommand::Check(a) => {
-            // TODO(#860): this whole top-level `aw cb` dispatcher is dead
-            // (no `aw cb` CLI surface remains); pointed at the shared
-            // classifier here rather than left duplicated, but removal of
-            // the dispatcher itself is out of scope for #856d.
-            if let Some(target) = a.target.as_deref() {
-                if code_check_target_is_slug(&project_root, target) {
-                    crate::cli::workflow_guard::guard_issue_mutation(
-                        &project_root,
-                        Some(("cb", target)),
-                    )
-                    .await?;
-                }
-            }
-        }
-        CbCommand::GenSource(_) => {}
-        CbCommand::Gen(a) => {
-            if let Some(slug) = a.slug.as_deref() {
-                crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", slug)))
-                    .await?;
-            } else {
-                crate::cli::workflow_guard::guard_issue_mutation(&project_root, None).await?;
-            }
-        }
-        CbCommand::Fill(a) => {
-            crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", &a.slug)))
-                .await?;
-        }
-        CbCommand::Claim(_) => {
-            crate::cli::workflow_guard::guard_issue_mutation(&project_root, None).await?;
-        }
-    }
-    match args.command {
-        CbCommand::Gen(a) => run_gen(a).await,
-        CbCommand::GenSource(a) => run_gen_source(a),
-        CbCommand::Check(a) => run_check(a).await,
-        CbCommand::Claim(a) => run_claim(a).await,
-        CbCommand::Fill(a) => crate::cli::cb_fill::run(a).await,
-    }
 }
 
 // Args for `aw td gen-source --spec <td> --target <rs>`.
@@ -4350,15 +4291,17 @@ pub fn signature_only() -> Result<()>
     }
 }
 
-/// True if `target` (an `aw td code-check <target>` argument, or the dead
-/// top-level `aw cb check <target>` dispatcher's) does not resolve to an
-/// on-disk path relative to `project_root` — i.e. it should be dispatched
-/// as a lifecycle slug (terminal code-check) rather than an audit path.
+/// True if `target` (an `aw td code-check <target>` argument) does not
+/// resolve to an on-disk path relative to `project_root` — i.e. it should be
+/// dispatched as a lifecycle slug (terminal code-check) rather than an audit
+/// path.
 ///
-/// Shared by `run_check` below, td.rs's `TdCommand::CodeCheck` workflow-guard
-/// arm, and the dead top-level `CbCommand::Check` dispatcher arm (its
-/// removal is tracked separately by #860) — issue #856d, replacing three
-/// copies of the same `target_path.is_absolute() -> join -> exists()` check.
+/// Shared by `run_check` below and td.rs's `TdCommand::CodeCheck`
+/// workflow-guard arm — issue #856d, replacing what were three copies of the
+/// same `target_path.is_absolute() -> join -> exists()` check (the third,
+/// the dead top-level `aw cb check` dispatcher's own `CbCommand::Check` arm,
+/// was removed by issue #860 along with the rest of the unreachable
+/// `CbArgs`/`CbCommand`/`run` dispatcher).
 pub(crate) fn code_check_target_is_slug(project_root: &std::path::Path, target: &str) -> bool {
     let target_path = std::path::Path::new(target);
     let target_abs = if target_path.is_absolute() {
