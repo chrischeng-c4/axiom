@@ -22,7 +22,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/commands.rs` generate
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Commands` | projects/agentic-workflow/src/cli/commands.rs | enum | pub | 23 |  |
-| `run_command` | projects/agentic-workflow/src/cli/commands.rs | function | pub | 96 | run_command(cmd: Commands) -> Result<()> |
+| `run_command` | projects/agentic-workflow/src/cli/commands.rs | function | pub | 100 | run_command(cmd: Commands) -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -66,6 +66,10 @@ pub enum Commands {
         /// Override version downgrade protection and force-replace all assets
         #[arg(short, long)]
         force: bool,
+
+        /// Read-only: report stale CLAUDE.md/AGENTS.md projections without writing (issue #984)
+        #[arg(long)]
+        check: bool,
     },
 
     /// Create a greenfield project directory and bootstrap Agentic Workflow.
@@ -130,8 +134,12 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         // Project initialization
         // =================================================================
         // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R2
-        Commands::Init { name, force } => {
-            init::run(name.as_deref(), force, None).await?;
+        Commands::Init { name, force, check } => {
+            if check {
+                init::run_check()?;
+            } else {
+                init::run(name.as_deref(), force, None).await?;
+            }
         }
         Commands::New(args) => {
             init::run_new(args).await?;
@@ -209,4 +217,12 @@ changes:
       Issue #848: whole-file resync — adds the Guard/View/Llm/Upgrade/Issue/
       ReportIssue command_refs and their guard/view/llm/standard_cli module
       imports and run_command match arms that had drifted out of the mirror.
+  - path: projects/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #984 (init-projector slice 1/3): `Commands::Init` gains a
+      read-only `--check` flag; `run_command` dispatches it to
+      `init::run_check()` instead of the mutating `init::run(...)` path.
 ```

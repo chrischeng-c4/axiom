@@ -1,5 +1,6 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
 // CODEGEN-BEGIN
+use crate::cli::doc_mirror;
 use crate::models::{SddConfig, SddInterface};
 use crate::Result;
 use clap::Args;
@@ -271,7 +272,14 @@ fn run_at_project_root(
             .bold()
         );
         println!();
-        run_update(name, &project_root, &sdd_dir, &claude_dir, force)?;
+        run_update(
+            name,
+            &project_root,
+            &sdd_dir,
+            &claude_dir,
+            force,
+            print_fresh_success,
+        )?;
     } else {
         // Fresh install - CLI interface, determine platform
         let interface = SddInterface::Cli;
@@ -782,11 +790,14 @@ fn run_fresh_install(
     // Install system files
     install_system_files(project_root, sdd_dir, claude_dir)?;
 
-    // Generate CLAUDE.md with project context
+    // Generate CLAUDE.md and AGENTS.md with project context (issue #984: both
+    // root docs project from the same template + shared whitelist).
     generate_claude_md(project_root, sdd_dir)?;
+    generate_agents_md(project_root)?;
 
     if print_success_message {
         print_init_success();
+        print_next_step(sdd_dir);
     }
 
     Ok(())
@@ -799,6 +810,7 @@ fn run_update(
     sdd_dir: &Path,
     claude_dir: &Path,
     force: bool,
+    print_next: bool,
 ) -> Result<()> {
     // name parameter is deprecated and ignored
     let _ = name;
@@ -872,8 +884,10 @@ fn run_update(
     // Install/update system files
     install_system_files(project_root, sdd_dir, claude_dir)?;
 
-    // Regenerate CLAUDE.md with project context
+    // Regenerate CLAUDE.md and AGENTS.md with project context (issue #984:
+    // both root docs project from the same template + shared whitelist).
     generate_claude_md(project_root, sdd_dir)?;
+    generate_agents_md(project_root)?;
 
     // Clean up legacy .version file (version now lives in config.toml)
     let legacy_version_file = sdd_dir.join(".version");
@@ -883,6 +897,9 @@ fn run_update(
 
     println!();
     println!("{}", "✅ Update complete!".green().bold());
+    if print_next {
+        print_next_step(sdd_dir);
+    }
 
     Ok(())
 }
@@ -1015,58 +1032,207 @@ fn remove_old_sdd_sections(content: &str) -> String {
     result
 }
 
+// Outcome of upserting a managed `aw:start`/`aw:end` section into a root doc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpsertOutcome {
+    Created,
+    Updated,
+    UpToDate,
+}
+
+// Compute the new full-file content for `existing_content` after upserting
+// `section` between the `aw:start`/`aw:end` markers (or inserting it per the
+// no-markers fallback rules). Shared by the CLAUDE.md and AGENTS.md
+// projections (issue #984) so both root docs upsert identically.
+fn compute_upserted_doc(existing_content: &str, section: &str) -> String {
+    // First, remove old format sections (without markers)
+    let cleaned_content = remove_old_sdd_sections(existing_content);
+
+    if let (Some(start), Some(end)) = (
+        cleaned_content.find(GENESIS_START_MARKER),
+        cleaned_content.find(GENESIS_END_MARKER),
+    ) {
+        // Markers exist - replace content between them
+        let before = &cleaned_content[..start];
+        let after = &cleaned_content[end + GENESIS_END_MARKER.len()..];
+        format!("{}{}{}", before, section, after)
+    } else if let Some(first_newline) = cleaned_content.find('\n') {
+        let first_line = &cleaned_content[..first_newline];
+        if first_line.starts_with('#') {
+            // Insert after the first heading
+            let after_heading = &cleaned_content[first_newline..];
+            format!("{}\n\n{}{}", first_line, section, after_heading)
+        } else {
+            // Prepend at top
+            format!("{}\n\n{}", section, cleaned_content)
+        }
+    } else {
+        format!("{}\n\n{}", section, cleaned_content)
+    }
+}
+
+// Generate-or-update `doc_path` with `section` upserted between the
+// `aw:start`/`aw:end` markers, using `full_doc_if_missing` when the file does
+// not exist yet. Shared by the CLAUDE.md and AGENTS.md projections (issue
+// #984) so the two root docs can never upsert differently.
+fn upsert_managed_section(
+    doc_path: &Path,
+    section: &str,
+    full_doc_if_missing: &str,
+    label: &str,
+) -> Result<UpsertOutcome> {
+    if doc_path.exists() {
+        let existing_content = std::fs::read_to_string(doc_path)?;
+        let new_content = compute_upserted_doc(&existing_content, section);
+
+        if new_content.trim() == existing_content.trim() {
+            println!("   {} {} (up to date)", "✓".green(), label);
+            Ok(UpsertOutcome::UpToDate)
+        } else {
+            std::fs::write(doc_path, new_content)?;
+            println!("   {} {} (updated)", "✓".green(), label);
+            Ok(UpsertOutcome::Updated)
+        }
+    } else {
+        std::fs::write(doc_path, full_doc_if_missing)?;
+        println!("   {} {} (created)", "✓".green(), label);
+        Ok(UpsertOutcome::Created)
+    }
+}
+
 // Generate or update CLAUDE.md with SDD section (upsert mode)
 fn generate_claude_md(project_root: &Path, _sdd_dir: &Path) -> Result<()> {
     let claude_md_path = project_root.join("CLAUDE.md");
-
     let sdd_section = get_sdd_section();
+    upsert_managed_section(&claude_md_path, sdd_section, CLAUDE_TEMPLATE, "CLAUDE.md")?;
+    Ok(())
+}
 
-    if claude_md_path.exists() {
-        // CLAUDE.md exists - upsert the SDD section
-        let existing_content = std::fs::read_to_string(&claude_md_path)?;
+// AGENTS.md's managed `aw:start` section is CLAUDE.md's section plus the
+// fixed Codex-only slash-command translation paragraph — see
+// `doc_mirror::agents_block_from_claude_block` (issue #984, the one shared
+// whitelist consumed by both this projection and `root_doc_mirror_test`).
+fn get_agents_sdd_section() -> String {
+    doc_mirror::agents_block_from_claude_block(get_sdd_section())
+}
 
-        // First, remove old format sections (without markers)
-        let cleaned_content = remove_old_sdd_sections(&existing_content);
+// Generate or update AGENTS.md with the same SDD-managed section as
+// CLAUDE.md, plus the Codex-only insertions (issue #984). AGENTS.md's
+// `## Codex Operational Rules` section sits OUTSIDE the `aw:start` block and
+// is hand-authored — when AGENTS.md does not exist yet, seed only the title
+// and the managed section, never inventing that section's content.
+fn generate_agents_md(project_root: &Path) -> Result<()> {
+    let agents_md_path = project_root.join("AGENTS.md");
+    let sdd_section = get_agents_sdd_section();
+    let full_doc_if_missing = format!("{}\n\n{}\n", doc_mirror::AGENTS_TITLE, sdd_section);
+    upsert_managed_section(
+        &agents_md_path,
+        &sdd_section,
+        &full_doc_if_missing,
+        "AGENTS.md",
+    )?;
+    Ok(())
+}
 
-        let new_content = if let (Some(start), Some(end)) = (
-            cleaned_content.find(GENESIS_START_MARKER),
-            cleaned_content.find(GENESIS_END_MARKER),
-        ) {
-            // Markers exist - replace content between them
-            let before = &cleaned_content[..start];
-            let after = &cleaned_content[end + GENESIS_END_MARKER.len()..];
-            format!("{}{}{}", before, sdd_section, after)
-        } else {
-            // No markers - prepend SDD section after first heading or at top
-            if let Some(first_newline) = cleaned_content.find('\n') {
-                let first_line = &cleaned_content[..first_newline];
-                if first_line.starts_with('#') {
-                    // Insert after the first heading
-                    let after_heading = &cleaned_content[first_newline..];
-                    format!("{}\n\n{}{}", first_line, sdd_section, after_heading)
-                } else {
-                    // Prepend at top
-                    format!("{}\n\n{}", sdd_section, cleaned_content)
-                }
-            } else {
-                format!("{}\n\n{}", sdd_section, cleaned_content)
-            }
-        };
+// True if `doc_path`'s managed section would change if upserted right now
+// (or the file is missing outright) — the read-only predicate behind
+// `aw init --check` (issue #984 AC2), mirroring `cargo fmt --check`
+// semantics: detect drift without writing.
+fn managed_section_is_stale(doc_path: &Path, section: &str) -> Result<bool> {
+    if !doc_path.exists() {
+        return Ok(true);
+    }
+    let existing_content = std::fs::read_to_string(doc_path)?;
+    let new_content = compute_upserted_doc(&existing_content, section);
+    Ok(new_content.trim() != existing_content.trim())
+}
 
-        // Check if content changed
-        if new_content.trim() == existing_content.trim() {
-            println!("   {} CLAUDE.md (up to date)", "✓".green());
-        } else {
-            std::fs::write(&claude_md_path, new_content)?;
-            println!("   {} CLAUDE.md (updated)", "✓".green());
-        }
-    } else {
-        // CLAUDE.md doesn't exist - create with full template
-        std::fs::write(&claude_md_path, CLAUDE_TEMPLATE)?;
-        println!("   {} CLAUDE.md (created)", "✓".green());
+// Read-only staleness check for CLAUDE.md's and AGENTS.md's managed
+// `aw:start` sections (issue #984 AC2/AC4). Never writes; exits non-zero
+// (via `Err`) and names the stale file(s) when a projection is out of date,
+// analogous to `cargo fmt --check`.
+// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
+pub fn run_check() -> Result<()> {
+    let project_root = env::current_dir()?;
+
+    let claude_md_path = project_root.join("CLAUDE.md");
+    let agents_md_path = project_root.join("AGENTS.md");
+    let sdd_section = get_sdd_section();
+    let agents_section = get_agents_sdd_section();
+
+    let mut stale = Vec::new();
+    if managed_section_is_stale(&claude_md_path, sdd_section)? {
+        stale.push("CLAUDE.md");
+    }
+    if managed_section_is_stale(&agents_md_path, &agents_section)? {
+        stale.push("AGENTS.md");
     }
 
-    Ok(())
+    if stale.is_empty() {
+        println!(
+            "{}",
+            "✓ CLAUDE.md and AGENTS.md are up to date with the aw init template".green()
+        );
+        println!("next: done");
+        Ok(())
+    } else {
+        println!(
+            "{}",
+            format!("✗ stale managed section(s): {}", stale.join(", "))
+                .red()
+                .bold()
+        );
+        println!("next: aw init");
+        anyhow::bail!(
+            "aw init --check found stale managed section(s): {}",
+            stale.join(", ")
+        );
+    }
+}
+
+// Best-effort scan of `.aw/config.toml` for a single registered
+// `[[projects]]` entry's `name`. Returns `None` when zero or more than one
+// project is registered so the chainable `next:` hint (issue #984) never
+// emits an ambiguous or unexecutable `aw health --project <name>` command
+// (`--project` is required, not optional).
+fn resolve_single_project_name(sdd_dir: &Path) -> Option<String> {
+    let config_path = sdd_dir.join("config.toml");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+
+    let mut names = Vec::new();
+    let mut in_projects_table = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_projects_table = trimmed.starts_with("[[projects]]");
+            continue;
+        }
+        if in_projects_table && trimmed.starts_with("name") {
+            if let Some(val) = trimmed.strip_prefix("name") {
+                let val = val.trim().trim_start_matches('=').trim();
+                let val = val.trim_matches('"').trim_matches('\'');
+                if !val.is_empty() {
+                    names.push(val.to_string());
+                }
+            }
+        }
+    }
+
+    if names.len() == 1 {
+        names.into_iter().next()
+    } else {
+        None
+    }
+}
+
+// Chainable next-step line ending `aw init`'s output (CONTRIBUTING's
+// chainable-output convention, issue #984): a runnable `aw health` when
+// exactly one project resolves unambiguously, else a `done` marker.
+fn print_next_step(sdd_dir: &Path) {
+    match resolve_single_project_name(sdd_dir) {
+        Some(name) => println!("next: aw health --project {}", name),
+        None => println!("next: done"),
+    }
 }
 
 // Check if upgrade is available and optionally auto-upgrade
@@ -1114,7 +1280,7 @@ pub fn check_and_auto_upgrade(auto_upgrade: bool) -> bool {
         let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
         let claude_dir = project_root.join(".claude");
 
-        if let Err(e) = run_update(None, &project_root, &sdd_dir, &claude_dir, false) {
+        if let Err(e) = run_update(None, &project_root, &sdd_dir, &claude_dir, false, false) {
             eprintln!("{}", format!("⚠️  Auto-upgrade failed: {}", e).yellow());
             return false;
         }

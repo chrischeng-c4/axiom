@@ -153,6 +153,9 @@ semantic_domain:
           - name: "in_place_lifecycle_test"
             kind: "module"
             public: false
+          - name: "init_doc_projection_test"
+            kind: "module"
+            public: false
           - name: "inplace_mode_test"
             kind: "module"
             public: false
@@ -721,6 +724,14 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli_tests.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #984 (init-projector slice 1/3): registers the new
+      `init_doc_projection_test` module (real-binary smoke coverage for `aw
+      init`'s dual CLAUDE.md/AGENTS.md projection and `aw init --check`).
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/codegen_full_test.rs"
     action: modify
