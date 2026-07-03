@@ -28,12 +28,20 @@ Public API manifest for `projects/agentic-workflow/src/cli/merge_target.rs` gene
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/cli/merge_target.rs -->
 ```rust
-//! Resolve the target branch for `aw td code-check` and `aw wi merge`.
+//! Resolve the target branch to land a lifecycle branch onto.
+//!
+//! Live production caller: `cb.rs`'s `land_td_lifecycle_branch` (issue #842),
+//! the terminal `aw td code-check` step that merges a `td-<slug>` lifecycle
+//! branch and deletes it. That caller always passes `override_branch: None`
+//! (there is no CLI `--target-branch` flag on the current LINEAR surface —
+//! `aw td merge`/`aw wi merge` were removed) and threads `Issue.target_branch`
+//! through as `frontmatter_branch`.
 //!
 //! Resolution order (per the Logic flowchart in the TD spec
 //! `projects/agentic-workflow/tech-design/core/issues/issue-merge-target.md`):
-//!   1. `override_branch` (CLI `--target-branch`) if `Some` → return verbatim
-//!      (no branch-exists check; user is explicit).
+//!   1. `override_branch` if `Some` → return verbatim (no branch-exists
+//!      check; caller is explicit). No production caller currently supplies
+//!      this; covered directly by `test_override_branch_wins`.
 //!   2. `frontmatter_branch` (`issue.target_branch`) if `Some` → return it.
 //!   3. `git -C <project_root> rev-parse --abbrev-ref HEAD` → if output ≠ "HEAD"
 //!      return the detected branch name.
@@ -71,8 +79,8 @@ pub fn resolve_merge_target(
     }
 
     // Step 3: detect current branch via git.
-    let git_bin =
-        agentic_workflow::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
 
     let output = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -96,7 +104,7 @@ pub fn resolve_merge_target(
         let parsed: toml::Value = toml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("failed to parse .aw/config.toml: {}", e))?;
         let default_branch = parsed
-            .get("sdd")
+            .get("agentic_workflow")
             .and_then(|s| s.get("repo_platform"))
             .and_then(|rp| rp.get("default_branch"))
             .and_then(|v| v.as_str())
@@ -251,6 +259,7 @@ mod tests {
             .contains("cannot determine merge target"));
     }
 }
+
 ```
 
 ## Changes

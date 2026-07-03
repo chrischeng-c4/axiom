@@ -2270,8 +2270,9 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) => {}
         TdCommand::CodeCheck(a) => {
             // Issue #856d: shared slug-vs-path classifier with cb.rs's
-            // `run_check` (and its own dead `CbCommand::Check` arm) instead
-            // of a third copy of the same check.
+            // `run_check` instead of a third copy of the same check (issue
+            // #860 removed the dead top-level `CbCommand::Check` arm this
+            // comment used to reference).
             if let Some(target) = a.target.as_deref() {
                 if super::cb::code_check_target_is_slug(&project_root, target) {
                     super::workflow_guard::guard_issue_mutation(
