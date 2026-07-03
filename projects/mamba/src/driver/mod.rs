@@ -351,6 +351,19 @@ impl CompilerSession {
                 crate::runtime::closure::set_module_sym_info(sym_info);
                 crate::runtime::closure::set_module_func_info(func_info);
                 // HANDWRITE-END
+                // #945: the entry script's `__name__` is "__main__"; only
+                // imported modules get their own module name (seeded
+                // separately in runtime::module::compile_and_exec_module).
+                // hir_to_mir no longer hardcodes "__main__" on first read of
+                // `__name__`, so the entry point must pre-seed it here.
+                if let Some(name_sym) = checker.symbols.lookup("__name__") {
+                    crate::runtime::closure::mb_global_set_id(
+                        crate::runtime::value::MbValue::from_bits(name_sym.0 as u64),
+                        crate::runtime::value::MbValue::from_ptr(
+                            crate::runtime::rc::MbObject::new_str("__main__".to_string()),
+                        ),
+                    );
+                }
                 Self::execute_jit_entry(entry)
             }
             _ => Err(MambaError::codegen("expected JIT output".to_string())),
@@ -457,6 +470,19 @@ impl CompilerSession {
                 crate::runtime::closure::set_module_sym_info(sym_info);
                 crate::runtime::closure::set_module_func_info(func_info);
                 // HANDWRITE-END
+                // #945: the entry script's `__name__` is "__main__"; only
+                // imported modules get their own module name (seeded
+                // separately in runtime::module::compile_and_exec_module).
+                // hir_to_mir no longer hardcodes "__main__" on first read of
+                // `__name__`, so the entry point must pre-seed it here.
+                if let Some(name_sym) = checker.symbols.lookup("__name__") {
+                    crate::runtime::closure::mb_global_set_id(
+                        crate::runtime::value::MbValue::from_bits(name_sym.0 as u64),
+                        crate::runtime::value::MbValue::from_ptr(
+                            crate::runtime::rc::MbObject::new_str("__main__".to_string()),
+                        ),
+                    );
+                }
                 Self::execute_jit_entry(entry)
             }
             _ => Err(MambaError::codegen("expected JIT output".to_string())),

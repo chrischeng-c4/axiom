@@ -8267,22 +8267,6 @@ impl<'a> HirToMir<'a> {
                                 ty: *ty,
                             });
                             dest
-                        } else if self
-                            .symbol_table
-                            .and_then(|st| st.lookup("__name__"))
-                            .map_or(false, |name_sym| name_sym == *sym)
-                        {
-                            // Module scope: __name__ dunder variable (#1133).
-                            // Emit "__main__" string constant instead of uninitialized VReg.
-                            // Also emit StoreGlobal so inner functions can access it
-                            // via LoadGlobal.
-                            let dest = self.emit_str_const("__main__");
-                            self.current_stmts.push(MirInst::StoreGlobal {
-                                name: *sym,
-                                value: dest,
-                            });
-                            self.sym_to_vreg.insert(*sym, dest);
-                            dest
                         } else {
                             // Module scope: variable not yet assigned (use before
                             // define). Read it from global storage rather than
@@ -8294,6 +8278,18 @@ impl<'a> HirToMir<'a> {
                             // backend (compiled_blob.rs:90 panic on
                             // `[__file__]`-style list literals). LoadGlobal
                             // returns None when the symbol has not been set.
+                            //
+                            // `__name__` used to be special-cased here to hardcode
+                            // the "__main__" string constant (#1133), but that fired
+                            // unconditionally for EVERY module compiled through this
+                            // path — including imported modules, whose `__name__`
+                            // should be their own module name, not "__main__" (#945).
+                            // The runtime now pre-seeds `__name__` via mb_global_set_id
+                            // before executing a module's compiled code (the entry
+                            // script gets "__main__" in driver::run/run_source; an
+                            // imported module gets its module name in
+                            // module::compile_and_exec_module), so a plain LoadGlobal
+                            // here reads the correct pre-seeded value in both cases.
                             let dest = self.fresh_vreg();
                             self.current_stmts.push(MirInst::LoadGlobal {
                                 dest,
@@ -13552,7 +13548,14 @@ mod tests {
     // REQ: tick-241 test-coverage — __name__ dunder init (#1133) emits StoreGlobal
     // when symbol_table contains "__name__" and top-level code references it.
     #[test]
-    fn test_name_dunder_init_emits_store_global() {
+    fn test_name_dunder_init_emits_load_global() {
+        // #945: a bare module-scope read of `__name__` must NOT hardcode
+        // "__main__" via StoreGlobal (#1133's old behavior) — that fired for
+        // every compiled module, including imports, clobbering their real
+        // module name. It must instead emit a plain LoadGlobal, trusting the
+        // runtime's pre-seeded value (driver::run/run_source seed
+        // "__main__" for the entry script; module::compile_and_exec_module
+        // seeds the real module name for imports).
         use crate::resolve::SymbolKind;
         let tcx = TypeContext::new();
         let any_ty = tcx.any();
@@ -13580,8 +13583,18 @@ mod tests {
             .flat_map(|blk| blk.stmts.iter())
             .any(|s| matches!(s, MirInst::StoreGlobal { name, .. } if *name == name_sym));
         assert!(
-            has_store,
-            "__name__ reference must emit StoreGlobal (#1133)"
+            !has_store,
+            "__name__ reference must NOT hardcode a StoreGlobal (#945, reverts #1133's overreach)"
+        );
+        let has_load = mir
+            .bodies
+            .iter()
+            .flat_map(|b| b.blocks.iter())
+            .flat_map(|blk| blk.stmts.iter())
+            .any(|s| matches!(s, MirInst::LoadGlobal { name, .. } if *name == name_sym));
+        assert!(
+            has_load,
+            "__name__ reference must emit LoadGlobal so it reads the runtime's pre-seeded value (#945)"
         );
     }
 
