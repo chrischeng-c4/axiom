@@ -675,6 +675,8 @@ pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue
 }
 
 pub fn mb_traceback_pop_frame() {
+    // #878: matching call-exit hook (see mb_traceback_push_frame above).
+    super::cprofile_mod::on_call_exit();
     TRACE_FRAME_STACK.with(|stack| {
         stack.borrow_mut().pop();
     });
