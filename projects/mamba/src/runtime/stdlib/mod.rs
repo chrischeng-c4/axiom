@@ -13,6 +13,7 @@ pub mod collections_mod;
 pub mod contextlib_mod;
 pub mod copy_mod;
 pub mod copyreg_mod;
+pub mod cprofile_mod;
 pub mod dataclasses_mod;
 pub mod datetime_mod;
 pub mod decimal_mod;
@@ -246,6 +247,7 @@ pub fn register_stdlib() {
     contextlib_mod::register();
     copy_mod::register();
     copyreg_mod::register();
+    cprofile_mod::register();
     operator_mod::register();
     weakref_mod::register();
     traceback_mod::register();
