@@ -567,8 +567,12 @@ impl TypeChecker {
                     }
                 }
                 if kv_pairs.is_empty() {
-                    // Empty dict or unpack-only: return any type
-                    self.tcx.any()
+                    // Empty dict or unpack-only: Dict(Any, Any), mirroring the
+                    // sibling []/set() empty-literal arms (List(Any)/Set(Any))
+                    // so the dict fast path (#979) has a receiver type to key
+                    // off of instead of starving on a bare Any.
+                    let any = self.tcx.any();
+                    self.tcx.intern(Ty::Dict(any, any))
                 } else {
                     let kt = self.check_expr(kv_pairs[0].0);
                     let vt = self.check_expr(kv_pairs[0].1);
@@ -741,11 +745,20 @@ impl TypeChecker {
                         self.check_expr(cond);
                     }
                 }
-                self.check_expr(key);
-                self.check_expr(value);
+                let key_ty = self.check_expr(key);
+                let val_ty = self.check_expr(value);
                 self.comprehension_depth -= 1;
                 self.symbols.pop_scope();
-                self.tcx.error()
+                // Dict(key_ty, val_ty) from the comprehension's key/value
+                // exprs, mirroring the dict-literal arm; fall back to
+                // Dict(Any, Any) when a side is unresolvable (Ty::Error)
+                // rather than widening the whole comprehension to error(),
+                // which starved the #979 dict fast path of a receiver type.
+                let any = self.tcx.any();
+                let error = self.tcx.error();
+                let final_kt = if key_ty == error { any } else { key_ty };
+                let final_vt = if val_ty == error { any } else { val_ty };
+                self.tcx.intern(Ty::Dict(final_kt, final_vt))
             }
             Expr::Yield(val) => {
                 if let Some(v) = val {
