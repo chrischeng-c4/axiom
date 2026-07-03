@@ -88,6 +88,10 @@ serde_json.workspace = true
 rustc-hash = "2.1"
 rustls = "0.23"
 rustls-pemfile = "2"
+# Shared peer-mTLS material loading (PEM cert/key/CA + rustls builders +
+# crypto-provider install); lumen keeps a thin adapter with its
+# `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names (#971).
+service-tls = { path = "../../libs/service-tls" }
 smallvec = "1"
 thiserror.workspace = true
 tokio = { workspace = true }
