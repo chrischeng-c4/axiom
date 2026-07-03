@@ -367,6 +367,13 @@ impl CraneliftJitBackend {
         let mut fb_ctx = cranelift_frontend::FunctionBuilderContext::new();
         let mut builder = cranelift_frontend::FunctionBuilder::new(&mut func, &mut fb_ctx);
         let mut vars = VarAlloc::new();
+        // #959: per-block "may already be assigned" VReg sets, consumed by
+        // `emit_terminator`'s Return epilogue via `vars.live_filter` to skip
+        // releasing VRegs that are provably unassigned on every path
+        // reaching that terminator (see `compute_may_assign` for the
+        // soundness argument — this never skips a release for a value a
+        // live path actually assigned).
+        let may_assign = super::compute_may_assign(body);
 
         // Map MIR BlockIds to Cranelift blocks by ID (not by array index).
         let mut cl_blocks: std::collections::HashMap<u32, cranelift_codegen::ir::Block> =
@@ -431,6 +438,11 @@ impl CraneliftJitBackend {
             for inst in &block.stmts {
                 self.emit_inst(inst, tcx, externs, &mut builder, &mut vars);
             }
+            // #959: scope the Return epilogue's release loop to VRegs that
+            // may actually be assigned by the time control reaches THIS
+            // block's terminator (empty/missing entry ⇒ no filtering, same
+            // as before this pass existed).
+            vars.live_filter = may_assign.get(&block.id.0).cloned();
             emit_terminator(
                 &block.terminator,
                 &cl_blocks,
