@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-02T23:23:02.586208+00:00"
-digest = "sha256:11527a9e03b5bd3a5d74f36466e434067b62e363ca29c41cbc24d7d6849d4ec5"
-source_digest = "sha256:11527a9e03b5bd3a5d74f36466e434067b62e363ca29c41cbc24d7d6849d4ec5"
-ir_digest = "sha256:b8d4902b256741e512eaf05b200eba22cead928db7813e3703b82d5c41877648"
+generated_at = "2026-07-03T00:47:14.389704+00:00"
+digest = "sha256:f48ad0b58cb48be9d959d03fa9c7e7adb5d0764b559a8be3dabcf7f588a66988"
+source_digest = "sha256:f48ad0b58cb48be9d959d03fa9c7e7adb5d0764b559a8be3dabcf7f588a66988"
+ir_digest = "sha256:d73738c94c5fb4a8b31ceb858a98cf34a27c4491144f5da69e335417f29628b5"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4950,8 +4950,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:43528764803127eebf99c9951046b7cdabce0164c19d3b7f0ec944fbf71c9acc"
-ir_digest = "sha256:461013c00f5346c395b2c3e272217cc5e057e4c503192d7ec8970173a91b16e6"
+digest = "sha256:f549806fcd036ba1caec5022803ccec15fdd65be3725a570117ab6ff0b8a7200"
+ir_digest = "sha256:f7ee508419b3d78cd5fdac77c41b619e58a29f5808fed9eef9b633a9140d9359"
 section_count = 2
 
 [[files]]
@@ -5333,8 +5333,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/merge_target.md"
-digest = "sha256:a0742eecf4b0d56760a3619075c2edf50caaf939eed5c17e44ad0441179616d2"
-ir_digest = "sha256:5a96e9c0bb9231c1e03daafd23e959933186da8278e3c7b97eda4c468d8d6c34"
+digest = "sha256:d69aef0686b6cc970f9ffbe2226ebbdbae51266175cbeae015e077ea0716c6ef"
+ir_digest = "sha256:a593abf5622bf3be9e2d908fca7a176fbc169b99d8d68dcfded29d21424b3dc1"
 section_count = 2
 
 [[files]]
@@ -5363,8 +5363,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/standardize.md"
-digest = "sha256:95741cf602e8323c3966dcde9e21432aaf1f24115fb27fe47f8a89c299960cc7"
-ir_digest = "sha256:0a0be728527c5fefff8eabfce25d2e4d307736de121630caceac35e39785b52c"
+digest = "sha256:ad3171eeb3c7ab6ed37c3209d1cc0e573728625a81c147a8de724a3df3c8235b"
+ir_digest = "sha256:ff4cc7f01cb2416b2160012fa612029c48a00bbde119d70abf1ecd60570af91d"
 section_count = 3
 
 [[files]]
@@ -5807,8 +5807,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/inplace_mode_test.md"
-digest = "sha256:9a1236b7dbee6c20fd29ce5a9e768c8b3fb4c6513fe715dc65ce7f33efffc491"
-ir_digest = "sha256:24a64ba3caa99999efdcdda76298b24417dd822a75229669b148ef84665d3e1c"
+digest = "sha256:27a2134d56906951b6cedc3e97f5ff9672cf3a6886ecd6fb4ef0fa378390a07e"
+ir_digest = "sha256:ca6bf8bbbc54e1c2a1c6e6461d9f07484638da6fbdd47f78db64352863e12f46"
 section_count = 2
 
 [[files]]
