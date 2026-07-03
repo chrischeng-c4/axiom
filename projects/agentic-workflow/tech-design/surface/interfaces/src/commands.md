@@ -21,8 +21,8 @@ Public API manifest for `projects/agentic-workflow/src/cli/commands.rs` generate
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Commands` | projects/agentic-workflow/src/cli/commands.rs | enum | pub | 18 |  |
-| `run_command` | projects/agentic-workflow/src/cli/commands.rs | function | pub | 68 | run_command(cmd: Commands) -> Result<()> |
+| `Commands` | projects/agentic-workflow/src/cli/commands.rs | enum | pub | 23 |  |
+| `run_command` | projects/agentic-workflow/src/cli/commands.rs | function | pub | 96 | run_command(cmd: Commands) -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -38,11 +38,15 @@ use crate::cli::capability;
 use crate::cli::chat;
 use crate::cli::ec;
 use crate::cli::generator;
+use crate::cli::guard;
 use crate::cli::init;
 use crate::cli::issues;
+use crate::cli::llm;
 use crate::cli::project;
+use crate::cli::standard_cli;
 use crate::cli::standardize;
 use crate::cli::sync;
+use crate::cli::view;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
@@ -78,6 +82,12 @@ pub enum Commands {
     /// Generator gap request surface after takeover readiness.
     Generator(generator::GeneratorArgs),
 
+    /// Agent-runtime direct edit/create guard for Codex and Claude Code.
+    Guard(guard::GuardArgs),
+
+    /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
+    View(view::ViewArgs),
+
     /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
     Sync(sync::SyncArgs),
 
@@ -88,6 +98,19 @@ pub enum Commands {
 
     /// Cross-checkout agent messaging via shared plain-text channel
     Chat(chat::ChatArgs),
+
+    /// Offline agent orientation: outline + capability/td/ec pillars + loop.
+    Llm(llm::LlmArgs),
+
+    /// Self-update this binary from a published GitHub release.
+    Upgrade(standard_cli::UpgradeArgs),
+
+    /// Search, view, or create Agentic Workflow issues.
+    Issue(standard_cli::IssueArgs),
+
+    /// File a diagnostics-rich GitHub issue for aw.
+    #[command(name = "report-issue")]
+    ReportIssue(standard_cli::ReportIssueArgs),
 
     /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
@@ -123,6 +146,12 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Generator(args) => {
             generator::run(args).await?;
         }
+        Commands::Guard(args) => {
+            guard::run(args)?;
+        }
+        Commands::View(args) => {
+            view::run(args).await?;
+        }
         Commands::Sync(args) => {
             sync::run(args)?;
         }
@@ -131,6 +160,18 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Chat(args) => {
             chat::run_chat(args)?;
+        }
+        Commands::Llm(args) => {
+            llm::run(args)?;
+        }
+        Commands::Upgrade(args) => {
+            standard_cli::run_upgrade(args).await?;
+        }
+        Commands::Issue(args) => {
+            standard_cli::run_issue(args).await?;
+        }
+        Commands::ReportIssue(args) => {
+            standard_cli::run_report_issue(args).await?;
         }
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;
@@ -160,4 +201,12 @@ changes:
     section: source
     description: |
       Whole-file source template generated from the standardized target body.
+  - path: projects/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #848: whole-file resync — adds the Guard/View/Llm/Upgrade/Issue/
+      ReportIssue command_refs and their guard/view/llm/standard_cli module
+      imports and run_command match arms that had drifted out of the mirror.
 ```

@@ -5238,7 +5238,9 @@ fn extract_section_tags(body: &str) -> Vec<crate::issues::IssueSection> {
 
 // Arbitrate a stalled CRRR loop. For now only `--send-back` is automated;
 // the bare command emits an error envelope with manual-decision instructions
-// so a human picks one of force-merge / reject-close / send-back.
+// so a human picks one of reject-close (`aw wi close <id>`) or send-back
+// (`--send-back`, one more author pass); there is no force-approve/merge
+// path (the LINEAR lifecycle has no `aw wi merge`).
 ///
 // `--send-back` is bounded once per slug — a second invocation is rejected
 // to avoid infinite loops (R12). On accept it commits
