@@ -18,12 +18,12 @@ mod legacy_cli_removal_test;
 mod merge_target_branch;
 #[path = "cli/tests/phase_migration_test.rs"]
 mod phase_migration_test;
-#[path = "cli/tests/root_doc_mirror_test.rs"]
-mod root_doc_mirror_test;
 #[path = "cli/tests/project_health_test.rs"]
 mod project_health_test;
 #[path = "cli/tests/recovery_flow_test.rs"]
 mod recovery_flow_test;
+#[path = "cli/tests/root_doc_mirror_test.rs"]
+mod root_doc_mirror_test;
 #[path = "cli/tests/standardize_test.rs"]
 mod standardize_test;
 #[path = "cli/tests/td_check_test.rs"]
