@@ -6371,6 +6371,7 @@ dependencies = [
  "service-auth",
  "service-backup",
  "service-http",
+ "service-metrics",
  "service-tls",
  "smallvec",
  "tempfile",
@@ -10706,6 +10707,10 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
 ]
+
+[[package]]
+name = "service-metrics"
+version = "0.1.0"
 
 [[package]]
 name = "service-tls"

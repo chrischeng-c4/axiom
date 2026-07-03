@@ -92,6 +92,10 @@ rustls-pemfile = "2"
 # crypto-provider install); lumen keeps a thin adapter with its
 # `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names (#971).
 service-tls = { path = "../../libs/service-tls" }
+# Shared lock-free counter/gauge/latency primitives + Prometheus text
+# encoder; lumen's `Metrics` reimplements on top with byte-identical
+# `render()` output (#974).
+service-metrics = { path = "../../libs/service-metrics" }
 smallvec = "1"
 thiserror.workspace = true
 tokio = { workspace = true }
