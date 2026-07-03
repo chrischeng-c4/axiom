@@ -211,6 +211,42 @@ pub fn render_cli_tables(section: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Skill-tree projection (issue #986, init-projector slice 3/3)
+// ---------------------------------------------------------------------------
+
+/// Literal-substring rewrites applied when projecting a templates-authored
+/// `aw-*` `SKILL.md` body (the `.claude/skills/` install source) into the
+/// sibling `.agents/skills/` tree. Established by diffing all 16 `aw-*`
+/// skills across `templates/cli/mainthread/skills/`, `.claude/skills/`, and
+/// `.agents/skills/` (issue #986): every real content difference between the
+/// `.claude` and `.agents` copies reduces to exactly these two self-
+/// referencing literal swaps — a skill's own script-invocation path
+/// (`.claude/skills/...` → `.agents/skills/...`, needed by
+/// aw-build-debug/aw-build-release/aw-mamba-test-coverage) and a doc
+/// cross-reference (`CLAUDE.md` → `AGENTS.md`, needed by aw-cb-fill/aw-wi).
+/// Companion `scripts/*.sh` files need no transform (verified: zero
+/// `.claude`/`CLAUDE` literal references in any of the 4 scripts), so only
+/// `SKILL.md` bodies are run through this whitelist.
+const SKILL_TREE_LITERAL_SWAPS: &[(&str, &str)] = &[
+    (".claude/skills/", ".agents/skills/"),
+    ("CLAUDE.md", "AGENTS.md"),
+];
+
+/// Project a `.claude/skills/<name>/SKILL.md` body into the body `aw init`
+/// installs at `.agents/skills/<name>/SKILL.md`, applying
+/// [`SKILL_TREE_LITERAL_SWAPS`] in order. Consumed by both `aw init`'s
+/// `.agents/skills` installer (`crate::cli::init::install_agents_skills`) and
+/// its staleness check, so the two can never disagree (issue #986 AC3, same
+/// shared-whitelist pattern as [`agents_block_from_claude_block`]).
+pub fn agents_skill_body_from_claude_skill_body(body: &str) -> String {
+    let mut out = body.to_string();
+    for (from, to) in SKILL_TREE_LITERAL_SWAPS {
+        out = out.replace(from, to);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Repo-root Projects table (issue #985, init-projector slice 2/3)
 // ---------------------------------------------------------------------------
 
@@ -437,6 +473,35 @@ mod tests {
         assert!(rendered.contains("| `aw init` |"));
         assert!(rendered.contains(CLI_TABLE_WORKFLOW_START));
         assert!(rendered.contains(CLI_TABLE_SUPPORT_END));
+    }
+
+    // -- Skill-tree projection (issue #986) ---------------------------------
+
+    #[test]
+    fn agents_skill_body_swaps_self_referencing_script_path() {
+        let claude_body = "Run:\n\n```bash\n.claude/skills/aw-build-debug/scripts/build.sh\n```\n";
+        let agents_body = agents_skill_body_from_claude_skill_body(claude_body);
+        assert!(agents_body.contains(".agents/skills/aw-build-debug/scripts/build.sh"));
+        assert!(!agents_body.contains(".claude/skills/"));
+    }
+
+    #[test]
+    fn agents_skill_body_swaps_claude_md_doc_reference() {
+        let claude_body = "See `CLAUDE.md § AW envelope (mainthread protocol)`.";
+        let agents_body = agents_skill_body_from_claude_skill_body(claude_body);
+        assert_eq!(
+            agents_body,
+            "See `AGENTS.md § AW envelope (mainthread protocol)`."
+        );
+    }
+
+    #[test]
+    fn agents_skill_body_is_identity_without_whitelisted_literals() {
+        let claude_body = "# /aw:health\n\nNo tree-specific literals here.\n";
+        assert_eq!(
+            agents_skill_body_from_claude_skill_body(claude_body),
+            claude_body
+        );
     }
 
     // -- Repo-root Projects table (issue #985) ------------------------------

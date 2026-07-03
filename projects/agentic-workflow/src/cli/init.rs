@@ -43,6 +43,7 @@ const SKILL_BUILD_RELEASE: &str =
 const SKILL_CHAT_LISTEN: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-chat-listen/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
+const SKILL_GUARD: &str = include_str!("../../templates/cli/mainthread/skills/aw-guard/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/scripts/release.sh");
 // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R15
@@ -911,13 +912,22 @@ fn run_update(
 }
 
 // Install/update all system files (skills, retired-agent cleanup, hooks, settings)
-fn install_system_files(_project_root: &Path, _sdd_dir: &Path, claude_dir: &Path) -> Result<()> {
+fn install_system_files(project_root: &Path, _sdd_dir: &Path, claude_dir: &Path) -> Result<()> {
     let skills_dir = claude_dir.join("skills");
     std::fs::create_dir_all(&skills_dir)?;
 
     // Install Claude Code Skills
     println!("{}", "🤖 Updating Claude Code Skills...".cyan());
     install_claude_skills(&skills_dir)?;
+
+    // Install the same aw-* skills into `.agents/skills/` (issue #986:
+    // init-projector slice 3/3 — templates/ is the sole source, projected to
+    // BOTH runtime trees so `.agents` is never a hand-maintained mirror).
+    println!();
+    println!("{}", "🤖 Updating Codex/.agents Skills...".cyan());
+    let agents_skills_dir = project_root.join(".agents").join("skills");
+    std::fs::create_dir_all(&agents_skills_dir)?;
+    install_agents_skills(&agents_skills_dir)?;
 
     // Install Claude Code Agent definitions
     println!();
@@ -959,6 +969,7 @@ fn print_init_success() {
     println!();
     println!("{}", "🤖 Claude Code assets installed:".cyan());
     println!("   .claude/skills/          - Agentic Workflow skills");
+    println!("   .agents/skills/          - same skills, projected for Codex");
     println!("   .claude/hooks/           - retired hook cleanup area");
     println!("   .claude/settings.json    - permissions + status line settings");
     println!();
@@ -1232,11 +1243,61 @@ fn readme_projects_table_is_stale(project_root: &Path) -> Result<bool> {
     Ok(updated.trim() != existing.trim())
 }
 
+// True if `skills_dir` (a `.claude/skills` or `.agents/skills` tree) has any
+// aw-* skill whose on-disk content differs from what `aw init` would install
+// there right now — a hand-edited `SKILL.md`/script, a missing skill, or a
+// still-present deprecated skill (issue #986 AC2). `expected_body` maps a
+// templates-sourced `SKILL.md` body to the body expected in this tree
+// (identity for `.claude`, `doc_mirror::agents_skill_body_from_claude_skill_body`
+// for `.agents`), so both trees share one comparison path. Returns each
+// stale path for the `--check` report; never writes (mirrors
+// [`managed_section_is_stale`]'s read-only contract).
+fn skill_tree_stale_entries(
+    skills_dir: &Path,
+    expected_body: impl Fn(&str) -> String,
+) -> Vec<String> {
+    let mut stale = Vec::new();
+
+    for (name, content) in aw_skill_entries() {
+        let expected = expected_body(content);
+        let skill_path = skills_dir.join(name).join("SKILL.md");
+        let matches = std::fs::read_to_string(&skill_path)
+            .map(|actual| actual.trim() == expected.trim())
+            .unwrap_or(false);
+        if !matches {
+            stale.push(skill_path.display().to_string());
+        }
+    }
+
+    for (skill_name, script_name, content) in skill_script_entries() {
+        let script_path = skills_dir
+            .join(skill_name)
+            .join("scripts")
+            .join(script_name);
+        let matches = std::fs::read_to_string(&script_path)
+            .map(|actual| actual == *content)
+            .unwrap_or(false);
+        if !matches {
+            stale.push(script_path.display().to_string());
+        }
+    }
+
+    for deprecated in deprecated_skill_names() {
+        let deprecated_dir = skills_dir.join(deprecated);
+        if deprecated_dir.exists() {
+            stale.push(format!("{} (deprecated)", deprecated_dir.display()));
+        }
+    }
+
+    stale
+}
+
 // Read-only staleness check for CLAUDE.md's and AGENTS.md's managed
-// `aw:start` sections (issue #984 AC2/AC4), plus the repo-root README's
-// generated Projects table when it is opted in via markers (issue #985).
-// Never writes; exits non-zero (via `Err`) and names the stale file(s) when
-// a projection is out of date, analogous to `cargo fmt --check`.
+// `aw:start` sections (issue #984 AC2/AC4), the repo-root README's generated
+// Projects table when it is opted in via markers (issue #985), and every
+// `aw-*` skill under `.claude/skills/` + `.agents/skills/` (issue #986
+// AC2/AC3). Never writes; exits non-zero (via `Err`) and names the stale
+// file(s) when a projection is out of date, analogous to `cargo fmt --check`.
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
 pub fn run_check() -> Result<()> {
     let project_root = env::current_dir()?;
@@ -1246,21 +1307,32 @@ pub fn run_check() -> Result<()> {
     let sdd_section = get_sdd_section();
     let agents_section = get_agents_sdd_section();
 
-    let mut stale = Vec::new();
+    let mut stale: Vec<String> = Vec::new();
     if managed_section_is_stale(&claude_md_path, &sdd_section)? {
-        stale.push("CLAUDE.md");
+        stale.push("CLAUDE.md".to_string());
     }
     if managed_section_is_stale(&agents_md_path, &agents_section)? {
-        stale.push("AGENTS.md");
+        stale.push("AGENTS.md".to_string());
     }
     if readme_projects_table_is_stale(&project_root)? {
-        stale.push("README.md");
+        stale.push("README.md".to_string());
     }
+
+    let claude_skills_dir = project_root.join(".claude").join("skills");
+    stale.extend(skill_tree_stale_entries(&claude_skills_dir, |c| {
+        c.to_string()
+    }));
+    let agents_skills_dir = project_root.join(".agents").join("skills");
+    stale.extend(skill_tree_stale_entries(
+        &agents_skills_dir,
+        doc_mirror::agents_skill_body_from_claude_skill_body,
+    ));
 
     if stale.is_empty() {
         println!(
             "{}",
-            "✓ CLAUDE.md and AGENTS.md are up to date with the aw init template".green()
+            "✓ CLAUDE.md, AGENTS.md, and installed aw-* skills are up to date with the aw init template"
+                .green()
         );
         println!("next: done");
         Ok(())
@@ -1458,9 +1530,53 @@ fn update_version_in_content(content: &str, new_version: &str) -> String {
     }
 }
 
-fn install_claude_skills(skills_dir: &Path) -> Result<()> {
-    // Remove deprecated skills
-    let deprecated_skills = vec![
+// Every `aw-*` skill's directory name + templates-sourced `SKILL.md`
+// content (issue #986: the single list consumed by BOTH the `.claude/skills`
+// installer and the `.agents/skills` installer, so the two trees can never
+// list a different skill set than each other or than `templates/`).
+fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("aw-codex-review", SKILL_CODEX_REVIEW),
+        ("aw-gemini-explore-specs", SKILL_GEMINI_EXPLORE_SPECS),
+        ("aw-gemini-explore-codebase", SKILL_GEMINI_EXPLORE_CODEBASE),
+        ("aw-capability", SKILL_CAPABILITY),
+        ("aw-wi", SKILL_WI),
+        ("aw-build-debug", SKILL_BUILD_DEBUG),
+        ("aw-release-patch", SKILL_RELEASE_PATCH),
+        ("aw-mamba-test-coverage", SKILL_MAMBA_TEST_COVERAGE),
+        ("aw-td-create", SKILL_TD_CREATE),
+        ("aw-cb-fill", SKILL_CB_FILL),
+        ("aw-cb-claim", SKILL_CB_CLAIM),
+        ("aw-standardize", SKILL_STANDARDIZE),
+        ("aw-build-release", SKILL_BUILD_RELEASE),
+        ("aw-chat-listen", SKILL_CHAT_LISTEN),
+        ("aw-health", SKILL_HEALTH),
+        ("aw-guard", SKILL_GUARD),
+    ]
+}
+
+// Companion `scripts/<file>` payloads for the subset of `aw-*` skills that
+// ship one (issue #986: shared by both skill-tree installers; scripts need
+// no `.agents` transform — verified zero `.claude`/`CLAUDE` literal
+// references in any of the 4 scripts).
+fn skill_script_entries() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
+        ("aw-build-debug", "build.sh", SCRIPT_BUILD_DEBUG),
+        ("aw-release-patch", "release.sh", SCRIPT_RELEASE_PATCH),
+        (
+            "aw-mamba-test-coverage",
+            "coverage.sh",
+            SCRIPT_MAMBA_TEST_COVERAGE,
+        ),
+        ("aw-build-release", "release.sh", SCRIPT_BUILD_RELEASE),
+    ]
+}
+
+// Legacy/retired skill directory names pruned from a skills tree on every
+// `aw init` (issue #986: shared by both `.claude/skills` and `.agents/skills`
+// so a deprecated skill can never survive in one tree only).
+fn deprecated_skill_names() -> Vec<&'static str> {
+    vec![
         "genesis-proposal",
         "genesis-challenge",
         "genesis-reproposal",
@@ -1543,60 +1659,36 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         // Removed: `aw td merge` no longer exists (LINEAR lifecycle;
         // `aw td code-check` is the terminal step).
         "aw-merge",
-    ];
+    ]
+}
 
-    for deprecated in &deprecated_skills {
+// Remove every [`deprecated_skill_names`] directory still present under
+// `skills_dir` (issue #986: shared by both skill-tree installers).
+fn prune_deprecated_skills(skills_dir: &Path) -> Result<()> {
+    for deprecated in deprecated_skill_names() {
         let deprecated_dir = skills_dir.join(deprecated);
         if deprecated_dir.exists() {
             std::fs::remove_dir_all(&deprecated_dir)?;
             println!("   {} {} (removed)", "✗".red(), deprecated);
         }
     }
+    Ok(())
+}
 
-    // Install current skills
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R12
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R13
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R12
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R13
-    let skills = vec![
-        ("aw-codex-review", SKILL_CODEX_REVIEW),
-        ("aw-gemini-explore-specs", SKILL_GEMINI_EXPLORE_SPECS),
-        ("aw-gemini-explore-codebase", SKILL_GEMINI_EXPLORE_CODEBASE),
-        ("aw-capability", SKILL_CAPABILITY),
-        ("aw-wi", SKILL_WI),
-        ("aw-build-debug", SKILL_BUILD_DEBUG),
-        ("aw-release-patch", SKILL_RELEASE_PATCH),
-        ("aw-mamba-test-coverage", SKILL_MAMBA_TEST_COVERAGE),
-        ("aw-td-create", SKILL_TD_CREATE),
-        ("aw-cb-fill", SKILL_CB_FILL),
-        ("aw-cb-claim", SKILL_CB_CLAIM),
-        ("aw-standardize", SKILL_STANDARDIZE),
-        ("aw-build-release", SKILL_BUILD_RELEASE),
-        ("aw-chat-listen", SKILL_CHAT_LISTEN),
-        ("aw-health", SKILL_HEALTH),
-    ];
+// Write one skill's `SKILL.md` under `skills_dir/<name>/`.
+fn write_skill_file(skills_dir: &Path, name: &str, content: &str) -> Result<()> {
+    let skill_dir = skills_dir.join(name);
+    std::fs::create_dir_all(&skill_dir)?;
+    std::fs::write(skill_dir.join("SKILL.md"), content)?;
+    println!("   ✓ {}", name);
+    Ok(())
+}
 
-    for (name, content) in skills {
-        let skill_dir = skills_dir.join(name);
-        std::fs::create_dir_all(&skill_dir)?;
-        std::fs::write(skill_dir.join("SKILL.md"), content)?;
-        println!("   ✓ {}", name);
-    }
-
-    // Install scripts for skills that have them
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R16
-    let skill_scripts: &[(&str, &str, &str)] = &[
-        ("aw-build-debug", "build.sh", SCRIPT_BUILD_DEBUG),
-        ("aw-release-patch", "release.sh", SCRIPT_RELEASE_PATCH),
-        (
-            "aw-mamba-test-coverage",
-            "coverage.sh",
-            SCRIPT_MAMBA_TEST_COVERAGE,
-        ),
-        ("aw-build-release", "release.sh", SCRIPT_BUILD_RELEASE),
-    ];
-
-    for (skill_name, script_name, content) in skill_scripts {
+// Install every [`skill_script_entries`] companion script under `skills_dir`
+// with executable permissions (issue #986: shared by both skill-tree
+// installers; scripts are byte-identical in both trees, no transform).
+fn install_skill_scripts(skills_dir: &Path) -> Result<()> {
+    for (skill_name, script_name, content) in skill_script_entries() {
         let scripts_dir = skills_dir.join(skill_name).join("scripts");
         std::fs::create_dir_all(&scripts_dir)?;
         let script_path = scripts_dir.join(script_name);
@@ -1609,7 +1701,36 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
             std::fs::set_permissions(&script_path, perms)?;
         }
     }
+    Ok(())
+}
 
+// Install/refresh every `aw-*` skill under `.claude/skills/` from
+// `templates/cli/mainthread/skills/` verbatim (the `.claude` tree is the
+// untransformed install source; see [`install_agents_skills`] for the
+// sibling `.agents/skills/` projection).
+// @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R12
+// @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R13
+fn install_claude_skills(skills_dir: &Path) -> Result<()> {
+    prune_deprecated_skills(skills_dir)?;
+    for (name, content) in aw_skill_entries() {
+        write_skill_file(skills_dir, name, content)?;
+    }
+    install_skill_scripts(skills_dir)?;
+    Ok(())
+}
+
+// Install/refresh every `aw-*` skill under `.agents/skills/` (issue #986:
+// init-projector slice 3/3). Same skill set and deprecated-prune list as
+// [`install_claude_skills`], with each `SKILL.md` body run through
+// [`doc_mirror::agents_skill_body_from_claude_skill_body`] so the two trees
+// can only ever differ by the declared transform, never by hand-editing.
+fn install_agents_skills(skills_dir: &Path) -> Result<()> {
+    prune_deprecated_skills(skills_dir)?;
+    for (name, content) in aw_skill_entries() {
+        let projected = doc_mirror::agents_skill_body_from_claude_skill_body(content);
+        write_skill_file(skills_dir, name, &projected)?;
+    }
+    install_skill_scripts(skills_dir)?;
     Ok(())
 }
 

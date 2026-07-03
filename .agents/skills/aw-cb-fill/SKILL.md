@@ -9,7 +9,7 @@ amended_on: "2026-05-03"
 # /aw:cb:fill
 
 Fills HANDWRITE-BEGIN/END marker blocks emitted by `aw td gen` for a
-tech-design slug, then drives the td-fill lifecycle: brief → mainthread
+tech-design slug, then drives the cb-fill lifecycle: brief → mainthread
 per-marker fill loop → `aw td code-check`.
 
 > **Mainthread-only model (post Phase-2).** The `aw-cb-handwriter`
@@ -66,10 +66,10 @@ For each envelope:
   payload and re-applies.
   If the dispatch or parent runner (`aw wi run` / `aw capability run`)
   envelope includes an `Artifact Quality Gate`, the produced code/test
-  artifacts must satisfy its hard preflight
-  evidence before this lifecycle can be considered complete. Frontend/UI work
-  needs desktop and mobile viewport evidence, interaction smoke proof,
-  accessibility/readability smoke, and placeholder-free primary-state evidence.
+  artifacts must satisfy its hard preflight evidence before this lifecycle can
+  be considered complete. Frontend/UI work needs desktop and mobile viewport
+  evidence, interaction smoke proof, accessibility/readability smoke, and
+  placeholder-free primary-state evidence.
 
 - **dispatch with `agent: ...` non-null** — legacy compatibility. Treat
   as if `agent` were `null` and run `invoke.command` directly. The

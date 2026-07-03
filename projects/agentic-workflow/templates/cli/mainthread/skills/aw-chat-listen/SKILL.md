@@ -62,7 +62,7 @@ When this skill is invoked:
    ```
    Monitor(
      description: "cross-WT chat channel -- new messages from /tmp/aw-channel.md",
-     command: "cd /Users/chris.cheng/cclab/main && aw chat listen 2>&1",
+     command: "aw chat listen 2>&1",
      persistent: true,
      timeout_ms: 3600000  // ignored when persistent=true; required by schema
    )
