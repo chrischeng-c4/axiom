@@ -6366,6 +6366,7 @@ dependencies = [
  "service-auth",
  "service-backup",
  "service-http",
+ "service-tls",
  "smallvec",
  "tempfile",
  "thiserror 2.0.18",
@@ -10699,6 +10700,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "utoipa",
+]
+
+[[package]]
+name = "service-tls"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rustls",
+ "rustls-pemfile",
 ]
 
 [[package]]
