@@ -130,8 +130,8 @@ pub enum TdCommand {
     /// Fill HANDWRITE marker blocks in generated code.
     Fill(super::cb::CbFillArgs),
     /// Promote a HANDWRITE marker block to CODEGEN once its gap-blocker has
-    /// closed (byte-equivalence-checked). Shares its core flip logic with
-    /// `aw standardize managed run`'s `promote_handwrite` action.
+    /// closed (byte-equivalence-checked). This is the `promote_handwrite`
+    /// standardization action, homed as a first-class td verb (#919).
     /// @spec projects/agentic-workflow/tech-design/surface/specs/score-standardization.md#the-6-standardization-actions
     Promote(PromoteArgs),
 }
@@ -162,14 +162,13 @@ pub struct PromoteArgs {
     /// Repo-relative source path, or a HANDWRITE marker `tracker=` id, to
     /// promote from HANDWRITE to CODEGEN. Every HANDWRITE block in the
     /// resolved file must already carry a complete `gap` and a durable
-    /// `tracker` attribute (`aw standardize managed run`'s `issue_marker_gap`
-    /// action attaches those) before it can be promoted.
+    /// `tracker` attribute (the health-routed `issue_marker_gap` remediation
+    /// attaches those) before it can be promoted.
     pub target: String,
     /// Fallback `<mirror>.md#anchor` spec reference written above a
     /// promoted block that has no preceding `SPEC-MANAGED:` line. Defaults
     /// to a semantic-spec path derived from the resolved file's configured
-    /// project workspace, matching `aw standardize managed run`'s own
-    /// default.
+    /// project workspace (the standardization loop's historical default).
     #[arg(long = "spec-ref")]
     pub spec_ref: Option<String>,
     /// Emit the result envelope as pretty-printed JSON.
@@ -2338,8 +2337,9 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) => {}
         TdCommand::CodeCheck(a) => {
             // Issue #856d: shared slug-vs-path classifier with cb.rs's
-            // `run_check` (and its own dead `CbCommand::Check` arm) instead
-            // of a third copy of the same check.
+            // `run_check` instead of a third copy of the same check (issue
+            // #860 removed the dead top-level `CbCommand::Check` arm this
+            // comment used to reference).
             if let Some(target) = a.target.as_deref() {
                 if super::cb::code_check_target_is_slug(&project_root, target) {
                     super::workflow_guard::guard_issue_mutation(
