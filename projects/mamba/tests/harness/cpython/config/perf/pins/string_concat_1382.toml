@@ -5,5 +5,5 @@ lib = "string_concat"
 fixture = "tests/harness/cpython/config/perf/string_concat/string_concat_10k.py"
 floor = 1.0
 mem_floor = 1.0
-samples = 1
+samples = 9
 prereq_imports = []
