@@ -719,6 +719,112 @@ fn init_prunes_deprecated_skill_from_agents_tree() {
         combined_output(&check_clean)
     );
 }
+
+/// Issue #1077 (traits slice 1/3): when a project's CONTRIBUTING.md already
+/// carries `<!-- aw:trait-table:start/end -->` markers, `aw init` regenerates
+/// the enclosed table from `doc_mirror::TRAITS` and `aw init --check` covers
+/// its freshness the same way it covers README.md's Projects table — without
+/// ever inserting the table into a CONTRIBUTING.md that never opted in.
+#[test]
+fn init_contributing_trait_table_is_opt_in_and_tamper_is_detected_and_restored() {
+    let Some(bin) = skip_unless_ready() else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // A CONTRIBUTING.md with no markers is left alone (opt-in, not
+    // force-inserted).
+    let plain_contributing = "# demo contributing\n\nno markers here.\n";
+    std::fs::write(root.join("CONTRIBUTING.md"), plain_contributing).unwrap();
+
+    let out = run_init(&bin, root, &[]);
+    assert!(
+        out.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out)
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("CONTRIBUTING.md")).unwrap(),
+        plain_contributing,
+        "aw init must not touch a CONTRIBUTING.md without the trait-table markers"
+    );
+    let check_no_markers = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_no_markers.status.success(),
+        "a marker-less CONTRIBUTING.md must never be reported stale:\n{}",
+        combined_output(&check_no_markers)
+    );
+
+    // Opt in: seed a stale trait table between the markers, then re-run.
+    let seeded_contributing = format!(
+        "# demo contributing\n\n## Service archetype\n\n{}\n| Trait | Derives | Enforces | About |\n|---|---|---|---|\n| `stale_trait` | `stale-cap` | [stale](#stale) | stale row |\n{}\n\n## Other\n",
+        "<!-- aw:trait-table:start -->", "<!-- aw:trait-table:end -->"
+    );
+    std::fs::write(root.join("CONTRIBUTING.md"), &seeded_contributing).unwrap();
+
+    let out2 = run_init(&bin, root, &[]);
+    assert!(
+        out2.status.success(),
+        "aw init should succeed:\n{}",
+        combined_output(&out2)
+    );
+    let contributing_after = std::fs::read_to_string(root.join("CONTRIBUTING.md")).unwrap();
+    assert!(
+        !contributing_after.contains("stale row"),
+        "aw init must regenerate the opted-in trait table, dropping stale rows:\n{contributing_after}"
+    );
+    assert!(
+        contributing_after.contains("## Other"),
+        "content outside the markers must be preserved byte-for-byte:\n{contributing_after}"
+    );
+    assert_eq!(
+        contributing_after.matches("| `http2_api` |").count(),
+        1,
+        "aw init must render the real doc_mirror::TRAITS table:\n{contributing_after}"
+    );
+
+    let check_clean = run_init(&bin, root, &["--check"]);
+    assert!(
+        check_clean.status.success(),
+        "aw init --check should be clean right after regenerating the trait table:\n{}",
+        combined_output(&check_clean)
+    );
+
+    // Tamper the now-generated table and prove detection + restore.
+    let tampered_contributing = contributing_after.replace(
+        "<!-- aw:trait-table:start -->",
+        "<!-- aw:trait-table:start -->\n| TAMPERED | ROW | HERE | X |",
+    );
+    assert_ne!(tampered_contributing, contributing_after);
+    std::fs::write(root.join("CONTRIBUTING.md"), &tampered_contributing).unwrap();
+
+    let check_tampered = run_init(&bin, root, &["--check"]);
+    assert!(
+        !check_tampered.status.success(),
+        "aw init --check must fail when the trait table is tampered"
+    );
+    assert!(
+        combined_output(&check_tampered).contains("CONTRIBUTING.md"),
+        "aw init --check must name CONTRIBUTING.md as stale:\n{}",
+        combined_output(&check_tampered)
+    );
+
+    let restore = run_init(&bin, root, &[]);
+    assert!(
+        restore.status.success(),
+        "aw init should succeed restoring CONTRIBUTING.md:\n{}",
+        combined_output(&restore)
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("CONTRIBUTING.md"))
+            .unwrap()
+            .trim(),
+        contributing_after.trim(),
+        "aw init must restore the tampered trait table in CONTRIBUTING.md"
+    );
+}
 // CODEGEN-END
 ```
 
@@ -784,5 +890,23 @@ changes:
       seeds a fake retired `aw-merge` skill directory under `.agents/skills/`
       (mirroring the pre-existing `.claude/skills` prune coverage) and
       proves `aw init` prunes it there too.
+    impl_mode: hand-written
+  - path: projects/agentic-workflow/tests/cli/tests/init_doc_projection_test.rs
+    action: modify
+    section: source
+    description: |
+      Issue #1077 (traits slice 1/3) adds one more real-binary smoke test:
+      `init_contributing_trait_table_is_opt_in_and_tamper_is_detected_and_restored`
+      proves AC2 for the repo-root CONTRIBUTING.md trait table, mirroring
+      the existing `init_projects_table_is_opt_in_and_tamper_is_detected_and_restored`
+      contract exactly. A CONTRIBUTING.md without
+      `<!-- aw:trait-table:start/end -->` markers is left byte-for-byte
+      untouched (opt-in, never force-inserted); a CONTRIBUTING.md that
+      already carries the markers gets its enclosed table regenerated from
+      `doc_mirror::TRAITS` (dropping a seeded stale row, preserving content
+      outside the markers, and rendering the real `http2_api` row); and a
+      subsequent tamper of the generated table is caught by
+      `aw init --check` (naming CONTRIBUTING.md) and restored by a follow-up
+      `aw init`. All against a sandboxed tempdir, never the live repo root.
     impl_mode: hand-written
 ```
