@@ -18,6 +18,10 @@ pub use model::{
     BaseSpec, CleanupAction, CleanupPlan, PreviewEnvironment, PreviewPhase, PreviewSpec, RouteSpec,
 };
 pub use render::{render_files, RenderFile, RenderInput};
-pub use router::{resolve_route, ResolvedRoute, RouteBinding, RouteRequest};
+pub use router::{
+    load_route_table_from_kubectl, load_route_table_from_rendered_dir, resolve_route,
+    resolve_route_with_base, BaseRoute, ResolvedRoute, RouteBinding, RouteDecision, RouteOutcome,
+    RouteRequest,
+};
 
 // </HANDWRITE>

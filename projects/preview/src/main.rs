@@ -7,8 +7,10 @@ use clap::{Args, Parser, Subcommand};
 use preview::discover::discover_base_with_kubectl;
 use preview::render::{cleanup_plan, mr_comment, preview_environment};
 use preview::{
-    apply_rendered_manifests, apply_summary_markdown, render_files, render_gitops_bundle,
-    ApplyOptions, BaseWorkloadContract, RenderInput,
+    apply_rendered_manifests, apply_summary_markdown, load_route_table_from_kubectl,
+    load_route_table_from_rendered_dir, render_files, render_gitops_bundle,
+    resolve_route_with_base, ApplyOptions, BaseRoute, BaseWorkloadContract, RenderInput,
+    RouteRequest,
 };
 
 #[derive(Debug, Parser)]
@@ -26,6 +28,10 @@ enum Command {
     Gitops {
         #[command(subcommand)]
         command: GitopsCommand,
+    },
+    Router {
+        #[command(subcommand)]
+        command: RouterCommand,
     },
     Comment(RenderArgs),
     CleanupPlan(CleanupArgs),
@@ -48,6 +54,11 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum GitopsCommand {
     Render(GitopsRenderArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum RouterCommand {
+    Resolve(RouterResolveArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -130,6 +141,28 @@ struct GitopsRenderArgs {
 }
 
 #[derive(Debug, Args)]
+struct RouterResolveArgs {
+    #[arg(long)]
+    dir: Option<PathBuf>,
+    #[arg(long)]
+    context: Option<String>,
+    #[arg(long, default_value = "preview-system")]
+    control_namespace: String,
+    #[arg(long)]
+    host: String,
+    #[arg(long, default_value = "uat-base")]
+    base_namespace: String,
+    #[arg(long, default_value = "checkout")]
+    base_service: String,
+    #[arg(long, default_value_t = 80)]
+    base_service_port: u16,
+    #[arg(long)]
+    header_target: Option<String>,
+    #[arg(long)]
+    cookie_target: Option<String>,
+}
+
+#[derive(Debug, Args)]
 struct CleanupArgs {
     #[arg(long)]
     mr: u32,
@@ -156,6 +189,9 @@ fn main() -> Result<()> {
         Command::Apply(args) => apply(args),
         Command::Gitops { command } => match command {
             GitopsCommand::Render(args) => gitops_render(args),
+        },
+        Command::Router { command } => match command {
+            RouterCommand::Resolve(args) => router_resolve(args),
         },
         Command::Comment(args) => {
             let input = args.into_input()?;
@@ -290,6 +326,35 @@ fn gitops_render(args: GitopsRenderArgs) -> Result<()> {
     Ok(())
 }
 
+fn router_resolve(args: RouterResolveArgs) -> Result<()> {
+    let bindings = if let Some(dir) = &args.dir {
+        load_route_table_from_rendered_dir(dir)
+    } else {
+        load_route_table_from_kubectl(&args.control_namespace, args.context.as_deref())
+    }?;
+    let base = BaseRoute {
+        host: args.host.clone(),
+        namespace: args.base_namespace,
+        service: args.base_service,
+        service_port: args.base_service_port,
+    };
+    let mut request = RouteRequest {
+        host: args.host,
+        ..RouteRequest::default()
+    };
+    if let Some(target) = args.header_target {
+        request.headers.insert("X-UAT-Target".to_string(), target);
+    }
+    if let Some(target) = args.cookie_target {
+        request.cookies.insert("uat_target".to_string(), target);
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&resolve_route_with_base(&bindings, &base, &request))?
+    );
+    Ok(())
+}
+
 fn print_llm(topic: &str) {
     match topic {
         "outline" => {
@@ -299,6 +364,7 @@ fn print_llm(topic: &str) {
                 "Use `preview apply --dir <dir> --dry-run` for server-side validation in kind."
             );
             println!("Use `preview gitops render --dir <dir> --out <dir>` for PR-based delivery.");
+            println!("Use `preview router resolve --dir <dir> --host <host>` to prove base fallback and preview target routing locally.");
             println!("The rendered route binding maps cookie/header target `mr-<id>` to a namespace service.");
         }
         _ => {

@@ -23,14 +23,14 @@ Canonical field-style capability contracts below are machine-readable input for
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | GKE UAT Preview Environment Rendering | - | implemented | verified | smoke | ready | `preview discover-base` normalizes a base Deployment/Service contract; `preview render` emits a base-workload clone plan plus namespace, service account, quota, limits, RBAC, deployment, service, route binding, MR comment, manifest inventory, and cleanup plan files for an MR-scoped UAT preview. |
-| Preview External Contracts | - | implemented | verified | smoke | ready | Always-on render/router/Kubernetes object/local apply and GitOps tests plus an opt-in kind/GKE-like lifecycle gate that applies, dry-runs, re-applies, rolls out, routes, and cleans a preview namespace. |
+| Preview External Contracts | - | implemented | verified | smoke | ready | Always-on render/router-adapter/Kubernetes object/local apply and GitOps tests plus an opt-in kind/GKE-like lifecycle gate that applies, dry-runs, re-applies, loads route-binding ConfigMaps, rolls out, routes, and cleans a preview namespace. |
 | Kubernetes-Native Deployment | - | planned | planned | none | not_ready | future CRD/operator form for reconciling the same PreviewEnvironment model in GKE. |
 
 ### GKE UAT Preview Environment Rendering
 
 ID: gke-uat-preview-environment-rendering
 Type: Devops
-Surfaces: CLI: `preview discover-base`, `preview render`, `preview apply`, `preview gitops render`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
+Surfaces: CLI: `preview discover-base`, `preview render`, `preview apply`, `preview gitops render`, `preview router resolve`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
 EC Dimensions: behavior: render/discovery contract tests - base workload normalization, MR identity, namespace naming, GKE labels, route binding stability, MR comment text, and cleanup dry-run output.
 Root WI: -
 Status: verified
@@ -75,6 +75,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Render contract EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test render_contract` |
 | Local apply/GitOps execution EC | change | #1109 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Local router adapter | change | #1110 | implemented | verified | smoke | `cargo test -p preview --test router_contract`; `cargo test -p preview --test local_cicd_contract local_router_resolve_proves_base_preview_and_fail_closed`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | Router target EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test router_contract` |
 | Kubernetes object EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test k8s_object_contract` |
 | Kind/GKE lifecycle EC | epic | - | implemented | verified | smoke | `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
@@ -145,6 +146,7 @@ The first renderer assumes:
 | `preview render` | Render the MR-scoped preview contract to files. |
 | `preview apply` | Print an ordered plan, server-side dry-run, or apply rendered manifests through `kubectl` with kind-context guardrails. |
 | `preview gitops render` | Convert rendered manifests into a deterministic relative-path GitOps bundle. |
+| `preview router resolve` | Load rendered route-binding files or kind ConfigMaps and return a base/preview/not-found routing decision. |
 | `preview comment` | Print the MR comment text for a rendered preview. |
 | `preview cleanup-plan` | Print a dry-run cleanup decision for a preview. |
 | `preview llm` | Print offline agent-facing usage notes. |
@@ -160,6 +162,9 @@ Preview EC has four layers:
   open/update/comment/close, apply plan summaries, and GitOps bundle rendering
   without a live cluster.
 - Router EC: validates cookie/header target resolution without a real ingress.
+- Local router adapter EC: validates base fallback, header/cookie preview
+  target routing, and invalid-target fail-closed decisions through
+  `preview router resolve`.
 - Kubernetes object EC: parses rendered manifests and checks cross-object
   references such as Service selectors, resource bounds, and workload RBAC.
 - Kind/GKE lifecycle EC: opt-in SRE gate that requires Docker, `kind`, and
@@ -178,7 +183,8 @@ cargo test -p preview
 
 That covers render determinism, base workload normalization from Kubernetes
 JSON fixtures, clone-plan shape, local CI command shape, MR comments, cleanup
-JSON protected namespaces, route resolution, Kubernetes object
+JSON protected namespaces, route resolution, local router adapter decisions,
+Kubernetes object
 cross-references, RBAC shape, and resource bounds.
 
 Run the local-cluster lane before involving a real GKE cluster:
@@ -189,6 +195,6 @@ PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture
 
 That covers Docker image build/load, base namespace fixture discovery through
   `preview discover-base`, `preview apply` direct apply/server dry-run/reapply,
-  rollout, Service
+  route-binding ConfigMap table loading, rollout, Service
 endpoints, port-forward HTTP, admission rejection for oversized pods,
 least-privilege RBAC, and namespace cleanup.

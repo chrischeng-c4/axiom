@@ -15,7 +15,7 @@ description = "Opt-in kind/GKE-like lifecycle gate: create base fixture, discove
 [aw.ec.generated]
 version = 1
 project = "preview"
-generated_from_td_digest = "sha256:64a4934c4dcb83374580ba1927b559e28e52a43b62343713548b4d406ae714b0"
+generated_from_td_digest = "sha256:10e8bd860eee6b6048c7787214753ec9885e26af8a817ab6e4c01b533c91b039"
 
 [[aw.ec.generated.cases]]
 id = "base-workload-discovery"
@@ -131,6 +131,23 @@ assertions = [
     "`preview apply --dir <rendered-dir> --plan-only` prints an MR-comment-friendly ordered apply summary without contacting a cluster.",
     "`preview gitops render --dir <rendered-dir> --out <bundle-dir>` writes a deterministic relative-path GitOps bundle with no local absolute paths.",
     "The kind lifecycle gate covers `preview apply --dry-run`, direct apply, idempotent re-apply, and rollout against a local cluster.",
+]
+
+[[aw.ec.generated.cases]]
+id = "local-router-adapter"
+capability_id = "preview-external-contracts"
+claim_id = "local-router-adapter"
+contract_id = "local-router-adapter"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/local-router-adapter.md#local-router-adapter"
+test_path = "projects/preview/tests/behavior_local_router_adapter.rs"
+command = "cargo test -p preview --test local_cicd_contract local_router_resolve_proves_base_preview_and_fail_closed"
+required_for_production = true
+assertions = [
+    "`preview router resolve --dir <rendered-dir>` routes requests without target header/cookie to the base route.",
+    "`preview router resolve` routes valid X-UAT-Target values to the preview namespace and service.",
+    "`preview router resolve` lets X-UAT-Target override uat_target cookie.",
+    "Invalid targets return a not-found decision and never silently fallback to base.",
 ]
 
 [[aw.ec.generated.cases]]

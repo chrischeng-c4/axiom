@@ -62,6 +62,12 @@ capability_refs:
     claim: "local-apply-gitops-execution-ec"
     coverage: partial
     rationale: "Local apply and GitOps execution EC is covered by the local CI/CD contract test and kind lifecycle test."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "local-router-adapter"
+    claim: "local-router-adapter"
+    coverage: partial
+    rationale: "Local router adapter behavior is covered by pure router tests, local CLI tests, and the kind route-binding ConfigMap loader."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -85,13 +91,28 @@ semantic_domain:
           - name: "bindings"
             kind: "function"
             public: false
+          - name: "base"
+            kind: "function"
+            public: false
+          - name: "render_input"
+            kind: "function"
+            public: false
           - name: "cookie_target_resolves_to_route_binding"
+            kind: "function"
+            public: false
+          - name: "no_target_uses_base_route"
             kind: "function"
             public: false
           - name: "header_target_overrides_cookie_target"
             kind: "function"
             public: false
           - name: "unknown_target_does_not_guess_namespace"
+            kind: "function"
+            public: false
+          - name: "host_mismatch_fails_closed_instead_of_falling_back_to_base"
+            kind: "function"
+            public: false
+          - name: "rendered_route_binding_file_loads_adapter_route_table"
             kind: "function"
             public: false
         source_evidence_node:
@@ -163,6 +184,9 @@ semantic_domain:
           - name: "local_apply_plan_and_gitops_bundle_are_deterministic"
             kind: "function"
             public: false
+          - name: "local_router_resolve_proves_base_preview_and_fail_closed"
+            kind: "function"
+            public: false
           - name: "local_ci_render_consumes_discovered_base_contract_file"
             kind: "function"
             public: false
@@ -219,6 +243,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "preview_apply_rendered_lifecycle"
+            kind: "function"
+            public: false
+          - name: "assert_kind_route_binding_adapter_loads_configmap"
             kind: "function"
             public: false
           - name: "kubectl_server_side_dry_run"

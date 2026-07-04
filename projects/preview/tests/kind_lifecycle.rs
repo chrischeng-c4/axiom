@@ -6,7 +6,10 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use preview::{render_files, BaseWorkloadContract, RenderInput};
+use preview::{
+    load_route_table_from_kubectl, render_files, resolve_route_with_base, BaseRoute,
+    BaseWorkloadContract, RenderInput, RouteOutcome, RouteRequest,
+};
 
 const SMOKE_IMAGE: &str = "preview-kind-smoke:local";
 
@@ -102,6 +105,7 @@ fn kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects() {
     preview_apply_rendered_lifecycle(dir.path(), &context, false);
     preview_apply_rendered_lifecycle(dir.path(), &context, true);
     preview_apply_rendered_lifecycle(dir.path(), &context, false);
+    assert_kind_route_binding_adapter_loads_configmap(&context);
     kubectl_rollout_status("uat-mr-123", "checkout");
     assert_service_has_endpoint("uat-mr-123", "checkout");
     assert_port_forward_reaches_readyz("uat-mr-123", "checkout");
@@ -260,6 +264,30 @@ fn preview_apply_rendered_lifecycle(root: &Path, context: &str, dry_run: bool) {
         command.arg("--dry-run");
     }
     command_ok(&mut command, "preview apply rendered lifecycle");
+}
+
+fn assert_kind_route_binding_adapter_loads_configmap(context: &str) {
+    let bindings =
+        load_route_table_from_kubectl("preview-system", Some(context)).expect("load route table");
+    let base = BaseRoute {
+        host: "uat.example.com".to_string(),
+        namespace: "uat-base".to_string(),
+        service: "checkout".to_string(),
+        service_port: 80,
+    };
+    let request = RouteRequest {
+        host: "uat.example.com".to_string(),
+        cookies: Default::default(),
+        headers: std::collections::BTreeMap::from([(
+            "X-UAT-Target".to_string(),
+            "mr-123".to_string(),
+        )]),
+    };
+    let decision = resolve_route_with_base(&bindings, &base, &request);
+
+    assert_eq!(decision.outcome, RouteOutcome::Preview);
+    assert_eq!(decision.namespace.as_deref(), Some("uat-mr-123"));
+    assert_eq!(decision.service.as_deref(), Some("checkout"));
 }
 
 fn build_and_load_smoke_image(cluster_name: &str) {
