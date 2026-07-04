@@ -40,7 +40,7 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw artifact",
     "aw validate-spec-structure",
     "aw check-alignment",
-    "aw iss",
+    "aw iss ",
     "aw issues",
     "aw chat agents",
     "aw handoff",
