@@ -288,6 +288,60 @@ fn local_cleanup_janitor_plan_reports_guarded_actions() {
 }
 
 #[test]
+fn ci_templates_document_required_variables_and_command_order() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for relative in [
+        "docs/ci-templates/github-actions-preview.yaml",
+        "docs/ci-templates/gitlab-ci-preview.yml",
+        "docs/ci-templates/local-kind-lifecycle.sh",
+    ] {
+        let contents = std::fs::read_to_string(root.join(relative)).expect(relative);
+        for required in [
+            "PREVIEW_MR",
+            "PREVIEW_SHA",
+            "PREVIEW_IMAGE",
+            "PREVIEW_APP",
+            "PREVIEW_HOST",
+            "PREVIEW_BASE_NAMESPACE",
+            "PREVIEW_CONTEXT",
+            "PREVIEW_TTL_HOURS",
+        ] {
+            assert!(
+                contents.contains(required),
+                "{relative} missing required variable {required}"
+            );
+        }
+        assert_command_order(
+            relative,
+            &contents,
+            &[
+                "preview discover-base",
+                "preview render",
+                "preview apply --dir",
+                "--plan-only",
+                "--dry-run",
+                "kubectl",
+                "rollout status",
+                "preview router resolve",
+                "preview comment",
+                "preview cleanup plan",
+                "preview cleanup apply",
+            ],
+        );
+    }
+}
+
+fn assert_command_order(relative: &str, contents: &str, needles: &[&str]) {
+    let mut offset = 0;
+    for needle in needles {
+        let Some(found) = contents[offset..].find(needle) else {
+            panic!("{relative} missing command fragment {needle}");
+        };
+        offset += found + needle.len();
+    }
+}
+
+#[test]
 fn local_ci_render_consumes_discovered_base_contract_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let contract = dir.path().join("base-contract.json");

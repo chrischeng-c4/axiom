@@ -4,9 +4,16 @@ summary: Semantic coverage for "projects/preview"
 capability_refs:
   - id: "gke-uat-preview-environment-rendering"
     role: primary
+    gap: "mr-scoped-namespace-projection"
     claim: "mr-scoped-namespace-projection"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/preview`."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "ci-template-lifecycle"
+    claim: "ci-template-lifecycle"
+    coverage: partial
+    rationale: "CI/CD lifecycle templates are documented under projects/preview/docs/ci-templates."
 fill_sections: [schema, changes]
 ---
 
@@ -52,6 +59,46 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/preview"
+      - path: "projects/preview/docs/ci-templates/README.md"
+        language: "markdown"
+        ownership_state: "handwrite"
+        generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "docs"
+          ecosystem: "markdown"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview"
+      - path: "projects/preview/docs/ci-templates/github-actions-preview.yaml"
+        language: "yaml"
+        ownership_state: "handwrite"
+        generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "docs"
+          ecosystem: "yaml"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview"
+      - path: "projects/preview/docs/ci-templates/gitlab-ci-preview.yml"
+        language: "yaml"
+        ownership_state: "handwrite"
+        generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "docs"
+          ecosystem: "yaml"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview"
+      - path: "projects/preview/docs/ci-templates/local-kind-lifecycle.sh"
+        language: "shell"
+        ownership_state: "handwrite"
+        generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "docs"
+          ecosystem: "shell"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview"
 ```
 
 ## Changes
@@ -81,5 +128,29 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/docs/ci-templates/README.md"
+    action: add
+    section: schema
+    description: |
+      CI/CD lifecycle template documentation is covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/docs/ci-templates/github-actions-preview.yaml"
+    action: add
+    section: schema
+    description: |
+      GitHub Actions preview lifecycle template is covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/docs/ci-templates/gitlab-ci-preview.yml"
+    action: add
+    section: schema
+    description: |
+      GitLab CI preview lifecycle template is covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/docs/ci-templates/local-kind-lifecycle.sh"
+    action: add
+    section: schema
+    description: |
+      Local kind lifecycle script is covered by this semantic TD.
     impl_mode: hand-written
 ```
