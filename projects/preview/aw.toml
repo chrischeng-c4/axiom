@@ -15,7 +15,7 @@ description = "Opt-in kind/GKE-like lifecycle gate: create base fixture, discove
 [aw.ec.generated]
 version = 1
 project = "preview"
-generated_from_td_digest = "sha256:fa048579fd56f3b23f1c012a73f40e6179cc895f165c02687f2838e414e0c3df"
+generated_from_td_digest = "sha256:64a4934c4dcb83374580ba1927b559e28e52a43b62343713548b4d406ae714b0"
 
 [[aw.ec.generated.cases]]
 id = "base-workload-discovery"
@@ -76,7 +76,7 @@ test_path = "projects/preview/tests/behavior_kind_gke_lifecycle_ec.rs"
 command = "PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture"
 required_for_production = true
 assertions = [
-    "When a kind/GKE kubectl context is configured, rendered lifecycle objects apply twice, roll out, expose endpoints, and serve /readyz through port-forward.",
+    "When a kind/GKE kubectl context is configured, preview apply performs direct apply, server-side dry-run after namespace creation, idempotent re-apply, rollout, endpoint checks, and /readyz port-forward smoke.",
     "The kind/GKE gate creates a base Deployment/Service fixture and runs preview discover-base before rendering the preview namespace.",
     "The kind/GKE gate validates namespace-local workload RBAC and rejects an oversized pod through ResourceQuota/LimitRange admission.",
     "The kind/GKE gate cleans temporary preview/control namespaces after success or failure.",
@@ -97,6 +97,40 @@ assertions = [
     "Rendered Kubernetes YAML parses as Namespace, ServiceAccount, ResourceQuota, LimitRange, Role, RoleBinding, Deployment, Service, and ConfigMap objects.",
     "Service selectors match Deployment pod labels.",
     "Rendered Deployment includes readiness/liveness probes, explicit Workload Identity service account, bounded resources, and base workload clone annotations.",
+]
+
+[[aw.ec.generated.cases]]
+id = "local-apply-and-gitops-execution"
+capability_id = "gke-uat-preview-environment-rendering"
+claim_id = "local-apply-and-gitops-execution"
+contract_id = "local-apply-and-gitops-execution"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/local-apply-and-gitops-execution.md#local-apply-and-gitops-execution"
+test_path = "projects/preview/tests/behavior_local_apply_and_gitops_execution.rs"
+command = "cargo test -p preview --test local_cicd_contract"
+required_for_production = true
+assertions = [
+    "`preview render` emits plans/manifest-inventory.json with deterministic Kubernetes object order.",
+    "`preview apply --dir <rendered-dir> --plan-only` prints an ordered summary for MR comments and CI logs.",
+    "`preview gitops render --dir <rendered-dir> --out <bundle-dir>` writes deterministic relative-path bundle artifacts.",
+    "`preview apply` is covered against a local cluster by the kind lifecycle gate.",
+]
+
+[[aw.ec.generated.cases]]
+id = "local-apply-gitops-execution-ec"
+capability_id = "preview-external-contracts"
+claim_id = "local-apply-gitops-execution-ec"
+contract_id = "local-apply-gitops-execution-ec"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/local-apply-gitops-execution.md#local-apply-gitops-execution-ec"
+test_path = "projects/preview/tests/behavior_local_apply_gitops_execution_ec.rs"
+command = "cargo test -p preview --test local_cicd_contract local_apply_plan_and_gitops_bundle_are_deterministic"
+required_for_production = true
+assertions = [
+    "`preview render` emits plans/manifest-inventory.json with deterministic Kubernetes object order.",
+    "`preview apply --dir <rendered-dir> --plan-only` prints an MR-comment-friendly ordered apply summary without contacting a cluster.",
+    "`preview gitops render --dir <rendered-dir> --out <bundle-dir>` writes a deterministic relative-path GitOps bundle with no local absolute paths.",
+    "The kind lifecycle gate covers `preview apply --dry-run`, direct apply, idempotent re-apply, and rollout against a local cluster.",
 ]
 
 [[aw.ec.generated.cases]]

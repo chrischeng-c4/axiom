@@ -99,8 +99,9 @@ fn kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects() {
         }
         fs::write(path, file.contents).expect("write manifest");
     }
-    apply_rendered_lifecycle(dir.path());
-    apply_rendered_lifecycle(dir.path());
+    preview_apply_rendered_lifecycle(dir.path(), &context, false);
+    preview_apply_rendered_lifecycle(dir.path(), &context, true);
+    preview_apply_rendered_lifecycle(dir.path(), &context, false);
     kubectl_rollout_status("uat-mr-123", "checkout");
     assert_service_has_endpoint("uat-mr-123", "checkout");
     assert_port_forward_reaches_readyz("uat-mr-123", "checkout");
@@ -249,20 +250,16 @@ fn kubectl_server_side_dry_run(path: &Path) {
     );
 }
 
-fn apply_rendered_lifecycle(root: &Path) {
-    for path in [
-        "k8s/namespace.yaml",
-        "k8s/service-account.yaml",
-        "k8s/resource-quota.yaml",
-        "k8s/limit-range.yaml",
-        "k8s/workload-role.yaml",
-        "k8s/workload-role-binding.yaml",
-        "k8s/deployment.yaml",
-        "k8s/service.yaml",
-        "router/route-binding.yaml",
-    ] {
-        kubectl_apply(&root.join(path));
+fn preview_apply_rendered_lifecycle(root: &Path, context: &str, dry_run: bool) {
+    let mut command = Command::new(preview_bin());
+    command
+        .args(["apply", "--dir"])
+        .arg(root)
+        .args(["--context", context]);
+    if dry_run {
+        command.arg("--dry-run");
     }
+    command_ok(&mut command, "preview apply rendered lifecycle");
 }
 
 fn build_and_load_smoke_image(cluster_name: &str) {

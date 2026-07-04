@@ -50,6 +50,18 @@ capability_refs:
     claim: "kind-gke-lifecycle-ec"
     coverage: partial
     rationale: "Kind/GKE lifecycle EC is backed by the opt-in kind_lifecycle integration test."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "local-apply-and-gitops-execution"
+    claim: "local-apply-and-gitops-execution"
+    coverage: partial
+    rationale: "Local apply and GitOps execution are covered by the local CI/CD contract test and kind lifecycle test."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "local-apply-gitops-execution-ec"
+    claim: "local-apply-gitops-execution-ec"
+    coverage: partial
+    rationale: "Local apply and GitOps execution EC is covered by the local CI/CD contract test and kind lifecycle test."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -148,6 +160,9 @@ semantic_domain:
           - name: "local_ci_open_update_comment_and_close_lifecycle_is_deterministic"
             kind: "function"
             public: false
+          - name: "local_apply_plan_and_gitops_bundle_are_deterministic"
+            kind: "function"
+            public: false
           - name: "local_ci_render_consumes_discovered_base_contract_file"
             kind: "function"
             public: false
@@ -200,16 +215,13 @@ semantic_domain:
           - name: "input"
             kind: "function"
             public: false
-          - name: "kind_server_side_dry_run_accepts_rendered_lifecycle_objects"
-            kind: "function"
-            public: false
           - name: "kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects"
             kind: "function"
             public: false
-          - name: "kubectl_server_side_dry_run"
+          - name: "preview_apply_rendered_lifecycle"
             kind: "function"
             public: false
-          - name: "output"
+          - name: "kubectl_server_side_dry_run"
             kind: "function"
             public: false
         source_evidence_node:

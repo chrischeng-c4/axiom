@@ -1,8 +1,8 @@
 version = 1
 project = "preview"
 td_path = "projects/preview/tech-design"
-generated_at = "2026-07-04T16:31:27.156834+00:00"
-digest = "sha256:5615f9adffbe7f8b71f65f4f5118711ee14cc6cdc62c188d79ed677e6df5c9c9"
+generated_at = "2026-07-04T16:54:31.543910+00:00"
+digest = "sha256:c6c4ef878fb8d3cec5aa8d8f7dfe08eaf07a7e48a8a5535cb8258debbcb27813"
 
 [[files]]
 path = "README.md"
@@ -13,13 +13,17 @@ path = "interfaces/cli/preview-discovers-and-normalizes-base-workload-clone-cont
 digest = "sha256:bb1b6feef701cadaba574eb72d84ef0f2b9792d5680d792ddac526babe9230eb"
 
 [[files]]
+path = "interfaces/cli/preview-exposes-local-apply-and-gitops-bundle-execution-paths.md"
+digest = "sha256:e4609fb93584a759d296a2a09de014ad690a6fdd3d87683199618f12f12f57a8"
+
+[[files]]
 path = "semantic/preview-projects-preview.md"
 digest = "sha256:5b2c43fbc22bf24ea39e182005d62475b41d686cb15f6a41959b37ec73b85beb"
 
 [[files]]
 path = "semantic/preview-src.md"
-digest = "sha256:411ba08a3ebcc200535585cb914e66a09d1a9313e05b53ec8e3e401bca0f3817"
+digest = "sha256:4bbb6bb7b0765608dc6552c2e82cc08d0a4190ad57968ac9a37dc28ff1d20c04"
 
 [[files]]
 path = "semantic/preview-tests.md"
-digest = "sha256:a5ff274f305f7c16c9eff9b417db2247ef9f14280fe5898afe81fd96f65cb70e"
+digest = "sha256:8849d59a039d27889f7fd27efbc65f6b7b54e3d3e90196785c674956b876aa7b"

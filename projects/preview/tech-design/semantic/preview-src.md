@@ -14,6 +14,18 @@ capability_refs:
     claim: "base-workload-discovery"
     coverage: partial
     rationale: "Base workload discovery is implemented by the discover module and CLI/render integration."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "local-apply-and-gitops-execution"
+    claim: "local-apply-and-gitops-execution"
+    coverage: partial
+    rationale: "Local apply and GitOps execution are implemented by the apply module plus CLI integration."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "local-apply-gitops-execution-ec"
+    claim: "local-apply-gitops-execution-ec"
+    coverage: partial
+    rationale: "Local apply and GitOps execution EC coverage is implemented by the apply module plus CLI integration."
 fill_sections: [schema, changes]
 ---
 
@@ -41,6 +53,9 @@ semantic_domain:
             kind: "struct"
             public: true
           - name: "render_files"
+            kind: "function"
+            public: true
+          - name: "render_single_manifest"
             kind: "function"
             public: true
           - name: "preview_environment"
@@ -90,6 +105,9 @@ semantic_domain:
         ownership_state: "handwrite"
         generator_primitives: ["source_unit"]
         symbols:
+          - name: "apply"
+            kind: "module"
+            public: true
           - name: "discover"
             kind: "module"
             public: true
@@ -101,6 +119,50 @@ semantic_domain:
             public: true
           - name: "router"
             kind: "module"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview/src"
+      - path: "projects/preview/src/apply.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "ManifestInventory"
+            kind: "struct"
+            public: true
+          - name: "ManifestInventoryEntry"
+            kind: "struct"
+            public: true
+          - name: "ApplyOptions"
+            kind: "struct"
+            public: true
+          - name: "ApplySummary"
+            kind: "struct"
+            public: true
+          - name: "GitopsBundleFile"
+            kind: "struct"
+            public: true
+          - name: "apply_manifest_paths"
+            kind: "function"
+            public: true
+          - name: "manifest_inventory_for_env"
+            kind: "function"
+            public: true
+          - name: "manifest_inventory_from_dir"
+            kind: "function"
+            public: true
+          - name: "apply_rendered_manifests"
+            kind: "function"
+            public: true
+          - name: "render_gitops_bundle"
+            kind: "function"
+            public: true
+          - name: "apply_summary_markdown"
+            kind: "function"
             public: true
         source_evidence_node:
           layer: "backend"
@@ -177,10 +239,19 @@ semantic_domain:
           - name: "IssueCommand"
             kind: "enum"
             public: false
+          - name: "GitopsCommand"
+            kind: "enum"
+            public: false
           - name: "RenderArgs"
             kind: "struct"
             public: false
           - name: "DiscoverBaseArgs"
+            kind: "struct"
+            public: false
+          - name: "ApplyArgs"
+            kind: "struct"
+            public: false
+          - name: "GitopsRenderArgs"
             kind: "struct"
             public: false
           - name: "CleanupArgs"
@@ -193,6 +264,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "discover_base"
+            kind: "function"
+            public: false
+          - name: "apply"
+            kind: "function"
+            public: false
+          - name: "gitops_render"
             kind: "function"
             public: false
           - name: "print_llm"
@@ -272,6 +349,14 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-src-lib-rs>"
+  - path: "projects/preview/src/apply.rs"
+    action: add
+    section: schema
+    description: |
+      Local apply, manifest inventory, and GitOps execution behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-preview-src-apply-rs>"
   - path: "projects/preview/src/discover.rs"
     action: add
     section: schema

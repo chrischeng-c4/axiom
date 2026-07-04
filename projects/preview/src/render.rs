@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use serde_json::json;
 
+use crate::apply::manifest_inventory_for_env;
 use crate::discover::BaseWorkloadContract;
 use crate::model::{
     BaseSpec, CleanupAction, CleanupPlan, GkeSpec, Label, PreviewEnvironment, PreviewMetadata,
@@ -34,6 +35,7 @@ pub struct RenderFile {
 pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
     let env = preview_environment(input);
     let cleanup = cleanup_plan(&env, false);
+    let inventory = manifest_inventory_for_env(&env)?;
 
     Ok(vec![
         RenderFile {
@@ -48,40 +50,44 @@ pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
             ))? + "\n",
         },
         RenderFile {
+            path: "plans/manifest-inventory.json".to_string(),
+            contents: serde_json::to_string_pretty(&inventory)? + "\n",
+        },
+        RenderFile {
             path: "k8s/namespace.yaml".to_string(),
-            contents: yaml(&namespace(&env))?,
+            contents: render_single_manifest(&env, "k8s/namespace.yaml")?,
         },
         RenderFile {
             path: "k8s/service-account.yaml".to_string(),
-            contents: yaml(&service_account(&env))?,
+            contents: render_single_manifest(&env, "k8s/service-account.yaml")?,
         },
         RenderFile {
             path: "k8s/resource-quota.yaml".to_string(),
-            contents: yaml(&resource_quota(&env))?,
+            contents: render_single_manifest(&env, "k8s/resource-quota.yaml")?,
         },
         RenderFile {
             path: "k8s/limit-range.yaml".to_string(),
-            contents: yaml(&limit_range(&env))?,
+            contents: render_single_manifest(&env, "k8s/limit-range.yaml")?,
         },
         RenderFile {
             path: "k8s/workload-role.yaml".to_string(),
-            contents: yaml(&workload_role(&env))?,
+            contents: render_single_manifest(&env, "k8s/workload-role.yaml")?,
         },
         RenderFile {
             path: "k8s/workload-role-binding.yaml".to_string(),
-            contents: yaml(&workload_role_binding(&env))?,
+            contents: render_single_manifest(&env, "k8s/workload-role-binding.yaml")?,
         },
         RenderFile {
             path: "k8s/deployment.yaml".to_string(),
-            contents: yaml(&deployment(&env))?,
+            contents: render_single_manifest(&env, "k8s/deployment.yaml")?,
         },
         RenderFile {
             path: "k8s/service.yaml".to_string(),
-            contents: yaml(&service(&env))?,
+            contents: render_single_manifest(&env, "k8s/service.yaml")?,
         },
         RenderFile {
             path: "router/route-binding.yaml".to_string(),
-            contents: yaml(&route_binding(&env))?,
+            contents: render_single_manifest(&env, "router/route-binding.yaml")?,
         },
         RenderFile {
             path: "mr-comment.md".to_string(),
@@ -92,6 +98,22 @@ pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
             contents: serde_json::to_string_pretty(&cleanup)? + "\n",
         },
     ])
+}
+
+pub fn render_single_manifest(env: &PreviewEnvironment, path: &str) -> Result<String> {
+    let object = match path {
+        "k8s/namespace.yaml" => namespace(env),
+        "k8s/service-account.yaml" => service_account(env),
+        "k8s/resource-quota.yaml" => resource_quota(env),
+        "k8s/limit-range.yaml" => limit_range(env),
+        "k8s/workload-role.yaml" => workload_role(env),
+        "k8s/workload-role-binding.yaml" => workload_role_binding(env),
+        "k8s/deployment.yaml" => deployment(env),
+        "k8s/service.yaml" => service(env),
+        "router/route-binding.yaml" => route_binding(env),
+        _ => anyhow::bail!("unknown render manifest path {path}"),
+    };
+    yaml(&object)
 }
 
 pub fn preview_environment(input: &RenderInput) -> PreviewEnvironment {
