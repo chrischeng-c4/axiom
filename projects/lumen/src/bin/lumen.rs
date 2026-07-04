@@ -68,6 +68,20 @@ enum Command {
     /// Kubernetes artifacts split by layer: cluster-scoped CRD, operator
     /// control plane, and app-namespace Lumen instances.
     K8s(K8sArgs),
+    /// Dump a running node's full SnapshotV1 JSON to stdout or `--out`.
+    /// Alias of `export`; this is ad hoc data movement, not scheduled backup
+    /// sink transport.
+    Dump(SnapshotExportArgs),
+    /// Export a running node's full SnapshotV1 JSON to stdout or `--out`.
+    /// Use `backup` when you need destination sinks and retention.
+    Export(SnapshotExportArgs),
+    /// Load a SnapshotV1 JSON document from `--file` or stdin into a running
+    /// node by replacing all engine state through `/admin/restore`.
+    /// Alias of `import`.
+    Load(SnapshotImportArgs),
+    /// Import a SnapshotV1 JSON document from `--file` or stdin into a running
+    /// node by replacing all engine state through `/admin/restore`.
+    Import(SnapshotImportArgs),
     /// Self-update this binary from a published GitHub release. Resolves the
     /// running target + version, downloads the matching `lumen-<target>.tar.gz`,
     /// verifies its sha256, and atomically replaces the running executable.
@@ -348,6 +362,38 @@ struct BackupArgs {
     /// put. Omit to keep everything.
     #[arg(long)]
     retention_secs: Option<u64>,
+}
+
+/// `lumen dump|export` flags (#1095): pulls SnapshotV1 JSON from a running
+/// serving fleet and writes the exact bytes to stdout or a local file.
+#[derive(clap::Args)]
+struct SnapshotExportArgs {
+    /// Base URL of a running lumen serving node, e.g. `http://localhost:7373`.
+    #[arg(long)]
+    url: String,
+    /// Write the SnapshotV1 JSON bytes to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
+    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    token: Option<String>,
+}
+
+/// `lumen load|import` flags (#1095): reads SnapshotV1 JSON and posts it to
+/// `/admin/restore`, replacing the target engine state.
+#[derive(clap::Args)]
+struct SnapshotImportArgs {
+    /// Base URL of a running lumen serving node, e.g. `http://localhost:7373`.
+    #[arg(long)]
+    url: String,
+    /// Read SnapshotV1 JSON bytes from this path. Omit to read stdin.
+    #[arg(long)]
+    file: Option<PathBuf>,
+    /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls
+    /// back to `LUMEN_BACKUP_TOKEN`; omit entirely when `spec.auth: off`.
+    #[arg(long, env = "LUMEN_BACKUP_TOKEN")]
+    token: Option<String>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -658,6 +704,8 @@ async fn main() -> Result<()> {
         }
         Command::Issue(args) => issue(args).await,
         Command::Backup(args) => dispatch_backup(args).await,
+        Command::Dump(args) | Command::Export(args) => dispatch_snapshot_export(args).await,
+        Command::Load(args) | Command::Import(args) => dispatch_snapshot_import(args).await,
     }
 }
 
@@ -963,6 +1011,89 @@ async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
          `--features backup` (or `operator`, which pulls it in — the published \
          image includes both)"
     )
+}
+
+/// `lumen dump|export` (#1095): fetch `{url}/admin/backup` and write exact
+/// SnapshotV1 JSON bytes to stdout or `--out`.
+#[cfg(feature = "backup")]
+async fn dispatch_snapshot_export(args: SnapshotExportArgs) -> Result<()> {
+    let payload = lumen::backup::fetch_snapshot_bytes(&args.url, args.token.as_deref()).await?;
+    if let Some(out) = args.out {
+        if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create {}", parent.display()))?;
+        }
+        std::fs::write(&out, &payload).with_context(|| format!("write {}", out.display()))?;
+        let next =
+            restore_file_next_command(args.url.trim_end_matches('/'), &out, args.token.is_some());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "exported",
+                "path": out,
+                "bytes": payload.len(),
+                "next": next,
+            }))?
+        );
+    } else {
+        let mut stdout = std::io::stdout().lock();
+        std::io::Write::write_all(&mut stdout, &payload)?;
+        std::io::Write::flush(&mut stdout)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_snapshot_export(_args: SnapshotExportArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without backup support; rebuild with \
+         `--features backup` (or `operator`, which pulls it in — the published \
+         image includes both)"
+    )
+}
+
+/// `lumen load|import` (#1095): read SnapshotV1 JSON bytes from `--file` or
+/// stdin and POST them to `{url}/admin/restore`.
+#[cfg(feature = "backup")]
+async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
+    let payload = match &args.file {
+        Some(path) => std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
+        None => {
+            let mut buf = Vec::new();
+            let mut stdin = std::io::stdin();
+            std::io::Read::read_to_end(&mut stdin, &mut buf)?;
+            buf
+        }
+    };
+    lumen::backup::restore_snapshot_bytes(&args.url, args.token.as_deref(), &payload).await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "status": "restored",
+            "url": args.url.trim_end_matches('/'),
+            "bytes": payload.len(),
+        }))?
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_snapshot_import(_args: SnapshotImportArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without backup support; rebuild with \
+         `--features backup` (or `operator`, which pulls it in — the published \
+         image includes both)"
+    )
+}
+
+#[cfg(feature = "backup")]
+fn restore_file_next_command(url: &str, path: &Path, has_token: bool) -> String {
+    let auth = if has_token {
+        " --token $LUMEN_BACKUP_TOKEN"
+    } else {
+        ""
+    };
+    format!("lumen import --url {url}{auth} --file {}", path.display())
 }
 
 fn render_source_dockerfile() -> String {

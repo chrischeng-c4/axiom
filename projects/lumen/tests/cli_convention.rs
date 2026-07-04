@@ -69,6 +69,36 @@ fn help_ships_standard_issue_group_not_report_issue() {
     );
 }
 
+/// #1095: direct SnapshotV1 movement verbs are visible alongside `backup`.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md#unit-test
+#[test]
+fn help_ships_snapshot_data_movement_verbs() {
+    let help = run_lumen(&["--help"]);
+    for command in ["dump", "export", "load", "import", "backup"] {
+        assert!(help.contains(command), "missing `{command}` in:\n{help}");
+    }
+
+    for command in ["dump", "export"] {
+        let help = run_lumen(&[command, "--help"]);
+        for expected in ["--url", "--out", "--token", "SnapshotV1"] {
+            assert!(
+                help.contains(expected),
+                "missing `{expected}` in `lumen {command} --help`:\n{help}"
+            );
+        }
+    }
+
+    for command in ["load", "import"] {
+        let help = run_lumen(&[command, "--help"]);
+        for expected in ["--url", "--file", "--token", "/admin/restore"] {
+            assert!(
+                help.contains(expected),
+                "missing `{expected}` in `lumen {command} --help`:\n{help}"
+            );
+        }
+    }
+}
+
 /// #824: every topic command shown by `llm_outline_md()` must parse through
 /// the actual lumen binary.
 /// @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#unit-test
