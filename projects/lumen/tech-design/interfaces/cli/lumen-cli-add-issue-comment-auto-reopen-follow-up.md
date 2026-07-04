@@ -99,10 +99,10 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add IssueCommand::Comment args and dispatch to cli_std::issue::comment with repo, dry-run, yes, and free-form message support."
+    description: "Extend IssueCommand with Comment, add IssueCommentArgs, and dispatch to cli_std::issue::comment using Lumen TOOL metadata."
   - path: projects/lumen/tests/cli_convention.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Assert `lumen issue --help` lists comment and `lumen issue comment ... --dry-run` prints the shared reopen/comment preview."
+    description: "Cover issue comment help flags and dry-run output so the follow-up path remains offline-testable."
 ```
