@@ -652,6 +652,53 @@ traceability coverage); this convention asks whether one command's output is
 CLI can be 100% complete by `aw health` and still emit unchainable output,
 and vice versa.
 
+## Meta-doc content contract
+
+> Every doc fact carries exactly one of: a generator (a projection with a
+> named source), a validator (a contract or scanner that fails when the fact
+> goes stale), or an explicit policy-only marker. A fact restated only in
+> prose — none of the three — rots the first time reality moves, because
+> nothing catches the drift.
+
+The four doc families split content by *level* (repo-wide vs. one project),
+not by topic:
+
+| Doc | repo_root | project_root |
+|-----|-----------|--------------|
+| README | identity + generated Projects table + install | `## Brief` (required) + Overview + machine-owned capability contract |
+| CAPABILITIES | n/a — no repo-root file | optional split of the README capability contract (same schema, configurable `cap_path`) |
+| CONTRIBUTING | authoring contracts (this file) | none by default — scoped conventions files live next to the tree they govern |
+| CLAUDE / AGENTS | agent operating manual: projected `aw:start` block + generated trait/command tables | only for projects with genuinely special agent-facing mechanics; a standalone doc, not a projection of the root file |
+
+Three rules govern every cell above:
+
+- **Single-level rule** — content lives at exactly one level; every other
+  level links to it, never restates it.
+- **Fact-ownership rule** — a fact with no generator, no validator, and no
+  policy-only marker is a defect, not a stylistic choice; add whichever of
+  the three fits before landing the fact.
+- **Level heuristic** — "how do all projects do X" belongs in CONTRIBUTING;
+  "what does this project promise" belongs in its own README/CAPABILITIES;
+  "how does an agent operate here" belongs in CLAUDE/AGENTS; "what exists"
+  belongs in the repo-root README.
+
+Enforcement, so this is a contract and not a reminder:
+
+- `aw init --check` — repo-root projections (the `aw:start` block, generated
+  tables) are fresh against their generators.
+- The repo-root doc allowlist test — the root carries only the five doc
+  files this contract names; a stray file is a defect, not a new home.
+- `root_doc_mirror_test` — CLAUDE and AGENTS stay one document in two
+  agent-runtime flavors via an explicit whitelist, not freehand divergence.
+- `aw capability check` plus rule R7g — a project's README-owned capability
+  contract stays internally consistent, including that TD capability refs
+  actually resolve against it.
+- The active-docs scanners — agent-facing docs and skills are re-scanned for
+  retired command literals on every change, including the negative case: a
+  doc that only explains a command was retired must not itself carry that
+  command's literal invocation text, or the scanner cannot tell "documents
+  the removal" from "still tells an agent to run it."
+
 ## Project build and release contract
 
 Every project build skill and project `build.sh` must use the same two-mode
