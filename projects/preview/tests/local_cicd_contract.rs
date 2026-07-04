@@ -181,6 +181,70 @@ fn local_apply_plan_and_gitops_bundle_are_deterministic() {
 }
 
 #[test]
+fn local_router_resolve_proves_base_preview_and_fail_closed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("preview");
+    preview_render(&out, "abc123");
+
+    let base = command_stdout(Command::new(preview_bin()).args([
+        "router",
+        "resolve",
+        "--dir",
+        out.to_str().expect("out path"),
+        "--host",
+        "uat.local.test",
+        "--base-namespace",
+        "uat-base",
+        "--base-service",
+        "checkout",
+    ]));
+    let base: Value = serde_json::from_str(&base).expect("base decision");
+    assert_eq!(base["outcome"], "base");
+    assert_eq!(base["namespace"], "uat-base");
+    assert!(base["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("base route"));
+
+    let preview = command_stdout(Command::new(preview_bin()).args([
+        "router",
+        "resolve",
+        "--dir",
+        out.to_str().expect("out path"),
+        "--host",
+        "uat.local.test",
+        "--header-target",
+        "mr-321",
+        "--cookie-target",
+        "mr-999",
+    ]));
+    let preview: Value = serde_json::from_str(&preview).expect("preview decision");
+    assert_eq!(preview["outcome"], "preview");
+    assert_eq!(preview["target"], "mr-321");
+    assert_eq!(preview["namespace"], "uat-mr-321");
+    assert_eq!(preview["reason"], "matched X-UAT-Target header");
+
+    let invalid = command_stdout(Command::new(preview_bin()).args([
+        "router",
+        "resolve",
+        "--dir",
+        out.to_str().expect("out path"),
+        "--host",
+        "uat.local.test",
+        "--cookie-target",
+        "mr-999",
+    ]));
+    let invalid: Value = serde_json::from_str(&invalid).expect("invalid decision");
+    assert_eq!(invalid["outcome"], "not-found");
+    assert_eq!(invalid["target"], "mr-999");
+    assert_eq!(invalid["namespace"], Value::Null);
+    assert!(invalid["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("unknown route target"));
+}
+
+#[test]
 fn local_ci_render_consumes_discovered_base_contract_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let contract = dir.path().join("base-contract.json");

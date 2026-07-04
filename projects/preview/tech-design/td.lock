@@ -1,8 +1,8 @@
 version = 1
 project = "preview"
 td_path = "projects/preview/tech-design"
-generated_at = "2026-07-04T16:54:31.543910+00:00"
-digest = "sha256:c6c4ef878fb8d3cec5aa8d8f7dfe08eaf07a7e48a8a5535cb8258debbcb27813"
+generated_at = "2026-07-04T17:06:22.061465+00:00"
+digest = "sha256:df4543c622fa80bd77aed8d82e6e02de63b0dc17f4b7605d1f407d3d3f773f9a"
 
 [[files]]
 path = "README.md"
@@ -17,13 +17,17 @@ path = "interfaces/cli/preview-exposes-local-apply-and-gitops-bundle-execution-p
 digest = "sha256:e4609fb93584a759d296a2a09de014ad690a6fdd3d87683199618f12f12f57a8"
 
 [[files]]
+path = "interfaces/cli/preview-router-adapter-proves-base-fallback-and-target-routing-locally.md"
+digest = "sha256:27d2a09fccd973ebaaceea62b8394b6f7543863641ed003592fe8efbddc8e529"
+
+[[files]]
 path = "semantic/preview-projects-preview.md"
 digest = "sha256:5b2c43fbc22bf24ea39e182005d62475b41d686cb15f6a41959b37ec73b85beb"
 
 [[files]]
 path = "semantic/preview-src.md"
-digest = "sha256:4bbb6bb7b0765608dc6552c2e82cc08d0a4190ad57968ac9a37dc28ff1d20c04"
+digest = "sha256:ed2a1eef092ac870b041906815a8f6011100f02e33989929c111f89975d8439c"
 
 [[files]]
 path = "semantic/preview-tests.md"
-digest = "sha256:8849d59a039d27889f7fd27efbc65f6b7b54e3d3e90196785c674956b876aa7b"
+digest = "sha256:7845ff1834c582a6ba39a40e999ea632d5f862d72fccca4f994a3ecf80cb39c2"

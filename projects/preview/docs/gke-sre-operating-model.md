@@ -30,6 +30,10 @@ Do not expose namespaces to testers. Testers select a stable target:
 The router resolves the target through a route binding. The first renderer emits
 that binding as a ConfigMap in a control namespace so the adapter can be a small
 router deployment, an ingress controller extension, or a GitOps-rendered input.
+The local adapter proves the same rule before ingress work: no target uses the
+base route, a valid `X-UAT-Target` overrides the cookie and routes to preview, a
+valid `uat_target` cookie routes to preview, and invalid targets fail closed
+instead of silently falling back to base.
 
 ## GKE Defaults
 
@@ -55,7 +59,8 @@ Use the same model through progressively stronger deployment forms:
 2. CI binary applies to kind/sandbox clusters directly or renders into a GitOps
    repo for ArgoCD/Flux.
 3. A preview-router watches route-binding ConfigMaps and routes cookie/header
-   traffic.
+   traffic; the local `preview router resolve` command proves this table from
+   rendered files or kind ConfigMaps.
 4. When the cluster policy allows it, promote `PreviewEnvironment` to a CRD and
    run the same reconcile logic as an operator.
 
@@ -71,12 +76,16 @@ The EC path is deliberately layered:
    cross-resource references.
 4. Always-on local CI/CD EC validates `preview apply --plan-only` and
    `preview gitops render` without a live cluster.
-5. Opt-in kind/GKE EC builds a local probe image, creates a local base namespace
+5. Always-on local router adapter EC validates base fallback, preview target
+   routing, header-over-cookie precedence, host mismatch, and invalid-target
+   fail-closed behavior.
+6. Opt-in kind/GKE EC builds a local probe image, creates a local base namespace
    fixture, discovers it, applies the rendered objects through `preview apply`,
    runs server-side dry-run after namespace creation, re-applies idempotently,
-   waits for rollout, checks service endpoints, reaches `/readyz` through
-   port-forward, validates least-privilege RBAC, verifies quota rejection, and
-   cleans only test-created namespaces when `PREVIEW_KIND_E2E=1` is set.
+   loads the route-binding ConfigMap through the local adapter, waits for
+   rollout, checks service endpoints, reaches `/readyz` through port-forward,
+   validates least-privilege RBAC, verifies quota rejection, and cleans only
+   test-created namespaces when `PREVIEW_KIND_E2E=1` is set.
 
 This keeps daily CI cheap while making the cluster gate concrete enough for an
 SRE-owned validation lane.

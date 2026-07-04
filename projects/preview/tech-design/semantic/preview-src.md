@@ -26,6 +26,12 @@ capability_refs:
     claim: "local-apply-gitops-execution-ec"
     coverage: partial
     rationale: "Local apply and GitOps execution EC coverage is implemented by the apply module plus CLI integration."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "local-router-adapter"
+    claim: "local-router-adapter"
+    coverage: partial
+    rationale: "Local router adapter behavior is implemented by the router module and CLI integration."
 fill_sections: [schema, changes]
 ---
 
@@ -210,13 +216,31 @@ semantic_domain:
           - name: "RouteBinding"
             kind: "struct"
             public: true
+          - name: "BaseRoute"
+            kind: "struct"
+            public: true
           - name: "RouteRequest"
             kind: "struct"
             public: true
           - name: "ResolvedRoute"
             kind: "struct"
             public: true
+          - name: "RouteDecision"
+            kind: "struct"
+            public: true
+          - name: "RouteOutcome"
+            kind: "enum"
+            public: true
           - name: "resolve_route"
+            kind: "function"
+            public: true
+          - name: "resolve_route_with_base"
+            kind: "function"
+            public: true
+          - name: "load_route_table_from_rendered_dir"
+            kind: "function"
+            public: true
+          - name: "load_route_table_from_kubectl"
             kind: "function"
             public: true
         source_evidence_node:
@@ -242,6 +266,9 @@ semantic_domain:
           - name: "GitopsCommand"
             kind: "enum"
             public: false
+          - name: "RouterCommand"
+            kind: "enum"
+            public: false
           - name: "RenderArgs"
             kind: "struct"
             public: false
@@ -252,6 +279,9 @@ semantic_domain:
             kind: "struct"
             public: false
           - name: "GitopsRenderArgs"
+            kind: "struct"
+            public: false
+          - name: "RouterResolveArgs"
             kind: "struct"
             public: false
           - name: "CleanupArgs"
@@ -270,6 +300,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "gitops_render"
+            kind: "function"
+            public: false
+          - name: "router_resolve"
             kind: "function"
             public: false
           - name: "print_llm"
