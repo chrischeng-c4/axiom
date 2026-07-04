@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-07-03T18:15:37.185182+00:00"
-digest = "sha256:50dd7277d850dc490d81dda038d02192b13a14b72499b82248b748d097516e43"
-source_digest = "sha256:50dd7277d850dc490d81dda038d02192b13a14b72499b82248b748d097516e43"
-ir_digest = "sha256:9baab62a59d96dfb4860883de71fca262f73d68474266bab0ae3f60510f6902e"
+generated_at = "2026-07-04T05:35:42.461166+00:00"
+digest = "sha256:99ea50c0315ba326ef74cde08c36bd51758351473d54e8cae7e322bc3f4ab109"
+source_digest = "sha256:99ea50c0315ba326ef74cde08c36bd51758351473d54e8cae7e322bc3f4ab109"
+ir_digest = "sha256:9eea45dd1d5ab864b6689dace460baf329625a4ba8f12f82c2e7cf8016dc99d7"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4632,8 +4632,8 @@ section_count = 3
 
 [[files]]
 path = "core/validate/rule.md"
-digest = "sha256:c9fee8e80b28a2234c09040c38906239ca8be84219d8ddf3238e4f5f80f0a21b"
-ir_digest = "sha256:4e41493e69bdb274558ade22814bb9283d5615a11147af6651647b47995b0b1c"
+digest = "sha256:85a32c60fd2e7386f17850a712de131e4b840a36d4817c2f87a074bcd722af6c"
+ir_digest = "sha256:2adbfcdf4b7ee67396a681ea098af454e7d51fd9a1a0f81b399118f3a032edc4"
 section_count = 4
 
 [[files]]
@@ -4710,14 +4710,14 @@ section_count = 2
 
 [[files]]
 path = "core/validate/source/projects-sdd-src-validate-rule-rs.md"
-digest = "sha256:4f59ebd43785e2fd78589037e2ac08f59dc982e5417165f2c94243e634e1df2e"
-ir_digest = "sha256:dfb0e84afaf5900ff1f806d22ece591ff2c74fe2546c46544952c2b600807917"
+digest = "sha256:ea7c20fa2bdc194cbc3f609d761aa44ff6d58c4d15f6d99f72c426b1f353592b"
+ir_digest = "sha256:9a5a9413f997e19b0fd751ea0cdbe46ebf7e7b3bf940fca6a7eed991fc59c696"
 section_count = 2
 
 [[files]]
 path = "core/validate/source/projects-sdd-src-validate-rules-mod-rs.md"
-digest = "sha256:26161b11b175fe65bb93f0de6fdc0e6d0d70a7fff85cb358619e7145cbcaa73e"
-ir_digest = "sha256:95d09aee0daf3a374a82fa076adaf3efd3325113f664871886250345a33acb60"
+digest = "sha256:ccae978eb04d5e527ffda21a09e8638584cdd5bc237c13425e21756eec02c6de"
+ir_digest = "sha256:fff8a63d8ba49365b5605849dcc03b803f9339f07b5890e8b095abc74b74643c"
 section_count = 2
 
 [[files]]
@@ -4808,6 +4808,12 @@ section_count = 2
 path = "core/validate/source/projects-sdd-src-validate-rules-r7f_field_near_match-rs.md"
 digest = "sha256:fd914ca3c7973886e413676c6285e0d9ecf6eaf241042ee30918d9e56080fb38"
 ir_digest = "sha256:1a02654e038b93bd3768718d404a6aeb59407c925965c8ee7075ae15572290a0"
+section_count = 2
+
+[[files]]
+path = "core/validate/source/projects-sdd-src-validate-rules-r7g_dangling_capability_ref-rs.md"
+digest = "sha256:a31f9654f602d85ed08c5cee28e437d22ad431b73f533f256a6005b525304861"
+ir_digest = "sha256:40d886b5c0af62323e1a9b97a290dcfa99a38896780b9fdf081bab8430e84355"
 section_count = 2
 
 [[files]]
@@ -4950,8 +4956,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:c230d72539ea43faa58f6405286067073e836498212671c45d63e877fab0a2d5"
-ir_digest = "sha256:41f3d65d1931e4c39c0ad985caee34b9ad38a246653c2627b2464aff7a8361c5"
+digest = "sha256:133d878d104d01aca0c65bb9c8f6b93b96ec45a6e40b637bbe378ac12fcdde37"
+ir_digest = "sha256:90afbee8830a33e1593fe935a077ed77b16dc829622e57e57634bed0a8c9b08e"
 section_count = 2
 
 [[files]]

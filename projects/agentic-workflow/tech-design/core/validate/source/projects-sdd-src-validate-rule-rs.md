@@ -21,22 +21,22 @@ Public API manifest for `projects/agentic-workflow/src/validate/rule.rs` generat
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Finding` | projects/agentic-workflow/src/validate/rule.rs | struct | pub | 278 |  |
-| `RuleId` | projects/agentic-workflow/src/validate/rule.rs | enum | pub | 189 |  |
-| `RuleReport` | projects/agentic-workflow/src/validate/rule.rs | struct | pub | 325 |  |
-| `Severity` | projects/agentic-workflow/src/validate/rule.rs | enum | pub | 268 |  |
+| `Finding` | projects/agentic-workflow/src/validate/rule.rs | struct | pub | 287 |  |
+| `RuleId` | projects/agentic-workflow/src/validate/rule.rs | enum | pub | 193 |  |
+| `RuleReport` | projects/agentic-workflow/src/validate/rule.rs | struct | pub | 334 |  |
+| `Severity` | projects/agentic-workflow/src/validate/rule.rs | enum | pub | 277 |  |
 | `category` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 64 | category(&self) -> &'static str |
-| `error` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 298 | error(rule: RuleId, file: impl Into<PathBuf>, message: impl Into<String>) -> Self |
-| `extend` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 109 | extend(&mut self, other: RuleReport) |
+| `error` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 307 | error(rule: RuleId, file: impl Into<PathBuf>, message: impl Into<String>) -> Self |
+| `extend` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 112 | extend(&mut self, other: RuleReport) |
 | `format` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 43 | format(&self) -> String |
-| `has_errors` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 114 | has_errors(&self) -> bool |
-| `is_empty` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 118 | is_empty(&self) -> bool |
-| `new` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 101 | new() -> Self |
-| `push` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 105 | push(&mut self, f: Finding) |
-| `short` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 243 | short(&self) -> &'static str |
-| `slug` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 90 | slug(&self) -> &'static str |
-| `with_line` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 310 | with_line(mut self, line: usize) -> Self |
-| `with_path` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 316 | with_path(mut self, path: impl Into<String>) -> Self |
+| `has_errors` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 117 | has_errors(&self) -> bool |
+| `is_empty` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 121 | is_empty(&self) -> bool |
+| `new` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 104 | new() -> Self |
+| `push` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 108 | push(&mut self, f: Finding) |
+| `short` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 251 | short(&self) -> &'static str |
+| `slug` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 93 | slug(&self) -> &'static str |
+| `with_line` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 319 | with_line(mut self, line: usize) -> Self |
+| `with_path` | projects/agentic-workflow/src/validate/rule.rs | function | pub | 325 | with_path(mut self, path: impl Into<String>) -> Self |
 ## Source
 <!-- type: source lang: rust -->
 
@@ -119,8 +119,11 @@ impl RuleId {
             | RuleId::DuplicateSection => "format",
             // TD directory shape (R6a, R6b).
             RuleId::LooseRootFile | RuleId::UnexpectedSubdir => "structure",
-            // Cross-section logical consistency (R7d, R7e, R7f).
-            RuleId::OrphanRequirement | RuleId::SchemaConflict | RuleId::FieldNearMatch => "logic",
+            // Cross-section / cross-project logical consistency (R7d, R7e, R7f, R7g).
+            RuleId::OrphanRequirement
+            | RuleId::SchemaConflict
+            | RuleId::FieldNearMatch
+            | RuleId::DanglingCapabilityRef => "logic",
         }
     }
 
@@ -198,6 +201,7 @@ mod tests {
         assert_eq!(RuleId::OrphanRequirement.category(), "logic");
         assert_eq!(RuleId::SchemaConflict.category(), "logic");
         assert_eq!(RuleId::FieldNearMatch.category(), "logic");
+        assert_eq!(RuleId::DanglingCapabilityRef.category(), "logic");
     }
 
     #[test]
@@ -276,6 +280,10 @@ pub enum RuleId {
     /// R7f — reject near-match field names that likely indicate schema typos.
     #[serde(rename = "FieldNearMatch")]
     FieldNearMatch,
+    /// R7g — reject capability_refs entries (capability/gap/claim ids) that
+    /// do not resolve against the owning project's capability contract.
+    #[serde(rename = "DanglingCapabilityRef")]
+    DanglingCapabilityRef,
 }
 
 /// @spec projects/agentic-workflow/tech-design/core/validate/rule.md#schema.impls
@@ -299,6 +307,7 @@ impl RuleId {
             RuleId::OrphanRequirement => "R7d:orphan-requirement",
             RuleId::SchemaConflict => "R7e:schema-conflict",
             RuleId::FieldNearMatch => "R7f:field-near-match",
+            RuleId::DanglingCapabilityRef => "R7g:dangling-capability-ref",
         }
     }
 }
