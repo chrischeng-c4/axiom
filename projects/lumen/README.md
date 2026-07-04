@@ -915,3 +915,41 @@ generated `h2c_runtime.py` exposes unary `request()` and bidirectional
 `stream()` APIs; Lumen's current OpenAPI routes are unary, so generated
 `client.py` uses `request()` today and the streaming surface is forward-looking
 runtime capacity for services that add streaming operations.
+
+## Design notes (from the retired HA.md, 2026-07)
+
+Durable decisions folded from the retired `HA.md`; its session-era "Original
+design notes (openraft)" framing was already superseded by the shipped
+`raft-core`/`raft-host` implementation and is dropped as historical.
+
+lumen is a **log-replicated, derived, rebuildable search index**: the caller
+still owns the source of truth, and lumen indexes the caller's `external_id`s.
+The deployment boundary changed once `libs/raft-core` existed: multi-pod lumen
+owns its own write ordering and replica synchronization instead of requiring
+an external broker as the default HA path. Mode split:
+
+- **standalone**: one pod, embedded WAL, direct apply.
+- **primary-replica**: multiple lumen pods, `raft-core` elects a leader, the
+  leader owns the ordered write log, and followers replicate/apply the same
+  raw `WalRecord::encode()` bytes.
+
+`lumen serve --wal auto` is the production default: it starts embedded when no
+k8s replica topology is present, and switches to raft when
+`REPLICAS_PER_SHARD > 1` is injected by the operator/StatefulSet. The operator
+never passes special cluster flags — topology comes from the downward API
+(`POD_NAME`, `POD_NAMESPACE`, `SHARD_COUNT`, `REPLICAS_PER_SHARD`,
+`VOTER_COUNT`, `LUMEN_HEADLESS_SERVICE`): one serving pod renders a standalone
+Deployment + HPA, `replicasPerShard > 1` renders a stable serving StatefulSet +
+headless Service. For local multi-node work, `LUMEN_PEERS=host:port,...`
+overrides headless DNS so several `lumen serve --wal raft` processes can run
+on one machine.
+
+Raft responsibility is split by crate/module: `libs/raft-core` (consensus
+state machine and log semantics), `libs/raft-host` (h2c peer transport,
+leader forwarding, snapshot install, log compaction — snapshot upload/pruning
+policy lives in `libs/service-backup`), `projects/lumen/src/raft_sm.rs`
+(committed write records → engine mutations, snapshot produce/restore), and
+`projects/lumen/src/raft.rs` (API-facing cluster/debug DTOs, read-consistency
+parsing). Legacy broker-backed write logs are not part of the Lumen
+deployment archetype; the NATS backend is compatibility/test surface only, and
+Relay WAL support has been removed from Lumen.
