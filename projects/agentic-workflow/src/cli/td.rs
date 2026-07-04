@@ -140,6 +140,10 @@ pub struct CreateArgs {
     /// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<phase>/<section>.md`
     /// into the spec. Other sections in the spec are untouched. Required
     /// for loop-fill flow where the subagent applies one section at a time.
+    /// JSON-payload sections (contract/unit-test class, issue #1097) use a
+    /// `<section>.json` payload instead: write ONLY structured requirements
+    /// data there — never hand-write mermaid or YAML frontmatter — and this
+    /// command renders the YAML frontmatter + `flowchart TD` diagram.
     #[arg(long)]
     pub section: Option<String>,
     /// DEPRECATED compatibility no-op. TD lifecycle envelopes are JSON by default.
@@ -2130,10 +2134,18 @@ fn section_payload_path(
     pass: &str,
     section: &str,
 ) -> String {
+    // Issue #1097: JSON-payload sections (contract/unit-test class) use a
+    // `.json` payload extension so the fill-loop envelope and the file
+    // extension both signal "write data, not diagram syntax".
+    let ext = if td_section_uses_json_payload(section) {
+        "json"
+    } else {
+        "md"
+    };
     crate::shared::workspace::payloads_path(project_root)
         .join(slug)
         .join(pass)
-        .join(format!("{section}.md"))
+        .join(format!("{section}.{ext}"))
         .to_string_lossy()
         .into_owned()
 }
@@ -2157,6 +2169,12 @@ fn td_section_payload_template(section: &str) -> Result<String> {
         .map_err(|e| anyhow::anyhow!(e))?;
     if !is_supported_td_payload_section_type(st) {
         anyhow::bail!("section '{}' is not supported for new TD payloads", section);
+    }
+    if td_section_uses_json_payload(section) {
+        // Issue #1097: the placeholder payload for these sections is raw
+        // JSON data, not a markdown/mermaid-wrapped section template — the
+        // CLI renders the wrapped artifact at apply time.
+        return td_json_payload_template(section);
     }
     let lang = st.default_lang();
     let body = match lang {
@@ -2196,6 +2214,255 @@ fn td_section_title(section: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// ── JSON section payloads (Mermaid Plus contract/unit-test class, #1097) ──
+//
+// Hand-authoring a structured Mermaid Plus section duplicates facts: the
+// YAML frontmatter and the diagram body both encode the same
+// requirement -> verification-target relation. For the `unit-test` section
+// the agent now writes ONLY that requirements data as JSON; `aw td create
+// --apply` renders the YAML frontmatter presentation and a deterministic
+// `flowchart TD` diagram derived from each requirement's `verify` field.
+// Prose sections and every other Mermaid Plus section kind are unaffected —
+// extend `td_section_uses_json_payload` iteratively as more section kinds
+// convert (issue #1097 scope is contract/unit-test only).
+
+/// Section kinds whose fill-loop payload is JSON data (rendered into the
+/// artifact by the CLI) instead of hand-authored markdown/mermaid text.
+fn td_section_uses_json_payload(section: &str) -> bool {
+    matches!(section, "unit-test")
+}
+
+/// Compact JSON schema example embedded directly in fill-loop dispatch text
+/// for JSON-payload sections — agents need the shape inline, not a pointer.
+fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
+    match section {
+        "unit-test" => Some(concat!(
+            r#"{"id":"<spec-id>-verification","requirements":{"#,
+            r#""<requirement_key>":{"id":"R1","text":"<requirement text>","#,
+            r#""kind":"functional|regression|...","risk":"low|medium|high","#,
+            r#""verify":"<concrete verification target, e.g. a test name>"}}}"#,
+            " — write ONLY this JSON. Never hand-write mermaid or YAML frontmatter ",
+            "for this section; the CLI renders the YAML frontmatter and a ",
+            "`flowchart TD` grouping requirements by their `verify` target."
+        )),
+        _ => None,
+    }
+}
+
+/// Reason text for the fill-loop dispatch envelope: for JSON-payload
+/// sections this embeds the compact inline schema (issue #1097 — agents
+/// need the shape inline, not a pointer); other sections keep the existing
+/// generic reason.
+fn td_section_fill_reason(section: &str) -> String {
+    match td_json_payload_schema_hint(section) {
+        Some(hint) => format!("fill the next TD section payload as JSON and apply it. {hint}"),
+        None => "fill the next TD section payload and apply it".to_string(),
+    }
+}
+
+/// Attach an inline `payload_schema` hint to a dispatch envelope's `args`
+/// object when `section` is a JSON-payload section (issue #1097). No-op for
+/// every other section kind and for non-object `args` values.
+fn attach_json_payload_schema_hint(
+    mut args: serde_json::Value,
+    section: &str,
+) -> serde_json::Value {
+    if let Some(hint) = td_json_payload_schema_hint(section) {
+        if let Some(obj) = args.as_object_mut() {
+            obj.insert(
+                "payload_schema".to_string(),
+                serde_json::Value::String(hint.to_string()),
+            );
+        }
+    }
+    args
+}
+
+/// One requirement row of a `unit-test` JSON payload (#1097).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct UnitTestRequirement {
+    pub id: String,
+    pub text: String,
+    pub kind: String,
+    pub risk: String,
+    /// Concrete verification target (e.g. a test name). The rendered
+    /// diagram's requirement -> target edge is derived mechanically from
+    /// this field — it is never written separately.
+    pub verify: String,
+}
+
+/// `unit-test` section JSON payload: the data half of a Mermaid Plus
+/// contract/unit-test section. `aw td create --apply` renders this into the
+/// YAML-frontmatter + `flowchart TD` artifact form (#1097). `BTreeMap` keeps
+/// key order deterministic so `render_unit_test_section` is byte-stable.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct UnitTestSectionPayload {
+    pub id: String,
+    pub requirements: std::collections::BTreeMap<String, UnitTestRequirement>,
+}
+
+/// Placeholder JSON payload written when a JSON-payload section file does
+/// not exist yet (mirrors `td_section_payload_template`'s md/mermaid
+/// placeholder convention for the other section kinds).
+fn td_json_payload_template(section: &str) -> Result<String> {
+    match section {
+        "unit-test" => {
+            let mut requirements = std::collections::BTreeMap::new();
+            requirements.insert(
+                "example_requirement".to_string(),
+                UnitTestRequirement {
+                    id: "R1".to_string(),
+                    text: "(fill: requirement text)".to_string(),
+                    kind: "functional".to_string(),
+                    risk: "medium".to_string(),
+                    verify: "(fill: concrete verification target, e.g. a test name)".to_string(),
+                },
+            );
+            let payload = UnitTestSectionPayload {
+                id: "(fill: spec-id)-verification".to_string(),
+                requirements,
+            };
+            Ok(serde_json::to_string_pretty(&payload)?)
+        }
+        other => anyhow::bail!(
+            "no JSON payload template registered for section '{}'",
+            other
+        ),
+    }
+}
+
+/// Sanitize a `verify` target string into a stable mermaid node identifier:
+/// lowercase, non-alphanumeric runs collapsed to a single `_`, trimmed of
+/// leading/trailing `_`, and `t_`-prefixed if empty or digit-led (mermaid
+/// node ids must not start with a digit).
+fn mermaid_node_id(raw: &str) -> String {
+    let mut id = String::new();
+    let mut last_was_sep = false;
+    for ch in raw.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            id.push(ch);
+            last_was_sep = false;
+        } else if !last_was_sep {
+            id.push('_');
+            last_was_sep = true;
+        }
+    }
+    let id = id.trim_matches('_').to_string();
+    if id.is_empty() || id.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        format!("t_{id}")
+    } else {
+        id
+    }
+}
+
+/// Ascending sort key for a requirement id such as `R1`/`R12`: the trailing
+/// numeric run parsed as `u64` (non-numeric ids sort last, deterministically,
+/// via `u64::MAX`).
+fn requirement_id_sort_key(id: &str) -> u64 {
+    let digits: String = id.chars().skip_while(|c| !c.is_ascii_digit()).collect();
+    digits.parse::<u64>().unwrap_or(u64::MAX)
+}
+
+/// Render a map key such as `help_surface` into a human-readable diagram
+/// label fragment (`help surface`).
+fn humanize_payload_key(key: &str) -> String {
+    key.replace(['_', '-'], " ")
+}
+
+/// Quote a YAML scalar the same way the motivating precedent does: always
+/// double-quoted so frontmatter text containing `:` or backticks parses
+/// unambiguously, with embedded `"` and `\` escaped.
+fn yaml_quoted_scalar(raw: &str) -> String {
+    let escaped = raw.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+/// Render a `unit-test` JSON payload into the full `## Heading` + Mermaid
+/// Plus section text: YAML frontmatter (deterministic `BTreeMap` key order)
+/// followed by a generated `flowchart TD` grouping requirements by their
+/// `verify` target — the CLI-rendered projection issue #1097 asks for,
+/// replacing hand-authored diagram syntax. Byte-deterministic for a given
+/// payload (AC2): requirements are visited in ascending numeric-id order,
+/// then grouped by `verify` target in order of first appearance so shared
+/// targets are listed together, matching the motivating hand-authored
+/// precedent's grouping exactly.
+fn render_unit_test_section(payload: &UnitTestSectionPayload) -> String {
+    let mut frontmatter = String::new();
+    frontmatter.push_str("---\n");
+    frontmatter.push_str(&format!("id: {}\n", payload.id));
+    frontmatter.push_str("requirements:\n");
+    for (key, req) in &payload.requirements {
+        frontmatter.push_str(&format!("  {key}:\n"));
+        frontmatter.push_str(&format!("    id: {}\n", req.id));
+        frontmatter.push_str(&format!("    text: {}\n", yaml_quoted_scalar(&req.text)));
+        frontmatter.push_str(&format!("    kind: {}\n", req.kind));
+        frontmatter.push_str(&format!("    risk: {}\n", req.risk));
+        frontmatter.push_str(&format!("    verify: {}\n", req.verify));
+    }
+    frontmatter.push_str("---\n");
+
+    let mut ordered: Vec<(&String, &UnitTestRequirement)> = payload.requirements.iter().collect();
+    ordered.sort_by_key(|(_, req)| (requirement_id_sort_key(&req.id), req.id.clone()));
+
+    let mut groups: Vec<(String, Vec<(&String, &UnitTestRequirement)>)> = Vec::new();
+    for (key, req) in ordered {
+        match groups.iter_mut().find(|(target, _)| *target == req.verify) {
+            Some((_, members)) => members.push((key, req)),
+            None => groups.push((req.verify.clone(), vec![(key, req)])),
+        }
+    }
+
+    let mut diagram = String::new();
+    diagram.push_str("flowchart TD\n");
+    for (target, members) in &groups {
+        let target_id = mermaid_node_id(target);
+        for (idx, (key, req)) in members.iter().enumerate() {
+            let req_id = mermaid_node_id(&req.id);
+            let req_label = format!("{} {}", req.id, humanize_payload_key(key));
+            if idx == 0 {
+                diagram.push_str(&format!(
+                    "    {req_id}[{req_label}] --> {target_id}[{target}]\n"
+                ));
+            } else {
+                diagram.push_str(&format!("    {req_id}[{req_label}] --> {target_id}\n"));
+            }
+        }
+    }
+
+    format!(
+        "## {}\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n{}{}```\n",
+        td_section_title("unit-test"),
+        frontmatter,
+        diagram,
+    )
+}
+
+/// Render a JSON-payload section from its raw JSON text, or fail with a
+/// message that names the schema violation and points at the inline schema
+/// (AC1: hand-written mermaid/md payloads fail JSON parsing and are
+/// rejected this way rather than silently accepted).
+fn render_td_json_section_payload(section: &str, raw_json: &str) -> Result<String> {
+    match section {
+        "unit-test" => {
+            let payload: UnitTestSectionPayload =
+                serde_json::from_str(raw_json).map_err(|e| {
+                    anyhow::anyhow!(
+                        "'{section}' section payload must be JSON matching the schema (parse error: {e}). Expected shape: {}",
+                        td_json_payload_schema_hint(section).unwrap_or_default()
+                    )
+                })?;
+            if payload.requirements.is_empty() {
+                anyhow::bail!(
+                    "'{section}' section payload JSON is missing at least one `requirements` entry. Expected shape: {}",
+                    td_json_payload_schema_hint(section).unwrap_or_default()
+                );
+            }
+            Ok(render_unit_test_section(&payload))
+        }
+        other => anyhow::bail!("no JSON renderer registered for section '{}'", other),
+    }
 }
 
 fn remaining_after_section(pass: &str, section: &str) -> Vec<String> {
@@ -2528,7 +2795,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
                     "aw td create {} --apply --phase {} --section {} --spec-path {}",
                     slug, pass, section, spec_path
                 ),
-                "fill the next TD section payload and apply it",
+                &td_section_fill_reason(section),
                 Some(payload),
             )
         } else {
@@ -2654,6 +2921,21 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!();
     println!("Read `.aw/tech-design/AUTHORING.md` § Mermaid Plus Content Model for full examples.");
     println!();
+    println!("## Unit Test (JSON payload — CLI renders frontmatter + diagram)");
+    println!();
+    println!(
+        "Section type `unit-test` takes a JSON payload, not mermaid or YAML. Write ONLY the requirements data:"
+    );
+    println!();
+    println!(
+        "{}",
+        td_json_payload_schema_hint("unit-test").unwrap_or_default()
+    );
+    println!();
+    println!(
+        "`aw td create --apply` renders the YAML frontmatter and a `flowchart TD` diagram from this data — the diagram's requirement -> `verify` edges are derived mechanically, never hand-drawn. A hand-written mermaid/YAML payload for this section fails JSON parsing and is rejected with a pointer back to this schema."
+    );
+    println!();
     println!("## Rules");
     println!();
     println!("- Section type MUST match content (state-machine → stateDiagram-v2, not flowchart)");
@@ -2748,8 +3030,25 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
             return td_error(slug, msg);
         };
         let payload_abs = std::path::Path::new(&payload_path);
-        let payload_body =
+        let payload_body_raw =
             std::fs::read_to_string(payload_abs).context("failed to read section payload")?;
+        // Issue #1097: JSON-payload sections render the full section text
+        // (heading + YAML frontmatter + generated diagram) from the
+        // agent-written JSON data here, before the unchanged
+        // `merge_spec_section` splice below. A hand-written mermaid/md
+        // payload fails JSON parsing and is rejected with a message naming
+        // the schema violation (AC1) — the payload file is left intact so
+        // the agent can retry with corrected JSON.
+        let payload_body = if td_section_uses_json_payload(section) {
+            match render_td_json_section_payload(section, &payload_body_raw) {
+                Ok(rendered) => rendered,
+                Err(e) => {
+                    return td_error(slug, e.to_string());
+                }
+            }
+        } else {
+            payload_body_raw
+        };
         let base_body = if spec_abs.exists() {
             std::fs::read_to_string(&spec_abs).context("failed to read base spec")?
         } else {
@@ -2906,14 +3205,17 @@ async fn complete_section_apply(
             "Td-Section",
             active_phase,
             "aw td create",
-            serde_json::json!({
-                "slug": slug,
-                "apply": true,
-                "phase": pass,
-                "section": next_section,
-                "spec_path": spec_path,
-                "payload_path": expected_payload,
-            }),
+            attach_json_payload_schema_hint(
+                serde_json::json!({
+                    "slug": slug,
+                    "apply": true,
+                    "phase": pass,
+                    "section": next_section,
+                    "spec_path": spec_path,
+                    "payload_path": expected_payload,
+                }),
+                next_section,
+            ),
         ))
     } else if pass == "applicability" {
         let active_phase = "td_applicability_created".to_string();
@@ -2944,14 +3246,17 @@ async fn complete_section_apply(
                     "Td-Applicability-Complete",
                     active_phase,
                     "aw td create",
-                    serde_json::json!({
-                        "slug": slug,
-                        "apply": true,
-                        "phase": "contract",
-                        "section": first,
-                        "spec_path": spec_path,
-                        "payload_path": expected_payload,
-                    }),
+                    attach_json_payload_schema_hint(
+                        serde_json::json!({
+                            "slug": slug,
+                            "apply": true,
+                            "phase": "contract",
+                            "section": first,
+                            "spec_path": spec_path,
+                            "payload_path": expected_payload,
+                        }),
+                        &first,
+                    ),
                 ))
             }
             None => Some((
@@ -4973,6 +5278,190 @@ label = "project:agentic-workflow"
         assert!(err
             .to_string()
             .contains("section 'scenarios' is not supported for new TD payloads"));
+    }
+
+    // ── #1097: JSON section payloads (Mermaid Plus contract/unit-test) ──
+
+    fn unit_test_precedent_payload() -> UnitTestSectionPayload {
+        // Reconstructs the motivating lumen #1095 "Unit Test" section: five
+        // requirements, two verification targets, with a concrete `verify`
+        // target string so the diagram edges are mechanically derivable.
+        let mut requirements = std::collections::BTreeMap::new();
+        requirements.insert(
+            "help_surface".to_string(),
+            UnitTestRequirement {
+                id: "R1".to_string(),
+                text: "`lumen --help` lists dump/export/load/import with wording that distinguishes ad hoc SnapshotV1 movement from `backup` sink transport.".to_string(),
+                kind: "functional".to_string(),
+                risk: "medium".to_string(),
+                verify: "cargo test -p lumen --test cli_convention".to_string(),
+            },
+        );
+        requirements.insert(
+            "export_file".to_string(),
+            UnitTestRequirement {
+                id: "R2".to_string(),
+                text: "Export helper writes the exact `/admin/backup` response bytes to `--out` and the parsed JSON has `version: 1` plus collections.".to_string(),
+                kind: "functional".to_string(),
+                risk: "high".to_string(),
+                verify: "cargo test -p lumen --test backup_restore_e2e".to_string(),
+            },
+        );
+        requirements.insert(
+            "import_file".to_string(),
+            UnitTestRequirement {
+                id: "R3".to_string(),
+                text: "Import helper reads SnapshotV1 JSON from a file and restores it into a fresh server through `/admin/restore`.".to_string(),
+                kind: "functional".to_string(),
+                risk: "high".to_string(),
+                verify: "cargo test -p lumen --test backup_restore_e2e".to_string(),
+            },
+        );
+        requirements.insert(
+            "aliases".to_string(),
+            UnitTestRequirement {
+                id: "R4".to_string(),
+                text: "`dump` behaves as an export alias and `load` behaves as an import alias through shared dispatch.".to_string(),
+                kind: "regression".to_string(),
+                risk: "medium".to_string(),
+                verify: "cargo test -p lumen --test backup_restore_e2e".to_string(),
+            },
+        );
+        requirements.insert(
+            "token_fallback".to_string(),
+            UnitTestRequirement {
+                id: "R5".to_string(),
+                text: "The new verbs expose `--token` with `LUMEN_BACKUP_TOKEN` fallback like `backup`.".to_string(),
+                kind: "functional".to_string(),
+                risk: "medium".to_string(),
+                verify: "cargo test -p lumen --test cli_convention".to_string(),
+            },
+        );
+        UnitTestSectionPayload {
+            id: "lumen-cli-snapshot-data-movement-verification".to_string(),
+            requirements,
+        }
+    }
+
+    #[test]
+    fn section_payload_path_unit_test_uses_json_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = section_payload_path(tmp.path(), "123", "contract", "unit-test");
+        assert!(path.ends_with("unit-test.json"), "got: {path}");
+        let logic_path = section_payload_path(tmp.path(), "123", "contract", "logic");
+        assert!(logic_path.ends_with("logic.md"), "got: {logic_path}");
+    }
+
+    #[test]
+    fn td_section_payload_template_unit_test_is_json_placeholder() {
+        let template = td_section_payload_template("unit-test").unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&template).expect("unit-test payload template must be valid JSON");
+        assert!(value.get("requirements").is_some());
+        assert!(
+            !template.contains("```"),
+            "JSON template must not be mermaid-wrapped"
+        );
+    }
+
+    #[test]
+    fn render_unit_test_section_is_byte_deterministic() {
+        let payload = unit_test_precedent_payload();
+        let first = render_unit_test_section(&payload);
+        let second = render_unit_test_section(&payload);
+        assert_eq!(
+            first, second,
+            "AC2: same JSON must render byte-identical output"
+        );
+    }
+
+    #[test]
+    fn render_unit_test_section_round_trips_through_the_generic_frontmatter_parser() {
+        // AC3: parse(render(data)) == data, driven through the SAME
+        // extractor `merge_spec_section`'s callers rely on for Mermaid Plus
+        // blocks (`extract_mermaid_plus_blocks`), not a bespoke parser.
+        let payload = unit_test_precedent_payload();
+        let rendered = render_unit_test_section(&payload);
+
+        let full_spec = format!(
+            "---\nid: x\nfill_sections: [unit-test]\n---\n\n{}",
+            rendered
+        );
+        let blocks = crate::generate::frontmatter::extract_mermaid_plus_blocks(&full_spec);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].section_type.as_deref(), Some("unit-test"));
+
+        let parsed: UnitTestSectionPayload = serde_yaml::from_value(blocks[0].frontmatter.clone())
+            .expect("rendered frontmatter must deserialize back into UnitTestSectionPayload");
+        assert_eq!(parsed, payload);
+    }
+
+    #[test]
+    fn render_unit_test_section_matches_precedent_grouping_and_edges() {
+        let payload = unit_test_precedent_payload();
+        let rendered = render_unit_test_section(&payload);
+
+        assert!(rendered
+            .starts_with("## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n"));
+        assert!(rendered.trim_end().ends_with("```"));
+        assert!(rendered.contains("flowchart TD\n"));
+
+        // Requirements sharing a `verify` target are grouped together, in
+        // order of first appearance while scanning ascending requirement
+        // id — exactly the motivating hand-authored precedent's order.
+        let diagram_start = rendered.find("flowchart TD\n").unwrap();
+        let diagram = &rendered[diagram_start..];
+        let expected = concat!(
+            "flowchart TD\n",
+            "    r1[R1 help surface] --> cargo_test_p_lumen_test_cli_convention[cargo test -p lumen --test cli_convention]\n",
+            "    r5[R5 token fallback] --> cargo_test_p_lumen_test_cli_convention\n",
+            "    r2[R2 export file] --> cargo_test_p_lumen_test_backup_restore_e2e[cargo test -p lumen --test backup_restore_e2e]\n",
+            "    r3[R3 import file] --> cargo_test_p_lumen_test_backup_restore_e2e\n",
+            "    r4[R4 aliases] --> cargo_test_p_lumen_test_backup_restore_e2e\n",
+            "```\n",
+        );
+        assert_eq!(diagram, expected, "diagram body:\n{diagram}");
+    }
+
+    #[test]
+    fn mermaid_node_id_sanitizes_and_prefixes_digit_led_ids() {
+        assert_eq!(mermaid_node_id("cargo test -p lumen"), "cargo_test_p_lumen");
+        assert_eq!(mermaid_node_id("  Weird!!Chars??  "), "weird_chars");
+        assert_eq!(mermaid_node_id("123-start"), "t_123_start");
+        assert_eq!(mermaid_node_id(""), "t_");
+    }
+
+    #[test]
+    fn render_td_json_section_payload_rejects_hand_written_mermaid_text() {
+        // AC1: a hand-written mermaid/YAML payload for a JSON-payload
+        // section is rejected with a pointer to the JSON schema, not
+        // silently spliced into the spec.
+        let raw = "---\nid: x\nrequirements: {}\n---\nflowchart TD\n    a --> b\n";
+        let err = render_td_json_section_payload("unit-test", raw).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must be JSON matching the schema"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("requirements"), "got: {msg}");
+    }
+
+    #[test]
+    fn render_td_json_section_payload_rejects_empty_requirements() {
+        let err = render_td_json_section_payload(
+            "unit-test",
+            r#"{"id":"x-verification","requirements":{}}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("missing at least one"));
+    }
+
+    #[test]
+    fn render_td_json_section_payload_accepts_valid_json_and_matches_direct_render() {
+        let payload = unit_test_precedent_payload();
+        let raw_json = serde_json::to_string(&payload).unwrap();
+        let rendered = render_td_json_section_payload("unit-test", &raw_json).unwrap();
+        assert_eq!(rendered, render_unit_test_section(&payload));
     }
 
     #[test]
