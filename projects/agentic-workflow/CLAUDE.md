@@ -21,8 +21,8 @@ Full contract: `projects/agentic-workflow/tech-design/surface/specs/score-standa
 
 ## What this is
 
-SDD is the methodology + library that powers `score` and (eventually)
-`conductor`. It owns:
+SDD is the methodology + library behind the `aw` CLI (`agentic-workflow`).
+It owns:
 
 - CRRR lifecycle types (`phase`, `Lifecycle-Stage` trailers, state machines)
 - Spec / TD / CB artifact models (`issues/`, `tech_design/`, `generate/`)
@@ -64,17 +64,15 @@ The standardize layer verbs are retired — `aw standardize` keeps only
 
 ## Boundary
 
-SDD should NOT contain:
-- Score-specific orchestration (lives in `projects/agentic-workflow/`)
-- Conductor-specific UX (lives in `projects/conductor/`)
-- LLM provider wiring (lives in `crates/cclab-agent`)
+`agentic-workflow` (the `aw` CLI) should NOT contain:
+- Product-specific business logic for any consuming project (lives in that
+  project's own `projects/<name>/` tree — e.g. mamba's Python semantics,
+  jet's bundler internals)
+- Domain-specific CLI UX for other projects (each ships its own binary per
+  the CLI convention in the repo-root `CONTRIBUTING.md`)
 
-If a primitive in SDD looks score-specific, push it up to `projects/agentic-workflow/src/cli/`.
+LLM/agent dispatch wiring for `aw` itself is in-scope here (`src/agents/`,
+`src/cli/llm.rs`) — it is not pushed out to a separate crate.
 
-## Trajectory
-
-Currently positioned as an arsenal crate so multiple projects (score,
-conductor) can consume it. **Planned**: promote to `projects/agentic-workflow/` once
-it grows its own skills + CLI surface — at that point follow the same
-surfaces principle as `projects/agentic-workflow/CLAUDE.md` (skills face-to-user,
-CLI face-to-agent).
+If a primitive here looks specific to one consuming project, push it down
+into that project instead of generalizing it in `agentic-workflow/src/cli/`.
