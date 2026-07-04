@@ -80,6 +80,18 @@ pub struct CsfMeta {
     pub args: BTreeMap<String, CsfValue>,
     /// `argTypes:` object — control metadata for B3.
     pub arg_types: BTreeMap<String, CsfValue>,
+    /// `parameters:` object — render-path metadata such as `layout`.
+    pub parameters: BTreeMap<String, CsfValue>,
+    /// `globals:` object — file-level globals overrides.
+    pub globals: BTreeMap<String, CsfValue>,
+    /// `globalTypes:` object — global default values and toolbar metadata.
+    pub global_types: BTreeMap<String, CsfValue>,
+    /// Whether `decorators:` is authored on the meta object.
+    pub has_decorators: bool,
+    /// Whether `loaders:` is authored on the meta object.
+    pub has_loaders: bool,
+    /// Storybook tags such as `autodocs` / `!autodocs`.
+    pub tags: Vec<String>,
 }
 
 /// Parsed named-export story.
@@ -87,6 +99,9 @@ pub struct CsfMeta {
 pub struct CsfStory {
     /// The export identifier (`Primary`, `Disabled`).
     pub export_name: String,
+    /// Copyable source slice for the story panel. `parameters.docs.source.code`
+    /// overrides the extracted source when authored.
+    pub source: Option<String>,
     /// Story-level `args:` object (merged over meta args by the index).
     pub args: BTreeMap<String, CsfValue>,
     /// Whether the story declares its own `render:` function.
@@ -95,6 +110,14 @@ pub struct CsfStory {
     /// through the bound template, so it carries its own render just like a
     /// CSF3 story with an explicit `render:` field.
     pub has_render: bool,
+    /// `parameters:` object authored on this story.
+    pub parameters: BTreeMap<String, CsfValue>,
+    /// `globals:` object authored on this story.
+    pub globals: BTreeMap<String, CsfValue>,
+    /// Whether `decorators:` is authored on this story.
+    pub has_decorators: bool,
+    /// Whether `loaders:` is authored on this story.
+    pub has_loaders: bool,
 }
 
 /// A re-exported story (`export { Primary } from './button.stories'`).
@@ -159,9 +182,11 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
     let mut top_level_consts: BTreeMap<String, Node> = BTreeMap::new();
     let mut default_object: Option<Node> = None;
     // (export_name, object_node) for CSF3 `export const X = { ... }` stories.
-    let mut named_stories: Vec<(String, Node)> = Vec::new();
+    let mut named_stories: Vec<(String, Node, Node)> = Vec::new();
     // CSF2 `const X = Template.bind({})` story identifiers (in source order).
-    let mut bound_stories: Vec<String> = Vec::new();
+    let mut bound_stories: Vec<(String, Option<String>)> = Vec::new();
+    // Top-level/exported declaration statements keyed by declared identifier.
+    let mut source_decls: BTreeMap<String, Node> = BTreeMap::new();
     // Re-exported stories: `export { A as B } from './x'`.
     let mut re_exports: Vec<CsfReExport> = Vec::new();
 
@@ -170,11 +195,12 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
         match child.kind() {
             "lexical_declaration" | "variable_declaration" => {
                 for (name, value) in declarators(source, child) {
+                    source_decls.insert(name.clone(), child);
                     if let Some(obj) = unwrap_to_object(value) {
                         top_level_consts.insert(name, obj);
-                    } else if is_bind_call(source, value) {
+                    } else if let Some(template) = bind_template_name(source, value) {
                         // CSF2 `const Primary = Template.bind({})`.
-                        bound_stories.push(name);
+                        bound_stories.push((name, Some(template)));
                     }
                 }
             }
@@ -191,10 +217,11 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
                     // or `export const Primary = Template.bind({})` (CSF2 export
                     // form). Track which exported names are bound templates.
                     for (name, value) in declarators(source, decl) {
+                        source_decls.insert(name.clone(), child);
                         if let Some(obj) = unwrap_to_object(value) {
-                            named_stories.push((name, obj));
-                        } else if is_bind_call(source, value) {
-                            bound_stories.push(name);
+                            named_stories.push((name, obj, child));
+                        } else if let Some(template) = bind_template_name(source, value) {
+                            bound_stories.push((name, Some(template)));
                         }
                     }
                 }
@@ -220,12 +247,22 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
 
     let mut stories: Vec<CsfStory> = named_stories
         .into_iter()
-        .map(|(export_name, obj)| parse_story_object(source, &export_name, obj, &scope, &mutations))
+        .map(|(export_name, obj, source_node)| {
+            let extracted_source = Some(node_text(source_node, source).trim().to_string());
+            parse_story_object(
+                source,
+                &export_name,
+                obj,
+                &scope,
+                &mutations,
+                extracted_source,
+            )
+        })
         .collect();
 
     // CSF2 bound-template stories: render comes from the bound template, args
     // come from the later `X.args = {...}` mutation (if any).
-    for name in bound_stories {
+    for (name, template_name) in bound_stories {
         // A name may be both a bound template and (mistakenly) re-declared as an
         // object; the object form already produced a story, so skip duplicates.
         if stories.iter().any(|s| s.export_name == name) {
@@ -236,10 +273,21 @@ pub fn parse_csf(source: &str, _is_tsx: bool) -> Result<ParsedStoryFile> {
             .map(|m| resolve_args(&m.args_pairs, source, &scope, &mutations))
             .unwrap_or_default();
         stories.push(CsfStory {
+            source: bound_story_source(
+                source,
+                &name,
+                template_name.as_deref(),
+                &source_decls,
+                &mutations,
+            ),
             export_name: name,
             args,
             // The render is supplied by the bound template.
             has_render: true,
+            parameters: BTreeMap::new(),
+            globals: BTreeMap::new(),
+            has_decorators: false,
+            has_loaders: false,
         });
     }
 
@@ -272,6 +320,24 @@ fn parse_meta_object(source: &str, obj: Node) -> CsfMeta {
                     meta.arg_types = map;
                 }
             }
+            "parameters" => {
+                if let CsfValue::Object(map) = value_of(source, value) {
+                    meta.parameters = map;
+                }
+            }
+            "globals" => {
+                if let CsfValue::Object(map) = value_of(source, value) {
+                    meta.globals = map;
+                }
+            }
+            "globalTypes" => {
+                if let CsfValue::Object(map) = value_of(source, value) {
+                    meta.global_types = map;
+                }
+            }
+            "decorators" => meta.has_decorators = true,
+            "loaders" => meta.has_loaders = true,
+            "tags" => meta.tags = string_array_values(source, value),
             _ => {}
         }
     }
@@ -288,9 +354,14 @@ fn parse_story_object(
     obj: Node,
     scope: &SpreadScope,
     mutations: &BTreeMap<String, StoryMutation>,
+    extracted_source: Option<String>,
 ) -> CsfStory {
     let mut args = BTreeMap::new();
     let mut has_render = false;
+    let mut parameters = BTreeMap::new();
+    let mut globals = BTreeMap::new();
+    let mut has_decorators = false;
+    let mut has_loaders = false;
     for (key, value) in object_pairs(source, obj) {
         match key.as_str() {
             "args" => {
@@ -299,17 +370,89 @@ fn parse_story_object(
                 }
             }
             "render" => has_render = true,
+            "parameters" => {
+                if let CsfValue::Object(map) = value_of(source, value) {
+                    parameters = map;
+                }
+            }
+            "globals" => {
+                if let CsfValue::Object(map) = value_of(source, value) {
+                    globals = map;
+                }
+            }
+            "decorators" => has_decorators = true,
+            "loaders" => has_loaders = true,
             _ => {}
         }
     }
+    let source = docs_source_override(&parameters).or(extracted_source);
     CsfStory {
         export_name: export_name.to_string(),
+        source,
         args,
         has_render,
+        parameters,
+        globals,
+        has_decorators,
+        has_loaders,
     }
 }
 
+fn docs_source_override(parameters: &BTreeMap<String, CsfValue>) -> Option<String> {
+    let Some(CsfValue::Object(docs)) = parameters.get("docs") else {
+        return None;
+    };
+    let Some(CsfValue::Object(source)) = docs.get("source") else {
+        return None;
+    };
+    match source.get("code") {
+        Some(CsfValue::Str(code)) => Some(code.clone()),
+        Some(CsfValue::Raw(code)) => Some(code.trim_matches(['"', '\'', '`']).to_string()),
+        _ => None,
+    }
+}
+
+fn string_array_values(source: &str, node: Node) -> Vec<String> {
+    if node.kind() != "array" {
+        return Vec::new();
+    }
+    named_children(node)
+        .into_iter()
+        .filter(|child| child.kind() == "string")
+        .map(|child| strip_quotes(node_text(child, source)))
+        .collect()
+}
+
 // ── CSF2 mutations + spread resolution ────────────────────────────────────────
+
+fn bound_story_source(
+    source: &str,
+    story_name: &str,
+    template_name: Option<&str>,
+    decls: &BTreeMap<String, Node>,
+    mutations: &BTreeMap<String, StoryMutation>,
+) -> Option<String> {
+    let mut chunks = Vec::new();
+    if let Some(template) = template_name.and_then(|name| decls.get(name)) {
+        chunks.push(node_text(*template, source).trim().to_string());
+    }
+    if let Some(story_decl) = decls.get(story_name) {
+        let text = node_text(*story_decl, source).trim().to_string();
+        if !chunks.iter().any(|chunk| chunk == &text) {
+            chunks.push(text);
+        }
+    }
+    if let Some(mutation) = mutations.get(story_name) {
+        for statement in &mutation.source_statements {
+            chunks.push(node_text(*statement, source).trim().to_string());
+        }
+    }
+    if chunks.is_empty() {
+        None
+    } else {
+        Some(chunks.join("\n"))
+    }
+}
 
 /// Static scope for resolving spread args within a single file: top-level
 /// `const NAME = {object}` declarations keyed by identifier.
@@ -322,6 +465,8 @@ struct SpreadScope<'a> {
 struct StoryMutation<'a> {
     /// The `args =` RHS object's `pair`/`spread_element` nodes, in source order.
     args_pairs: Vec<Node<'a>>,
+    /// Full top-level assignment statements that should appear in the source panel.
+    source_statements: Vec<Node<'a>>,
     /// `X.storyName = '...'` value, if assigned. (Surfaced for completeness;
     /// the story index keys off the export identifier today.)
     #[allow(dead_code)]
@@ -366,6 +511,7 @@ fn collect_story_mutations<'a>(
 
         let entry = out.entry(story).or_insert_with(|| StoryMutation {
             args_pairs: Vec::new(),
+            source_statements: Vec::new(),
             story_name: None,
         });
         match prop_name {
@@ -373,6 +519,7 @@ fn collect_story_mutations<'a>(
                 if rhs.kind() == "object" {
                     entry.args_pairs = object_member_nodes(rhs);
                 }
+                entry.source_statements.push(child);
             }
             "storyName" => {
                 if rhs.kind() == "string" {
@@ -502,20 +649,18 @@ fn pair_kv<'a>(pair: Node<'a>, source: &str) -> Option<(String, Node<'a>)> {
     Some((key_text, value))
 }
 
-/// True when `value` is a `Template.bind({...})`-shaped call expression: a call
-/// on a `member_expression` whose property identifier is exactly `bind`.
-fn is_bind_call(source: &str, value: Node) -> bool {
+/// Return `Template` when `value` is a `Template.bind({...})`-shaped call.
+fn bind_template_name(source: &str, value: Node) -> Option<String> {
     // Unwrap `as`/`satisfies`/parens around the call (rare, but cheap).
-    let Some(call) = unwrap_to_call(value) else {
-        return false;
-    };
-    let Some(callee) = first_child_of_kind(call, "member_expression") else {
-        return false;
-    };
-    named_children(callee)
-        .into_iter()
+    let call = unwrap_to_call(value)?;
+    let callee = first_child_of_kind(call, "member_expression")?;
+    let kids = named_children(callee);
+    let base = kids.iter().find(|c| c.kind() == "identifier")?;
+    let has_bind = kids
+        .iter()
         .filter(|c| c.kind() == "property_identifier")
-        .any(|c| node_text(c, source) == "bind")
+        .any(|c| node_text(*c, source) == "bind");
+    has_bind.then(|| node_text(*base, source).to_string())
 }
 
 /// Unwrap `as`/`satisfies`/parenthesized wrappers to reach a `call_expression`.
@@ -782,6 +927,11 @@ export const Disabled: Story = {
             Some(&CsfValue::Number("3".into()))
         );
         assert!(!primary.has_render);
+        assert!(primary
+            .source
+            .as_deref()
+            .unwrap()
+            .contains("export const Primary: Story ="));
 
         let disabled = &parsed.stories[1];
         assert_eq!(disabled.export_name, "Disabled");
@@ -848,6 +998,37 @@ export { Primary };
         assert_eq!(primary.args.get("label"), Some(&CsfValue::Str("Hi".into())));
         assert_eq!(primary.args.get("on"), Some(&CsfValue::Bool(true)));
         assert!(primary.has_render, "bound template supplies render");
+        let primary_source = primary.source.as_deref().unwrap();
+        assert!(primary_source.contains("const Template = (args) => <Toggle {...args} />;"));
+        assert!(primary_source.contains("const Primary = Template.bind({});"));
+        assert!(primary_source.contains("Primary.args = { label: \"Hi\", on: true };"));
+
+        let secondary = parsed
+            .stories
+            .iter()
+            .find(|s| s.export_name == "Secondary")
+            .unwrap();
+        let secondary_source = secondary.source.as_deref().unwrap();
+        assert!(secondary_source.contains("export const Secondary = Template.bind({});"));
+        assert!(secondary_source.contains("Secondary.args = { label: \"Lo\" };"));
+    }
+
+    #[test]
+    fn docs_source_code_overrides_extracted_source() {
+        let src = r#"
+import { Button } from './Button';
+export default { title: 'Components/Button', component: Button };
+
+export const Primary = {
+  args: { label: 'Hidden' },
+  parameters: { docs: { source: { code: '<Button label="Copy me" />' } } },
+};
+"#;
+        let parsed = parse_csf(src, true).expect("parses");
+        assert_eq!(
+            parsed.stories[0].source.as_deref(),
+            Some("<Button label=\"Copy me\" />")
+        );
     }
 
     #[test]
@@ -882,6 +1063,55 @@ export const Dynamic = { args: { ...imported, only: 9 } };
         assert!(
             !dynamic.args.contains_key("x"),
             "unresolvable spread dropped"
+        );
+    }
+
+    #[test]
+    fn parses_render_path_core_fields() {
+        let src = r#"
+import { Button } from './Button';
+export default {
+  title: 'Components/Button',
+  component: Button,
+  decorators: [(Story) => <section><Story /></section>],
+  parameters: { layout: 'centered', chromatic: { disable: true } },
+  globals: { theme: 'light' },
+  globalTypes: { theme: { defaultValue: 'dark' } },
+  loaders: [async () => ({ project: true })],
+  tags: ['autodocs'],
+};
+
+export const Primary = {
+  decorators: [(Story) => <div><Story /></div>],
+  parameters: { layout: 'fullscreen' },
+  globals: { locale: 'en' },
+  loaders: [() => ({ story: true })],
+};
+"#;
+        let parsed = parse_csf(src, true).expect("parses");
+        assert!(parsed.meta.has_decorators);
+        assert!(parsed.meta.has_loaders);
+        assert_eq!(
+            parsed.meta.parameters.get("layout"),
+            Some(&CsfValue::Str("centered".into()))
+        );
+        assert!(parsed.meta.global_types.contains_key("theme"));
+        assert_eq!(
+            parsed.meta.globals.get("theme"),
+            Some(&CsfValue::Str("light".into()))
+        );
+        assert_eq!(parsed.meta.tags, vec!["autodocs"]);
+
+        let primary = &parsed.stories[0];
+        assert!(primary.has_decorators);
+        assert!(primary.has_loaders);
+        assert_eq!(
+            primary.parameters.get("layout"),
+            Some(&CsfValue::Str("fullscreen".into()))
+        );
+        assert_eq!(
+            primary.globals.get("locale"),
+            Some(&CsfValue::Str("en".into()))
         );
     }
 

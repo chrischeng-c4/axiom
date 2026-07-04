@@ -72,7 +72,19 @@ fn write_fixtures() -> TempDir {
     write(root.join("src/surfaces/Card.stories.tsx"), CARD_STORIES);
     write(
         root.join("src/components/Button.tsx"),
-        "export const Button = (props) => null;\n",
+        r#"
+export interface ButtonProps {
+  /** Main label shown in the button. */
+  label: string;
+  /** Emphasize the button. */
+  primary?: boolean;
+}
+
+/**
+ * Button component description.
+ */
+export const Button = (props: ButtonProps) => null;
+"#,
     );
     write(
         root.join("src/surfaces/Card.tsx"),
@@ -99,6 +111,18 @@ fn build_emits_manager_previews_and_modules() {
 
     // Manager shell.
     assert!(out.join("index.html").is_file(), "index.html written");
+    assert!(out.join("index.json").is_file(), "index.json written");
+    let manager = fs::read_to_string(out.join("index.html")).expect("read manager");
+    assert!(manager.contains("class=\"jet-docs-link\""));
+    assert!(manager.contains("Button component description."));
+    assert!(manager.contains("Main label shown in the button."));
+    assert!(manager.contains("<code>string</code>"));
+    assert!(manager.contains("preview/components-button--primary.html"));
+    let index_json = fs::read_to_string(out.join("index.json")).expect("read index json");
+    assert!(index_json.contains("\"schemaVersion\":1"));
+    assert!(index_json.contains("\"id\":\"components-button--primary\""));
+    assert!(index_json.contains("\"importPath\":\"src/components/Button.stories.tsx\""));
+    assert!(index_json.contains("\"docs\":["));
 
     // One preview per story, by id.
     for story in &index.stories {
@@ -132,10 +156,95 @@ fn build_emits_manager_previews_and_modules() {
 
     // The result lists every emitted relative path.
     assert!(result.emitted.iter().any(|p| p == Path::new("index.html")));
+    assert!(result.emitted.iter().any(|p| p == Path::new("index.json")));
     assert!(result
         .emitted
         .iter()
         .any(|p| p == Path::new("modules/src/components/Button.js")));
+}
+
+#[test]
+fn static_manager_keeps_dev_feature_parity_checklist() {
+    let dir = write_fixtures();
+    let out = dir.path().join("dist-stories");
+    build_stories_static(dir.path(), &out).expect("build");
+    let manager = fs::read_to_string(out.join("index.html")).expect("read manager");
+    let index_json = fs::read_to_string(out.join("index.json")).expect("read index json");
+    let checklist = [
+        ("toolbar", "id=\"jet-viewport\""),
+        ("controls panel", "id=\"jet-controls-body\""),
+        ("actions panel", "id=\"jet-actions-log\""),
+        ("interactions panel", "id=\"jet-interactions-log\""),
+        ("a11y panel", "id=\"jet-a11y-log\""),
+        ("source panel", "id=\"jet-source-code\""),
+        ("docs pages", "class=\"jet-docs-link\""),
+        ("manager search", "id=\"jet-search\""),
+        ("theme toggle", "id=\"jet-theme-toggle\""),
+        ("index artifact", "\"schemaVersion\":1"),
+    ];
+    for (feature, needle) in checklist {
+        let haystack = if feature == "index artifact" {
+            &index_json
+        } else {
+            &manager
+        };
+        assert!(
+            haystack.contains(needle),
+            "{feature} missing from static parity checklist"
+        );
+    }
+}
+
+#[test]
+fn mdx_docs_pages_render_core_blocks_in_static_export() {
+    let dir = write_fixtures();
+    write(
+        dir.path().join("src/components/Button.mdx"),
+        r#"
+<Meta title="Components/Button" />
+
+# Button usage
+Use the primary button for the main action.
+
+<Canvas of={ButtonStories.Primary} />
+<Story id="components-button--disabled" />
+<ArgTypes of={ButtonStories} />
+<Source of={ButtonStories.Primary} />
+"#,
+    );
+    let out = dir.path().join("dist-stories");
+    build_stories_static(dir.path(), &out).expect("build");
+
+    let manager = fs::read_to_string(out.join("index.html")).expect("read manager");
+    assert!(manager.contains("data-docs-id=\"mdx-components-button\""));
+    assert!(manager.contains("Button usage"));
+    assert!(manager.contains("Use the primary button for the main action."));
+    assert!(manager.contains("preview/components-button--primary.html"));
+    assert!(manager.contains("preview/components-button--disabled.html"));
+    assert!(manager.contains("Main label shown in the button."));
+    assert!(manager.contains("export const Primary"));
+}
+
+#[test]
+fn broken_mdx_surfaces_file_named_diagnostic() {
+    let dir = write_fixtures();
+    write(
+        dir.path().join("src/components/Broken.mdx"),
+        r#"
+<Meta title="Components/Button" />
+<CustomThing />
+"#,
+    );
+
+    let index = discover(dir.path());
+    assert!(
+        index.diagnostics.iter().any(|diag| {
+            diag.contains("src/components/Broken.mdx")
+                && diag.contains("unsupported MDX JSX tag <CustomThing>")
+        }),
+        "diagnostics should name broken MDX file and unsupported syntax: {:?}",
+        index.diagnostics
+    );
 }
 
 /// (b) The manager + previews reference RELATIVE paths that exist in the output.
@@ -173,6 +282,10 @@ fn emitted_urls_are_relative_and_resolve() {
         !preview.contains("WebSocket"),
         "no HMR WebSocket in static preview"
     );
+    assert!(
+        !preview.contains("/@react-refresh") && !preview.contains("RefreshRuntime"),
+        "static preview must not reference the dev-only refresh runtime: {preview}"
+    );
 
     // The emitted Button.stories module rewrites its `./Button` import to the
     // emitted `.js` sibling, which exists.
@@ -182,7 +295,58 @@ fn emitted_urls_are_relative_and_resolve() {
         mod_js.contains("./Button.js"),
         "relative import rewritten to emitted .js sibling: {mod_js}"
     );
+    assert!(
+        !mod_js.contains("/@react-refresh")
+            && !mod_js.contains("RefreshRuntime")
+            && !mod_js.contains("enqueueUpdate"),
+        "static emitted modules must not carry React Fast Refresh injection: {mod_js}"
+    );
     assert!(out.join("modules/src/components/Button.js").is_file());
+}
+
+#[test]
+fn static_build_emits_project_preview_runtime_module() {
+    let dir = write_fixtures();
+    let root = dir.path();
+    write(
+        root.join(".storybook/preview.tsx"),
+        r#"
+import React from 'react';
+
+export const globalTypes = { theme: { defaultValue: 'dark' } };
+export const globals = { locale: 'en' };
+export const parameters = { layout: 'centered' };
+export const loaders = [async () => ({ fromPreview: true })];
+export const decorators = [
+  (Story, context) => <div data-theme={context.globals.theme}><Story /></div>,
+];
+"#,
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    let preview_runtime = Path::new("modules/.storybook/preview.js");
+    assert!(
+        out.join(preview_runtime).is_file(),
+        "project preview module is emitted"
+    );
+    assert!(result.emitted.iter().any(|p| p == preview_runtime));
+
+    let primary_preview = fs::read_to_string(out.join("preview/components-button--primary.html"))
+        .expect("read preview");
+    assert!(
+        primary_preview
+            .contains(r#"import * as ProjectPreview from "../modules/.storybook/preview.js";"#),
+        "static preview imports emitted project preview runtime: {primary_preview}"
+    );
+    assert!(
+        primary_preview.contains("ProjectPreview.decorators")
+            && primary_preview.contains("ProjectPreview.globalTypes")
+            && primary_preview.contains("ProjectPreview.loaders")
+            && primary_preview.contains("applyLayout(parameters.layout)"),
+        "static preview runtime applies CSF render-path core"
+    );
 }
 
 /// (c) Building twice is clean — a stale file from a prior build is removed.
@@ -352,17 +516,11 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
         root.join("node_modules/@tw-tech/shared-assets/package.json"),
         r#"{
   "name": "@tw-tech/shared-assets",
-  "version": "1.0.0",
-  "exports": {
-    "./images/empty-default.png": {
-      "import": "./dist/images/empty-default.png",
-      "default": "./dist/images/empty-default.png"
-    }
-  }
+  "version": "1.0.0"
 }"#,
     );
     write(
-        root.join("node_modules/@tw-tech/shared-assets/dist/images/empty-default.png"),
+        root.join("node_modules/@tw-tech/shared-assets/images/empty-default.png"),
         "png-bytes",
     );
 
@@ -372,7 +530,7 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
     );
     write(
         root.join("src/components/AssetBox.tsx"),
-        "import iconUrl from './error.svg';\nimport defaultImage from '@tw-tech/shared-assets/images/empty-default.png';\nexport const AssetBox = () => ({ iconUrl, defaultImage });\n",
+        "import iconUrl from './error.svg?url';\nimport defaultImage from '@tw-tech/shared-assets/images/empty-default.png?url';\nexport const AssetBox = () => ({ iconUrl, defaultImage });\n",
     );
     write(
         root.join("src/components/error.svg"),
@@ -383,7 +541,7 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
     let result = build_stories_static(root, &out).expect("build");
 
     let svg_rel = Path::new("modules/src/components/error.svg");
-    let png_rel = Path::new("deps/@tw-tech/shared-assets/dist/images/empty-default.png");
+    let png_rel = Path::new("deps/@tw-tech/shared-assets/images/empty-default.png");
     assert!(out.join(svg_rel).is_file(), "SVG asset must be copied");
     assert!(out.join(png_rel).is_file(), "PNG asset must be copied");
     assert!(result.emitted.iter().any(|p| p == svg_rel));
@@ -397,13 +555,291 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
     );
     assert!(
         component.contains(
-            r#"const defaultImage = "../../../deps/@tw-tech/shared-assets/dist/images/empty-default.png";"#
+            r#"const defaultImage = "../../../deps/@tw-tech/shared-assets/images/empty-default.png";"#
         ),
         "bare PNG import should become a URL string into deps/: {component}"
     );
     assert!(
         !component.contains("import iconUrl") && !component.contains("import defaultImage"),
         "asset imports must not remain as browser module imports: {component}"
+    );
+}
+
+#[test]
+fn build_emits_react_is_as_browser_esm_shim() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/react-is/package.json"),
+        r#"{"name":"react-is","version":"16.13.1","main":"index.js"}"#,
+    );
+    write(
+        root.join("node_modules/react-is/index.js"),
+        "module.exports = require('./cjs/react-is.development.js');\n",
+    );
+    write(
+        root.join("src/components/Probe.stories.tsx"),
+        "import { Probe } from './Probe';\nexport default { title: 'Components/Probe', component: Probe };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Probe.tsx"),
+        "import { ForwardRef, isMemo } from 'react-is';\nexport const Probe = () => String(Boolean(ForwardRef) && !isMemo({}));\n",
+    );
+
+    let out = root.join("dist-stories");
+    build_stories_static(root, &out).expect("build");
+
+    let shim = fs::read_to_string(out.join("deps/react-is/index.js")).expect("read react-is shim");
+    assert!(
+        shim.contains("const ForwardRef") && shim.contains("function isMemo"),
+        "react-is should be emitted as an ESM shim: {shim}"
+    );
+    assert!(
+        shim.contains("export {") && !shim.contains("module.exports") && !shim.contains("require("),
+        "react-is shim must be browser ESM, not CommonJS: {shim}"
+    );
+
+    let component = fs::read_to_string(out.join("modules/src/components/Probe.js"))
+        .expect("read component module");
+    assert!(
+        component.contains("../../../deps/react-is/index.js"),
+        "component should import the emitted react-is ESM shim: {component}"
+    );
+}
+
+#[test]
+fn build_emits_classnames_as_browser_esm_default_shim() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/classnames/package.json"),
+        r#"{"name":"classnames","version":"2.5.1","main":"index.js"}"#,
+    );
+    write(
+        root.join("node_modules/classnames/index.js"),
+        "module.exports = function classNames() { return ''; };\n",
+    );
+    write(
+        root.join("src/components/Probe.stories.tsx"),
+        "import { Probe } from './Probe';\nexport default { title: 'Components/Probe', component: Probe };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Probe.tsx"),
+        "import classNames from 'classnames';\nexport const Probe = () => classNames('a', { b: true });\n",
+    );
+
+    let out = root.join("dist-stories");
+    build_stories_static(root, &out).expect("build");
+
+    let shim =
+        fs::read_to_string(out.join("deps/classnames/index.js")).expect("read classnames shim");
+    assert!(
+        shim.contains("function classNames") && shim.contains("export default classNames"),
+        "classnames should be emitted as an ESM default shim: {shim}"
+    );
+    assert!(
+        !shim.contains("module.exports") && !shim.contains("require("),
+        "classnames shim must be browser ESM, not CommonJS: {shim}"
+    );
+}
+
+#[test]
+fn build_wraps_dayjs_plugins_as_browser_esm_default() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/dayjs/package.json"),
+        r#"{"name":"dayjs","version":"1.11.13","main":"dayjs.min.js"}"#,
+    );
+    write(
+        root.join("node_modules/dayjs/plugin/advancedFormat.js"),
+        "module.exports = function advancedFormat() {};\n",
+    );
+    write(
+        root.join("src/components/Probe.stories.tsx"),
+        "import { Probe } from './Probe';\nexport default { title: 'Components/Probe', component: Probe };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Probe.tsx"),
+        "import advancedFormat from 'dayjs/plugin/advancedFormat';\nexport const Probe = () => Boolean(advancedFormat);\n",
+    );
+
+    let out = root.join("dist-stories");
+    build_stories_static(root, &out).expect("build");
+
+    let wrapper = fs::read_to_string(out.join("deps/dayjs/plugin/advancedFormat.js"))
+        .expect("read dayjs plugin wrapper");
+    assert!(
+        wrapper.contains("const module = { exports: {} }")
+            && wrapper.contains("export default module.exports"),
+        "dayjs plugin should be wrapped as an ESM default export: {wrapper}"
+    );
+}
+
+#[test]
+fn build_wraps_dayjs_main_as_browser_esm_default() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/dayjs/package.json"),
+        r#"{"name":"dayjs","version":"1.11.13","main":"dayjs.min.js"}"#,
+    );
+    write(
+        root.join("node_modules/dayjs/dayjs.min.js"),
+        "module.exports = function dayjs() {};\n",
+    );
+    write(
+        root.join("src/components/Probe.stories.tsx"),
+        "import { Probe } from './Probe';\nexport default { title: 'Components/Probe', component: Probe };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Probe.tsx"),
+        "import dayjs from 'dayjs';\nexport const Probe = () => Boolean(dayjs);\n",
+    );
+
+    let out = root.join("dist-stories");
+    build_stories_static(root, &out).expect("build");
+
+    let wrapper =
+        fs::read_to_string(out.join("deps/dayjs/dayjs.min.js")).expect("read dayjs main wrapper");
+    assert!(
+        wrapper.contains("const module = { exports: {} }")
+            && wrapper.contains("export default module.exports"),
+        "dayjs main should be wrapped as an ESM default export: {wrapper}"
+    );
+}
+
+#[test]
+fn build_emits_json2mq_as_browser_esm_default_shim() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/json2mq/package.json"),
+        r#"{"name":"json2mq","version":"0.2.0","main":"index.js"}"#,
+    );
+    write(
+        root.join("node_modules/json2mq/index.js"),
+        "module.exports = function json2mq() { return ''; };\n",
+    );
+    write(
+        root.join("src/components/Probe.stories.tsx"),
+        "import { Probe } from './Probe';\nexport default { title: 'Components/Probe', component: Probe };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Probe.tsx"),
+        "import json2mq from 'json2mq';\nexport const Probe = () => json2mq({ minWidth: 1 });\n",
+    );
+
+    let out = root.join("dist-stories");
+    build_stories_static(root, &out).expect("build");
+
+    let shim = fs::read_to_string(out.join("deps/json2mq/index.js")).expect("read json2mq shim");
+    assert!(
+        shim.contains("function json2mq") && shim.contains("export default json2mq"),
+        "json2mq should be emitted as an ESM default shim: {shim}"
+    );
+    assert!(
+        !shim.contains("module.exports") && !shim.contains("require("),
+        "json2mq shim must be browser ESM, not CommonJS: {shim}"
+    );
+}
+
+#[test]
+fn build_emits_copy_to_clipboard_browser_esm_default_shim() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/copy-to-clipboard/package.json"),
+        r#"{"name":"copy-to-clipboard","version":"3.3.3","main":"index.js","dependencies":{"toggle-selection":"^1.0.6"}}"#,
+    );
+    write(
+        root.join("node_modules/copy-to-clipboard/index.js"),
+        "var deselectCurrent = require('toggle-selection');\nmodule.exports = function copy() { return Boolean(deselectCurrent); };\n",
+    );
+    write(
+        root.join("node_modules/toggle-selection/package.json"),
+        r#"{"name":"toggle-selection","version":"1.0.6","main":"index.js"}"#,
+    );
+    write(
+        root.join("node_modules/toggle-selection/index.js"),
+        "module.exports = function toggleSelection() { return function noop() {}; };\n",
+    );
+    write(
+        root.join("src/components/Probe.stories.tsx"),
+        "import { Probe } from './Probe';\nexport default { title: 'Components/Probe', component: Probe };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Probe.tsx"),
+        "import copy from 'copy-to-clipboard';\nexport const Probe = () => String(copy('ok'));\n",
+    );
+
+    let out = root.join("dist-stories");
+    build_stories_static(root, &out).expect("build");
+
+    let copy_shim = fs::read_to_string(out.join("deps/copy-to-clipboard/index.js"))
+        .expect("read copy-to-clipboard shim");
+    assert!(
+        copy_shim.contains("import deselectCurrent from \"../toggle-selection/index.js\"")
+            && copy_shim.contains("export default copy"),
+        "copy-to-clipboard should be emitted as an ESM default shim: {copy_shim}"
+    );
+    assert!(
+        !copy_shim.contains("module.exports") && !copy_shim.contains("require("),
+        "copy-to-clipboard shim must be browser ESM, not CommonJS: {copy_shim}"
+    );
+
+    let toggle_shim = fs::read_to_string(out.join("deps/toggle-selection/index.js"))
+        .expect("read toggle-selection shim");
+    assert!(
+        toggle_shim.contains("function toggleSelection")
+            && toggle_shim.contains("export default toggleSelection"),
+        "toggle-selection should be emitted as an ESM default shim: {toggle_shim}"
+    );
+    assert!(
+        !toggle_shim.contains("module.exports") && !toggle_shim.contains("require("),
+        "toggle-selection shim must be browser ESM, not CommonJS: {toggle_shim}"
+    );
+}
+
+#[test]
+fn build_applies_production_defines_to_static_modules() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("node_modules/env-probe/package.json"),
+        r#"{"name":"env-probe","version":"1.0.0","module":"index.js"}"#,
+    );
+    write(
+        root.join("node_modules/env-probe/index.js"),
+        "export const mode = process.env.NODE_ENV;\nexport const dev = __DEV__;\n",
+    );
+    write(
+        root.join("src/components/Probe.stories.tsx"),
+        "import { Probe } from './Probe';\nexport default { title: 'Components/Probe', component: Probe };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/Probe.tsx"),
+        "import { mode, dev } from 'env-probe';\nexport const Probe = () => `${mode}:${dev}`;\n",
+    );
+
+    let out = root.join("dist-stories");
+    build_stories_static(root, &out).expect("build");
+
+    let dep = fs::read_to_string(out.join("deps/env-probe/index.js")).expect("read env-probe dep");
+    assert!(
+        dep.contains(r#""production""#) && dep.contains("false"),
+        "static modules should receive production defines: {dep}"
+    );
+    assert!(
+        !dep.contains("process.env") && !dep.contains("__DEV__"),
+        "static modules should not leave browser-undefined env globals: {dep}"
     );
 }
 
@@ -422,6 +858,8 @@ fn dev_renderers_default_output_is_unchanged() {
         name: "Primary".into(),
         export_name: "Primary".into(),
         args: BTreeMap::new(),
+        parameters: BTreeMap::new(),
+        source: None,
         has_render: false,
         file: PathBuf::from("/x/Button.stories.tsx"),
         title_path: vec!["Components".into(), "Button".into()],

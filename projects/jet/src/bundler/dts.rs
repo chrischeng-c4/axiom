@@ -31,6 +31,7 @@
 //! @issue #796
 //! @issue #797
 //! @issue #799
+//! @issue #937
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -234,7 +235,7 @@ fn emit_export_statement(
             // statically determinable. Emit a synthetic `_default` of that
             // type and re-export it as the default.
             "as_expression" | "satisfies_expression" | "parenthesized_expression" if is_default => {
-                if let Some(ty) = default_export_annotated_type(child, source) {
+                if let Some(ty) = annotated_expression_type(child, source) {
                     push_line(out, &format!("declare const _default: {ty};"));
                     push_line(out, "export default _default;");
                     return Ok(());
@@ -270,13 +271,13 @@ fn emit_export_statement(
 /// carries one: `expr as Type`, `expr satisfies Type`, or a parenthesized
 /// wrapper around either. Returns the type text, or `None` when the expression
 /// has no boundary annotation.
-fn default_export_annotated_type(node: Node, source: &str) -> Option<String> {
+fn annotated_expression_type(node: Node, source: &str) -> Option<String> {
     match node.kind() {
         // `(inner)` — the inner expression has no field name on this grammar,
         // so unwrap the first named child and recurse.
         "parenthesized_expression" => {
             let inner = first_named_child(node)?;
-            default_export_annotated_type(inner, source)
+            annotated_expression_type(inner, source)
         }
         // `expr as Type` / `expr satisfies Type` — the type is the trailing
         // named child (`type` field is not set on this grammar).
@@ -372,6 +373,9 @@ fn infer_variable_declarator_type(node: Node, source: &str) -> Option<String> {
     let value = node
         .child_by_field_name("value")
         .or_else(|| last_named_child(node))?;
+    if let Some(inferred) = annotated_expression_type(value, source) {
+        return Some(inferred);
+    }
     if let Some(inferred) = infer_arrow_function_type(value, source) {
         return Some(inferred);
     }
@@ -919,6 +923,12 @@ fn infer_return_statement_type(
     source: &str,
     param_types: &HashMap<String, String>,
 ) -> Option<String> {
+    if let Some(expr_node) = first_named_child(node) {
+        if let Some(ty) = annotated_expression_type(expr_node, source) {
+            return Some(ty);
+        }
+    }
+
     let text = node_text(node, source).trim();
     let expr = text
         .strip_prefix("return")
@@ -1517,6 +1527,23 @@ mod tests {
     }
 
     #[test]
+    fn infers_exported_function_as_expression_return() {
+        let src = r#"export interface UploadApi {
+    open(): Promise<void>;
+}
+export function createUploadApi() {
+    const api = {};
+    return api as UploadApi;
+}
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare function createUploadApi(): UploadApi;"),
+            "return as-expression should use its asserted type, got:\n{dts}"
+        );
+    }
+
+    #[test]
     fn infers_exported_class_member_string_return() {
         let src = r#"export class Greeter {
     greet(name: string) { return `hi ${name}`; }
@@ -1550,6 +1577,22 @@ mod tests {
         assert!(
             !dts.contains("1.0.0"),
             "const initializer must be dropped, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_as_expression_signature() {
+        let src = r#"export interface UploadApi {
+    open(): Promise<void>;
+}
+export const uploadApi = {
+    async open() {},
+} as UploadApi;
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const uploadApi: UploadApi;"),
+            "const as-expression should use its asserted type, got:\n{dts}"
         );
     }
 

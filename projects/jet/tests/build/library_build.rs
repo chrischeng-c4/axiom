@@ -466,6 +466,66 @@ fn lib_build_skips_configured_css_export_and_merges_once() {
     );
 }
 
+#[test]
+// @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#unit-test
+fn lib_build_skips_unconfigured_css_export_entry() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "css-export-entry-lib",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "./dist/index.js",
+            "exports": {
+                ".": "./dist/index.js",
+                "./style.css": "./dist/style.css"
+            }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        "export const hello = (): string => 'hello';\n",
+    );
+
+    let options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
+    };
+
+    let result = build_library(options).expect("non-code CSS export must not be built as an entry");
+    assert_eq!(
+        result.entries.len(),
+        1,
+        "only the JS entry should be built, got {:?}",
+        result
+            .entries
+            .iter()
+            .map(|entry| entry.subpath.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(result.entries[0].subpath, ".");
+    assert!(
+        result.entries[0].code.contains("hello"),
+        "JS entry should still build, got:\n{}",
+        result.entries[0].code
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (d) App-mode build is unchanged (no regression)
 // ──────────────────────────────────────────────────────────────────────────
