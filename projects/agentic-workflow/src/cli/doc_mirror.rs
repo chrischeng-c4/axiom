@@ -409,6 +409,133 @@ pub fn upsert_projects_table(
     ))
 }
 
+// ---------------------------------------------------------------------------
+// Trait registry (issue #1077, archetype-as-traits slice 1/3)
+// ---------------------------------------------------------------------------
+
+/// One `[capability.profile].traits` id's data: the baseline capabilities it
+/// derives, the CONTRIBUTING.md "Service archetype" heading it enforces, and
+/// an agent-facing one-liner. Replaces the hand-maintained match family in
+/// `crate::cli::capability` for traits that already have a settled
+/// CONTRIBUTING.md doc home; [`render_trait_table`] projects this table's
+/// rows into CONTRIBUTING.md's generated `<!-- aw:trait-table:start/end -->`
+/// block so the archetype's doc side stops being prose-only.
+///
+/// `contributing_anchor` stores the exact heading line (including the `###
+/// ` prefix) rather than a precomputed slug, so both `render_trait_table`
+/// (which derives the link's href from it) and `root_trait_coverage_test`
+/// (which resolves it against a live heading scan of CONTRIBUTING.md) share
+/// one robust, literal-match representation that can never fall out of sync
+/// with a hand-edited heading the way a duplicated slug string could.
+///
+/// Only the three traits with a settled CONTRIBUTING.md doc home are
+/// data-ified this slice (`http2_api`, `kubernetes_native`,
+/// `primary_replicas`); the remaining known traits (`cli_facing`,
+/// `competitive_replacement`, `long_running`, `network_exposed`,
+/// `agent_facing`, `stateful_storage`) have no settled anchor yet and stay
+/// in `capability::other_known_trait_baseline_caps` until a follow-up slice
+/// gives them one (issue #1077 out-of-scope: new traits / umbrella
+/// `service` is slice 2, #1078).
+// `pub`, not `pub(crate)`: the bidirectional coverage test
+// (`root_trait_coverage_test`, issue #1077 AC3) lives in `tests/` and
+// compiles against this crate as an external dependent, so it can only see
+// `pub` items — matching every other shared-projector constant in this
+// module (`TRAIT_TABLE_START`, `PROJECTS_TABLE_START`, ...).
+pub struct TraitDef {
+    pub id: &'static str,
+    pub baseline_caps: &'static [&'static str],
+    pub contributing_anchor: &'static str,
+    pub about: &'static str,
+}
+
+/// The archetype-anchored trait registry, in CONTRIBUTING.md trait-table row
+/// order.
+pub const TRAITS: &[TraitDef] = &[
+    TraitDef {
+        id: "http2_api",
+        baseline_caps: &["http2-api-list"],
+        contributing_anchor: "### Transport — h2c + OpenAPI on one port",
+        about: "Project owes a public HTTP/2 (h2c) + OpenAPI transport baseline, not full OpenAPI completeness.",
+    },
+    TraitDef {
+        id: "kubernetes_native",
+        baseline_caps: &["kubernetes-native-deployment"],
+        contributing_anchor: "### Deploy artifacts — image, cluster API, operator, instance",
+        about: "Project owes a Kubernetes-native deployment baseline: image, cluster API, operator, instance.",
+    },
+    TraitDef {
+        id: "primary_replicas",
+        baseline_caps: &["primary-replicas"],
+        contributing_anchor: "### HA — `raft-core`, sharded and strongly consistent",
+        about: "Project owes a primary/replica HA topology baseline; select only for projects that actually support that topology.",
+    },
+];
+
+/// Marker pair around the generated CONTRIBUTING.md trait table, placed in
+/// the "Service archetype" section right after its intro paragraph/table and
+/// before the first H3.
+pub const TRAIT_TABLE_START: &str = "<!-- aw:trait-table:start -->";
+pub const TRAIT_TABLE_END: &str = "<!-- aw:trait-table:end -->";
+
+/// A best-effort Markdown heading slug for same-document anchor links:
+/// lower-case, ASCII-alphanumeric runs kept, every other character (including
+/// the CONTRIBUTING.md headings' em dashes, backticks, and commas) collapsed
+/// to a single `-`, with leading/trailing `-` trimmed. Not guaranteed to
+/// reproduce every renderer's exact slug algorithm (GitHub's, for one, keeps
+/// internal hyphens as single hyphens too, so the two happen to agree here),
+/// but deterministic and shared by [`render_trait_table`] alone — the
+/// bidirectional coverage test resolves anchors via the literal heading text
+/// in [`TraitDef::contributing_anchor`], not this slug.
+fn slugify_heading(heading_text: &str) -> String {
+    let mut slug = String::new();
+    let mut prev_was_sep = true;
+    for ch in heading_text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            prev_was_sep = false;
+        } else if !prev_was_sep {
+            slug.push('-');
+            prev_was_sep = true;
+        }
+    }
+    slug.trim_end_matches('-').to_string()
+}
+
+/// Render the generated `| Trait | Derives | Enforces | About |` table from
+/// [`TRAITS`] (issue #1077). `Enforces` is a same-document Markdown link to
+/// the trait's `contributing_anchor` heading.
+pub fn render_trait_table() -> String {
+    let mut out = String::from("| Trait | Derives | Enforces | About |\n|---|---|---|---|\n");
+    for def in TRAITS {
+        let heading_text = def.contributing_anchor.trim_start_matches("### ");
+        let anchor = slugify_heading(heading_text);
+        let derives = def
+            .baseline_caps
+            .iter()
+            .map(|cap| format!("`{cap}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            "| `{}` | {} | [{}](#{}) | {} |\n",
+            def.id, derives, heading_text, anchor, def.about
+        ));
+    }
+    out
+}
+
+/// Regenerate the repo-root CONTRIBUTING.md's trait table between
+/// [`TRAIT_TABLE_START`]/[`TRAIT_TABLE_END`] (issue #1077). Callers gate on
+/// the markers already being present in `doc_text`, mirroring
+/// [`upsert_projects_table`]'s opt-in-per-document contract.
+pub fn upsert_trait_table(doc_text: &str) -> String {
+    replace_between_markers(
+        doc_text,
+        TRAIT_TABLE_START,
+        TRAIT_TABLE_END,
+        &render_trait_table(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,6 +726,57 @@ path = "projects/aw-duplicate"
         assert!(!updated.contains("stale table"));
         assert!(updated.contains("[demo](projects/demo/README.md)"));
         assert!(updated.contains("## Install\nkeep me"));
+    }
+
+    // -- Trait registry (issue #1077) ---------------------------------------
+
+    #[test]
+    fn slugify_heading_matches_hand_computed_contributing_anchors() {
+        assert_eq!(
+            slugify_heading("Transport — h2c + OpenAPI on one port"),
+            "transport-h2c-openapi-on-one-port"
+        );
+        assert_eq!(
+            slugify_heading("Deploy artifacts — image, cluster API, operator, instance"),
+            "deploy-artifacts-image-cluster-api-operator-instance"
+        );
+        assert_eq!(
+            slugify_heading("HA — `raft-core`, sharded and strongly consistent"),
+            "ha-raft-core-sharded-and-strongly-consistent"
+        );
+    }
+
+    #[test]
+    fn render_trait_table_has_one_row_per_trait_def_with_working_links() {
+        let table = render_trait_table();
+        assert!(table.starts_with("| Trait | Derives | Enforces | About |\n|---|---|---|---|\n"));
+        assert_eq!(table.lines().count(), 2 + TRAITS.len());
+        for def in TRAITS {
+            assert!(
+                table.contains(&format!("| `{}` |", def.id)),
+                "missing row for trait `{}`",
+                def.id
+            );
+            for cap in def.baseline_caps {
+                assert!(table.contains(&format!("`{cap}`")));
+            }
+            assert!(table.contains(def.about));
+            let heading_text = def.contributing_anchor.trim_start_matches("### ");
+            let anchor = slugify_heading(heading_text);
+            assert!(table.contains(&format!("[{heading_text}](#{anchor})")));
+        }
+    }
+
+    #[test]
+    fn upsert_trait_table_replaces_only_the_marked_region() {
+        let doc = format!(
+            "## Service archetype\n\nintro\n\n{}\nstale row\n{}\n\n### Next H3\n",
+            TRAIT_TABLE_START, TRAIT_TABLE_END
+        );
+        let updated = upsert_trait_table(&doc);
+        assert!(!updated.contains("stale row"));
+        assert!(updated.contains("| `http2_api` |"));
+        assert!(updated.contains("### Next H3"));
     }
 }
 // CODEGEN-END

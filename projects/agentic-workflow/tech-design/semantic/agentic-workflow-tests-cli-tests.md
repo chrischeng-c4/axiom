@@ -215,6 +215,23 @@ semantic_domain:
           - name: "agents_md_is_claude_md_plus_codex_whitelist"
             kind: "function"
             public: false
+      - path: "projects/agentic-workflow/tests/cli/tests/root_trait_coverage_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        symbols:
+          - name: "repo_root"
+            kind: "function"
+            public: false
+          - name: "service_archetype_section_range"
+            kind: "function"
+            public: false
+          - name: "every_trait_contributing_anchor_resolves_to_a_real_heading"
+            kind: "function"
+            public: false
+          - name: "every_service_archetype_h3_is_either_trait_anchored_or_marked_policy_only"
+            kind: "function"
+            public: false
       - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -890,6 +907,7 @@ tests:
       - path: "projects/agentic-workflow/tests/cli/tests/standardize_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_namespace_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_trait_coverage_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
@@ -953,6 +971,18 @@ changes:
       CLAUDE.md plus the fixed Codex-only whitelist (title swap, Codex
       Operational Rules section, slash-command translation paragraph);
       drift outside the whitelist fails the suite.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/root_trait_coverage_test.rs"
+    action: create
+    section: schema
+    description: |
+      Issue #1077 (traits slice 1/3): bidirectional coverage between
+      `doc_mirror::TRAITS` and CONTRIBUTING.md's "## Service archetype..."
+      section. `every_trait_contributing_anchor_resolves_to_a_real_heading`
+      proves every `TraitDef.contributing_anchor` matches a real heading in
+      CONTRIBUTING.md. `every_service_archetype_h3_is_either_trait_anchored_or_marked_policy_only`
+      proves every H3 within the archetype section is either a trait anchor
+      or carries a literal `policy-only` marker line in its own body.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
     action: create

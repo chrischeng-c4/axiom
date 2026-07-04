@@ -22,12 +22,12 @@ Public API manifest for `projects/agentic-workflow/src/cli/init.rs` generated fr
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `WorkspaceType` | projects/agentic-workflow/src/cli/init.rs | enum | pub(crate) | 642 |  |
-| `check_and_auto_upgrade` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1402 | check_and_auto_upgrade(auto_upgrade: bool) -> bool |
+| `check_and_auto_upgrade` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1455 | check_and_auto_upgrade(auto_upgrade: bool) -> bool |
 | `detect_workspace_type` | projects/agentic-workflow/src/cli/init.rs | function | pub(crate) | 658 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
-| `get_current_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1508 | get_current_version() -> &'static str |
-| `get_installed_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1470 | get_installed_version() -> Option<String> |
+| `get_current_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1561 | get_current_version() -> &'static str |
+| `get_installed_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1523 | get_installed_version() -> Option<String> |
 | `run` | projects/agentic-workflow/src/cli/init.rs | function | pub | 66 | run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> Result<()> |
-| `run_check` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1302 | run_check() -> Result<()> |
+| `run_check` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1352 | run_check() -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -834,6 +834,9 @@ fn run_fresh_install(
     // Regenerate the repo-root README's Projects table when opted in
     // (issue #985; no-op when README.md is absent or has no markers).
     update_readme_projects_table(project_root)?;
+    // Regenerate the repo-root CONTRIBUTING's trait table when opted in
+    // (issue #1077; no-op when CONTRIBUTING.md is absent or has no markers).
+    update_contributing_trait_table(project_root)?;
 
     if print_success_message {
         print_init_success();
@@ -931,6 +934,9 @@ fn run_update(
     // Regenerate the repo-root README's Projects table when opted in
     // (issue #985; no-op when README.md is absent or has no markers).
     update_readme_projects_table(project_root)?;
+    // Regenerate the repo-root CONTRIBUTING's trait table when opted in
+    // (issue #1077; no-op when CONTRIBUTING.md is absent or has no markers).
+    update_contributing_trait_table(project_root)?;
 
     // Clean up legacy .version file (version now lives in config.toml)
     let legacy_version_file = sdd_dir.join(".version");
@@ -1279,6 +1285,48 @@ fn readme_projects_table_is_stale(project_root: &Path) -> Result<bool> {
     Ok(updated.trim() != existing.trim())
 }
 
+// Regenerate the repo-root CONTRIBUTING.md's generated trait table between
+// `<!-- aw:trait-table:start/end -->` markers from `doc_mirror::TRAITS` (issue
+// #1077, archetype-as-traits slice 1/3). Only touches CONTRIBUTING.md when it
+// exists AND already carries the markers: the table is opt-in per document,
+// mirroring [`update_readme_projects_table`]'s contract exactly.
+fn update_contributing_trait_table(project_root: &Path) -> Result<()> {
+    let contributing_path = project_root.join("CONTRIBUTING.md");
+    let Ok(existing) = std::fs::read_to_string(&contributing_path) else {
+        return Ok(());
+    };
+    if !existing.contains(doc_mirror::TRAIT_TABLE_START) {
+        return Ok(());
+    }
+    let updated = doc_mirror::upsert_trait_table(&existing);
+    if updated.trim() == existing.trim() {
+        println!(
+            "   {} CONTRIBUTING.md (trait table up to date)",
+            "✓".green()
+        );
+    } else {
+        std::fs::write(&contributing_path, updated)?;
+        println!("   {} CONTRIBUTING.md (trait table updated)", "✓".green());
+    }
+    Ok(())
+}
+
+// True if `project_root`'s CONTRIBUTING.md carries the generated trait-table
+// markers and its table would change if regenerated right now (issue #1077
+// AC2), mirroring [`readme_projects_table_is_stale`]'s read-only contract. A
+// CONTRIBUTING.md without the markers is not opted in, so it is never stale.
+fn contributing_trait_table_is_stale(project_root: &Path) -> Result<bool> {
+    let contributing_path = project_root.join("CONTRIBUTING.md");
+    let Ok(existing) = std::fs::read_to_string(&contributing_path) else {
+        return Ok(false);
+    };
+    if !existing.contains(doc_mirror::TRAIT_TABLE_START) {
+        return Ok(false);
+    }
+    let updated = doc_mirror::upsert_trait_table(&existing);
+    Ok(updated.trim() != existing.trim())
+}
+
 // True if `skills_dir` (a `.claude/skills` or `.agents/skills` tree) has any
 // aw-* skill whose on-disk content differs from what `aw init` would install
 // there right now — a hand-edited `SKILL.md`/script, a missing skill, or a
@@ -1330,10 +1378,12 @@ fn skill_tree_stale_entries(
 
 // Read-only staleness check for CLAUDE.md's and AGENTS.md's managed
 // `aw:start` sections (issue #984 AC2/AC4), the repo-root README's generated
-// Projects table when it is opted in via markers (issue #985), and every
-// `aw-*` skill under `.claude/skills/` + `.agents/skills/` (issue #986
-// AC2/AC3). Never writes; exits non-zero (via `Err`) and names the stale
-// file(s) when a projection is out of date, analogous to `cargo fmt --check`.
+// Projects table when it is opted in via markers (issue #985), the repo-root
+// CONTRIBUTING's generated trait table when it is opted in via markers (issue
+// #1077), and every `aw-*` skill under `.claude/skills/` + `.agents/skills/`
+// (issue #986 AC2/AC3). Never writes; exits non-zero (via `Err`) and names
+// the stale file(s) when a projection is out of date, analogous to
+// `cargo fmt --check`.
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
 pub fn run_check() -> Result<()> {
     let project_root = env::current_dir()?;
@@ -1352,6 +1402,9 @@ pub fn run_check() -> Result<()> {
     }
     if readme_projects_table_is_stale(&project_root)? {
         stale.push("README.md".to_string());
+    }
+    if contributing_trait_table_is_stale(&project_root)? {
+        stale.push("CONTRIBUTING.md".to_string());
     }
 
     let claude_skills_dir = project_root.join(".claude").join("skills");
@@ -2752,4 +2805,16 @@ changes:
       tree is named and flagged without writing — the same `cargo fmt
       --check` semantics as the existing CLAUDE.md/AGENTS.md staleness
       check.
+
+      Issue #1077 (archetype-as-traits slice 1/3): added
+      `update_contributing_trait_table`/`contributing_trait_table_is_stale`,
+      wired into `run_fresh_install`, `run_update`, and `run_check`
+      immediately after their `update_readme_projects_table`/
+      `readme_projects_table_is_stale` counterparts. Same opt-in-per-document
+      contract as the README Projects table (issue #985): only touches
+      CONTRIBUTING.md when it exists AND already carries the
+      `<!-- aw:trait-table:start/end -->` markers, rendering the enclosed
+      table from `doc_mirror::upsert_trait_table`/`doc_mirror::TRAITS`.
+      `run_check`'s doc comment and stale-file list now cover CONTRIBUTING.md
+      alongside README.md, never writing.
 ```

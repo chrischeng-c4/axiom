@@ -171,6 +171,9 @@ semantic_domain:
           - name: "root_doc_mirror_test"
             kind: "module"
             public: false
+          - name: "root_trait_coverage_test"
+            kind: "module"
+            public: false
           - name: "project_health_test"
             kind: "module"
             public: false
@@ -732,6 +735,16 @@ changes:
       Issue #984 (init-projector slice 1/3): registers the new
       `init_doc_projection_test` module (real-binary smoke coverage for `aw
       init`'s dual CLAUDE.md/AGENTS.md projection and `aw init --check`).
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli_tests.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1077 (traits slice 1/3): registers the new
+      `root_trait_coverage_test` module (bidirectional coverage between
+      `doc_mirror::TRAITS` and CONTRIBUTING.md's "Service archetype"
+      section), alphabetically between `root_doc_mirror_test` and
+      `standardize_test`.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/codegen_full_test.rs"
     action: modify
