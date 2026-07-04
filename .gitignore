@@ -110,7 +110,6 @@ tests/fixtures/python-project/.venv/
 .playwright-mcp/
 test-results/
 .aw/worktrees/
-.aw/payloads/
 .aw/codegen_markers.yaml
 .claude/worktrees/
 

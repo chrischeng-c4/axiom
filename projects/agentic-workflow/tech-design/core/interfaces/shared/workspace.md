@@ -45,11 +45,14 @@ Public API manifest for `projects/agentic-workflow/src/shared/workspace.rs` gene
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/shared/workspace.rs -->
 ```rust
-//! SDD workspace directory constants and path helpers.
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+// CODEGEN-BEGIN
+//! Agentic Workflow workspace directory constants and path helpers.
 //!
-//! All SDD state lives under a single top-level `.aw/` directory in the
-//! consumer's project root, following the dev-tool convention of hidden
-//! dot-prefix state dirs (`.git/`, `.cargo/`, `.claude/`).
+//! Versioned Agentic Workflow state lives under a single top-level `.aw/`
+//! directory in the consumer's project root, following the dev-tool convention
+//! of hidden dot-prefix state dirs (`.git/`, `.cargo/`, `.claude/`).
+//! Ephemeral runtime/cache state lives under `/tmp/aw`.
 //!
 //! Centralizing these constants here makes future renames a one-line change.
 
@@ -65,18 +68,23 @@ pub const CONFIG_FILE: &str = "config.toml";
 
 /// Begin marker for the auto-generated [[projects]] block in config.toml.
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R2
-pub const SYNC_BEGIN_MARKER: &str =
-    "# BEGIN AW SYNC \u{2014} auto-generated, do not edit by hand";
+pub const SYNC_BEGIN_MARKER: &str = "# BEGIN AW SYNC \u{2014} auto-generated, do not edit by hand";
 
 /// End marker for the auto-generated [[projects]] block in config.toml.
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R2
 pub const SYNC_END_MARKER: &str = "# END AW SYNC";
 
 /// Tech design artifact directory (previously "specs").
-pub const TECH_DESIGN_DIR: &str = "tech_design";
+pub const TECH_DESIGN_DIR: &str = "tech-design";
 
 /// Local issue artifact directory (pre-tracker).
 pub const ISSUES_DIR: &str = "issues";
+
+/// Ephemeral payload round-trip artifact directory.
+pub const PAYLOADS_DIR: &str = "payloads";
+
+/// Agentic Workflow runtime/cache root.
+pub const AW_TMP_ROOT: &str = "/tmp/aw";
 
 /// In-flight change directory.
 pub const CHANGES_DIR: &str = "changes";
@@ -90,6 +98,12 @@ pub fn workspace_path(project_root: &Path) -> PathBuf {
     project_root.join(WORKSPACE_DIR)
 }
 
+/// Path to the runtime/cache root: `/tmp/aw`.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn aw_tmp_path() -> PathBuf {
+    PathBuf::from(AW_TMP_ROOT)
+}
+
 /// Path to the config file: `{project_root}/.aw/config.toml`
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn config_path(project_root: &Path) -> PathBuf {
@@ -100,7 +114,7 @@ pub fn config_path(project_root: &Path) -> PathBuf {
 ///
 /// Reads `[agentic_workflow.tech_design_platform].path` from `.aw/config.toml` when it
 /// is present, and falls back to `{project_root}/.aw/tech-design` for
-/// legacy workspaces.
+/// workspaces.
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn tech_design_path(project_root: &Path) -> PathBuf {
     configured_tech_design_base(project_root)
@@ -147,7 +161,7 @@ fn configured_tech_design_base(project_root: &Path) -> Option<PathBuf> {
     #[derive(serde::Deserialize, Default)]
     struct Config {
         #[serde(default)]
-        sdd: SddSection,
+        agentic_workflow: SddSection,
     }
 
     #[derive(serde::Deserialize, Default)]
@@ -172,10 +186,71 @@ fn configured_tech_design_base(project_root: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Path to the issues directory: `{project_root}/.aw/issues`
+/// Path to the ephemeral issue working-copy directory:
+/// `/tmp/aw/workspaces/<workspace>/issues`.
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn issues_path(project_root: &Path) -> PathBuf {
-    workspace_path(project_root).join(ISSUES_DIR)
+    aw_tmp_path()
+        .join("workspaces")
+        .join(workspace_cache_slug(project_root))
+        .join(ISSUES_DIR)
+}
+
+/// Path to the ephemeral payload round-trip directory:
+/// `/tmp/aw/workspaces/<workspace>/payloads`.
+///
+/// CRRR round-trip fragments (TD section drafts, HANDWRITE marker fills, EC
+/// draft sections, work-item fill-section/review bodies) are consumed
+/// within a single agent turn and are never git-tracked, so they live here
+/// alongside `issues_path` rather than under the project's `.aw/` tree.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn payloads_path(project_root: &Path) -> PathBuf {
+    aw_tmp_path()
+        .join("workspaces")
+        .join(workspace_cache_slug(project_root))
+        .join(PAYLOADS_DIR)
+}
+
+fn workspace_cache_slug(project_root: &Path) -> String {
+    let identity_root = issue_workspace_identity_root(project_root);
+    let resolved = identity_root.canonicalize().unwrap_or(identity_root);
+    let raw = resolved.to_string_lossy();
+    let mut out = String::with_capacity(raw.len());
+    let mut last_dash = true;
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "workspace".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn issue_workspace_identity_root(project_root: &Path) -> PathBuf {
+    let Some(worktrees_dir) = project_root.parent() else {
+        return project_root.to_path_buf();
+    };
+    if worktrees_dir.file_name().and_then(|name| name.to_str()) != Some("worktrees") {
+        return project_root.to_path_buf();
+    }
+    let Some(aw_dir) = worktrees_dir.parent() else {
+        return project_root.to_path_buf();
+    };
+    if aw_dir.file_name().and_then(|name| name.to_str()) != Some(WORKSPACE_DIR) {
+        return project_root.to_path_buf();
+    }
+    aw_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project_root.to_path_buf())
 }
 
 /// Path to the changes directory: `{project_root}/.aw/changes`
@@ -208,7 +283,30 @@ mod tests {
 
         assert_eq!(issues_path(&worktree_root), issues_path(main_root));
     }
+
+    #[test]
+    fn payloads_path_uses_main_checkout_identity_for_aw_worktrees() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let main_root = tmp.path();
+        let worktree_root = main_root.join(".aw/worktrees/change-slug");
+
+        assert_eq!(payloads_path(&worktree_root), payloads_path(main_root));
+    }
+
+    #[test]
+    fn payloads_path_lives_under_aw_tmp_root_alongside_issues() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let payloads = payloads_path(root);
+        assert!(payloads.starts_with(aw_tmp_path().join("workspaces")));
+        assert_eq!(payloads.file_name().unwrap(), PAYLOADS_DIR);
+        // Same workspace slug as issues_path — siblings under one workspace dir.
+        assert_eq!(payloads.parent(), issues_path(root).parent());
+    }
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

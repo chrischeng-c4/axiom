@@ -20,7 +20,8 @@ the **mainthread-only** orchestration spelled out below.
 > `aw-issue-reviewer` / `aw-issue-reviser` subagent to dispatch —
 > those agent definitions were removed atomically with this skill
 > rewrite. Mainthread takes over `--apply` directly: write the section
-> payload to `.aw/payloads/<slug>/<file>.md`, run
+> payload to `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<file>.md`
+> (path from the envelope), run
 > `aw wi fill-section --apply --section <X>`, then run
 > `aw wi validate <slug>`. Loop on the emitted dispatch envelope.
 
@@ -91,8 +92,9 @@ individually so git history is unchanged.
   Phase-1 deprecated shim and is omitted via `skip_serializing_if`).
   Mainthread runs `invoke.command` directly:
   - if the command is `aw wi fill-section --apply`, write the
-    payload to `.aw/payloads/<slug>/body.md` first (or per-section
-    payload), then run the command from mainthread.
+    payload to `/tmp/aw/workspaces/<workspace>/payloads/<slug>/body.md`
+    first (or the per-section payload path from the envelope), then run
+    the command from mainthread.
   - if the command is `aw wi validate <slug>`, run it; parse the next envelope; loop.
 - `done` → print summary; end.
 - `error` → see retry-cap rules below.

@@ -268,8 +268,10 @@ pub fn count_worktree_handwrite_markers(worktree: &Path) -> usize {
     enumerate_worktree_markers(worktree).len()
 }
 
-fn cb_marker_payload_rel(slug: &str, marker_id: &str) -> String {
-    format!(".aw/payloads/{}/{}.md", slug, marker_id)
+fn cb_marker_payload_path(project_root: &Path, slug: &str, marker_id: &str) -> PathBuf {
+    crate::shared::workspace::payloads_path(project_root)
+        .join(slug)
+        .join(format!("{marker_id}.md"))
 }
 
 fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
@@ -288,14 +290,13 @@ fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
 }
 
 fn initialize_marker_payload(
-    worktree: &Path,
+    project_root: &Path,
     slug: &str,
     marker: &HandwriteMarkerEntry,
 ) -> Result<(String, bool)> {
-    let rel = cb_marker_payload_rel(slug, &marker.id);
-    let abs = worktree.join(&rel);
+    let abs = cb_marker_payload_path(project_root, slug, &marker.id);
     if abs.exists() {
-        return Ok((rel, false));
+        return Ok((abs.to_string_lossy().into_owned(), false));
     }
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)
@@ -303,7 +304,7 @@ fn initialize_marker_payload(
     }
     std::fs::write(&abs, marker_payload_template(marker))
         .with_context(|| format!("failed to write payload {}", abs.display()))?;
-    Ok((rel, true))
+    Ok((abs.to_string_lossy().into_owned(), true))
 }
 
 fn next_for_marker(
@@ -474,12 +475,7 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 async fn run_brief(args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = args.slug.clone();
-    let payload_prefix = format!(".aw/payloads/{}/", slug);
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
-        &project_root,
-        &slug,
-        &[payload_prefix.as_str()],
-    )?;
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
@@ -754,13 +750,8 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             std::process::exit(2);
         }
     };
-    let payload_rel = format!(".aw/payloads/{}/{}.md", slug, marker_id);
     let project_root = crate::find_project_root()?;
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
-        &project_root,
-        &slug,
-        &[payload_rel.as_str()],
-    )?;
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
 
     if !worktree_abs.exists() {
@@ -808,7 +799,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     };
 
     // Read the payload.
-    let payload_abs = worktree_abs.join(&payload_rel);
+    let payload_abs = cb_marker_payload_path(&project_root, &slug, &marker_id);
     let payload_body = match std::fs::read_to_string(&payload_abs) {
         Ok(s) => s,
         Err(e) => {
@@ -1449,7 +1440,7 @@ mod tests {
         let next = next_for_marker(
             "4124",
             &marker,
-            ".aw/payloads/4124/missing-generator-cli.md",
+            "/tmp/aw/workspaces/example/payloads/4124/missing-generator-cli.md",
         );
 
         assert_eq!(
@@ -1459,7 +1450,7 @@ mod tests {
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(
             next["payload_path"],
-            ".aw/payloads/4124/missing-generator-cli.md"
+            "/tmp/aw/workspaces/example/payloads/4124/missing-generator-cli.md"
         );
     }
 
@@ -1468,18 +1459,20 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let marker = marker("missing-generator-cli");
 
-        let (rel, created) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
-        assert_eq!(rel, ".aw/payloads/4124/missing-generator-cli.md");
+        let (abs_s, created) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
+        let expected_abs = crate::shared::workspace::payloads_path(tmp.path())
+            .join("4124")
+            .join("missing-generator-cli.md");
+        assert_eq!(abs_s, expected_abs.to_string_lossy());
         assert!(created);
-        let abs = tmp.path().join(&rel);
-        let content = std::fs::read_to_string(&abs).unwrap();
+        let content = std::fs::read_to_string(&expected_abs).unwrap();
         assert!(content.contains("(fill)"));
         assert!(content.contains("missing deterministic generator"));
 
-        std::fs::write(&abs, "custom\n").unwrap();
+        std::fs::write(&expected_abs, "custom\n").unwrap();
         let (_, created_again) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
         assert!(!created_again);
-        assert_eq!(std::fs::read_to_string(&abs).unwrap(), "custom\n");
+        assert_eq!(std::fs::read_to_string(&expected_abs).unwrap(), "custom\n");
     }
 
     #[test]

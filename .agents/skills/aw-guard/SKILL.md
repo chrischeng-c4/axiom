@@ -49,9 +49,10 @@ It must preserve unrelated hooks and settings.
 
 Guard scopes denial to the project's registered `path` / `td_path` /
 `cap_path` / workspace globs (see `GuardScope` in `src/cli/guard.rs`).
-`.aw/payloads/<slug>/...` lives at the repo root, outside every project's
-registered scope, so writing a HANDWRITE marker payload there is always
-allowed even with guard on. The `aw td fill <slug> --apply --marker <id>`
+`/tmp/aw/workspaces/<workspace>/payloads/<slug>/...` lives under `/tmp`,
+outside every project's registered scope, so writing a HANDWRITE marker
+payload there is always allowed even with guard on. The
+`aw td fill <slug> --apply --marker <id>`
 call that actually merges the payload into the guarded HANDWRITE block runs
 as a Bash-invoked binary, not as an `Edit`/`Write`/`MultiEdit`/`NotebookEdit`/
 `apply_patch` tool call — guard's PreToolUse hook only intercepts those tool

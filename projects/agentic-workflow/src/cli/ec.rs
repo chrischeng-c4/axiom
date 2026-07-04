@@ -111,7 +111,8 @@ pub struct EcFillArgs {
     #[arg(long)]
     pub section: String,
     /// Markdown fragment containing the complete replacement section.
-    /// Defaults to `.aw/payloads/ec/<draft-id>/<section>.md`.
+    /// Defaults to
+    /// `/tmp/aw/workspaces/<workspace>/payloads/ec/<draft-id>/<section>.md`.
     #[arg(long)]
     pub body_file: Option<PathBuf>,
     /// Emit JSON instead of human-readable output.
@@ -725,16 +726,15 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
     let fill_sections = ec_draft_fill_sections(&args);
     let payload_paths = fill_sections
         .iter()
-        .map(|section| ec_payload_rel(&id, section))
+        .map(|section| ec_payload_path(&ctx.project_root, &id, section))
         .collect::<Vec<_>>();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
-    for (section, rel_path) in fill_sections.iter().zip(payload_paths.iter()) {
+    for (section, payload_path) in fill_sections.iter().zip(payload_paths.iter()) {
         initialize_ec_payload_file(
-            &ctx.project_root,
-            rel_path,
+            payload_path,
             &ec_section_payload_template(&ctx, &id, &category, &title, &args, section)?,
         )?;
     }
@@ -808,7 +808,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("cannot derive EC draft id from {}", path.display())
                 })?;
-            ctx.project_root.join(ec_payload_rel(&id, &args.section))
+            PathBuf::from(ec_payload_path(&ctx.project_root, &id, &args.section))
         }
     };
     if !body_file.exists() && args.body_file.is_none() {
@@ -837,8 +837,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
             json: false,
         };
         initialize_ec_payload_file(
-            &ctx.project_root,
-            &ec_payload_rel(&id, &args.section),
+            &ec_payload_path(&ctx.project_root, &id, &args.section),
             &ec_section_payload_template(
                 &ctx,
                 &id,
@@ -887,12 +886,17 @@ fn ec_draft_fill_sections(args: &EcDraftArgs) -> Vec<String> {
     sections
 }
 
-fn ec_payload_rel(id: &str, section: &str) -> String {
-    format!(".aw/payloads/ec/{id}/{section}.md")
+fn ec_payload_path(project_root: &Path, id: &str, section: &str) -> String {
+    crate::shared::workspace::payloads_path(project_root)
+        .join("ec")
+        .join(id)
+        .join(format!("{section}.md"))
+        .to_string_lossy()
+        .into_owned()
 }
 
-fn initialize_ec_payload_file(project_root: &Path, rel_path: &str, content: &str) -> Result<bool> {
-    let abs = project_root.join(rel_path);
+fn initialize_ec_payload_file(payload_path: &str, content: &str) -> Result<bool> {
+    let abs = Path::new(payload_path);
     if abs.exists() {
         return Ok(false);
     }
@@ -901,7 +905,7 @@ fn initialize_ec_payload_file(project_root: &Path, rel_path: &str, content: &str
             format!("failed to create EC payload directory {}", parent.display())
         })?;
     }
-    fs::write(&abs, content)
+    fs::write(abs, content)
         .with_context(|| format!("failed to write EC payload {}", abs.display()))?;
     Ok(true)
 }
@@ -5137,9 +5141,15 @@ tool_contracts:
             ec_draft_fill_sections(&args),
             vec!["e2e-test".to_string(), "tool-contract".to_string()]
         );
+        let expected_payload_path = crate::shared::workspace::payloads_path(&ctx.project_root)
+            .join("ec")
+            .join("search-indexing")
+            .join("e2e-test.md")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(
-            ec_payload_rel("search-indexing", "e2e-test"),
-            ".aw/payloads/ec/search-indexing/e2e-test.md"
+            ec_payload_path(&ctx.project_root, "search-indexing", "e2e-test"),
+            expected_payload_path
         );
 
         let e2e = ec_section_payload_template(
@@ -5189,13 +5199,17 @@ tool_contracts:
     #[test]
     fn initialize_ec_payload_file_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
-        let rel = ".aw/payloads/ec/search-indexing/e2e-test.md";
+        let payload_path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("ec")
+            .join("search-indexing")
+            .join("e2e-test.md");
+        let payload_path_s = payload_path.to_string_lossy().into_owned();
 
-        assert!(initialize_ec_payload_file(tmp.path(), rel, "first\n").unwrap());
-        assert_eq!(fs::read_to_string(tmp.path().join(rel)).unwrap(), "first\n");
+        assert!(initialize_ec_payload_file(&payload_path_s, "first\n").unwrap());
+        assert_eq!(fs::read_to_string(&payload_path).unwrap(), "first\n");
 
-        assert!(!initialize_ec_payload_file(tmp.path(), rel, "second\n").unwrap());
-        assert_eq!(fs::read_to_string(tmp.path().join(rel)).unwrap(), "first\n");
+        assert!(!initialize_ec_payload_file(&payload_path_s, "second\n").unwrap());
+        assert_eq!(fs::read_to_string(&payload_path).unwrap(), "first\n");
     }
 
     #[test]

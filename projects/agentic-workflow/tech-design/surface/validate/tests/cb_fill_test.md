@@ -31,10 +31,13 @@ No public AST symbols.
 //! Integration tests for `aw td fill` (Phase 3).
 //!
 //! Smoke tests for CLI registration, brief mode envelope shape, marker
-//! enumeration, and `--apply --marker` block replacement. Full
-//! e2e integration scenarios (code check gate + Cb-Fill trailer + phase
-//! advance) are #[ignore]d because they require a real worktree, real
-//! payload files, and the agent loop infrastructure.
+//! enumeration, and `--apply --marker` block replacement, plus a real-binary
+//! round trip (`test_apply_marker_replaces_block`, issue #1096 AC1) proving
+//! the payload lives under `/tmp/aw/workspaces/<workspace>/payloads/` and
+//! that apply reads it back. The remaining e2e integration scenarios (code
+//! check gate + Cb-Fill trailer + phase advance) are #[ignore]d because they
+//! require a real worktree, real payload files, and the agent loop
+//! infrastructure.
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#test-plan
 
@@ -128,8 +131,9 @@ fn test_lifecycle_trailer_cb_fill_variant() {
     assert_eq!(lifecycle_trailer::CB_FILL, "Cb-Fill");
 }
 
-/// R10: `aw td code-check` accepts `cb_filled` as a valid pre-merge phase.
-/// We verify this at the helper-level: `is_terminal_code_checkable("cb_filled") == true`.
+/// R10: terminal `aw td code-check` accepts `cb_filled` as a valid phase.
+/// We verify this at the helper-level:
+/// `is_terminal_code_checkable("cb_filled") == true`.
 #[test]
 fn test_td_code_check_accepts_cb_filled() {
     use agentic_workflow::issues::types::td_phase;
@@ -420,12 +424,224 @@ fn test_collision_enumerate_returns_both_entries() {
 
 // ── e2e gates (require real worktree + payload + check pipeline) ────────
 
-#[test]
-#[ignore = "requires real worktree, real payload, and the cb check pipeline"]
-fn test_apply_marker_replaces_block() {
-    // Reserved: build a worktree, write a payload at
-    // .aw/payloads/<slug>/<id>.md, run `aw td fill <slug> --apply
-    // --marker <id>`, assert source file has payload body in place of stub.
+/// AC1 (#1096): a real `aw td fill` brief + apply round trip writes and
+/// reads the marker payload under `/tmp/aw/workspaces/<workspace>/payloads/`
+/// (never under the repo's `.aw/payloads/`), quoting the absolute path in
+/// the dispatch envelope, and the apply step actually reads that file back
+/// into the HANDWRITE block.
+#[tokio::test]
+async fn test_apply_marker_replaces_block() {
+    use agentic_workflow::issues::types::{td_phase, IssueType};
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    // Seed a minimal git repo on a non-"main" branch: TD/CB verbs only
+    // require a provisioned `td-<slug>` branch when launched from `main`
+    // (`should_use_td_branch` in td.rs); every real project branch (e.g.
+    // `project-<name>`) runs TD/CB commands in place instead.
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["init", "-b", "project-test"])
+        .status()
+        .expect("git init");
+    for (k, v) in [
+        ("user.email", "test@test"),
+        ("user.name", "test"),
+        ("commit.gpgsign", "false"),
+    ] {
+        Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["config", k, v])
+            .status()
+            .unwrap();
+    }
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    std::fs::create_dir_all(root.join(".aw")).unwrap();
+    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+
+    // Seed a TD spec whose Changes section names the marker's source file
+    // (so brief mode's spec-scoped enumeration includes it).
+    let spec_rel = ".aw/tech-design/specs/demo.md";
+    let spec_content = "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n\
+         ## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  \
+         - path: src/demo.rs\n    action: create\n    impl_mode: hand-written\n```\n";
+    let spec_dir = root.join(".aw/tech-design/specs");
+    std::fs::create_dir_all(&spec_dir).unwrap();
+    std::fs::write(spec_dir.join("demo.md"), spec_content).unwrap();
+
+    // Seed the unfilled HANDWRITE marker source file.
+    let marker_rel = "src/demo.rs";
+    let marker_path = root.join(marker_rel);
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &marker_path,
+        "// HANDWRITE-BEGIN gap=\"demo-marker\" tracker=\"none\" reason=\"unfilled\"\n\
+         // TODO: hand-write content for `src/demo.rs`.\n\
+         // HANDWRITE-END\n",
+    )
+    .unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "seed"])
+        .status()
+        .unwrap();
+
+    // Seed the open issue at cb_genned (the phase `aw td fill` expects).
+    let slug = "cb-fill-payload-roundtrip-test";
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![format!("phase:{}", td_phase::CB_GENNED)],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: vec![spec_rel.to_string()],
+        phase: Some(td_phase::CB_GENNED.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed open issue");
+
+    // Brief mode: enumerate + dispatch. Assert the envelope's payload path
+    // is an ABSOLUTE path under /tmp/aw/workspaces/ — never the old
+    // repo-relative `.aw/payloads/`.
+    let brief_output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("fill")
+        .arg(slug)
+        .current_dir(root)
+        .output()
+        .expect("run aw td fill (brief)");
+    let brief_stdout = String::from_utf8_lossy(&brief_output.stdout);
+    let brief_stderr = String::from_utf8_lossy(&brief_output.stderr);
+    assert!(
+        brief_output.status.success(),
+        "brief mode should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        brief_stdout,
+        brief_stderr
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_str(brief_stdout.trim()).expect("brief envelope is valid JSON");
+    let payload_path = envelope["next"]["payload_path"]
+        .as_str()
+        .expect("next.payload_path present")
+        .to_string();
+    assert!(
+        payload_path.starts_with("/tmp/aw/workspaces/"),
+        "payload path must live under /tmp/aw/workspaces/, got: {}",
+        payload_path
+    );
+    assert!(
+        payload_path.contains("/payloads/"),
+        "payload path must be under a payloads/ directory, got: {}",
+        payload_path
+    );
+    assert!(
+        !payload_path.contains(".aw/payloads"),
+        "payload path must not reference the retired repo-root .aw/payloads/, got: {}",
+        payload_path
+    );
+    let marker_id = envelope["invoke"]["args"]["marker_list"][0]["id"]
+        .as_str()
+        .expect("marker_list[0].id present")
+        .to_string();
+
+    // The CLI already initialized the payload template at that absolute
+    // path; overwrite it with the marker's real fill content, proving the
+    // apply step reads back from /tmp, not from the repo tree.
+    let payload_body = "// filled by test_apply_marker_replaces_block\n";
+    std::fs::write(&payload_path, payload_body).expect("write payload at /tmp/aw path");
+
+    // Apply: read the /tmp payload and merge it into the HANDWRITE block.
+    let apply_output = Command::new(&aw_bin)
+        .arg("td")
+        .arg("fill")
+        .arg(slug)
+        .arg("--apply")
+        .arg("--marker")
+        .arg(&marker_id)
+        .current_dir(root)
+        .output()
+        .expect("run aw td fill --apply");
+    let apply_stdout = String::from_utf8_lossy(&apply_output.stdout);
+    let apply_stderr = String::from_utf8_lossy(&apply_output.stderr);
+    assert!(
+        apply_output.status.success(),
+        "apply should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        apply_stdout,
+        apply_stderr
+    );
+    assert!(
+        apply_stdout.contains("\"command\":\"aw td code-check\""),
+        "last marker apply should dispatch to terminal code-check, got:\n{}",
+        apply_stdout
+    );
+
+    let updated_source = std::fs::read_to_string(&marker_path).expect("read updated source");
+    assert!(
+        updated_source.contains("filled by test_apply_marker_replaces_block"),
+        "source file must contain the payload body in place of the stub, got:\n{}",
+        updated_source
+    );
+    assert!(
+        !updated_source.contains("TODO: hand-write content"),
+        "the unfilled stub text must be gone after apply, got:\n{}",
+        updated_source
+    );
+
+    // The payload directory itself must never have been created inside the
+    // repo tree.
+    assert!(
+        !root.join(".aw/payloads").exists(),
+        "apply must never write payload state under the repo's .aw/payloads/"
+    );
 }
 
 #[test]
