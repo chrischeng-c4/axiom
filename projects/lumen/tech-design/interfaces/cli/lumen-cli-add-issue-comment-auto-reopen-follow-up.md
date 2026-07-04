@@ -23,35 +23,35 @@ fill_sections: [logic, unit-test, changes]
 
 ```mermaid
 ---
-id: lumen-issue-comment-applicability
-entry: start
+id: lumen-issue-comment-contract
+entry: command
 nodes:
-  start: { kind: start, label: "lumen issue comment <number> [message...]" }
-  parse: { kind: process, label: "Clap parses issue number, free-form follow-up message, --repo, --dry-run, --yes" }
-  opts: { kind: process, label: "Build cli_std::issue::CommentOptions with TOOL metadata" }
-  dry: { kind: decision, label: "--dry-run?" }
-  preview: { kind: terminal, label: "cli-std prints repo, issue #, state: open, diagnostics comment; no network mutation" }
-  online: { kind: process, label: "cli_std::issue::comment handles token lookup, reopen, and POST comment" }
-  done: { kind: terminal, label: "existing search/view/create behavior unchanged" }
+  command: { kind: start, label: "Command: lumen issue comment <number> [message...]" }
+  args: { kind: process, label: "Args: number required; message variadic; --repo optional; --dry-run; -y/--yes" }
+  msg: { kind: process, label: "message = joined message args when non-empty; otherwise cli-std default follow-up text" }
+  options: { kind: process, label: "CommentOptions { number, message, repo, dry_run, yes }" }
+  delegate: { kind: process, label: "delegate to cli_std::issue::comment(&TOOL, options)" }
+  dry: { kind: decision, label: "dry_run?" }
+  preview: { kind: terminal, label: "stdout includes repo, issue #, state: open, message, diagnostics; exits 0" }
+  mutate: { kind: terminal, label: "cli-std resolves token, reopens issue, posts comment; Lumen owns no HTTP code" }
 edges:
-  - { from: start, to: parse }
-  - { from: parse, to: opts }
-  - { from: opts, to: dry }
+  - { from: command, to: args }
+  - { from: args, to: msg }
+  - { from: msg, to: options }
+  - { from: options, to: delegate }
+  - { from: delegate, to: dry }
   - { from: dry, to: preview, label: "yes" }
-  - { from: dry, to: online, label: "no" }
-  - { from: online, to: done }
-  - { from: preview, to: done }
+  - { from: dry, to: mutate, label: "no" }
 ---
 flowchart TD
-    start([lumen issue comment number message]) --> parse[parse number/message/repo/dry-run/yes]
-    parse --> opts[build cli_std CommentOptions with Lumen TOOL metadata]
-    opts --> dry{--dry-run?}
-    dry -->|yes| preview([print open-state diagnostics comment; no mutation])
-    dry -->|no| online[cli_std handles credential lookup, reopen issue, post comment]
-    online --> done([search/view/create unchanged])
-    preview --> done
+    command([lumen issue comment]) --> args[number/message/repo/dry-run/yes]
+    args --> msg[join message args or use cli-std default]
+    msg --> options[build CommentOptions]
+    options --> delegate[cli_std::issue::comment]
+    delegate --> dry{dry_run?}
+    dry -->|yes| preview([preview open-state diagnostics comment])
+    dry -->|no| mutate([cli-std reopens issue and posts comment])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
