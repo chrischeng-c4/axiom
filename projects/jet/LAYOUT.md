@@ -84,7 +84,7 @@ They are peers, not parent/child.
 | `parity/data/parity-gating.toml` | Default gate manifest. |
 | `parity/data/waivers.toml` | Default waivers. |
 | `assets/` | Static assets shipped with the renderer. |
-| `docs/` | Project-level docs (architecture notes, reorg plan, etc.). |
+| `docs/` | Project-level docs (architecture notes, reorg plan, etc.) plus the public user-guide vitepress site (`docs/index.md`, `docs/.vitepress/`, `docs/getting-started.md` + peers; moved from the repo-root `docs/` — content was already 100% jet). |
 | `docs/architecture/reorg-plan.md` | Historical reorg plan & success criteria. |
 | `README.md` | Crate-level README. |
 | `issue-loop.md` | Issue-loop working notes. |

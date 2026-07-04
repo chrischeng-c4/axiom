@@ -7,11 +7,11 @@ hero:
   actions:
     - theme: brand
       text: Get Started with Jet
-      link: /jet/getting-started
+      link: /getting-started
 features:
   - title: Jet
     details: Fast JavaScript/TypeScript bundler and package manager. Replaces Vite + pnpm.
-    link: /jet/getting-started
+    link: /getting-started
   - title: Mamba
     details: Force-typed Python compiler with Cranelift backend. (Docs coming soon)
   - title: SDD
