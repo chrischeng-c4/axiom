@@ -3757,6 +3757,29 @@ changes:
       the sole remediation surfaced for a stale Active WI reference (project
       jet's `wasm-multi-target-readiness` claim, #818).
     impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1077 (traits slice 1/3): `baseline_caps_for_trait` becomes a
+      thin lookup over the new `crate::cli::doc_mirror::TRAITS` const table
+      (home of the archetype-anchored `TraitDef` registry) for the three
+      traits with a settled CONTRIBUTING.md doc home (`http2_api`,
+      `kubernetes_native`, `primary_replicas`), falling back to the
+      remaining known traits' baseline caps in the new private helper
+      `other_known_trait_baseline_caps` (`cli_facing`,
+      `competitive_replacement`, `long_running`, `network_exposed`,
+      `agent_facing`, `stateful_storage`) -- behavior-preserving, same
+      signature, same call sites. `known_capability_profile_traits()` and
+      `required_baseline_caps_for_traits` are unchanged (kept as the
+      existing static 9-trait list so trait-iteration order used by other
+      tests does not shift); a new unit test
+      `known_traits_include_every_doc_mirror_trait_def` asserts the two
+      registries can never drift apart (every `doc_mirror::TRAITS` entry is
+      in `known_capability_profile_traits()` and its baseline caps match).
+      `cargo test -p agentic-workflow --lib cli::capability::` stays fully
+      green (144 tests) -- AC1.
+    impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/cb_revise.rs"
     action: delete
     section: schema

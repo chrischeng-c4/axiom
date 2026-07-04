@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 //! `aw capability` -- product capability map governance.
 
+use crate::cli::doc_mirror;
 use crate::issues::types::td_phase;
 use crate::issues::{
     make_backend, resolve_default_backend, Issue, IssueFilter, IssueState, IssueType,
@@ -5405,20 +5406,37 @@ fn required_baseline_caps_for_traits(traits: &[String]) -> Vec<String> {
     required.into_iter().collect()
 }
 
+// Issue #1077 (archetype-as-traits slice 1/3): the three traits with a
+// settled CONTRIBUTING.md "Service archetype" doc home
+// (`http2_api`/`kubernetes_native`/`primary_replicas`) are now data-ified
+// into `doc_mirror::TRAITS`, the one registry CONTRIBUTING.md's generated
+// trait table also renders from. This is a thin lookup over that registry,
+// falling back to `other_known_trait_baseline_caps` for the remaining known
+// traits that have no anchor yet.
 fn baseline_caps_for_trait(trait_id: &str) -> &'static [&'static str] {
+    if let Some(def) = doc_mirror::TRAITS.iter().find(|def| def.id == trait_id) {
+        return def.baseline_caps;
+    }
+    other_known_trait_baseline_caps(trait_id)
+}
+
+/// Baseline caps for known traits with no CONTRIBUTING.md doc anchor yet.
+/// Slice 2 (#1077 out-of-scope: new traits / umbrella `service`) is expected
+/// to give these a home and fold them into `doc_mirror::TRAITS` too.
+fn other_known_trait_baseline_caps(trait_id: &str) -> &'static [&'static str] {
     match trait_id {
         "cli_facing" => &["cli-interface"],
         "competitive_replacement" => &["competitor-feature-parity", "competitor-performance"],
-        "http2_api" => &["http2-api-list"],
-        "kubernetes_native" => &["kubernetes-native-deployment"],
         "long_running" => &["long-running-stability"],
         "network_exposed" => &["security-hardening"],
-        "primary_replicas" => &["primary-replicas"],
         "agent_facing" | "stateful_storage" => &[],
         _ => &[],
     }
 }
 
+// Every known trait id, `doc_mirror::TRAITS`-backed or not (see
+// `known_traits_include_every_doc_mirror_trait_def` for the drift guard that
+// keeps this list a superset of `doc_mirror::TRAITS`' ids).
 fn known_capability_profile_traits() -> &'static [&'static str] {
     &[
         "agent_facing",
@@ -12633,6 +12651,27 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("Status: candidate"));
         assert!(artifact.contains("(confirm gate inventory)"));
         assert!(artifact.contains("This artifact is inference only"));
+    }
+
+    #[test]
+    fn known_traits_include_every_doc_mirror_trait_def() {
+        // Issue #1077: `known_capability_profile_traits` must stay a
+        // superset of `doc_mirror::TRAITS`' ids (and agree on baseline caps)
+        // even though it also carries traits with no CONTRIBUTING.md anchor
+        // yet, so the two registries can never quietly disagree.
+        for def in doc_mirror::TRAITS {
+            assert!(
+                known_capability_profile_traits().contains(&def.id),
+                "known_capability_profile_traits must list doc_mirror trait `{}`",
+                def.id
+            );
+            assert_eq!(
+                baseline_caps_for_trait(def.id),
+                def.baseline_caps,
+                "baseline_caps_for_trait must match doc_mirror::TRAITS for `{}`",
+                def.id
+            );
+        }
     }
 
     #[test]

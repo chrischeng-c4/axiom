@@ -28,6 +28,8 @@ mod recovery_flow_test;
 mod root_doc_allowlist_test;
 #[path = "cli/tests/root_doc_mirror_test.rs"]
 mod root_doc_mirror_test;
+#[path = "cli/tests/root_trait_coverage_test.rs"]
+mod root_trait_coverage_test;
 #[path = "cli/tests/standardize_test.rs"]
 mod standardize_test;
 #[path = "cli/tests/td_check_test.rs"]
