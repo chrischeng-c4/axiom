@@ -15,7 +15,13 @@
 //! `online` feature; the offline paths (`llm`, `upgrade --check` messaging,
 //! `issue create --dry-run` / pre-filled-URL fallback, `issue comment --dry-run`
 //! / manual-comment fallback) always build.
+//!
+//! One more module rides along that is not a CLI subcommand: [`chainable`] —
+//! a test harness (not a `run` function a binary calls) backing the
+//! `chainable_output` archetype trait's gate: `CONTRIBUTING.md` § "CLI
+//! convention: stdout tells the agent the next step".
 
+pub mod chainable;
 pub mod issue;
 pub mod llm;
 /// Deprecated alias of [`issue`] — kept until keep/loom/lumen adopt `issue`.
