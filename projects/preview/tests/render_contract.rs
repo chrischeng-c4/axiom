@@ -25,6 +25,7 @@ fn render_creates_gke_contract_files() {
 
     assert!(paths.contains(&"spec/preview-environment.yaml"));
     assert!(paths.contains(&"plans/workload-clone.json"));
+    assert!(paths.contains(&"plans/manifest-inventory.json"));
     assert!(paths.contains(&"k8s/namespace.yaml"));
     assert!(paths.contains(&"k8s/service-account.yaml"));
     assert!(paths.contains(&"k8s/resource-quota.yaml"));
@@ -46,6 +47,16 @@ fn render_creates_gke_contract_files() {
     assert!(namespace
         .contents
         .contains("preview.cclab.dev/base-namespace: uat-base"));
+
+    let inventory = files
+        .iter()
+        .find(|file| file.path == "plans/manifest-inventory.json")
+        .expect("manifest inventory");
+    let inventory: serde_json::Value =
+        serde_json::from_str(&inventory.contents).expect("manifest inventory json");
+    assert_eq!(inventory["namespace"], "uat-mr-123");
+    assert_eq!(inventory["entries"][0]["path"], "k8s/namespace.yaml");
+    assert_eq!(inventory["entries"][8]["path"], "router/route-binding.yaml");
 }
 
 #[test]

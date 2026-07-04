@@ -1,6 +1,7 @@
 // <HANDWRITE gap="standardize:claim-code" tracker="projects-preview-tests-local-cicd-contract-rs" reason="Local CI/CD lifecycle smoke is hand-authored until workflow generator primitives cover binary-driven CI simulations.">
 use std::process::Command;
 
+use preview::manifest_inventory_from_dir;
 use serde_json::{json, Value};
 
 fn preview_bin() -> &'static str {
@@ -23,8 +24,30 @@ fn local_ci_open_update_comment_and_close_lifecycle_is_deterministic() {
     assert!(out.join("k8s/deployment.yaml").is_file());
     assert!(out.join("k8s/service.yaml").is_file());
     assert!(out.join("router/route-binding.yaml").is_file());
+    assert!(out.join("plans/manifest-inventory.json").is_file());
     assert!(out.join("mr-comment.md").is_file());
     assert!(out.join("cleanup-plan.json").is_file());
+
+    let inventory = manifest_inventory_from_dir(&out).expect("manifest inventory");
+    let ordered_paths: Vec<_> = inventory
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    assert_eq!(
+        ordered_paths,
+        vec![
+            "k8s/namespace.yaml",
+            "k8s/service-account.yaml",
+            "k8s/resource-quota.yaml",
+            "k8s/limit-range.yaml",
+            "k8s/workload-role.yaml",
+            "k8s/workload-role-binding.yaml",
+            "k8s/deployment.yaml",
+            "k8s/service.yaml",
+            "router/route-binding.yaml",
+        ]
+    );
 
     preview_render(&out, "def456");
     let route_binding =
@@ -107,6 +130,54 @@ fn preview_render(out: &std::path::Path, sha: &str) {
         "--out",
         out.to_str().expect("out path"),
     ]));
+}
+
+#[test]
+fn local_apply_plan_and_gitops_bundle_are_deterministic() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("preview");
+    let gitops = dir.path().join("gitops");
+    preview_render(&out, "abc123");
+
+    let apply_summary = command_stdout(Command::new(preview_bin()).args([
+        "apply",
+        "--dir",
+        out.to_str().expect("out path"),
+        "--context",
+        "kind-preview-ec",
+        "--plan-only",
+    ]));
+    assert!(apply_summary.contains("Mode: `plan-only`"));
+    assert!(apply_summary.contains("Context: `kind-preview-ec`"));
+    assert!(apply_summary.contains("- 00 `Namespace` `<cluster>/uat-mr-321`"));
+    assert!(apply_summary.contains("- 08 `ConfigMap` `preview-system/routebinding-mr-321`"));
+
+    command_stdout(Command::new(preview_bin()).args([
+        "gitops",
+        "render",
+        "--dir",
+        out.to_str().expect("out path"),
+        "--out",
+        gitops.to_str().expect("gitops path"),
+    ]));
+
+    assert!(gitops.join("manifest-inventory.json").is_file());
+    assert!(gitops.join("kustomization.yaml").is_file());
+    assert!(gitops.join("manifests/00-namespace.yaml").is_file());
+    assert!(gitops.join("manifests/08-route-binding.yaml").is_file());
+
+    let kustomization =
+        std::fs::read_to_string(gitops.join("kustomization.yaml")).expect("kustomization");
+    assert!(kustomization.contains("- manifests/00-namespace.yaml"));
+    assert!(kustomization.contains("- manifests/08-route-binding.yaml"));
+
+    let bundle_inventory =
+        std::fs::read_to_string(gitops.join("manifest-inventory.json")).expect("inventory");
+    assert!(bundle_inventory.contains(r#""path": "k8s/namespace.yaml""#));
+    assert!(
+        !bundle_inventory.contains(dir.path().to_str().expect("tempdir path")),
+        "GitOps inventory leaked a local absolute path"
+    );
 }
 
 #[test]

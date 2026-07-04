@@ -10,7 +10,7 @@
 // @command PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture
 // AW-EC-END
 
-// Contract: When a kind/GKE kubectl context is configured, rendered lifecycle objects apply twice, roll out, expose endpoints, and serve /readyz through port-forward.
+// Contract: When a kind/GKE kubectl context is configured, preview apply performs direct apply, server-side dry-run after namespace creation, idempotent re-apply, rollout, endpoint checks, and /readyz port-forward smoke.
 // Contract: The kind/GKE gate creates a base Deployment/Service fixture and runs preview discover-base before rendering the preview namespace.
 // Contract: The kind/GKE gate validates namespace-local workload RBAC and rejects an oversized pod through ResourceQuota/LimitRange admission.
 // Contract: The kind/GKE gate cleans temporary preview/control namespaces after success or failure.

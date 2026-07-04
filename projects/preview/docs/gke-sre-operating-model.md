@@ -51,8 +51,9 @@ First useful defaults for an SRE lead:
 
 Use the same model through progressively stronger deployment forms:
 
-1. CI binary renders YAML and comments on the MR.
-2. CI binary renders into a GitOps repo and ArgoCD/Flux applies it.
+1. CI binary renders YAML, prints an ordered apply plan, and comments on the MR.
+2. CI binary applies to kind/sandbox clusters directly or renders into a GitOps
+   repo for ArgoCD/Flux.
 3. A preview-router watches route-binding ConfigMaps and routes cookie/header
    traffic.
 4. When the cluster policy allows it, promote `PreviewEnvironment` to a CRD and
@@ -62,16 +63,20 @@ Use the same model through progressively stronger deployment forms:
 
 The EC path is deliberately layered:
 
-1. Always-on render EC validates deterministic output and naming.
+1. Always-on render EC validates deterministic output, manifest inventory, and
+   naming.
 2. Always-on router EC validates cookie/header target resolution without a live
    ingress.
 3. Always-on Kubernetes object EC parses rendered manifests and checks
    cross-resource references.
-4. Opt-in kind/GKE EC builds a local probe image, applies the rendered objects
-   twice, creates a local base namespace fixture, waits for rollout, checks
-   service endpoints, reaches `/readyz` through port-forward, validates
-   least-privilege RBAC, verifies quota rejection, and cleans only
-   test-created namespaces when `PREVIEW_KIND_E2E=1` is set.
+4. Always-on local CI/CD EC validates `preview apply --plan-only` and
+   `preview gitops render` without a live cluster.
+5. Opt-in kind/GKE EC builds a local probe image, creates a local base namespace
+   fixture, discovers it, applies the rendered objects through `preview apply`,
+   runs server-side dry-run after namespace creation, re-applies idempotently,
+   waits for rollout, checks service endpoints, reaches `/readyz` through
+   port-forward, validates least-privilege RBAC, verifies quota rejection, and
+   cleans only test-created namespaces when `PREVIEW_KIND_E2E=1` is set.
 
 This keeps daily CI cheap while making the cluster gate concrete enough for an
 SRE-owned validation lane.
@@ -80,5 +85,5 @@ SRE-owned validation lane.
 
 - No production backup restore or DB clone behavior.
 - No assumption about Istio, NGINX, Traefik, or GKE Gateway internals.
-- No direct Kubernetes API writes from the first CLI path.
+- No in-cluster controller or CRD install requirement for the first CLI path.
 - No shared UAT database migration execution.

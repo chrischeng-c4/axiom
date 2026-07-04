@@ -6,7 +6,10 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use preview::discover::discover_base_with_kubectl;
 use preview::render::{cleanup_plan, mr_comment, preview_environment};
-use preview::{render_files, BaseWorkloadContract, RenderInput};
+use preview::{
+    apply_rendered_manifests, apply_summary_markdown, render_files, render_gitops_bundle,
+    ApplyOptions, BaseWorkloadContract, RenderInput,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "preview", version, about = "MR-scoped UAT previews for GKE")]
@@ -19,6 +22,11 @@ struct Cli {
 enum Command {
     Render(RenderArgs),
     DiscoverBase(DiscoverBaseArgs),
+    Apply(ApplyArgs),
+    Gitops {
+        #[command(subcommand)]
+        command: GitopsCommand,
+    },
     Comment(RenderArgs),
     CleanupPlan(CleanupArgs),
     Llm {
@@ -35,6 +43,11 @@ enum Command {
         #[command(subcommand)]
         command: IssueCommand,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum GitopsCommand {
+    Render(GitopsRenderArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -95,6 +108,28 @@ struct DiscoverBaseArgs {
 }
 
 #[derive(Debug, Args)]
+struct ApplyArgs {
+    #[arg(long, default_value = "dist/preview")]
+    dir: PathBuf,
+    #[arg(long)]
+    context: Option<String>,
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+    #[arg(long, default_value_t = false)]
+    allow_non_kind: bool,
+    #[arg(long, default_value_t = false)]
+    plan_only: bool,
+}
+
+#[derive(Debug, Args)]
+struct GitopsRenderArgs {
+    #[arg(long, default_value = "dist/preview")]
+    dir: PathBuf,
+    #[arg(long, default_value = "dist/gitops")]
+    out: PathBuf,
+}
+
+#[derive(Debug, Args)]
 struct CleanupArgs {
     #[arg(long)]
     mr: u32,
@@ -118,6 +153,10 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Render(args) => render(args),
         Command::DiscoverBase(args) => discover_base(args),
+        Command::Apply(args) => apply(args),
+        Command::Gitops { command } => match command {
+            GitopsCommand::Render(args) => gitops_render(args),
+        },
         Command::Comment(args) => {
             let input = args.into_input()?;
             let env = preview_environment(&input);
@@ -225,11 +264,41 @@ fn discover_base(args: DiscoverBaseArgs) -> Result<()> {
     Ok(())
 }
 
+fn apply(args: ApplyArgs) -> Result<()> {
+    let summary = apply_rendered_manifests(&ApplyOptions {
+        dir: args.dir,
+        context: args.context,
+        dry_run: args.dry_run,
+        allow_non_kind: args.allow_non_kind,
+        plan_only: args.plan_only,
+    })?;
+    print!("{}", apply_summary_markdown(&summary));
+    Ok(())
+}
+
+fn gitops_render(args: GitopsRenderArgs) -> Result<()> {
+    let files = render_gitops_bundle(&args.dir)?;
+    for file in files {
+        let path = args.out.join(&file.path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create output directory {}", parent.display()))?;
+        }
+        fs::write(&path, file.contents).with_context(|| format!("write {}", path.display()))?;
+    }
+    println!("rendered preview GitOps bundle to {}", args.out.display());
+    Ok(())
+}
+
 fn print_llm(topic: &str) {
     match topic {
         "outline" => {
             println!("preview manages MR-scoped UAT preview environments for GKE.");
             println!("Use `preview render --mr <id> --sha <sha> --image <image>` in CI.");
+            println!(
+                "Use `preview apply --dir <dir> --dry-run` for server-side validation in kind."
+            );
+            println!("Use `preview gitops render --dir <dir> --out <dir>` for PR-based delivery.");
             println!("The rendered route binding maps cookie/header target `mr-<id>` to a namespace service.");
         }
         _ => {
