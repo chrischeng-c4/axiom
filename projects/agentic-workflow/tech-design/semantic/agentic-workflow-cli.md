@@ -3780,6 +3780,46 @@ changes:
       `cargo test -p agentic-workflow --lib cli::capability::` stays fully
       green (144 tests) -- AC1.
     impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1078 (traits slice 2/3): deleted the private
+      `other_known_trait_baseline_caps` fallback added by #1077 -- the six
+      general traits it covered (`cli_facing`, `competitive_replacement`,
+      `long_running`, `network_exposed`, `agent_facing`, `stateful_storage`)
+      are now first-class `doc_mirror::TRAITS` entries with
+      `contributing_anchor: None`, so `baseline_caps_for_trait` becomes a
+      pure lookup over that one registry (no fallback branch left).
+      `required_baseline_caps_for_traits` now calls the new
+      `doc_mirror::expand_capability_profile_traits(traits)` first (expanding
+      the `service` umbrella into its members, deduped via `BTreeSet`) before
+      deriving caps, so declaring `service` derives the full baseline set of
+      its members and umbrella+member double-declaration does not duplicate.
+      `known_capability_profile_traits()` grows from 9 to 14 ids (the four
+      new anchored traits `standard_endpoints`/`ec_gated`/`cli_std`/
+      `chainable_output`, plus the `service` umbrella itself, added to the
+      existing 9). `baseline_capability_title` gained match arms for the
+      four new anchored traits' baseline cap ids
+      (`standard-operational-endpoints`, `ec-gates-configured`,
+      `cli-standard-surface`, `chainable-output-conformance`).
+      `render_trait_baseline_caps_cell` gained an umbrella branch: when
+      `trait_id` matches a `doc_mirror::TRAIT_EXPANSIONS` entry, it renders
+      `"expands: {members} -> caps: {derived}"` (derived via a nested call to
+      `required_baseline_caps_for_traits` on the member list) instead of a
+      plain baseline-cap lookup, so the umbrella's expansion is visible in
+      profile/draft rendering, not just in the derived cap list. The
+      drift-guard test `known_traits_include_every_doc_mirror_trait_def`
+      gained a second loop asserting every `TRAIT_EXPANSIONS` id is known and
+      every member id is a real `doc_mirror::TRAITS` id. Two new fixture
+      tests, `project_declaring_service_umbrella_derives_full_deduped_
+      baseline_set` and `project_declaring_service_umbrella_and_a_member_
+      does_not_duplicate`, cover AC1 directly: a project declaring
+      `traits = ["service"]` derives the full deduped 6-member baseline set,
+      and declaring `["service", "http2_api", "primary_replicas"]` alongside
+      it adds only `primary-replicas` on top with no duplicate
+      `http2-api-list` entry.
+    impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/cb_revise.rs"
     action: delete
     section: schema

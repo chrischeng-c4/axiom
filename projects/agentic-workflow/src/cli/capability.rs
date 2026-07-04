@@ -2580,6 +2580,10 @@ fn baseline_capability_title(capability_id: &str) -> &'static str {
         "long-running-stability" => "Long-Running Stability",
         "primary-replicas" => "Primary Replicas",
         "security-hardening" => "Security Hardening",
+        "standard-operational-endpoints" => "Standard Operational Endpoints",
+        "ec-gates-configured" => "EC Gates Configured",
+        "cli-standard-surface" => "CLI Standard Surface",
+        "chainable-output-conformance" => "Chainable Output Conformance",
         _ => "Trait-Derived Baseline Capability",
     }
 }
@@ -2812,6 +2816,32 @@ fn render_project_traits_draft_section(profile: &CapabilityProfileReport) -> Str
 fn render_trait_baseline_caps_cell(trait_id: &str) -> String {
     if !capability_profile_trait_known(trait_id) {
         return "(unknown trait; no baseline caps derived)".to_string();
+    }
+    // Issue #1078: an umbrella (`service`) derives no baseline caps of its
+    // own -- show the member expansion plus the caps that expansion derives,
+    // so the profile report makes the umbrella's effect visible instead of
+    // rendering the "prompt only" fallback a bare lookup miss would produce.
+    if let Some(expansion) = doc_mirror::TRAIT_EXPANSIONS
+        .iter()
+        .find(|exp| exp.id == trait_id)
+    {
+        let members = expansion
+            .members
+            .iter()
+            .map(|member| format!("`{member}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let member_traits = expansion
+            .members
+            .iter()
+            .map(|member| member.to_string())
+            .collect::<Vec<_>>();
+        let derived = required_baseline_caps_for_traits(&member_traits)
+            .iter()
+            .map(|cap| format!("`{cap}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!("expands: {members} → caps: {derived}");
     }
     let caps = baseline_caps_for_trait(trait_id);
     if caps.is_empty() {
@@ -5396,9 +5426,13 @@ fn normalize_capability_profile_traits(raw_traits: Vec<String>) -> Vec<String> {
     out
 }
 
+// Issue #1078 (archetype-as-traits slice 2/3): umbrella ids (`service`) are
+// expanded into their member trait ids -- with dedup against any member also
+// declared directly -- before baseline caps are gathered, so declaring the
+// umbrella alongside one of its own members never double-counts.
 fn required_baseline_caps_for_traits(traits: &[String]) -> Vec<String> {
     let mut required = BTreeSet::new();
-    for trait_id in traits {
+    for trait_id in &doc_mirror::expand_capability_profile_traits(traits) {
         for capability_id in baseline_caps_for_trait(trait_id) {
             required.insert((*capability_id).to_string());
         }
@@ -5406,47 +5440,39 @@ fn required_baseline_caps_for_traits(traits: &[String]) -> Vec<String> {
     required.into_iter().collect()
 }
 
-// Issue #1077 (archetype-as-traits slice 1/3): the three traits with a
-// settled CONTRIBUTING.md "Service archetype" doc home
-// (`http2_api`/`kubernetes_native`/`primary_replicas`) are now data-ified
-// into `doc_mirror::TRAITS`, the one registry CONTRIBUTING.md's generated
-// trait table also renders from. This is a thin lookup over that registry,
-// falling back to `other_known_trait_baseline_caps` for the remaining known
-// traits that have no anchor yet.
+// Issue #1077 (archetype-as-traits slice 1/3), extended by #1078 (slice
+// 2/3): every known trait -- archetype-anchored or general -- now lives in
+// `doc_mirror::TRAITS`, the one registry CONTRIBUTING.md's generated trait
+// table also renders from. This is a thin lookup over that registry; ids
+// with no `TraitDef` (including the `service` umbrella, which lives in
+// `doc_mirror::TRAIT_EXPANSIONS` instead and is expanded away before this is
+// ever called) fall through to an empty slice.
 fn baseline_caps_for_trait(trait_id: &str) -> &'static [&'static str] {
-    if let Some(def) = doc_mirror::TRAITS.iter().find(|def| def.id == trait_id) {
-        return def.baseline_caps;
-    }
-    other_known_trait_baseline_caps(trait_id)
+    doc_mirror::TRAITS
+        .iter()
+        .find(|def| def.id == trait_id)
+        .map_or(&[], |def| def.baseline_caps)
 }
 
-/// Baseline caps for known traits with no CONTRIBUTING.md doc anchor yet.
-/// Slice 2 (#1077 out-of-scope: new traits / umbrella `service`) is expected
-/// to give these a home and fold them into `doc_mirror::TRAITS` too.
-fn other_known_trait_baseline_caps(trait_id: &str) -> &'static [&'static str] {
-    match trait_id {
-        "cli_facing" => &["cli-interface"],
-        "competitive_replacement" => &["competitor-feature-parity", "competitor-performance"],
-        "long_running" => &["long-running-stability"],
-        "network_exposed" => &["security-hardening"],
-        "agent_facing" | "stateful_storage" => &[],
-        _ => &[],
-    }
-}
-
-// Every known trait id, `doc_mirror::TRAITS`-backed or not (see
+// Every known trait id, `doc_mirror::TRAITS`-backed or not, plus every
+// `doc_mirror::TRAIT_EXPANSIONS` umbrella id (see
 // `known_traits_include_every_doc_mirror_trait_def` for the drift guard that
-// keeps this list a superset of `doc_mirror::TRAITS`' ids).
+// keeps this list a superset of both registries' ids).
 fn known_capability_profile_traits() -> &'static [&'static str] {
     &[
         "agent_facing",
+        "chainable_output",
         "cli_facing",
+        "cli_std",
         "competitive_replacement",
+        "ec_gated",
         "http2_api",
         "kubernetes_native",
         "long_running",
         "network_exposed",
         "primary_replicas",
+        "service",
+        "standard_endpoints",
         "stateful_storage",
     ]
 }
@@ -12672,6 +12698,24 @@ Mamba can execute the Python 3.12 language and standard library surface.
                 def.id
             );
         }
+        // Issue #1078: every umbrella id (`doc_mirror::TRAIT_EXPANSIONS`)
+        // must also be known, and every member it expands to must itself be
+        // a real `doc_mirror::TRAITS` id.
+        for expansion in doc_mirror::TRAIT_EXPANSIONS {
+            assert!(
+                known_capability_profile_traits().contains(&expansion.id),
+                "known_capability_profile_traits must list umbrella `{}`",
+                expansion.id
+            );
+            for member in expansion.members {
+                assert!(
+                    doc_mirror::TRAITS.iter().any(|def| &def.id == member),
+                    "umbrella `{}` member `{}` must be a real doc_mirror::TRAITS id",
+                    expansion.id,
+                    member
+                );
+            }
+        }
     }
 
     #[test]
@@ -12719,6 +12763,87 @@ traits = ["long-running", "cli_facing", "competitive_replacement", "network_expo
                 "security-hardening"
             ]
         );
+    }
+
+    #[test]
+    fn project_declaring_service_umbrella_derives_full_deduped_baseline_set() {
+        // Issue #1078 AC1: declaring the `service` umbrella derives the full
+        // deduped baseline set of its members.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["service"]
+"#,
+        )
+        .unwrap();
+
+        let profile = load_capability_profile_report(tmp.path(), "demo").unwrap();
+
+        assert_eq!(profile.traits, vec!["service"]);
+        assert!(profile.unknown_traits.is_empty());
+        assert_eq!(
+            profile.required_baseline_caps,
+            vec![
+                "chainable-output-conformance",
+                "cli-standard-surface",
+                "ec-gates-configured",
+                "http2-api-list",
+                "kubernetes-native-deployment",
+                "standard-operational-endpoints",
+            ]
+        );
+    }
+
+    #[test]
+    fn project_declaring_service_umbrella_and_a_member_does_not_duplicate() {
+        // Issue #1078 AC1: umbrella+member double-declaration doesn't
+        // duplicate the derived baseline caps.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["service", "http2_api", "primary_replicas"]
+"#,
+        )
+        .unwrap();
+
+        let profile = load_capability_profile_report(tmp.path(), "demo").unwrap();
+
+        // Declaring `http2_api` alongside the `service` umbrella that already
+        // expands to include it must not duplicate `http2-api-list`; the only
+        // net-new cap on top of the umbrella's own set is `primary-replicas`
+        // (declared separately, not one of the umbrella's members).
+        assert_eq!(
+            profile.required_baseline_caps,
+            vec![
+                "chainable-output-conformance",
+                "cli-standard-surface",
+                "ec-gates-configured",
+                "http2-api-list",
+                "kubernetes-native-deployment",
+                "primary-replicas",
+                "standard-operational-endpoints",
+            ]
+        );
+        // No duplicates, by construction and by explicit assertion (the
+        // actual acceptance criterion).
+        let mut sorted = profile.required_baseline_caps.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted, profile.required_baseline_caps);
     }
 
     #[test]
