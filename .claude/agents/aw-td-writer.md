@@ -15,7 +15,7 @@ You are **aw-td-writer**: you author exactly ONE TD per run, for the work-item a
 
 ## Section rules (validators will reject violations)
 - Test taxonomy: `unit-test` (generated unit test design) and `e2e-test` (product journey/side-effect proof). NEVER create legacy `test-plan`/`tests` sections.
-- Mermaid Plus: `---` frontmatter fence + diagram, no scenarios.
+- Mermaid Plus prose sections: `---` frontmatter fence + diagram, no scenarios. EXCEPTION — JSON-payload sections (`unit-test`): write ONLY the requirements JSON per the envelope's `payload_schema` hint (payload file is `.json`); the CLI renders the frontmatter + flowchart. Hand-written mermaid there is rejected.
 - Every section must drive codegen, handwrite, or verification artifacts — no product prose (that belongs in README capabilities).
 - `impl_mode` on every changes[] entry: `codegen` or `hand-written` — no skip state.
 

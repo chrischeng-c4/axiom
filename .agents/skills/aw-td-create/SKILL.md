@@ -41,6 +41,8 @@ Reads the current issue phase and picks up where the chain left off.
 | `td_applicability_in_progress` | Fill `/tmp/aw/workspaces/<workspace>/payloads/<slug>/applicability/<section>.md`, then run the projection's exact `aw td create --apply --phase applicability --section <section>` command |
 | `td_applicability_created` | Transient — the linear lifecycle advances straight to the first contract section (or `aw td gen` if the contract pass has no sections), no review step. If no lock is active here, read the `Next-Command` git trailer off the last td commit for this slug and run it verbatim |
 | `td_contract_in_progress` | Fill `/tmp/aw/workspaces/<workspace>/payloads/<slug>/contract/<section>.md`, then run the projection's exact `aw td create --apply --phase contract --section <section>` command |
+
+JSON-payload sections: the `unit-test` section's payload is `<section>.json` — write ONLY the requirements JSON matching the envelope's inline `payload_schema` hint; never hand-write mermaid or YAML frontmatter for it (the CLI renders both, grouping requirements by their `verify` target). Hand-written mermaid payloads for this section are rejected.
 | `td_created` | Transient — the linear lifecycle advances straight to `aw td gen`. If no lock is active here, read the `Next-Command` git trailer off the last td commit for this slug and run it verbatim |
 | `td_reviewed` | Retired CRRR phase (issue #850); self-heals to `td_created` on read (`td_phase::normalize`), so `aw wi show` never actually surfaces it — treat as `td_created` and run `aw td gen <slug> --spec-path <path>` |
 | `cb_genned` | Run `aw td fill` to fill HANDWRITE markers |
