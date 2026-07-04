@@ -30,7 +30,7 @@ Canonical field-style capability contracts below are machine-readable input for
 
 ID: gke-uat-preview-environment-rendering
 Type: Devops
-Surfaces: CLI: `preview discover-base`, `preview render`, `preview apply`, `preview gitops render`, `preview router resolve`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
+Surfaces: CLI: `preview discover-base`, `preview render`, `preview apply`, `preview gitops render`, `preview router resolve`, `preview cleanup plan`, `preview cleanup apply`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
 EC Dimensions: behavior: render/discovery contract tests - base workload normalization, MR identity, namespace naming, GKE labels, route binding stability, MR comment text, and cleanup dry-run output.
 Root WI: -
 Status: verified
@@ -51,6 +51,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Base workload discovery | change | #1108 | implemented | verified | smoke | `cargo test -p preview --test base_discovery_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | Local apply and GitOps execution | change | #1109 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Guarded cleanup janitor | change | #1111 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract local_cleanup_janitor_plan_reports_guarded_actions`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | MR-scoped namespace projection | epic | - | implemented | verified | smoke | `cargo test -p preview render_creates_gke_contract_files` |
 | Cookie/header route binding contract | epic | - | implemented | verified | smoke | `cargo test -p preview route_binding_uses_target_not_namespace_cookie` |
 | Cleanup dry-run planning | epic | - | implemented | verified | smoke | `cargo test -p preview cleanup_plan_marks_closed_mr_for_namespace_delete` |
@@ -147,6 +148,8 @@ The first renderer assumes:
 | `preview apply` | Print an ordered plan, server-side dry-run, or apply rendered manifests through `kubectl` with kind-context guardrails. |
 | `preview gitops render` | Convert rendered manifests into a deterministic relative-path GitOps bundle. |
 | `preview router resolve` | Load rendered route-binding files or kind ConfigMaps and return a base/preview/not-found routing decision. |
+| `preview cleanup plan` | Compute guarded keep/drain/delete cleanup decisions from MR, TTL, namespace, route-binding, and protected namespace state. |
+| `preview cleanup apply` | Apply a guarded janitor plan through `kubectl`, deleting only bounded preview namespaces and route-binding ConfigMaps. |
 | `preview comment` | Print the MR comment text for a rendered preview. |
 | `preview cleanup-plan` | Print a dry-run cleanup decision for a preview. |
 | `preview llm` | Print offline agent-facing usage notes. |
@@ -183,7 +186,7 @@ cargo test -p preview
 
 That covers render determinism, base workload normalization from Kubernetes
 JSON fixtures, clone-plan shape, local CI command shape, MR comments, cleanup
-JSON protected namespaces, route resolution, local router adapter decisions,
+JSON protected namespaces, guarded cleanup janitor decisions, route resolution, local router adapter decisions,
 Kubernetes object
 cross-references, RBAC shape, and resource bounds.
 
@@ -197,4 +200,4 @@ That covers Docker image build/load, base namespace fixture discovery through
   `preview discover-base`, `preview apply` direct apply/server dry-run/reapply,
   route-binding ConfigMap table loading, rollout, Service
 endpoints, port-forward HTTP, admission rejection for oversized pods,
-least-privilege RBAC, and namespace cleanup.
+least-privilege RBAC, guarded janitor cleanup apply, and namespace cleanup.

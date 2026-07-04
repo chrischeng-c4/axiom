@@ -245,6 +245,49 @@ fn local_router_resolve_proves_base_preview_and_fail_closed() {
 }
 
 #[test]
+fn local_cleanup_janitor_plan_reports_guarded_actions() {
+    let delete = command_stdout(Command::new(preview_bin()).args([
+        "cleanup",
+        "plan",
+        "--mr",
+        "321",
+        "--closed",
+        "--namespace-exists",
+        "--route-binding-exists",
+        "--base-namespace",
+        "uat-base",
+        "--control-namespace",
+        "preview-system",
+    ]));
+    let delete: Value = serde_json::from_str(&delete).expect("delete plan");
+    assert_eq!(delete["action"], "delete");
+    assert_eq!(delete["deleteNamespace"], true);
+    assert_eq!(delete["deleteRouteBinding"], true);
+    assert_eq!(delete["reason"], "MR is closed or merged");
+
+    let protected = command_stdout(Command::new(preview_bin()).args([
+        "cleanup",
+        "plan",
+        "--mr",
+        "321",
+        "--namespace",
+        "uat-base",
+        "--closed",
+        "--namespace-exists",
+        "--route-binding-exists",
+        "--base-namespace",
+        "uat-base",
+    ]));
+    let protected: Value = serde_json::from_str(&protected).expect("protected plan");
+    assert_eq!(protected["action"], "keep");
+    assert_eq!(protected["deleteNamespace"], false);
+    assert!(protected["skipped"][0]
+        .as_str()
+        .expect("skip")
+        .contains("protected namespace"));
+}
+
+#[test]
 fn local_ci_render_consumes_discovered_base_contract_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let contract = dir.path().join("base-contract.json");

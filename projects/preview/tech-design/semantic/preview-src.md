@@ -32,6 +32,12 @@ capability_refs:
     claim: "local-router-adapter"
     coverage: partial
     rationale: "Local router adapter behavior is implemented by the router module and CLI integration."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "guarded-cleanup-janitor"
+    claim: "guarded-cleanup-janitor"
+    coverage: partial
+    rationale: "Guarded cleanup janitor behavior is implemented by the cleanup module and CLI integration."
 fill_sections: [schema, changes]
 ---
 
@@ -114,6 +120,9 @@ semantic_domain:
           - name: "apply"
             kind: "module"
             public: true
+          - name: "cleanup"
+            kind: "module"
+            public: true
           - name: "discover"
             kind: "module"
             public: true
@@ -168,6 +177,38 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "apply_summary_markdown"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview/src"
+      - path: "projects/preview/src/cleanup.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "JanitorPlan"
+            kind: "struct"
+            public: true
+          - name: "JanitorInput"
+            kind: "struct"
+            public: true
+          - name: "CleanupApplyOptions"
+            kind: "struct"
+            public: true
+          - name: "CleanupApplySummary"
+            kind: "struct"
+            public: true
+          - name: "plan_guarded_cleanup"
+            kind: "function"
+            public: true
+          - name: "apply_guarded_cleanup"
+            kind: "function"
+            public: true
+          - name: "read_janitor_plan"
             kind: "function"
             public: true
         source_evidence_node:
@@ -269,6 +310,9 @@ semantic_domain:
           - name: "RouterCommand"
             kind: "enum"
             public: false
+          - name: "CleanupCommand"
+            kind: "enum"
+            public: false
           - name: "RenderArgs"
             kind: "struct"
             public: false
@@ -282,6 +326,12 @@ semantic_domain:
             kind: "struct"
             public: false
           - name: "RouterResolveArgs"
+            kind: "struct"
+            public: false
+          - name: "CleanupJanitorPlanArgs"
+            kind: "struct"
+            public: false
+          - name: "CleanupApplyArgs"
             kind: "struct"
             public: false
           - name: "CleanupArgs"
@@ -303,6 +353,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "router_resolve"
+            kind: "function"
+            public: false
+          - name: "cleanup_janitor_plan"
+            kind: "function"
+            public: false
+          - name: "cleanup_apply"
             kind: "function"
             public: false
           - name: "print_llm"
@@ -390,6 +446,14 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-src-apply-rs>"
+  - path: "projects/preview/src/cleanup.rs"
+    action: add
+    section: schema
+    description: |
+      Guarded cleanup janitor source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-preview-src-cleanup-rs>"
   - path: "projects/preview/src/discover.rs"
     action: add
     section: schema

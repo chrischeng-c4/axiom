@@ -49,7 +49,10 @@ First useful defaults for an SRE lead:
 - `/readyz` and `/healthz` probes required by the rendered Deployment;
 - no direct DB clone assumption in the preview project yet;
 - all delete behavior starts as a dry-run cleanup plan and protects the base
-  namespace plus control namespace.
+  namespace plus control namespace;
+- janitor cleanup computes keep/drain/delete decisions from MR closure, TTL,
+  orphaned namespace/route-binding state, and preview namespace selectors before
+  any `kubectl delete`.
 
 ## Adapter Path
 
@@ -84,8 +87,9 @@ The EC path is deliberately layered:
    runs server-side dry-run after namespace creation, re-applies idempotently,
    loads the route-binding ConfigMap through the local adapter, waits for
    rollout, checks service endpoints, reaches `/readyz` through port-forward,
-   validates least-privilege RBAC, verifies quota rejection, and cleans only
-   test-created namespaces when `PREVIEW_KIND_E2E=1` is set.
+   validates least-privilege RBAC, verifies quota rejection, applies guarded
+   janitor cleanup twice, and cleans only test-created namespaces when
+   `PREVIEW_KIND_E2E=1` is set.
 
 This keeps daily CI cheap while making the cluster gate concrete enough for an
 SRE-owned validation lane.

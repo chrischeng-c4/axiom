@@ -1,8 +1,8 @@
 version = 1
 project = "preview"
 td_path = "projects/preview/tech-design"
-generated_at = "2026-07-04T17:06:22.061465+00:00"
-digest = "sha256:df4543c622fa80bd77aed8d82e6e02de63b0dc17f4b7605d1f407d3d3f773f9a"
+generated_at = "2026-07-04T17:16:42.369852+00:00"
+digest = "sha256:8082c20de45af78bdfcac75f56a006be8aae75021e3ddd3fe861e870eb73e2d2"
 
 [[files]]
 path = "README.md"
@@ -17,6 +17,10 @@ path = "interfaces/cli/preview-exposes-local-apply-and-gitops-bundle-execution-p
 digest = "sha256:e4609fb93584a759d296a2a09de014ad690a6fdd3d87683199618f12f12f57a8"
 
 [[files]]
+path = "interfaces/cli/preview-janitor-plans-and-applies-guarded-local-cleanup.md"
+digest = "sha256:0e6be4487a78f5805f2de454e79a2981611ab4297c9f135660c44ce591b06a66"
+
+[[files]]
 path = "interfaces/cli/preview-router-adapter-proves-base-fallback-and-target-routing-locally.md"
 digest = "sha256:27d2a09fccd973ebaaceea62b8394b6f7543863641ed003592fe8efbddc8e529"
 
@@ -26,8 +30,8 @@ digest = "sha256:5b2c43fbc22bf24ea39e182005d62475b41d686cb15f6a41959b37ec73b85be
 
 [[files]]
 path = "semantic/preview-src.md"
-digest = "sha256:ed2a1eef092ac870b041906815a8f6011100f02e33989929c111f89975d8439c"
+digest = "sha256:09858b71e24674513ffb6977cafc4587af94b36339d74c07fdbe2145840e8f04"
 
 [[files]]
 path = "semantic/preview-tests.md"
-digest = "sha256:7845ff1834c582a6ba39a40e999ea632d5f862d72fccca4f994a3ecf80cb39c2"
+digest = "sha256:02ca02533bf9d7664b97c804a4addb166034ac5b68e2c322696138735d7f6504"

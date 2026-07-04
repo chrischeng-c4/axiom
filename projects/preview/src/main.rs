@@ -8,9 +8,9 @@ use preview::discover::discover_base_with_kubectl;
 use preview::render::{cleanup_plan, mr_comment, preview_environment};
 use preview::{
     apply_rendered_manifests, apply_summary_markdown, load_route_table_from_kubectl,
-    load_route_table_from_rendered_dir, render_files, render_gitops_bundle,
-    resolve_route_with_base, ApplyOptions, BaseRoute, BaseWorkloadContract, RenderInput,
-    RouteRequest,
+    load_route_table_from_rendered_dir, plan_guarded_cleanup, read_janitor_plan, render_files,
+    render_gitops_bundle, resolve_route_with_base, ApplyOptions, BaseRoute, BaseWorkloadContract,
+    CleanupApplyOptions, JanitorInput, RenderInput, RouteRequest,
 };
 
 #[derive(Debug, Parser)]
@@ -32,6 +32,10 @@ enum Command {
     Router {
         #[command(subcommand)]
         command: RouterCommand,
+    },
+    Cleanup {
+        #[command(subcommand)]
+        command: CleanupCommand,
     },
     Comment(RenderArgs),
     CleanupPlan(CleanupArgs),
@@ -59,6 +63,12 @@ enum GitopsCommand {
 #[derive(Debug, Subcommand)]
 enum RouterCommand {
     Resolve(RouterResolveArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum CleanupCommand {
+    Plan(CleanupJanitorPlanArgs),
+    Apply(CleanupApplyArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -163,6 +173,38 @@ struct RouterResolveArgs {
 }
 
 #[derive(Debug, Args)]
+struct CleanupJanitorPlanArgs {
+    #[arg(long)]
+    mr: u32,
+    #[arg(long)]
+    namespace: Option<String>,
+    #[arg(long)]
+    route_target: Option<String>,
+    #[arg(long, default_value = "preview-system")]
+    control_namespace: String,
+    #[arg(long, default_value = "uat-base")]
+    base_namespace: String,
+    #[arg(long, default_value_t = false)]
+    closed: bool,
+    #[arg(long, default_value_t = false)]
+    ttl_expired: bool,
+    #[arg(long, default_value_t = false)]
+    namespace_exists: bool,
+    #[arg(long, default_value_t = false)]
+    route_binding_exists: bool,
+}
+
+#[derive(Debug, Args)]
+struct CleanupApplyArgs {
+    #[arg(long)]
+    plan: PathBuf,
+    #[arg(long)]
+    context: Option<String>,
+    #[arg(long, default_value_t = false)]
+    allow_non_kind: bool,
+}
+
+#[derive(Debug, Args)]
 struct CleanupArgs {
     #[arg(long)]
     mr: u32,
@@ -192,6 +234,10 @@ fn main() -> Result<()> {
         },
         Command::Router { command } => match command {
             RouterCommand::Resolve(args) => router_resolve(args),
+        },
+        Command::Cleanup { command } => match command {
+            CleanupCommand::Plan(args) => cleanup_janitor_plan(args),
+            CleanupCommand::Apply(args) => cleanup_apply(args),
         },
         Command::Comment(args) => {
             let input = args.into_input()?;
@@ -355,6 +401,41 @@ fn router_resolve(args: RouterResolveArgs) -> Result<()> {
     Ok(())
 }
 
+fn cleanup_janitor_plan(args: CleanupJanitorPlanArgs) -> Result<()> {
+    let namespace = args
+        .namespace
+        .unwrap_or_else(|| format!("uat-mr-{}", args.mr));
+    let route_target = args
+        .route_target
+        .unwrap_or_else(|| format!("mr-{}", args.mr));
+    let plan = plan_guarded_cleanup(JanitorInput {
+        mr: args.mr,
+        namespace,
+        route_target,
+        control_namespace: args.control_namespace.clone(),
+        protected_namespaces: vec![args.base_namespace, args.control_namespace],
+        mr_closed: args.closed,
+        ttl_expired: args.ttl_expired,
+        namespace_exists: args.namespace_exists,
+        route_binding_exists: args.route_binding_exists,
+    });
+    println!("{}", serde_json::to_string_pretty(&plan)?);
+    Ok(())
+}
+
+fn cleanup_apply(args: CleanupApplyArgs) -> Result<()> {
+    let plan = read_janitor_plan(&args.plan)?;
+    let summary = preview::apply_guarded_cleanup(
+        &plan,
+        &CleanupApplyOptions {
+            context: args.context,
+            allow_non_kind: args.allow_non_kind,
+        },
+    )?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
 fn print_llm(topic: &str) {
     match topic {
         "outline" => {
@@ -365,6 +446,7 @@ fn print_llm(topic: &str) {
             );
             println!("Use `preview gitops render --dir <dir> --out <dir>` for PR-based delivery.");
             println!("Use `preview router resolve --dir <dir> --host <host>` to prove base fallback and preview target routing locally.");
+            println!("Use `preview cleanup plan` and `preview cleanup apply --plan <json>` for guarded janitor cleanup.");
             println!("The rendered route binding maps cookie/header target `mr-<id>` to a namespace service.");
         }
         _ => {
