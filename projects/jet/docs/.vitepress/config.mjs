@@ -8,21 +8,21 @@ export default defineConfig({
 
   themeConfig: {
     nav: [
-      { text: 'Jet', link: '/jet/getting-started' },
+      { text: 'Jet', link: '/getting-started' },
     ],
 
     sidebar: {
-      '/jet/': [
+      '/': [
         {
           text: 'Jet',
           items: [
-            { text: 'Getting Started', link: '/jet/getting-started' },
-            { text: 'Package Manager', link: '/jet/package-manager' },
-            { text: 'Bundler', link: '/jet/bundler' },
-            { text: 'Dev Server', link: '/jet/dev-server' },
-            { text: 'Task Runner', link: '/jet/task-runner' },
-            { text: 'Configuration', link: '/jet/configuration' },
-            { text: 'Workspaces', link: '/jet/workspaces' },
+            { text: 'Getting Started', link: '/getting-started' },
+            { text: 'Package Manager', link: '/package-manager' },
+            { text: 'Bundler', link: '/bundler' },
+            { text: 'Dev Server', link: '/dev-server' },
+            { text: 'Task Runner', link: '/task-runner' },
+            { text: 'Configuration', link: '/configuration' },
+            { text: 'Workspaces', link: '/workspaces' },
           ]
         }
       ]
