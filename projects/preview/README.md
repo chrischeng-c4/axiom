@@ -77,6 +77,7 @@ Gate Inventory:
 | Render contract EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test render_contract` |
 | Local apply/GitOps execution EC | change | #1109 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | Local router adapter | change | #1110 | implemented | verified | smoke | `cargo test -p preview --test router_contract`; `cargo test -p preview --test local_cicd_contract local_router_resolve_proves_base_preview_and_fail_closed`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| CI template lifecycle | change | #1112 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract ci_templates_document_required_variables_and_command_order`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | Router target EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test router_contract` |
 | Kubernetes object EC | epic | - | implemented | verified | smoke | `cargo test -p preview --test k8s_object_contract` |
 | Kind/GKE lifecycle EC | epic | - | implemented | verified | smoke | `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
@@ -156,6 +157,19 @@ The first renderer assumes:
 | `preview upgrade` | Placeholder for the repo-wide self-update convention. |
 | `preview issue` | Placeholder for the repo-wide issue convention. |
 
+## CI/CD Templates
+
+Copyable local-first lifecycle templates live in
+`projects/preview/docs/ci-templates/`:
+
+- `github-actions-preview.yaml` for pull request open/update/rerun/close.
+- `gitlab-ci-preview.yml` for GitLab merge request pipelines.
+- `local-kind-lifecycle.sh` for SRE laptop smoke testing.
+
+The templates parameterize registry, Kubernetes context, base namespace, app,
+host, and TTL so GKE-specific values can be swapped in during the pilot without
+changing the command lifecycle.
+
 ## External Contract Gates
 
 Preview EC has four layers:
@@ -163,7 +177,7 @@ Preview EC has four layers:
 - Render EC: validates the file contract and MR-to-namespace naming.
 - Local CI/CD EC: runs the `preview` binary locally to simulate MR
   open/update/comment/close, apply plan summaries, and GitOps bundle rendering
-  without a live cluster.
+  without a live cluster. It also validates the copyable CI/CD templates.
 - Router EC: validates cookie/header target resolution without a real ingress.
 - Local router adapter EC: validates base fallback, header/cookie preview
   target routing, and invalid-target fail-closed decisions through

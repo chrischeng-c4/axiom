@@ -1,8 +1,8 @@
 version = 1
 project = "preview"
 td_path = "projects/preview/tech-design"
-generated_at = "2026-07-04T17:16:42.369852+00:00"
-digest = "sha256:8082c20de45af78bdfcac75f56a006be8aae75021e3ddd3fe861e870eb73e2d2"
+generated_at = "2026-07-04T17:24:49.431237+00:00"
+digest = "sha256:37824b6c9cf286c78e2719cd1bda344a95762c677ba58ac1217ff04ec9fde4df"
 
 [[files]]
 path = "README.md"
@@ -25,8 +25,12 @@ path = "interfaces/cli/preview-router-adapter-proves-base-fallback-and-target-ro
 digest = "sha256:27d2a09fccd973ebaaceea62b8394b6f7543863641ed003592fe8efbddc8e529"
 
 [[files]]
+path = "interfaces/cli/preview-ships-copyable-local-first-cicd-lifecycle-templates.md"
+digest = "sha256:23322dad263eb86e6bf62f51ddd3ad9108a67dfc940bb2e21d07fd7785a9e6c6"
+
+[[files]]
 path = "semantic/preview-projects-preview.md"
-digest = "sha256:5b2c43fbc22bf24ea39e182005d62475b41d686cb15f6a41959b37ec73b85beb"
+digest = "sha256:f98b35ea3123eedcceb858c663f41a0104eacca37410ce6160db528999021cce"
 
 [[files]]
 path = "semantic/preview-src.md"
@@ -34,4 +38,4 @@ digest = "sha256:09858b71e24674513ffb6977cafc4587af94b36339d74c07fdbe2145840e8f0
 
 [[files]]
 path = "semantic/preview-tests.md"
-digest = "sha256:02ca02533bf9d7664b97c804a4addb166034ac5b68e2c322696138735d7f6504"
+digest = "sha256:3815d8b5df10780e305f7b0eba058afaca3b9e54a944799e876af91ef1b1a0a4"

@@ -74,6 +74,12 @@ capability_refs:
     claim: "guarded-cleanup-janitor"
     coverage: partial
     rationale: "Guarded cleanup janitor behavior is covered by render/local CI tests and the kind cleanup apply path."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "ci-template-lifecycle"
+    claim: "ci-template-lifecycle"
+    coverage: partial
+    rationale: "CI template lifecycle is covered by the local CI/CD contract test."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -200,6 +206,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "local_cleanup_janitor_plan_reports_guarded_actions"
+            kind: "function"
+            public: false
+          - name: "ci_templates_document_required_variables_and_command_order"
+            kind: "function"
+            public: false
+          - name: "assert_command_order"
             kind: "function"
             public: false
           - name: "local_ci_render_consumes_discovered_base_contract_file"

@@ -67,6 +67,11 @@ Use the same model through progressively stronger deployment forms:
 4. When the cluster policy allows it, promote `PreviewEnvironment` to a CRD and
    run the same reconcile logic as an operator.
 
+Copyable GitHub Actions, GitLab CI, and local kind lifecycle templates live in
+`projects/preview/docs/ci-templates/`. They keep registry, cluster context, base
+namespace, app, host, and TTL parameterized so GKE-specific values are isolated
+to pipeline variables.
+
 ## EC Strategy
 
 The EC path is deliberately layered:
@@ -77,8 +82,9 @@ The EC path is deliberately layered:
    ingress.
 3. Always-on Kubernetes object EC parses rendered manifests and checks
    cross-resource references.
-4. Always-on local CI/CD EC validates `preview apply --plan-only` and
-   `preview gitops render` without a live cluster.
+4. Always-on local CI/CD EC validates `preview apply --plan-only`,
+   `preview gitops render`, and CI/CD template command order without a live
+   cluster.
 5. Always-on local router adapter EC validates base fallback, preview target
    routing, header-over-cookie precedence, host mismatch, and invalid-target
    fail-closed behavior.
