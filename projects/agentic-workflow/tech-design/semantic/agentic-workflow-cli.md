@@ -181,7 +181,7 @@ semantic_domain:
           - name: "count_worktree_handwrite_markers"
             kind: "function"
             public: true
-          - name: "cb_marker_payload_rel"
+          - name: "cb_marker_payload_path"
             kind: "function"
             public: false
           - name: "cb_fill_apply_command"

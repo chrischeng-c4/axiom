@@ -137,9 +137,9 @@ pub struct CreateArgs {
     pub phase: Option<String>,
     /// Per-section apply: merge ONLY the section of the given `type:`
     /// annotation from the payload file at
-    /// `.aw/payloads/<slug>/<phase>/<section>.md` into the spec. Other
-    /// sections in the spec are untouched. Required for loop-fill flow
-    /// where the subagent applies one section at a time.
+    /// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<phase>/<section>.md`
+    /// into the spec. Other sections in the spec are untouched. Required
+    /// for loop-fill flow where the subagent applies one section at a time.
     #[arg(long)]
     pub section: Option<String>,
     /// DEPRECATED compatibility no-op. TD lifecycle envelopes are JSON by default.
@@ -427,16 +427,20 @@ pub(crate) fn td_activate_inplace_allowing_dirty_lifecycle_paths(
 }
 
 /// @spec .aw/tech-design/projects/score/specs/aw-td-extend-dirty-allow-issue-file.md#logic
+///
+/// Payload round-trip files no longer need a dirty-path exception here:
+/// they live under `/tmp/aw/workspaces/<workspace>/payloads` (see
+/// [`crate::shared::workspace::payloads_path`]), which is outside the
+/// project's git status entirely.
 pub(crate) fn td_activate_inplace_allowing_dirty_spec_path(
     project_root: &std::path::Path,
     slug: &str,
     spec_path: &str,
 ) -> Result<()> {
     let issue_path = canonical_issue_path_for_slug(project_root, slug);
-    let payload_prefix = format!(".aw/payloads/{slug}/");
     let allowed: Vec<&str> = match issue_path.as_deref() {
-        Some(p) => vec![spec_path, p, payload_prefix.as_str()],
-        None => vec![spec_path, payload_prefix.as_str()],
+        Some(p) => vec![spec_path, p],
+        None => vec![spec_path],
     };
     ensure_clean_or_only_dirty_paths(project_root, &allowed).map_err(|e| {
         anyhow::anyhow!(
@@ -2120,16 +2124,22 @@ fn slugify_spec_filename(title: &str) -> String {
     trimmed[..cut].trim_end_matches('-').to_string()
 }
 
-fn section_payload_rel(slug: &str, pass: &str, section: &str) -> String {
-    format!(".aw/payloads/{}/{}/{}.md", slug, pass, section)
+fn section_payload_path(
+    project_root: &std::path::Path,
+    slug: &str,
+    pass: &str,
+    section: &str,
+) -> String {
+    crate::shared::workspace::payloads_path(project_root)
+        .join(slug)
+        .join(pass)
+        .join(format!("{section}.md"))
+        .to_string_lossy()
+        .into_owned()
 }
 
-fn initialize_td_payload_file(
-    project_root: &std::path::Path,
-    rel_path: &str,
-    content: &str,
-) -> Result<bool> {
-    let abs = project_root.join(rel_path);
+fn initialize_td_payload_file(payload_path: &str, content: &str) -> Result<bool> {
+    let abs = std::path::Path::new(payload_path);
     if abs.exists() {
         return Ok(false);
     }
@@ -2137,7 +2147,7 @@ fn initialize_td_payload_file(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create payload directory {}", parent.display()))?;
     }
-    std::fs::write(&abs, content)
+    std::fs::write(abs, content)
         .with_context(|| format!("failed to write payload {}", abs.display()))?;
     Ok(true)
 }
@@ -2463,9 +2473,8 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     let queue = td_section_queue(pass);
     let mut first_payload_created = None;
     if let Some(first_section) = queue.first() {
-        let expected_payload = section_payload_rel(&slug, pass, first_section);
+        let expected_payload = section_payload_path(&project_root, &slug, pass, first_section);
         first_payload_created = Some(initialize_td_payload_file(
-            &project_root,
             &expected_payload,
             &td_section_payload_template(first_section)?,
         )?);
@@ -2510,7 +2519,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         let first_section = queue.first().cloned();
         let payload_path = first_section
             .as_ref()
-            .map(|section| section_payload_rel(&slug, pass, section));
+            .map(|section| section_payload_path(&project_root, &slug, pass, section));
         let next = if let (Some(section), Some(payload)) =
             (first_section.as_ref(), payload_path.as_ref())
         {
@@ -2664,7 +2673,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     if let Some(first_section) = queue.first() {
         println!();
         println!("Next section payload:");
-        println!("  {}", section_payload_rel(&slug, pass, first_section));
+        println!(
+            "  {}",
+            section_payload_path(&project_root, &slug, pass, first_section)
+        );
         println!(
             "Payload: {}",
             if first_payload_created.unwrap_or(false) {
@@ -2688,10 +2700,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
 /// Apply mode: validate spec in-place, emit dispatch envelope for validate.
 ///
 /// When `--section X` is supplied, reads
-/// `.aw/payloads/<slug>/<phase>/<section>.md` and merges ONLY that section
-/// into the spec file before validating (loop-fill path). When omitted,
-/// the caller is expected to have written the full spec directly — we
-/// just validate in-place.
+/// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<phase>/<section>.md` and
+/// merges ONLY that section into the spec file before validating
+/// (loop-fill path). When omitted, the caller is expected to have written
+/// the full spec directly — we just validate in-place.
 async fn run_create_apply(args: &CreateArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = &args.slug;
@@ -2712,27 +2724,32 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
     // Per-section merge path: read payload, merge into base spec, write back.
     if let Some(section) = args.section.as_deref() {
         let pass = td_authoring_pass(args.phase.as_deref());
-        let preferred_payload_rel = section_payload_rel(slug, pass, section);
-        let legacy_payload_rel = format!(".aw/payloads/{}/{}.md", slug, section);
-        let payload_rel = if worktree_abs.join(&preferred_payload_rel).exists() {
-            preferred_payload_rel
-        } else if worktree_abs.join(&legacy_payload_rel).exists() {
-            legacy_payload_rel
+        let preferred_payload_path = section_payload_path(&project_root, slug, pass, section);
+        // Legacy naming (pre-`<phase>` segment) — still checked so payloads
+        // initialized by an older binary are not silently dropped.
+        let legacy_payload_path = crate::shared::workspace::payloads_path(&project_root)
+            .join(slug)
+            .join(format!("{section}.md"))
+            .to_string_lossy()
+            .into_owned();
+        let payload_path = if std::path::Path::new(&preferred_payload_path).exists() {
+            preferred_payload_path
+        } else if std::path::Path::new(&legacy_payload_path).exists() {
+            legacy_payload_path
         } else {
             initialize_td_payload_file(
-                &worktree_abs,
-                &preferred_payload_rel,
+                &preferred_payload_path,
                 &td_section_payload_template(section)?,
             )?;
             let msg = format!(
                 "section payload was missing; initialized {}. Fill that file, then rerun this command.",
-                preferred_payload_rel
+                preferred_payload_path
             );
             return td_error(slug, msg);
         };
-        let payload_abs = worktree_abs.join(&payload_rel);
+        let payload_abs = std::path::Path::new(&payload_path);
         let payload_body =
-            std::fs::read_to_string(&payload_abs).context("failed to read section payload")?;
+            std::fs::read_to_string(payload_abs).context("failed to read section payload")?;
         let base_body = if spec_abs.exists() {
             std::fs::read_to_string(&spec_abs).context("failed to read base spec")?
         } else {
@@ -2865,9 +2882,8 @@ async fn complete_section_apply(
                 },
             )
             .await?;
-        let expected_payload = section_payload_rel(slug, pass, next_section);
+        let expected_payload = section_payload_path(project_root, slug, pass, next_section);
         initialize_td_payload_file(
-            &worktree_abs,
             &expected_payload,
             &td_section_payload_template(next_section)?,
         )?;
@@ -2919,9 +2935,8 @@ async fn complete_section_apply(
             .next()
         {
             Some(first) => {
-                let expected_payload = section_payload_rel(slug, "contract", &first);
+                let expected_payload = section_payload_path(project_root, slug, "contract", &first);
                 initialize_td_payload_file(
-                    &worktree_abs,
                     &expected_payload,
                     &td_section_payload_template(&first)?,
                 )?;
@@ -4510,41 +4525,6 @@ label = "project:agentic-workflow"
     }
 
     #[test]
-    fn dirty_payload_prefix_is_allowed_for_td_revise_apply() {
-        if !git_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        init_git_repo(root);
-        let payload = root.join(".aw/payloads/1/changes.md");
-        std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
-        std::fs::write(&payload, "## Changes\n").unwrap();
-
-        ensure_clean_or_only_dirty_paths(root, &["tech-design/spec.md", ".aw/payloads/1/"])
-            .expect("td revise apply should allow matching payload fragments");
-    }
-
-    #[test]
-    fn dirty_marker_payload_file_is_allowed_for_cb_fill_apply() {
-        if !git_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        init_git_repo(root);
-        let payload = root.join(".aw/payloads/1/missing-generator:component:e4ee6075.md");
-        std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
-        std::fs::write(&payload, "fill\n").unwrap();
-
-        ensure_clean_or_only_dirty_paths(
-            root,
-            &[".aw/payloads/1/missing-generator:component:e4ee6075.md"],
-        )
-        .expect("cb fill apply should allow the expected marker payload");
-    }
-
-    #[test]
     fn merge_spec_section_replaces_matching_type() {
         let base = concat!(
             "---\n",
@@ -5025,19 +5005,17 @@ label = "project:agentic-workflow"
     #[test]
     fn initialize_td_payload_file_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
-        let rel = ".aw/payloads/123/applicability/logic.md";
+        let payload_path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("123")
+            .join("applicability")
+            .join("logic.md");
+        let payload_path_s = payload_path.to_string_lossy().into_owned();
 
-        assert!(initialize_td_payload_file(tmp.path(), rel, "first\n").unwrap());
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join(rel)).unwrap(),
-            "first\n"
-        );
+        assert!(initialize_td_payload_file(&payload_path_s, "first\n").unwrap());
+        assert_eq!(std::fs::read_to_string(&payload_path).unwrap(), "first\n");
 
-        assert!(!initialize_td_payload_file(tmp.path(), rel, "second\n").unwrap());
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join(rel)).unwrap(),
-            "first\n"
-        );
+        assert!(!initialize_td_payload_file(&payload_path_s, "second\n").unwrap());
+        assert_eq!(std::fs::read_to_string(&payload_path).unwrap(), "first\n");
     }
 
     #[test]

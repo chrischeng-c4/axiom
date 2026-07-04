@@ -33,6 +33,9 @@ pub const TECH_DESIGN_DIR: &str = "tech-design";
 /// Local issue artifact directory (pre-tracker).
 pub const ISSUES_DIR: &str = "issues";
 
+/// Ephemeral payload round-trip artifact directory.
+pub const PAYLOADS_DIR: &str = "payloads";
+
 /// Agentic Workflow runtime/cache root.
 pub const AW_TMP_ROOT: &str = "/tmp/aw";
 
@@ -146,6 +149,21 @@ pub fn issues_path(project_root: &Path) -> PathBuf {
         .join(ISSUES_DIR)
 }
 
+/// Path to the ephemeral payload round-trip directory:
+/// `/tmp/aw/workspaces/<workspace>/payloads`.
+///
+/// CRRR round-trip fragments (TD section drafts, HANDWRITE marker fills, EC
+/// draft sections, work-item fill-section/review bodies) are consumed
+/// within a single agent turn and are never git-tracked, so they live here
+/// alongside `issues_path` rather than under the project's `.aw/` tree.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn payloads_path(project_root: &Path) -> PathBuf {
+    aw_tmp_path()
+        .join("workspaces")
+        .join(workspace_cache_slug(project_root))
+        .join(PAYLOADS_DIR)
+}
+
 fn workspace_cache_slug(project_root: &Path) -> String {
     let identity_root = issue_workspace_identity_root(project_root);
     let resolved = identity_root.canonicalize().unwrap_or(identity_root);
@@ -217,6 +235,27 @@ mod tests {
         let worktree_root = main_root.join(".aw/worktrees/change-slug");
 
         assert_eq!(issues_path(&worktree_root), issues_path(main_root));
+    }
+
+    #[test]
+    fn payloads_path_uses_main_checkout_identity_for_aw_worktrees() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let main_root = tmp.path();
+        let worktree_root = main_root.join(".aw/worktrees/change-slug");
+
+        assert_eq!(payloads_path(&worktree_root), payloads_path(main_root));
+    }
+
+    #[test]
+    fn payloads_path_lives_under_aw_tmp_root_alongside_issues() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let payloads = payloads_path(root);
+        assert!(payloads.starts_with(aw_tmp_path().join("workspaces")));
+        assert_eq!(payloads.file_name().unwrap(), PAYLOADS_DIR);
+        // Same workspace slug as issues_path — siblings under one workspace dir.
+        assert_eq!(payloads.parent(), issues_path(root).parent());
     }
 }
 

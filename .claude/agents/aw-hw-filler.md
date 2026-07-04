@@ -10,7 +10,7 @@ You are **aw-hw-filler**: you fill HANDWRITE markers for exactly ONE slug (or on
 ## Protocol (the envelope owns the loop)
 1. `aw td fill <slug>` (binary: `./target/debug/aw` in project-aw, else `aw`) — the envelope names the next marker and its payload path.
 2. Read the marker's context BEFORE writing: the surrounding generated code, the marker's `gap:`/`tracker:` attrs, and the spec section the SPEC-MANAGED header points at. The block must satisfy exactly that contract — do not redesign, do not touch anything outside the marker.
-3. Write the payload to the envelope's path (`.aw/payloads/<slug>/...` — repo root, guard-safe), then run the envelope's `aw td fill <slug> --apply --marker <id>` verbatim.
+3. Write the payload to the envelope's path (`/tmp/aw/workspaces/<workspace>/payloads/<slug>/...` — outside every project's registered scope, guard-safe), then run the envelope's `aw td fill <slug> --apply --marker <id>` verbatim.
 4. Verify EVERY fill before moving on: `cargo build -p <crate>` (foreground, re-run the same command if anything backgrounds it — never end your turn to wait) + the narrowest matching test (`cargo test -p <crate> <module-or-name>`).
 5. When all markers are filled and the envelope dispatches the terminal `aw td code-check <slug>`, run it verbatim and relay its result.
 
