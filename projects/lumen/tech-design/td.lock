@@ -2,15 +2,21 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-04T15:43:46.889473+00:00"
-digest = "sha256:9bbfe9b17a679dd203357fa1cb48793970dce34584fe2a5888ccd4294b21590f"
-source_digest = "sha256:9bbfe9b17a679dd203357fa1cb48793970dce34584fe2a5888ccd4294b21590f"
-ir_digest = "sha256:f9a0df6517343d038c9edeb7d5884ae5e7383c03e5f50fbb165aa5bca1134054"
+generated_at = "2026-07-04T16:37:59.865494+00:00"
+digest = "sha256:c764b7e710f1053b934fa5cc9757f429d94d15529c4544baa2b9357f915617b7"
+source_digest = "sha256:c764b7e710f1053b934fa5cc9757f429d94d15529c4544baa2b9357f915617b7"
+ir_digest = "sha256:cbd0b7ef717ac080c901eb5536d62b5633cd8c8ec2fba7a13522f85a3306ff89"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
 digest = "sha256:2f1ac2f7c64c6d1fd7fdffbd069c21762b57ed4da064aabd244eb2f63c9bdf9d"
 ir_digest = "sha256:821f3a5feeb51561a1d26a26195bea13ec0f571fb2483e2f4ea1885bf65dda1a"
+section_count = 3
+
+[[files]]
+path = "interfaces/cli/lumen-cli-add-issue-comment-auto-reopen-follow-up.md"
+digest = "sha256:d66d16ec6cfc5eb51fc0000efa0dafa716babdfb2afdd1c126aecba9c9be7800"
+ir_digest = "sha256:6c682f14a4bb95b005d37e958f38369f141dc095acd35319206af63d4c9e9613"
 section_count = 3
 
 [[files]]
