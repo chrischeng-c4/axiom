@@ -47,8 +47,7 @@ not a lifecycle bypass.
 [<cap-id>] --project <project>` drives one capability's work-root WIs (omit
 `<cap-id>` to run the whole project end to end). Follow `invoke.command` and
 `agent_prompt` from either until `completion.workflow_complete=true` or
-`requires_hitl=true`. (The old top-level `aw run` verb is deprecated and
-slated for removal.)
+`requires_hitl=true`. (The old top-level runner verb is retired.)
 
 `aw wi` is work-item inventory, planning, and CRRR: `draft`, `list`, `show`,
 `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
