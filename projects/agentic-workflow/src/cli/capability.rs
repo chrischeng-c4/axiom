@@ -73,6 +73,8 @@ pub enum CapabilityCommand {
     SetSurface(CapabilitySetSurfaceArgs),
     /// Upsert an EC dimension into the README contract.
     SetEcDimension(CapabilitySetEcDimensionArgs),
+    /// Rewrite a claim's Active WI reference cell in the README work-root table.
+    SetWiRef(CapabilitySetWiRefArgs),
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -400,6 +402,27 @@ pub struct CapabilitySetEcDimensionArgs {
     /// Must be supplied together with --operating-point.
     #[arg(long)]
     pub cube: Option<String>,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// A claim id is the README work-root row id (`slugify(work_root)`, the same
+/// id space as `CapabilityGap.id`/`CapabilityClaim.id`): `--claim` targets one
+/// work-root row and this verb rewrites that row's `WI` cell.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySetWiRefArgs {
+    /// Capability id whose claim traceability row should receive the WI reference.
+    #[arg(long)]
+    pub capability: String,
+    /// Claim id (the README work-root row id) to update.
+    #[arg(long)]
+    pub claim: String,
+    /// Replacement WI reference(s). Accepts `#<n>` or bare `<n>`; repeat for a
+    /// claim row that tracks more than one WI reference.
+    #[arg(long = "wi")]
+    pub wi: Vec<String>,
     /// Pretty-print the JSON result.
     #[arg(long)]
     pub pretty: bool,
@@ -1456,6 +1479,10 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
         CapabilityCommand::SetEcDimension(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
             set_capability_ec_dimension(&project, args)
+        }
+        CapabilityCommand::SetWiRef(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_wi_ref(&project, args)
         }
     }
 }
@@ -4477,6 +4504,245 @@ fn validate_ec_dimension_backfill_slot(dimension: &CapabilityEcDimension) -> Res
     Ok(())
 }
 
+fn set_capability_wi_ref(project: &str, args: CapabilitySetWiRefArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, None)?;
+    let content = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("read capability map {}", cap_path.display()))?;
+    let wi_value = normalize_wi_ref_values(&args.wi)?;
+
+    let document = parse_capability_document(&content, &cap_path)
+        .with_context(|| format!("parse capability map {}", cap_path.display()))?;
+    resolve_capability_and_claim_ids(&document, &args.capability, &args.claim)?;
+
+    let updated =
+        upsert_capability_wi_ref_in_readme(&content, &args.capability, &args.claim, &wi_value)
+            .with_context(|| format!("update capability WI reference in {}", cap_path.display()))?;
+
+    // Never write a table this verb cannot itself read back: re-run the same
+    // scan `aw capability report` uses and confirm the claim row now carries
+    // the requested value before persisting.
+    let reparsed = parse_capability_document(&updated, &cap_path).with_context(|| {
+        format!(
+            "re-parse capability map {} after WI reference update",
+            cap_path.display()
+        )
+    })?;
+    let confirmed_wi = reparsed
+        .capabilities
+        .iter()
+        .find(|capability| capability.id == args.capability)
+        .and_then(|capability| {
+            capability
+                .work_roots
+                .iter()
+                .find(|work_root| work_root.id == args.claim)
+        })
+        .map(|work_root| work_root.wi.as_str());
+    if confirmed_wi != Some(wi_value.as_str()) {
+        anyhow::bail!(
+            "internal error: {} did not re-parse the updated WI reference for claim `{}`",
+            cap_path.display(),
+            args.claim
+        );
+    }
+
+    std::fs::write(&cap_path, &updated)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "set_capability_wi_ref",
+        "project": project,
+        "capability_id": args.capability,
+        "claim_id": args.claim,
+        "wi": wi_value,
+        "cap_path": cap_path.display().to_string(),
+    });
+    if args.pretty {
+        print_json_output(&payload, true)?;
+    } else {
+        print_json_output(&payload, false)?;
+    }
+    Ok(())
+}
+
+/// Resolve `capability_id`/`claim_id` against an already-parsed capability
+/// document. Fails closed with the valid id list (chainable-output
+/// convention: an agent reading the error knows exactly which ids to retry
+/// with) instead of a bare "not found".
+fn resolve_capability_and_claim_ids<'a>(
+    document: &'a CapabilityDocument,
+    capability_id: &str,
+    claim_id: &str,
+) -> Result<&'a CapabilitySection> {
+    let capability = document
+        .capabilities
+        .iter()
+        .find(|capability| capability.id == capability_id)
+        .ok_or_else(|| {
+            let valid_ids = document
+                .capabilities
+                .iter()
+                .map(|capability| capability.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::anyhow!(
+                "capability `{capability_id}` not found; valid capability ids: {valid_ids}"
+            )
+        })?;
+    if !capability
+        .work_roots
+        .iter()
+        .any(|work_root| work_root.id == claim_id)
+    {
+        let valid_claims = capability
+            .work_roots
+            .iter()
+            .map(|work_root| work_root.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "claim `{claim_id}` not found in capability `{capability_id}`; valid claim ids: {valid_claims}"
+        );
+    }
+    Ok(capability)
+}
+
+fn normalize_wi_ref_values(values: &[String]) -> Result<String> {
+    if values.is_empty() {
+        anyhow::bail!("`--wi` requires at least one value");
+    }
+    let normalized = values
+        .iter()
+        .map(|value| normalize_wi_ref_value(value))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(normalized.join(", "))
+}
+
+fn normalize_wi_ref_value(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    let digits = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        anyhow::bail!("invalid `--wi` value `{value}`; expected `#<n>` or a bare work-item number");
+    }
+    Ok(format!("#{digits}"))
+}
+
+fn upsert_capability_wi_ref_in_readme(
+    content: &str,
+    capability_id: &str,
+    claim_id: &str,
+    wi_value: &str,
+) -> Result<String> {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let block_range = {
+        let line_refs = lines.iter().map(String::as_str).collect::<Vec<_>>();
+        let fenced = markdown_fenced_line_mask(&line_refs);
+        let mut idx = 0;
+        let mut found = None;
+        while idx < line_refs.len() {
+            if fenced[idx] {
+                idx += 1;
+                continue;
+            }
+            let Some((level, _title)) = parse_heading(line_refs[idx]) else {
+                idx += 1;
+                continue;
+            };
+            if level < 2 {
+                idx += 1;
+                continue;
+            }
+            let block_end =
+                next_capability_heading(&line_refs, idx + 1, level).unwrap_or(lines.len());
+            if markdown_block_has_capability_id(
+                &line_refs,
+                &fenced,
+                idx + 1,
+                block_end,
+                capability_id,
+            ) {
+                found = Some((idx + 1, block_end));
+                break;
+            }
+            idx = block_end;
+        }
+        found
+    };
+    let Some((start, end)) = block_range else {
+        anyhow::bail!("capability `{capability_id}` not found in README capability map")
+    };
+    let fenced_full = {
+        let line_refs = lines.iter().map(String::as_str).collect::<Vec<_>>();
+        markdown_fenced_line_mask(&line_refs)
+    };
+    if !upsert_work_root_wi_cell(&mut lines, &fenced_full, start, end, claim_id, wi_value) {
+        anyhow::bail!(
+            "claim `{claim_id}` not found in capability `{capability_id}` work root table"
+        );
+    }
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn upsert_work_root_wi_cell(
+    lines: &mut [String],
+    fenced: &[bool],
+    start: usize,
+    end: usize,
+    claim_id: &str,
+    wi_value: &str,
+) -> bool {
+    let borrowed = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut cursor = start;
+    let mut replacements = Vec::<(usize, String)>::new();
+    while cursor < end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((headers, rows, next_cursor)) = parse_markdown_table_at(&borrowed, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        if let Some(indices) = markdown_work_root_indices(&headers) {
+            for (row_offset, row) in rows.iter().enumerate() {
+                let work_root = table_cell(row, indices.work_root);
+                if is_empty_table_value(&work_root) || slugify(&work_root) != claim_id {
+                    continue;
+                }
+                let mut updated_row = row.clone();
+                while updated_row.len() < headers.len() {
+                    updated_row.push(String::new());
+                }
+                updated_row[indices.wi] = wi_value.to_string();
+                replacements.push((
+                    cursor + 2 + row_offset,
+                    format!(
+                        "| {} |",
+                        updated_row
+                            .iter()
+                            .map(|cell| markdown_cell(cell))
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    ),
+                ));
+            }
+        }
+        cursor = next_cursor;
+    }
+    drop(borrowed);
+    let found = !replacements.is_empty();
+    for (line_idx, replacement_line) in replacements {
+        if let Some(line) = lines.get_mut(line_idx) {
+            *line = replacement_line;
+        }
+    }
+    found
+}
+
 fn upsert_capability_efficiency_backfill_section_in_readme(
     content: &str,
     capability_id: &str,
@@ -6292,11 +6558,25 @@ fn choose_next_action(
                         wi_plan_reason(report, "open capability gap has no active WI in README"),
                     ),
                 };
+                // Issue #819: `aw capability set-wi-ref` now gives
+                // `reconcile_wi_refs` a deterministic, non-`aw wi plan`
+                // resolution path once the correct replacement WI id is
+                // known -- name it here so it is no longer the sole
+                // remediation surfaced for a stale Active WI reference.
+                let reason = if kind == CapabilityActionKind::ReconcileWiRefs {
+                    format!(
+                        "{reason}; once the correct WI id is known, resolve without a raw file edit via `aw capability set-wi-ref --project {} --capability {} --claim {} --wi <id>`",
+                        report.project, item.id, gap.id
+                    )
+                } else {
+                    reason
+                };
                 return CapabilityAction {
                     kind,
                     capability_id: Some(item.id.clone()),
                     gap_id: Some(gap.id.clone()),
-                    claim_id: None,
+                    claim_id: (kind == CapabilityActionKind::ReconcileWiRefs)
+                        .then(|| gap.id.clone()),
                     target: item.title.clone(),
                     command: command.clone(),
                     reason: reason.clone(),
@@ -14565,6 +14845,192 @@ Gate Inventory:
         assert!(err
             .to_string()
             .contains("only valid for the efficiency EC dimension"));
+    }
+
+    fn multi_row_wasm_markdown_capability() -> &'static str {
+        r#"# demo
+
+## WASM And Multi-Target Execution
+
+ID: wasm-multi-target
+Root WI: #3783
+Status: auditing
+Required Verification: smoke, conformance
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Wasm multi target readiness | epic | #3783 | implemented | planned | none | Basic phase 1 -> phase 2 -> phase 3 |
+| DOM Renderer Controlled Input Parity | change | #4004 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance` |
+| Library WASM Lowering Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test tsx_to_rust_imports` |
+"#
+    }
+
+    #[test]
+    fn set_wi_ref_updates_work_root_row() {
+        let before =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let updated = upsert_capability_wi_ref_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            "package-manager-readiness",
+            "#4200",
+        )
+        .unwrap();
+
+        assert!(updated.contains(
+            "| Package manager readiness | epic | #4200 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |"
+        ));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        assert_eq!(parsed.capabilities[0].work_roots[0].wi, "#4200");
+        // The verb must never write a table it cannot itself re-read: it must not
+        // introduce any *new* parse findings versus the pre-edit document (the
+        // fixture's own missing Type/Surface/EC Dimensions findings are
+        // pre-existing and unrelated to the WI cell edit).
+        assert_eq!(parsed.findings, before.findings);
+    }
+
+    #[test]
+    fn set_wi_ref_only_touches_the_matching_claim_row() {
+        let updated = upsert_capability_wi_ref_in_readme(
+            multi_row_wasm_markdown_capability(),
+            "wasm-multi-target",
+            "wasm-multi-target-readiness",
+            "#5100",
+        )
+        .unwrap();
+
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        let work_roots = &parsed.capabilities[0].work_roots;
+        assert_eq!(
+            work_roots
+                .iter()
+                .find(|row| row.id == "wasm-multi-target-readiness")
+                .unwrap()
+                .wi,
+            "#5100"
+        );
+        // Sibling claim rows in the same capability are untouched.
+        assert_eq!(
+            work_roots
+                .iter()
+                .find(|row| row.id == "dom-renderer-controlled-input-parity")
+                .unwrap()
+                .wi,
+            "#4004"
+        );
+        assert_eq!(
+            work_roots
+                .iter()
+                .find(|row| row.id == "library-wasm-lowering-fixtures")
+                .unwrap()
+                .wi,
+            "#4072"
+        );
+    }
+
+    #[test]
+    fn set_wi_ref_rejects_unknown_claim_in_known_capability() {
+        let err = upsert_capability_wi_ref_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            "not-a-real-claim",
+            "#4200",
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn set_wi_ref_rejects_unknown_capability() {
+        let err = upsert_capability_wi_ref_in_readme(
+            one_field_markdown_capability(),
+            "not-a-real-capability",
+            "package-manager-readiness",
+            "#4200",
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("capability `not-a-real-capability` not found"));
+    }
+
+    #[test]
+    fn resolve_capability_and_claim_ids_lists_valid_ids_for_unknown_capability() {
+        let document =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let err = resolve_capability_and_claim_ids(&document, "not-a-real-capability", "anything")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("valid capability ids"));
+        assert!(err.to_string().contains("package-manager"));
+    }
+
+    #[test]
+    fn resolve_capability_and_claim_ids_lists_valid_claims_for_unknown_claim() {
+        let document =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let err =
+            resolve_capability_and_claim_ids(&document, "package-manager", "not-a-real-claim")
+                .unwrap_err();
+
+        assert!(err.to_string().contains("valid claim ids"));
+        assert!(err.to_string().contains("package-manager-readiness"));
+    }
+
+    #[test]
+    fn resolve_capability_and_claim_ids_accepts_a_known_claim() {
+        let document =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let capability = resolve_capability_and_claim_ids(
+            &document,
+            "package-manager",
+            "package-manager-readiness",
+        )
+        .unwrap();
+
+        assert_eq!(capability.id, "package-manager");
+    }
+
+    #[test]
+    fn normalize_wi_ref_values_accepts_hash_and_bare_forms() {
+        assert_eq!(
+            normalize_wi_ref_values(&["#4200".to_string()]).unwrap(),
+            "#4200"
+        );
+        assert_eq!(
+            normalize_wi_ref_values(&["4200".to_string()]).unwrap(),
+            "#4200"
+        );
+    }
+
+    #[test]
+    fn normalize_wi_ref_values_joins_repeated_values_with_a_comma() {
+        assert_eq!(
+            normalize_wi_ref_values(&["4200".to_string(), "#4201".to_string()]).unwrap(),
+            "#4200, #4201"
+        );
+    }
+
+    #[test]
+    fn normalize_wi_ref_values_rejects_empty_and_non_numeric_input() {
+        assert!(normalize_wi_ref_values(&[])
+            .unwrap_err()
+            .to_string()
+            .contains("at least one"));
+        assert!(normalize_wi_ref_values(&["abc".to_string()])
+            .unwrap_err()
+            .to_string()
+            .contains("invalid `--wi` value"));
     }
 
     #[test]

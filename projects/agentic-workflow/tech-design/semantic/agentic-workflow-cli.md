@@ -2672,6 +2672,9 @@ semantic_domain:
           - name: "CapabilitySetEcDimensionArgs"
             kind: "struct"
             public: true
+          - name: "CapabilitySetWiRefArgs"
+            kind: "struct"
+            public: true
           - name: "CapabilityStatus"
             kind: "enum"
             public: true
@@ -3733,6 +3736,26 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #819: added `aw capability set-wi-ref --project <p> --capability
+      <cap-id> --claim <claim-id> --wi <n>` (repeatable `--wi`) to the set-*
+      contract-field-setter family (alongside set-type/set-status/
+      set-surface/set-ec-dimension). Claim ids are the README work-root
+      table's row ids (`slugify(work_root)`, the same id space as
+      `CapabilityGap.id`/`CapabilityClaim.id`), so the verb resolves
+      `--claim` against a capability's work-root rows and rewrites that
+      row's `WI` cell -- not a separate claim-level ref surface, since none
+      exists. `--wi` accepts `#<n>` or bare `<n>`, normalized to the table's
+      existing `#<n>` format; multiple `--wi` values join with `, ` for a
+      claim row that tracks more than one reference. Unknown capability/claim
+      ids fail closed via `resolve_capability_and_claim_ids` with the valid id
+      list from a fresh `parse_capability_document` scan; a successful edit is
+      re-parsed and the row's `wi` field reconfirmed before the file is
+      written, so the verb never persists a table it cannot itself read back.
+      `choose_next_action`'s `reconcile_wi_refs` branch
+      (`lifecycle_action_for_work_item`'s unresolved-issue-evidence path) now
+      also names this verb in its `reason` text, so `aw wi plan` is no longer
+      the sole remediation surfaced for a stale Active WI reference (project
+      jet's `wasm-multi-target-readiness` claim, #818).
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/cb_revise.rs"
     action: delete
