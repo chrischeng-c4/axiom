@@ -2,10 +2,16 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-03T20:56:06.606065+00:00"
-digest = "sha256:442a1090ac544aecc176d8d1f331b210b1dbba238030bd9363e5aa23fea54484"
-source_digest = "sha256:442a1090ac544aecc176d8d1f331b210b1dbba238030bd9363e5aa23fea54484"
-ir_digest = "sha256:3387b88fde19ecfb4aa172afb8306c58d589e5391ef4504ee26eb00019fd800e"
+generated_at = "2026-07-04T15:43:46.889473+00:00"
+digest = "sha256:9bbfe9b17a679dd203357fa1cb48793970dce34584fe2a5888ccd4294b21590f"
+source_digest = "sha256:9bbfe9b17a679dd203357fa1cb48793970dce34584fe2a5888ccd4294b21590f"
+ir_digest = "sha256:f9a0df6517343d038c9edeb7d5884ae5e7383c03e5f50fbb165aa5bca1134054"
+
+[[files]]
+path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
+digest = "sha256:2f1ac2f7c64c6d1fd7fdffbd069c21762b57ed4da064aabd244eb2f63c9bdf9d"
+ir_digest = "sha256:821f3a5feeb51561a1d26a26195bea13ec0f571fb2483e2f4ea1885bf65dda1a"
+section_count = 3
 
 [[files]]
 path = "interfaces/cli/lumen-cli-consolidation-single-binary-serve-spec-llm-k8s-operato.md"
