@@ -557,9 +557,10 @@ pub struct FillSectionArgs {
     #[arg(long, default_value = "all")]
     pub section: String,
 
-    /// Apply mode: merge .aw/payloads/<slug>/body.md into the checkout issue
-    /// and emit the next validate envelope. Without this flag the CLI prints a
-    /// plain-text brief.
+    /// Apply mode: merge
+    /// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/body.md` into the
+    /// checkout issue and emit the next validate envelope. Without this
+    /// flag the CLI prints a plain-text brief.
     #[arg(long)]
     pub apply: bool,
 
@@ -600,8 +601,9 @@ pub struct ReviewArgs {
     #[arg(long)]
     pub slug: String,
 
-    /// Apply mode: append .aw/payloads/<slug>/review.md under `# Reviews`
-    /// and emit the next validate envelope.
+    /// Apply mode: append
+    /// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/review.md` under
+    /// `# Reviews` and emit the next validate envelope.
     #[arg(long)]
     pub apply: bool,
 
@@ -2444,7 +2446,8 @@ fn looks_like_structured_attempt(body: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Fill-section (envelope loop: subagent round-trip via .aw/payloads/<slug>/body.md)
+// Fill-section (envelope loop: subagent round-trip via
+// /tmp/aw/workspaces/<workspace>/payloads/<slug>/body.md)
 // ---------------------------------------------------------------------------
 
 // Derive the issue workspace path for `<slug>` under the active workspace mode.
@@ -2453,9 +2456,7 @@ fn looks_like_structured_attempt(body: &str) -> bool {
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R5
 fn fill_section_payload_path(project_root: &std::path::Path, slug: &str) -> std::path::PathBuf {
-    project_root
-        .join(".aw")
-        .join("payloads")
+    crate::shared::workspace::payloads_path(project_root)
         .join(slug)
         .join("body.md")
 }
@@ -2921,16 +2922,15 @@ async fn run_fill_section_apply(
 }
 
 // ---------------------------------------------------------------------------
-// Review (envelope loop: reviewer round-trip via .aw/payloads/<slug>/review.md)
+// Review (envelope loop: reviewer round-trip via
+// /tmp/aw/workspaces/<workspace>/payloads/<slug>/review.md)
 // ---------------------------------------------------------------------------
 
 // Payload path where the reviewer writes its single bullet for CLI to merge.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R10
 fn review_payload_path(project_root: &std::path::Path, slug: &str) -> std::path::PathBuf {
-    project_root
-        .join(".aw")
-        .join("payloads")
+    crate::shared::workspace::payloads_path(project_root)
         .join(slug)
         .join("review.md")
 }
@@ -7638,7 +7638,9 @@ labels:\n\
     #[test]
     fn initialize_payload_file_creates_parent_and_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join(".aw/payloads/123/body.md");
+        let path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("123")
+            .join("body.md");
 
         assert!(initialize_payload_file(&path, "first\n").unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\n");

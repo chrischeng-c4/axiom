@@ -105,8 +105,8 @@ pub struct CbFillArgs {
     // spec's Changes paths.
     #[arg(long)]
     pub spec_path: Option<String>,
-    // Merge mode. When set, --marker is required. Merges
-    // `.aw/payloads/<slug>/<marker>.md` into the matching
+    // Merge mode. When set, --marker is required. Merges the payload at
+    // `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<marker>.md` into the
     // matching begin/end marker block.
     #[arg(long)]
     pub apply: bool,

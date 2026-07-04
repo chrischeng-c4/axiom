@@ -745,7 +745,9 @@ mod tests {
             issue_id: "123".to_string(),
             locked: true,
             owner: Some("td".to_string()),
-            expected_payload: Some(".aw/payloads/123/applicability/schema.md".to_string()),
+            expected_payload: Some(
+                "/tmp/aw/workspaces/example/payloads/123/applicability/schema.md".to_string(),
+            ),
             expected_command: Some("aw td create 123 --apply".to_string()),
             ..Default::default()
         };
@@ -755,7 +757,7 @@ mod tests {
         assert_eq!(view.owner, "td");
         assert_eq!(
             view.expected_payload.as_deref(),
-            Some(".aw/payloads/123/applicability/schema.md")
+            Some("/tmp/aw/workspaces/example/payloads/123/applicability/schema.md")
         );
     }
 
@@ -783,9 +785,13 @@ mod tests {
             owner: Some("td".to_string()),
             active_phase: Some("td_inited".to_string()),
             expected_command: Some("aw td validate 123".to_string()),
-            expected_payload: Some(".aw/payloads/123/applicability/schema.md".to_string()),
+            expected_payload: Some(
+                "/tmp/aw/workspaces/example/payloads/123/applicability/schema.md".to_string(),
+            ),
             remaining_sections: vec!["schema".to_string()],
-            dirty_paths: vec![".aw/payloads/123/applicability/schema.md".to_string()],
+            dirty_paths: vec![
+                "/tmp/aw/workspaces/example/payloads/123/applicability/schema.md".to_string(),
+            ],
             blocker_summary: Some("waiting".to_string()),
             ..Default::default()
         };
@@ -809,7 +815,9 @@ mod tests {
             issue_id: "123".to_string(),
             owner: "td".to_string(),
             expected_command: "aw td create 123 --apply".to_string(),
-            expected_payload: Some(".aw/payloads/123/applicability/schema.md".to_string()),
+            expected_payload: Some(
+                "/tmp/aw/workspaces/example/payloads/123/applicability/schema.md".to_string(),
+            ),
             active_phase: None,
             current_section: None,
             dirty_paths: vec![
@@ -818,7 +826,7 @@ mod tests {
             blocker_summary: None,
         };
         assert!(path_allowed_by_lock(
-            ".aw/payloads/123/applicability/schema.md",
+            "/tmp/aw/workspaces/example/payloads/123/applicability/schema.md",
             &lock
         ));
         assert!(!path_allowed_by_lock(
@@ -826,7 +834,7 @@ mod tests {
             &lock
         ));
         assert!(!path_allowed_by_lock(
-            ".aw/payloads/456/applicability/schema.md",
+            "/tmp/aw/workspaces/example/payloads/456/applicability/schema.md",
             &lock
         ));
     }
