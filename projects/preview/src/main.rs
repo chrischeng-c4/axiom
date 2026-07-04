@@ -4,8 +4,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
+use preview::discover::discover_base_with_kubectl;
 use preview::render::{cleanup_plan, mr_comment, preview_environment};
-use preview::{render_files, RenderInput};
+use preview::{render_files, BaseWorkloadContract, RenderInput};
 
 #[derive(Debug, Parser)]
 #[command(name = "preview", version, about = "MR-scoped UAT previews for GKE")]
@@ -17,6 +18,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Render(RenderArgs),
+    DiscoverBase(DiscoverBaseArgs),
     Comment(RenderArgs),
     CleanupPlan(CleanupArgs),
     Llm {
@@ -74,8 +76,22 @@ struct RenderArgs {
     control_namespace: String,
     #[arg(long, default_value = "preview-runner")]
     workload_identity: String,
+    #[arg(long)]
+    base_contract: Option<PathBuf>,
     #[arg(long, default_value = "dist/preview")]
     out: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct DiscoverBaseArgs {
+    #[arg(long)]
+    namespace: String,
+    #[arg(long)]
+    app: String,
+    #[arg(long)]
+    context: Option<String>,
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -101,8 +117,9 @@ struct CleanupArgs {
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Render(args) => render(args),
+        Command::DiscoverBase(args) => discover_base(args),
         Command::Comment(args) => {
-            let input = args.into_input();
+            let input = args.into_input()?;
             let env = preview_environment(&input);
             print!("{}", mr_comment(&env));
             Ok(())
@@ -119,6 +136,7 @@ fn main() -> Result<()> {
                 ttl_hours: 48,
                 control_namespace: args.control_namespace,
                 workload_identity: "preview-runner".to_string(),
+                base_contract: None,
             };
             let env = preview_environment(&input);
             println!(
@@ -178,7 +196,7 @@ fn main() -> Result<()> {
 
 fn render(args: RenderArgs) -> Result<()> {
     let out = args.out.clone();
-    let files = render_files(&args.into_input())?;
+    let files = render_files(&args.into_input()?)?;
     for file in files {
         let path = out.join(&file.path);
         if let Some(parent) = path.parent() {
@@ -188,6 +206,22 @@ fn render(args: RenderArgs) -> Result<()> {
         fs::write(&path, file.contents).with_context(|| format!("write {}", path.display()))?;
     }
     println!("rendered preview contract to {}", out.display());
+    Ok(())
+}
+
+fn discover_base(args: DiscoverBaseArgs) -> Result<()> {
+    let contract = discover_base_with_kubectl(&args.namespace, &args.app, args.context.as_deref())?;
+    let output = serde_json::to_string_pretty(&contract)? + "\n";
+    if let Some(out) = args.out {
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create output directory {}", parent.display()))?;
+        }
+        fs::write(&out, output).with_context(|| format!("write {}", out.display()))?;
+        println!("discovered base workload contract to {}", out.display());
+    } else {
+        print!("{output}");
+    }
     Ok(())
 }
 
@@ -205,8 +239,18 @@ fn print_llm(topic: &str) {
 }
 
 impl RenderArgs {
-    fn into_input(self) -> RenderInput {
-        RenderInput {
+    fn into_input(self) -> Result<RenderInput> {
+        let base_contract = self
+            .base_contract
+            .as_ref()
+            .map(|path| {
+                let contents = fs::read_to_string(path)
+                    .with_context(|| format!("read base contract {}", path.display()))?;
+                serde_json::from_str::<BaseWorkloadContract>(&contents)
+                    .with_context(|| format!("parse base contract {}", path.display()))
+            })
+            .transpose()?;
+        Ok(RenderInput {
             mr: self.mr,
             sha: self.sha,
             image: self.image,
@@ -217,7 +261,8 @@ impl RenderArgs {
             ttl_hours: self.ttl_hours,
             control_namespace: self.control_namespace,
             workload_identity: self.workload_identity,
-        }
+            base_contract,
+        })
     }
 }
 

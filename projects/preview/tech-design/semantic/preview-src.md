@@ -4,9 +4,16 @@ summary: Semantic coverage for "projects/preview/src"
 capability_refs:
   - id: "gke-uat-preview-environment-rendering"
     role: primary
+    gap: "mr-scoped-namespace-projection"
     claim: "mr-scoped-namespace-projection"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/preview/src`."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "base-workload-discovery"
+    claim: "base-workload-discovery"
+    coverage: partial
+    rationale: "Base workload discovery is implemented by the discover module and CLI/render integration."
 fill_sections: [schema, changes]
 ---
 
@@ -83,6 +90,9 @@ semantic_domain:
         ownership_state: "handwrite"
         generator_primitives: ["source_unit"]
         symbols:
+          - name: "discover"
+            kind: "module"
+            public: true
           - name: "model"
             kind: "module"
             public: true
@@ -91,6 +101,38 @@ semantic_domain:
             public: true
           - name: "router"
             kind: "module"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview/src"
+      - path: "projects/preview/src/discover.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "BaseWorkloadContract"
+            kind: "struct"
+            public: true
+          - name: "BaseContainerContract"
+            kind: "struct"
+            public: true
+          - name: "BaseContainerPort"
+            kind: "struct"
+            public: true
+          - name: "BaseEnvVar"
+            kind: "struct"
+            public: true
+          - name: "BaseServicePort"
+            kind: "struct"
+            public: true
+          - name: "discover_base_with_kubectl"
+            kind: "function"
+            public: true
+          - name: "normalize_base_workload"
+            kind: "function"
             public: true
         source_evidence_node:
           layer: "backend"
@@ -138,6 +180,9 @@ semantic_domain:
           - name: "RenderArgs"
             kind: "struct"
             public: false
+          - name: "DiscoverBaseArgs"
+            kind: "struct"
+            public: false
           - name: "CleanupArgs"
             kind: "struct"
             public: false
@@ -145,6 +190,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "render"
+            kind: "function"
+            public: false
+          - name: "discover_base"
             kind: "function"
             public: false
           - name: "print_llm"
@@ -224,6 +272,14 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-src-lib-rs>"
+  - path: "projects/preview/src/discover.rs"
+    action: add
+    section: schema
+    description: |
+      Base workload discovery and normalization source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-preview-src-discover-rs>"
   - path: "projects/preview/src/router.rs"
     action: modify
     section: schema

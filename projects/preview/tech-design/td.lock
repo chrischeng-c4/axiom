@@ -1,12 +1,16 @@
 version = 1
 project = "preview"
 td_path = "projects/preview/tech-design"
-generated_at = "2026-07-04T14:25:40.800441+00:00"
-digest = "sha256:a85c6390148cc679cec19201f8a38f0ca4e2b2e2e95e0c9fdf2fba185ce516fd"
+generated_at = "2026-07-04T16:31:27.156834+00:00"
+digest = "sha256:5615f9adffbe7f8b71f65f4f5118711ee14cc6cdc62c188d79ed677e6df5c9c9"
 
 [[files]]
 path = "README.md"
 digest = "sha256:dfc819133707a9badcc30383b6465862f93e5b102d95ee2c53d3930efb557331"
+
+[[files]]
+path = "interfaces/cli/preview-discovers-and-normalizes-base-workload-clone-contracts-l.md"
+digest = "sha256:bb1b6feef701cadaba574eb72d84ef0f2b9792d5680d792ddac526babe9230eb"
 
 [[files]]
 path = "semantic/preview-projects-preview.md"
@@ -14,8 +18,8 @@ digest = "sha256:5b2c43fbc22bf24ea39e182005d62475b41d686cb15f6a41959b37ec73b85be
 
 [[files]]
 path = "semantic/preview-src.md"
-digest = "sha256:844e6cc9886c9f44516a438e48e51ed2d5525dc2733ccceec159a79458542086"
+digest = "sha256:411ba08a3ebcc200535585cb914e66a09d1a9313e05b53ec8e3e401bca0f3817"
 
 [[files]]
 path = "semantic/preview-tests.md"
-digest = "sha256:22d8964cdc6303bf69363296b77e877e224ff63b62aea47cf5a6867b6f239bdb"
+digest = "sha256:a5ff274f305f7c16c9eff9b417db2247ef9f14280fe5898afe81fd96f65cb70e"

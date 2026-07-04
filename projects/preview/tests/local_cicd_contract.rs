@@ -1,7 +1,7 @@
 // <HANDWRITE gap="standardize:claim-code" tracker="projects-preview-tests-local-cicd-contract-rs" reason="Local CI/CD lifecycle smoke is hand-authored until workflow generator primitives cover binary-driven CI simulations.">
 use std::process::Command;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 fn preview_bin() -> &'static str {
     env!("CARGO_BIN_EXE_preview")
@@ -107,6 +107,70 @@ fn preview_render(out: &std::path::Path, sha: &str) {
         "--out",
         out.to_str().expect("out path"),
     ]));
+}
+
+#[test]
+fn local_ci_render_consumes_discovered_base_contract_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let contract = dir.path().join("base-contract.json");
+    let out = dir.path().join("preview");
+    std::fs::write(
+        &contract,
+        serde_json::to_string_pretty(&json!({
+            "namespace": "uat-base",
+            "app": "checkout",
+            "deployment": "checkout",
+            "service": "checkout",
+            "selector": {"app.kubernetes.io/name": "checkout"},
+            "podLabels": {"app.kubernetes.io/name": "checkout", "tier": "web"},
+            "container": {
+                "name": "checkout",
+                "image": "registry.local/checkout:base",
+                "ports": [{"name": "http", "containerPort": 8080}],
+                "env": [{"name": "APP_MODE", "value": "uat", "valueFromKind": null}],
+                "resources": {"requests": {"cpu": "200m", "memory": "256Mi"}},
+                "readinessPath": "/readyz",
+                "livenessPath": "/healthz"
+            },
+            "servicePorts": [{"name": "http", "port": 80, "targetPort": "8080"}],
+            "excludedRuntimeFields": ["metadata.uid", "status", "spec.clusterIP", "secrets by default"]
+        }))
+        .expect("serialize base contract"),
+    )
+    .expect("write base contract");
+
+    command_stdout(
+        Command::new(preview_bin())
+            .args([
+                "render",
+                "--mr",
+                "654",
+                "--sha",
+                "abc654",
+                "--image",
+                "registry.local/checkout:abc654",
+                "--app",
+                "checkout",
+                "--host",
+                "uat.local.test",
+                "--base-contract",
+            ])
+            .arg(&contract)
+            .args(["--out"])
+            .arg(&out),
+    );
+
+    let clone_plan =
+        std::fs::read_to_string(out.join("plans/workload-clone.json")).expect("clone plan");
+    let clone_plan: Value = serde_json::from_str(&clone_plan).expect("clone plan json");
+    assert_eq!(
+        clone_plan["discoveredBase"]["servicePorts"][0]["targetPort"],
+        "8080"
+    );
+    assert_eq!(
+        clone_plan["discoveredBase"]["container"]["resources"]["requests"]["cpu"],
+        "200m"
+    );
 }
 
 fn command_stdout(command: &mut Command) -> String {

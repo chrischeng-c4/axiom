@@ -11,6 +11,7 @@
 // AW-EC-END
 
 // Contract: When a kind/GKE kubectl context is configured, rendered lifecycle objects apply twice, roll out, expose endpoints, and serve /readyz through port-forward.
+// Contract: The kind/GKE gate creates a base Deployment/Service fixture and runs preview discover-base before rendering the preview namespace.
 // Contract: The kind/GKE gate validates namespace-local workload RBAC and rejects an oversized pod through ResourceQuota/LimitRange admission.
 // Contract: The kind/GKE gate cleans temporary preview/control namespaces after success or failure.
 // Contract: Without a configured kubectl context, the test reports an explicit skip instead of falsely applying to an unknown cluster.

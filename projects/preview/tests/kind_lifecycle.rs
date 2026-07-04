@@ -6,9 +6,13 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use preview::{render_files, RenderInput};
+use preview::{render_files, BaseWorkloadContract, RenderInput};
 
 const SMOKE_IMAGE: &str = "preview-kind-smoke:local";
+
+fn preview_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_preview")
+}
 
 fn input() -> RenderInput {
     RenderInput {
@@ -22,6 +26,7 @@ fn input() -> RenderInput {
         ttl_hours: 2,
         control_namespace: "preview-system".to_string(),
         workload_identity: "preview-runner".to_string(),
+        base_contract: None,
     }
 }
 
@@ -50,7 +55,41 @@ fn kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut cleanup = NamespaceCleanup::new();
     cleanup.add("uat-mr-123");
-    for file in render_files(&input()).expect("render") {
+    if kubectl_create_namespace_if_missing("preview-system") {
+        cleanup.add("preview-system");
+    }
+    if kubectl_create_namespace_if_missing("uat-base") {
+        cleanup.add("uat-base");
+    }
+    write_base_workload_fixture(dir.path(), &input().image);
+    kubectl_apply(&dir.path().join("base/deployment.yaml"));
+    kubectl_apply(&dir.path().join("base/service.yaml"));
+
+    let contract_path = dir.path().join("base-contract.json");
+    command_ok(
+        Command::new(preview_bin())
+            .args([
+                "discover-base",
+                "--namespace",
+                "uat-base",
+                "--app",
+                "checkout",
+                "--out",
+            ])
+            .arg(&contract_path),
+        "preview discover-base",
+    );
+    let discovered: BaseWorkloadContract = serde_json::from_str(
+        &fs::read_to_string(&contract_path).expect("read discovered base contract"),
+    )
+    .expect("parse discovered base contract");
+    assert_eq!(discovered.namespace, "uat-base");
+    assert_eq!(discovered.container.ports[0].container_port, 8080);
+    assert_eq!(discovered.service_ports[0].target_port, "8080");
+
+    let mut render_input = input();
+    render_input.base_contract = Some(discovered);
+    for file in render_files(&render_input).expect("render") {
         if !file.path.starts_with("k8s/") && file.path != "router/route-binding.yaml" {
             continue;
         }
@@ -59,13 +98,6 @@ fn kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects() {
             fs::create_dir_all(parent).expect("create parent");
         }
         fs::write(path, file.contents).expect("write manifest");
-    }
-
-    if kubectl_create_namespace_if_missing("preview-system") {
-        cleanup.add("preview-system");
-    }
-    if kubectl_create_namespace_if_missing("uat-base") {
-        cleanup.add("uat-base");
     }
     apply_rendered_lifecycle(dir.path());
     apply_rendered_lifecycle(dir.path());
@@ -77,6 +109,78 @@ fn kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects() {
     assert_namespace_exists("uat-base");
     kubectl_server_side_dry_run(&dir.path().join("router/route-binding.yaml"));
     drop(cleanup);
+}
+
+fn write_base_workload_fixture(root: &Path, image: &str) {
+    let dir = root.join("base");
+    fs::create_dir_all(&dir).expect("create base fixture dir");
+    fs::write(
+        dir.join("deployment.yaml"),
+        format!(
+            r#"apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  namespace: uat-base
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: checkout
+      tier: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: checkout
+        tier: web
+    spec:
+      containers:
+      - name: checkout
+        image: {image}
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: APP_MODE
+          value: uat
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+"#
+        ),
+    )
+    .expect("write base deployment");
+    fs::write(
+        dir.join("service.yaml"),
+        r#"apiVersion: v1
+kind: Service
+metadata:
+  name: checkout
+  namespace: uat-base
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: checkout
+    tier: web
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+"#,
+    )
+    .expect("write base service");
 }
 
 struct NamespaceCleanup {

@@ -9,13 +9,30 @@ description = "Always-on preview render, local CI/CD, router, Kubernetes object,
 [[gates]]
 id = "preview-kind-e2e"
 command = "PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture"
-description = "Opt-in kind/GKE-like server-side dry-run lifecycle gate for SRE validation."
+description = "Opt-in kind/GKE-like lifecycle gate: create base fixture, discover it through kubectl, apply preview, roll out, smoke, and clean up."
 
 # AW-EC-BEGIN
 [aw.ec.generated]
 version = 1
 project = "preview"
-generated_from_td_digest = "sha256:a15c1fa4b5b9c690284a8017f6a7019c7d4d9b4083fce7cd017e4dd9afc94564"
+generated_from_td_digest = "sha256:fa048579fd56f3b23f1c012a73f40e6179cc895f165c02687f2838e414e0c3df"
+
+[[aw.ec.generated.cases]]
+id = "base-workload-discovery"
+capability_id = "gke-uat-preview-environment-rendering"
+claim_id = "base-workload-discovery"
+contract_id = "base-workload-discovery"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/base-workload-discovery.md#base-workload-discovery"
+test_path = "projects/preview/tests/behavior_base_workload_discovery.rs"
+command = "cargo test -p preview --test base_discovery_contract"
+required_for_production = true
+assertions = [
+    "Base discovery normalizes Kubernetes Deployment and Service JSON fixtures into a BaseWorkloadContract.",
+    "Discovery preserves cloneable selector, port, env, probe, and resource fields while excluding runtime identity and cluster-assigned fields.",
+    "Discovery refuses ambiguous multi-container Deployments without a container matching the requested app.",
+    "Render can consume a discovered base contract and embed it in plans/workload-clone.json without a live cluster.",
+]
 
 [[aw.ec.generated.cases]]
 id = "cleanup-dry-run-planning"
@@ -60,6 +77,7 @@ command = "PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --n
 required_for_production = true
 assertions = [
     "When a kind/GKE kubectl context is configured, rendered lifecycle objects apply twice, roll out, expose endpoints, and serve /readyz through port-forward.",
+    "The kind/GKE gate creates a base Deployment/Service fixture and runs preview discover-base before rendering the preview namespace.",
     "The kind/GKE gate validates namespace-local workload RBAC and rejects an oversized pod through ResourceQuota/LimitRange admission.",
     "The kind/GKE gate cleans temporary preview/control namespaces after success or failure.",
     "Without a configured kubectl context, the test reports an explicit skip instead of falsely applying to an unknown cluster.",

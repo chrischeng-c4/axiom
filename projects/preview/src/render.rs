@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use serde_json::json;
 
+use crate::discover::BaseWorkloadContract;
 use crate::model::{
     BaseSpec, CleanupAction, CleanupPlan, GkeSpec, Label, PreviewEnvironment, PreviewMetadata,
     PreviewPhase, PreviewSpec, PreviewStatus, RouteSpec,
@@ -21,6 +22,7 @@ pub struct RenderInput {
     pub ttl_hours: u32,
     pub control_namespace: String,
     pub workload_identity: String,
+    pub base_contract: Option<BaseWorkloadContract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +42,10 @@ pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
         },
         RenderFile {
             path: "plans/workload-clone.json".to_string(),
-            contents: serde_json::to_string_pretty(&workload_clone_plan(&env))? + "\n",
+            contents: serde_json::to_string_pretty(&workload_clone_plan(
+                &env,
+                input.base_contract.as_ref(),
+            ))? + "\n",
         },
         RenderFile {
             path: "k8s/namespace.yaml".to_string(),
@@ -108,9 +113,21 @@ pub fn preview_environment(input: &RenderInput) -> PreviewEnvironment {
             app: app.clone(),
             namespace,
             base: BaseSpec {
-                namespace: input.base_namespace.clone(),
-                workload: app.clone(),
-                service: app.clone(),
+                namespace: input
+                    .base_contract
+                    .as_ref()
+                    .map(|contract| contract.namespace.clone())
+                    .unwrap_or_else(|| input.base_namespace.clone()),
+                workload: input
+                    .base_contract
+                    .as_ref()
+                    .map(|contract| contract.deployment.clone())
+                    .unwrap_or_else(|| app.clone()),
+                service: input
+                    .base_contract
+                    .as_ref()
+                    .map(|contract| contract.service.clone())
+                    .unwrap_or_else(|| app.clone()),
             },
             owner: input.owner.clone(),
             ttl_hours: input.ttl_hours,
@@ -269,7 +286,10 @@ fn namespace(env: &PreviewEnvironment) -> serde_json::Value {
     })
 }
 
-fn workload_clone_plan(env: &PreviewEnvironment) -> serde_json::Value {
+fn workload_clone_plan(
+    env: &PreviewEnvironment,
+    base_contract: Option<&BaseWorkloadContract>,
+) -> serde_json::Value {
     json!({
         "source": {
             "namespace": env.spec.base.namespace,
@@ -289,6 +309,7 @@ fn workload_clone_plan(env: &PreviewEnvironment) -> serde_json::Value {
             "owner": env.spec.owner,
             "ttlHours": env.spec.ttl_hours
         },
+        "discoveredBase": base_contract,
         "copyPolicy": {
             "include": [
                 "pod template labels",

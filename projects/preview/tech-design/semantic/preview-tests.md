@@ -10,6 +10,12 @@ capability_refs:
     rationale: "Semantic takeover coverage for existing source group `projects/preview/tests`."
   - id: "gke-uat-preview-environment-rendering"
     role: primary
+    gap: "base-workload-discovery"
+    claim: "base-workload-discovery"
+    coverage: partial
+    rationale: "Base workload discovery is covered by no-cluster fixture tests and the kind lifecycle discovery path."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
     gap: "cookie-header-route-binding-contract"
     claim: "cookie-header-route-binding-contract"
     coverage: partial
@@ -105,6 +111,32 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/preview/tests"
+      - path: "projects/preview/tests/base_discovery_contract.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "deployment"
+            kind: "function"
+            public: false
+          - name: "service"
+            kind: "function"
+            public: false
+          - name: "normalizes_base_deployment_and_service_without_runtime_identity"
+            kind: "function"
+            public: false
+          - name: "render_clone_plan_can_embed_discovered_base_contract"
+            kind: "function"
+            public: false
+          - name: "refuses_ambiguous_deployment_containers_without_matching_app_name"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/preview/tests"
       - path: "projects/preview/tests/local_cicd_contract.rs"
         language: "rust"
         ownership_state: "handwrite"
@@ -114,6 +146,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "local_ci_open_update_comment_and_close_lifecycle_is_deterministic"
+            kind: "function"
+            public: false
+          - name: "local_ci_render_consumes_discovered_base_contract_file"
             kind: "function"
             public: false
           - name: "preview_render"
@@ -168,6 +203,9 @@ semantic_domain:
           - name: "kind_server_side_dry_run_accepts_rendered_lifecycle_objects"
             kind: "function"
             public: false
+          - name: "kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects"
+            kind: "function"
+            public: false
           - name: "kubectl_server_side_dry_run"
             kind: "function"
             public: false
@@ -194,6 +232,7 @@ evidence:
   source_tests:
     - path: "projects/preview/tests/router_contract.rs"
     - path: "projects/preview/tests/render_contract.rs"
+    - path: "projects/preview/tests/base_discovery_contract.rs"
     - path: "projects/preview/tests/local_cicd_contract.rs"
     - path: "projects/preview/tests/k8s_object_contract.rs"
     - path: "projects/preview/tests/kind_lifecycle.rs"
@@ -222,6 +261,12 @@ changes:
     section: schema
     description: |
       Test source inventory and symbol evidence are covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/tests/base_discovery_contract.rs"
+    action: add
+    section: schema
+    description: |
+      Base discovery fixture normalization and failure tests are covered by this semantic TD.
     impl_mode: hand-written
   - path: "projects/preview/tests/local_cicd_contract.rs"
     action: modify
@@ -257,6 +302,14 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-tests-render-contract-rs>"
+  - path: "projects/preview/tests/base_discovery_contract.rs"
+    action: add
+    section: unit-test
+    description: |
+      Base workload discovery normalization and render integration tests are covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-preview-tests-base-discovery-contract-rs>"
   - path: "projects/preview/tests/local_cicd_contract.rs"
     action: modify
     section: unit-test
