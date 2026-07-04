@@ -123,10 +123,40 @@ fn llm_outline_advertised_topic_commands_parse() {
 }
 
 #[test]
-fn issue_help_lists_search_view_create() {
+fn issue_help_lists_search_view_create_comment() {
     let help = run_lumen(&["issue", "--help"]);
-    for command in ["search", "view", "create"] {
+    for command in ["search", "view", "create", "comment"] {
         assert!(help.contains(command), "missing `{command}` in:\n{help}");
+    }
+}
+
+/// #931: issue comment is the shared cli-std follow-up path; dry-run must be
+/// offline-testable and show the reopen/comment preview without mutating GitHub.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-cli-add-issue-comment-auto-reopen-follow-up.md#unit-test
+#[test]
+fn issue_comment_help_and_dry_run_preview() {
+    let help = run_lumen(&["issue", "comment", "--help"]);
+    for expected in ["<NUMBER>", "--repo", "--dry-run", "--yes", "[MSG]"] {
+        assert!(
+            help.contains(expected),
+            "missing `{expected}` in `lumen issue comment --help`:\n{help}"
+        );
+    }
+
+    let preview = run_lumen(&["issue", "comment", "123", "--dry-run", "still", "broken"]);
+    for expected in [
+        "repo:  chrischeng-c4/axiom",
+        "issue: #123",
+        "state: open",
+        "still broken",
+        "## Diagnostics",
+        "- lumen version:",
+        "- os/arch:",
+    ] {
+        assert!(
+            preview.contains(expected),
+            "missing `{expected}` in dry-run preview:\n{preview}"
+        );
     }
 }
 

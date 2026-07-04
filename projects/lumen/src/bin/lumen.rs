@@ -278,8 +278,9 @@ struct UpgradeArgs {
     yes: bool,
 }
 
-/// `lumen issue <search|view|create>` flags.
+/// `lumen issue <search|view|create|comment>` flags.
 /// @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-cli-add-issue-comment-auto-reopen-follow-up.md
 #[derive(clap::Args)]
 struct IssueArgs {
     #[command(subcommand)]
@@ -294,6 +295,8 @@ enum IssueCommand {
     View(IssueViewArgs),
     /// File a diagnostics-rich Lumen issue.
     Create(IssueCreateArgs),
+    /// Comment on an issue and ensure it is open.
+    Comment(IssueCommentArgs),
 }
 
 #[derive(clap::Args)]
@@ -334,6 +337,25 @@ struct IssueCreateArgs {
     #[arg(long)]
     label: Vec<String>,
     /// Assemble and print the report without submitting anything.
+    #[arg(long)]
+    dry_run: bool,
+    /// Skip the confirmation prompt.
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+#[derive(clap::Args)]
+struct IssueCommentArgs {
+    /// Issue number.
+    number: u64,
+    /// Follow-up note to add after reopening. Omit for cli-std's standard
+    /// verification-failed message.
+    #[arg(value_name = "MSG", num_args = 0..)]
+    message: Vec<String>,
+    /// Target repository (`owner/name`); defaults to lumen's release repo.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Print the reopen/comment request without changing GitHub state.
     #[arg(long)]
     dry_run: bool,
     /// Skip the confirmation prompt.
@@ -765,6 +787,20 @@ async fn issue(args: IssueArgs) -> Result<()> {
                     label: std::iter::once("project:lumen".to_string())
                         .chain(args.label)
                         .collect(),
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }
+        IssueCommand::Comment(args) => {
+            let message = (!args.message.is_empty()).then(|| args.message.join(" "));
+            cli_std::issue::comment(
+                &TOOL,
+                cli_std::issue::CommentOptions {
+                    number: args.number,
+                    message,
+                    repo: args.repo,
                     dry_run: args.dry_run,
                     yes: args.yes,
                 },
