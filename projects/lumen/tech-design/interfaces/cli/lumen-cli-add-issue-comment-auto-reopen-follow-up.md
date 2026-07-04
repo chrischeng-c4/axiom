@@ -57,40 +57,39 @@ flowchart TD
 
 ```mermaid
 ---
-id: lumen-issue-comment-verification
+id: lumen-issue-comment-contract-tests
 requirements:
-  help_surface:
+  issue_help_comment:
     id: R1
-    text: "`lumen issue --help` lists `comment` alongside search/view/create."
+    text: "`issue_help_lists_search_view_create_comment` asserts `lumen issue --help` lists search, view, create, and comment."
     kind: functional
     risk: medium
     verify: test
-  dry_run_preview:
+  comment_help_flags:
     id: R2
-    text: "`lumen issue comment 123 --dry-run ...` exits successfully and prints repo, issue number, `state: open`, follow-up message, and diagnostics without network mutation."
+    text: "`lumen issue comment --help` lists number/message usage plus `--repo`, `--dry-run`, and `--yes`."
+    kind: functional
+    risk: medium
+    verify: test
+  dry_run_body:
+    id: R3
+    text: "`lumen issue comment 123 --dry-run still broken` prints `state: open`, the message, and the shared diagnostics block."
     kind: functional
     risk: high
     verify: test
-  shared_api:
-    id: R3
-    text: "Dispatch calls `cli_std::issue::comment` with `CommentOptions`; Lumen does not duplicate GitHub reopen/comment HTTP logic."
-    kind: design
-    risk: medium
-    verify: code-review
-  regression:
+  no_network:
     id: R4
-    text: "Existing search/view/create help and standard CLI convention tests keep passing."
+    text: "Dry-run mode succeeds without GitHub credentials and without requiring network I/O."
     kind: regression
-    risk: medium
+    risk: high
     verify: test
 ---
 flowchart TD
-    r1[R1 help lists comment] --> cli_convention[cargo test -p lumen --test cli_convention]
-    r2[R2 dry-run preview] --> cli_convention
-    r4[R4 existing issue group unchanged] --> cli_convention
-    r3[R3 shared cli_std dispatch] --> code_review[review projects/lumen/src/bin/lumen.rs dispatch]
+    r1[R1 issue help] --> cli[cargo test -p lumen --test cli_convention]
+    r2[R2 comment help flags] --> cli
+    r3[R3 dry-run diagnostics] --> cli
+    r4[R4 no network dry-run] --> cli
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
