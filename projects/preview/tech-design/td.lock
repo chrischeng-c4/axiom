@@ -1,0 +1,21 @@
+version = 1
+project = "preview"
+td_path = "projects/preview/tech-design"
+generated_at = "2026-07-04T14:25:40.800441+00:00"
+digest = "sha256:a85c6390148cc679cec19201f8a38f0ca4e2b2e2e95e0c9fdf2fba185ce516fd"
+
+[[files]]
+path = "README.md"
+digest = "sha256:dfc819133707a9badcc30383b6465862f93e5b102d95ee2c53d3930efb557331"
+
+[[files]]
+path = "semantic/preview-projects-preview.md"
+digest = "sha256:5b2c43fbc22bf24ea39e182005d62475b41d686cb15f6a41959b37ec73b85beb"
+
+[[files]]
+path = "semantic/preview-src.md"
+digest = "sha256:844e6cc9886c9f44516a438e48e51ed2d5525dc2733ccceec159a79458542086"
+
+[[files]]
+path = "semantic/preview-tests.md"
+digest = "sha256:22d8964cdc6303bf69363296b77e877e224ff63b62aea47cf5a6867b6f239bdb"

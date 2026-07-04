@@ -154,6 +154,21 @@ verify_cold = true
 codegen.profile = "rust/score-crate"
 
 [[projects]]
+name = "preview"
+path = "projects/preview"
+td_path = "projects/preview/tech-design"
+cap_path = "projects/preview/README.md"
+label = "project:preview"
+
+[[projects.workspaces]]
+name = "preview"
+paths = ["projects/preview/**"]
+target = "rust"
+test_cmd = "cargo test -p preview"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+[[projects]]
 name = "tape"
 path = "projects/tape"
 td_path = "projects/tape/tech-design"

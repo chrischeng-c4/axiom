@@ -64,6 +64,8 @@ struct RenderArgs {
     app: String,
     #[arg(long, default_value = "uat.example.com")]
     host: String,
+    #[arg(long, default_value = "uat-base")]
+    base_namespace: String,
     #[arg(long, default_value = "sre")]
     owner: String,
     #[arg(long, default_value_t = 48)]
@@ -90,6 +92,10 @@ struct CleanupArgs {
     image: String,
     #[arg(long, default_value = "uat.example.com")]
     host: String,
+    #[arg(long, default_value = "uat-base")]
+    base_namespace: String,
+    #[arg(long, default_value = "preview-system")]
+    control_namespace: String,
 }
 
 fn main() -> Result<()> {
@@ -108,9 +114,10 @@ fn main() -> Result<()> {
                 image: args.image,
                 app: args.app,
                 host: args.host,
+                base_namespace: args.base_namespace,
                 owner: "sre".to_string(),
                 ttl_hours: 48,
-                control_namespace: "preview-system".to_string(),
+                control_namespace: args.control_namespace,
                 workload_identity: "preview-runner".to_string(),
             };
             let env = preview_environment(&input);
@@ -205,6 +212,7 @@ impl RenderArgs {
             image: self.image,
             app: self.app,
             host: self.host,
+            base_namespace: self.base_namespace,
             owner: self.owner,
             ttl_hours: self.ttl_hours,
             control_namespace: self.control_namespace,

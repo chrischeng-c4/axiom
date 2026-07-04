@@ -1,0 +1,129 @@
+[capability.profile]
+traits = ["kubernetes_native"]
+
+[[gates]]
+id = "preview-smoke"
+command = "cargo test -p preview"
+description = "Always-on preview render, local CI/CD, router, Kubernetes object, and cleanup contract tests."
+
+[[gates]]
+id = "preview-kind-e2e"
+command = "PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture"
+description = "Opt-in kind/GKE-like server-side dry-run lifecycle gate for SRE validation."
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "preview"
+generated_from_td_digest = "sha256:a15c1fa4b5b9c690284a8017f6a7019c7d4d9b4083fce7cd017e4dd9afc94564"
+
+[[aw.ec.generated.cases]]
+id = "cleanup-dry-run-planning"
+capability_id = "gke-uat-preview-environment-rendering"
+claim_id = "cleanup-dry-run-planning"
+contract_id = "cleanup-dry-run-planning"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/cleanup-dry-run-planning.md#cleanup-dry-run-planning"
+test_path = "projects/preview/tests/behavior_cleanup_dry_run_planning.rs"
+command = "cargo test -p preview cleanup_plan_marks_closed_mr_for_namespace_delete"
+required_for_production = true
+assertions = [
+    "Closed MR cleanup plans delete both the preview namespace and route binding.",
+    "Cleanup output keeps the route target and namespace explicit for SRE review.",
+    "Cleanup output lists the base namespace and control namespace as protected namespaces.",
+]
+
+[[aw.ec.generated.cases]]
+id = "cookie-header-route-binding-contract"
+capability_id = "gke-uat-preview-environment-rendering"
+claim_id = "cookie-header-route-binding-contract"
+contract_id = "cookie-header-route-binding-contract"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/cookie-header-route-binding-contract.md#cookie-header-route-binding-contract"
+test_path = "projects/preview/tests/behavior_cookie_header_route_binding_contract.rs"
+command = "cargo test -p preview route_binding_uses_target_not_namespace_cookie"
+required_for_production = true
+assertions = [
+    "Route binding keeps the public target `mr-<id>` separate from namespace `uat-mr-<id>`.",
+    "Browser cookie selection uses `uat_target`, not a raw namespace value.",
+]
+
+[[aw.ec.generated.cases]]
+id = "kind-gke-lifecycle-ec"
+capability_id = "preview-external-contracts"
+claim_id = "kind-gke-lifecycle-ec"
+contract_id = "kind-gke-lifecycle-ec"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/kind-gke-lifecycle-ec.md#kind-gke-lifecycle-ec"
+test_path = "projects/preview/tests/behavior_kind_gke_lifecycle_ec.rs"
+command = "PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture"
+required_for_production = true
+assertions = [
+    "When a kind/GKE kubectl context is configured, rendered lifecycle objects apply twice, roll out, expose endpoints, and serve /readyz through port-forward.",
+    "The kind/GKE gate validates namespace-local workload RBAC and rejects an oversized pod through ResourceQuota/LimitRange admission.",
+    "The kind/GKE gate cleans temporary preview/control namespaces after success or failure.",
+    "Without a configured kubectl context, the test reports an explicit skip instead of falsely applying to an unknown cluster.",
+]
+
+[[aw.ec.generated.cases]]
+id = "kubernetes-object-ec"
+capability_id = "preview-external-contracts"
+claim_id = "kubernetes-object-ec"
+contract_id = "kubernetes-object-ec"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/kubernetes-object-ec.md#kubernetes-object-ec"
+test_path = "projects/preview/tests/behavior_kubernetes_object_ec.rs"
+command = "cargo test -p preview --test k8s_object_contract"
+required_for_production = true
+assertions = [
+    "Rendered Kubernetes YAML parses as Namespace, ServiceAccount, ResourceQuota, LimitRange, Role, RoleBinding, Deployment, Service, and ConfigMap objects.",
+    "Service selectors match Deployment pod labels.",
+    "Rendered Deployment includes readiness/liveness probes, explicit Workload Identity service account, bounded resources, and base workload clone annotations.",
+]
+
+[[aw.ec.generated.cases]]
+id = "mr-scoped-namespace-projection"
+capability_id = "gke-uat-preview-environment-rendering"
+claim_id = "mr-scoped-namespace-projection"
+contract_id = "mr-scoped-namespace-projection"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/mr-scoped-namespace-projection.md#mr-scoped-namespace-projection"
+test_path = "projects/preview/tests/behavior_mr_scoped_namespace_projection.rs"
+command = "cargo test -p preview render_creates_gke_contract_files"
+required_for_production = true
+assertions = [
+    "`preview render` emits spec, workload clone plan, namespace, service account, quota, limits, RBAC, deployment, service, route-binding, MR comment, and cleanup-plan files.",
+    "The rendered namespace is named `uat-mr-<id>`, carries preview labels, and records the base namespace/source workload.",
+]
+
+[[aw.ec.generated.cases]]
+id = "render-contract-ec"
+capability_id = "preview-external-contracts"
+claim_id = "render-contract-ec"
+contract_id = "render-contract-ec"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/render-contract-ec.md#render-contract-ec"
+test_path = "projects/preview/tests/behavior_render_contract_ec.rs"
+command = "cargo test -p preview --test render_contract"
+required_for_production = true
+assertions = [
+    "Render contract tests cover generated file names, base workload clone plan, namespace naming, route binding, and cleanup protected namespace output.",
+    "The render EC remains runnable without a live cluster.",
+]
+
+[[aw.ec.generated.cases]]
+id = "router-target-ec"
+capability_id = "preview-external-contracts"
+claim_id = "router-target-ec"
+contract_id = "router-target-ec"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/router-target-ec.md#router-target-ec"
+test_path = "projects/preview/tests/behavior_router_target_ec.rs"
+command = "cargo test -p preview --test router_contract"
+required_for_production = true
+assertions = [
+    "Cookie target resolution maps only through a known RouteBinding.",
+    "Header target selection can override cookie selection for API/mobile/manual clients.",
+    "Unknown targets do not guess or synthesize namespaces.",
+]
+# AW-EC-END
