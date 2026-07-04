@@ -33,6 +33,40 @@ fill_sections: [logic, unit-test, changes]
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
+---
+id: lumen-cli-snapshot-data-movement-contract
+entry: user
+nodes:
+  user: { kind: start, label: "operator/agent needs ad hoc data movement" }
+  export_cmd: { kind: decision, label: "dump/export?" }
+  import_cmd: { kind: decision, label: "load/import?" }
+  get_backup: { kind: process, label: "GET {url}/admin/backup" }
+  write_target: { kind: decision, label: "--out provided?" }
+  write_file: { kind: terminal, label: "write SnapshotV1 JSON file" }
+  write_stdout: { kind: terminal, label: "stream SnapshotV1 JSON to stdout" }
+  read_target: { kind: decision, label: "--file provided?" }
+  read_file: { kind: process, label: "read SnapshotV1 JSON file" }
+  read_stdin: { kind: process, label: "read SnapshotV1 JSON from stdin" }
+  post_restore: { kind: process, label: "POST {url}/admin/restore" }
+  destructive: { kind: terminal, label: "replace all engine state" }
+  backup: { kind: process, label: "existing lumen backup" }
+  sink: { kind: terminal, label: "destination sink transport + retention" }
+edges:
+  - { from: user, to: export_cmd }
+  - { from: user, to: import_cmd }
+  - { from: export_cmd, to: get_backup }
+  - { from: get_backup, to: write_target }
+  - { from: write_target, to: write_file, label: "yes" }
+  - { from: write_target, to: write_stdout, label: "no" }
+  - { from: import_cmd, to: read_target }
+  - { from: read_target, to: read_file, label: "yes" }
+  - { from: read_target, to: read_stdin, label: "no" }
+  - { from: read_file, to: post_restore }
+  - { from: read_stdin, to: post_restore }
+  - { from: post_restore, to: destructive }
+  - { from: backup, to: sink }
+  - { from: sink, to: get_backup }
+---
 flowchart TD
     user["operator/agent needs ad hoc data movement"] --> export_cmd{"dump/export?"}
     user --> import_cmd{"load/import?"}
@@ -54,13 +88,39 @@ flowchart TD
 
 ```mermaid
 ---
-id: lumen-cli-snapshot-data-movement-test-placeholder
-requirements: {}
+id: lumen-cli-snapshot-data-movement-verification
+requirements:
+  help_surface:
+    id: R1
+    text: "`lumen --help` lists dump, export, load, import, and backup with distinct snapshot wording."
+    kind: functional
+    risk: medium
+    verify: test
+  export_output:
+    id: R2
+    text: "`lumen export` / `lumen dump` fetch SnapshotV1 JSON and can write it to stdout or `--out` without altering the bytes."
+    kind: functional
+    risk: high
+    verify: test
+  import_input:
+    id: R3
+    text: "`lumen import` / `lumen load` read SnapshotV1 JSON from `--file` or stdin and POST it to `/admin/restore`."
+    kind: functional
+    risk: high
+    verify: test
+  token_parity:
+    id: R4
+    text: "All four direct verbs accept `--token` with the same `LUMEN_BACKUP_TOKEN` fallback as `lumen backup`."
+    kind: functional
+    risk: medium
+    verify: test
 ---
 flowchart TD
-    start([placeholder])
+    r1[R1 help surface] --> cli_convention[cargo test -p lumen --test cli_convention]
+    r2[R2 export/dump output] --> backup_restore[cargo test -p lumen --test backup_restore_e2e]
+    r3[R3 import/load input] --> backup_restore
+    r4[R4 token parity] --> cli_convention
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
