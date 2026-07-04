@@ -98,6 +98,7 @@ These are project-level tools rather than service-portfolio data planes.
 | `guard` | Security posture CLI and report surface. |
 | `arena` | Benchmark result comparison across targets. |
 | `rig` | Request/query/workload driver for runtime evidence. |
+| `preview` | GKE-oriented MR-scoped UAT preview controller/CLI: namespace projection, cookie/header route binding, MR comments, and cleanup plans. |
 
 ## Dependency Flow
 

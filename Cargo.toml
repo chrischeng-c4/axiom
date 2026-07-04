@@ -2,6 +2,7 @@
 members = [
     "projects/relay",
     "projects/loom",
+    "projects/preview",
     "projects/mamba/mambalibs/mongokit",
     "projects/mamba/mambalibs/mongokit/binding",
     "projects/mamba/mambalibs/pgkit/pg",

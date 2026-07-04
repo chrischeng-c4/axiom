@@ -4,7 +4,7 @@ pub mod render;
 pub mod router;
 
 pub use model::{
-    CleanupAction, CleanupPlan, PreviewEnvironment, PreviewPhase, PreviewSpec, RouteSpec,
+    BaseSpec, CleanupAction, CleanupPlan, PreviewEnvironment, PreviewPhase, PreviewSpec, RouteSpec,
 };
 pub use render::{render_files, RenderFile, RenderInput};
 pub use router::{resolve_route, ResolvedRoute, RouteBinding, RouteRequest};

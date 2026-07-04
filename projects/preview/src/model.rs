@@ -33,10 +33,19 @@ pub struct PreviewSpec {
     pub image: String,
     pub app: String,
     pub namespace: String,
+    pub base: BaseSpec,
     pub owner: String,
     pub ttl_hours: u32,
     pub route: RouteSpec,
     pub gke: GkeSpec,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseSpec {
+    pub namespace: String,
+    pub workload: String,
+    pub service: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +90,7 @@ pub struct CleanupPlan {
     pub mr: u32,
     pub namespace: String,
     pub route_target: String,
+    pub protected_namespaces: Vec<String>,
     pub action: CleanupAction,
     pub reason: String,
     pub delete_namespace: bool,

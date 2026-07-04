@@ -4,9 +4,46 @@ summary: Semantic coverage for "projects/preview/tests"
 capability_refs:
   - id: "gke-uat-preview-environment-rendering"
     role: primary
+    gap: "mr-scoped-namespace-projection"
     claim: "mr-scoped-namespace-projection"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/preview/tests`."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "cookie-header-route-binding-contract"
+    claim: "cookie-header-route-binding-contract"
+    coverage: partial
+    rationale: "Router/render contract tests verify cookie/header route binding behavior for MR-scoped UAT previews."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "cleanup-dry-run-planning"
+    claim: "cleanup-dry-run-planning"
+    coverage: partial
+    rationale: "Cleanup contract tests verify closed-MR route binding and namespace deletion plans."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "render-contract-ec"
+    claim: "render-contract-ec"
+    coverage: partial
+    rationale: "Render contract EC is backed by the render_contract integration test."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "router-target-ec"
+    claim: "router-target-ec"
+    coverage: partial
+    rationale: "Router target EC is backed by the router_contract integration test."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "kubernetes-object-ec"
+    claim: "kubernetes-object-ec"
+    coverage: partial
+    rationale: "Kubernetes object EC is backed by the k8s_object_contract integration test."
+  - id: "preview-external-contracts"
+    role: primary
+    gap: "kind-gke-lifecycle-ec"
+    claim: "kind-gke-lifecycle-ec"
+    coverage: partial
+    rationale: "Kind/GKE lifecycle EC is backed by the opt-in kind_lifecycle integration test."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -60,6 +97,29 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "cleanup_plan_marks_closed_mr_for_namespace_delete"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/preview/tests"
+      - path: "projects/preview/tests/local_cicd_contract.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "preview_bin"
+            kind: "function"
+            public: false
+          - name: "local_ci_open_update_comment_and_close_lifecycle_is_deterministic"
+            kind: "function"
+            public: false
+          - name: "preview_render"
+            kind: "function"
+            public: false
+          - name: "command_stdout"
             kind: "function"
             public: false
         source_evidence_node:
@@ -134,6 +194,7 @@ evidence:
   source_tests:
     - path: "projects/preview/tests/router_contract.rs"
     - path: "projects/preview/tests/render_contract.rs"
+    - path: "projects/preview/tests/local_cicd_contract.rs"
     - path: "projects/preview/tests/k8s_object_contract.rs"
     - path: "projects/preview/tests/kind_lifecycle.rs"
 ---
@@ -154,21 +215,59 @@ changes:
     action: modify
     section: schema
     description: |
+      Test source inventory and symbol evidence are covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/tests/render_contract.rs"
+    action: modify
+    section: schema
+    description: |
+      Test source inventory and symbol evidence are covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/tests/local_cicd_contract.rs"
+    action: modify
+    section: schema
+    description: |
+      Local CI/CD command lifecycle smoke evidence is covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/tests/k8s_object_contract.rs"
+    action: modify
+    section: schema
+    description: |
+      Test source inventory and symbol evidence are covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/tests/kind_lifecycle.rs"
+    action: modify
+    section: schema
+    description: |
+      Test source inventory and symbol evidence are covered by this semantic TD.
+    impl_mode: hand-written
+  - path: "projects/preview/tests/router_contract.rs"
+    action: modify
+    section: unit-test
+    description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-tests-router-contract-rs>"
   - path: "projects/preview/tests/render_contract.rs"
     action: modify
-    section: schema
+    section: unit-test
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-tests-render-contract-rs>"
+  - path: "projects/preview/tests/local_cicd_contract.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Local CI/CD open/update/comment/close command behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-preview-tests-local-cicd-contract-rs>"
   - path: "projects/preview/tests/k8s_object_contract.rs"
     action: modify
-    section: schema
+    section: unit-test
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
@@ -176,7 +275,7 @@ changes:
       - "<handwrite-tracker:projects-preview-tests-k8s-object-contract-rs>"
   - path: "projects/preview/tests/kind_lifecycle.rs"
     action: modify
-    section: schema
+    section: unit-test
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written

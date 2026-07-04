@@ -5,8 +5,8 @@ use anyhow::Result;
 use serde_json::json;
 
 use crate::model::{
-    CleanupAction, CleanupPlan, GkeSpec, Label, PreviewEnvironment, PreviewMetadata, PreviewPhase,
-    PreviewSpec, PreviewStatus, RouteSpec,
+    BaseSpec, CleanupAction, CleanupPlan, GkeSpec, Label, PreviewEnvironment, PreviewMetadata,
+    PreviewPhase, PreviewSpec, PreviewStatus, RouteSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +16,7 @@ pub struct RenderInput {
     pub image: String,
     pub app: String,
     pub host: String,
+    pub base_namespace: String,
     pub owner: String,
     pub ttl_hours: u32,
     pub control_namespace: String,
@@ -38,8 +39,32 @@ pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
             contents: serde_yaml::to_string(&env)?,
         },
         RenderFile {
+            path: "plans/workload-clone.json".to_string(),
+            contents: serde_json::to_string_pretty(&workload_clone_plan(&env))? + "\n",
+        },
+        RenderFile {
             path: "k8s/namespace.yaml".to_string(),
             contents: yaml(&namespace(&env))?,
+        },
+        RenderFile {
+            path: "k8s/service-account.yaml".to_string(),
+            contents: yaml(&service_account(&env))?,
+        },
+        RenderFile {
+            path: "k8s/resource-quota.yaml".to_string(),
+            contents: yaml(&resource_quota(&env))?,
+        },
+        RenderFile {
+            path: "k8s/limit-range.yaml".to_string(),
+            contents: yaml(&limit_range(&env))?,
+        },
+        RenderFile {
+            path: "k8s/workload-role.yaml".to_string(),
+            contents: yaml(&workload_role(&env))?,
+        },
+        RenderFile {
+            path: "k8s/workload-role-binding.yaml".to_string(),
+            contents: yaml(&workload_role_binding(&env))?,
         },
         RenderFile {
             path: "k8s/deployment.yaml".to_string(),
@@ -82,6 +107,11 @@ pub fn preview_environment(input: &RenderInput) -> PreviewEnvironment {
             image: input.image.clone(),
             app: app.clone(),
             namespace,
+            base: BaseSpec {
+                namespace: input.base_namespace.clone(),
+                workload: app.clone(),
+                service: app.clone(),
+            },
             owner: input.owner.clone(),
             ttl_hours: input.ttl_hours,
             route: RouteSpec {
@@ -120,6 +150,10 @@ pub fn cleanup_plan(env: &PreviewEnvironment, mr_closed: bool) -> CleanupPlan {
         mr: env.spec.mr,
         namespace: env.spec.namespace.clone(),
         route_target: env.spec.route.target.clone(),
+        protected_namespaces: vec![
+            env.spec.base.namespace.clone(),
+            env.spec.gke.control_namespace.clone(),
+        ],
         action,
         reason: if action == CleanupAction::Delete {
             "MR is closed or preview is already draining/deleted".to_string()
@@ -140,6 +174,8 @@ MR: `{}`
 SHA: `{}`
 Image: `{}`
 Namespace: `{}`
+Base namespace: `{}`
+Base workload: `{}`
 Route target: `{}`
 
 Browser entry:
@@ -155,6 +191,8 @@ Cleanup TTL: `{}` hours
         env.spec.sha,
         env.spec.image,
         env.spec.namespace,
+        env.spec.base.namespace,
+        env.spec.base.workload,
         env.spec.route.target,
         env.spec.route.host,
         env.spec.route.target,
@@ -224,7 +262,157 @@ fn namespace(env: &PreviewEnvironment) -> serde_json::Value {
             "annotations": {
                 "preview.cclab.dev/ttl-hours": env.spec.ttl_hours.to_string(),
                 "preview.cclab.dev/route-target": env.spec.route.target,
+                "preview.cclab.dev/base-namespace": env.spec.base.namespace,
+                "preview.cclab.dev/source-workload": env.spec.base.workload,
             }
+        }
+    })
+}
+
+fn workload_clone_plan(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "source": {
+            "namespace": env.spec.base.namespace,
+            "workload": env.spec.base.workload,
+            "service": env.spec.base.service
+        },
+        "target": {
+            "namespace": env.spec.namespace,
+            "workload": env.spec.app,
+            "service": env.spec.route.service,
+            "routeTarget": env.spec.route.target
+        },
+        "overrides": {
+            "image": env.spec.image,
+            "sha": env.spec.sha,
+            "serviceAccount": env.spec.gke.workload_identity,
+            "owner": env.spec.owner,
+            "ttlHours": env.spec.ttl_hours
+        },
+        "copyPolicy": {
+            "include": [
+                "pod template labels",
+                "container ports",
+                "container env contract",
+                "probes",
+                "resource requests and limits"
+            ],
+            "exclude": [
+                "status",
+                "uid",
+                "resourceVersion",
+                "ownerReferences",
+                "clusterIP",
+                "nodePort",
+                "loadBalancer",
+                "base namespace secrets by default"
+            ]
+        }
+    })
+}
+
+fn service_account(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {
+            "name": env.spec.gke.workload_identity,
+            "namespace": env.spec.namespace,
+            "labels": label_map(env),
+            "annotations": {
+                "iam.gke.io/gcp-service-account": format!("{}@example.iam.gserviceaccount.com", env.spec.gke.workload_identity)
+            }
+        }
+    })
+}
+
+fn resource_quota(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "ResourceQuota",
+        "metadata": {
+            "name": "preview-budget",
+            "namespace": env.spec.namespace,
+            "labels": label_map(env),
+        },
+        "spec": {
+            "hard": {
+                "pods": "3",
+                "services": "2",
+                "configmaps": "10",
+                "requests.cpu": "500m",
+                "requests.memory": "768Mi",
+                "limits.cpu": "1",
+                "limits.memory": "1536Mi"
+            }
+        }
+    })
+}
+
+fn limit_range(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "LimitRange",
+        "metadata": {
+            "name": "preview-defaults",
+            "namespace": env.spec.namespace,
+            "labels": label_map(env),
+        },
+        "spec": {
+            "limits": [{
+                "type": "Container",
+                "defaultRequest": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                },
+                "default": {
+                    "cpu": "250m",
+                    "memory": "256Mi"
+                },
+                "max": {
+                    "cpu": "500m",
+                    "memory": "512Mi"
+                }
+            }]
+        }
+    })
+}
+
+fn workload_role(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "Role",
+        "metadata": {
+            "name": "preview-workload-read",
+            "namespace": env.spec.namespace,
+            "labels": label_map(env),
+        },
+        "rules": [{
+            "apiGroups": [""],
+            "resources": ["configmaps", "endpoints", "pods", "services"],
+            "verbs": ["get", "list", "watch"]
+        }]
+    })
+}
+
+fn workload_role_binding(env: &PreviewEnvironment) -> serde_json::Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {
+            "name": "preview-workload-read",
+            "namespace": env.spec.namespace,
+            "labels": label_map(env),
+        },
+        "subjects": [{
+            "kind": "ServiceAccount",
+            "name": env.spec.gke.workload_identity,
+            "namespace": env.spec.namespace
+        }],
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "preview-workload-read"
         }
     })
 }
@@ -240,6 +428,10 @@ fn deployment(env: &PreviewEnvironment) -> serde_json::Value {
             "name": env.spec.app,
             "namespace": env.spec.namespace,
             "labels": labels,
+            "annotations": {
+                "preview.cclab.dev/base-namespace": env.spec.base.namespace,
+                "preview.cclab.dev/source-workload": env.spec.base.workload
+            }
         },
         "spec": {
             "replicas": 1,
@@ -257,6 +449,16 @@ fn deployment(env: &PreviewEnvironment) -> serde_json::Value {
                             { "name": "PREVIEW_SHA", "value": env.spec.sha },
                             { "name": "UAT_ROUTE_TARGET", "value": env.spec.route.target }
                         ],
+                        "resources": {
+                            "requests": {
+                                "cpu": "100m",
+                                "memory": "128Mi"
+                            },
+                            "limits": {
+                                "cpu": "250m",
+                                "memory": "256Mi"
+                            }
+                        },
                         "readinessProbe": {
                             "httpGet": { "path": "/readyz", "port": 8080 },
                             "initialDelaySeconds": 5,
@@ -282,6 +484,10 @@ fn service(env: &PreviewEnvironment) -> serde_json::Value {
             "name": env.spec.route.service,
             "namespace": env.spec.namespace,
             "labels": label_map(env),
+            "annotations": {
+                "preview.cclab.dev/base-namespace": env.spec.base.namespace,
+                "preview.cclab.dev/source-service": env.spec.base.service
+            }
         },
         "spec": {
             "type": "ClusterIP",
@@ -314,6 +520,8 @@ fn route_binding(env: &PreviewEnvironment) -> serde_json::Value {
             "cookie": env.spec.route.cookie,
             "header": env.spec.route.header,
             "namespace": env.spec.namespace,
+            "baseNamespace": env.spec.base.namespace,
+            "sourceWorkload": env.spec.base.workload,
             "service": env.spec.route.service,
             "servicePort": env.spec.route.service_port.to_string(),
             "sha": env.spec.sha

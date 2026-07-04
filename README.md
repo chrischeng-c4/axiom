@@ -13,6 +13,7 @@ details.
 | [jet](projects/jet/README.md) | Rust-native web toolchain — package management, dev server, production builds, test/e2e, and WASM/multi-target execution. Replaces the Vite/pnpm/Playwright stack. |
 | [lumen](projects/lumen/README.md) | K8s-native, log-replicated search specialist — exact, lexical (BM25), semantic (HNSW/GPU kNN), perceptual, and duplicate search in one engine. |
 | [loom](projects/loom/README.md) | Workflow scheduler — DAG/state machine orchestration over relay delivery and keep result refs. |
+| [preview](projects/preview/README.md) | MR-scoped UAT preview environments for GKE — one namespace per feature/MR, cookie/header route binding, and lifecycle cleanup plans. |
 | [relay](projects/relay/README.md) | Broker — durable ordered log, online delivery, broadcast fan-out, and work-queue leasing. |
 | [keep](projects/keep/README.md) | KV/result backend — claim-check payload/result storage, collections, durability, and HA path. |
 | [tape](projects/tape/README.md) | Topic replay journal — append-only topic history, consumer checkpoints, retention, and backfill. |
@@ -46,6 +47,7 @@ an installer yet are marked _coming soon_.
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
 | [meter](projects/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/meter/install.sh \| sh` |
+| [preview](projects/preview/README.md) | `preview` | _coming soon_ |
 | [relay](projects/relay/README.md) | `relay-server` | _coming soon_ |
 | [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
 | [tape](projects/tape/README.md) | `tape` | _coming soon_ |
