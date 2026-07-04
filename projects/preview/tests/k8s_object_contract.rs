@@ -15,6 +15,7 @@ fn input() -> RenderInput {
         ttl_hours: 48,
         control_namespace: "preview-system".to_string(),
         workload_identity: "preview-runner".to_string(),
+        base_contract: None,
     }
 }
 

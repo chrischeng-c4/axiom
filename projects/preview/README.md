@@ -22,7 +22,7 @@ Canonical field-style capability contracts below are machine-readable input for
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GKE UAT Preview Environment Rendering | - | implemented | verified | smoke | ready | `preview render` emits a base-workload clone plan plus namespace, service account, quota, limits, RBAC, deployment, service, route binding, MR comment, and cleanup plan files for an MR-scoped UAT preview. |
+| GKE UAT Preview Environment Rendering | - | implemented | verified | smoke | ready | `preview discover-base` normalizes a base Deployment/Service contract; `preview render` emits a base-workload clone plan plus namespace, service account, quota, limits, RBAC, deployment, service, route binding, MR comment, and cleanup plan files for an MR-scoped UAT preview. |
 | Preview External Contracts | - | implemented | verified | smoke | ready | Always-on render/router/Kubernetes object tests plus an opt-in kind/GKE-like lifecycle gate that applies, rolls out, routes, and cleans a preview namespace. |
 | Kubernetes-Native Deployment | - | planned | planned | none | not_ready | future CRD/operator form for reconciling the same PreviewEnvironment model in GKE. |
 
@@ -30,20 +30,23 @@ Canonical field-style capability contracts below are machine-readable input for
 
 ID: gke-uat-preview-environment-rendering
 Type: Devops
-Surfaces: CLI: `preview render`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
-EC Dimensions: behavior: render contract tests - MR identity, namespace naming, GKE labels, route binding stability, MR comment text, and cleanup dry-run output.
+Surfaces: CLI: `preview discover-base`, `preview render`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
+EC Dimensions: behavior: render/discovery contract tests - base workload normalization, MR identity, namespace naming, GKE labels, route binding stability, MR comment text, and cleanup dry-run output.
 Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
 `preview` turns an MR id, commit SHA, image, and base namespace into a
 GKE-oriented UAT preview contract without requiring cluster-specific CRDs up
-front.
+front. When a base namespace is available locally, `preview discover-base`
+reads its Deployment/Service contract and `preview render --base-contract`
+embeds the discovered shape into the clone plan.
 Gate Inventory:
 - `cargo test -p preview`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
+| Base workload discovery | change | #1108 | implemented | verified | smoke | `cargo test -p preview --test base_discovery_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | MR-scoped namespace projection | epic | - | implemented | verified | smoke | `cargo test -p preview render_creates_gke_contract_files` |
 | Cookie/header route binding contract | epic | - | implemented | verified | smoke | `cargo test -p preview route_binding_uses_target_not_namespace_cookie` |
 | Cleanup dry-run planning | epic | - | implemented | verified | smoke | `cargo test -p preview cleanup_plan_marks_closed_mr_for_namespace_delete` |
@@ -133,6 +136,7 @@ The first renderer assumes:
 
 | Verb | Purpose |
 |---|---|
+| `preview discover-base` | Read a base namespace Deployment/Service through `kubectl` and emit a normalized workload contract. |
 | `preview render` | Render the MR-scoped preview contract to files. |
 | `preview comment` | Print the MR comment text for a rendered preview. |
 | `preview cleanup-plan` | Print a dry-run cleanup decision for a preview. |
@@ -164,10 +168,10 @@ Run the no-cluster lane on every change:
 cargo test -p preview
 ```
 
-That covers render determinism, base workload clone-plan shape, local CI
-command shape, MR comments, cleanup JSON protected namespaces, route
-resolution, Kubernetes object cross-references, RBAC shape, and resource
-bounds.
+That covers render determinism, base workload normalization from Kubernetes
+JSON fixtures, clone-plan shape, local CI command shape, MR comments, cleanup
+JSON protected namespaces, route resolution, Kubernetes object
+cross-references, RBAC shape, and resource bounds.
 
 Run the local-cluster lane before involving a real GKE cluster:
 
@@ -175,6 +179,7 @@ Run the local-cluster lane before involving a real GKE cluster:
 PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture
 ```
 
-That covers Docker image build/load, Kubernetes apply/idempotency, rollout,
-Service endpoints, port-forward HTTP, admission rejection for oversized pods,
+That covers Docker image build/load, base namespace fixture discovery through
+`preview discover-base`, Kubernetes apply/idempotency, rollout, Service
+endpoints, port-forward HTTP, admission rejection for oversized pods,
 least-privilege RBAC, and namespace cleanup.
