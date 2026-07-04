@@ -51,3 +51,42 @@ flowchart TD
     online --> done([search/view/create unchanged])
     preview --> done
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: lumen-issue-comment-verification
+requirements:
+  help_surface:
+    id: R1
+    text: "`lumen issue --help` lists `comment` alongside search/view/create."
+    kind: functional
+    risk: medium
+    verify: test
+  dry_run_preview:
+    id: R2
+    text: "`lumen issue comment 123 --dry-run ...` exits successfully and prints repo, issue number, `state: open`, follow-up message, and diagnostics without network mutation."
+    kind: functional
+    risk: high
+    verify: test
+  shared_api:
+    id: R3
+    text: "Dispatch calls `cli_std::issue::comment` with `CommentOptions`; Lumen does not duplicate GitHub reopen/comment HTTP logic."
+    kind: design
+    risk: medium
+    verify: code-review
+  regression:
+    id: R4
+    text: "Existing search/view/create help and standard CLI convention tests keep passing."
+    kind: regression
+    risk: medium
+    verify: test
+---
+flowchart TD
+    r1[R1 help lists comment] --> cli_convention[cargo test -p lumen --test cli_convention]
+    r2[R2 dry-run preview] --> cli_convention
+    r4[R4 existing issue group unchanged] --> cli_convention
+    r3[R3 shared cli_std dispatch] --> code_review[review projects/lumen/src/bin/lumen.rs dispatch]
+```
