@@ -699,6 +699,10 @@ Enforcement, so this is a contract and not a reminder:
   command's literal invocation text, or the scanner cannot tell "documents
   the removal" from "still tells an agent to run it."
 
+Payload corollary: when a lifecycle section has a schema (e.g. TD `unit-test`),
+its agent payload is JSON data and the artifact's YAML frontmatter + mermaid
+diagram are CLI-rendered projections; prose-only payloads remain Markdown.
+
 ## Project build and release contract
 
 Every project build skill and project `build.sh` must use the same two-mode
