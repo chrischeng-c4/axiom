@@ -35,53 +35,59 @@ fill_sections: [logic, unit-test, changes]
 ```mermaid
 ---
 id: lumen-cli-snapshot-data-movement-contract
-entry: user
+entry: start
 nodes:
-  user: { kind: start, label: "operator/agent needs ad hoc data movement" }
-  export_cmd: { kind: decision, label: "dump/export?" }
-  import_cmd: { kind: decision, label: "load/import?" }
-  get_backup: { kind: process, label: "GET {url}/admin/backup" }
-  write_target: { kind: decision, label: "--out provided?" }
-  write_file: { kind: terminal, label: "write SnapshotV1 JSON file" }
-  write_stdout: { kind: terminal, label: "stream SnapshotV1 JSON to stdout" }
-  read_target: { kind: decision, label: "--file provided?" }
-  read_file: { kind: process, label: "read SnapshotV1 JSON file" }
-  read_stdin: { kind: process, label: "read SnapshotV1 JSON from stdin" }
-  post_restore: { kind: process, label: "POST {url}/admin/restore" }
-  destructive: { kind: terminal, label: "replace all engine state" }
-  backup: { kind: process, label: "existing lumen backup" }
-  sink: { kind: terminal, label: "destination sink transport + retention" }
+  start: { kind: start, label: "lumen <dump|export|load|import>" }
+  token: { kind: process, label: "token = --token or LUMEN_BACKUP_TOKEN; omitted when auth off" }
+  verb: { kind: decision, label: "verb class" }
+  dump: { kind: process, label: "dump/export: GET {url}/admin/backup with optional Bearer token" }
+  dump_ok: { kind: decision, label: "2xx?" }
+  dump_err: { kind: terminal, label: "bail with status + response body" }
+  out: { kind: decision, label: "--out provided?" }
+  stdout: { kind: terminal, label: "write exact response bytes to stdout" }
+  outfile: { kind: terminal, label: "create parent dir if needed; write exact response bytes to file" }
+  load: { kind: decision, label: "load/import input" }
+  infile: { kind: process, label: "--file path: read exact bytes" }
+  stdin: { kind: process, label: "no --file: read all stdin bytes" }
+  post: { kind: process, label: "POST {url}/admin/restore Content-Type: application/json with optional Bearer token" }
+  restore_ok: { kind: decision, label: "2xx/204?" }
+  restore_err: { kind: terminal, label: "bail with status + response body" }
+  restored: { kind: terminal, label: "print JSON {status:'restored', url}" }
 edges:
-  - { from: user, to: export_cmd }
-  - { from: user, to: import_cmd }
-  - { from: export_cmd, to: get_backup }
-  - { from: get_backup, to: write_target }
-  - { from: write_target, to: write_file, label: "yes" }
-  - { from: write_target, to: write_stdout, label: "no" }
-  - { from: import_cmd, to: read_target }
-  - { from: read_target, to: read_file, label: "yes" }
-  - { from: read_target, to: read_stdin, label: "no" }
-  - { from: read_file, to: post_restore }
-  - { from: read_stdin, to: post_restore }
-  - { from: post_restore, to: destructive }
-  - { from: backup, to: sink }
-  - { from: sink, to: get_backup }
+  - { from: start, to: token }
+  - { from: token, to: verb }
+  - { from: verb, to: dump, label: "dump/export" }
+  - { from: dump, to: dump_ok }
+  - { from: dump_ok, to: dump_err, label: "no" }
+  - { from: dump_ok, to: out, label: "yes" }
+  - { from: out, to: outfile, label: "yes" }
+  - { from: out, to: stdout, label: "no" }
+  - { from: verb, to: load, label: "load/import" }
+  - { from: load, to: infile, label: "--file" }
+  - { from: load, to: stdin, label: "stdin" }
+  - { from: infile, to: post }
+  - { from: stdin, to: post }
+  - { from: post, to: restore_ok }
+  - { from: restore_ok, to: restore_err, label: "no" }
+  - { from: restore_ok, to: restored, label: "yes" }
 ---
 flowchart TD
-    user["operator/agent needs ad hoc data movement"] --> export_cmd{"dump/export?"}
-    user --> import_cmd{"load/import?"}
-    export_cmd --> get_backup["GET {url}/admin/backup"]
-    get_backup --> write_target{"--out provided?"}
-    write_target -->|yes| write_file["write SnapshotV1 JSON file"]
-    write_target -->|no| write_stdout["stream SnapshotV1 JSON to stdout"]
-    import_cmd --> read_target{"--file provided?"}
-    read_target -->|yes| read_file["read SnapshotV1 JSON file"]
-    read_target -->|no| read_stdin["read SnapshotV1 JSON from stdin"]
-    read_file --> post_restore["POST {url}/admin/restore"]
-    read_stdin --> post_restore
-    post_restore --> destructive["replace all engine state"]
-    backup["existing lumen backup"] --> sink["destination sink transport + retention"]
-    sink -. remains separate .-> get_backup
+    start([lumen dump/export/load/import]) --> token[token = --token or LUMEN_BACKUP_TOKEN]
+    token --> verb{verb class}
+    verb -->|dump/export| dump[GET /admin/backup]
+    dump --> dump_ok{2xx?}
+    dump_ok -->|no| dump_err([bail with status + body])
+    dump_ok -->|yes| out{--out?}
+    out -->|yes| outfile([write exact bytes to file])
+    out -->|no| stdout([write exact bytes to stdout])
+    verb -->|load/import| load{input source}
+    load -->|--file| infile[read file bytes]
+    load -->|stdin| stdin[read stdin bytes]
+    infile --> post[POST /admin/restore]
+    stdin --> post
+    post --> restore_ok{2xx/204?}
+    restore_ok -->|no| restore_err([bail with status + body])
+    restore_ok -->|yes| restored([print JSON restored status])
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
