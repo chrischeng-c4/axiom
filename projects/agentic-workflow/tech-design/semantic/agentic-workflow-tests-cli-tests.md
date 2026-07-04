@@ -215,6 +215,17 @@ semantic_domain:
           - name: "agents_md_is_claude_md_plus_codex_whitelist"
             kind: "function"
             public: false
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        symbols:
+          - name: "repo_root"
+            kind: "function"
+            public: false
+          - name: "repo_root_md_files_match_allowlist"
+            kind: "function"
+            public: false
       - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -879,6 +890,7 @@ tests:
       - path: "projects/agentic-workflow/tests/cli/tests/standardize_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_namespace_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
@@ -941,6 +953,17 @@ changes:
       CLAUDE.md plus the fixed Codex-only whitelist (title swap, Codex
       Operational Rules section, slash-command translation paragraph);
       drift outside the whitelist fails the suite.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
+    action: create
+    section: schema
+    description: |
+      Repo-root doc allowlist contract (meta-doc sheet 2, doc consolidation
+      wave 2): the repo root carries exactly README.md, CONTRIBUTING.md,
+      ECOSYSTEM.md, CLAUDE.md, and AGENTS.md; any other visible root-level
+      `.md` file fails the suite naming the unexpected file and pointing at
+      the CONTRIBUTING.md meta-doc content contract. Dotfiles (tool
+      prompt/cache files) are out of scope.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
     action: create

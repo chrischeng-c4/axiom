@@ -24,6 +24,8 @@ mod phase_migration_test;
 mod project_health_test;
 #[path = "cli/tests/recovery_flow_test.rs"]
 mod recovery_flow_test;
+#[path = "cli/tests/root_doc_allowlist_test.rs"]
+mod root_doc_allowlist_test;
 #[path = "cli/tests/root_doc_mirror_test.rs"]
 mod root_doc_mirror_test;
 #[path = "cli/tests/standardize_test.rs"]
