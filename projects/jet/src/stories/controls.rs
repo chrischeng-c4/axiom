@@ -43,6 +43,26 @@ pub enum ControlKind {
     Text,
     /// A numeric input for a `number` prop.
     Number,
+    /// A color picker for CSS color strings.
+    Color,
+    /// A date picker whose DOM value is an ISO date string.
+    Date,
+    /// A numeric range slider.
+    Range {
+        min: Option<String>,
+        max: Option<String>,
+        step: Option<String>,
+    },
+    /// A JSON textarea for object/array-like args.
+    Object,
+    /// A radio group.
+    Radio { options: Vec<String>, inline: bool },
+    /// A checkbox group.
+    Check { options: Vec<String>, inline: bool },
+    /// A multi-select list.
+    MultiSelect { options: Vec<String> },
+    /// A file input.
+    File,
     /// A dropdown for a string-literal union / argType `options` list.
     Select {
         /// The selectable option values, in declared order.
@@ -60,6 +80,10 @@ pub struct Control {
     /// The story's current value for this arg, if any (seeds the widget). This
     /// is the merged story arg ([`super::StoryEntry::args`]), not a default.
     pub current: Option<CsfValue>,
+    /// Optional per-option labels from `argTypes[name].labels`.
+    pub labels: BTreeMap<String, String>,
+    /// Optional per-option value mapping from `argTypes[name].mapping`.
+    pub mapping: BTreeMap<String, CsfValue>,
 }
 
 /// Infer a control kind from a prop's TS type text alone (no overrides).
@@ -144,18 +168,32 @@ pub fn resolve_controls(
             continue;
         }
 
+        let metadata = arg_type.map(control_metadata_from_arg_type);
         // argType override wins over inference; otherwise infer from the type.
-        let kind = arg_type
-            .and_then(control_kind_from_arg_type)
+        let kind = metadata
+            .as_ref()
+            .and_then(|m| m.kind.clone())
             .unwrap_or_else(|| infer_control(prop));
 
         out.push(Control {
             name: prop.name.clone(),
             kind,
             current: args.get(&prop.name).cloned(),
+            labels: metadata
+                .as_ref()
+                .map(|m| m.labels.clone())
+                .unwrap_or_default(),
+            mapping: metadata.map(|m| m.mapping).unwrap_or_default(),
         });
     }
     out
+}
+
+#[derive(Debug, Clone, Default)]
+struct ControlMetadata {
+    kind: Option<ControlKind>,
+    labels: BTreeMap<String, String>,
+    mapping: BTreeMap<String, CsfValue>,
 }
 
 /// True when an argType disables its control: `control: false`, or
@@ -178,31 +216,52 @@ fn arg_type_is_disabled(arg_type: &CsfValue) -> bool {
     false
 }
 
-/// Derive a [`ControlKind`] from an argType's `control` (+ `options`) fields, if
-/// the argType specifies one. `None` means "fall back to type inference".
-fn control_kind_from_arg_type(arg_type: &CsfValue) -> Option<ControlKind> {
+/// Derive control metadata from an argType's `control` / `options` / `labels` /
+/// `mapping` fields. Missing `kind` means "fall back to type inference".
+fn control_metadata_from_arg_type(arg_type: &CsfValue) -> ControlMetadata {
     let CsfValue::Object(map) = arg_type else {
-        return None;
+        return ControlMetadata::default();
     };
 
     // `options` may live at the argType root (`{ options: [...], control: 'select' }`).
     let root_options = map.get("options").and_then(csf_string_list);
+    let labels = map
+        .get("labels")
+        .and_then(csf_string_map)
+        .unwrap_or_default();
+    let mapping = map
+        .get("mapping")
+        .and_then(csf_value_map)
+        .unwrap_or_default();
 
-    match map.get("control") {
+    let kind = match map.get("control") {
         // `control: 'text' | 'boolean' | 'number' | 'select' | 'radio'`.
-        Some(CsfValue::Str(kind)) => Some(control_from_type_name(kind, root_options)),
+        Some(CsfValue::Str(kind)) => Some(control_from_type_name(kind, root_options, None)),
         // `control: { type: 'select', options: [...] }`.
         Some(CsfValue::Object(control)) => {
             let inner_options = control.get("options").and_then(csf_string_list);
             let options = inner_options.or(root_options);
+            let range = RangeConfig {
+                min: control.get("min").and_then(csf_scalar_string),
+                max: control.get("max").and_then(csf_scalar_string),
+                step: control.get("step").and_then(csf_scalar_string),
+            };
             match control.get("type") {
-                Some(CsfValue::Str(kind)) => Some(control_from_type_name(kind, options)),
+                Some(CsfValue::Str(kind)) => {
+                    Some(control_from_type_name(kind, options, Some(range)))
+                }
                 // No explicit type but options present → a select.
                 _ => options.map(|opts| ControlKind::Select { options: opts }),
             }
         }
         // No `control` field but root `options` present → a select.
         _ => root_options.map(|opts| ControlKind::Select { options: opts }),
+    };
+
+    ControlMetadata {
+        kind,
+        labels,
+        mapping,
     }
 }
 
@@ -211,21 +270,59 @@ fn control_kind_from_arg_type(arg_type: &CsfValue) -> Option<ControlKind> {
 /// `select` / `radio` / `check` / `inline-radio` need options; if none are
 /// supplied the control degrades to [`ControlKind::Text`] rather than an empty
 /// dropdown.
-fn control_from_type_name(name: &str, options: Option<Vec<String>>) -> ControlKind {
+fn control_from_type_name(
+    name: &str,
+    options: Option<Vec<String>>,
+    range: Option<RangeConfig>,
+) -> ControlKind {
     match name {
         "boolean" => ControlKind::Toggle,
-        "number" | "range" => ControlKind::Number,
-        "text" | "color" | "date" => ControlKind::Text,
-        "select" | "radio" | "inline-radio" | "check" | "inline-check" | "multi-select" => {
-            match options {
-                Some(opts) if !opts.is_empty() => ControlKind::Select { options: opts },
-                // A select with no options is useless — fall back to text.
-                _ => ControlKind::Text,
+        "number" => ControlKind::Number,
+        "range" => {
+            let range = range.unwrap_or_default();
+            ControlKind::Range {
+                min: range.min,
+                max: range.max,
+                step: range.step,
             }
         }
+        "text" => ControlKind::Text,
+        "color" => ControlKind::Color,
+        "date" => ControlKind::Date,
+        "object" => ControlKind::Object,
+        "file" => ControlKind::File,
+        "select" => options
+            .filter(|opts| !opts.is_empty())
+            .map(|options| ControlKind::Select { options })
+            .unwrap_or(ControlKind::Text),
+        "radio" | "inline-radio" => options
+            .filter(|opts| !opts.is_empty())
+            .map(|options| ControlKind::Radio {
+                options,
+                inline: name == "inline-radio",
+            })
+            .unwrap_or(ControlKind::Text),
+        "check" | "inline-check" => options
+            .filter(|opts| !opts.is_empty())
+            .map(|options| ControlKind::Check {
+                options,
+                inline: name == "inline-check",
+            })
+            .unwrap_or(ControlKind::Text),
+        "multi-select" => options
+            .filter(|opts| !opts.is_empty())
+            .map(|options| ControlKind::MultiSelect { options })
+            .unwrap_or(ControlKind::Text),
         // Unknown control type → text input (safe default).
         _ => ControlKind::Text,
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RangeConfig {
+    min: Option<String>,
+    max: Option<String>,
+    step: Option<String>,
 }
 
 /// Read a `CsfValue` as a list of string options. Accepts a raw array literal
@@ -236,6 +333,34 @@ fn csf_string_list(value: &CsfValue) -> Option<Vec<String>> {
         // The CSF parser keeps array literals as Raw source (`["sm", "lg"]`).
         CsfValue::Raw(raw) => parse_array_literal(raw),
         _ => None,
+    }
+}
+
+fn csf_string_map(value: &CsfValue) -> Option<BTreeMap<String, String>> {
+    let CsfValue::Object(map) = value else {
+        return None;
+    };
+    let mut out = BTreeMap::new();
+    for (key, value) in map {
+        out.insert(key.clone(), csf_scalar_string(value)?);
+    }
+    Some(out)
+}
+
+fn csf_value_map(value: &CsfValue) -> Option<BTreeMap<String, CsfValue>> {
+    let CsfValue::Object(map) = value else {
+        return None;
+    };
+    Some(map.clone())
+}
+
+fn csf_scalar_string(value: &CsfValue) -> Option<String> {
+    match value {
+        CsfValue::Str(s) => Some(s.clone()),
+        CsfValue::Bool(b) => Some(b.to_string()),
+        CsfValue::Number(n) => Some(n.clone()),
+        CsfValue::Raw(raw) => Some(raw.trim_matches(['"', '\'']).to_string()),
+        CsfValue::Null | CsfValue::Object(_) => None,
     }
 }
 
@@ -271,6 +396,8 @@ mod tests {
             name: name.to_string(),
             type_text: ty.to_string(),
             optional,
+            description: String::new(),
+            default_value: None,
         }
     }
 
@@ -374,6 +501,128 @@ mod tests {
         let controls = resolve_controls(&props, &arg_types, &BTreeMap::new());
         assert_eq!(controls.len(), 1, "disabled control omitted");
         assert_eq!(controls[0].name, "shown");
+    }
+
+    #[test]
+    fn arg_type_full_control_types_labels_mapping_and_range_config() {
+        let props = vec![
+            prop("color", "string", false),
+            prop("date", "string", false),
+            prop("range", "number", false),
+            prop("object", "Record<string, string>", false),
+            prop("radio", "string", false),
+            prop("check", "string[]", false),
+            prop("multi", "string[]", false),
+            prop("file", "string", false),
+        ];
+        let mut arg_types = BTreeMap::new();
+        arg_types.insert("color".into(), arg_type_with_control("color"));
+        arg_types.insert("date".into(), arg_type_with_control("date"));
+        arg_types.insert(
+            "range".into(),
+            CsfValue::Object({
+                let mut control = BTreeMap::new();
+                control.insert("type".into(), CsfValue::Str("range".into()));
+                control.insert("min".into(), CsfValue::Number("0".into()));
+                control.insert("max".into(), CsfValue::Number("10".into()));
+                control.insert("step".into(), CsfValue::Number("2".into()));
+                let mut arg_type = BTreeMap::new();
+                arg_type.insert("control".into(), CsfValue::Object(control));
+                arg_type
+            }),
+        );
+        arg_types.insert("object".into(), arg_type_with_control("object"));
+        arg_types.insert(
+            "radio".into(),
+            choice_arg_type("inline-radio", "[\"sm\", \"lg\"]"),
+        );
+        arg_types.insert("check".into(), choice_arg_type("check", "[\"a\", \"b\"]"));
+        arg_types.insert(
+            "multi".into(),
+            choice_arg_type("multi-select", "[\"x\", \"y\"]"),
+        );
+        arg_types.insert("file".into(), arg_type_with_control("file"));
+
+        let controls = resolve_controls(&props, &arg_types, &BTreeMap::new());
+        let kinds: Vec<_> = controls.iter().map(|c| &c.kind).collect();
+        assert!(matches!(kinds[0], ControlKind::Color));
+        assert!(matches!(kinds[1], ControlKind::Date));
+        assert_eq!(
+            kinds[2],
+            &ControlKind::Range {
+                min: Some("0".into()),
+                max: Some("10".into()),
+                step: Some("2".into())
+            }
+        );
+        assert!(matches!(kinds[3], ControlKind::Object));
+        assert_eq!(
+            kinds[4],
+            &ControlKind::Radio {
+                options: vec!["sm".into(), "lg".into()],
+                inline: true
+            }
+        );
+        assert_eq!(
+            kinds[5],
+            &ControlKind::Check {
+                options: vec!["a".into(), "b".into()],
+                inline: false
+            }
+        );
+        assert_eq!(
+            kinds[6],
+            &ControlKind::MultiSelect {
+                options: vec!["x".into(), "y".into()]
+            }
+        );
+        assert!(matches!(kinds[7], ControlKind::File));
+    }
+
+    #[test]
+    fn arg_type_labels_and_mapping_are_preserved() {
+        let props = vec![prop("size", "string", false)];
+        let mut labels = BTreeMap::new();
+        labels.insert("sm".into(), CsfValue::Str("Small".into()));
+        labels.insert("lg".into(), CsfValue::Str("Large".into()));
+        let mut mapping = BTreeMap::new();
+        mapping.insert("sm".into(), CsfValue::Number("1".into()));
+        mapping.insert("lg".into(), CsfValue::Number("2".into()));
+
+        let mut arg_type = BTreeMap::new();
+        arg_type.insert("control".into(), CsfValue::Str("radio".into()));
+        arg_type.insert("options".into(), CsfValue::Raw("[\"sm\", \"lg\"]".into()));
+        arg_type.insert("labels".into(), CsfValue::Object(labels));
+        arg_type.insert("mapping".into(), CsfValue::Object(mapping));
+        let mut arg_types = BTreeMap::new();
+        arg_types.insert("size".into(), CsfValue::Object(arg_type));
+
+        let controls = resolve_controls(&props, &arg_types, &BTreeMap::new());
+        assert_eq!(
+            controls[0].labels.get("sm").map(String::as_str),
+            Some("Small")
+        );
+        assert_eq!(
+            controls[0].mapping.get("lg"),
+            Some(&CsfValue::Number("2".into()))
+        );
+    }
+
+    fn arg_type_with_control(kind: &str) -> CsfValue {
+        CsfValue::Object({
+            let mut m = BTreeMap::new();
+            m.insert("control".into(), CsfValue::Str(kind.into()));
+            m
+        })
+    }
+
+    fn choice_arg_type(kind: &str, options: &str) -> CsfValue {
+        CsfValue::Object({
+            let mut m = BTreeMap::new();
+            m.insert("control".into(), CsfValue::Str(kind.into()));
+            m.insert("options".into(), CsfValue::Raw(options.into()));
+            m
+        })
     }
 }
 // </HANDWRITE>

@@ -19,6 +19,7 @@ pub mod csf;
 pub mod deps;
 pub mod hmr;
 pub mod manager;
+pub mod mdx;
 pub mod prop_extractor;
 pub mod server;
 
@@ -60,6 +61,10 @@ pub struct StoryMeta {
     pub args: BTreeMap<String, CsfValue>,
     /// `argTypes:` control metadata (consumed by B3).
     pub arg_types: BTreeMap<String, CsfValue>,
+    /// `parameters:` metadata used by preview runtime and manager toolbar.
+    pub parameters: BTreeMap<String, CsfValue>,
+    /// Storybook meta tags such as `autodocs` / `!autodocs`.
+    pub tags: Vec<String>,
 }
 
 /// One renderable story (a named export), with args merged over the meta.
@@ -74,6 +79,10 @@ pub struct StoryEntry {
     pub export_name: String,
     /// Args effective for this story = meta args overridden by story args.
     pub args: BTreeMap<String, CsfValue>,
+    /// Parameters effective for this story = meta parameters overridden by story parameters.
+    pub parameters: BTreeMap<String, CsfValue>,
+    /// Copyable source slice for the story source panel.
+    pub source: Option<String>,
     /// Whether the story declares its own `render:` function.
     pub has_render: bool,
     /// The story file this entry came from.
@@ -154,6 +163,7 @@ pub fn discover(root: &Path) -> StoryIndex {
 
     index.stories.sort_by(|a, b| a.id.cmp(&b.id));
     index.metas.sort_by(|a, b| a.file.cmp(&b.file));
+    index.diagnostics.extend(mdx::diagnostics(root, &index));
     index
 }
 
@@ -178,11 +188,21 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
         title_path: title_path.clone(),
         args: meta.args.clone(),
         arg_types: meta.arg_types.clone(),
+        parameters: meta.parameters.clone(),
+        tags: meta.tags.clone(),
     };
 
     let title_slug = slug(&title_path.join("/"));
     for story in &stories {
-        push_story(index, file, &title_slug, &title_path, &meta.args, story);
+        push_story(
+            index,
+            file,
+            &title_slug,
+            &title_path,
+            &meta.args,
+            &meta.parameters,
+            story,
+        );
     }
 
     // Resolve each re-exported story against its sibling file.
@@ -198,8 +218,13 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
                 {
                     let renamed = csf::CsfStory {
                         export_name: re.exported_name.clone(),
+                        source: src_story.source.clone(),
                         args: src_story.args.clone(),
                         has_render: src_story.has_render,
+                        parameters: src_story.parameters.clone(),
+                        globals: src_story.globals.clone(),
+                        has_decorators: src_story.has_decorators,
+                        has_loaders: src_story.has_loaders,
                     };
                     // Story-level args still merge over the sibling meta args so
                     // an inherited default is not lost.
@@ -209,6 +234,7 @@ fn assemble_file(index: &mut StoryIndex, file: &Path, parsed: ParsedStoryFile) {
                         &title_slug,
                         &title_path,
                         &sibling.meta.args,
+                        &sibling.meta.parameters,
                         &renamed,
                     );
                 } else {
@@ -239,6 +265,7 @@ fn push_story(
     title_slug: &str,
     title_path: &[String],
     base_args: &BTreeMap<String, CsfValue>,
+    base_parameters: &BTreeMap<String, CsfValue>,
     story: &csf::CsfStory,
 ) {
     // Merge: base args first, story args override per key.
@@ -246,12 +273,18 @@ fn push_story(
     for (k, v) in &story.args {
         merged.insert(k.clone(), v.clone());
     }
+    let mut parameters = base_parameters.clone();
+    for (k, v) in &story.parameters {
+        parameters.insert(k.clone(), v.clone());
+    }
     let id = format!("{title_slug}--{}", slug(&story.export_name));
     index.stories.push(StoryEntry {
         id,
         name: story.export_name.clone(),
         export_name: story.export_name.clone(),
         args: merged,
+        parameters,
+        source: story.source.clone(),
         has_render: story.has_render,
         file: file.to_path_buf(),
         title_path: title_path.to_vec(),

@@ -30,6 +30,8 @@ fn entry(id: &str, name: &str, file: &str) -> StoryEntry {
         name: name.to_string(),
         export_name: name.to_string(),
         args: BTreeMap::new(),
+        parameters: BTreeMap::new(),
+        source: None,
         has_render: false,
         file: PathBuf::from(file),
         title_path: vec!["Components".to_string(), "Button".to_string()],

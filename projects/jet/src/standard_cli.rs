@@ -80,7 +80,8 @@ Packages live in a global content-addressed store (`jet store`). The lockfile is
 | inspect / lint config      | `jet config lint`             |
 | update this tool           | `jet upgrade`                 |
 | search known issues        | `jet issue search \"hmr\"`      |
-| file a bug                 | `jet issue create \"...\"`      |",
+| file a bug                 | `jet issue create \"...\"`      |
+| reopen + comment follow-up | `jet issue comment 123 \"...\"` |",
     },
 ];
 
@@ -126,10 +127,11 @@ pub fn upgrade_command() -> Command {
         )
 }
 
-/// `jet issue <search|view|create>` — search, read, and file jet issues.
+/// `jet issue <search|view|create|comment>` — search, read, file, and follow up
+/// on jet issues.
 pub fn issue_command() -> Command {
     Command::new("issue")
-        .about("Search, view, and file jet issues on the axiom tracker")
+        .about("Search, view, file, and comment on jet issues on the axiom tracker")
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
@@ -187,6 +189,27 @@ pub fn issue_command() -> Command {
                         .help("Free-text description of the problem"),
                 ),
         )
+        .subcommand(
+            Command::new("comment")
+                .about("Comment on an issue and ensure it is open")
+                .arg(
+                    Arg::new("number")
+                        .required(true)
+                        .value_parser(clap::value_parser!(u64))
+                        .help("Issue number"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .action(ArgAction::SetTrue)
+                        .help("Print the reopen/comment request without changing GitHub state"),
+                )
+                .arg(
+                    Arg::new("message")
+                        .num_args(0..)
+                        .help("Follow-up note to add after reopening"),
+                ),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +247,8 @@ pub async fn run_upgrade(matches: &ArgMatches) -> Result<()> {
     .await
 }
 
-/// `jet issue <verb>` — dispatch search/view/create to cli-std. `create` always
-/// tags `project:jet`; `search` defaults to jet's own issues.
+/// `jet issue <verb>` — dispatch search/view/create/comment to cli-std.
+/// `create` always tags `project:jet`; `search` defaults to jet's own issues.
 pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("search", m)) => {
@@ -278,7 +301,60 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
             )
             .await
         }
-        _ => anyhow::bail!("unknown `jet issue` subcommand; try search / view / create"),
+        Some(("comment", m)) => {
+            let number = *m.get_one::<u64>("number").expect("number is required");
+            let msg = m
+                .get_many::<String>("message")
+                .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
+                .filter(|s| !s.trim().is_empty());
+            cli_std::issue::comment(
+                &TOOL,
+                cli_std::issue::CommentOptions {
+                    number,
+                    message: msg,
+                    repo: None,
+                    dry_run: m.get_flag("dry-run"),
+                    yes: true,
+                },
+            )
+            .await
+        }
+        _ => anyhow::bail!("unknown `jet issue` subcommand; try search / view / create / comment"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn issue_help_lists_comment() {
+        let mut help = Vec::new();
+        issue_command()
+            .write_long_help(&mut help)
+            .expect("render issue help");
+        let help = String::from_utf8(help).expect("help is UTF-8");
+        assert!(
+            help.contains("comment"),
+            "issue help should list comment subcommand, got:\n{help}"
+        );
+    }
+
+    #[test]
+    fn issue_comment_parses_number_message_and_dry_run() {
+        let matches = issue_command()
+            .try_get_matches_from(["issue", "comment", "123", "--dry-run", "still", "broken"])
+            .expect("parse issue comment");
+        let Some(("comment", comment)) = matches.subcommand() else {
+            panic!("expected comment subcommand");
+        };
+        assert_eq!(comment.get_one::<u64>("number"), Some(&123));
+        assert!(comment.get_flag("dry-run"));
+        let message = comment
+            .get_many::<String>("message")
+            .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
+            .unwrap_or_default();
+        assert_eq!(message, "still broken");
     }
 }
 
