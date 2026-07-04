@@ -41,12 +41,15 @@ Public API manifest for `projects/agentic-workflow/src/cli/doc_mirror.rs` genera
 | `agents_skill_body_from_claude_skill_body` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 239 | agents_skill_body_from_claude_skill_body(body: &str) -> String |
 | `render_projects_table` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 362 | render_projects_table(project_root: &std::path::Path) -> anyhow::Result<String> |
 | `upsert_projects_table` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 397 | upsert_projects_table(project_root: &std::path::Path, doc_text: &str) -> anyhow::Result<String> |
-| `TraitDef` | projects/agentic-workflow/src/cli/doc_mirror.rs | struct | pub | 444 | TraitDef { id: &'static str, baseline_caps: &'static [&'static str], contributing_anchor: &'static str, about: &'static str } |
-| `TRAITS` | projects/agentic-workflow/src/cli/doc_mirror.rs | const | pub | 453 | TRAITS: &[TraitDef] |
-| `TRAIT_TABLE_START` | projects/agentic-workflow/src/cli/doc_mirror.rs | const | pub | 477 | TRAIT_TABLE_START: &str |
-| `TRAIT_TABLE_END` | projects/agentic-workflow/src/cli/doc_mirror.rs | const | pub | 478 | TRAIT_TABLE_END: &str |
-| `render_trait_table` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 507 | render_trait_table() -> String |
-| `upsert_trait_table` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 530 | upsert_trait_table(doc_text: &str) -> String |
+| `TraitDef` | projects/agentic-workflow/src/cli/doc_mirror.rs | struct | pub | 451 | TraitDef { id: &'static str, baseline_caps: &'static [&'static str], contributing_anchor: Option<&'static str>, about: &'static str } |
+| `TRAITS` | projects/agentic-workflow/src/cli/doc_mirror.rs | const | pub | 460 | TRAITS: &[TraitDef] |
+| `TraitExpansion` | projects/agentic-workflow/src/cli/doc_mirror.rs | struct | pub | 550 | TraitExpansion { id: &'static str, members: &'static [&'static str], about: &'static str } |
+| `TRAIT_EXPANSIONS` | projects/agentic-workflow/src/cli/doc_mirror.rs | const | pub | 561 | TRAIT_EXPANSIONS: &[TraitExpansion] |
+| `expand_capability_profile_traits` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 580 | expand_capability_profile_traits(traits: &[String]) -> std::collections::BTreeSet<String> |
+| `TRAIT_TABLE_START` | projects/agentic-workflow/src/cli/doc_mirror.rs | const | pub | 600 | TRAIT_TABLE_START: &str |
+| `TRAIT_TABLE_END` | projects/agentic-workflow/src/cli/doc_mirror.rs | const | pub | 601 | TRAIT_TABLE_END: &str |
+| `render_trait_table` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 635 | render_trait_table() -> String |
+| `upsert_trait_table` | projects/agentic-workflow/src/cli/doc_mirror.rs | function | pub | 679 | upsert_trait_table(doc_text: &str) -> String |
 
 ## Source
 <!-- type: source lang: rust -->
@@ -466,7 +469,8 @@ pub fn upsert_projects_table(
 }
 
 // ---------------------------------------------------------------------------
-// Trait registry (issue #1077, archetype-as-traits slice 1/3)
+// Trait registry (issue #1077 slice 1/3, extended by #1078 slice 2/3: new
+// anchored traits, the migrated general traits, and the `service` umbrella)
 // ---------------------------------------------------------------------------
 
 /// One `[capability.profile].traits` id's data: the baseline capabilities it
@@ -477,21 +481,27 @@ pub fn upsert_projects_table(
 /// rows into CONTRIBUTING.md's generated `<!-- aw:trait-table:start/end -->`
 /// block so the archetype's doc side stops being prose-only.
 ///
-/// `contributing_anchor` stores the exact heading line (including the `###
-/// ` prefix) rather than a precomputed slug, so both `render_trait_table`
-/// (which derives the link's href from it) and `root_trait_coverage_test`
-/// (which resolves it against a live heading scan of CONTRIBUTING.md) share
-/// one robust, literal-match representation that can never fall out of sync
-/// with a hand-edited heading the way a duplicated slug string could.
+/// `contributing_anchor` stores the exact heading line (including the `#`
+/// prefix, at whatever level the section actually is — most are `### `
+/// archetype subsections, but `cli_std`/`chainable_output` anchor to `## `
+/// top-level CLI-convention sections) rather than a precomputed slug, so
+/// both `render_trait_table` (which derives the link's href from it) and
+/// `root_trait_coverage_test` (which resolves it against a live heading scan
+/// of CONTRIBUTING.md) share one robust, literal-match representation that
+/// can never fall out of sync with a hand-edited heading the way a
+/// duplicated slug string could.
 ///
-/// Only the three traits with a settled CONTRIBUTING.md doc home are
-/// data-ified this slice (`http2_api`, `kubernetes_native`,
-/// `primary_replicas`); the remaining known traits (`cli_facing`,
+/// `contributing_anchor` is `None` for traits with no settled CONTRIBUTING.md
+/// doc anchor (issue #1078, archetype-as-traits slice 2/3: `cli_facing`,
 /// `competitive_replacement`, `long_running`, `network_exposed`,
-/// `agent_facing`, `stateful_storage`) have no settled anchor yet and stay
-/// in `capability::other_known_trait_baseline_caps` until a follow-up slice
-/// gives them one (issue #1077 out-of-scope: new traits / umbrella
-/// `service` is slice 2, #1078).
+/// `agent_facing`, `stateful_storage` — carried over from
+/// `capability::other_known_trait_baseline_caps`, now folded into this one
+/// registry with no anchor rather than a second lookup table). Anchored
+/// traits render a working `Enforces` link and participate in
+/// `root_trait_coverage_test`'s archetype-H3 coverage direction; anchor-less
+/// traits render `—` in that column and are exempt from the H3-coverage
+/// direction (there is no heading for them to cover), but still participate
+/// in the "every `Some` anchor resolves to a real heading" direction.
 // `pub`, not `pub(crate)`: the bidirectional coverage test
 // (`root_trait_coverage_test`, issue #1077 AC3) lives in `tests/` and
 // compiles against this crate as an external dependent, so it can only see
@@ -500,32 +510,148 @@ pub fn upsert_projects_table(
 pub struct TraitDef {
     pub id: &'static str,
     pub baseline_caps: &'static [&'static str],
-    pub contributing_anchor: &'static str,
+    pub contributing_anchor: Option<&'static str>,
     pub about: &'static str,
 }
 
-/// The archetype-anchored trait registry, in CONTRIBUTING.md trait-table row
-/// order.
+/// The full known-trait registry (archetype-anchored and general), in
+/// CONTRIBUTING.md trait-table row order.
 pub const TRAITS: &[TraitDef] = &[
     TraitDef {
         id: "http2_api",
         baseline_caps: &["http2-api-list"],
-        contributing_anchor: "### Transport — h2c + OpenAPI on one port",
+        contributing_anchor: Some("### Transport — h2c + OpenAPI on one port"),
         about: "Project owes a public HTTP/2 (h2c) + OpenAPI transport baseline, not full OpenAPI completeness.",
     },
     TraitDef {
         id: "kubernetes_native",
         baseline_caps: &["kubernetes-native-deployment"],
-        contributing_anchor: "### Deploy artifacts — image, cluster API, operator, instance",
+        contributing_anchor: Some("### Deploy artifacts — image, cluster API, operator, instance"),
         about: "Project owes a Kubernetes-native deployment baseline: image, cluster API, operator, instance.",
     },
     TraitDef {
         id: "primary_replicas",
         baseline_caps: &["primary-replicas"],
-        contributing_anchor: "### HA — `raft-core`, sharded and strongly consistent",
+        contributing_anchor: Some("### HA — `raft-core`, sharded and strongly consistent"),
         about: "Project owes a primary/replica HA topology baseline; select only for projects that actually support that topology.",
     },
+    TraitDef {
+        id: "standard_endpoints",
+        baseline_caps: &["standard-operational-endpoints"],
+        contributing_anchor: Some(
+            "### Standard endpoints — one operational surface, one contract three ways",
+        ),
+        about: "Project owes the standard /healthz, /readyz, /metrics, /openapi.json, /docs operational surface on one port.",
+    },
+    TraitDef {
+        id: "ec_gated",
+        baseline_caps: &["ec-gates-configured"],
+        contributing_anchor: Some(
+            "### EC gates — `vat`-driven, evidence under `external-contracts/`",
+        ),
+        about: "Project owes vat-driven EC gate files (vat.toml/meter*.toml/guard*.toml) with evidence under external-contracts/.",
+    },
+    TraitDef {
+        id: "cli_std",
+        baseline_caps: &["cli-standard-surface"],
+        contributing_anchor: Some("## CLI convention: every CLI ships `llm`, `upgrade`, `issue`"),
+        about: "Project owes the mandatory llm/upgrade/issue CLI surface every tool in the ecosystem ships.",
+    },
+    TraitDef {
+        id: "chainable_output",
+        baseline_caps: &["chainable-output-conformance"],
+        contributing_anchor: Some("## CLI convention: stdout tells the agent the next step"),
+        about: "Project owes chainable stdout: every structured/terminal output carries a runnable next command or an explicit terminal marker.",
+    },
+    TraitDef {
+        id: "cli_facing",
+        baseline_caps: &["cli-interface"],
+        contributing_anchor: None,
+        about: "Project is primarily driven through a CLI surface; no settled CONTRIBUTING.md doc home yet.",
+    },
+    TraitDef {
+        id: "competitive_replacement",
+        baseline_caps: &["competitor-feature-parity", "competitor-performance"],
+        contributing_anchor: None,
+        about: "Project aims to replace or match an existing competitor tool; no settled CONTRIBUTING.md doc home yet.",
+    },
+    TraitDef {
+        id: "long_running",
+        baseline_caps: &["long-running-stability"],
+        contributing_anchor: None,
+        about: "Project runs as a long-lived process; no settled CONTRIBUTING.md doc home yet.",
+    },
+    TraitDef {
+        id: "network_exposed",
+        baseline_caps: &["security-hardening"],
+        contributing_anchor: None,
+        about: "Project exposes a network-reachable surface; no settled CONTRIBUTING.md doc home yet.",
+    },
+    TraitDef {
+        id: "agent_facing",
+        baseline_caps: &[],
+        contributing_anchor: None,
+        about: "Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet.",
+    },
+    TraitDef {
+        id: "stateful_storage",
+        baseline_caps: &[],
+        contributing_anchor: None,
+        about: "Project owns durable stateful storage; prompt-only, no enforced baseline capability yet.",
+    },
 ];
+
+/// One `[capability.profile].traits` umbrella id's expansion: declaring it
+/// is equivalent to declaring every id in `members` (issue #1078,
+/// archetype-as-traits slice 2/3). Not a `TraitDef` itself — an umbrella
+/// derives no baseline caps of its own, only via its members — so it gets
+/// its own small table rather than a fake anchor-less `TraitDef` row.
+pub struct TraitExpansion {
+    pub id: &'static str,
+    pub members: &'static [&'static str],
+    pub about: &'static str,
+}
+
+/// The umbrella-trait expansion registry. `service` is the full
+/// service-archetype adopter: every trait with a settled CONTRIBUTING.md
+/// "Service archetype" or "CLI convention" doc home, excluding
+/// `primary_replicas` (topology-dependent, stays opt-in per the archetype's
+/// own HA row -- not every service needs sharded HA).
+pub const TRAIT_EXPANSIONS: &[TraitExpansion] = &[TraitExpansion {
+    id: "service",
+    members: &[
+        "http2_api",
+        "kubernetes_native",
+        "standard_endpoints",
+        "ec_gated",
+        "cli_std",
+        "chainable_output",
+    ],
+    about: "Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly.",
+}];
+
+/// Expand `traits` into the trait-id set actually used for baseline-cap
+/// derivation (issue #1078 AC1): every umbrella id in [`TRAIT_EXPANSIONS`] is
+/// replaced by its `members`, and everything else passes through unchanged.
+/// A `BTreeSet` so an umbrella declared alongside one of its own members
+/// (`["service", "http2_api"]`) collapses to one entry — "umbrella+member
+/// double-declaration doesn't duplicate".
+pub fn expand_capability_profile_traits(traits: &[String]) -> std::collections::BTreeSet<String> {
+    let mut expanded = std::collections::BTreeSet::new();
+    for trait_id in traits {
+        match TRAIT_EXPANSIONS.iter().find(|exp| exp.id == trait_id) {
+            Some(expansion) => {
+                for member in expansion.members {
+                    expanded.insert((*member).to_string());
+                }
+            }
+            None => {
+                expanded.insert(trait_id.clone());
+            }
+        }
+    }
+    expanded
+}
 
 /// Marker pair around the generated CONTRIBUTING.md trait table, placed in
 /// the "Service archetype" section right after its intro paragraph/table and
@@ -558,22 +684,48 @@ fn slugify_heading(heading_text: &str) -> String {
 }
 
 /// Render the generated `| Trait | Derives | Enforces | About |` table from
-/// [`TRAITS`] (issue #1077). `Enforces` is a same-document Markdown link to
-/// the trait's `contributing_anchor` heading.
+/// [`TRAITS`] plus [`TRAIT_EXPANSIONS`] (issue #1077, extended #1078).
+/// `Enforces` is a same-document Markdown link to the trait's
+/// `contributing_anchor` heading when it has one, or `—` for general traits
+/// with no settled CONTRIBUTING.md doc home. Umbrella rows (from
+/// `TRAIT_EXPANSIONS`) render `Derives` as `expands: <member ids>` and
+/// `Enforces` as `—` — the umbrella has no anchor of its own, only via its
+/// members' own rows.
 pub fn render_trait_table() -> String {
     let mut out = String::from("| Trait | Derives | Enforces | About |\n|---|---|---|---|\n");
     for def in TRAITS {
-        let heading_text = def.contributing_anchor.trim_start_matches("### ");
-        let anchor = slugify_heading(heading_text);
         let derives = def
             .baseline_caps
             .iter()
             .map(|cap| format!("`{cap}`"))
             .collect::<Vec<_>>()
             .join(", ");
+        let enforces = match def.contributing_anchor {
+            Some(anchor) => {
+                let heading_text = anchor.trim_start_matches('#').trim_start();
+                let slug = slugify_heading(heading_text);
+                format!("[{heading_text}](#{slug})")
+            }
+            None => "—".to_string(),
+        };
         out.push_str(&format!(
-            "| `{}` | {} | [{}](#{}) | {} |\n",
-            def.id, derives, heading_text, anchor, def.about
+            "| `{}` | {} | {} | {} |\n",
+            def.id, derives, enforces, def.about
+        ));
+    }
+    for expansion in TRAIT_EXPANSIONS {
+        let derives = format!(
+            "expands: {}",
+            expansion
+                .members
+                .iter()
+                .map(|member| format!("`{member}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        out.push_str(&format!(
+            "| `{}` | {} | — | {} |\n",
+            expansion.id, derives, expansion.about
         ));
     }
     out
@@ -784,7 +936,7 @@ path = "projects/aw-duplicate"
         assert!(updated.contains("## Install\nkeep me"));
     }
 
-    // -- Trait registry (issue #1077) ---------------------------------------
+    // -- Trait registry (issue #1077, extended #1078) ------------------------
 
     #[test]
     fn slugify_heading_matches_hand_computed_contributing_anchors() {
@@ -806,7 +958,10 @@ path = "projects/aw-duplicate"
     fn render_trait_table_has_one_row_per_trait_def_with_working_links() {
         let table = render_trait_table();
         assert!(table.starts_with("| Trait | Derives | Enforces | About |\n|---|---|---|---|\n"));
-        assert_eq!(table.lines().count(), 2 + TRAITS.len());
+        assert_eq!(
+            table.lines().count(),
+            2 + TRAITS.len() + TRAIT_EXPANSIONS.len()
+        );
         for def in TRAITS {
             assert!(
                 table.contains(&format!("| `{}` |", def.id)),
@@ -817,9 +972,43 @@ path = "projects/aw-duplicate"
                 assert!(table.contains(&format!("`{cap}`")));
             }
             assert!(table.contains(def.about));
-            let heading_text = def.contributing_anchor.trim_start_matches("### ");
-            let anchor = slugify_heading(heading_text);
-            assert!(table.contains(&format!("[{heading_text}](#{anchor})")));
+            match def.contributing_anchor {
+                Some(anchor) => {
+                    let heading_text = anchor.trim_start_matches('#').trim_start();
+                    let slug = slugify_heading(heading_text);
+                    assert!(
+                        table.contains(&format!("[{heading_text}](#{slug})")),
+                        "trait `{}` must render a working Enforces link",
+                        def.id
+                    );
+                }
+                None => {
+                    assert!(
+                        table.contains(&format!("| `{}` | {} | — |", def.id, {
+                            def.baseline_caps
+                                .iter()
+                                .map(|cap| format!("`{cap}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })),
+                        "anchor-less trait `{}` must render `—` in Enforces",
+                        def.id
+                    );
+                }
+            }
+        }
+        for expansion in TRAIT_EXPANSIONS {
+            assert!(table.contains(&format!("| `{}` |", expansion.id)));
+            assert!(table.contains(&format!(
+                "expands: {}",
+                expansion
+                    .members
+                    .iter()
+                    .map(|member| format!("`{member}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+            assert!(table.contains(expansion.about));
         }
     }
 
@@ -833,6 +1022,41 @@ path = "projects/aw-duplicate"
         assert!(!updated.contains("stale row"));
         assert!(updated.contains("| `http2_api` |"));
         assert!(updated.contains("### Next H3"));
+    }
+
+    // -- Umbrella trait expansion (issue #1078) ------------------------------
+
+    #[test]
+    fn expand_capability_profile_traits_expands_umbrella_and_dedups_members() {
+        let traits = vec!["service".to_string(), "http2_api".to_string()];
+        let expanded = expand_capability_profile_traits(&traits);
+        assert_eq!(
+            expanded,
+            [
+                "chainable_output",
+                "cli_std",
+                "ec_gated",
+                "http2_api",
+                "kubernetes_native",
+                "standard_endpoints",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+        );
+    }
+
+    #[test]
+    fn expand_capability_profile_traits_passes_through_non_umbrella_ids() {
+        let traits = vec!["primary_replicas".to_string(), "cli_facing".to_string()];
+        let expanded = expand_capability_profile_traits(&traits);
+        assert_eq!(
+            expanded,
+            ["cli_facing", "primary_replicas"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
     }
 }
 // CODEGEN-END
@@ -898,4 +1122,56 @@ changes:
       compiles against this crate as an external dependent and can only see
       `pub` items — matching every other shared-projector constant in this
       module.
+  - path: projects/agentic-workflow/src/cli/doc_mirror.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1078 (archetype-as-traits slice 2/3) extends the trait registry
+      in three ways.
+
+      First, `TraitDef.contributing_anchor` becomes `Option<&'static str>`
+      (was `&'static str`) so the registry can represent traits with no
+      settled CONTRIBUTING.md doc home at all, not only anchored ones.
+      `render_trait_table` renders a working `Enforces` link for `Some(..)`
+      and `—` for `None`, using a level-agnostic
+      `anchor.trim_start_matches('#').trim_start()` (was a `"### "`-only
+      trim) so it also strips the `## ` prefix of the two new H2 anchors
+      below without special-casing heading level.
+
+      Second, `TRAITS` grows from 3 to 13 entries: four new
+      archetype/convention-anchored traits — `standard_endpoints`
+      (`standard-operational-endpoints`, anchors "### Standard endpoints —
+      one operational surface, one contract three ways"), `ec_gated`
+      (`ec-gates-configured`, anchors "### EC gates — `vat`-driven, evidence
+      under `external-contracts/`"), `cli_std` (`cli-standard-surface`,
+      anchors the H2 "## CLI convention: every CLI ships `llm`, `upgrade`,
+      `issue`"), and `chainable_output` (`chainable-output-conformance`,
+      anchors the H2 "## CLI convention: stdout tells the agent the next
+      step") — plus the six general traits formerly hand-maintained in
+      `crate::cli::capability::other_known_trait_baseline_caps`
+      (`cli_facing`, `competitive_replacement`, `long_running`,
+      `network_exposed`, `agent_facing`, `stateful_storage`), migrated in
+      with `contributing_anchor: None` so that fallback function could be
+      deleted entirely — one registry, no second lookup table.
+
+      Third, a new `TraitExpansion`/`TRAIT_EXPANSIONS` umbrella table and
+      `expand_capability_profile_traits` function: `service` expands to
+      `{http2_api, kubernetes_native, standard_endpoints, ec_gated, cli_std,
+      chainable_output}` (`primary_replicas` stays opt-in per its own HA
+      row, not every service needs sharded HA). `expand_capability_profile_
+      traits` replaces umbrella ids with their members into a `BTreeSet` so
+      an umbrella declared alongside one of its own members collapses to one
+      entry (no duplicate baseline caps). `render_trait_table` also renders
+      one row per `TRAIT_EXPANSIONS` entry, with `Derives` = `expands:
+      <member ids>` and `Enforces` = `—` (the umbrella has no anchor of its
+      own).
+
+      `root_trait_coverage_test.rs` (its own SPEC-MANAGED mirror) was updated
+      for the `Option` anchor type; `crate::cli::capability` was updated to
+      call `expand_capability_profile_traits` from
+      `required_baseline_caps_for_traits` and to delete
+      `other_known_trait_baseline_caps` (see that file's own semantic
+      mirror, `tech-design/semantic/agentic-workflow-cli.md`, for its side of
+      the change).
 ```

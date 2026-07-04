@@ -238,6 +238,17 @@ not hand-edit between the markers; run `aw init` after a trait changes.
 | `http2_api` | `http2-api-list` | [Transport — h2c + OpenAPI on one port](#transport-h2c-openapi-on-one-port) | Project owes a public HTTP/2 (h2c) + OpenAPI transport baseline, not full OpenAPI completeness. |
 | `kubernetes_native` | `kubernetes-native-deployment` | [Deploy artifacts — image, cluster API, operator, instance](#deploy-artifacts-image-cluster-api-operator-instance) | Project owes a Kubernetes-native deployment baseline: image, cluster API, operator, instance. |
 | `primary_replicas` | `primary-replicas` | [HA — `raft-core`, sharded and strongly consistent](#ha-raft-core-sharded-and-strongly-consistent) | Project owes a primary/replica HA topology baseline; select only for projects that actually support that topology. |
+| `standard_endpoints` | `standard-operational-endpoints` | [Standard endpoints — one operational surface, one contract three ways](#standard-endpoints-one-operational-surface-one-contract-three-ways) | Project owes the standard /healthz, /readyz, /metrics, /openapi.json, /docs operational surface on one port. |
+| `ec_gated` | `ec-gates-configured` | [EC gates — `vat`-driven, evidence under `external-contracts/`](#ec-gates-vat-driven-evidence-under-external-contracts) | Project owes vat-driven EC gate files (vat.toml/meter*.toml/guard*.toml) with evidence under external-contracts/. |
+| `cli_std` | `cli-standard-surface` | [CLI convention: every CLI ships `llm`, `upgrade`, `issue`](#cli-convention-every-cli-ships-llm-upgrade-issue) | Project owes the mandatory llm/upgrade/issue CLI surface every tool in the ecosystem ships. |
+| `chainable_output` | `chainable-output-conformance` | [CLI convention: stdout tells the agent the next step](#cli-convention-stdout-tells-the-agent-the-next-step) | Project owes chainable stdout: every structured/terminal output carries a runnable next command or an explicit terminal marker. |
+| `cli_facing` | `cli-interface` | — | Project is primarily driven through a CLI surface; no settled CONTRIBUTING.md doc home yet. |
+| `competitive_replacement` | `competitor-feature-parity`, `competitor-performance` | — | Project aims to replace or match an existing competitor tool; no settled CONTRIBUTING.md doc home yet. |
+| `long_running` | `long-running-stability` | — | Project runs as a long-lived process; no settled CONTRIBUTING.md doc home yet. |
+| `network_exposed` | `security-hardening` | — | Project exposes a network-reachable surface; no settled CONTRIBUTING.md doc home yet. |
+| `agent_facing` |  | — | Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet. |
+| `stateful_storage` |  | — | Project owns durable stateful storage; prompt-only, no enforced baseline capability yet. |
+| `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly. |
 <!-- aw:trait-table:end -->
 
 ### The shared service kit — compose these libs, do not hand-roll
@@ -312,7 +323,10 @@ generated from the handlers, never hand-maintained.
 
 ### OpenAPI client codegen — typed clients from the spec
 
-*(policy-only — trait pending — #1078)*
+*(policy-only — judgment, not trait-enforced; codegen-from-spec discipline
+for a service's clients, not itself a separate baseline capability — enforced
+transitively via `http2_api`'s `http2-api-list` baseline, which already
+requires the service's own OpenAPI surface to exist)*
 
 Because the OpenAPI doc is the source of truth, the typed clients adopters use
 are **generated from it**, never hand-written and never produced by an external
@@ -442,8 +456,6 @@ advice:
 
 ### Standard endpoints — one operational surface, one contract three ways
 
-*(policy-only — trait pending — #1078)*
-
 Every service exposes the same five endpoints on its one port, so an operator,
 a probe, a scraper, or an agent finds the same surface without per-service
 lookup:
@@ -519,8 +531,6 @@ nothing is hand-configured per replica. Gate consensus behind a Cargo feature
 only when a single-node mode is a legitimate deployment (e.g. `keep`).
 
 ### EC gates — `vat`-driven, evidence under `external-contracts/`
-
-*(policy-only — trait pending — #1078)*
 
 Every service carries a fixed set of **evidence-contract (EC) gate files**, each
 `SPEC-MANAGED` and pointed at a contract under `external-contracts/`. They are
