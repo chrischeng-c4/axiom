@@ -21,6 +21,7 @@ pub mod r7c_duplicate_section;
 pub mod r7d_orphan_requirement;
 pub mod r7e_schema_conflict;
 pub mod r7f_field_near_match;
+pub mod r7g_dangling_capability_ref;
 pub mod section_format;
 
 pub use r3a_double_option::DoubleOptionRule;
@@ -38,6 +39,7 @@ pub use r7c_duplicate_section::DuplicateSectionRule;
 pub use r7d_orphan_requirement::OrphanRequirementRule;
 pub use r7e_schema_conflict::SchemaConflictRule;
 pub use r7f_field_near_match::FieldNearMatchRule;
+pub use r7g_dangling_capability_ref::DanglingCapabilityRefRule;
 pub use section_format::SectionFormatRule;
 
 use crate::validate::Rule;
@@ -63,6 +65,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(OrphanRequirementRule::default()),
         Box::new(SchemaConflictRule::default()),
         Box::new(FieldNearMatchRule::default()),
+        Box::new(DanglingCapabilityRefRule::default()),
     ]
 }
 

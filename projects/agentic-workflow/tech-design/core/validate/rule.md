@@ -17,7 +17,7 @@ capability_refs:
 
 Core validation primitives for the `sdd` crate's rule-engine:
 
-- `RuleId` — 16-variant unit enum identifying each validation rule (R3a-R3h, R6a-R6b, R7a-R7f); each variant maps to a short human-readable code used in CLI output and JSON.
+- `RuleId` — 17-variant unit enum identifying each validation rule (R3a-R3h, R6a-R6b, R7a-R7g); each variant maps to a short human-readable code used in CLI output and JSON.
 - `Severity` — 2-variant enum (`Error` / `Warning`); an `Error` finding blocks `aw td validate`.
 - `Finding` — single rule-violation record (6 fields: rule, file, line, path, message, severity) with a builder-chain constructor (`::error` + `with_line` + `with_path`). `Finding::format` produces a single-line human string — marked hand-written because the exact string layout is not derivable from the schema.
 - `RuleReport` — aggregate collector (`Vec<Finding>`) with `new`, `push`, `extend`, `has_errors`, `is_empty` accessors.
@@ -49,6 +49,7 @@ definitions:
       - OrphanRequirement
       - SchemaConflict
       - FieldNearMatch
+      - DanglingCapabilityRef
     description: |
       Rule identifier. Mirrors the R-ids used in issue Requirements tables
       so a failing rule points authors at the exact requirement it enforces.
@@ -87,6 +88,8 @@ definitions:
           doc: "R7e — reject conflicting schema definitions for the same named entity."
         - name: FieldNearMatch
           doc: "R7f — reject near-match field names that likely indicate schema typos."
+        - name: DanglingCapabilityRef
+          doc: "R7g — reject capability_refs entries (capability/gap/claim ids) that do not resolve against the owning project's capability contract."
     x-methods:
       - name: short
         returns: "&'static str"
@@ -125,6 +128,8 @@ definitions:
             value: "R7e:schema-conflict"
           - variant: FieldNearMatch
             value: "R7f:field-near-match"
+          - variant: DanglingCapabilityRef
+            value: "R7g:dangling-capability-ref"
 
   Severity:
     type: string
