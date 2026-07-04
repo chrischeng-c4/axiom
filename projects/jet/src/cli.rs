@@ -20,7 +20,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Build the jet CLI command tree
 /// @spec .aw/tech-design/projects/jet/semantic/jet-src.md#schema
@@ -872,6 +872,14 @@ pub fn command() -> Command {
                              single worker so actions are visible. Combine \
                              with `page.pause()` in a spec to pause at a \
                              breakpoint (MVP: 30-minute hold).",
+                        ),
+                )
+                .arg(
+                    Arg::new("stories")
+                        .long("stories")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Run the stories smoke runner: discover stories, build the self-contained story workbench, and report each story.",
                         ),
                 )
                 .arg(
@@ -2898,6 +2906,11 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 std::process::exit(exit_code);
             }
 
+            if m.get_flag("stories") {
+                let exit_code = run_stories_smoke_tests(&root_dir).await?;
+                std::process::exit(exit_code);
+            }
+
             let mut cfg = crate::test_runner::RunnerConfig::default_for_root(&root_dir)
                 .context("Failed to build test runner config")?;
 
@@ -3562,6 +3575,167 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
         _ => {
             anyhow::bail!("Unknown jet subcommand. Run 'jet --help' for usage.")
         }
+    }
+}
+
+async fn run_stories_smoke_tests(root_dir: &Path) -> anyhow::Result<i32> {
+    let index = crate::stories::discover(root_dir);
+    if index.stories.is_empty() {
+        println!("jet test --stories: no stories discovered");
+        return Ok(if index.diagnostics.is_empty() { 0 } else { 1 });
+    }
+    let out = tempfile::tempdir().context("creating temporary stories test output")?;
+    let result = crate::stories::build_stories_static(root_dir, out.path())
+        .context("building static stories workbench for test")?;
+    let mut failed = false;
+    for diag in &result.diagnostics {
+        failed = true;
+        eprintln!("FAIL diagnostic: {diag}");
+    }
+
+    let browser = crate::browser::Browser::launch(crate::browser::LaunchOptions {
+        headless: true,
+        args: vec!["--allow-file-access-from-files".to_string()],
+        ..Default::default()
+    })
+    .await
+    .context(
+        "launching headless Chromium for story tests; run `jet browser install` if Chrome is not installed",
+    )?;
+
+    for story in &index.stories {
+        let preview = out
+            .path()
+            .join("preview")
+            .join(format!("{}.html", story.id));
+        if !preview.is_file() {
+            failed = true;
+            eprintln!("FAIL {} — missing preview {}", story.id, preview.display());
+            continue;
+        }
+        let page = browser
+            .new_page()
+            .await
+            .with_context(|| format!("opening browser page for story {}", story.id))?;
+        let url = path_to_file_url(&preview);
+        let story_result = async {
+            page.goto(&url)
+                .await
+                .with_context(|| format!("navigating story {} to {}", story.id, url))?;
+            wait_for_story_test_status(&page, Duration::from_secs(15)).await
+        }
+        .await;
+        let _ = page.close().await;
+        match story_result {
+            Ok(status) if story_status_passed(&status) => {
+                println!(
+                    "PASS {} — {} (render={}, play={})",
+                    story.id,
+                    story.name,
+                    status["render"].as_str().unwrap_or("unknown"),
+                    status["play"].as_str().unwrap_or("unknown")
+                );
+            }
+            Ok(status) => {
+                failed = true;
+                eprintln!(
+                    "FAIL {} — {} ({})",
+                    story.id,
+                    story.name,
+                    format_story_status(&status)
+                );
+            }
+            Err(err) => {
+                failed = true;
+                eprintln!("FAIL {} — {} ({err:#})", story.id, story.name);
+            }
+        }
+    }
+    browser.close().await.ok();
+    println!(
+        "jet test --stories: {} story{}, {}",
+        index.stories.len(),
+        if index.stories.len() == 1 { "" } else { "s" },
+        if failed { "failed" } else { "passed" }
+    );
+    Ok(if failed { 1 } else { 0 })
+}
+
+async fn wait_for_story_test_status(
+    page: &crate::browser::Page,
+    timeout: Duration,
+) -> anyhow::Result<serde_json::Value> {
+    let start = Instant::now();
+    let expression = r#"(() => {
+      const status = window.__jetStoryTestStatus;
+      if (!status) return null;
+      return JSON.parse(JSON.stringify(status));
+    })()"#;
+    loop {
+        let status = page.evaluate(expression).await?;
+        if story_status_terminal(&status) {
+            return Ok(status);
+        }
+        if start.elapsed() > timeout {
+            anyhow::bail!("timed out waiting for story runtime status");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn story_status_terminal(status: &serde_json::Value) -> bool {
+    let Some(render) = status.get("render").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    let play = status
+        .get("play")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pending");
+    render == "fail" || play == "fail" || (render == "pass" && matches!(play, "pass" | "skipped"))
+}
+
+fn story_status_passed(status: &serde_json::Value) -> bool {
+    status.get("render").and_then(|v| v.as_str()) == Some("pass")
+        && matches!(
+            status.get("play").and_then(|v| v.as_str()),
+            Some("pass" | "skipped")
+        )
+}
+
+fn format_story_status(status: &serde_json::Value) -> String {
+    let render = status
+        .get("render")
+        .and_then(|v| v.as_str())
+        .unwrap_or("missing");
+    let play = status
+        .get("play")
+        .and_then(|v| v.as_str())
+        .unwrap_or("missing");
+    let errors = status
+        .get("errors")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .unwrap_or_default();
+    if errors.is_empty() {
+        format!("render={render}, play={play}")
+    } else {
+        format!("render={render}, play={play}, errors={errors}")
+    }
+}
+
+fn path_to_file_url(path: &Path) -> String {
+    let display = path.display().to_string();
+    let escaped = display.replace(' ', "%20");
+    if cfg!(windows) {
+        format!("file:///{}", escaped.replace('\\', "/"))
+    } else {
+        format!("file://{}", escaped)
     }
 }
 

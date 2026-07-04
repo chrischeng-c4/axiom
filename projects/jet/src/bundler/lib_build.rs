@@ -23,6 +23,7 @@
 //! @issue #795
 //! @issue #797
 //! @issue #798
+//! @issue #936
 
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -229,6 +230,9 @@ fn resolve_lib_entries(
     let mut entries = library_entries(pkg_path, conditions)
         .with_context(|| format!("resolving library entries from {}", pkg_path.display()))?;
 
+    // @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#logic
+    entries.retain(|entry| !asset_export_entry(entry));
+
     if entries.is_empty() {
         if let Some(conv) = [
             "src/index.tsx",
@@ -252,56 +256,12 @@ fn resolve_lib_entries(
         }
     }
 
-    // @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#logic
-    entries.retain(|entry| !configured_asset_export_entry(options, entry));
     Ok(entries)
 }
 
-fn configured_asset_export_entry(options: &LibBuildOptions, entry: &LibraryEntry) -> bool {
+fn asset_export_entry(entry: &LibraryEntry) -> bool {
     let source = normalize_export_path(&entry.source);
-    if is_library_source_path(&source) {
-        return false;
-    }
-
-    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if ext == "css" && css_merge_covers_asset_export(options, &source) {
-        return true;
-    }
-
-    raw_copy_covers_asset_export(options, &source)
-}
-
-fn css_merge_covers_asset_export(options: &LibBuildOptions, source: &Path) -> bool {
-    if options.css_merge.is_empty() {
-        return false;
-    }
-    options
-        .css_merge
-        .iter()
-        .any(|configured| normalize_export_path(configured) == source)
-        || source.file_name().and_then(|name| name.to_str()) == Some("style.css")
-}
-
-fn raw_copy_covers_asset_export(options: &LibBuildOptions, source: &Path) -> bool {
-    if options.raw_copy.is_empty() {
-        return false;
-    }
-
-    let dest_rel = output_relative_asset_path(options, source);
-    options.raw_copy.iter().any(|dir| {
-        let dest_root = normalize_export_path(dir.to.as_deref().unwrap_or(&dir.from));
-        dest_rel.starts_with(&dest_root) || source.starts_with(normalize_export_path(&dir.from))
-    })
-}
-
-fn output_relative_asset_path(options: &LibBuildOptions, source: &Path) -> PathBuf {
-    let Some(out_dir_name) = options.out_dir.file_name().and_then(|name| name.to_str()) else {
-        return source.to_path_buf();
-    };
-    source
-        .strip_prefix(out_dir_name)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|_| source.to_path_buf())
+    !source.as_os_str().is_empty() && !is_library_source_path(&source)
 }
 
 fn normalize_export_path(path: &str) -> PathBuf {

@@ -756,6 +756,29 @@ semantic_domain:
           domain: "projects/jet/src/stories"
 ```
 
+## Decision: MDX Compile Strategy (#996)
+<!-- type: decision lang: markdown -->
+
+Jet stories supports authored `.mdx` docs pages through a Rust-side Markdown +
+core JSX doc-block subset for this production slice.
+
+- Decision: choose the bounded Rust-side subset route for #996.
+- Supported blocks: `Meta`, `Canvas`, `Story`, `ArgTypes`, and `Source`.
+- Dev/static parity: compiled docs are rendered into the same manager DocsPage
+  model as autodocs; story preview URLs are resolved by `UrlMode`, so dev and
+  static exports share the same compiled page.
+- Failure mode: unsupported JSX/MDX syntax records a diagnostic naming the MDX
+  file and the unsupported tag or malformed block; Jet must not render a blank
+  docs page.
+- Deferred compatibility route: a vendored MDX compiler through the dependency
+  route remains the future full-compatibility path for arbitrary MDX ecosystems
+  and remark/rehype plugin support. That route should be atomized separately
+  because it changes dependency execution, transform integration, and plugin
+  policy.
+
+This choice intentionally implements the issue's in-scope core doc blocks while
+keeping arbitrary plugin ecosystems out of this slice.
+
 ## Changes
 <!-- type: changes lang: yaml -->
 
