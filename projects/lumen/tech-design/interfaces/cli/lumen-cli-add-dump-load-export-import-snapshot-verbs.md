@@ -98,34 +98,41 @@ id: lumen-cli-snapshot-data-movement-verification
 requirements:
   help_surface:
     id: R1
-    text: "`lumen --help` lists dump, export, load, import, and backup with distinct snapshot wording."
+    text: "`lumen --help` lists dump/export/load/import with wording that distinguishes ad hoc SnapshotV1 movement from `backup` sink transport."
     kind: functional
     risk: medium
     verify: test
-  export_output:
+  export_file:
     id: R2
-    text: "`lumen export` / `lumen dump` fetch SnapshotV1 JSON and can write it to stdout or `--out` without altering the bytes."
+    text: "Export helper writes the exact `/admin/backup` response bytes to `--out` and the parsed JSON has `version: 1` plus collections."
     kind: functional
     risk: high
     verify: test
-  import_input:
+  import_file:
     id: R3
-    text: "`lumen import` / `lumen load` read SnapshotV1 JSON from `--file` or stdin and POST it to `/admin/restore`."
+    text: "Import helper reads SnapshotV1 JSON from a file and restores it into a fresh server through `/admin/restore`."
     kind: functional
     risk: high
     verify: test
-  token_parity:
+  aliases:
     id: R4
-    text: "All four direct verbs accept `--token` with the same `LUMEN_BACKUP_TOKEN` fallback as `lumen backup`."
+    text: "`dump` behaves as an export alias and `load` behaves as an import alias through shared dispatch."
+    kind: regression
+    risk: medium
+    verify: test
+  token_fallback:
+    id: R5
+    text: "The new verbs expose `--token` with `LUMEN_BACKUP_TOKEN` fallback like `backup`."
     kind: functional
     risk: medium
     verify: test
 ---
 flowchart TD
     r1[R1 help surface] --> cli_convention[cargo test -p lumen --test cli_convention]
-    r2[R2 export/dump output] --> backup_restore[cargo test -p lumen --test backup_restore_e2e]
-    r3[R3 import/load input] --> backup_restore
-    r4[R4 token parity] --> cli_convention
+    r5[R5 token fallback] --> cli_convention
+    r2[R2 export file] --> backup_restore[cargo test -p lumen --test backup_restore_e2e]
+    r3[R3 import file] --> backup_restore
+    r4[R4 alias dispatch] --> backup_restore
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
