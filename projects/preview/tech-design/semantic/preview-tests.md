@@ -68,6 +68,12 @@ capability_refs:
     claim: "local-router-adapter"
     coverage: partial
     rationale: "Local router adapter behavior is covered by pure router tests, local CLI tests, and the kind route-binding ConfigMap loader."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "guarded-cleanup-janitor"
+    claim: "guarded-cleanup-janitor"
+    coverage: partial
+    rationale: "Guarded cleanup janitor behavior is covered by render/local CI tests and the kind cleanup apply path."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -138,6 +144,12 @@ semantic_domain:
           - name: "cleanup_plan_marks_closed_mr_for_namespace_delete"
             kind: "function"
             public: false
+          - name: "janitor_plans_keep_drain_delete_orphan_and_guardrail_decisions"
+            kind: "function"
+            public: false
+          - name: "janitor_input"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -185,6 +197,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "local_router_resolve_proves_base_preview_and_fail_closed"
+            kind: "function"
+            public: false
+          - name: "local_cleanup_janitor_plan_reports_guarded_actions"
             kind: "function"
             public: false
           - name: "local_ci_render_consumes_discovered_base_contract_file"
@@ -245,7 +260,16 @@ semantic_domain:
           - name: "preview_apply_rendered_lifecycle"
             kind: "function"
             public: false
+          - name: "preview_cleanup_rendered_lifecycle"
+            kind: "function"
+            public: false
           - name: "assert_kind_route_binding_adapter_loads_configmap"
+            kind: "function"
+            public: false
+          - name: "assert_namespace_absent"
+            kind: "function"
+            public: false
+          - name: "assert_route_binding_absent"
             kind: "function"
             public: false
           - name: "kubectl_server_side_dry_run"

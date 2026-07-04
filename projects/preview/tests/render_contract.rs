@@ -1,6 +1,6 @@
 // <HANDWRITE gap="standardize:claim-code" tracker="projects-preview-tests-render-contract-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 use preview::render::{cleanup_plan, preview_environment};
-use preview::{render_files, CleanupAction, RenderInput};
+use preview::{plan_guarded_cleanup, render_files, CleanupAction, JanitorInput, RenderInput};
 
 fn input() -> RenderInput {
     RenderInput {
@@ -108,6 +108,63 @@ fn cleanup_plan_marks_closed_mr_for_namespace_delete() {
         plan.protected_namespaces,
         vec!["uat-base".to_string(), "preview-system".to_string()]
     );
+}
+
+#[test]
+fn janitor_plans_keep_drain_delete_orphan_and_guardrail_decisions() {
+    let mut input = janitor_input();
+    let keep = plan_guarded_cleanup(input.clone());
+    assert_eq!(keep.action, CleanupAction::Keep);
+    assert!(!keep.delete_namespace);
+    assert!(!keep.delete_route_binding);
+
+    input.ttl_expired = true;
+    let drain = plan_guarded_cleanup(input.clone());
+    assert_eq!(drain.action, CleanupAction::Drain);
+    assert!(!drain.delete_namespace);
+    assert!(drain.delete_route_binding);
+
+    input.ttl_expired = false;
+    input.mr_closed = true;
+    let delete = plan_guarded_cleanup(input.clone());
+    assert_eq!(delete.action, CleanupAction::Delete);
+    assert!(delete.delete_namespace);
+    assert!(delete.delete_route_binding);
+
+    input.mr_closed = false;
+    input.namespace_exists = false;
+    input.route_binding_exists = true;
+    let orphan_route = plan_guarded_cleanup(input.clone());
+    assert_eq!(orphan_route.action, CleanupAction::Delete);
+    assert!(!orphan_route.delete_namespace);
+    assert!(orphan_route.delete_route_binding);
+
+    input.namespace = "uat-base".to_string();
+    input.namespace_exists = true;
+    let protected = plan_guarded_cleanup(input.clone());
+    assert_eq!(protected.action, CleanupAction::Keep);
+    assert!(!protected.delete_namespace);
+    assert!(protected.skipped[0].contains("protected namespace"));
+
+    input.namespace = "prod".to_string();
+    input.protected_namespaces = vec!["uat-base".to_string(), "preview-system".to_string()];
+    let broad = plan_guarded_cleanup(input);
+    assert_eq!(broad.action, CleanupAction::Keep);
+    assert!(broad.skipped[0].contains("does not match preview selector"));
+}
+
+fn janitor_input() -> JanitorInput {
+    JanitorInput {
+        mr: 123,
+        namespace: "uat-mr-123".to_string(),
+        route_target: "mr-123".to_string(),
+        control_namespace: "preview-system".to_string(),
+        protected_namespaces: vec!["uat-base".to_string(), "preview-system".to_string()],
+        mr_closed: false,
+        ttl_expired: false,
+        namespace_exists: true,
+        route_binding_exists: true,
+    }
 }
 
 #[test]

@@ -15,7 +15,7 @@ description = "Opt-in kind/GKE-like lifecycle gate: create base fixture, discove
 [aw.ec.generated]
 version = 1
 project = "preview"
-generated_from_td_digest = "sha256:10e8bd860eee6b6048c7787214753ec9885e26af8a817ab6e4c01b533c91b039"
+generated_from_td_digest = "sha256:b7064e6297c827c6b18f191635eec03f50537a23c2d2533140cead559682298e"
 
 [[aw.ec.generated.cases]]
 id = "base-workload-discovery"
@@ -63,6 +63,23 @@ required_for_production = true
 assertions = [
     "Route binding keeps the public target `mr-<id>` separate from namespace `uat-mr-<id>`.",
     "Browser cookie selection uses `uat_target`, not a raw namespace value.",
+]
+
+[[aw.ec.generated.cases]]
+id = "guarded-cleanup-janitor"
+capability_id = "gke-uat-preview-environment-rendering"
+claim_id = "guarded-cleanup-janitor"
+contract_id = "guarded-cleanup-janitor"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/guarded-cleanup-janitor.md#guarded-cleanup-janitor"
+test_path = "projects/preview/tests/behavior_guarded_cleanup_janitor.rs"
+command = "cargo test -p preview --test local_cicd_contract local_cleanup_janitor_plan_reports_guarded_actions"
+required_for_production = true
+assertions = [
+    "`preview cleanup plan` emits keep, drain, and delete decisions from MR/TTL/orphan state.",
+    "Protected base/control namespaces are reported as skipped and are not deleted.",
+    "`preview cleanup apply --plan <json>` is covered by the kind lifecycle gate and deletes only preview namespaces and route-binding ConfigMaps.",
+    "Repeated cleanup runs are idempotent.",
 ]
 
 [[aw.ec.generated.cases]]

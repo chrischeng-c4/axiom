@@ -113,6 +113,10 @@ fn kind_applies_rolls_out_routes_and_cleans_rendered_lifecycle_objects() {
     assert_quota_rejects_oversized_pod(dir.path(), &input().image);
     assert_namespace_exists("uat-base");
     kubectl_server_side_dry_run(&dir.path().join("router/route-binding.yaml"));
+    preview_cleanup_rendered_lifecycle(dir.path(), &context);
+    preview_cleanup_rendered_lifecycle(dir.path(), &context);
+    assert_namespace_absent("uat-mr-123");
+    assert_route_binding_absent("preview-system", "routebinding-mr-123");
     drop(cleanup);
 }
 
@@ -266,6 +270,34 @@ fn preview_apply_rendered_lifecycle(root: &Path, context: &str, dry_run: bool) {
     command_ok(&mut command, "preview apply rendered lifecycle");
 }
 
+fn preview_cleanup_rendered_lifecycle(root: &Path, context: &str) {
+    let plan_path = root.join("cleanup-closed-plan.json");
+    fs::write(
+        &plan_path,
+        r#"{
+  "mr": 123,
+  "namespace": "uat-mr-123",
+  "routeTarget": "mr-123",
+  "controlNamespace": "preview-system",
+  "protectedNamespaces": ["uat-base", "preview-system"],
+  "action": "delete",
+  "reason": "MR is closed or merged",
+  "deleteNamespace": true,
+  "deleteRouteBinding": true,
+  "skipped": []
+}
+"#,
+    )
+    .expect("write cleanup plan");
+    command_ok(
+        Command::new(preview_bin())
+            .args(["cleanup", "apply", "--plan"])
+            .arg(&plan_path)
+            .args(["--context", context]),
+        "preview cleanup apply",
+    );
+}
+
 fn assert_kind_route_binding_adapter_loads_configmap(context: &str) {
     let bindings =
         load_route_table_from_kubectl("preview-system", Some(context)).expect("load route table");
@@ -349,6 +381,28 @@ fn assert_namespace_exists(namespace: &str) {
     command_ok(
         Command::new("kubectl").args(["get", "namespace", namespace]),
         "kubectl get namespace",
+    );
+}
+
+fn assert_namespace_absent(namespace: &str) {
+    let output = Command::new("kubectl")
+        .args(["get", "namespace", namespace])
+        .output()
+        .unwrap_or_else(|err| panic!("kubectl get namespace failed to start: {err}"));
+    assert!(
+        !output.status.success(),
+        "namespace {namespace} unexpectedly exists"
+    );
+}
+
+fn assert_route_binding_absent(namespace: &str, name: &str) {
+    let output = Command::new("kubectl")
+        .args(["get", "configmap", name, "-n", namespace])
+        .output()
+        .unwrap_or_else(|err| panic!("kubectl get configmap failed to start: {err}"));
+    assert!(
+        !output.status.success(),
+        "configmap {namespace}/{name} exists"
     );
 }
 
