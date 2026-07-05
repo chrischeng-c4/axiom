@@ -620,6 +620,21 @@ These three routes are the safe procedure for ad hoc or scripted
 snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
 like, push back with `POST /admin/restore` to recover.
 
+### Direct CLI data movement: `dump` / `export` / `load` / `import`
+For ad hoc SnapshotV1 movement from a shell, use the direct CLI wrappers:
+
+```
+lumen export --url http://localhost:7373 --out snapshot.json
+lumen import --url http://localhost:7373 --file snapshot.json
+```
+
+`lumen dump` is an alias of `export`, and `lumen load` is an alias of
+`import`. With no `--out`, dump/export write the exact SnapshotV1 JSON bytes to
+stdout; with no `--file`, load/import read SnapshotV1 JSON from stdin. These
+verbs do not add a new format, merge mode, or partial import semantics:
+load/import still replace all engine state via `/admin/restore`. `--token`
+uses the same `LUMEN_BACKUP_TOKEN` fallback as `lumen backup`.
+
 ### Optional scheduled backup: `spec.serving.backup`
 Set `spec.serving.backup` on the CR to make the operator render a
 `<name>-backup` `batch/v1` CronJob that runs `lumen backup` on a schedule.
@@ -631,10 +646,14 @@ spec:
   serving:
     backup:
       schedule: "0 * * * *"        # CronJob.spec.schedule
-      destination: "s3://my-bucket/lumen-backups"  # file:// | s3:// | gs://
+      destination: "s3://my-bucket/lumen-backups"  # file:// | s3:// ; gs:// parses but is not yet a sink
       retentionSecs: 604800        # optional; drop objects older than this
       adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
 ```
+
+Use `file://` or `s3://` for production today. `gs://` stays in the schema so
+CRDs and CLI input can validate/round-trip, but `lumen backup` still fails
+loudly until `libs/service-backup` ships a real GCS adapter.
 
 Omitting `spec.serving.backup` renders no CronJob; the admin API above is
 still reachable manually either way.

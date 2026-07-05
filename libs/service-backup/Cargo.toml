@@ -8,10 +8,17 @@ description = "Shared backup contract for axiom services: destination/policy sch
 name = "service_backup"
 path = "src/lib.rs"
 
+[features]
+default = []
+s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:tokio"]
+
 [dependencies]
 anyhow = { workspace = true }
+aws-config = { version = "1", optional = true }
+aws-sdk-s3 = { version = "1", optional = true }
 serde = { workspace = true }
 schemars = "0.8"
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

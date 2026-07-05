@@ -15,15 +15,10 @@ use service_backup::{
     run_backup_once, sink_from_destination, BackupDestination, BackupRunResult, RetentionPolicy,
 };
 
-/// Fetch `{base_url}/admin/backup` (Bearer `token` when set) and ship the
-/// returned bytes to `dest` via `service_backup::run_backup_once`, applying
-/// `retention` afterward.
-pub async fn run_backup(
-    base_url: &str,
-    token: Option<&str>,
-    dest: &BackupDestination,
-    retention: &RetentionPolicy,
-) -> Result<BackupRunResult> {
+/// Fetch `{base_url}/admin/backup` (Bearer `token` when set) and return the
+/// exact snapshot response bytes.
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md#logic
+pub async fn fetch_snapshot_bytes(base_url: &str, token: Option<&str>) -> Result<Vec<u8>> {
     let url = format!("{}/admin/backup", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
     let mut req = client.get(&url);
@@ -40,6 +35,45 @@ pub async fn run_backup(
         .bytes()
         .await
         .with_context(|| format!("read response body from {url}"))?;
+    Ok(payload.to_vec())
+}
+
+/// POST exact SnapshotV1 JSON bytes to `{base_url}/admin/restore` (Bearer
+/// `token` when set).
+/// @spec projects/lumen/tech-design/interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md#logic
+pub async fn restore_snapshot_bytes(
+    base_url: &str,
+    token: Option<&str>,
+    payload: &[u8],
+) -> Result<()> {
+    let url = format!("{}/admin/restore", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let mut req = client
+        .post(&url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(payload.to_vec());
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await.with_context(|| format!("POST {url}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        bail!("POST {url} returned {status}: {body}");
+    }
+    Ok(())
+}
+
+/// Fetch `{base_url}/admin/backup` (Bearer `token` when set) and ship the
+/// returned bytes to `dest` via `service_backup::run_backup_once`, applying
+/// `retention` afterward.
+pub async fn run_backup(
+    base_url: &str,
+    token: Option<&str>,
+    dest: &BackupDestination,
+    retention: &RetentionPolicy,
+) -> Result<BackupRunResult> {
+    let payload = fetch_snapshot_bytes(base_url, token).await?;
     let sink = sink_from_destination(dest)?;
     run_backup_once(sink.as_ref(), SystemTime::now(), &payload, retention)
 }
@@ -51,7 +85,8 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn tmp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("lumen-backup-test-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("lumen-backup-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -129,6 +164,41 @@ mod tests {
             .expect_err("non-2xx must bail");
         assert!(err.to_string().contains("503"));
         assert!(err.to_string().contains("engine not ready"));
+    }
+
+    #[tokio::test]
+    async fn restore_posts_snapshot_with_bearer_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/admin/restore"))
+            .and(header("authorization", "Bearer restore-token"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        restore_snapshot_bytes(
+            &server.uri(),
+            Some("restore-token"),
+            br#"{"version":1,"collections":{}}"#,
+        )
+        .await
+        .expect("restore succeeds");
+    }
+
+    #[tokio::test]
+    async fn restore_non_success_status_bails_with_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/admin/restore"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad snapshot"))
+            .mount(&server)
+            .await;
+
+        let err = restore_snapshot_bytes(&server.uri(), None, b"{}")
+            .await
+            .expect_err("non-2xx must bail");
+        assert!(err.to_string().contains("400"));
+        assert!(err.to_string().contains("bad snapshot"));
     }
 
     #[tokio::test]

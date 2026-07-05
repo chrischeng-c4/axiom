@@ -220,7 +220,8 @@ pub struct ServingBackupSpec {
     /// Cron schedule (`CronJob.spec.schedule`) for the backup runner.
     pub schedule: String,
     /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
-    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    /// schema-only `gs://bucket/prefix` (parsed, but the runner supports
+    /// `file://` and `s3://` sinks today).
     pub destination: String,
     /// Drop backup objects older than this many seconds after a successful
     /// put. Absent keeps everything.

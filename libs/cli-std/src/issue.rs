@@ -157,6 +157,7 @@ fn print_preview(repo: &str, title: &str, body: &str, labels: &[String]) {
     }
     println!("---");
     println!("{body}");
+    println!("next: done");
 }
 
 /// Print the pre-filled-issue URL plus the title/body so the user can file by
@@ -165,6 +166,7 @@ fn print_preview(repo: &str, title: &str, body: &str, labels: &[String]) {
 /// distinct and must not be conflated.
 fn print_fallback(repo: &str, title: &str, body: &str, labels: &[String]) {
     println!("{}", prefilled_url(repo, title, body, labels));
+    println!("next: done");
     eprintln!("\n--- title ---\n{title}\n--- body ---\n{body}");
 }
 
@@ -178,10 +180,12 @@ fn print_comment_preview(repo: &str, number: u64, body: &str) {
     println!("state: open");
     println!("---");
     println!("{body}");
+    println!("next: done");
 }
 
 fn print_comment_fallback(repo: &str, number: u64, body: &str) {
     println!("{}", issue_url(repo, number));
+    println!("next: done");
     eprintln!("\n--- comment ---\n{body}");
 }
 
@@ -256,6 +260,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
         Some(token) => {
             if !opts.yes && !crate::confirm(&format!("file this issue to {repo}?"))? {
                 println!("aborted");
+                println!("next: done");
                 return Ok(());
             }
             let url = submit_issue(
@@ -266,6 +271,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
             )
             .await?;
             println!("filed: {url}");
+            println!("next: done");
         }
         None => {
             note_no_credential();
@@ -314,6 +320,7 @@ pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
         ))?
     {
         println!("aborted");
+        println!("next: done");
         return Ok(());
     }
 
@@ -322,6 +329,7 @@ pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
     println!("issue: {url}");
     let comment_url = post_issue_comment(&client, &repo, opts.number, &token, &body).await?;
     println!("commented: {comment_url}");
+    println!("next: done");
     Ok(())
 }
 
@@ -404,6 +412,7 @@ pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
         }
         _ => println!("no {label} issues match"),
     }
+    println!("next: done");
     Ok(())
 }
 
@@ -448,6 +457,7 @@ pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
             body
         }
     );
+    println!("next: done");
     Ok(())
 }
 
@@ -647,5 +657,17 @@ mod tests {
 
         let default_body = followup_comment_body(&TOOL, Some("  "));
         assert!(default_body.contains("User-side verification failed after closure"));
+    }
+
+    #[test]
+    fn representative_issue_outputs_are_chainable() {
+        for output in [
+            "repo:  chrischeng-c4/axiom\ntitle: lumen: bug\n---\nbody\nnext: done\n",
+            "#1142 [open] lumen: add lightweight chainable output\nnext: done\n",
+            "#1142 [open] lumen: add lightweight chainable output\nhttps://github.com/chrischeng-c4/axiom/issues/1142\n---\nbody\nnext: done\n",
+        ] {
+            crate::chainable::assert_chainable(output)
+                .expect("shared issue outputs should satisfy the lightweight chainable contract");
+        }
     }
 }
