@@ -55,7 +55,7 @@ an installer yet are marked _coming soon_.
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
 | [meter](projects/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/meter/install.sh \| sh` |
-| [preview](projects/preview/README.md) | `preview` | _coming soon_ |
+| [preview](projects/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/preview/install.sh \| sh` |
 | [relay](projects/relay/README.md) | `relay-server` | _coming soon_ |
 | [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
 | [tape](projects/tape/README.md) | `tape` | _coming soon_ |

@@ -135,6 +135,7 @@ fn render_clone_plan_can_embed_discovered_base_contract() {
         control_namespace: "preview-system".to_string(),
         workload_identity: "preview-runner".to_string(),
         base_contract: Some(contract),
+        data: None,
     })
     .expect("render files");
     let clone_plan = files

@@ -38,6 +38,12 @@ capability_refs:
     claim: "guarded-cleanup-janitor"
     coverage: partial
     rationale: "Guarded cleanup janitor behavior is implemented by the cleanup module and CLI integration."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "local-fake-gcp-data-lifecycle"
+    claim: "local-fake-gcp-data-lifecycle"
+    coverage: partial
+    rationale: "Local fake-GCP data lifecycle behavior is implemented by the data module, renderer Secret rewrite, manifest inventory, and CLI integration."
 fill_sections: [schema, changes]
 ---
 
@@ -64,6 +70,9 @@ semantic_domain:
           - name: "RenderFile"
             kind: "struct"
             public: true
+          - name: "DataRenderInput"
+            kind: "struct"
+            public: true
           - name: "render_files"
             kind: "function"
             public: true
@@ -79,6 +88,9 @@ semantic_domain:
           - name: "mr_comment"
             kind: "function"
             public: true
+          - name: "data_secret"
+            kind: "function"
+            public: false
           - name: "phase_name"
             kind: "function"
             public: false
@@ -121,6 +133,9 @@ semantic_domain:
             kind: "module"
             public: true
           - name: "cleanup"
+            kind: "module"
+            public: true
+          - name: "data"
             kind: "module"
             public: true
           - name: "discover"
@@ -177,6 +192,53 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "apply_summary_markdown"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/preview/src"
+      - path: "projects/preview/src/data.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "DataPlanInput"
+            kind: "struct"
+            public: true
+          - name: "DataPlan"
+            kind: "struct"
+            public: true
+          - name: "DataSource"
+            kind: "struct"
+            public: true
+          - name: "DataTarget"
+            kind: "struct"
+            public: true
+          - name: "FakeDataState"
+            kind: "struct"
+            public: true
+          - name: "FakeDataResource"
+            kind: "struct"
+            public: true
+          - name: "FakeDataSummary"
+            kind: "struct"
+            public: true
+          - name: "build_data_plan"
+            kind: "function"
+            public: true
+          - name: "fake_apply_data_plan"
+            kind: "function"
+            public: true
+          - name: "fake_cleanup_data_plan"
+            kind: "function"
+            public: true
+          - name: "read_data_plan"
+            kind: "function"
+            public: true
+          - name: "connection_string"
             kind: "function"
             public: true
         source_evidence_node:
@@ -313,6 +375,9 @@ semantic_domain:
           - name: "CleanupCommand"
             kind: "enum"
             public: false
+          - name: "DataCommand"
+            kind: "enum"
+            public: false
           - name: "RenderArgs"
             kind: "struct"
             public: false
@@ -332,6 +397,12 @@ semantic_domain:
             kind: "struct"
             public: false
           - name: "CleanupApplyArgs"
+            kind: "struct"
+            public: false
+          - name: "DataPlanArgs"
+            kind: "struct"
+            public: false
+          - name: "DataApplyArgs"
             kind: "struct"
             public: false
           - name: "CleanupArgs"
@@ -361,6 +432,15 @@ semantic_domain:
           - name: "cleanup_apply"
             kind: "function"
             public: false
+          - name: "data_plan"
+            kind: "function"
+            public: false
+          - name: "data_apply"
+            kind: "function"
+            public: false
+          - name: "data_cleanup"
+            kind: "function"
+            public: false
           - name: "print_llm"
             kind: "function"
             public: false
@@ -388,6 +468,9 @@ semantic_domain:
             kind: "struct"
             public: true
           - name: "PreviewSpec"
+            kind: "struct"
+            public: true
+          - name: "DataSpec"
             kind: "struct"
             public: true
           - name: "RouteSpec"
@@ -454,6 +537,14 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-src-cleanup-rs>"
+  - path: "projects/preview/src/data.rs"
+    action: add
+    section: schema
+    description: |
+      Local fake-GCP data lifecycle planning, Secret rewrite support, and fake provider state behavior are covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-preview-src-data-rs>"
   - path: "projects/preview/src/discover.rs"
     action: add
     section: schema
