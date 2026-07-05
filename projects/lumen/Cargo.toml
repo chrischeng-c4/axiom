@@ -134,11 +134,9 @@ jieba = ["dep:jieba-rs"]
 raft-wal = ["dep:raft-core", "dep:reqwest"]
 # backup — `lumen backup` (#808): fetches a snapshot from a running fleet's
 # `/admin/backup` over HTTP and hands it to a `libs/service-backup`
-# destination sink. Needs an HTTP client; `raft-wal` already links one into
-# every release binary (build.sh / Dockerfile / lumen-release.yml all pass
-# `--features "... raft-wal operator ..."`), so this adds no new dependency to
-# what actually ships.
-backup = ["dep:reqwest"]
+# destination sink. When linked, that shared sink can now speak local files or
+# S3-compatible object stores; Lumen still owns no upload client of its own.
+backup = ["dep:reqwest", "service-backup/s3"]
 # self-update / issue — enable the online (HTTPS) paths of the shared
 # CLI-ops lib. Offline builds still ship both commands (upgrade --check / the
 # issue create dry-run + pre-filled-URL fallback). The published binary enables

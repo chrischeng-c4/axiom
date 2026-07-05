@@ -8,12 +8,15 @@
 //!
 //! Operator code should render/manage a backup runner from the policy. The
 //! runner calls the service's admin backup endpoint or CLI, then writes the
-//! returned bytes through a [`BackupSink`]. Cloud sinks are feature work on this
-//! crate, not bespoke code in each service or in the operator.
+//! returned bytes through a [`BackupSink`]. Local is always available, S3 is
+//! feature-gated here, and `gs://` remains schema-compatible until this crate
+//! grows a real GCS sink.
 
 mod destination;
 mod policy;
 mod runner;
+#[cfg(feature = "s3")]
+mod s3;
 mod sink;
 
 pub use destination::BackupDestination;

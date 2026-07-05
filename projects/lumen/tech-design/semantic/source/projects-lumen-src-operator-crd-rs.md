@@ -208,7 +208,7 @@ pub struct ServingSpec {
     /// pd-balanced, not pd-ssd). Raft/WAL write latency is sensitive to
     /// disk performance, so a deployer who cares about that latency should
     /// set this field explicitly to an SSD-backed StorageClass name rather
-    /// than relying on the cluster default (see `lumen llm storage` for
+    /// than relying on the cluster default (see `lumen llm --topic storage` for
     /// example StorageClass names per common provider — informational
     /// reference only, not a value validated or defaulted by this field).
     #[serde(default)]
@@ -220,7 +220,7 @@ pub struct ServingSpec {
     /// snapshot mechanism, only scheduling + transport. Absent means no
     /// CronJob; the admin API (`GET /admin/backup`, `POST /admin/backup/local`,
     /// `POST /admin/restore`) is still reachable for manual/scripted use
-    /// either way (see `lumen llm storage`).
+    /// either way (see `lumen llm --topic storage`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<ServingBackupSpec>,
 }
@@ -256,7 +256,8 @@ pub struct ServingBackupSpec {
     /// Cron schedule (`CronJob.spec.schedule`) for the backup runner.
     pub schedule: String,
     /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
-    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    /// schema-only `gs://bucket/prefix` (parsed, but the runner supports
+    /// `file://` and `s3://` sinks today).
     pub destination: String,
     /// Drop backup objects older than this many seconds after a successful
     /// put. Absent keeps everything.
@@ -275,7 +276,7 @@ pub struct ServingBackupSpec {
 #[serde(rename_all = "camelCase")]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct Autoscaling {
-    /// Floor (also the Deployment's apply-time replica count).
+    /// Floor (also the StatefulSet's apply-time replica count in HPA mode).
     pub min_replicas: i32,
     /// Ceiling.
     pub max_replicas: i32,
@@ -305,7 +306,7 @@ pub struct LumenStatus {
     /// The `.metadata.generation` this status reflects (drift detection).
     #[serde(default)]
     pub observed_generation: i64,
-    /// Ready serving replicas (from the Deployment status).
+    /// Ready serving replicas (from the StatefulSet status).
     #[serde(default)]
     pub serving_ready_replicas: i32,
     /// Desired serving replicas (HPA floor at apply, or the live count).

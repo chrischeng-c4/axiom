@@ -48,11 +48,15 @@ agent integration remain first-class domain roots.
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | CLI Interface | 4143 | implemented | verified | conformance | ready | mandatory baseline: serve/spec/llm/dockerfile/k8s command surfaces |
+| CLI Standard Surface | 1164 | implemented | verified | conformance | ready | mandatory baseline: shared `cli-std` llm/upgrade/issue surface, distinct from Lumen domain commands |
+| Chainable Output Conformance | 1142 | implemented | verified | conformance | ready | mandatory baseline: operational CLI outputs emit next/done without wrapping raw artifact/data streams |
 | Competitive Search Feature Parity | - | implemented | verified | conformance | ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
 | Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: Lumen-only perf regression passes in vat against retained pg/OpenSearch-calibrated floors |
 | Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
 | Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
 | HTTP/2 API List | 4143 | implemented | verified | conformance | ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
+| Standard Operational Endpoints | 1166 | implemented | verified | conformance | ready | mandatory baseline: one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` surface plus offline `lumen spec` evidence |
+| EC Gates Configured | 1165 | implemented | verified | conformance | ready | mandatory baseline: aw.toml, vat runners, claim tests, and external-contract claim closure stay wired together |
 | Search Core | - | implemented | verified | conformance | ready | domain: pure search index returning ranked external_ids only |
 | Lexical Search | - | implemented | verified | conformance | ready | domain: BM25 and analyzer-backed text search |
 | Exact & Filter Search | - | implemented | verified | conformance | ready | domain: keyword, number, set, boolean, range, and sorted filters |
@@ -88,6 +92,52 @@ Gate Inventory:
 | query-shape-cookbook-field-analyzer-catalog | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | deployment-operator-command-surface | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>projects/lumen/src/operator |
+
+### CLI Standard Surface
+
+ID: cli-standard-surface
+Type: RuntimeTool
+Surfaces: CLI: `lumen llm` - shared offline agent self-doc topic surface required by the ecosystem CLI convention.; CLI: `lumen upgrade` - shared self-update and `--check` surface provided through `cli-std`.; CLI: `lumen issue search`, `lumen issue view`, `lumen issue create`, and `lumen issue comment` - shared tracker read/write/follow-up surface scoped to `project:lumen`, separate from Lumen's domain commands.
+EC Dimensions: behavior: `cargo test -p lumen --test cli_convention help_ships_standard_issue_group_not_report_issue -- --exact` - top-level help keeps the standard `llm`, `upgrade`, and `issue` groups visible; behavior: `cargo test -p lumen --test cli_convention issue_help_lists_search_view_create_comment -- --exact` - the issue group exposes the shared search/view/create/comment verbs; behavior: `cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact` - shared issue create/comment and upgrade check remain runnable in offline smoke mode; behavior: `cargo test -p lumen --test spec_cli llm_outline_maps_agent_topics -- --exact` - the shared `llm` entrypoint still publishes the agent topic set.
+Root WI: 1164
+Status: verified
+Required Verification: conformance
+Promise:
+Ship the mandatory shared `cli-std` surface every ecosystem CLI owes without
+blurring it into Lumen-specific serve/spec/dockerfile/k8s/data-movement
+commands.
+Gate Inventory:
+- projects/lumen/tests/cli_convention.rs; projects/lumen/tests/spec_cli.rs; projects/lumen/src/bin/lumen.rs; libs/cli-std/src/issue.rs; libs/cli-std/src/upgrade.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| shared-llm-entrypoint-surface | epic | 1164 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs<br>projects/lumen/src/bin/lumen.rs |
+| shared-upgrade-check-surface | epic | 1164 | implemented | passing | conformance | projects/lumen/tests/cli_convention.rs<br>libs/cli-std/src/upgrade.rs |
+| shared-issue-search-view-create-comment-surface | epic | 1164 | implemented | passing | conformance | projects/lumen/tests/cli_convention.rs<br>libs/cli-std/src/issue.rs |
+
+### Chainable Output Conformance
+
+ID: chainable-output-conformance
+Type: RuntimeTool
+Surfaces: CLI: `lumen dockerfile render --out`, `lumen k8s crd|operator|instance render --out`, `lumen spec gen --out`, `lumen backup`, `lumen export --out`, `lumen import`, `lumen issue ...`, and `lumen upgrade --check` - operational/artifact-producing commands that expose a runnable continuation or an explicit terminal marker.; CLI: `lumen dockerfile render` without `--out`, `lumen k8s ... render` without `--out`, `lumen export` without `--out`, `lumen spec`, and `lumen llm` - streamed artifact/domain payloads that intentionally stay unwrapped.
+EC Dimensions: behavior: `cargo test -p lumen --test cli_convention` - shared chainable harness over the default dry-run/file-writing CLI surfaces; behavior: `cargo test -p lumen --features backup --test cli_convention backup_export_import_outputs_are_chainable -- --exact` - backup/export/import next/terminal markers through the built binary
+Root WI: 1142
+Status: verified
+Required Verification: conformance
+Promise:
+Keep Lumen's operational CLI outputs lightweight but chainable: file-writing
+commands end with a trailing `next: <command>`, machine-readable admin helpers
+emit a top-level JSON `next`, and terminal dry-run/read paths end with an
+explicit terminal marker. Raw artifact/data streams stay as raw bytes, not AW
+envelopes.
+Gate Inventory:
+- projects/lumen/tests/cli_convention.rs; projects/lumen/src/bin/lumen.rs; libs/cli-std/src/issue.rs; libs/cli-std/src/upgrade.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| artifact-render-follow-ups | epic | 1142 | implemented | passing | conformance | projects/lumen/tests/cli_convention.rs<br>projects/lumen/src/bin/lumen.rs |
+| backup-export-import-next-contract | epic | 1142 | implemented | passing | conformance | projects/lumen/tests/cli_convention.rs<br>projects/lumen/src/bin/lumen.rs |
+| shared-issue-upgrade-terminal-markers | epic | 1142 | implemented | passing | conformance | projects/lumen/tests/cli_convention.rs<br>libs/cli-std/src/issue.rs<br>libs/cli-std/src/upgrade.rs |
 
 ### Competitive Search Feature Parity
 
@@ -206,6 +256,52 @@ Gate Inventory:
 | client-search-and-index-route-list | epic | - | implemented | passing | conformance | projects/lumen/README.md#api-surface; projects/lumen/tests/api_e2e.rs |
 | ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 | offline-spec-openapi-list | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+
+### Standard Operational Endpoints
+
+ID: standard-operational-endpoints
+Type: Service
+Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - auth-exempt liveness, readiness, scrape, live-spec, and Swagger UI endpoints served on the same listener as the data plane via `service_http::standard_probe_routes`.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline OpenAPI evidence for the same operational contract when no server is running.
+EC Dimensions: behavior: `cargo test -p lumen --test api_e2e health_and_ready -- --exact` - liveness and steady-state readiness surface; behavior: `cargo test -p lumen --test api_e2e readyz_reports_draining -- --exact` - drain flips readiness to 503 while `/healthz` stays live; behavior: `cargo test -p lumen --test api_e2e metrics_exposes_prometheus_text -- --exact` - Prometheus scrape surface; behavior: `cargo test -p lumen --test api_e2e openapi_spec_served -- --exact` - live one-port OpenAPI endpoint; behavior: `cargo test -p lumen --test coverage_gaps_e2e s8_swagger_docs_endpoint_returns_html -- --exact` - Swagger UI is served and points at the live spec; behavior: `cargo test -p lumen --test spec_cli openapi_is_valid_json_with_search_path -- --exact` - offline `lumen spec` emits the same auth-exempt operational route inventory
+Root WI: 1166
+Status: verified
+Required Verification: conformance
+Promise:
+Expose the standard one-port operational surface the service trait requires:
+shared probe, metrics, live-spec, and Swagger UI endpoints stay available on
+the main listener, while `lumen spec` mirrors the same OpenAPI contract
+offline.
+Gate Inventory:
+- projects/lumen/src/api.rs; projects/lumen/tests/api_e2e.rs (health_and_ready, readyz_reports_draining, metrics_exposes_prometheus_text, openapi_spec_served); projects/lumen/tests/coverage_gaps_e2e.rs (s8_swagger_docs_endpoint_returns_html); projects/lumen/tests/spec_cli.rs (openapi_is_valid_json_with_search_path)
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| service-http-standard-probe-routes | epic | 1166 | implemented | passing | conformance | projects/lumen/src/api.rs<br>projects/lumen/tests/api_e2e.rs |
+| live-openapi-and-swagger-ui-surface | epic | 1166 | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs<br>projects/lumen/tests/coverage_gaps_e2e.rs |
+| offline-openapi-matches-operational-surface | epic | 1166 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs<br>projects/lumen/README.md#openapi |
+
+### EC Gates Configured
+
+ID: ec-gates-configured
+Type: Devops
+Surfaces: Config: `projects/lumen/aw.toml` - AW EC inventory, generated claim catalog, and dispatch commands for behavior/efficiency/stability verification.; Config: `projects/lumen/vat.toml` - vat-managed `rig-*` and `ec-efficiency*` runners backing the rig and meter EC tools.; Docs: `projects/lumen/external-contracts/claim-closure/production-claims.md` - claim-closure mappings from README promises to executable EC commands.; Tests: `projects/lumen/tests/behavior_lumen_claim_*.rs`, `projects/lumen/tests/efficiency_lumen_claim_*.rs`, `projects/lumen/tests/stability_lumen_claim_*.rs`, and `projects/lumen/tests/security_lumen_claim_*.rs` - generated claim evidence stubs tied back to the EC inventory.
+EC Dimensions: behavior: `./target/debug/aw ec check --project lumen` - aw.toml/generated-case inventory stays in sync with claim tests; behavior: `./target/debug/aw ec review --project lumen` - typed capabilities keep required EC dimensions covered; efficiency: `cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter` - meter-wrapped Lumen-only efficiency gate dispatch; stability: `cd projects/lumen && ../../target/debug/vat run rig-resilience` - vat-managed rig stability dispatch
+Root WI: 1165
+Status: verified
+Required Verification: conformance
+Promise:
+Keep Lumen's service-trait EC baseline explicit and runnable: AW knows where the
+claim inventory lives, vat owns the meter/rig gate runners, and
+external-contract claim closure maps each production claim to concrete
+executable evidence.
+Gate Inventory:
+- projects/lumen/aw.toml; projects/lumen/vat.toml; projects/lumen/external-contracts/claim-closure/production-claims.md; projects/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs; projects/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs; projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs; projects/lumen/tests/security_lumen_claim_security_bearer_auth.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| aw-ec-generated-inventory-and-dispatch | epic | 1165 | implemented | passing | conformance | projects/lumen/aw.toml |
+| vat-managed-meter-and-rig-runners | epic | 1165 | implemented | passing | conformance | projects/lumen/vat.toml<br>projects/lumen/tests/rig/cases/resilience<br>projects/lumen/tests/rig/cases/endurance<br>projects/lumen/tests/rig/config/pins |
+| external-contract-claim-closure-evidence | epic | 1165 | implemented | passing | conformance | projects/lumen/external-contracts/claim-closure/production-claims.md<br>projects/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs<br>projects/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs<br>projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs<br>projects/lumen/tests/security_lumen_claim_security_bearer_auth.rs |
 
 ### Search Core
 

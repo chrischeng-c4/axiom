@@ -1536,11 +1536,14 @@ changes:
     section: unit-test
     description: |
       Standard CLI convention help-surface smoke tests cover the lumen issue
-      group; #963 adds the offline chainable-output conformance test
-      (`chainable_output_next_line_file_writing_vs_stream`) asserting the
-      `^next: \S` tail line is present-and-last in file-writing modes
+      group; chainable-output coverage now adopts the shared
+      `cli_std::chainable` harness for dry-run/read terminals plus file-writing
+      follow-ups, asserting issue create/comment dry-runs and `upgrade --check`
+      terminate explicitly, `chainable_output_next_line_file_writing_vs_stream`
+      keeps the `^next: \S` tail line on file-writing modes
       (k8s crd/operator/instance render --out, dockerfile render --out,
-      spec gen --out) and absent in stream-to-stdout modes.
+      spec gen --out), and the backup-feature test verifies backup/export/import
+      JSON next markers through the built binary.
     impl_mode: hand-written
   - path: "projects/lumen/tests/drop_field_e2e.rs"
     action: modify
