@@ -9,22 +9,28 @@ details.
 <!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
-| [agentic-workflow](projects/agentic-workflow/README.md) | Workflow protocol and `aw` CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle, and production-readiness rollup. |
-| [mamba](projects/mamba/README.md) | Force-typed Python compiler — lexes Python, lowers through HIR/MIR, and emits native machine code via Cranelift JIT/AOT. Real binaries, not a transpiler or interpreter. |
-| [jet](projects/jet/README.md) | Rust-native web toolchain — package management, dev server, production builds, test/e2e, and WASM/multi-target execution. Replaces the Vite/pnpm/Playwright stack. |
-| [lumen](projects/lumen/README.md) | K8s-native, log-replicated search specialist — exact, lexical (BM25), semantic (HNSW/GPU kNN), perceptual, and duplicate search in one engine. |
-| [loom](projects/loom/README.md) | Workflow scheduler — DAG/state machine orchestration over relay delivery and keep result refs. |
-| [preview](projects/preview/README.md) | MR-scoped UAT preview environments for GKE — one namespace per feature/MR, cookie/header route binding, and lifecycle cleanup plans. |
-| [relay](projects/relay/README.md) | Broker — durable ordered log, online delivery, broadcast fan-out, and work-queue leasing. |
-| [keep](projects/keep/README.md) | KV/result backend — claim-check payload/result storage, collections, durability, and HA path. |
-| [tape](projects/tape/README.md) | Topic replay journal — append-only topic history, consumer checkpoints, retention, and backfill. |
-| [defer](projects/defer/README.md) | Delayed task dispatch service — scheduled HTTP tasks, retry policy, rate limits, and DLQs. |
-| [cube](projects/cube/README.md) | OLAP service — columnar ingest, analytical query, rollups, and partition pruning. |
-| [beam](projects/beam/README.md) | GPU vector database — vector-first storage, GPU ANN indexing, batch ingest, and vector query. |
-| [vat](projects/vat/README.md) | Agent-native, GPU-native dev containers — a sandboxed host-process runtime (no VM) where the GPU just works on Apple Silicon, with a single JSON state surface for agents. |
-| [cap](projects/cap/README.md) | Resource-protection wrapper — throttles heavy local commands (and the Bash an agent fires) by watching free memory and pausing/resuming/killing, so nothing OOMs the box. |
-| [meter](projects/meter/README.md) | Local resource measurement for agents — `measure` observes external executables for cpu/wall/RSS and sampled hot spots; `profile` folds embedded/source-aware phase data. |
-| [guard](projects/guard/README.md) | Security posture gate — turns compass static findings plus future vat/rig/meter/arena evidence into one agent-readable security report. |
+| [agentic-workflow](projects/agentic-workflow/README.md) | Workflow protocol and CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle execution, and production-readiness rollup. |
+| [cap](projects/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
+| [vat](projects/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
+| [loom](projects/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
+| [preview](projects/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
+| [tape](projects/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
+| [defer](projects/defer/README.md) | Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack. |
+| [cube](projects/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
+| [beam](projects/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
+| [arena](projects/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
+| [guard](projects/guard/README.md) | Security posture gate for the cclab ecosystem. |
+| [rig](projects/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
+| [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
+| [lumen](projects/lumen/README.md) | A K8s-native, log-replicated search specialist. |
+| [jet](projects/jet/README.md) | Jet is a Rust-native frontend toolchain. |
+| [relay](projects/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
+| [keep](projects/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
+| [cgdb](projects/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
+| [httpkit-demo](projects/httpkit-demo/README.md) | httpkit-demo is a generated demo consumer of the `mambalibs.http` framework. |
+| [meter](projects/meter/README.md) | Local resource measurement for agent-driven Rust development. |
+| [qc](projects/qc/README.md) | Qc is the planned agent-facing quality-control CLI surface for structured reports, security findings, and performance boundary-cost findings. |
+| [queue](projects/queue/README.md) | Queue is the Rust distributed-task-queue library surface for cclab. |
 <!-- aw:projects-table:end -->
 
 ## Install
