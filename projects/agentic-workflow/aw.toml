@@ -5,7 +5,7 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:98a69a3e862607341cc86b0c99def5deb93e86c2fd6fb1f1ede9e27ec423fcce"
+generated_from_td_digest = "sha256:256c1e388213aa87732439ff1249a5135c8b737d4349c14aab4dad1ef415bf43"
 
 [[aw.ec.generated.cases]]
 id = "artifact-quality-fixture-roundtrip"
