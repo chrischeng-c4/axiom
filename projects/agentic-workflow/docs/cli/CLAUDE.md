@@ -72,6 +72,12 @@ Agentic Workflow is itself a project that follows SDD. Changes go through:
 
 ## Standardization workflow
 
+This document predates the audit-only `aw standardize` surface. Treat it as
+historical design context, not current command guidance; current agents should
+use `aw standardize audit ...` for preservation audit work and `aw health
+--project <project>` / `aw capability next --project <project>` for readiness
+and remediation routing.
+
 Agentic Workflow has two distinct workflows. Don't conflate them — they share
 primitives but answer different questions.
 
@@ -90,7 +96,7 @@ The driver picks one action per tick in this priority order:
 
 | # | Action | CLI verb | Status |
 |---|---|---|---|
-| 0 | inventory | `aw standardize managed report` / `aw standardize managed next` | implemented |
+| 0 | inventory | `aw health --project <project>` / `aw capability next --project <project>` | superseded |
 | 1 | regen_drift | `aw cb gen <slug>` (driven by `cb check` drift report) | partial — driver missing |
 | 2 | promote_handwrite | mainthread rewrite of HANDWRITE → CODEGEN | **missing** |
 | 3 | issue_marker_gap | `aw wi create` (gap-blocker) + edit marker | manual |
@@ -98,11 +104,8 @@ The driver picks one action per tick in this priority order:
 | 5 | fold_shadow | mainthread wraps shadow region in CODEGEN/HANDWRITE | **missing** |
 | 6 | claim_code | `aw cb claim <path>` | implemented as HANDWRITE claim; CODEGEN promotion is follow-up |
 
-The umbrella driver is `aw standardize managed next` — emits one
-StandardizeAction envelope per tick. Cron / `/aw:standardize-cron`
-runs the action and ticks again. After managed coverage is complete,
-`aw standardize regenerable next <project>` reports the second layer:
-remaining HANDWRITE blockers before full CODEGEN ownership.
+The old layer drivers were retired; `aw health` now reports the top gap and
+emits the worker command to run next.
 
 ### Loop pattern (all CLI verbs must support)
 
