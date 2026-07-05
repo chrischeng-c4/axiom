@@ -92,15 +92,15 @@ changes:
     action: delete
     section: logic
     impl_mode: hand-written
-    description: "Remove source semantic mirror for deleted projects/lumen/src/wal_relay.rs."
+    description: "Delete semantic source snapshot for removed projects/lumen/src/wal_relay.rs."
   - path: projects/lumen/tech-design/semantic/source/projects-lumen-tests-wal_relay-rs.md
     action: delete
     section: logic
     impl_mode: hand-written
-    description: "Remove test semantic mirror for deleted projects/lumen/tests/wal_relay.rs found by the same sweep."
+    description: "Delete semantic test snapshot for removed projects/lumen/tests/wal_relay.rs."
   - path: projects/lumen/tech-design/td.lock
     action: modify
     section: changes
     impl_mode: hand-written
-    description: "Refresh TD lock after deleting orphaned semantic mirror specs."
+    description: "Regenerate Lumen TD lock after deleting orphaned semantic TDs."
 ```
