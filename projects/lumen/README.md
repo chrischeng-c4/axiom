@@ -48,6 +48,7 @@ agent integration remain first-class domain roots.
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | CLI Interface | 4143 | implemented | verified | conformance | ready | mandatory baseline: serve/spec/llm/dockerfile/k8s command surfaces |
+| CLI Standard Surface | 1164 | implemented | verified | conformance | ready | mandatory baseline: shared `cli-std` llm/upgrade/issue surface, distinct from Lumen domain commands |
 | Chainable Output Conformance | 1142 | implemented | verified | conformance | ready | mandatory baseline: operational CLI outputs emit next/done without wrapping raw artifact/data streams |
 | Competitive Search Feature Parity | - | implemented | verified | conformance | ready | mandatory baseline: search-side replacement breadth vs pg/OpenSearch/MongoDB |
 | Competitive Search Performance | - | implemented | verified | conformance | ready | mandatory baseline: Lumen-only perf regression passes in vat against retained pg/OpenSearch-calibrated floors |
@@ -89,6 +90,28 @@ Gate Inventory:
 | query-shape-cookbook-field-analyzer-catalog | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | deployment-operator-command-surface | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>projects/lumen/src/operator |
+
+### CLI Standard Surface
+
+ID: cli-standard-surface
+Type: RuntimeTool
+Surfaces: CLI: `lumen llm` - shared offline agent self-doc topic surface required by the ecosystem CLI convention.; CLI: `lumen upgrade` - shared self-update and `--check` surface provided through `cli-std`.; CLI: `lumen issue search`, `lumen issue view`, `lumen issue create`, and `lumen issue comment` - shared tracker read/write/follow-up surface scoped to `project:lumen`, separate from Lumen's domain commands.
+EC Dimensions: behavior: `cargo test -p lumen --test cli_convention help_ships_standard_issue_group_not_report_issue -- --exact` - top-level help keeps the standard `llm`, `upgrade`, and `issue` groups visible; behavior: `cargo test -p lumen --test cli_convention issue_help_lists_search_view_create_comment -- --exact` - the issue group exposes the shared search/view/create/comment verbs; behavior: `cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact` - shared issue create/comment and upgrade check remain runnable in offline smoke mode; behavior: `cargo test -p lumen --test spec_cli llm_outline_maps_agent_topics -- --exact` - the shared `llm` entrypoint still publishes the agent topic set.
+Root WI: 1164
+Status: verified
+Required Verification: conformance
+Promise:
+Ship the mandatory shared `cli-std` surface every ecosystem CLI owes without
+blurring it into Lumen-specific serve/spec/dockerfile/k8s/data-movement
+commands.
+Gate Inventory:
+- projects/lumen/tests/cli_convention.rs; projects/lumen/tests/spec_cli.rs; projects/lumen/src/bin/lumen.rs; libs/cli-std/src/issue.rs; libs/cli-std/src/upgrade.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| shared-llm-entrypoint-surface | epic | 1164 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs<br>projects/lumen/src/bin/lumen.rs |
+| shared-upgrade-check-surface | epic | 1164 | implemented | passing | conformance | projects/lumen/tests/cli_convention.rs<br>libs/cli-std/src/upgrade.rs |
+| shared-issue-search-view-create-comment-surface | epic | 1164 | implemented | passing | conformance | projects/lumen/tests/cli_convention.rs<br>libs/cli-std/src/issue.rs |
 
 ### Chainable Output Conformance
 
