@@ -55,6 +55,7 @@ agent integration remain first-class domain roots.
 | Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
 | Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
 | HTTP/2 API List | 4143 | implemented | verified | conformance | ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
+| EC Gates Configured | 1165 | implemented | verified | conformance | ready | mandatory baseline: aw.toml, vat runners, claim tests, and external-contract claim closure stay wired together |
 | Search Core | - | implemented | verified | conformance | ready | domain: pure search index returning ranked external_ids only |
 | Lexical Search | - | implemented | verified | conformance | ready | domain: BM25 and analyzer-backed text search |
 | Exact & Filter Search | - | implemented | verified | conformance | ready | domain: keyword, number, set, boolean, range, and sorted filters |
@@ -254,6 +255,29 @@ Gate Inventory:
 | client-search-and-index-route-list | epic | - | implemented | passing | conformance | projects/lumen/README.md#api-surface; projects/lumen/tests/api_e2e.rs |
 | ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 | offline-spec-openapi-list | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+
+### EC Gates Configured
+
+ID: ec-gates-configured
+Type: Devops
+Surfaces: Config: `projects/lumen/aw.toml` - AW EC inventory, generated claim catalog, and dispatch commands for behavior/efficiency/stability verification.; Config: `projects/lumen/vat.toml` - vat-managed `rig-*` and `ec-efficiency*` runners backing the rig and meter EC tools.; Docs: `projects/lumen/external-contracts/claim-closure/production-claims.md` - claim-closure mappings from README promises to executable EC commands.; Tests: `projects/lumen/tests/behavior_lumen_claim_*.rs`, `projects/lumen/tests/efficiency_lumen_claim_*.rs`, `projects/lumen/tests/stability_lumen_claim_*.rs`, and `projects/lumen/tests/security_lumen_claim_*.rs` - generated claim evidence stubs tied back to the EC inventory.
+EC Dimensions: behavior: `./target/debug/aw ec check --project lumen` - aw.toml/generated-case inventory stays in sync with claim tests; behavior: `./target/debug/aw ec review --project lumen` - typed capabilities keep required EC dimensions covered; efficiency: `cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter` - meter-wrapped Lumen-only efficiency gate dispatch; stability: `cd projects/lumen && ../../target/debug/vat run rig-resilience` - vat-managed rig stability dispatch
+Root WI: 1165
+Status: verified
+Required Verification: conformance
+Promise:
+Keep Lumen's service-trait EC baseline explicit and runnable: AW knows where the
+claim inventory lives, vat owns the meter/rig gate runners, and
+external-contract claim closure maps each production claim to concrete
+executable evidence.
+Gate Inventory:
+- projects/lumen/aw.toml; projects/lumen/vat.toml; projects/lumen/external-contracts/claim-closure/production-claims.md; projects/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs; projects/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs; projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs; projects/lumen/tests/security_lumen_claim_security_bearer_auth.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| aw-ec-generated-inventory-and-dispatch | epic | 1165 | implemented | passing | conformance | projects/lumen/aw.toml |
+| vat-managed-meter-and-rig-runners | epic | 1165 | implemented | passing | conformance | projects/lumen/vat.toml<br>projects/lumen/tests/rig/cases/resilience<br>projects/lumen/tests/rig/cases/endurance<br>projects/lumen/tests/rig/config/pins |
+| external-contract-claim-closure-evidence | epic | 1165 | implemented | passing | conformance | projects/lumen/external-contracts/claim-closure/production-claims.md<br>projects/lumen/tests/behavior_lumen_claim_cli_service_process_interface.rs<br>projects/lumen/tests/efficiency_lumen_claim_competitor_performance_external_comparison.rs<br>projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs<br>projects/lumen/tests/security_lumen_claim_security_bearer_auth.rs |
 
 ### Search Core
 
