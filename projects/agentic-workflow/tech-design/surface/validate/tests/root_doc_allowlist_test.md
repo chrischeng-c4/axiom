@@ -29,10 +29,10 @@ No public AST symbols.
 ```rust
 //! Repo-root doc allowlist contract (meta-doc sheet 2).
 //!
-//! The repo root carries exactly five visible `.md` files: `README.md`
-//! (project inventory), `CONTRIBUTING.md` (repo-wide authoring contract),
-//! `ECOSYSTEM.md` (4-layer architecture map), and `CLAUDE.md` / `AGENTS.md`
-//! (the implementation quick-reference in its two agent-runtime flavors).
+//! The repo root carries exactly four visible `.md` files: `README.md`
+//! (project and shared-library inventory), `CONTRIBUTING.md` (repo-wide
+//! authoring contract), and `CLAUDE.md` / `AGENTS.md` (the implementation
+//! quick-reference in its two agent-runtime flavors).
 //! Every other root-level doc fact needs a generator, a validator, or a
 //! policy-only home under `projects/<p>/` or next to the tree it governs —
 //! see the meta-doc content contract in `CONTRIBUTING.md`. This test
@@ -60,7 +60,6 @@ fn repo_root() -> PathBuf {
 const ALLOWED_ROOT_DOCS: &[&str] = &[
     "README.md",
     "CONTRIBUTING.md",
-    "ECOSYSTEM.md",
     "CLAUDE.md",
     "AGENTS.md",
 ];
@@ -123,7 +122,7 @@ changes:
       Repo-root doc allowlist contract test
       repo_root_md_files_match_allowlist (meta-doc sheet 2, doc consolidation
       wave 2): the repo root carries exactly README.md, CONTRIBUTING.md,
-      ECOSYSTEM.md, CLAUDE.md, and AGENTS.md; any other visible root-level
+      CLAUDE.md, and AGENTS.md; any other visible root-level
       `.md` file fails the suite naming the unexpected file(s) and pointing
       at the CONTRIBUTING.md meta-doc content contract. Wave 1 of the doc
       consolidation already deleted the prior strays (QUICKSTART.md,

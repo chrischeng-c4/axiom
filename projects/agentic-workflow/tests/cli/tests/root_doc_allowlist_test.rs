@@ -2,10 +2,10 @@
 // CODEGEN-BEGIN
 //! Repo-root doc allowlist contract (meta-doc sheet 2).
 //!
-//! The repo root carries exactly five visible `.md` files: `README.md`
-//! (project inventory), `CONTRIBUTING.md` (repo-wide authoring contract),
-//! `ECOSYSTEM.md` (4-layer architecture map), and `CLAUDE.md` / `AGENTS.md`
-//! (the implementation quick-reference in its two agent-runtime flavors).
+//! The repo root carries exactly four visible `.md` files: `README.md`
+//! (project and shared-library inventory), `CONTRIBUTING.md` (repo-wide
+//! authoring contract), and `CLAUDE.md` / `AGENTS.md` (the implementation
+//! quick-reference in its two agent-runtime flavors).
 //! Every other root-level doc fact needs a generator, a validator, or a
 //! policy-only home under `projects/<p>/` or next to the tree it governs —
 //! see the meta-doc content contract in `CONTRIBUTING.md`. This test
@@ -33,7 +33,6 @@ fn repo_root() -> PathBuf {
 const ALLOWED_ROOT_DOCS: &[&str] = &[
     "README.md",
     "CONTRIBUTING.md",
-    "ECOSYSTEM.md",
     "CLAUDE.md",
     "AGENTS.md",
 ];

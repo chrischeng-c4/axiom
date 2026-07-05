@@ -990,7 +990,7 @@ changes:
     description: |
       Repo-root doc allowlist contract (meta-doc sheet 2, doc consolidation
       wave 2): the repo root carries exactly README.md, CONTRIBUTING.md,
-      ECOSYSTEM.md, CLAUDE.md, and AGENTS.md; any other visible root-level
+      CLAUDE.md, and AGENTS.md; any other visible root-level
       `.md` file fails the suite naming the unexpected file and pointing at
       the CONTRIBUTING.md meta-doc content contract. Dotfiles (tool
       prompt/cache files) are out of scope.

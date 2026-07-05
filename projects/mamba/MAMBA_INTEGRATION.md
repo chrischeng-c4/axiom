@@ -298,4 +298,4 @@ without pulling the compiler.
 - Higher-level binding: `projects/mamba/mambalibs/httpkit/binding/` (FastAPI-style router)
 - Config schema: `projects/mamba/src/config/schema.rs`
 - Current `mamba build` entry: `projects/mamba/src/main.rs:79`
-- Ecosystem overview: `ECOSYSTEM.md`
+- Ecosystem overview: `README.md`

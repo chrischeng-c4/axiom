@@ -33,6 +33,32 @@ details.
 | [queue](projects/queue/README.md) | Queue is the Rust distributed-task-queue library surface for cclab. |
 <!-- aw:projects-table:end -->
 
+## Shared Libraries
+
+Services and tools compose the internal libraries below instead of
+reimplementing transport, auth, metrics, codegen, replication, or operator
+plumbing locally. Libraries have no user-facing CLI or release pipeline; those
+surfaces belong under `projects/`.
+
+| Library | What it is |
+|---------|------------|
+| [build-stamp](libs/build-stamp/Cargo.toml) | Shared `build.rs` stamping for service CLIs: git short SHA, build epoch, and target triple. |
+| [claimtoken](libs/claimtoken/Cargo.toml) | Scoped claim-check access tokens; issuers sign bounded payload/key access and services verify the scope. |
+| [cli-std](libs/cli-std/Cargo.toml) | Shared implementation for the required `llm`, `upgrade`, and `issue` CLI convention. |
+| [compass](libs/compass/README.md) | Code-intelligence engine for navigation, analysis, refactoring, and watch workflows. |
+| [h2c](libs/h2c/Cargo.toml) | Shared HTTP/2 cleartext transport: single client, round-robin pool, frame-level manager, and connection-count heuristic. |
+| [openapi-codegen](libs/openapi-codegen/Cargo.toml) | Typed TypeScript, Python, and Rust API client generation from OpenAPI 3.0/3.1 documents. |
+| [operator](libs/operator/Cargo.toml) | Shared Kubernetes operator scaffold: reconcile controller, leader election, and HA render toolkit. |
+| [raft-core](libs/raft-core/Cargo.toml) | Transport- and storage-agnostic, step-driven Raft consensus core. |
+| [raft-host](libs/raft-host/Cargo.toml) | Shared Raft host driver over h2c peer transport with snapshots, compaction, and read-your-write propose. |
+| [service-auth](libs/service-auth/Cargo.toml) | Shared request-auth middleware: extract, verify, reject, and inject verified identity into service handlers. |
+| [service-backup](libs/service-backup/Cargo.toml) | Shared backup contract: destination and policy schema, sink trait, local sink, and runner primitive. |
+| [service-http](libs/service-http/Cargo.toml) | Standard HTTP service shell: probes, readiness, metrics, OpenAPI/docs routes, tracing, graceful drain, and h2c serve. |
+| [service-metrics](libs/service-metrics/Cargo.toml) | Lock-free Prometheus primitives and text encoder for service metrics. |
+| [service-tls](libs/service-tls/Cargo.toml) | Peer mTLS material loading and rustls server/client config builders. |
+| [surface](libs/surface/Cargo.toml) | Renderer-neutral UI element model shared by Jet WASM, native readers, renderers, and parity tools. |
+| [ui-runtime](libs/ui-runtime/Cargo.toml) | Renderer-neutral component runtime: hooks, fiber storage, mount, flush, and update scheduling. |
+
 ## Install
 
 Each binary ships a `curl | sh` installer that downloads the right prebuilt
