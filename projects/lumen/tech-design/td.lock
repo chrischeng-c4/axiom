@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-04T16:37:59.865494+00:00"
-digest = "sha256:c764b7e710f1053b934fa5cc9757f429d94d15529c4544baa2b9357f915617b7"
-source_digest = "sha256:c764b7e710f1053b934fa5cc9757f429d94d15529c4544baa2b9357f915617b7"
-ir_digest = "sha256:cbd0b7ef717ac080c901eb5536d62b5633cd8c8ec2fba7a13522f85a3306ff89"
+generated_at = "2026-07-05T04:04:43.105458+00:00"
+digest = "sha256:c975e6b6e3ff557dd4fa736f7e875dba79fa45ea81e377fd84edd1c66b249fa3"
+source_digest = "sha256:c975e6b6e3ff557dd4fa736f7e875dba79fa45ea81e377fd84edd1c66b249fa3"
+ir_digest = "sha256:ba192625f15e072c12efefdb609e04d36d3b487d0c7a8ef7c94e94e9b77c3c71"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
@@ -263,6 +263,12 @@ section_count = 2
 path = "semantic/lumen-tests.md"
 digest = "sha256:a7822200f1bc66a2ffa2e04101d894404738dbc849ba3555eed15730441c172b"
 ir_digest = "sha256:c435cee70c6d6d682b8bc709d8371dd2a468ee0770bd3b6729cb108e644676cb"
+section_count = 3
+
+[[files]]
+path = "semantic/orphaned-semantic-mirror-snapshots-deleted-wal-relay-rs.md"
+digest = "sha256:efbd92b62e11d368a3339e91f8f4d2ce6f0f89cd858f8b77aeff74acdeca062c"
+ir_digest = "sha256:f3115de6e183d5a407517a790745e7c6c886a6467d79cfb5ff0e7aa91c53c07d"
 section_count = 3
 
 [[files]]
