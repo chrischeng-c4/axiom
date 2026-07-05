@@ -8,9 +8,10 @@ use preview::discover::discover_base_with_kubectl;
 use preview::render::{cleanup_plan, mr_comment, preview_environment};
 use preview::{
     apply_rendered_manifests, apply_summary_markdown, load_route_table_from_kubectl,
-    load_route_table_from_rendered_dir, plan_guarded_cleanup, read_janitor_plan, render_files,
-    render_gitops_bundle, resolve_route_with_base, ApplyOptions, BaseRoute, BaseWorkloadContract,
-    CleanupApplyOptions, JanitorInput, RenderInput, RouteRequest,
+    load_route_table_from_rendered_dir, plan_guarded_cleanup, read_data_plan, read_janitor_plan,
+    render_files, render_gitops_bundle, resolve_route_with_base, ApplyOptions, BaseRoute,
+    BaseWorkloadContract, CleanupApplyOptions, DataPlanInput, DataRenderInput, JanitorInput,
+    RenderInput, RouteRequest,
 };
 
 #[derive(Debug, Parser)]
@@ -36,6 +37,10 @@ enum Command {
     Cleanup {
         #[command(subcommand)]
         command: CleanupCommand,
+    },
+    Data {
+        #[command(subcommand)]
+        command: DataCommand,
     },
     Comment(RenderArgs),
     CleanupPlan(CleanupArgs),
@@ -69,6 +74,13 @@ enum RouterCommand {
 enum CleanupCommand {
     Plan(CleanupJanitorPlanArgs),
     Apply(CleanupApplyArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum DataCommand {
+    Plan(DataPlanArgs),
+    Apply(DataApplyArgs),
+    Cleanup(DataApplyArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -112,6 +124,20 @@ struct RenderArgs {
     workload_identity: String,
     #[arg(long)]
     base_contract: Option<PathBuf>,
+    #[arg(long)]
+    data_provider: Option<String>,
+    #[arg(long, default_value = "clone")]
+    data_policy: String,
+    #[arg(long)]
+    data_source_instance: Option<String>,
+    #[arg(long)]
+    data_database: Option<String>,
+    #[arg(long, default_value = "preview-mr-")]
+    data_target_instance_prefix: String,
+    #[arg(long, default_value = "preview-database")]
+    data_secret_name: String,
+    #[arg(long, default_value = "DATABASE_URL")]
+    data_env_name: String,
     #[arg(long, default_value = "dist/preview")]
     out: PathBuf,
 }
@@ -205,6 +231,46 @@ struct CleanupApplyArgs {
 }
 
 #[derive(Debug, Args)]
+struct DataPlanArgs {
+    #[arg(long)]
+    mr: u32,
+    #[arg(long, default_value = "app")]
+    app: String,
+    #[arg(long, default_value = "uat-base")]
+    base_namespace: String,
+    #[arg(long)]
+    target_namespace: Option<String>,
+    #[arg(long)]
+    route_target: Option<String>,
+    #[arg(long, default_value = "fake-gcp-cloud-sql")]
+    provider: String,
+    #[arg(long, default_value = "clone")]
+    policy: String,
+    #[arg(long)]
+    source_instance: String,
+    #[arg(long)]
+    database: String,
+    #[arg(long, default_value = "preview-mr-")]
+    target_instance_prefix: String,
+    #[arg(long, default_value_t = 48)]
+    ttl_hours: u32,
+    #[arg(long, default_value = "preview-database")]
+    secret_name: String,
+    #[arg(long, default_value = "DATABASE_URL")]
+    env_name: String,
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct DataApplyArgs {
+    #[arg(long)]
+    plan: PathBuf,
+    #[arg(long, default_value = ".preview/fake-gcp-data-state.json")]
+    state: PathBuf,
+}
+
+#[derive(Debug, Args)]
 struct CleanupArgs {
     #[arg(long)]
     mr: u32,
@@ -239,6 +305,11 @@ fn main() -> Result<()> {
             CleanupCommand::Plan(args) => cleanup_janitor_plan(args),
             CleanupCommand::Apply(args) => cleanup_apply(args),
         },
+        Command::Data { command } => match command {
+            DataCommand::Plan(args) => data_plan(args),
+            DataCommand::Apply(args) => data_apply(args),
+            DataCommand::Cleanup(args) => data_cleanup(args),
+        },
         Command::Comment(args) => {
             let input = args.into_input()?;
             let env = preview_environment(&input);
@@ -258,6 +329,7 @@ fn main() -> Result<()> {
                 control_namespace: args.control_namespace,
                 workload_identity: "preview-runner".to_string(),
                 base_contract: None,
+                data: None,
             };
             let env = preview_environment(&input);
             println!(
@@ -436,6 +508,54 @@ fn cleanup_apply(args: CleanupApplyArgs) -> Result<()> {
     Ok(())
 }
 
+fn data_plan(args: DataPlanArgs) -> Result<()> {
+    let plan = preview::build_data_plan(DataPlanInput {
+        mr: args.mr,
+        app: args.app,
+        base_namespace: args.base_namespace,
+        target_namespace: args
+            .target_namespace
+            .unwrap_or_else(|| format!("uat-mr-{}", args.mr)),
+        route_target: args
+            .route_target
+            .unwrap_or_else(|| format!("mr-{}", args.mr)),
+        provider: args.provider,
+        policy: args.policy,
+        source_instance: args.source_instance,
+        database: args.database,
+        target_instance_prefix: args.target_instance_prefix,
+        ttl_hours: args.ttl_hours,
+        secret_name: args.secret_name,
+        env_name: args.env_name,
+    })?;
+    let output = serde_json::to_string_pretty(&plan)? + "\n";
+    if let Some(out) = args.out {
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create output directory {}", parent.display()))?;
+        }
+        fs::write(&out, output).with_context(|| format!("write {}", out.display()))?;
+        println!("rendered preview data plan to {}", out.display());
+    } else {
+        print!("{output}");
+    }
+    Ok(())
+}
+
+fn data_apply(args: DataApplyArgs) -> Result<()> {
+    let plan = read_data_plan(&args.plan)?;
+    let summary = preview::fake_apply_data_plan(&plan, &args.state)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+fn data_cleanup(args: DataApplyArgs) -> Result<()> {
+    let plan = read_data_plan(&args.plan)?;
+    let summary = preview::fake_cleanup_data_plan(&plan, &args.state)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
 fn print_llm(topic: &str) {
     match topic {
         "outline" => {
@@ -447,6 +567,7 @@ fn print_llm(topic: &str) {
             println!("Use `preview gitops render --dir <dir> --out <dir>` for PR-based delivery.");
             println!("Use `preview router resolve --dir <dir> --host <host>` to prove base fallback and preview target routing locally.");
             println!("Use `preview cleanup plan` and `preview cleanup apply --plan <json>` for guarded janitor cleanup.");
+            println!("Use `preview data plan`, `preview data apply`, and `preview data cleanup` to prove fake GCP data lifecycle locally.");
             println!("The rendered route binding maps cookie/header target `mr-<id>` to a namespace service.");
         }
         _ => {
@@ -467,6 +588,7 @@ impl RenderArgs {
                     .with_context(|| format!("parse base contract {}", path.display()))
             })
             .transpose()?;
+        let data = self.data_input()?;
         Ok(RenderInput {
             mr: self.mr,
             sha: self.sha,
@@ -479,7 +601,37 @@ impl RenderArgs {
             control_namespace: self.control_namespace,
             workload_identity: self.workload_identity,
             base_contract,
+            data,
         })
+    }
+
+    fn data_input(&self) -> Result<Option<DataRenderInput>> {
+        let has_any = self.data_provider.is_some()
+            || self.data_source_instance.is_some()
+            || self.data_database.is_some();
+        if !has_any {
+            return Ok(None);
+        }
+        let Some(provider) = self.data_provider.clone() else {
+            anyhow::bail!("--data-provider is required when rendering data lifecycle artifacts");
+        };
+        let Some(source_instance) = self.data_source_instance.clone() else {
+            anyhow::bail!(
+                "--data-source-instance is required when rendering data lifecycle artifacts"
+            );
+        };
+        let Some(database) = self.data_database.clone() else {
+            anyhow::bail!("--data-database is required when rendering data lifecycle artifacts");
+        };
+        Ok(Some(DataRenderInput {
+            provider,
+            policy: self.data_policy.clone(),
+            source_instance,
+            database,
+            target_instance_prefix: self.data_target_instance_prefix.clone(),
+            secret_name: self.data_secret_name.clone(),
+            env_name: self.data_env_name.clone(),
+        }))
     }
 }
 

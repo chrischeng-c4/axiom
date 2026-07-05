@@ -22,7 +22,7 @@ Canonical field-style capability contracts below are machine-readable input for
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GKE UAT Preview Environment Rendering | - | implemented | verified | smoke | ready | `preview discover-base` normalizes a base Deployment/Service contract; `preview render` emits a base-workload clone plan plus namespace, service account, quota, limits, RBAC, deployment, service, route binding, MR comment, manifest inventory, and cleanup plan files for an MR-scoped UAT preview. |
+| GKE UAT Preview Environment Rendering | - | implemented | verified | smoke | ready | `preview discover-base` normalizes a base Deployment/Service contract; `preview render` emits a base-workload clone plan plus optional fake-GCP data plan/Secret, namespace, service account, quota, limits, RBAC, deployment, service, route binding, MR comment, manifest inventory, and cleanup plan files for an MR-scoped UAT preview. |
 | Preview External Contracts | - | implemented | verified | smoke | ready | Always-on render/router-adapter/Kubernetes object/local apply and GitOps tests plus an opt-in kind/GKE-like lifecycle gate that applies, dry-runs, re-applies, loads route-binding ConfigMaps, rolls out, routes, and cleans a preview namespace. |
 | Kubernetes-Native Deployment | - | planned | planned | none | not_ready | future CRD/operator form for reconciling the same PreviewEnvironment model in GKE. |
 
@@ -30,7 +30,7 @@ Canonical field-style capability contracts below are machine-readable input for
 
 ID: gke-uat-preview-environment-rendering
 Type: Devops
-Surfaces: CLI: `preview discover-base`, `preview render`, `preview apply`, `preview gitops render`, `preview router resolve`, `preview cleanup plan`, `preview cleanup apply`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
+Surfaces: CLI: `preview discover-base`, `preview render`, `preview data plan`, `preview data apply`, `preview data cleanup`, `preview apply`, `preview gitops render`, `preview router resolve`, `preview cleanup plan`, `preview cleanup apply`, `preview comment`, `preview cleanup-plan`, `preview llm`, `preview upgrade`, `preview issue`.
 EC Dimensions: behavior: render/discovery contract tests - base workload normalization, MR identity, namespace naming, GKE labels, route binding stability, MR comment text, and cleanup dry-run output.
 Root WI: -
 Status: verified
@@ -43,7 +43,10 @@ reads its Deployment/Service contract and `preview render --base-contract`
 embeds the discovered shape into the clone plan. The rendered output can then
 be inspected through `preview apply --plan-only`, applied or server-side
 dry-run through `preview apply`, or packaged into a relative-path GitOps bundle
-with `preview gitops render`.
+with `preview gitops render`. When data flags are supplied, Preview also emits
+a local fake-GCP data lifecycle plan and a namespace-local Secret reference so
+teams can prove Cloud SQL/AlloyDB-style clone wiring before paying for real GCP
+resources.
 Gate Inventory:
 - `cargo test -p preview`
 
@@ -52,6 +55,7 @@ Gate Inventory:
 | Base workload discovery | change | #1108 | implemented | verified | smoke | `cargo test -p preview --test base_discovery_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | Local apply and GitOps execution | change | #1109 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
 | Guarded cleanup janitor | change | #1111 | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract local_cleanup_janitor_plan_reports_guarded_actions`; `PREVIEW_KIND_E2E=1 cargo test -p preview --test kind_lifecycle -- --nocapture` |
+| Local fake-GCP data lifecycle | change | - | implemented | verified | smoke | `cargo test -p preview --test local_cicd_contract local_data_plan_fake_provider_and_secret_rewrite_are_deterministic` |
 | MR-scoped namespace projection | epic | - | implemented | verified | smoke | `cargo test -p preview render_creates_gke_contract_files` |
 | Cookie/header route binding contract | epic | - | implemented | verified | smoke | `cargo test -p preview route_binding_uses_target_not_namespace_cookie` |
 | Cleanup dry-run planning | epic | - | implemented | verified | smoke | `cargo test -p preview cleanup_plan_marks_closed_mr_for_namespace_delete` |
@@ -108,6 +112,7 @@ Preview state is modeled as:
 
 ```text
 Base Namespace -> Base Workload -> PreviewEnvironment -> Preview Namespace -> RouteBinding -> CleanupPlan
+                                      \-> DataPlan -> Preview DB Secret -> Fake Provider State
 ```
 
 The route target is stable (`mr-123`) and intentionally separate from the
@@ -124,6 +129,13 @@ namespace secrets are intentionally excluded. Cleanup may delete preview
 namespaces and route bindings, but the base namespace and control namespace are
 protected namespaces.
 
+Data lifecycle is modeled separately from Kubernetes workload cloning. For the
+local-first path, `preview data plan` and `preview render --data-*` describe a
+Cloud SQL/AlloyDB-like preview database target, render a `DATABASE_URL` Secret
+inside `uat-mr-<id>`, and record fake provider ownership in a local JSON state
+file. The fake provider proves naming, TTL, Secret rewrite, idempotent apply,
+and guarded cleanup without contacting GCP.
+
 ## GKE Assumptions
 
 The first renderer assumes:
@@ -135,10 +147,13 @@ The first renderer assumes:
   `LimitRange`, `Role`, `RoleBinding`, `Deployment`, and `Service` resources;
 - a preview router, gateway extension, or ingress adapter consumes
   `preview.cclab.dev/route-binding` ConfigMaps;
+- optional data lifecycle artifacts can model Cloud SQL/AlloyDB clone or
+  restore intent without calling Google APIs;
 - browser traffic selects a preview with signed cookie `uat_target=mr-123`;
 - API/mobile/manual clients can select the same preview with
   `X-UAT-Target: mr-123`;
-- no DB clone behavior is assumed yet.
+- real Cloud SQL/AlloyDB clone/restore calls are deferred to the provider
+  adapter pilot.
 
 ## CLI
 
@@ -146,6 +161,9 @@ The first renderer assumes:
 |---|---|
 | `preview discover-base` | Read a base namespace Deployment/Service through `kubectl` and emit a normalized workload contract. |
 | `preview render` | Render the MR-scoped preview contract to files. |
+| `preview data plan` | Render a local-first data lifecycle plan for fake GCP Cloud SQL-style preview DB wiring. |
+| `preview data apply` | Apply a fake provider data plan to a local JSON state file. |
+| `preview data cleanup` | Remove fake provider data resources from the local JSON state file with preview ownership guardrails. |
 | `preview apply` | Print an ordered plan, server-side dry-run, or apply rendered manifests through `kubectl` with kind-context guardrails. |
 | `preview gitops render` | Convert rendered manifests into a deterministic relative-path GitOps bundle. |
 | `preview router resolve` | Load rendered route-binding files or kind ConfigMaps and return a base/preview/not-found routing decision. |
@@ -156,6 +174,21 @@ The first renderer assumes:
 | `preview llm` | Print offline agent-facing usage notes. |
 | `preview upgrade` | Placeholder for the repo-wide self-update convention. |
 | `preview issue` | Placeholder for the repo-wide issue convention. |
+
+## Install
+
+Install the release binary for CI runners or SRE laptops:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/preview/install.sh | sh
+```
+
+The installer follows the repo-wide binary convention:
+
+- `PREVIEW_VERSION` selects a `preview@*` release tag, defaulting to latest.
+- `PREVIEW_INSTALL` selects the install directory, defaulting to `$HOME/.local/bin`.
+- `PREVIEW_REPO` selects the GitHub repository, defaulting to `chrischeng-c4/axiom`.
+- `GH_TOKEN` or `GITHUB_TOKEN` is used for private forks, with `gh auth token` fallback.
 
 ## CI/CD Templates
 

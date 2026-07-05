@@ -288,6 +288,135 @@ fn local_cleanup_janitor_plan_reports_guarded_actions() {
 }
 
 #[test]
+fn local_data_plan_fake_provider_and_secret_rewrite_are_deterministic() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("preview");
+    let state = dir.path().join("fake-gcp-data-state.json");
+
+    command_stdout(Command::new(preview_bin()).args([
+        "render",
+        "--mr",
+        "321",
+        "--sha",
+        "abc123",
+        "--image",
+        "registry.local/checkout:abc123",
+        "--app",
+        "checkout",
+        "--host",
+        "uat.local.test",
+        "--base-namespace",
+        "uat-base",
+        "--owner",
+        "payments-sre",
+        "--data-provider",
+        "fake-gcp-cloud-sql",
+        "--data-source-instance",
+        "uat-orders-db",
+        "--data-database",
+        "orders",
+        "--out",
+        out.to_str().expect("out path"),
+    ]));
+
+    assert!(out.join("plans/data-plan.json").is_file());
+    assert!(out.join("k8s/data-secret.yaml").is_file());
+
+    let inventory = manifest_inventory_from_dir(&out).expect("manifest inventory");
+    let ordered_paths: Vec<_> = inventory
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    assert_eq!(ordered_paths[6], "k8s/data-secret.yaml");
+    assert_eq!(ordered_paths[7], "k8s/deployment.yaml");
+    assert_eq!(ordered_paths[9], "router/route-binding.yaml");
+
+    let data_plan: Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join("plans/data-plan.json")).expect("data plan"),
+    )
+    .expect("data plan json");
+    assert_eq!(data_plan["provider"], "fake-gcp-cloud-sql");
+    assert_eq!(data_plan["source"]["instance"], "uat-orders-db");
+    assert_eq!(data_plan["target"]["instance"], "preview-mr-321");
+    assert_eq!(data_plan["target"]["secretName"], "preview-database");
+    assert!(data_plan["guardrails"][0]
+        .as_str()
+        .expect("guardrail")
+        .contains("uat-mr-*"));
+
+    let secret: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(out.join("k8s/data-secret.yaml")).expect("secret"),
+    )
+    .expect("secret yaml");
+    assert_eq!(secret["kind"], "Secret");
+    assert_eq!(secret["metadata"]["namespace"], "uat-mr-321");
+    assert!(secret["stringData"]["DATABASE_URL"]
+        .as_str()
+        .expect("database url")
+        .contains("preview-mr-321.preview.local/orders"));
+
+    let deployment: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(out.join("k8s/deployment.yaml")).expect("deployment"),
+    )
+    .expect("deployment yaml");
+    let env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        .as_array()
+        .expect("env");
+    let database_url = env
+        .iter()
+        .find(|item| item["name"] == "DATABASE_URL")
+        .expect("DATABASE_URL env");
+    assert_eq!(
+        database_url["valueFrom"]["secretKeyRef"]["name"],
+        "preview-database"
+    );
+    assert_eq!(
+        database_url["valueFrom"]["secretKeyRef"]["key"],
+        "DATABASE_URL"
+    );
+
+    let first_apply = command_stdout(
+        Command::new(preview_bin())
+            .args(["data", "apply", "--plan"])
+            .arg(out.join("plans/data-plan.json"))
+            .args(["--state"])
+            .arg(&state),
+    );
+    let first_apply: Value = serde_json::from_str(&first_apply).expect("first apply");
+    assert_eq!(first_apply["action"], "apply");
+    assert_eq!(first_apply["changed"], true);
+
+    let second_apply = command_stdout(
+        Command::new(preview_bin())
+            .args(["data", "apply", "--plan"])
+            .arg(out.join("plans/data-plan.json"))
+            .args(["--state"])
+            .arg(&state),
+    );
+    let second_apply: Value = serde_json::from_str(&second_apply).expect("second apply");
+    assert_eq!(second_apply["changed"], false);
+
+    let cleanup = command_stdout(
+        Command::new(preview_bin())
+            .args(["data", "cleanup", "--plan"])
+            .arg(out.join("plans/data-plan.json"))
+            .args(["--state"])
+            .arg(&state),
+    );
+    let cleanup: Value = serde_json::from_str(&cleanup).expect("cleanup");
+    assert_eq!(cleanup["action"], "cleanup");
+    assert_eq!(cleanup["changed"], true);
+
+    let state_json: Value =
+        serde_json::from_str(&std::fs::read_to_string(&state).expect("state")).expect("state json");
+    assert_eq!(
+        state_json["resources"].as_array().expect("resources").len(),
+        0
+    );
+}
+
+#[test]
 fn ci_templates_document_required_variables_and_command_order() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for relative in [
@@ -329,6 +458,43 @@ fn ci_templates_document_required_variables_and_command_order() {
             ],
         );
     }
+}
+
+#[test]
+fn release_installer_matches_runner_bootstrap_contract() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let installer = std::fs::read_to_string(root.join("install.sh")).expect("install script");
+
+    for required in [
+        "PREVIEW_VERSION",
+        "PREVIEW_INSTALL",
+        "PREVIEW_REPO",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "gh auth token",
+        "preview@",
+        "preview-${target}.tar.gz",
+        "releases/download/${tag}/${asset}",
+        ".sha256",
+        "shasum -a 256",
+        "sha256sum",
+        "preview-${target}/preview",
+        "--version",
+    ] {
+        assert!(
+            installer.contains(required),
+            "install.sh missing release installer fragment {required}"
+        );
+    }
+
+    assert!(
+        !installer.contains("cargo build -p preview"),
+        "release installer must not build from source in CI"
+    );
+    assert!(
+        !installer.contains("target/debug/preview"),
+        "release installer must install release assets, not local debug binaries"
+    );
 }
 
 fn assert_command_order(relative: &str, contents: &str, needles: &[&str]) {

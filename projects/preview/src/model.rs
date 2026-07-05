@@ -34,6 +34,8 @@ pub struct PreviewSpec {
     pub app: String,
     pub namespace: String,
     pub base: BaseSpec,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<DataSpec>,
     pub owner: String,
     pub ttl_hours: u32,
     pub route: RouteSpec,
@@ -46,6 +48,19 @@ pub struct BaseSpec {
     pub namespace: String,
     pub workload: String,
     pub service: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSpec {
+    pub provider: String,
+    pub policy: String,
+    pub source_instance: String,
+    pub database: String,
+    pub target_instance: String,
+    pub target_database: String,
+    pub secret_name: String,
+    pub env_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

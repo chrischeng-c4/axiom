@@ -74,6 +74,12 @@ capability_refs:
     claim: "guarded-cleanup-janitor"
     coverage: partial
     rationale: "Guarded cleanup janitor behavior is covered by render/local CI tests and the kind cleanup apply path."
+  - id: "gke-uat-preview-environment-rendering"
+    role: primary
+    gap: "local-fake-gcp-data-lifecycle"
+    claim: "local-fake-gcp-data-lifecycle"
+    coverage: partial
+    rationale: "Local fake-GCP data lifecycle is covered by the local CI/CD contract test for data plan, Secret rewrite, fake apply, and fake cleanup."
   - id: "preview-external-contracts"
     role: primary
     gap: "ci-template-lifecycle"
@@ -206,6 +212,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "local_cleanup_janitor_plan_reports_guarded_actions"
+            kind: "function"
+            public: false
+          - name: "local_data_plan_fake_provider_and_secret_rewrite_are_deterministic"
             kind: "function"
             public: false
           - name: "ci_templates_document_required_variables_and_command_order"
@@ -389,7 +398,7 @@ changes:
     action: modify
     section: unit-test
     description: |
-      Local CI/CD open/update/comment/close command behavior is covered by this feature/domain semantic TD.
+      Local CI/CD open/update/comment/close command behavior and fake-GCP data lifecycle evidence are covered by this feature/domain semantic TD.
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-preview-tests-local-cicd-contract-rs>"

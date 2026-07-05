@@ -102,7 +102,9 @@ SRE-owned validation lane.
 
 ## Non-Goals For The Bootstrap
 
-- No production backup restore or DB clone behavior.
+- No live production backup restore or DB clone behavior; the bootstrap only
+  proves data lifecycle planning, Secret rewrite, fake provider state, and
+  guarded cleanup locally.
 - No assumption about Istio, NGINX, Traefik, or GKE Gateway internals.
 - No in-cluster controller or CRD install requirement for the first CLI path.
 - No shared UAT database migration execution.

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::model::PreviewEnvironment;
 
-const APPLY_ORDER: [&str; 9] = [
+const BASE_APPLY_ORDER: [&str; 9] = [
     "k8s/namespace.yaml",
     "k8s/service-account.yaml",
     "k8s/resource-quota.yaml",
@@ -20,6 +20,8 @@ const APPLY_ORDER: [&str; 9] = [
     "k8s/service.yaml",
     "router/route-binding.yaml",
 ];
+
+const DATA_SECRET_PATH: &str = "k8s/data-secret.yaml";
 
 const PROTECTED_NAMESPACE_NAMES: [&str; 4] =
     ["default", "kube-system", "preview-system", "uat-base"];
@@ -67,13 +69,14 @@ pub struct GitopsBundleFile {
     pub contents: String,
 }
 
-pub fn apply_manifest_paths() -> &'static [&'static str] {
-    &APPLY_ORDER
+pub fn apply_manifest_paths() -> Vec<&'static str> {
+    BASE_APPLY_ORDER.to_vec()
 }
 
 pub fn manifest_inventory_for_env(env: &PreviewEnvironment) -> Result<ManifestInventory> {
     let root = Path::new("");
-    let entries = APPLY_ORDER
+    let order = apply_order_for_env(env);
+    let entries = order
         .iter()
         .enumerate()
         .map(|(order, path)| {
@@ -93,7 +96,8 @@ pub fn manifest_inventory_for_env(env: &PreviewEnvironment) -> Result<ManifestIn
 }
 
 pub fn manifest_inventory_from_dir(dir: &Path) -> Result<ManifestInventory> {
-    let entries = APPLY_ORDER
+    let order = apply_order_for_dir(dir);
+    let entries = order
         .iter()
         .enumerate()
         .map(|(order, relative)| {
@@ -239,10 +243,19 @@ fn inventory_entry(order: usize, path: &str, object: &Value) -> Result<ManifestI
 }
 
 fn validate_inventory(inventory: &ManifestInventory, root: &Path) -> Result<()> {
-    if inventory.entries.len() != APPLY_ORDER.len() {
+    let expected_order = if inventory
+        .entries
+        .iter()
+        .any(|entry| entry.path == DATA_SECRET_PATH)
+    {
+        apply_order_with_data()
+    } else {
+        BASE_APPLY_ORDER.to_vec()
+    };
+    if inventory.entries.len() != expected_order.len() {
         bail!("manifest inventory has an unexpected number of entries");
     }
-    for (order, expected) in APPLY_ORDER.iter().enumerate() {
+    for (order, expected) in expected_order.iter().enumerate() {
         let Some(entry) = inventory.entries.get(order) else {
             bail!("manifest inventory missing order {order}");
         };
@@ -266,6 +279,28 @@ fn validate_inventory(inventory: &ManifestInventory, root: &Path) -> Result<()> 
         }
     }
     Ok(())
+}
+
+fn apply_order_for_env(env: &PreviewEnvironment) -> Vec<&'static str> {
+    if env.spec.data.is_some() {
+        apply_order_with_data()
+    } else {
+        BASE_APPLY_ORDER.to_vec()
+    }
+}
+
+fn apply_order_for_dir(dir: &Path) -> Vec<&'static str> {
+    if dir.join(DATA_SECRET_PATH).is_file() {
+        apply_order_with_data()
+    } else {
+        BASE_APPLY_ORDER.to_vec()
+    }
+}
+
+fn apply_order_with_data() -> Vec<&'static str> {
+    let mut order = BASE_APPLY_ORDER.to_vec();
+    order.insert(6, DATA_SECRET_PATH);
+    order
 }
 
 fn route_target_from_dir(dir: &Path) -> Result<String> {

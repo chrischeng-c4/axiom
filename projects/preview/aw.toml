@@ -15,7 +15,7 @@ description = "Opt-in kind/GKE-like lifecycle gate: create base fixture, discove
 [aw.ec.generated]
 version = 1
 project = "preview"
-generated_from_td_digest = "sha256:e82abf40450dc3412a9042b7b3c1c0b4c79c66192bd5f5cea87d89a90e5e592f"
+generated_from_td_digest = "sha256:8199a4f8c2e8aa3f5070e8309aca96fd67ff59738cddcabbb38bc1a3d4bed81b"
 
 [[aw.ec.generated.cases]]
 id = "base-workload-discovery"
@@ -165,6 +165,23 @@ assertions = [
     "`preview apply --dir <rendered-dir> --plan-only` prints an MR-comment-friendly ordered apply summary without contacting a cluster.",
     "`preview gitops render --dir <rendered-dir> --out <bundle-dir>` writes a deterministic relative-path GitOps bundle with no local absolute paths.",
     "The kind lifecycle gate covers `preview apply --dry-run`, direct apply, idempotent re-apply, and rollout against a local cluster.",
+]
+
+[[aw.ec.generated.cases]]
+id = "local-fake-gcp-data-lifecycle"
+capability_id = "gke-uat-preview-environment-rendering"
+claim_id = "local-fake-gcp-data-lifecycle"
+contract_id = "local-fake-gcp-data-lifecycle"
+category = "behavior"
+td_ref = "projects/preview/external-contracts/behavior/local-fake-gcp-data-lifecycle.md#local-fake-gcp-data-lifecycle"
+test_path = "projects/preview/tests/behavior_local_fake_gcp_data_lifecycle.rs"
+command = "cargo test -p preview --test local_cicd_contract local_data_plan_fake_provider_and_secret_rewrite_are_deterministic"
+required_for_production = true
+assertions = [
+    "`preview render --data-*` emits plans/data-plan.json and k8s/data-secret.yaml only when a data contract is supplied.",
+    "The data plan models a fake GCP Cloud SQL preview resource with read-only source, preview-* target naming, TTL, and ownership guardrails.",
+    "The rendered Deployment rewrites DATABASE_URL to the namespace-local preview database Secret.",
+    "`preview data apply` and `preview data cleanup` mutate only fake provider state and are idempotent for local CI.",
 ]
 
 [[aw.ec.generated.cases]]

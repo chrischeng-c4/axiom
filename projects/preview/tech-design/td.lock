@@ -1,8 +1,8 @@
 version = 1
 project = "preview"
 td_path = "projects/preview/tech-design"
-generated_at = "2026-07-04T17:24:49.431237+00:00"
-digest = "sha256:37824b6c9cf286c78e2719cd1bda344a95762c677ba58ac1217ff04ec9fde4df"
+generated_at = "2026-07-05T05:45:12.160153+00:00"
+digest = "sha256:c18ebe17f94d777a341db9ddb0c271fa62e8019492ca921a6f2f949ad15f2f6c"
 
 [[files]]
 path = "README.md"
@@ -34,8 +34,8 @@ digest = "sha256:f98b35ea3123eedcceb858c663f41a0104eacca37410ce6160db528999021cc
 
 [[files]]
 path = "semantic/preview-src.md"
-digest = "sha256:09858b71e24674513ffb6977cafc4587af94b36339d74c07fdbe2145840e8f04"
+digest = "sha256:869e2a22b551b80b9a55e664e24e14aad5797568155aa1eb65819e4e6049c4bf"
 
 [[files]]
 path = "semantic/preview-tests.md"
-digest = "sha256:3815d8b5df10780e305f7b0eba058afaca3b9e54a944799e876af91ef1b1a0a4"
+digest = "sha256:8f00193d39fb8a44acfd402229e8e25f66d0e46a8d9f9fe556e41d9e578bf502"

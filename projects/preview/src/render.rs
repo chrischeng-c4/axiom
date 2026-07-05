@@ -5,10 +5,11 @@ use anyhow::Result;
 use serde_json::json;
 
 use crate::apply::manifest_inventory_for_env;
+use crate::data::{build_data_plan, connection_string, DataPlan, DataPlanInput};
 use crate::discover::BaseWorkloadContract;
 use crate::model::{
-    BaseSpec, CleanupAction, CleanupPlan, GkeSpec, Label, PreviewEnvironment, PreviewMetadata,
-    PreviewPhase, PreviewSpec, PreviewStatus, RouteSpec,
+    BaseSpec, CleanupAction, CleanupPlan, DataSpec, GkeSpec, Label, PreviewEnvironment,
+    PreviewMetadata, PreviewPhase, PreviewSpec, PreviewStatus, RouteSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +25,18 @@ pub struct RenderInput {
     pub control_namespace: String,
     pub workload_identity: String,
     pub base_contract: Option<BaseWorkloadContract>,
+    pub data: Option<DataRenderInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataRenderInput {
+    pub provider: String,
+    pub policy: String,
+    pub source_instance: String,
+    pub database: String,
+    pub target_instance_prefix: String,
+    pub secret_name: String,
+    pub env_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,10 +47,15 @@ pub struct RenderFile {
 
 pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
     let env = preview_environment(input);
+    let data_plan = input
+        .data
+        .as_ref()
+        .map(|data| build_data_plan(data_plan_input(input, data, &env)))
+        .transpose()?;
     let cleanup = cleanup_plan(&env, false);
     let inventory = manifest_inventory_for_env(&env)?;
 
-    Ok(vec![
+    let mut files = vec![
         RenderFile {
             path: "spec/preview-environment.yaml".to_string(),
             contents: serde_yaml::to_string(&env)?,
@@ -53,6 +71,14 @@ pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
             path: "plans/manifest-inventory.json".to_string(),
             contents: serde_json::to_string_pretty(&inventory)? + "\n",
         },
+    ];
+    if let Some(plan) = &data_plan {
+        files.push(RenderFile {
+            path: "plans/data-plan.json".to_string(),
+            contents: serde_json::to_string_pretty(plan)? + "\n",
+        });
+    }
+    files.extend([
         RenderFile {
             path: "k8s/namespace.yaml".to_string(),
             contents: render_single_manifest(&env, "k8s/namespace.yaml")?,
@@ -77,6 +103,14 @@ pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
             path: "k8s/workload-role-binding.yaml".to_string(),
             contents: render_single_manifest(&env, "k8s/workload-role-binding.yaml")?,
         },
+    ]);
+    if env.spec.data.is_some() {
+        files.push(RenderFile {
+            path: "k8s/data-secret.yaml".to_string(),
+            contents: render_single_manifest(&env, "k8s/data-secret.yaml")?,
+        });
+    }
+    files.extend([
         RenderFile {
             path: "k8s/deployment.yaml".to_string(),
             contents: render_single_manifest(&env, "k8s/deployment.yaml")?,
@@ -97,7 +131,8 @@ pub fn render_files(input: &RenderInput) -> Result<Vec<RenderFile>> {
             path: "cleanup-plan.json".to_string(),
             contents: serde_json::to_string_pretty(&cleanup)? + "\n",
         },
-    ])
+    ]);
+    Ok(files)
 }
 
 pub fn render_single_manifest(env: &PreviewEnvironment, path: &str) -> Result<String> {
@@ -108,6 +143,7 @@ pub fn render_single_manifest(env: &PreviewEnvironment, path: &str) -> Result<St
         "k8s/limit-range.yaml" => limit_range(env),
         "k8s/workload-role.yaml" => workload_role(env),
         "k8s/workload-role-binding.yaml" => workload_role_binding(env),
+        "k8s/data-secret.yaml" => data_secret(env)?,
         "k8s/deployment.yaml" => deployment(env),
         "k8s/service.yaml" => service(env),
         "router/route-binding.yaml" => route_binding(env),
@@ -151,6 +187,7 @@ pub fn preview_environment(input: &RenderInput) -> PreviewEnvironment {
                     .map(|contract| contract.service.clone())
                     .unwrap_or_else(|| app.clone()),
             },
+            data: input.data.as_ref().map(|data| data_spec(input.mr, data)),
             owner: input.owner.clone(),
             ttl_hours: input.ttl_hours,
             route: RouteSpec {
@@ -308,6 +345,41 @@ fn namespace(env: &PreviewEnvironment) -> serde_json::Value {
     })
 }
 
+fn data_spec(mr: u32, input: &DataRenderInput) -> DataSpec {
+    DataSpec {
+        provider: input.provider.clone(),
+        policy: input.policy.clone(),
+        source_instance: input.source_instance.clone(),
+        database: input.database.clone(),
+        target_instance: format!("{}{}", input.target_instance_prefix, mr),
+        target_database: input.database.clone(),
+        secret_name: input.secret_name.clone(),
+        env_name: input.env_name.clone(),
+    }
+}
+
+fn data_plan_input(
+    input: &RenderInput,
+    data: &DataRenderInput,
+    env: &PreviewEnvironment,
+) -> DataPlanInput {
+    DataPlanInput {
+        mr: input.mr,
+        app: input.app.clone(),
+        base_namespace: env.spec.base.namespace.clone(),
+        target_namespace: env.spec.namespace.clone(),
+        route_target: env.spec.route.target.clone(),
+        provider: data.provider.clone(),
+        policy: data.policy.clone(),
+        source_instance: data.source_instance.clone(),
+        database: data.database.clone(),
+        target_instance_prefix: data.target_instance_prefix.clone(),
+        ttl_hours: input.ttl_hours,
+        secret_name: data.secret_name.clone(),
+        env_name: data.env_name.clone(),
+    }
+}
+
 fn workload_clone_plan(
     env: &PreviewEnvironment,
     base_contract: Option<&BaseWorkloadContract>,
@@ -463,6 +535,22 @@ fn workload_role_binding(env: &PreviewEnvironment) -> serde_json::Value {
 fn deployment(env: &PreviewEnvironment) -> serde_json::Value {
     let mut labels = selector(env);
     labels.extend(label_map(env));
+    let mut env_vars = vec![
+        json!({ "name": "PREVIEW_MR", "value": env.spec.mr.to_string() }),
+        json!({ "name": "PREVIEW_SHA", "value": env.spec.sha }),
+        json!({ "name": "UAT_ROUTE_TARGET", "value": env.spec.route.target }),
+    ];
+    if let Some(data) = &env.spec.data {
+        env_vars.push(json!({
+            "name": data.env_name,
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": data.secret_name,
+                    "key": "DATABASE_URL"
+                }
+            }
+        }));
+    }
 
     json!({
         "apiVersion": "apps/v1",
@@ -487,11 +575,7 @@ fn deployment(env: &PreviewEnvironment) -> serde_json::Value {
                         "name": env.spec.app,
                         "image": env.spec.image,
                         "ports": [{ "containerPort": 8080 }],
-                        "env": [
-                            { "name": "PREVIEW_MR", "value": env.spec.mr.to_string() },
-                            { "name": "PREVIEW_SHA", "value": env.spec.sha },
-                            { "name": "UAT_ROUTE_TARGET", "value": env.spec.route.target }
-                        ],
+                        "env": env_vars,
                         "resources": {
                             "requests": {
                                 "cpu": "100m",
@@ -517,6 +601,57 @@ fn deployment(env: &PreviewEnvironment) -> serde_json::Value {
             }
         }
     })
+}
+
+fn data_secret(env: &PreviewEnvironment) -> Result<serde_json::Value> {
+    let Some(data) = &env.spec.data else {
+        anyhow::bail!("data secret requested but preview environment has no data spec");
+    };
+    let plan = DataPlan {
+        schema_version: 1,
+        provider: data.provider.clone(),
+        policy: data.policy.clone(),
+        mr: env.spec.mr,
+        app: env.spec.app.clone(),
+        base_namespace: env.spec.base.namespace.clone(),
+        target_namespace: env.spec.namespace.clone(),
+        route_target: env.spec.route.target.clone(),
+        source: crate::data::DataSource {
+            instance: data.source_instance.clone(),
+            database: data.database.clone(),
+            access: "read-only".to_string(),
+        },
+        target: crate::data::DataTarget {
+            instance: data.target_instance.clone(),
+            database: data.target_database.clone(),
+            secret_name: data.secret_name.clone(),
+            env_name: data.env_name.clone(),
+            connection_secret_key: "DATABASE_URL".to_string(),
+        },
+        ttl_hours: env.spec.ttl_hours,
+        actions: Vec::new(),
+        guardrails: Vec::new(),
+    };
+    Ok(json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": data.secret_name,
+            "namespace": env.spec.namespace,
+            "labels": label_map(env),
+            "annotations": {
+                "preview.cclab.dev/data-provider": data.provider,
+                "preview.cclab.dev/data-policy": data.policy,
+                "preview.cclab.dev/source-instance": data.source_instance,
+                "preview.cclab.dev/target-instance": data.target_instance,
+                "preview.cclab.dev/ttl-hours": env.spec.ttl_hours.to_string()
+            }
+        },
+        "type": "Opaque",
+        "stringData": {
+            "DATABASE_URL": connection_string(&plan)
+        }
+    }))
 }
 
 fn service(env: &PreviewEnvironment) -> serde_json::Value {
