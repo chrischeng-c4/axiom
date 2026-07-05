@@ -48,3 +48,42 @@ flowchart TD
     exists -->|no| delete[remove orphaned mirror]
     delete --> lock([refresh td.lock])
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: lumen-orphaned-semantic-mirror-verification
+requirements:
+  source_sweep:
+    id: R1
+    text: "A semantic/source sweep over '# Standardized <path>' targets reports no mirrors whose target path is missing on disk."
+    kind: regression
+    risk: medium
+    verify: command
+  named_orphans_removed:
+    id: R2
+    text: "The wal_relay source and test mirror files named by the sweep are removed."
+    kind: functional
+    risk: medium
+    verify: command
+  td_lock:
+    id: R3
+    text: "projects/lumen/tech-design/td.lock is refreshed after deleting TD files."
+    kind: traceability
+    risk: medium
+    verify: command
+  td_valid:
+    id: R4
+    text: "The cleanup TD validates with aw td check."
+    kind: governance
+    risk: low
+    verify: command
+---
+flowchart TD
+    r1[R1 missing-target sweep empty] --> shell[semantic/source sweep command]
+    r2[R2 wal_relay mirrors absent] --> shell
+    r3[R3 td.lock refreshed] --> lock[aw td lock --project lumen]
+    r4[R4 TD check] --> check[aw td check cleanup TD]
+```
