@@ -55,6 +55,7 @@ agent integration remain first-class domain roots.
 | Long-Running Stability | - | implemented | verified | dogfood | ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
 | Security Hardening | - | implemented | verified | negative | ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
 | HTTP/2 API List | 4143 | implemented | verified | conformance | ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
+| Standard Operational Endpoints | 1166 | implemented | verified | conformance | ready | mandatory baseline: one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` surface plus offline `lumen spec` evidence |
 | EC Gates Configured | 1165 | implemented | verified | conformance | ready | mandatory baseline: aw.toml, vat runners, claim tests, and external-contract claim closure stay wired together |
 | Search Core | - | implemented | verified | conformance | ready | domain: pure search index returning ranked external_ids only |
 | Lexical Search | - | implemented | verified | conformance | ready | domain: BM25 and analyzer-backed text search |
@@ -255,6 +256,29 @@ Gate Inventory:
 | client-search-and-index-route-list | epic | - | implemented | passing | conformance | projects/lumen/README.md#api-surface; projects/lumen/tests/api_e2e.rs |
 | ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 | offline-spec-openapi-list | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+
+### Standard Operational Endpoints
+
+ID: standard-operational-endpoints
+Type: Service
+Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - auth-exempt liveness, readiness, scrape, live-spec, and Swagger UI endpoints served on the same listener as the data plane via `service_http::standard_probe_routes`.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline OpenAPI evidence for the same operational contract when no server is running.
+EC Dimensions: behavior: `cargo test -p lumen --test api_e2e health_and_ready -- --exact` - liveness and steady-state readiness surface; behavior: `cargo test -p lumen --test api_e2e readyz_reports_draining -- --exact` - drain flips readiness to 503 while `/healthz` stays live; behavior: `cargo test -p lumen --test api_e2e metrics_exposes_prometheus_text -- --exact` - Prometheus scrape surface; behavior: `cargo test -p lumen --test api_e2e openapi_spec_served -- --exact` - live one-port OpenAPI endpoint; behavior: `cargo test -p lumen --test coverage_gaps_e2e s8_swagger_docs_endpoint_returns_html -- --exact` - Swagger UI is served and points at the live spec; behavior: `cargo test -p lumen --test spec_cli openapi_is_valid_json_with_search_path -- --exact` - offline `lumen spec` emits the same auth-exempt operational route inventory
+Root WI: 1166
+Status: verified
+Required Verification: conformance
+Promise:
+Expose the standard one-port operational surface the service trait requires:
+shared probe, metrics, live-spec, and Swagger UI endpoints stay available on
+the main listener, while `lumen spec` mirrors the same OpenAPI contract
+offline.
+Gate Inventory:
+- projects/lumen/src/api.rs; projects/lumen/tests/api_e2e.rs (health_and_ready, readyz_reports_draining, metrics_exposes_prometheus_text, openapi_spec_served); projects/lumen/tests/coverage_gaps_e2e.rs (s8_swagger_docs_endpoint_returns_html); projects/lumen/tests/spec_cli.rs (openapi_is_valid_json_with_search_path)
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| service-http-standard-probe-routes | epic | 1166 | implemented | passing | conformance | projects/lumen/src/api.rs<br>projects/lumen/tests/api_e2e.rs |
+| live-openapi-and-swagger-ui-surface | epic | 1166 | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs<br>projects/lumen/tests/coverage_gaps_e2e.rs |
+| offline-openapi-matches-operational-surface | epic | 1166 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs<br>projects/lumen/README.md#openapi |
 
 ### EC Gates Configured
 
