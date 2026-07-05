@@ -26,7 +26,8 @@ Layer 4: Agkit      — agkit (domain models + UI + prompts), @cclab/ui, spec-vi
 Projects            — agentic-workflow
 ```
 
-Full details: `ECOSYSTEM.md`. Domain model schemas: `projects/agentic-workflow/schemas/`.
+Full project and shared-library inventory: `README.md`. Domain model schemas:
+`projects/agentic-workflow/schemas/`.
 
 ## Codex Operational Rules
 

@@ -102,7 +102,7 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 - [../../crates/cclab-fetch-mamba/](../../crates/cclab-fetch-mamba/): canonical first-party binding example (async HTTP client)
 - [mambalibs/httpkit/binding/](mambalibs/httpkit/binding/): higher-level binding example (FastAPI-style router)
 - [../../CLAUDE.md](../../CLAUDE.md): repo-wide working-tree, SDD, and CRRR rules
-- [../../ECOSYSTEM.md](../../ECOSYSTEM.md): 4-layer ecosystem map (runtime / libraries / framework / agkit)
+- [../../README.md](../../README.md): repo project and shared-library inventory
 
 ## Build & install
 

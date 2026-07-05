@@ -2317,10 +2317,10 @@ fn active_doc_command_blockers(
 fn active_doc_paths(project_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for rel in [
+        "README.md",
         "AGENTS.md",
         "CLAUDE.md",
         "CONTRIBUTING.md",
-        "ECOSYSTEM.md",
         "projects/agentic-workflow/templates/cli/README.md",
         "projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md",
     ] {
@@ -8864,15 +8864,15 @@ command_refs:
     }
 
     #[test]
-    fn active_doc_paths_scans_ecosystem_md() {
-        // Doc consolidation wave 2: ECOSYSTEM.md is the 4-layer map's detail
-        // page and must be scanned alongside AGENTS.md/CLAUDE.md/
-        // CONTRIBUTING.md, so a stale command reference there is caught too.
+    fn active_doc_paths_scans_readme_md() {
+        // The root README is the project and shared-library inventory and must
+        // be scanned alongside AGENTS.md/CLAUDE.md/CONTRIBUTING.md, so a stale
+        // command reference there is caught too.
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
-            "ECOSYSTEM.md",
-            "The dependency-flow diagram used to say `aw run --project demo`.\n",
+            "README.md",
+            "The project inventory used to say `aw run --project demo`.\n",
         );
 
         let inventory = runtime_command_inventory();
@@ -8880,9 +8880,9 @@ command_refs:
         assert!(
             blockers.iter().any(
                 |b| b.kind == TraceabilityBlockerKind::ActiveDocDeletedCommandRef
-                    && b.source.as_deref() == Some("ECOSYSTEM.md")
+                    && b.source.as_deref() == Some("README.md")
             ),
-            "expected ECOSYSTEM.md to be scanned for deleted-command refs, got {blockers:?}"
+            "expected README.md to be scanned for deleted-command refs, got {blockers:?}"
         );
     }
 
