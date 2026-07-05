@@ -488,6 +488,10 @@ CLI ships, services and non-services alike. `lumen` is the reference for all of 
 
 ### Service auth — one Bearer-token contract
 
+*(policy-only — judgment, not trait-enforced; candidate for a future
+`service_auth` trait once `libs/service-auth` adoption is mechanically
+checkable)*
+
 Service auth is shared infrastructure, not a per-project design space. Every
 long-running service uses `libs/service-auth` for request authentication:
 extract `Authorization: Bearer <token>`, verify it through a service-supplied
