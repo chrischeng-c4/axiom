@@ -3,6 +3,8 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Context, Result};
 
+#[cfg(feature = "s3")]
+use crate::s3::S3Sink;
 use crate::BackupDestination;
 
 /// Destination for snapshot bytes.
@@ -108,11 +110,18 @@ pub fn sink_from_destination(destination: &BackupDestination) -> Result<Box<dyn 
         BackupDestination::Local { .. } => {
             Ok(Box::new(LocalFsSink::from_destination(destination)?))
         }
+        #[cfg(feature = "s3")]
+        BackupDestination::S3 { .. } => Ok(Box::new(S3Sink::from_destination(destination)?)),
+        #[cfg(not(feature = "s3"))]
         BackupDestination::S3 { .. } | BackupDestination::Gcs { .. } => {
             Ok(Box::new(UnsupportedCloudSink {
                 destination: destination.clone(),
             }))
         }
+        #[cfg(feature = "s3")]
+        BackupDestination::Gcs { .. } => Ok(Box::new(UnsupportedCloudSink {
+            destination: destination.clone(),
+        })),
     }
 }
 
@@ -134,7 +143,15 @@ mod tests {
     }
 
     #[test]
-    fn cloud_sink_is_explicitly_unsupported_without_adapter() {
+    fn gcs_sink_is_explicitly_unsupported_without_adapter() {
+        let dest = BackupDestination::from_uri("gs://bucket/prefix").unwrap();
+        let sink = sink_from_destination(&dest).unwrap();
+        assert!(sink.put(SystemTime::now(), b"x").is_err());
+    }
+
+    #[cfg(not(feature = "s3"))]
+    #[test]
+    fn s3_sink_is_explicitly_unsupported_without_adapter() {
         let dest = BackupDestination::from_uri("s3://bucket/prefix").unwrap();
         let sink = sink_from_destination(&dest).unwrap();
         assert!(sink.put(SystemTime::now(), b"x").is_err());

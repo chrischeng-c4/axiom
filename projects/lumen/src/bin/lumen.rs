@@ -1013,12 +1013,11 @@ async fn dispatch_backup(args: BackupArgs) -> Result<()> {
 
 /// The matching restore step for a `lumen backup` run (#963): POST the
 /// just-written snapshot bytes back to `/admin/restore` on the same fleet.
-/// Only `file://` destinations resolve to a concrete local path today — the
-/// only sink `service_backup::sink_from_destination` actually implements
-/// (`s3://`/`gs://` bail with "requires a cloud adapter feature", so
-/// `run_backup` never reaches here for those); the fallback covers a future
-/// cloud sink without guessing a wrong command. The token, when set, is never
-/// echoed — the command references the same env var the flag reads.
+/// Only `file://` destinations resolve to a concrete local path for a copyable
+/// restore command; cloud sinks remain shared `service-backup` behavior and
+/// fall back to a generic note here instead of guessing a wrong object-fetch
+/// command. The token, when set, is never echoed — the command references the
+/// same env var the flag reads.
 #[cfg(feature = "backup")]
 fn restore_next_command(args: &BackupArgs, result: &service_backup::BackupRunResult) -> String {
     let url = args.url.trim_end_matches('/');

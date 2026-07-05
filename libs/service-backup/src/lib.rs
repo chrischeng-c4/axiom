@@ -14,6 +14,8 @@
 mod destination;
 mod policy;
 mod runner;
+#[cfg(feature = "s3")]
+mod s3;
 mod sink;
 
 pub use destination::BackupDestination;
