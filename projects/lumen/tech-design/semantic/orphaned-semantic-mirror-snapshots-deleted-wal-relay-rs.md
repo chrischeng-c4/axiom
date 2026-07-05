@@ -25,30 +25,26 @@ fill_sections: [logic, unit-test, changes]
 
 ```mermaid
 ---
-id: lumen-orphaned-semantic-mirror-cleanup
-entry: start
+id: lumen-orphaned-semantic-mirror-contract
+entry: sweep
 nodes:
-  start: { kind: start, label: "sweep projects/lumen/tech-design/semantic/source/*.md" }
-  extract: { kind: process, label: "extract '# Standardized <path>' target from each semantic source mirror" }
-  exists: { kind: decision, label: "target exists on disk?" }
-  keep: { kind: terminal, label: "keep mirror" }
-  delete: { kind: process, label: "delete orphaned mirror snapshot" }
-  lock: { kind: terminal, label: "refresh projects/lumen/tech-design/td.lock" }
+  sweep: { kind: start, label: "run semantic/source missing-target sweep" }
+  result: { kind: process, label: "orphan set = wal_relay source mirror + wal_relay test mirror" }
+  remove: { kind: process, label: "delete only those orphaned mirror TD files" }
+  refresh: { kind: process, label: "run aw td lock --project lumen" }
+  verify: { kind: terminal, label: "sweep is empty; cleanup TD check passes" }
 edges:
-  - { from: start, to: extract }
-  - { from: extract, to: exists }
-  - { from: exists, to: keep, label: "yes" }
-  - { from: exists, to: delete, label: "no" }
-  - { from: delete, to: lock }
+  - { from: sweep, to: result }
+  - { from: result, to: remove }
+  - { from: remove, to: refresh }
+  - { from: refresh, to: verify }
 ---
 flowchart TD
-    start([semantic/source sweep]) --> extract[read Standardized target path]
-    extract --> exists{target exists?}
-    exists -->|yes| keep([keep mirror])
-    exists -->|no| delete[remove orphaned mirror]
-    delete --> lock([refresh td.lock])
+    sweep([missing-target sweep]) --> result[orphan set: source/test wal_relay mirrors]
+    result --> remove[delete only orphaned mirror TDs]
+    remove --> refresh[refresh td.lock]
+    refresh --> verify([sweep empty and TD check clean])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
