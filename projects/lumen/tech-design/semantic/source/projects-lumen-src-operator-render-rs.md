@@ -27,7 +27,7 @@ Public API manifest for `projects/lumen/src/operator/render.rs` generated from A
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `render` | projects/lumen/src/operator/render.rs | function | pub | 93 | render(lumen: &Lumen) -> Vec<Value> |
+| `render` | projects/lumen/src/operator/render.rs | function | pub | 94 | render(lumen: &Lumen) -> Vec<Value> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -50,13 +50,18 @@ Public API manifest for `projects/lumen/src/operator/render.rs` generated from A
 use serde_json::{json, Value};
 
 use super::crd::Lumen;
-use operator::render::RenderCtx;
+use operator::render::{
+    self, HorizontalPodAutoscaler, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim,
+};
 
 const APP: &str = "lumen";
+const MANAGER: &str = "lumen-operator";
 const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
+const COMPONENT: &str = "server";
 const CLIENT_PORT: i32 = 7373;
 const BACKUP_COMPONENT: &str = "backup";
+const HEADLESS_ENV_KEY: &str = "LUMEN_HEADLESS_SERVICE";
 const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/lumen";
@@ -82,28 +87,16 @@ fn namespace(lumen: &Lumen) -> String {
 }
 
 /// lumen's render identity for the shared [`operator::render`] helpers.
-fn ctx(name: &str) -> RenderCtx<'_> {
+fn ctx<'a>(lumen: &Lumen, name: &'a str, ns: &'a str) -> RenderCtx<'a> {
     RenderCtx {
         app: APP,
-        manager: "lumen-operator",
+        manager: MANAGER,
         api_version: API_VERSION,
         kind: KIND,
         name,
-        ns: "",
-        owner: None,
+        ns,
+        owner: owner_ref(lumen),
     }
-}
-
-/// Recommended labels common to every child object (via the shared toolkit).
-fn labels(name: &str, component: &str) -> Value {
-    ctx(name).labels(component)
-}
-
-/// Minimal, immutable selector labels (a subset of [`labels`]). Workload and
-/// Service selectors are pinned to these so re-applies never hit a
-/// selector-immutability error.
-fn selector(name: &str, component: &str) -> Value {
-    ctx(name).selector(component)
 }
 
 /// The owner reference that ties a child to its `Lumen` CR, enabling
@@ -112,7 +105,7 @@ fn selector(name: &str, component: &str) -> Value {
 fn owner_ref(lumen: &Lumen) -> Option<Value> {
     let uid = lumen.metadata.uid.clone()?;
     let name = lumen.metadata.name.clone()?;
-    Some(operator::render::owner_ref(API_VERSION, KIND, &name, &uid))
+    Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
 fn token_registry_secret(lumen: &Lumen) -> Option<&str> {
@@ -121,15 +114,6 @@ fn token_registry_secret(lumen: &Lumen) -> Option<&str> {
     } else {
         None
     }
-}
-
-/// Assemble an object's `metadata` block.
-fn meta(name: &str, ns: &str, labels: Value, owner: &Option<Value>) -> Value {
-    let mut m = json!({ "name": name, "namespace": ns, "labels": labels });
-    if let Some(o) = owner {
-        m["ownerReferences"] = json!([o]);
-    }
-    m
 }
 
 /// Render every child object for `lumen`, in dependency order (namespace-scoped
@@ -142,23 +126,30 @@ fn meta(name: &str, ns: &str, labels: Value, owner: &Option<Value>) -> Value {
 /// raft-HA with a fixed peer set (no HPA).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
-    let mut out = vec![service_account(lumen), serving_configmap(lumen)];
-    out.push(serving_statefulset(lumen));
-    out.push(serving_headless_service(lumen));
-    out.push(serving_service(lumen));
+    let name = instance(lumen);
+    let ns = namespace(lumen);
+    let cx = ctx(lumen, &name, &ns);
+    let headless = format!("{name}-headless");
+    let mut out = vec![
+        render::service_account(&cx, COMPONENT),
+        serving_configmap(lumen, &cx),
+        serving_statefulset(lumen, &cx, &headless),
+        render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
+        render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
+    ];
     if lumen.spec.replicas_per_shard <= 1 {
         // Single member, no raft consensus: HPA owns the live replica count
         // (unchanged from the pre-StatefulSet-unconditional Deployment path).
-        out.push(serving_hpa(lumen));
+        out.push(serving_hpa(lumen, &cx));
     }
     // raft-HA (`replicasPerShard > 1`): no HPA — raft needs a fixed membership.
-    out.push(serving_pdb(lumen));
+    out.push(render::pdb(&cx, &name, COMPONENT, 1));
     if lumen.spec.observability {
-        out.push(service_monitor(lumen));
-        out.push(prometheus_rule(lumen));
+        out.push(service_monitor(&cx));
+        out.push(prometheus_rule(&cx));
     }
     // Optional scheduled backup runner: only when a policy is configured (#808).
-    if let Some(cj) = backup_cron_job(lumen) {
+    if let Some(cj) = backup_cron_job(lumen, &cx) {
         out.push(cj);
     }
     out
@@ -173,24 +164,16 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
 /// (`libs/service-backup`). The shared [`operator::render::cron_job`] helper
 /// stays manifest-only.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
-fn backup_cron_job(lumen: &Lumen) -> Option<Value> {
+fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
     let policy = lumen.spec.serving.backup.as_ref()?;
-    let name = instance(lumen);
-    let ns = namespace(lumen);
-    let cx = RenderCtx {
-        app: APP,
-        manager: "lumen-operator",
-        api_version: API_VERSION,
-        kind: KIND,
-        name: &name,
-        ns: &ns,
-        owner: owner_ref(lumen),
-    };
-    let cron_name = format!("{name}-backup");
+    let cron_name = format!("{}-backup", cx.name);
     // Cluster-DNS FQDN of the serving ClusterIP Service (`serving_service`),
     // reachable from any namespace's CronJob pod regardless of the operator's
     // own DNS search suffix.
-    let url = format!("http://{name}.{ns}.svc.cluster.local:{CLIENT_PORT}");
+    let url = format!(
+        "http://{}.{}.svc.cluster.local:{CLIENT_PORT}",
+        cx.name, cx.ns
+    );
     let mut args = vec![
         "backup".to_string(),
         "--url".to_string(),
@@ -214,8 +197,8 @@ fn backup_cron_job(lumen: &Lumen) -> Option<Value> {
         .image_pull_policy
         .clone()
         .unwrap_or_else(|| "IfNotPresent".to_string());
-    Some(operator::render::cron_job(operator::render::CronJob {
-        cx: &cx,
+    Some(render::cron_job(render::CronJob {
+        cx,
         name: &cron_name,
         component: BACKUP_COMPONENT,
         schedule: &policy.schedule,
@@ -227,7 +210,7 @@ fn backup_cron_job(lumen: &Lumen) -> Option<Value> {
         env_from: vec![],
         volumes: vec![],
         volume_mounts: vec![],
-        service_account_name: Some(&name),
+        service_account_name: Some(cx.name),
         cpu: "100m",
         memory: "128Mi",
         successful_jobs_history_limit: 3,
@@ -235,162 +218,16 @@ fn backup_cron_job(lumen: &Lumen) -> Option<Value> {
     }))
 }
 
-/// The downward-API env the raft-HA serving pods carry on top of `serving_env`:
-/// exactly the quartet (+ headless service) `raft_host::cluster::ClusterTopology::
-/// from_env` reads. `SHARD_COUNT` already comes from the serving ConfigMap.
-fn downward_api_env(lumen: &Lumen) -> Vec<Value> {
-    vec![
-        json!({ "name": "POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
-        json!({ "name": "POD_NAMESPACE", "valueFrom": { "fieldRef": { "fieldPath": "metadata.namespace" } } }),
-        json!({ "name": "REPLICAS_PER_SHARD", "value": lumen.spec.replicas_per_shard.to_string() }),
-        json!({ "name": "VOTER_COUNT", "value": lumen.spec.voter_count.to_string() }),
-        json!({ "name": "LUMEN_HEADLESS_SERVICE", "value": format!("{}-headless", instance(lumen)) }),
-    ]
-}
-
-/// The serving fleet: the serving pod template recast as a StatefulSet —
-/// stable per-pod identity + a durable `raft` PVC mounted at
-/// `/var/lib/lumen`, rendered unconditionally. Derived from
-/// [`serving_deployment`] so the pod template (image/probes/security/env)
-/// stays in one place. At `replicasPerShard > 1` (raft-HA) it additionally
-/// gets a fixed replica count (`shard_count * replicas_per_shard`) and the
-/// raft peer-identity downward-API env; at `replicasPerShard <= 1` it's a
-/// single member with no raft consensus and the replica count stays owned by
-/// the HPA (same floor `serving_deployment` sets).
-fn serving_statefulset(lumen: &Lumen) -> Value {
-    let name = instance(lumen);
-    let mut sts = serving_deployment(lumen);
-    sts["kind"] = json!("StatefulSet");
+/// The serving fleet: the shared workload primitive provides the StatefulSet's
+/// identity, headless binding, downward-API pod identity, and common pod
+/// template shell; Lumen layers its own ConfigMap-driven env, auth-secret
+/// mount, PVC, probes, and observability annotations on top. At
+/// `replicasPerShard <= 1` the HPA still owns the live replica count, so the
+/// single-member path strips the raft-only env vars and resets the apply-time
+/// floor to `autoscaling.minReplicas`.
+fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Value {
     let s = &lumen.spec.serving;
-    let raft_ha = lumen.spec.replicas_per_shard > 1;
-    {
-        let spec = sts["spec"]
-            .as_object_mut()
-            .expect("serving spec is an object");
-        spec.remove("strategy"); // Deployment-only
-        spec.insert("serviceName".into(), json!(format!("{name}-headless")));
-        spec.insert("podManagementPolicy".into(), json!("Parallel"));
-        spec.insert("updateStrategy".into(), json!({ "type": "RollingUpdate" }));
-        if raft_ha {
-            // Raft needs a fixed, known peer set; the HPA is not attached in
-            // this regime (see `render`).
-            spec.insert(
-                "replicas".into(),
-                json!(lumen.spec.shard_count * lumen.spec.replicas_per_shard),
-            );
-        }
-    }
-    if raft_ha {
-        if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut()
-        {
-            env.extend(downward_api_env(lumen));
-        }
-    }
-    if let Some(mounts) =
-        sts["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].as_array_mut()
-    {
-        mounts.push(json!({ "name": "raft", "mountPath": "/var/lib/lumen" }));
-    }
-    let mut pvc_spec = json!({
-        "accessModes": ["ReadWriteOnce"],
-        "resources": { "requests": { "storage": s.raft_storage.clone() } },
-    });
-    if let Some(sc) = &s.raft_storage_class {
-        pvc_spec["storageClassName"] = json!(sc);
-    }
-    sts["spec"]
-        .as_object_mut()
-        .expect("serving spec is an object")
-        .insert(
-            "volumeClaimTemplates".into(),
-            json!([{
-                "metadata": { "name": "raft", "labels": labels(&name, "server") },
-                "spec": pvc_spec,
-            }]),
-        );
-    sts
-}
-
-/// Headless Service backing the serving StatefulSet's stable peer DNS.
-fn serving_headless_service(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    json!({
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": meta(&format!("{name}-headless"), &ns, labels(&name, "server"), &owner),
-        "spec": {
-            "clusterIP": "None",
-            "publishNotReadyAddresses": true,
-            "selector": selector(&name, "server"),
-            "ports": [{ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }],
-        },
-    })
-}
-
-fn service_account(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    json!({
-        "apiVersion": "v1",
-        "kind": "ServiceAccount",
-        "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
-    })
-}
-
-fn serving_configmap(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    let mut data = json!({
-        "SHARD_COUNT": lumen.spec.shard_count.to_string(),
-        "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
-        "LUMEN_PORT": CLIENT_PORT.to_string(),
-        "LUMEN_AUTH": lumen.spec.auth.as_env(),
-    });
-    if let Some(level) = &lumen.spec.log_level {
-        data["LUMEN_LOG_LEVEL"] = json!(level);
-    }
-    json!({
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": meta(&format!("{name}-config"), &ns, labels(&name, "server"), &owner),
-        "data": data,
-    })
-}
-
-/// Container env for the serving pod: downward-API identity + literal runtime
-/// knobs + the config-driven values (so a ConfigMap edit can roll pods).
-fn serving_env(lumen: &Lumen) -> Vec<Value> {
-    let cfg = format!("{}-config", instance(lumen));
-    let from_cfg = |key: &str| json!({ "name": key, "valueFrom": { "configMapKeyRef": { "name": cfg, "key": key } } });
-    let mut env = vec![
-        json!({ "name": "POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
-        json!({ "name": "POD_NAMESPACE", "valueFrom": { "fieldRef": { "fieldPath": "metadata.namespace" } } }),
-        json!({ "name": "LUMEN_HOST", "value": "0.0.0.0" }),
-        json!({ "name": "LUMEN_WAL", "value": "auto" }),
-        json!({ "name": "LUMEN_GRACE_SECS", "value": lumen.spec.serving.grace_secs.to_string() }),
-        from_cfg("LUMEN_PORT"),
-        from_cfg("LUMEN_LOG_FORMAT"),
-        from_cfg("LUMEN_AUTH"),
-        from_cfg("SHARD_COUNT"),
-    ];
-    if lumen.spec.log_level.is_some() {
-        env.push(from_cfg("LUMEN_LOG_LEVEL"));
-    }
-    // Strict auth: the registry is mounted from a Secret/SecretManager projection.
-    if token_registry_secret(lumen).is_some() {
-        env.push(json!({
-            "name": "LUMEN_TOKEN_REGISTRY_FILE",
-            "value": TOKEN_REGISTRY_FILE,
-        }));
-    }
-    env
-}
-
-fn serving_deployment(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    let s = &lumen.spec.serving;
-    let res = json!({
-        "requests": { "cpu": s.cpu, "memory": s.memory },
-        "limits": { "cpu": s.cpu, "memory": s.memory },
-    });
+    let res = render::guaranteed_resources(&s.cpu, &s.memory);
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
     if let Some(secret) = token_registry_secret(lumen) {
@@ -412,171 +249,211 @@ fn serving_deployment(lumen: &Lumen) -> Value {
             "maxSkew": 1,
             "topologyKey": key,
             "whenUnsatisfiable": "ScheduleAnyway",
-            "labelSelector": { "matchLabels": selector(&name, "server") },
+            "labelSelector": { "matchLabels": cx.selector(COMPONENT) },
         })
     };
-    json!({
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
+    let image_pull_policy = lumen
+        .spec
+        .image_pull_policy
+        .as_deref()
+        .unwrap_or("IfNotPresent");
+    let mut pvc_template = json!({
         "spec": {
-            // HPA owns the live count; this is the floor at apply time.
-            "replicas": s.autoscaling.min_replicas,
-            "revisionHistoryLimit": 5,
-            "selector": { "matchLabels": selector(&name, "server") },
-            "strategy": {
-                "type": "RollingUpdate",
-                // Keep read capacity during rollouts; new pod must reach /readyz
-                // (log tail caught up) before an old one is torn down.
-                "rollingUpdate": { "maxUnavailable": 0, "maxSurge": 1 },
-            },
-            "template": {
-                "metadata": {
-                    "labels": labels(&name, "server"),
-                    "annotations": {
-                        "prometheus.io/scrape": "true",
-                        "prometheus.io/port": CLIENT_PORT.to_string(),
-                        "prometheus.io/path": "/metrics",
-                    },
-                },
-                "spec": {
-                    "serviceAccountName": name,
-                    "terminationGracePeriodSeconds": s.grace_secs,
-                    "securityContext": {
-                        "runAsNonRoot": true,
-                        "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
-                        "seccompProfile": { "type": "RuntimeDefault" },
-                    },
-                    "topologySpreadConstraints": [
-                        spread("topology.kubernetes.io/zone"),
-                        spread("kubernetes.io/hostname"),
-                    ],
-                    "containers": [{
-                        "name": "lumen",
-                        "image": lumen.spec.image,
-                        "imagePullPolicy": lumen.spec.image_pull_policy.clone().unwrap_or_else(|| "IfNotPresent".into()),
-                        "command": ["lumen", "serve"],
-                        "ports": [{ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" }],
-                        "env": serving_env(lumen),
-                        "resources": res,
-                        // 503 until the serving node has finished startup and
-                        // any local/raft recovery work.
-                        "readinessProbe": {
-                            "httpGet": { "path": "/readyz", "port": "http" },
-                            "initialDelaySeconds": 5, "periodSeconds": 10,
-                            "timeoutSeconds": 3, "failureThreshold": 60,
-                        },
-                        "livenessProbe": {
-                            "httpGet": { "path": "/healthz", "port": "http" },
-                            "initialDelaySeconds": 15, "periodSeconds": 30,
-                            "timeoutSeconds": 5, "failureThreshold": 3,
-                        },
-                        "startupProbe": {
-                            "httpGet": { "path": "/healthz", "port": "http" },
-                            "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
-                        },
-                        "securityContext": {
-                            "runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532,
-                            "allowPrivilegeEscalation": false,
-                            "readOnlyRootFilesystem": true,
-                            "capabilities": { "drop": ["ALL"] },
-                        },
-                        "volumeMounts": volume_mounts,
-                    }],
-                    "volumes": volumes,
-                },
-            },
+            "accessModes": ["ReadWriteOnce"],
+            "resources": { "requests": { "storage": s.raft_storage.clone() } },
         },
-    })
+    });
+    if let Some(sc) = &s.raft_storage_class {
+        pvc_template["spec"]["storageClassName"] = json!(sc);
+    }
+    let mut sts = render::service_statefulset(ServiceStatefulSet {
+        cx,
+        name: cx.name,
+        component: COMPONENT,
+        image: lumen.spec.image.as_str(),
+        image_pull_policy,
+        command: vec!["lumen".into(), "serve".into()],
+        args: vec![],
+        ports: vec![json!({ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" })],
+        headless_service: headless,
+        shard_count: lumen.spec.shard_count,
+        replicas_per_shard: lumen.spec.replicas_per_shard,
+        voter_count: lumen.spec.voter_count,
+        headless_env_key: HEADLESS_ENV_KEY,
+        service_account_name: Some(cx.name),
+        env: serving_env(lumen),
+        env_from: vec![],
+        resources: res,
+        pod_annotations: Some(json!({
+            "prometheus.io/scrape": "true",
+            "prometheus.io/port": CLIENT_PORT.to_string(),
+            "prometheus.io/path": "/metrics",
+        })),
+        pod_security_context: Some(json!({
+            "runAsNonRoot": true,
+            "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
+            "seccompProfile": { "type": "RuntimeDefault" },
+        })),
+        container_security_context: Some(json!({
+            "runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532,
+            "allowPrivilegeEscalation": false,
+            "readOnlyRootFilesystem": true,
+            "capabilities": { "drop": ["ALL"] },
+        })),
+        termination_grace_period_seconds: Some(s.grace_secs),
+        readiness_probe: Some(json!({
+            "httpGet": { "path": "/readyz", "port": "http" },
+            "initialDelaySeconds": 5, "periodSeconds": 10,
+            "timeoutSeconds": 3, "failureThreshold": 60,
+        })),
+        liveness_probe: Some(json!({
+            "httpGet": { "path": "/healthz", "port": "http" },
+            "initialDelaySeconds": 15, "periodSeconds": 30,
+            "timeoutSeconds": 5, "failureThreshold": 3,
+        })),
+        startup_probe: Some(json!({
+            "httpGet": { "path": "/healthz", "port": "http" },
+            "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
+        })),
+        volumes,
+        volume_mounts,
+        topology_spread_constraints: vec![
+            spread("topology.kubernetes.io/zone"),
+            spread("kubernetes.io/hostname"),
+        ],
+        revision_history_limit: Some(5),
+        update_strategy: Some(json!({ "type": "RollingUpdate" })),
+        volume_claim: Some(WorkloadVolumeClaim {
+            name: "raft".into(),
+            template: pvc_template,
+            mount_path: "/var/lib/lumen",
+            read_only: false,
+        }),
+    });
+    if lumen.spec.replicas_per_shard <= 1 {
+        if let Some(spec) = sts["spec"].as_object_mut() {
+            spec.insert("replicas".into(), json!(s.autoscaling.min_replicas));
+        }
+        if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
+            env.retain(|value| {
+                let Some(name) = value["name"].as_str() else {
+                    return true;
+                };
+                !matches!(
+                    name,
+                    "REPLICAS_PER_SHARD" | "VOTER_COUNT" | HEADLESS_ENV_KEY
+                )
+            });
+        }
+    }
+    sts
 }
 
-fn serving_service(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
+/// Container env layered onto the shared pod identity/downward-API scaffold:
+/// Lumen's literal runtime knobs + the config-driven values (so a ConfigMap
+/// edit can roll pods).
+fn serving_env(lumen: &Lumen) -> Vec<Value> {
+    let cfg = format!("{}-config", instance(lumen));
+    let from_cfg = |key: &str| json!({ "name": key, "valueFrom": { "configMapKeyRef": { "name": cfg, "key": key } } });
+    let mut env = vec![
+        json!({ "name": "LUMEN_HOST", "value": "0.0.0.0" }),
+        json!({ "name": "LUMEN_WAL", "value": "auto" }),
+        json!({ "name": "LUMEN_GRACE_SECS", "value": lumen.spec.serving.grace_secs.to_string() }),
+        from_cfg("LUMEN_PORT"),
+        from_cfg("LUMEN_LOG_FORMAT"),
+        from_cfg("LUMEN_AUTH"),
+    ];
+    if lumen.spec.log_level.is_some() {
+        env.push(from_cfg("LUMEN_LOG_LEVEL"));
+    }
+    // Strict auth: the registry is mounted from a Secret/SecretManager projection.
+    if token_registry_secret(lumen).is_some() {
+        env.push(json!({
+            "name": "LUMEN_TOKEN_REGISTRY_FILE",
+            "value": TOKEN_REGISTRY_FILE,
+        }));
+    }
+    env
+}
+
+fn serving_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
+    let name = format!("{}-config", cx.name);
+    let mut data = json!({
+        "SHARD_COUNT": lumen.spec.shard_count.to_string(),
+        "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
+        "LUMEN_PORT": CLIENT_PORT.to_string(),
+        "LUMEN_AUTH": lumen.spec.auth.as_env(),
+    });
+    if let Some(level) = &lumen.spec.log_level {
+        data["LUMEN_LOG_LEVEL"] = json!(level);
+    }
     json!({
         "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
-        "spec": {
-            "type": "ClusterIP",
-            "selector": selector(&name, "server"),
-            "ports": [{ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }],
-        },
+        "kind": "ConfigMap",
+        "metadata": cx.meta(&name, COMPONENT),
+        "data": data,
     })
 }
 
-fn serving_hpa(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
+fn serving_hpa(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
     let a = &lumen.spec.serving.autoscaling;
-    json!({
-        "apiVersion": "autoscaling/v2",
-        "kind": "HorizontalPodAutoscaler",
-        "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
-        "spec": {
-            // The serving fleet is always a StatefulSet (see `render`); the
-            // HPA is only attached at replicasPerShard <= 1 (single member,
-            // no raft consensus), where it still owns the live replica count.
-            "scaleTargetRef": { "apiVersion": "apps/v1", "kind": "StatefulSet", "name": name },
-            "minReplicas": a.min_replicas,
-            "maxReplicas": a.max_replicas,
-            "metrics": [{
-                "type": "Resource",
-                "resource": { "name": "cpu", "target": { "type": "Utilization", "averageUtilization": a.target_cpu_utilization } },
-            }],
-            "behavior": {
-                // React fast to read spikes; scale down slowly so new pods'
-                // index-rebuild warm-up cost isn't thrashed.
-                "scaleUp": {
-                    "stabilizationWindowSeconds": 30,
-                    "policies": [{ "type": "Percent", "value": 100, "periodSeconds": 30 }],
-                },
-                "scaleDown": {
-                    "stabilizationWindowSeconds": 300,
-                    "policies": [{ "type": "Pods", "value": 1, "periodSeconds": 60 }],
-                },
+    let min_replicas = u32::try_from(a.min_replicas)
+        .expect("serving autoscaling min_replicas must be non-negative");
+    let max_replicas = u32::try_from(a.max_replicas)
+        .expect("serving autoscaling max_replicas must be non-negative");
+    render::horizontal_pod_autoscaler(HorizontalPodAutoscaler {
+        cx,
+        name: cx.name,
+        component: COMPONENT,
+        target_api_version: "apps/v1",
+        target_kind: "StatefulSet",
+        target_name: cx.name,
+        min_replicas,
+        max_replicas,
+        metrics: vec![json!({
+            "type": "Resource",
+            "resource": { "name": "cpu", "target": { "type": "Utilization", "averageUtilization": a.target_cpu_utilization } },
+        })],
+        behavior: Some(json!({
+            // React fast to read spikes; scale down slowly so new pods'
+            // index-rebuild warm-up cost isn't thrashed.
+            "scaleUp": {
+                "stabilizationWindowSeconds": 30,
+                "policies": [{ "type": "Percent", "value": 100, "periodSeconds": 30 }],
             },
-        },
-    })
-}
-
-fn serving_pdb(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    json!({
-        "apiVersion": "policy/v1",
-        "kind": "PodDisruptionBudget",
-        "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
-        // Comfort guard on stateless cattle: keep read capacity during drains
-        // without ever blocking a single-replica dev deployment.
-        "spec": { "maxUnavailable": 1, "selector": { "matchLabels": selector(&name, "server") } },
+            "scaleDown": {
+                "stabilizationWindowSeconds": 300,
+                "policies": [{ "type": "Pods", "value": 1, "periodSeconds": 60 }],
+            },
+        })),
     })
 }
 
 // ---- Observability (optional) ---------------------------------------------
 
-fn service_monitor(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
+fn service_monitor(cx: &RenderCtx<'_>) -> Value {
     json!({
         "apiVersion": "monitoring.coreos.com/v1",
         "kind": "ServiceMonitor",
-        "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
+        "metadata": cx.meta(cx.name, COMPONENT),
         "spec": {
-            "selector": { "matchLabels": selector(&name, "server") },
+            "selector": { "matchLabels": cx.selector(COMPONENT) },
             "endpoints": [{ "port": "http", "path": "/metrics", "interval": "30s" }],
         },
     })
 }
 
-fn prometheus_rule(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
+fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
     json!({
         "apiVersion": "monitoring.coreos.com/v1",
         "kind": "PrometheusRule",
-        "metadata": meta(&name, &ns, labels(&name, "server"), &owner),
+        "metadata": cx.meta(cx.name, COMPONENT),
         "spec": {
             "groups": [{
                 "name": "lumen.slo",
                 "rules": [{
                     "alert": "LumenNoReadyServingPods",
-                    "expr": format!("kube_deployment_status_replicas_available{{deployment=\"{name}\"}} == 0"),
+                    "expr": format!("kube_deployment_status_replicas_available{{deployment=\"{}\"}} == 0", cx.name),
                     "for": "2m",
                     "labels": { "severity": "critical" },
                     "annotations": { "summary": "No ready lumen serving pods for {{ $labels.deployment }}" },

@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-05T04:06:32.460494+00:00"
-digest = "sha256:10a06bb3466bc66539e98e4ee08da15e6f0913878af4965b501fdf64e642de71"
-source_digest = "sha256:10a06bb3466bc66539e98e4ee08da15e6f0913878af4965b501fdf64e642de71"
-ir_digest = "sha256:0af18133baf4397207ec5d6492d87726993df126fad507fa1932ca4eef780baf"
+generated_at = "2026-07-05T09:16:13.308885+00:00"
+digest = "sha256:3b285853b9ec9b0f02bf884ed36196f6859e6b214647c72cab50a9421435629e"
+source_digest = "sha256:3b285853b9ec9b0f02bf884ed36196f6859e6b214647c72cab50a9421435629e"
+ir_digest = "sha256:9ec750c8181fd4dbe42b441de65577be4961722d00c46cc1bf167099e093a217"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
@@ -387,8 +387,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-render-rs.md"
-digest = "sha256:5709911ec5c4fadb4d1d46d9ecf59d442f23ddb3337d9fb975a61381db4a2a6b"
-ir_digest = "sha256:e3be88faed49fc08e82baf8c571562f4622feb08eff9ce43a10f37d048c0c709"
+digest = "sha256:5d1a54ff73ff9f9e274eb3ed65324641f0f81adfbc0d85117b389c9fca298f1f"
+ir_digest = "sha256:e7c73767174c1ec64756e6124037518e9b9540b39e2331a8cf4c6a134430a8b7"
 section_count = 3
 
 [[files]]
