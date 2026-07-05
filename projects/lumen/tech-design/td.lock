@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-05T15:13:56.262241+00:00"
-digest = "sha256:c1db1665e4e6afc6d26d65074069b584c7a3706dcf0912f05537b7c642fc4aaa"
-source_digest = "sha256:c1db1665e4e6afc6d26d65074069b584c7a3706dcf0912f05537b7c642fc4aaa"
-ir_digest = "sha256:3d88049fb04eddb6a62dfb18ff09ed76765175f0ea361650911ad8d1a2b3aed9"
+generated_at = "2026-07-05T16:22:50.816602+00:00"
+digest = "sha256:06297d9eb0c80736c6e5c950a0ed52992547a5ef9fb38e78732cbd99ef0fbe45"
+source_digest = "sha256:06297d9eb0c80736c6e5c950a0ed52992547a5ef9fb38e78732cbd99ef0fbe45"
+ir_digest = "sha256:1b5481895a6ed5581c050ce082771bb1bdfb0c8841702dd6306a163a04295dec"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
@@ -261,8 +261,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/lumen-tests.md"
-digest = "sha256:a7822200f1bc66a2ffa2e04101d894404738dbc849ba3555eed15730441c172b"
-ir_digest = "sha256:c435cee70c6d6d682b8bc709d8371dd2a468ee0770bd3b6729cb108e644676cb"
+digest = "sha256:bb0b82c1011d869b01236527d8ffd3320660b38c3a35f99afc3878c8e4570559"
+ir_digest = "sha256:dc5daea11d429d814c823d0955a0a067a86aead13337a617543f671e8c7900ae"
 section_count = 3
 
 [[files]]
@@ -315,8 +315,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-bin-lumen-rs.md"
-digest = "sha256:1da495d774627ba65e7f78b5e8cd9db811dbb98c756653cab8efa4449f1d887b"
-ir_digest = "sha256:d7adf840e4eca7aba29497a50edc258795aed6b1d416d9e04191a5469cddb16f"
+digest = "sha256:e33e4eb3db35b31b2aef4a04609776e12fa9ced3d87c0fbac17ca8ff828ee986"
+ir_digest = "sha256:0cfb284439168bb3114bc8e1e88ae0ad9ae20581471abd24b3623d0ab3371a07"
 section_count = 3
 
 [[files]]

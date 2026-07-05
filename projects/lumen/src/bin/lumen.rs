@@ -961,7 +961,13 @@ async fn resize_storage(args: K8sOperatorResizeStorageArgs) -> Result<()> {
     let outcomes =
         lumen::operator::resize::resize_instance(client, &args.namespace, &args.name, args.dry_run)
             .await?;
-    println!("{}", serde_json::to_string_pretty(&outcomes)?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "outcomes": outcomes,
+            "next": "done",
+        }))?
+    );
     Ok(())
 }
 
@@ -1108,6 +1114,7 @@ async fn dispatch_snapshot_import(args: SnapshotImportArgs) -> Result<()> {
             "status": "restored",
             "url": args.url.trim_end_matches('/'),
             "bytes": payload.len(),
+            "next": "done",
         }))?
     );
     Ok(())
