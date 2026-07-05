@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "projects/agentic-workflow/external-contracts"
 inventory_path = "projects/agentic-workflow/aw.toml"
-generated_at = "2026-06-29T09:39:27.625516+00:00"
-ir_digest = "sha256:2efc70ca1356119357c4d8a7cf40cf7dcd07a62259ba5a350fd3ecab5d9aa973"
-source_digest = "sha256:e0fd97b7473c069a33f60afa26f7fc949c4dca95a3950a8a2929735cb6810b02"
+generated_at = "2026-07-05T05:09:47.656243+00:00"
+ir_digest = "sha256:538b1e7138232b6e4235d92b1db6dbf3b7d720437585c4a8e47a85262d46f0b2"
+source_digest = "sha256:042e2cc2f095bfed1aec9cb891b0a15dc7fb8aaa0f3d4239a88debf8cfa9e907"
 tool_contracts = []
 
 [[sources]]
@@ -14,7 +14,7 @@ digest = "sha256:d5e43097cbde543eeb89e6668a5c6f47f239163b30007da8586144a2b1c6e14
 
 [[sources]]
 path = "projects/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md"
-digest = "sha256:819e48aa3c6badbdc81e8a43e1a1f00c80b5599a3c1476dcb3023bcdbba52e76"
+digest = "sha256:70b742dbb795276a0eb8d14bcd81988250c43a96d453234a2e15d730f44ef8e4"
 
 [[sources]]
 path = "projects/agentic-workflow/tech-design/surface/specs/aw-completeness-placeholder-gate.md"
@@ -622,12 +622,12 @@ contract_id = "workflow-root-runner-cli-workflow-chain"
 dimension = "behavior"
 source_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#workflow-root-runner-cli-workflow-chain"
 test_path = "projects/agentic-workflow/tests/behavior_workflow_root_runner_cli_workflow_chain.rs"
-command = "cargo test -p agentic-workflow --lib root_parser_accepts_capability_and_wi_roots -- --nocapture"
+command = "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
 required_for_production = true
-assertions = ["aw run root parser accepts capability and work-item roots"]
+assertions = ["CLI workflow chain emit sites resolve through the real clap tree for capability and work-item roots"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ae383f12b99f27c6839a222312eb064d07ba2476a3dc547cee76d95dd9b6ad42"
+digest = "sha256:cddd6f1dee8988928e32ffe62a7edf8765e5ff8757e3eb7bf7e471e232bbc8b5"
 
 [[cases]]
 id = "workflow-root-runner-parent-rollup-routing"
