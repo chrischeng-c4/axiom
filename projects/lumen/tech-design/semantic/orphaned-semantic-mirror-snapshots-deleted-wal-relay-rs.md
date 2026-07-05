@@ -50,40 +50,39 @@ flowchart TD
 
 ```mermaid
 ---
-id: lumen-orphaned-semantic-mirror-verification
+id: lumen-orphaned-semantic-mirror-contract-tests
 requirements:
-  source_sweep:
+  sweep_empty:
     id: R1
-    text: "A semantic/source sweep over '# Standardized <path>' targets reports no mirrors whose target path is missing on disk."
+    text: "The semantic/source sweep prints no missing target entries after cleanup."
     kind: regression
     risk: medium
     verify: command
-  named_orphans_removed:
+  deleted_files_absent:
     id: R2
-    text: "The wal_relay source and test mirror files named by the sweep are removed."
+    text: "`projects-lumen-src-wal_relay-rs.md` and `projects-lumen-tests-wal_relay-rs.md` are absent."
     kind: functional
     risk: medium
     verify: command
-  td_lock:
+  no_ha_reference:
     id: R3
-    text: "projects/lumen/tech-design/td.lock is refreshed after deleting TD files."
-    kind: traceability
-    risk: medium
+    text: "The deleted semantic mirror no longer carries the stale `see HA.md` reference."
+    kind: documentation
+    risk: low
     verify: command
-  td_valid:
+  td_check:
     id: R4
-    text: "The cleanup TD validates with aw td check."
+    text: "The cleanup TD validates with `aw td check`."
     kind: governance
     risk: low
     verify: command
 ---
 flowchart TD
-    r1[R1 missing-target sweep empty] --> shell[semantic/source sweep command]
-    r2[R2 wal_relay mirrors absent] --> shell
-    r3[R3 td.lock refreshed] --> lock[aw td lock --project lumen]
+    r1[R1 sweep empty] --> shell[semantic/source sweep]
+    r2[R2 deleted files absent] --> absent[test ! -e orphan files]
+    r3[R3 no stale HA mirror] --> absent
     r4[R4 TD check] --> check[aw td check cleanup TD]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
