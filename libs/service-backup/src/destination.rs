@@ -26,8 +26,10 @@ pub enum BackupDestination {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         credentials_secret: Option<String>,
     },
-    /// Google Cloud Storage. Prefer workload identity; use
-    /// `credentialsSecret` only for explicit key-based deployments.
+    /// Google Cloud Storage. Parsed and serialized as part of the shared
+    /// backup schema, but not yet backed by a production sink implementation.
+    /// Prefer workload identity; use `credentialsSecret` only once a real GCS
+    /// adapter exists.
     Gcs {
         bucket: String,
         #[serde(default)]
@@ -38,8 +40,9 @@ pub enum BackupDestination {
 }
 
 impl BackupDestination {
-    /// Parse the common URI spellings used by operators and CLIs:
-    /// `file:///path`, `s3://bucket/prefix`, and `gs://bucket/prefix`.
+    /// Parse the common URI spellings used by operators and CLIs.
+    /// `gs://bucket/prefix` remains schema-compatible so configs can validate
+    /// and round-trip, but runners still fail loudly until a GCS adapter lands.
     pub fn from_uri(raw: &str) -> Result<Self> {
         let raw = raw.trim();
         ensure!(!raw.is_empty(), "backup destination URI is empty");

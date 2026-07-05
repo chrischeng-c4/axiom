@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-07-05T15:05:29.479081+00:00"
-digest = "sha256:a98dbb7a4f7e6cf67170449b8565c2f3d4b6acc5c70765392d37dc0843bb00f6"
-source_digest = "sha256:a98dbb7a4f7e6cf67170449b8565c2f3d4b6acc5c70765392d37dc0843bb00f6"
-ir_digest = "sha256:4df03bafb2d0c819330782c33f2698dc0af83367563fb81808191a5d5e9e57df"
+generated_at = "2026-07-05T15:13:56.262241+00:00"
+digest = "sha256:c1db1665e4e6afc6d26d65074069b584c7a3706dcf0912f05537b7c642fc4aaa"
+source_digest = "sha256:c1db1665e4e6afc6d26d65074069b584c7a3706dcf0912f05537b7c642fc4aaa"
+ir_digest = "sha256:3d88049fb04eddb6a62dfb18ff09ed76765175f0ea361650911ad8d1a2b3aed9"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md"
@@ -315,8 +315,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-bin-lumen-rs.md"
-digest = "sha256:466d876ca1a793546e34ec2514e52fd33a2def5414365592eca0a3376cc0865a"
-ir_digest = "sha256:ba894f8e5bef5590f3d96f11b87915b620a87debd1cf1bccafd688c2d4f42cfc"
+digest = "sha256:1da495d774627ba65e7f78b5e8cd9db811dbb98c756653cab8efa4449f1d887b"
+ir_digest = "sha256:d7adf840e4eca7aba29497a50edc258795aed6b1d416d9e04191a5469cddb16f"
 section_count = 3
 
 [[files]]
@@ -363,8 +363,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-crd-rs.md"
-digest = "sha256:12ed6f9f1486a1b641de807c88fb187b18fddff8b8892caab27e295e021a36fe"
-ir_digest = "sha256:60c7ea669816718106cd0ba5128dc039ab06aa7723a38dd1936d0e8438ffbff7"
+digest = "sha256:132f8a52c6482d8740ad679d8a22170289359efcb1750a7a3098864b8ec197b4"
+ir_digest = "sha256:623ff62be26f18dbb738a158bb1f23de474b34839fe9f15c387453292f88200f"
 section_count = 3
 
 [[files]]
@@ -429,8 +429,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-lumen-src-spec-rs.md"
-digest = "sha256:0645afe94fbab5d1b9e2b87fa32a7c36a7bdc187cad27832c0e9091a7e301e21"
-ir_digest = "sha256:ae65e72604a16c23eb7fc18761d31876a409a5c622200932d2e33445c1c5d07b"
+digest = "sha256:2b7dd3b9f3e48045a617cbfc5785ced3ac147bad22338275158b49ca8835a20c"
+ir_digest = "sha256:8794b50182a7a21aa792d1ad4773e1199d05135e31b14c98f87312118c44cb25"
 section_count = 3
 
 [[files]]

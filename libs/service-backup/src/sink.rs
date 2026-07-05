@@ -85,19 +85,31 @@ pub struct UnsupportedCloudSink {
     pub destination: BackupDestination,
 }
 
+impl UnsupportedCloudSink {
+    fn action_message(&self) -> String {
+        match &self.destination {
+            BackupDestination::Gcs { .. } => format!(
+                "backup destination {} parses as GCS, but service-backup does not yet ship a GCS sink; use file:// or s3:// for production, or remove the gs:// config until GCS support lands",
+                self.destination.identity()
+            ),
+            BackupDestination::S3 { .. } => format!(
+                "backup destination {} requires the service-backup `s3` feature in the runner; rebuild with `--features s3` or use file://",
+                self.destination.identity()
+            ),
+            BackupDestination::Local { .. } => {
+                unreachable!("local destinations never use UnsupportedCloudSink")
+            }
+        }
+    }
+}
+
 impl BackupSink for UnsupportedCloudSink {
     fn put(&self, _timestamp: SystemTime, _payload: &[u8]) -> Result<String> {
-        bail!(
-            "backup destination {} requires a cloud adapter feature in the runner",
-            self.destination.identity()
-        )
+        bail!("{}", self.action_message())
     }
 
     fn prune(&self, _max_age_seconds: u64) -> Result<usize> {
-        bail!(
-            "backup destination {} requires a cloud adapter feature in the runner",
-            self.destination.identity()
-        )
+        bail!("{}", self.action_message())
     }
 
     fn identity(&self) -> String {
@@ -143,17 +155,21 @@ mod tests {
     }
 
     #[test]
-    fn gcs_sink_is_explicitly_unsupported_without_adapter() {
+    fn gcs_sink_reports_actionable_unsupported_message() {
         let dest = BackupDestination::from_uri("gs://bucket/prefix").unwrap();
         let sink = sink_from_destination(&dest).unwrap();
-        assert!(sink.put(SystemTime::now(), b"x").is_err());
+        let err = sink.put(SystemTime::now(), b"x").unwrap_err().to_string();
+        assert!(err.contains("does not yet ship a GCS sink"));
+        assert!(err.contains("use file:// or s3://"));
     }
 
     #[cfg(not(feature = "s3"))]
     #[test]
-    fn s3_sink_is_explicitly_unsupported_without_adapter() {
+    fn s3_sink_reports_feature_action_when_unlinked() {
         let dest = BackupDestination::from_uri("s3://bucket/prefix").unwrap();
         let sink = sink_from_destination(&dest).unwrap();
-        assert!(sink.put(SystemTime::now(), b"x").is_err());
+        let err = sink.put(SystemTime::now(), b"x").unwrap_err().to_string();
+        assert!(err.contains("`s3` feature"));
+        assert!(err.contains("--features s3"));
     }
 }

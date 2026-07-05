@@ -94,8 +94,8 @@ enum Command {
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
     /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
-    /// and ship it to a destination (`file://`, `s3://`, `gs://`) via
-    /// `libs/service-backup`. No new snapshot mechanism — this only
+    /// and ship it to a destination (`file://`, `s3://`, or schema-only
+    /// `gs://`) via `libs/service-backup`. No new snapshot mechanism — this only
     /// schedules and transports the existing admin API. Typically invoked by
     /// the operator's optional backup CronJob (`spec.serving.backup`, see
     /// `lumen llm --topic storage`), but works standalone. Requires the `backup`
@@ -373,7 +373,8 @@ struct BackupArgs {
     #[arg(long)]
     url: String,
     /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
-    /// `gs://bucket/prefix` (parsed by `service_backup::BackupDestination::from_uri`).
+    /// schema-only `gs://bucket/prefix` (parsed, but the runner supports
+    /// `file://` and `s3://` sinks today).
     #[arg(long)]
     dest: String,
     /// Bearer token for the admin API (needs `Role::Admin` on `*`). Falls

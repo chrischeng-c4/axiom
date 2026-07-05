@@ -646,10 +646,14 @@ spec:
   serving:
     backup:
       schedule: "0 * * * *"        # CronJob.spec.schedule
-      destination: "s3://my-bucket/lumen-backups"  # file:// | s3:// | gs://
+      destination: "s3://my-bucket/lumen-backups"  # file:// | s3:// ; gs:// parses but is not yet a sink
       retentionSecs: 604800        # optional; drop objects older than this
       adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
 ```
+
+Use `file://` or `s3://` for production today. `gs://` stays in the schema so
+CRDs and CLI input can validate/round-trip, but `lumen backup` still fails
+loudly until `libs/service-backup` ships a real GCS adapter.
 
 Omitting `spec.serving.backup` renders no CronJob; the admin API above is
 still reachable manually either way.
