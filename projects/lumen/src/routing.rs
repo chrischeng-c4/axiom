@@ -2,11 +2,11 @@
 // CODEGEN-BEGIN
 //! Shard routing.
 //!
-//! Two layers, split between client and server:
-//!   Layer 1 (client) — shard math: `crc32(collection_id) % shard_count`.
-//!   Layer 2 (server) — Raft leader forwarding inside the shard.
-//!
-//! Clients only need Layer 1; the server handles re-election transparently.
+//! The stable routing contract is virtual-bucket based:
+//! `bucket = hash(collection_id, routing_key || external_id) % N`, then a
+//! versioned bucket-to-physical-shard map decides ownership. That keeps
+//! `shardCount` from becoming a permanent `hash % shardCount` data contract,
+//! which is required for operator-managed shard splits.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -28,27 +28,147 @@ use crate::types::{
     SearchRequest, SearchResponse, SortOrder,
 };
 
+pub const DEFAULT_VIRTUAL_BUCKET_COUNT: u32 = 4096;
+
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub fn shard_index(collection_id: &str, shard_count: u32) -> u32 {
-    debug_assert!(shard_count > 0, "shard_count must be > 0");
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(collection_id.as_bytes());
-    hasher.finalize() % shard_count
+    let map = VirtualBucketShardMap::balanced(0, DEFAULT_VIRTUAL_BUCKET_COUNT, shard_count)
+        .expect("shard_count must be > 0");
+    map.route_key(collection_id, collection_id).shard
 }
 
 /// Row/document routing for a sharded local serving node. Collection-level
-/// routing (`shard_index`) sends a whole collection to a cluster shard; this
-/// function splits documents *inside* that collection across local shard engines
-/// so write apply can run on multiple cores while each document remains owned by
-/// exactly one shard.
+/// routing now uses the same virtual-bucket map as cluster routing, with
+/// `external_id` as the default routing key. That lets one large collection
+/// spread across shards while each document remains owned by exactly one shard.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub fn document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize {
-    debug_assert!(shard_count > 0, "shard_count must be > 0");
+    let physical = u32::try_from(shard_count).expect("shard_count must fit in u32");
+    let map = VirtualBucketShardMap::balanced(0, DEFAULT_VIRTUAL_BUCKET_COUNT, physical)
+        .expect("shard_count must be > 0");
+    map.route_document(collection_id, None, external_id).shard as usize
+}
+
+fn route_hash(collection_id: &str, key: &str) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(collection_id.as_bytes());
     hasher.update(&[0]);
-    hasher.update(external_id.as_bytes());
-    (hasher.finalize() as usize) % shard_count
+    hasher.update(key.as_bytes());
+    hasher.finalize()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+pub struct ShardRoute {
+    pub map_version: u64,
+    pub virtual_bucket_count: u32,
+    pub physical_shard_count: u32,
+    pub bucket: u32,
+    pub shard: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+pub enum SearchShardTarget {
+    All,
+    One(ShardRoute),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+pub struct VirtualBucketShardMap {
+    version: u64,
+    assignments: Arc<Vec<u32>>,
+    physical_shard_count: u32,
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+impl VirtualBucketShardMap {
+    pub fn balanced(
+        version: u64,
+        virtual_bucket_count: u32,
+        physical_shard_count: u32,
+    ) -> Result<Self> {
+        if virtual_bucket_count == 0 {
+            bail!("virtual_bucket_count must be > 0");
+        }
+        if physical_shard_count == 0 {
+            bail!("physical_shard_count must be > 0");
+        }
+        let assignments = (0..virtual_bucket_count)
+            .map(|bucket| bucket % physical_shard_count)
+            .collect();
+        Self::new(version, assignments, physical_shard_count)
+    }
+
+    pub fn new(version: u64, assignments: Vec<u32>, physical_shard_count: u32) -> Result<Self> {
+        if assignments.is_empty() {
+            bail!("shard map must contain at least one virtual bucket");
+        }
+        if physical_shard_count == 0 {
+            bail!("physical_shard_count must be > 0");
+        }
+        for &shard in &assignments {
+            if shard >= physical_shard_count {
+                bail!(
+                    "bucket assignment points to shard {shard}, but physical_shard_count is {physical_shard_count}"
+                );
+            }
+        }
+        Ok(Self {
+            version,
+            assignments: Arc::new(assignments),
+            physical_shard_count,
+        })
+    }
+
+    pub fn single() -> Self {
+        Self::new(0, vec![0], 1).expect("single shard map is valid")
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    pub fn virtual_bucket_count(&self) -> u32 {
+        self.assignments.len() as u32
+    }
+
+    pub fn physical_shard_count(&self) -> u32 {
+        self.physical_shard_count
+    }
+
+    pub fn route_document(
+        &self,
+        collection_id: &str,
+        routing_key: Option<&str>,
+        external_id: &str,
+    ) -> ShardRoute {
+        self.route_key(collection_id, routing_key.unwrap_or(external_id))
+    }
+
+    pub fn route_key(&self, collection_id: &str, routing_key: &str) -> ShardRoute {
+        let bucket = route_hash(collection_id, routing_key) % self.virtual_bucket_count();
+        let shard = self.assignments[bucket as usize];
+        ShardRoute {
+            map_version: self.version,
+            virtual_bucket_count: self.virtual_bucket_count(),
+            physical_shard_count: self.physical_shard_count,
+            bucket,
+            shard,
+        }
+    }
+
+    pub fn search_target(
+        &self,
+        collection_id: &str,
+        routing_key: Option<&str>,
+    ) -> SearchShardTarget {
+        match routing_key {
+            Some(key) => SearchShardTarget::One(self.route_key(collection_id, key)),
+            None => SearchShardTarget::All,
+        }
+    }
 }
 
 /// DNS for a given shard's stable client entry (any replica will do —
@@ -62,13 +182,23 @@ pub fn shard_host(prefix: &str, shard: u32, headless_service: &str) -> String {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub struct EngineShardSearch {
     shards: Arc<Vec<Arc<Engine>>>,
+    shard_map: VirtualBucketShardMap,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 impl EngineShardSearch {
     pub fn new(shards: Vec<Arc<Engine>>) -> Self {
+        let shard_count = u32::try_from(shards.len()).expect("shard count must fit in u32");
+        let shard_map =
+            VirtualBucketShardMap::balanced(0, DEFAULT_VIRTUAL_BUCKET_COUNT, shard_count.max(1))
+                .expect("balanced shard map");
+        Self::new_with_shard_map(shards, shard_map)
+    }
+
+    pub fn new_with_shard_map(shards: Vec<Arc<Engine>>, shard_map: VirtualBucketShardMap) -> Self {
         Self {
             shards: Arc::new(shards),
+            shard_map,
         }
     }
 
@@ -84,10 +214,22 @@ impl EngineShardSearch {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 impl SearchBackend for EngineShardSearch {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
+        let selected_shards: Vec<Arc<Engine>> = match self
+            .shard_map
+            .search_target(collection_id, req.routing_key.as_deref())
+        {
+            SearchShardTarget::All => self.shards.iter().cloned().collect(),
+            SearchShardTarget::One(route) => {
+                let Some(engine) = self.shards.get(route.shard as usize) else {
+                    bail!("shard map routed to missing shard {}", route.shard);
+                };
+                vec![engine.clone()]
+            }
+        };
         search_shards_parallel(
             collection_id,
             req,
-            self.shards.as_slice(),
+            selected_shards.as_slice(),
             |engine, collection_id, req| Ok(engine.search(collection_id, req)?),
             |hit, field| {
                 self.shards.iter().find_map(|engine| {
@@ -105,13 +247,26 @@ impl SearchBackend for EngineShardSearch {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 pub struct EngineShardWrite {
     writers: Arc<Vec<Arc<WriteCoordinator>>>,
+    shard_map: VirtualBucketShardMap,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
 impl EngineShardWrite {
     pub fn new(writers: Vec<Arc<WriteCoordinator>>) -> Self {
+        let shard_count = u32::try_from(writers.len()).expect("shard count must fit in u32");
+        let shard_map =
+            VirtualBucketShardMap::balanced(0, DEFAULT_VIRTUAL_BUCKET_COUNT, shard_count.max(1))
+                .expect("balanced shard map");
+        Self::new_with_shard_map(writers, shard_map)
+    }
+
+    pub fn new_with_shard_map(
+        writers: Vec<Arc<WriteCoordinator>>,
+        shard_map: VirtualBucketShardMap,
+    ) -> Self {
         Self {
             writers: Arc::new(writers),
+            shard_map,
         }
     }
 
@@ -215,7 +370,10 @@ impl WriteBackend for EngineShardWrite {
             .collect();
 
         for item in req.items {
-            let shard = document_shard_index(&collection_id, &item.external_id, self.writers.len());
+            let shard = self
+                .shard_map
+                .route_document(&collection_id, None, &item.external_id)
+                .shard as usize;
             shard_reqs[shard].items.push(item);
         }
 
@@ -265,7 +423,10 @@ impl WriteBackend for EngineShardWrite {
         field: Option<String>,
     ) -> Result<()> {
         self.require_shards()?;
-        let shard = document_shard_index(&collection_id, &external_id, self.writers.len());
+        let shard = self
+            .shard_map
+            .route_document(&collection_id, None, &external_id)
+            .shard as usize;
         match self.writers[shard]
             .submit(RaftLogEntry::Delete {
                 collection_id,
@@ -463,6 +624,62 @@ mod tests {
     }
 
     #[test]
+    fn virtual_bucket_map_preserves_single_shard_compatibility() {
+        let map = VirtualBucketShardMap::balanced(7, 128, 1).unwrap();
+        for external_id in ["a", "b", "large-collection-row"] {
+            let route = map.route_document("catalog", None, external_id);
+            assert_eq!(route.map_version, 7);
+            assert_eq!(route.virtual_bucket_count, 128);
+            assert_eq!(route.physical_shard_count, 1);
+            assert_eq!(route.shard, 0);
+        }
+    }
+
+    #[test]
+    fn virtual_bucket_map_distributes_one_large_collection_by_external_id() {
+        let map = VirtualBucketShardMap::balanced(1, 1024, 8).unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        for i in 0..512 {
+            seen.insert(
+                map.route_document("one-big-collection", None, &format!("doc-{i}"))
+                    .shard,
+            );
+        }
+        assert!(
+            seen.len() > 1,
+            "external_id routing collapsed one collection to one shard"
+        );
+    }
+
+    #[test]
+    fn versioned_bucket_maps_can_reassign_one_bucket() {
+        let key = key_for_bucket("catalog", 4, 1);
+        let before = VirtualBucketShardMap::new(1, vec![0, 0, 1, 1], 2).unwrap();
+        let after = VirtualBucketShardMap::new(2, vec![0, 1, 1, 1], 2).unwrap();
+
+        let old_route = before.route_key("catalog", &key);
+        let new_route = after.route_key("catalog", &key);
+
+        assert_eq!(old_route.bucket, 1);
+        assert_eq!(new_route.bucket, 1);
+        assert_eq!(old_route.shard, 0);
+        assert_eq!(new_route.shard, 1);
+        assert_eq!(old_route.map_version, 1);
+        assert_eq!(new_route.map_version, 2);
+    }
+
+    #[test]
+    fn search_target_scatter_without_key_and_targets_with_key() {
+        let map = VirtualBucketShardMap::balanced(3, 256, 4).unwrap();
+        assert_eq!(map.search_target("catalog", None), SearchShardTarget::All);
+        let SearchShardTarget::One(route) = map.search_target("catalog", Some("tenant-a")) else {
+            panic!("routing key should target one shard");
+        };
+        assert!(route.shard < 4);
+        assert_eq!(route.map_version, 3);
+    }
+
+    #[test]
     fn shard_host_formats_dns() {
         let h = shard_host("lumen", 2, "lumen-peer");
         assert_eq!(h, "lumen-2.lumen-peer");
@@ -543,10 +760,21 @@ mod tests {
             }),
             limit: 3,
             cursor: None,
+            routing_key: None,
             sort,
             track_total: true,
             collapse: None,
         }
+    }
+
+    fn key_for_bucket(collection_id: &str, bucket_count: u32, desired_bucket: u32) -> String {
+        for i in 0..10_000 {
+            let key = format!("key-{i}");
+            if route_hash(collection_id, &key) % bucket_count == desired_bucket {
+                return key;
+            }
+        }
+        panic!("could not find test key for bucket {desired_bucket}");
     }
 
     fn search_resp<const N: usize>(hits: [SearchHit; N], total: u64) -> SearchResponse {

@@ -68,9 +68,9 @@ agent integration remain first-class domain roots.
 | Duplicate & Nested Search | - | implemented | verified | conformance | ready | domain: duplicates, group/has_child/collapse, exists, and CJK substring cases |
 | Schema & Ops Lifecycle | - | implemented | verified | conformance | ready | domain: collection DDL, drop-field drain, reindex/replay, stats, and metadata |
 | Elastic Scale | - | implemented | verified | conformance | ready | domain: RAM-hot/disk-all columnar mmap segment tier |
-| Dynamic Shard Topology | 1179 | planned | planned | conformance | blocked | domain: versioned virtual-bucket shard map plus operator-managed shard split policy |
+| Dynamic Shard Topology | 1179 | implemented | partial | conformance | blocked | domain: versioned virtual-bucket shard map plus operator-managed shard split policy; remaining epic proof is kind dogfood plus actual gradual data movement |
 | Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
-| Replica Sync & Bootstrap | 1181 | planned | planned | conformance | blocked | domain: raft replica sync semantics plus empty-PVC snapshot seed before raft catch-up |
+| Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
 | Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
 | Agent Offline Integration | 4143 | implemented | verified | conformance | ready | domain: installed binary self-onboards agents with spec and llm topics |
@@ -474,22 +474,22 @@ Gate Inventory:
 ID: dynamic-shard-topology
 Type: Service
 Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied.
-EC Dimensions: behavior: planned issue 1182 - versioned virtual-bucket shard map conformance; behavior: planned issue 1180 - operator-owned reshard policy and kind topology proof
+EC Dimensions: behavior: `cargo test -p lumen --lib routing::tests` - versioned virtual-bucket shard map conformance; behavior: `cargo test -p lumen --features operator --test operator_render` - operator-owned reshard policy, storage topology, status, and shard-map CRD/render conformance
 Root WI: 1179
-Status: planned
+Status: candidate
 Required Verification: conformance, dogfood
 Promise:
 Scale storage by moving virtual buckets between physical shards under an
 operator-controlled workflow, while keeping replica HA and HPA-driven query
 capacity separate from data ownership.
 Gate Inventory:
-- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control
+- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; projects/lumen/src/routing.rs; projects/lumen/src/operator; projects/lumen/tests/operator_render.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| versioned-virtual-bucket-shard-map | epic | 1182 | planned | planned | conformance | #1182 |
-| storage-pressure-operator-split-policy | epic | 1180 | planned | planned | conformance | #1180 |
-| multi-shard-replica-kind-e2e | epic | 1179 | planned | planned | conformance | #1179 |
+| versioned-virtual-bucket-shard-map | epic | 1182 | implemented | passing | conformance | projects/lumen/src/routing.rs<br>projects/lumen/tests/operator_render.rs |
+| storage-pressure-operator-split-policy | epic | 1180 | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
+| multi-shard-replica-kind-e2e | epic | 1179 | planned | blocked | dogfood | #1179 |
 
 ### Backup & Restore
 
@@ -517,10 +517,10 @@ Gate Inventory:
 
 ID: replica-sync-bootstrap
 Type: Service
-Surfaces: RaftHost: leader forwarding, append/apply, install snapshot, compaction, and follower catch-up.; Lumen engine state machine: committed `WalRecord` bytes applied into shard-local index state.; Backup/seed: object-store or service-backup snapshot seed before raft delta catch-up for empty PVCs.
-EC Dimensions: stability: existing raft and backup tests cover live replica convergence and cold restore separately; behavior: planned issue 1181 - empty-PVC seed then raft catch-up
+Surfaces: RaftHost: leader forwarding, append/apply, install snapshot, compaction, and follower catch-up.; Lumen engine state machine: committed `WalRecord` bytes applied into shard-local index state.; Backup/seed: exact `file://` or backup-enabled `s3://bucket/key` SnapshotV1 seed before WAL/raft delta catch-up for empty PVCs.
+EC Dimensions: stability: existing raft and backup tests cover live replica convergence and cold restore separately; behavior: `cargo test -p lumen --bin lumen bootstrap_seed_file_restores_snapshot_before_catchup -- --nocapture` - empty-PVC seed restore before catch-up; behavior: `cargo test -p service-backup` - shared exact object fetch contract
 Root WI: 1181
-Status: planned
+Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Make replica behavior agent-readable: existing PVC restarts replay local raft
@@ -528,13 +528,13 @@ state/logs, replacement replicas seed from snapshot/object storage before raft
 delta catch-up, and disaster recovery restores from external backup without
 confusing backup with live replica synchronization.
 Gate Inventory:
-- #1181 empty-PVC replica bootstrap seed path; projects/lumen/src/raft.rs; projects/lumen/src/raft_sm.rs; libs/raft-host; libs/service-backup
+- #1181 empty-PVC replica bootstrap seed path; projects/lumen/src/bin/lumen.rs; projects/lumen/src/raft.rs; projects/lumen/src/raft_sm.rs; libs/raft-host; libs/service-backup
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | raft-log-replica-sync-existing-pvc | epic | - | implemented | passing | conformance | projects/lumen/src/raft.rs<br>projects/lumen/src/raft_sm.rs<br>libs/raft-host |
 | external-backup-disaster-recovery-seed | epic | - | implemented | passing | conformance | projects/lumen/tests/backup_restore_e2e.rs |
-| empty-pvc-object-store-seed-before-raft-catch-up | epic | 1181 | planned | planned | conformance | #1181 |
+| empty-pvc-object-store-seed-before-raft-catch-up | epic | 1181 | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>libs/service-backup/src/source.rs |
 
 ### Observability
 
@@ -582,7 +582,7 @@ Gate Inventory:
 | kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | projects/lumen/k8s |
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
 | kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
-| operator-owned-storage-topology-and-reshard-status | epic | 1180 | planned | planned | conformance | #1180 |
+| operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
 
 ### Agent Offline Integration
 

@@ -10,7 +10,8 @@
 //! runner calls the service's admin backup endpoint or CLI, then writes the
 //! returned bytes through a [`BackupSink`]. Local is always available, S3 is
 //! feature-gated here, and `gs://` remains schema-compatible until this crate
-//! grows a real GCS sink.
+//! grows a real GCS sink. Bootstrap/restore flows can read exact snapshot
+//! object URIs through [`fetch_backup_object`].
 
 mod destination;
 mod policy;
@@ -18,8 +19,10 @@ mod runner;
 #[cfg(feature = "s3")]
 mod s3;
 mod sink;
+mod source;
 
 pub use destination::BackupDestination;
 pub use policy::{BackupPolicy, RetentionPolicy};
 pub use runner::{run_backup_once, BackupObject, BackupRunResult};
 pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink};
+pub use source::fetch_backup_object;

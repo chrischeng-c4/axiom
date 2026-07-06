@@ -103,9 +103,10 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ];
-    if lumen.spec.replicas_per_shard <= 1 {
-        // Single member, no raft consensus: HPA owns the live replica count
-        // (unchanged from the pre-StatefulSet-unconditional Deployment path).
+    if lumen.spec.replicas_per_shard <= 1 && lumen.spec.shard_count <= 1 {
+        // Single shard, no raft consensus: keep the legacy dev HPA path.
+        // Multi-shard storage ownership is fixed by shardCount and is never
+        // changed by HPA.
         out.push(serving_hpa(lumen, &cx));
     }
     // raft-HA (`replicasPerShard > 1`): no HPA — raft needs a fixed membership.
@@ -298,7 +299,12 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
     });
     if lumen.spec.replicas_per_shard <= 1 {
         if let Some(spec) = sts["spec"].as_object_mut() {
-            spec.insert("replicas".into(), json!(s.autoscaling.min_replicas));
+            let replicas = if lumen.spec.shard_count > 1 {
+                lumen.spec.shard_count as i32
+            } else {
+                s.autoscaling.min_replicas
+            };
+            spec.insert("replicas".into(), json!(replicas));
         }
         if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
             env.retain(|value| {
@@ -339,6 +345,18 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
             "value": TOKEN_REGISTRY_FILE,
         }));
     }
+    if let Some(bootstrap) = &lumen.spec.serving.bootstrap {
+        env.push(json!({
+            "name": "LUMEN_BOOTSTRAP_SEED_URI",
+            "value": bootstrap.seed_uri,
+        }));
+        if let Some(limit) = bootstrap.max_bytes_per_sec {
+            env.push(json!({
+                "name": "LUMEN_BOOTSTRAP_MAX_BYTES_PER_SEC",
+                "value": limit.to_string(),
+            }));
+        }
+    }
     env
 }
 
@@ -346,10 +364,22 @@ fn serving_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
     let name = format!("{}-config", cx.name);
     let mut data = json!({
         "SHARD_COUNT": lumen.spec.shard_count.to_string(),
+        "SHARD_MAP_VERSION": lumen.spec.shard_map.version.to_string(),
+        "VIRTUAL_BUCKET_COUNT": lumen.spec.shard_map.virtual_bucket_count.to_string(),
         "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
         "LUMEN_PORT": CLIENT_PORT.to_string(),
         "LUMEN_AUTH": lumen.spec.auth.as_env(),
     });
+    if !lumen.spec.shard_map.assignments.is_empty() {
+        data["SHARD_MAP_ASSIGNMENTS"] = json!(lumen
+            .spec
+            .shard_map
+            .assignments
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(","));
+    }
     if let Some(level) = &lumen.spec.log_level {
         data["LUMEN_LOG_LEVEL"] = json!(level);
     }

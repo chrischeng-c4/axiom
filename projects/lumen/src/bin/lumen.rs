@@ -610,8 +610,8 @@ struct ServeArgs {
     #[cfg(feature = "raft-wal")]
     #[arg(long, env = "LUMEN_RAFT_PORT", default_value_t = 7374)]
     raft_port: u16,
-    /// Shard count for client-side routing (`crc32(collection) % N`).
-    /// Install-time topology constant.
+    /// Physical storage shard count. Data ownership uses the versioned
+    /// virtual-bucket map, not permanent `hash % shardCount` routing.
     #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
     shard_count: u32,
     /// Directory for RDB snapshots (cold-start baseline). When unset,
@@ -629,6 +629,15 @@ struct ServeArgs {
     /// writes still apply to the node's local engine/log.
     #[arg(long, env = "LUMEN_SEARCH_SHARD_SEGMENT_DIRS", value_delimiter = ',')]
     search_shard_segment_dirs: Vec<PathBuf>,
+    /// Optional SnapshotV1 JSON seed URI for empty-PVC bootstrap. Supports
+    /// exact `file://` paths and, in backup-enabled builds, exact
+    /// `s3://bucket/key` objects.
+    #[arg(long, env = "LUMEN_BOOTSTRAP_SEED_URI")]
+    bootstrap_seed_uri: Option<String>,
+    /// Optional seed fetch throttle advertised in CR/env. Exact object fetch is
+    /// a one-shot read; streaming throttle belongs in the source adapter.
+    #[arg(long, env = "LUMEN_BOOTSTRAP_MAX_BYTES_PER_SEC")]
+    bootstrap_max_bytes_per_sec: Option<u64>,
     /// Seconds between RDB snapshots when `--data-dir` is set.
     #[arg(long, env = "LUMEN_SNAPSHOT_SECS", default_value_t = 300)]
     snapshot_secs: u64,
@@ -1327,6 +1336,15 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     let engine = Arc::new(Engine::new());
 
+    if apply_bootstrap_seed(&engine, args.bootstrap_seed_uri.as_deref())? {
+        if let Some(limit) = args.bootstrap_max_bytes_per_sec {
+            tracing::info!(
+                max_bytes_per_sec = limit,
+                "bootstrap seed applied; read throttle reserved for object-store fetchers"
+            );
+        }
+    }
+
     // OTLP metrics push (opt-in, same endpoint as traces): observable
     // instruments read the engine's atomic counters and push to the collector.
     #[cfg(feature = "otel")]
@@ -1666,6 +1684,23 @@ async fn serve(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
+fn apply_bootstrap_seed(engine: &Engine, seed_uri: Option<&str>) -> Result<bool> {
+    let Some(seed_uri) = seed_uri else {
+        return Ok(false);
+    };
+    let bytes = service_backup::fetch_backup_object(seed_uri)
+        .with_context(|| format!("read bootstrap seed {seed_uri}"))?;
+    let snap: lumen::storage::SnapshotV1 =
+        serde_json::from_slice(&bytes).context("decode bootstrap SnapshotV1 JSON")?;
+    engine.restore(snap).context("apply bootstrap seed")?;
+    tracing::info!(
+        seed_uri,
+        bytes = bytes.len(),
+        "bootstrap seed restored before WAL/raft catch-up"
+    );
+    Ok(true)
+}
+
 /// Whether segment persistence is selected. Driven purely by `--persistence`:
 /// `false` for the default `cbor` mode (the binary's cold-start + snapshotter are
 /// byte-identical to today), `true` only when `--persistence=segment` is passed.
@@ -1940,5 +1975,86 @@ fn init_otel_meter(
 
     opentelemetry::global::set_meter_provider(provider);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumen::types::{
+        CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
+        QueryNode, SearchRequest, TermQuery,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn bootstrap_seed_file_restores_snapshot_before_catchup() {
+        let source = Engine::new();
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "tag".to_string(),
+            FieldSpec {
+                field_type: FieldType::Keyword,
+                analyzer: None,
+                multi: None,
+                dim: None,
+                metric: None,
+                backend: None,
+                quantize: None,
+            },
+        );
+        source
+            .create_collection("c", CreateCollectionRequest { fields })
+            .unwrap();
+        source
+            .index(
+                "c",
+                IndexRequest {
+                    items: vec![IndexItem {
+                        external_id: "doc-1".into(),
+                        field: "tag".into(),
+                        value: FieldValue::String("seeded".into()),
+                        version: None,
+                    }],
+                    request_id: None,
+                },
+            )
+            .unwrap();
+
+        let path = std::env::temp_dir().join(format!(
+            "lumen-bootstrap-seed-{}-{}.json",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&source.snapshot().unwrap()).unwrap(),
+        )
+        .unwrap();
+
+        let target = Engine::new();
+        let uri = format!("file://{}", path.display());
+        assert!(apply_bootstrap_seed(&target, Some(&uri)).unwrap());
+        let result = target
+            .search(
+                "c",
+                SearchRequest {
+                    query: QueryNode::Term(TermQuery {
+                        field: "tag".into(),
+                        value: FieldValue::String("seeded".into()),
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    routing_key: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.hits[0].external_id, "doc-1");
+
+        let _ = std::fs::remove_file(path);
+    }
 }
 // CODEGEN-END
