@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --features operator --test operator_render -- --nocapture
 // AW-EC-END
 
-// Contract: The kube-rs operator render path reconciles Lumen CRD inputs into serving resources.
+// Contract: The kube-rs operator render path reconciles Lumen CRD inputs into serving resources; issue #1180 owns storage-pressure reshard policy and status phases.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_k8s_operator_reconcile() {
