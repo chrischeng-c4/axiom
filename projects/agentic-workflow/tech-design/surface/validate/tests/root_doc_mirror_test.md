@@ -27,6 +27,8 @@ No public AST symbols.
 
 <!-- source-snapshot: path=projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs -->
 ```rust
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/validate/tests/root_doc_mirror_test.md#source
+// CODEGEN-BEGIN
 //! Root doc mirror contract (meta-doc sheet 1).
 //!
 //! `AGENTS.md` must equal `CLAUDE.md` plus a fixed whitelist of Codex-only
@@ -37,8 +39,8 @@ No public AST symbols.
 //! replaces "remember to edit both" with an executable contract.
 //!
 //! The whitelist constants come from `agentic_workflow::cli::doc_mirror` —
-//! the SAME module `aw init`'s AGENTS.md projection consumes (issue #984
-//! AC3), so the projector and this checker can never disagree.
+//! the SAME module root-doc producers consume (issue #984 AC3), so the
+//! projector and this checker can never disagree.
 
 use agentic_workflow::cli::doc_mirror::{
     AGENTS_TITLE, CLAUDE_TITLE, CODEX_RULES_HEADING, CODEX_TRANSLATE_PREFIX,
@@ -153,6 +155,8 @@ fn agents_md_is_claude_md_plus_codex_whitelist() {
         );
     }
 }
+// CODEGEN-END
+
 ```
 
 ## Changes
@@ -171,6 +175,6 @@ changes:
       suite with the first divergent line named. Issue #984 (AC3): the
       whitelist constants now import from `agentic_workflow::cli::doc_mirror`
       instead of duplicating them as private consts, so this checker and
-      `aw init`'s AGENTS.md projection share one definition.
+      root-doc producers share one definition.
     impl_mode: hand-written
 ```

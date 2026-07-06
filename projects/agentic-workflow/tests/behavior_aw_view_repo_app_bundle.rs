@@ -7,7 +7,7 @@
 // @contract aw-view-repo-app-bundle
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --app /private/tmp/AWRepoView.app
+// @command ./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app
 // AW-EC-END
 
 // Contract: native desktop bundle is produced as a macOS .app launcher
@@ -16,7 +16,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_view_repo_app_bundle() {
-    let command = "./target/debug/aw view --app /private/tmp/AWRepoView.app";
+    let command = "./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app";
     let id = "aw-view-repo-app-bundle";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

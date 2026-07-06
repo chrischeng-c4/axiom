@@ -1,5 +1,5 @@
 ---
-id: projects-sdd-tests-sync-check-test-rs
+id: projects-sdd-tests-project-registry-check-test-rs
 fill_sections: [overview, tests, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -10,12 +10,12 @@ capability_refs:
     rationale: "Issue/backend validation TDs verify AW Core client boundary behavior."
 ---
 
-# Sync Check Integration Tests
+# Project Registry Check Integration Tests
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Codegenerated integration tests for `aw sync --check` semantics. The test
+Codegenerated integration tests for project registry drift-check semantics. The test
 file is emitted through the Rust tests template using raw Rust preamble and
 test bodies, keeping the cross-language section type as `tests`.
 
@@ -24,7 +24,7 @@ test bodies, keeping the cross-language section type as `tests`.
 
 ```yaml
 preamble: |
-  //! External integration tests for `aw sync --check` semantics.
+  //! External integration tests for project registry drift-check semantics.
   //!
   //! Test T22 from the spec test plan: --check output references config.toml.
   //!
@@ -67,13 +67,13 @@ tests:
       // R11: diff output must reference config.toml (not projects.toml)
       assert!(
           diff_text.contains("config.toml"),
-          "aw sync --check output must reference config.toml;\ngot:\n{diff_text}"
+          "project registry drift output must reference config.toml;\ngot:\n{diff_text}"
       );
 
       // R9: must not reference the old projects.toml
       assert!(
           !diff_text.contains("projects.toml"),
-          "aw sync --check output must not reference projects.toml;\ngot:\n{diff_text}"
+          "project registry drift output must not reference projects.toml;\ngot:\n{diff_text}"
       );
   - name: check_no_drift_when_up_to_date
     body: |
@@ -115,7 +115,7 @@ tests:
 
 ```yaml
 changes:
-  - path: projects/agentic-workflow/tests/sync_check_test.rs
+  - path: projects/agentic-workflow/tests/project_registry_check_test.rs
     action: modify
     section: tests
     impl_mode: codegen

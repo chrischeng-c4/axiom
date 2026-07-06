@@ -143,7 +143,7 @@ pub fn detect_team_identity(cwd: &Path) -> Result<String> {
 // Channel parsing
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Parse `/tmp/aw-channel.md` into a `Vec<ChannelMessage>`.
+// Parse `/tmp/aw/chat/channel.md` into a `Vec<ChannelMessage>`.
 ///
 // Hand-coded substitute for the deferred `parse_markdown` primitive (#18).
 ///
@@ -677,7 +677,7 @@ fn listen_state_path() -> Result<PathBuf> {
 // Agents file helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Parse `/tmp/aw-channel-agents.md` into `Vec<AgentRegistration>`.
+// Parse `/tmp/aw/chat/agents.md` into `Vec<AgentRegistration>`.
 ///
 // /// @spec projects/agentic-workflow/tech-design/surface/specs/score-chat.md#logic
 fn parse_agents_file(path: &Path) -> Vec<AgentRegistration> {
@@ -865,11 +865,11 @@ mod tests {
     // REQ: projects/agentic-workflow/tech-design/surface/specs/score-chat.md#logic — replace_agent_section replaces existing entry
     #[test]
     fn test_replace_agent_section_replaces() {
-        let existing = "## agent-score\nname: score\nwt_path: /tmp/a\nbranch: main\ncapabilities: []\nlast_seen: old\n\n## agent-other\nname: other\n";
+        let existing = "## agent-score\nname: score\nwt_path: /tmp/aw/test/a\nbranch: main\ncapabilities: []\nlast_seen: old\n\n## agent-other\nname: other\n";
         let new_yaml =
-            "name: score\nwt_path: /tmp/b\nbranch: feat\ncapabilities: []\nlast_seen: new\n";
+            "name: score\nwt_path: /tmp/aw/test/b\nbranch: feat\ncapabilities: []\nlast_seen: new\n";
         let result = replace_agent_section(existing, "score", new_yaml);
-        assert!(result.contains("wt_path: /tmp/b"));
+        assert!(result.contains("wt_path: /tmp/aw/test/b"));
         assert!(result.contains("last_seen: new"));
         assert!(result.contains("## agent-other"));
         assert_eq!(result.matches("## agent-score").count(), 1);
@@ -881,7 +881,7 @@ mod tests {
         let result = replace_agent_section(
             "",
             "score",
-            "name: score\nwt_path: /tmp/b\nbranch: main\ncapabilities: []\nlast_seen: now\n",
+            "name: score\nwt_path: /tmp/aw/test/b\nbranch: main\ncapabilities: []\nlast_seen: now\n",
         );
         assert!(result.contains("## agent-score"));
         assert!(result.contains("name: score"));

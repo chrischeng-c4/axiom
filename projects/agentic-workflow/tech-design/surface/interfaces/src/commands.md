@@ -36,6 +36,7 @@ use clap::Subcommand;
 
 use crate::cli::capability;
 use crate::cli::chat;
+use crate::cli::conf;
 use crate::cli::ec;
 use crate::cli::generator;
 use crate::cli::guard;
@@ -45,33 +46,12 @@ use crate::cli::llm;
 use crate::cli::project;
 use crate::cli::standard_cli;
 use crate::cli::standardize;
-use crate::cli::sync;
 use crate::cli::view;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub enum Commands {
-    // =====================================================================
-    // Project initialization
-    // =====================================================================
-
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R1
-    /// Bootstrap .aw/ config and installed workflow skills/settings
-    Init {
-        /// Project name (deprecated, ignored)
-        #[arg(short, long)]
-        name: Option<String>,
-
-        /// Override version downgrade protection and force-replace all assets
-        #[arg(short, long)]
-        force: bool,
-
-        /// Read-only: report stale CLAUDE.md/AGENTS.md projections without writing (issue #984)
-        #[arg(long)]
-        check: bool,
-    },
-
     /// Create a greenfield project directory and bootstrap Agentic Workflow.
     // @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
     New(init::NewArgs),
@@ -92,8 +72,8 @@ pub enum Commands {
     /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
     View(view::ViewArgs),
 
-    /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
-    Sync(sync::SyncArgs),
+    /// Manage `.aw/config.toml` and Agentic Workflow configuration producers.
+    Conf(conf::ConfArgs),
 
     /// Manage work-items — list/show/create/validate across local + GitHub backends.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
@@ -130,17 +110,6 @@ pub enum Commands {
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub async fn run_command(cmd: Commands) -> Result<()> {
     match cmd {
-        // =================================================================
-        // Project initialization
-        // =================================================================
-        // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R2
-        Commands::Init { name, force, check } => {
-            if check {
-                init::run_check()?;
-            } else {
-                init::run(name.as_deref(), force, None).await?;
-            }
-        }
         Commands::New(args) => {
             init::run_new(args).await?;
         }
@@ -160,8 +129,8 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::View(args) => {
             view::run(args).await?;
         }
-        Commands::Sync(args) => {
-            sync::run(args)?;
+        Commands::Conf(args) => {
+            conf::run(args)?;
         }
         Commands::Issues(args) => {
             issues::run(args).await?;
@@ -196,6 +165,7 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
 }
 
 // CODEGEN-END
+
 ```
 
 ## Changes
@@ -222,7 +192,9 @@ changes:
     impl_mode: codegen
     section: source
     description: |
-      Issue #984 (init-projector slice 1/3): `Commands::Init` gains a
+      Issue #984 init-projector command wiring was removed with the retired
+      top-level init surface; root-doc projection coverage now lives behind
+      focused producer internals.
       read-only `--check` flag; `run_command` dispatches it to
       `init::run_check()` instead of the mutating `init::run(...)` path.
 ```

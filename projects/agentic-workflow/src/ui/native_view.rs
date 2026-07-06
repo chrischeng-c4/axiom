@@ -1953,20 +1953,20 @@ mod tests {
             layout: crate::cli::view::ViewLayout::LeftRight,
             repo: crate::cli::view::RepoViewRepo {
                 name: "repo".to_string(),
-                root: "/tmp/repo".to_string(),
+                root: "/tmp/aw/test/repo".to_string(),
                 item_count: 1,
                 project_count: 1,
                 library_count: 0,
             },
             repo_catalog: vec![crate::cli::view::RepoCatalogItem {
                 name: "repo".to_string(),
-                path: "/tmp/repo".to_string(),
+                path: "/tmp/aw/test/repo".to_string(),
                 current: true,
                 item_count: 1,
                 project_count: 1,
                 library_count: 0,
             }],
-            selected_repo: Some("/tmp/repo".to_string()),
+            selected_repo: Some("/tmp/aw/test/repo".to_string()),
             terminal: crate::cli::view::TerminalSnapshot {
                 title: "Terminal".to_string(),
                 lines: vec![
@@ -2044,7 +2044,7 @@ mod tests {
         let catalog = catalog_text(&snapshot);
         let detail = detail_text(&snapshot);
         assert!(catalog.contains("repo"));
-        assert!(catalog.contains("/tmp/repo"));
+        assert!(catalog.contains("/tmp/aw/test/repo"));
         assert!(detail.contains("Project / lib selector"));
         assert!(detail.contains("agentic-workflow"));
         assert!(detail.contains("Repo View Desktop App"));

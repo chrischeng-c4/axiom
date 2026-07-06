@@ -35,7 +35,7 @@ No public AST symbols.
 //! str>` — general traits with no CONTRIBUTING.md anchor at all).
 //!
 //! Two directions, both checked against the SAME `doc_mirror::TRAITS`
-//! constant that `aw init`'s trait-table projector consumes
+//! constant that the trait-table projector consumes
 //! (`crate::cli::doc_mirror::render_trait_table`), so the generator and this
 //! checker can never disagree (issue #1077 AC3):
 //!
@@ -146,6 +146,7 @@ fn every_service_archetype_h3_is_either_trait_anchored_or_marked_policy_only() {
     }
 }
 // CODEGEN-END
+
 ```
 
 ## Changes
@@ -160,8 +161,8 @@ changes:
       Issue #1077 (traits slice 1/3): bidirectional coverage test between
       `agentic_workflow::cli::doc_mirror::TRAITS` and CONTRIBUTING.md's
       "## Service archetype..." section, both directions imported from/
-      checked against the SAME production constant `aw init`'s trait-table
-      projector consumes, so the generator and this checker can never
+      checked against the SAME production constant the trait-table projector
+      consumes, so the generator and this checker can never
       disagree (AC3). `every_trait_contributing_anchor_resolves_to_a_real_heading`
       proves direction (a): every `TraitDef.contributing_anchor` must match
       a real heading line in CONTRIBUTING.md, so a renamed/removed heading

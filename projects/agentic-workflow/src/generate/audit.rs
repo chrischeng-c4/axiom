@@ -366,10 +366,9 @@ fn rustfmt_snippet(source: &str) -> std::io::Result<Option<String>> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let path = std::env::temp_dir().join(format!(
-        "agentic-workflow-audit-rustfmt-{}-{nanos}.rs",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join("aw").join("rustfmt");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}-{nanos}.rs", std::process::id()));
     std::fs::write(&path, source)?;
     let Some(rustfmt) = crate::git::find_rustfmt_bin() else {
         std::fs::remove_file(&path).ok();

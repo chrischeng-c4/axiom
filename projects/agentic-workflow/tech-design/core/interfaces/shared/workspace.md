@@ -21,24 +21,29 @@ Public API manifest for `projects/agentic-workflow/src/shared/workspace.rs` gene
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ARCHIVE_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 43 |  |
-| `AW_TMP_ROOT` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 37 |  |
-| `CHANGES_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 40 |  |
+| `ARCHIVE_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 49 |  |
+| `AW_TMP_ROOT` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 43 |  |
+| `CHANGES_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 46 |  |
 | `CONFIG_FILE` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 20 |  |
 | `ISSUES_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 34 |  |
+| `PAYLOADS_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 40 |  |
 | `SYNC_BEGIN_MARKER` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 24 |  |
 | `SYNC_END_MARKER` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 28 |  |
 | `TECH_DESIGN_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 31 |  |
+| `WORKITEMS_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 37 |  |
 | `WORKSPACE_DIR` | projects/agentic-workflow/src/shared/workspace.rs | constant | pub | 17 |  |
-| `archive_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 205 | archive_path(project_root: &Path) -> PathBuf |
-| `aw_tmp_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 53 | aw_tmp_path() -> PathBuf |
-| `change_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 199 | change_path(project_root: &Path, change_id: &str) -> PathBuf |
-| `changes_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 193 | changes_path(project_root: &Path) -> PathBuf |
-| `config_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 59 | config_path(project_root: &Path) -> PathBuf |
-| `issues_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 142 | issues_path(project_root: &Path) -> PathBuf |
-| `project_tech_design_paths` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 80 | project_tech_design_paths(project_root: &Path) -> Vec<(String, PathBuf)> |
-| `tech_design_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 69 | tech_design_path(project_root: &Path) -> PathBuf |
-| `workspace_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 47 | workspace_path(project_root: &Path) -> PathBuf |
+| `archive_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 236 | archive_path(project_root: &Path) -> PathBuf |
+| `aw_tmp_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 59 | aw_tmp_path() -> PathBuf |
+| `change_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 230 | change_path(project_root: &Path, change_id: &str) -> PathBuf |
+| `changes_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 224 | changes_path(project_root: &Path) -> PathBuf |
+| `config_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 74 | config_path(project_root: &Path) -> PathBuf |
+| `issues_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 157 | issues_path(project_root: &Path) -> PathBuf |
+| `payloads_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 176 | payloads_path(project_root: &Path) -> PathBuf |
+| `project_tech_design_paths` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 95 | project_tech_design_paths(project_root: &Path) -> Vec<(String, PathBuf)> |
+| `tech_design_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 84 | tech_design_path(project_root: &Path) -> PathBuf |
+| `workitems_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 164 | workitems_path(project_root: &Path) -> PathBuf |
+| `workspace_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 53 | workspace_path(project_root: &Path) -> PathBuf |
+| `workspace_runtime_path` | projects/agentic-workflow/src/shared/workspace.rs | function | pub | 66 | workspace_runtime_path(project_root: &Path) -> PathBuf |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -80,6 +85,9 @@ pub const TECH_DESIGN_DIR: &str = "tech-design";
 /// Local issue artifact directory (pre-tracker).
 pub const ISSUES_DIR: &str = "issues";
 
+/// Work-item draft and planning artifact directory.
+pub const WORKITEMS_DIR: &str = "workitems";
+
 /// Ephemeral payload round-trip artifact directory.
 pub const PAYLOADS_DIR: &str = "payloads";
 
@@ -102,6 +110,15 @@ pub fn workspace_path(project_root: &Path) -> PathBuf {
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn aw_tmp_path() -> PathBuf {
     PathBuf::from(AW_TMP_ROOT)
+}
+
+/// Path to the workspace-scoped runtime/cache root:
+/// `/tmp/aw/workspaces/<workspace>`.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn workspace_runtime_path(project_root: &Path) -> PathBuf {
+    aw_tmp_path()
+        .join("workspaces")
+        .join(workspace_cache_slug(project_root))
 }
 
 /// Path to the config file: `{project_root}/.aw/config.toml`
@@ -190,10 +207,14 @@ fn configured_tech_design_base(project_root: &Path) -> Option<PathBuf> {
 /// `/tmp/aw/workspaces/<workspace>/issues`.
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn issues_path(project_root: &Path) -> PathBuf {
-    aw_tmp_path()
-        .join("workspaces")
-        .join(workspace_cache_slug(project_root))
-        .join(ISSUES_DIR)
+    workspace_runtime_path(project_root).join(ISSUES_DIR)
+}
+
+/// Path to the ephemeral work-item draft/planning directory:
+/// `/tmp/aw/workspaces/<workspace>/workitems`.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn workitems_path(project_root: &Path) -> PathBuf {
+    workspace_runtime_path(project_root).join(WORKITEMS_DIR)
 }
 
 /// Path to the ephemeral payload round-trip directory:
@@ -205,10 +226,7 @@ pub fn issues_path(project_root: &Path) -> PathBuf {
 /// alongside `issues_path` rather than under the project's `.aw/` tree.
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
 pub fn payloads_path(project_root: &Path) -> PathBuf {
-    aw_tmp_path()
-        .join("workspaces")
-        .join(workspace_cache_slug(project_root))
-        .join(PAYLOADS_DIR)
+    workspace_runtime_path(project_root).join(PAYLOADS_DIR)
 }
 
 fn workspace_cache_slug(project_root: &Path) -> String {
@@ -303,6 +321,18 @@ mod tests {
         assert_eq!(payloads.file_name().unwrap(), PAYLOADS_DIR);
         // Same workspace slug as issues_path — siblings under one workspace dir.
         assert_eq!(payloads.parent(), issues_path(root).parent());
+    }
+
+    #[test]
+    fn workitems_path_lives_under_workspace_runtime_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let workitems = workitems_path(root);
+        assert!(workitems.starts_with(aw_tmp_path().join("workspaces")));
+        assert_eq!(workitems.file_name().unwrap(), WORKITEMS_DIR);
+        assert_eq!(workitems.parent(), payloads_path(root).parent());
+        assert_eq!(workitems.parent(), issues_path(root).parent());
     }
 }
 

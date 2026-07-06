@@ -100,7 +100,7 @@ scenarios:
     when: ["agent routes through /aw:wi planning"]
     then:
       - "non-epic implementation WI is rejected as too-large"
-      - "aw wi atomize produces local candidates under /tmp/aw/{project}/atomize"
+      - "aw wi atomize produces local candidates under /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize"
 
   - id: S3
     title: "prioritize classifies readiness and dependency lanes"
@@ -121,7 +121,7 @@ scenarios:
 
   - id: S5
     title: "Claude-facing skills stay aligned"
-    given: ["aw init installs Claude Code skills from embedded templates"]
+    given: ["managed asset producers install Claude Code skills from embedded templates"]
     when: ["the capability alignment workflow is installed or refreshed"]
     then:
       - "aw-capability is installed as a Claude Code skill"
@@ -195,7 +195,7 @@ scenarios:
       - "completed capabilities ask the agent to inspect the project root"
   - id: S9
     title: "root runner does not duplicate pending planning artifacts"
-    given: ["aw wi epicize has produced a local /tmp/aw/{project}/epics artifact with agent_review_required=true and review_status=pending"]
+    given: ["aw wi epicize has produced a local /tmp/aw/workspaces/<workspace>/workitems/{project}/epics artifact with agent_review_required=true and review_status=pending"]
     when: ["aw capability run --project executes before the artifact is reviewed"]
     then:
       - "aw capability run emits action=blocked instead of invoking epicize again"
@@ -292,7 +292,7 @@ roll completed child work back up to the parent root. Its `completion` object is
 authoritative stop condition: `action=done` only means the current root is done,
 while `completion.workflow_complete=true` means the root workflow has reached
 project-level 100%. Planning artifacts stay local under
-`/tmp/aw/{project}/...`; tracker mutation remains in the CRRR lane.
+`/tmp/aw/workspaces/<workspace>/workitems/{project}/...`; tracker mutation remains in the CRRR lane.
 The canonical README capability map is Markdown-first and optimized for agents
 that need to understand the project before touching code:
 
@@ -429,17 +429,17 @@ commands:
     mutates_tracker: false
   - path: [wi, plan]
     behavior: "read cap_path or project README Markdown capability tables, then write a local capability-to-WI planning draft; YAML/legacy tables require migration"
-    persistence: "/tmp/aw/{project}/capability-plan"
+    persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan"
     mutates_tracker: false
   - path: [wi, epicize]
     behavior: "group roadmap direction into epic or phase candidates"
   - path: [wi, atomize]
     behavior: "split epic or roadmap-sized work into atomic WI candidates"
-    persistence: "/tmp/aw/{project}/atomize"
+    persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/atomize"
     mutates_tracker: false
   - path: [wi, prioritize]
     behavior: "classify open work into ready_now, blocked_by_dependency, needs_atomize, needs_triage, and deferred lanes"
-    persistence: "/tmp/aw/{project}/priorities"
+    persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/priorities"
     mutates_tracker: false
 validation:
   non_epic_requires:
@@ -521,7 +521,7 @@ requirements:
     verifymethod: review
   claude_skill_sync:
     id: AW-CAP-WI-7
-    text: "aw init installs aw-capability, aw-wi planning, and aw-standardize human skill names"
+    text: "managed asset producers install aw-capability, aw-wi planning, and aw-standardize human skill names"
     risk: high
     verifymethod: test
   capability_h2_schema:
@@ -711,7 +711,7 @@ requirementDiagram
     }
     requirement claude_skill_sync {
         id: AW-CAP-WI-7
-        text: "aw init installs aw-capability, aw-wi planning, and aw-standardize"
+        text: "managed asset producers install aw-capability, aw-wi planning, and aw-standardize"
         risk: high
         verifymethod: test
     }
@@ -990,7 +990,7 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Update the aw init CLAUDE.md template with atomize, prioritize readiness, and bounded-WI guidance.
+    description: Update the managed CLAUDE.md template with atomize, prioritize readiness, and bounded-WI guidance.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-capability/SKILL.md
     action: modify
     section: cli
@@ -1020,7 +1020,7 @@ changes:
     action: modify
     impl_mode: codegen
     section: source
-    description: Include aw-capability and aw-standardize in aw init skill installation and tests, and prune old standardize-run/loop skills.
+    description: Include aw-capability and aw-standardize in managed skill installation and tests, and prune old standardize-run/loop skills.
   - path: projects/agentic-workflow/src/cli/issues.rs
     action: modify
     impl_mode: codegen

@@ -671,7 +671,7 @@ impl SddConfig {
                  default_branch = \"main\"\n\
                  auto_commit = true\n\
                  auto_pr = false\n\n\
-                 Or rerun aw init to refresh platform settings"
+                 Or update .aw/config.toml with the platform producer"
                     .to_string(),
             );
         }
@@ -682,7 +682,7 @@ impl SddConfig {
                  [agentic_workflow.tech_design_platform]\n\
                  type = \"local\"\n\
                  path = \".aw/tech-design\"\n\n\
-                 Or rerun aw init to refresh platform settings"
+                 Or update .aw/config.toml with the platform producer"
                     .to_string(),
             );
         }

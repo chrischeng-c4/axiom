@@ -702,7 +702,7 @@ mod tests {
     fn test_generator_produces_five_files() {
         let schema = user_schema();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_fastapi_gen"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/fastapi-gen"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();

@@ -71,7 +71,7 @@ use std::path::{Path, PathBuf};
 // Schema
 // ─────────────────────────────────────────────────────────────────────────────
 
-// One message block inside `/tmp/aw-channel.md`.
+// One message block inside `/tmp/aw/chat/channel.jsonl`.
 // Serialised as per-message YAML frontmatter delimited by `---` markers
 // followed by the body text. CLI auto-fills id, from, timestamp;
 // agents supply only --to and --body-file.
@@ -107,7 +107,7 @@ pub struct MessageFrontmatter {
     pub timestamp: Option<String>,
 }
 
-// One entry in `/tmp/aw-channel-members.yaml`.
+// One entry in `/tmp/aw/chat/members.yaml`.
 // Identity = branch; name is the human-readable label resolved from branch lookup.
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-chat-msg-members-schema.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,8 +122,8 @@ pub struct Member {
     pub last_seen: String,
 }
 
-// `/tmp/aw-channel-members.yaml` — the members registry.
-// Replaces the old `/tmp/aw-channel-agents.md` per-member markdown file format.
+// `/tmp/aw/chat/members.yaml` — the members registry.
+// Replaces the old `/tmp/aw/chat/agents.md` per-member markdown file format.
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-chat-msg-members-schema.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MembersFile {
@@ -181,7 +181,7 @@ pub fn resolve_identity(cwd: &Path) -> Result<String> {
 
     // Step 1: members.yaml lookup by branch — caller's explicit override.
     if !branch.is_empty() {
-        if let Ok(members) = read_members_file(Path::new("/tmp/aw-channel-members.yaml")) {
+        if let Ok(members) = read_members_file(Path::new("/tmp/aw/chat/members.yaml")) {
             if let Some(m) = members.members.iter().find(|m| m.branch == branch) {
                 return Ok(m.name.clone());
             }
@@ -252,7 +252,7 @@ fn git_branch_from(cwd: &Path) -> Result<String> {
 // Backwards-compatible wrapper: delegates to resolve_identity.
 // Retained so existing callers in chat.rs continue to compile.
 // The members_path argument is ignored; resolve_identity always uses the canonical
-// /tmp/aw-channel-members.yaml path per the spec.
+// /tmp/aw/chat/members.yaml path per the spec.
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/chat_members.md#source
 pub fn detect_team_identity(cwd: &Path, _members_path: &Path) -> Result<String> {
     resolve_identity(cwd)
@@ -673,6 +673,10 @@ pub fn read_members_file(path: &Path) -> Result<MembersFile> {
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-chat-msg-members-schema.md#logic  Node: members_write
 pub fn write_members_file(path: &Path, mf: &MembersFile) -> Result<()> {
     let yaml = serde_yaml::to_string(mf).context("serializing MembersFile")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating members directory {}", parent.display()))?;
+    }
     std::fs::write(path, yaml).with_context(|| format!("writing members file {}", path.display()))
 }
 
@@ -840,7 +844,7 @@ mod tests {
             members: vec![Member {
                 name: "bar".to_string(),
                 branch: "test-branch-g1-identity".to_string(),
-                wt_path: "/tmp/test".to_string(),
+                wt_path: "/tmp/aw/test/member".to_string(),
                 projects: vec![],
                 capabilities: vec![],
                 last_seen: "2026-04-27T00:00:00Z".to_string(),
@@ -881,7 +885,7 @@ mod tests {
         let f = NamedTempFile::new().unwrap();
         let path = f.path();
         let branch = "test-upsert-branch";
-        let wt = "/tmp/test-wt";
+        let wt = "/tmp/aw/test/wt";
         let now1 = "2026-04-27T07:00:00Z";
         let now2 = "2026-04-27T08:00:00Z";
 

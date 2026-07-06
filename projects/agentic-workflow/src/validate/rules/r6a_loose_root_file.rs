@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn unrelated_path_is_ignored() {
-        let r = run("/tmp/spec.md");
+        let r = run("/tmp/aw/test/spec.md");
         assert!(r.is_empty());
     }
 }

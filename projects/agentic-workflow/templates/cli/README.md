@@ -1,6 +1,7 @@
 # AW Templates
 
-Templates embedded into the `agentic-workflow` crate and installed via `aw init`.
+Templates embedded into the `agentic-workflow` crate and installed by explicit
+Agentic Workflow producer commands.
 
 ## Directory Structure
 
@@ -25,7 +26,7 @@ templates/
     └── ...
 ```
 
-## What `aw init` Installs
+## Project Asset Producers
 
 ### Project Files
 
@@ -46,11 +47,11 @@ templates/
 ## Usage
 
 ```bash
-# Fresh install
-aw init
+# Create a greenfield project with managed assets
+aw new my-project
 
-# Update (preserves user data)
-aw init
+# Refresh the generated project registry block
+aw conf sync
 ```
 
 ## Skills Usage in Claude Code

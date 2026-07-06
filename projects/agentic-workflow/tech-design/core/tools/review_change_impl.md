@@ -741,7 +741,7 @@ mod tests {
         // R23 + R27: Non-existent spec file → build_review_prompt guards with
         // exists() check, so alignment section is empty. Test that
         // build_alignment_report does NOT panic for non-existent files.
-        let non_existent = std::path::Path::new("/tmp/does-not-exist-alignment-test/spec.md");
+        let non_existent = std::path::Path::new("/tmp/aw/test/does-not-exist-alignment/spec.md");
 
         // build_alignment_report should not panic — check() returns IoError
         // violation for non-existent files, which is valid behavior.

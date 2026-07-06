@@ -76,6 +76,8 @@ fn legacy_top_level_commands_are_removed() {
         "project",
         "caps",
         "cb",
+        "init",
+        "sync",
     ] {
         assert!(
             cmd.find_subcommand(name).is_none(),
@@ -88,14 +90,13 @@ fn legacy_top_level_commands_are_removed() {
 fn workflow_protocol_commands_remain_registered() {
     let cmd = Cli::command();
     for name in [
-        "init",
         "health",
         "capability",
         "wi",
         "td",
         "standardize",
         "generator",
-        "sync",
+        "conf",
         "chat",
     ] {
         assert!(
@@ -144,6 +145,8 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
         "project",
         "caps",
         "cb",
+        "init",
+        "sync",
     ] {
         let out = Command::new(&aw)
             .arg(command)
@@ -203,6 +206,8 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw project health",
         "aw caps",
         "aw cb",
+        "aw init",
+        "aw sync",
         // #920 (epic #914 slice F): `aw standardize` is retired down to
         // `audit` only; the `managed`/`semantic`/`traceability` layer
         // `report`/`next`/`run` drivers are gone.

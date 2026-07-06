@@ -196,12 +196,12 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Update aw init CLAUDE template guidance.
+    description: Update managed CLAUDE template guidance.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-wi/SKILL.md
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Update aw init aw-wi skill template guidance.
+    description: Update managed aw-wi skill template guidance.
   - path: projects/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
     action: modify
     section: scenarios

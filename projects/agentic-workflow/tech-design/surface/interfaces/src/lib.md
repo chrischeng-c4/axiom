@@ -83,6 +83,7 @@ pub(crate) mod chain;
 pub mod chat;
 pub mod check_alignment;
 pub mod commands;
+pub mod conf;
 pub mod doc_mirror;
 pub mod ec;
 pub mod fillback;
@@ -102,7 +103,6 @@ pub(crate) mod shell_env;
 pub mod slug_workspace;
 pub mod standard_cli;
 pub mod standardize;
-pub mod sync;
 pub mod td;
 pub mod td_check_section_type;
 pub mod td_lock;
@@ -134,7 +134,7 @@ fn legacy_score_workspace_error(root: &std::path::Path) -> anyhow::Error {
 }
 
 // Find the project root by walking up from CWD looking for `.aw/config.toml`.
-// Falls back to CWD if no `.aw/` is found (e.g., during `aw init`).
+// Falls back to CWD if no `.aw/` is found (e.g., during greenfield setup).
 ///
 // This intentionally returns the repo root for the CLI process's current
 // working tree. In a git linked-worktree checkout, do not use shared git
@@ -161,7 +161,7 @@ pub fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
                 if let Some(root) = legacy_root {
                     return Err(legacy_score_workspace_error(&root));
                 }
-                // No .aw/ found — fall back to CWD (for aw init or uninitialized repos)
+                // No .aw/ found — fall back to CWD for uninitialized repos.
                 return Ok(cwd);
             }
         }
@@ -311,6 +311,7 @@ mod tests {
 }
 
 // CODEGEN-END
+
 ```
 
 ## Changes

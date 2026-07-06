@@ -1,39 +1,57 @@
-// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R11
-// HANDWRITE-BEGIN sync-cli-surface
-//! `aw sync` -- refresh the marker-delimited project registry block.
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+// HANDWRITE-BEGIN conf-cli-surface
+//! `aw conf` -- check and refresh `.aw/config.toml` producer artifacts.
 
 use crate::services::{project_discovery, project_registry};
 use crate::Result;
 use anyhow::bail;
-use clap::Args;
+use clap::{Args, Subcommand};
 use std::path::Path;
 
-/// Auto-discover project/workspace hierarchy and update `.aw/config.toml`.
+/// Manage Agentic Workflow configuration artifacts.
 #[derive(Debug, Args, Clone)]
-pub struct SyncArgs {
+pub struct ConfArgs {
+    #[command(subcommand)]
+    pub command: ConfCommand,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum ConfCommand {
+    /// Check whether `.aw/config.toml`'s project registry block is stale.
+    Check,
+    /// Auto-discover projects and refresh `.aw/config.toml`'s registry block.
+    Sync(ConfSyncArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ConfSyncArgs {
     /// Print the registry diff without writing `.aw/config.toml`.
     #[arg(long)]
     pub dry_run: bool,
-    /// Print the registry diff and fail when `.aw/config.toml` is stale.
-    #[arg(long)]
-    pub check: bool,
 }
 
-pub fn run(args: SyncArgs) -> Result<()> {
+pub fn run(args: ConfArgs) -> Result<()> {
     let root = crate::find_project_root()?;
     run_at_root(&root, args)
 }
 
-fn run_at_root(root: &Path, args: SyncArgs) -> Result<()> {
-    if args.dry_run || args.check {
-        return run_drift_check(root, args.check);
+fn run_at_root(root: &Path, args: ConfArgs) -> Result<()> {
+    match args.command {
+        ConfCommand::Check => run_drift_check(root, true),
+        ConfCommand::Sync(args) => run_registry_sync(root, args),
+    }
+}
+
+fn run_registry_sync(root: &Path, args: ConfSyncArgs) -> Result<()> {
+    if args.dry_run {
+        return run_drift_check(root, false);
     }
 
     let projects = project_discovery::discover_projects(root)?;
     let count = projects.len();
     project_registry::write_projects_config(root, &projects)?;
 
-    println!("aw sync: wrote .aw/config.toml with {count} discovered project(s).");
+    println!("aw conf sync: wrote .aw/config.toml with {count} discovered project(s).");
     for project in &projects {
         println!(
             "  {} ({} workspace(s))",
@@ -81,15 +99,14 @@ mod tests {
     }
 
     #[test]
-    fn sync_check_reports_drift_without_writing_config() {
+    fn conf_check_reports_drift_without_writing_config() {
         let tmp = make_root();
         write_config(tmp.path(), &stale_config());
 
         let result = run_at_root(
             tmp.path(),
-            SyncArgs {
-                dry_run: false,
-                check: true,
+            ConfArgs {
+                command: ConfCommand::Check,
             },
         );
 
@@ -99,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_write_updates_registry_and_clears_drift() {
+    fn conf_sync_updates_registry_and_clears_drift() {
         let tmp = make_root();
         write_config(tmp.path(), &stale_config());
         let project_dir = tmp.path().join("crates").join("alpha");
@@ -112,9 +129,8 @@ mod tests {
 
         run_at_root(
             tmp.path(),
-            SyncArgs {
-                dry_run: false,
-                check: false,
+            ConfArgs {
+                command: ConfCommand::Sync(ConfSyncArgs { dry_run: false }),
             },
         )
         .unwrap();
@@ -125,4 +141,4 @@ mod tests {
         assert!(project_registry::check_drift(tmp.path()).unwrap().is_none());
     }
 }
-// HANDWRITE-END sync-cli-surface
+// HANDWRITE-END conf-cli-surface

@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn test_merge_base_and_payload() {
         let base = json!({
-            "project_path": "/tmp",
+            "project_path": "/tmp/aw/test/root",
             "change_id": "test",
             "artifact": "proposal",
             "action": "create",
@@ -277,7 +277,7 @@ mod tests {
         let payload = json!({"scope": "patch", "spec_plan": []});
         let merged = merge_base_and_payload(&base, &payload);
 
-        assert_eq!(merged["project_path"], "/tmp");
+        assert_eq!(merged["project_path"], "/tmp/aw/test/root");
         assert_eq!(merged["change_id"], "test");
         assert_eq!(merged["caller"], "agent");
         assert_eq!(merged["scope"], "patch");
@@ -289,13 +289,13 @@ mod tests {
     #[test]
     fn test_issues_context_requires_labels_or_refs() {
         let args = json!({
-            "project_path": "/tmp",
+            "project_path": "/tmp/aw/test/root",
             "change_id": "test",
             "artifact": "issues_context",
             "action": "fetch",
             "payload": {}
         });
-        let result = execute(&args, Path::new("/tmp"));
+        let result = execute(&args, Path::new("/tmp/aw/test/root"));
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -310,7 +310,7 @@ mod tests {
             "action": "create",
             "payload": {}
         });
-        let result = execute(&args, Path::new("/tmp"));
+        let result = execute(&args, Path::new("/tmp/aw/test/root"));
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

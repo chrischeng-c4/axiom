@@ -29,8 +29,10 @@ Public API manifest for `projects/agentic-workflow/src/cli/update.rs` generated 
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/cli/update.rs -->
 ```rust
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/update.md#source
+// CODEGEN-BEGIN
+use crate::Result;
 use colored::Colorize;
-use agentic_workflow::Result;
 use semver::Version;
 use std::env;
 use std::process::Command;
@@ -186,11 +188,11 @@ fn update_binary(version: &str) -> Result<()> {
     println!();
     println!("   Run 'cclab --version' to verify.");
 
-    // If in an sdd project, suggest upgrading configs
+    // If in an AW project, suggest checking routed producer work.
     if std::path::Path::new("cclab").exists() {
         println!();
-        println!("{}", "💡 To upgrade project configs:".yellow());
-        println!("   aw init --force");
+        println!("{}", "💡 To inspect project readiness:".yellow());
+        println!("   aw health --project <project>");
     }
 
     Ok(())
@@ -252,6 +254,9 @@ mod tests {
         assert!(is_newer("v1.0.0", "0.9.0")); // Mixed prefix handling
     }
 }
+
+// CODEGEN-END
+
 ```
 
 ## Changes

@@ -1176,7 +1176,7 @@ fn capability_action_envelope(
         project,
         action,
         completion,
-        Path::new("/tmp"),
+        Path::new("/tmp/aw/test/root"),
     )
 }
 
