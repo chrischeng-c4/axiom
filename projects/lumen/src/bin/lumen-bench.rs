@@ -185,6 +185,7 @@ fn run_bool_filter(args: &RunArgs) -> Result<BenchReport> {
                     ]),
                     limit: 20,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: false,
                     collapse: None,
@@ -234,6 +235,7 @@ fn sorted_page_request(limit: u32) -> SearchRequest {
         }),
         limit,
         cursor: None,
+        routing_key: None,
         sort: Some(vec![SortSpec {
             field: "age".into(),
             order: SortOrder::Asc,

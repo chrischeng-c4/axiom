@@ -104,6 +104,27 @@ impl BackupSink for S3Sink {
     }
 }
 
+pub(crate) fn get_object(bucket: String, key: String) -> Result<Vec<u8>> {
+    block_on_in_thread(async move {
+        let client = build_client(None, None).await?;
+        let object = client
+            .get_object()
+            .bucket(&bucket)
+            .key(&key)
+            .send()
+            .await
+            .with_context(|| format!("get s3://{bucket}/{key}"))?;
+        let bytes = object
+            .body
+            .collect()
+            .await
+            .with_context(|| format!("read s3://{bucket}/{key} body"))?
+            .into_bytes()
+            .to_vec();
+        Ok(bytes)
+    })
+}
+
 async fn build_client(region: Option<String>, endpoint: Option<String>) -> Result<Client> {
     let mut loader = aws_config::defaults(BehaviorVersion::latest());
     if let Some(region) = region {

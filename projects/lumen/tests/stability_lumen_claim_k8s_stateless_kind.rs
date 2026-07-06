@@ -10,7 +10,7 @@
 // @command projects/lumen/scripts/kind-e2e.sh
 // AW-EC-END
 
-// Contract: The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart.
+// Contract: The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_k8s_stateless_kind() {

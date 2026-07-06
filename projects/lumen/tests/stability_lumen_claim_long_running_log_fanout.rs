@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --test wal_nats_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: A late or second node can replay the published write stream and converge with live writes.
+// Contract: A late or second node can replay the published write stream and converge with live writes; shard-group topology is now dogfooded by the operator kind profiles.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_long_running_log_fanout() {

@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --test backup_restore_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: The serving process snapshot loop and restore path remain covered by the backup/restore e2e gate.
+// Contract: The serving process snapshot loop and restore path remain covered by the backup/restore e2e gate; live replica synchronization remains raft-owned.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_backup_periodic_snapshotter() {

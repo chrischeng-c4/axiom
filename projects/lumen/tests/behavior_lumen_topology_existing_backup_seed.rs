@@ -1,21 +1,21 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-backup-rdb-store
+// SPEC-MANAGED: projects/lumen/external-contracts/topology/behavior/shard-topology.md#lumen-topology-existing-backup-seed
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec lumen-claim-backup-rdb-store
-// @capability backup-restore
-// @claim rdb-snapshot-restore-localfsrdbstore
-// @contract backup-rdb-store
+// @ec lumen-topology-existing-backup-seed
+// @capability replica-sync-bootstrap
+// @claim external-backup-disaster-recovery-seed
+// @contract topology-existing-backup-seed
 // @category behavior
 // @required_for_production true
 // @command cargo test -p lumen --test backup_restore_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: RDB snapshots restore through the LocalFsRdbStore baseline as a cold restore and future bootstrap seed surface.
+// Contract: The backup/restore e2e gate proves cold snapshot restore; the empty-PVC bootstrap seed path now restores SnapshotV1 before WAL/raft catch-up.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn lumen_claim_backup_rdb_store() {
+fn lumen_topology_existing_backup_seed() {
     let command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture";
-    let id = "lumen-claim-backup-rdb-store";
+    let id = "lumen-topology-existing-backup-seed";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

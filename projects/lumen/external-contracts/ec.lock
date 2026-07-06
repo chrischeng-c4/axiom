@@ -3,13 +3,13 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "projects/lumen/external-contracts"
 inventory_path = "projects/lumen/aw.toml"
-generated_at = "2026-07-02T04:12:27.938655+00:00"
-ir_digest = "sha256:c6dfd6c2080f434a51e4ad35deeb7389e9c313482a415893d987578a832faeef"
-source_digest = "sha256:f9520d1d71314af58fedd12c10d4e9ecbb719000d536ab7eac9d33b5a01183d8"
+generated_at = "2026-07-06T11:44:20.075201+00:00"
+ir_digest = "sha256:faa9c8c4dac11dd691f035940c9f0ef100c366807d7db7c6ec536f782f1c556a"
+source_digest = "sha256:40dde78d037d9aa601b7c8dce0982750ed779f7da4ef0316ebd6c017bc2462fb"
 
 [[sources]]
 path = "projects/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:2cdc77f1d15c7b7c76d61447f44c2ffac54a92c285983e75a775c6b0b4d874f3"
+digest = "sha256:732b85d06ed50fde023ec5dae04a76de00f50344ff7f9b77a1224f7ff5e90e27"
 
 [[sources]]
 path = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
@@ -46,6 +46,10 @@ digest = "sha256:2a1ad35fbaa3ba313b654f3766c78d9a9a23108cda38d8db0d2d442c5462c9c
 [[sources]]
 path = "projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md"
 digest = "sha256:bcd4dbdc117e2cadc7fc408fdb936c60d09dbbcb05bba59e2da1ee5dfdd2e953"
+
+[[sources]]
+path = "projects/lumen/external-contracts/topology/behavior/shard-topology.md"
+digest = "sha256:aaea8f71ad6724ed25c48fb0ad4d54d1db7dfad5a3e0c6764a1f5ceca15e3d08"
 
 [[cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -102,10 +106,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/behavior_lumen_claim_backup_periodic_snapshotter.rs"
 command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
 required_for_production = true
-assertions = ["The serving process snapshot loop and restore path remain covered by the backup/restore e2e gate."]
+assertions = ["The serving process snapshot loop and restore path remain covered by the backup/restore e2e gate; live replica synchronization remains raft-owned."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:62b8d63afbdc43fcde2d576599a5628320eed479da390dbb90dd6b962afc8c00"
+digest = "sha256:e68ae2f145b2b9f197f5eda70256f79b3ce31e53f66636c77a4087e59394a994"
 
 [[cases]]
 id = "lumen-claim-backup-rdb-store"
@@ -117,10 +121,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/behavior_lumen_claim_backup_rdb_store.rs"
 command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
 required_for_production = true
-assertions = ["RDB snapshots restore through the LocalFsRdbStore baseline."]
+assertions = ["RDB snapshots restore through the LocalFsRdbStore baseline as a cold restore and future bootstrap seed surface."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:900de5303e22fde8758d008243ab2b3b29b084b964d445fd0fc885170689ab91"
+digest = "sha256:07dd83c9759de153cd9185146c2918d19f43b5f6b839a778595a0cda880a9e31"
 
 [[cases]]
 id = "lumen-claim-cli-deployment-operator-command-surface"
@@ -372,10 +376,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_reconcile.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources."]
+assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ea8b0eda46dcbaa6ed8cfa56b71e42a72a39c49e1ceddcfef012b11ec37849da"
+digest = "sha256:102bd7e7189a5a268423df788ea9473c69d8c8b5c2ab34268c488160ffb6877c"
 
 [[cases]]
 id = "lumen-claim-k8s-stateless-kind"
@@ -387,10 +391,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/stability_lumen_claim_k8s_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
-assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
+assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:113a18f361506f3626fca74ba72b66eb1557efb49cbfa11e4bb68b58526d17c3"
+digest = "sha256:7c19e756dbf56f41a1a0a9f5e59ea00cdd3cc20d33acd0165228754400847fca"
 
 [[cases]]
 id = "lumen-claim-lexical-bm25"
@@ -432,10 +436,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs"
 command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
 required_for_production = true
-assertions = ["A late or second node can replay the published write stream and converge with live writes."]
+assertions = ["A late or second node can replay the published write stream and converge with live writes; shard-group topology is now dogfooded by the operator kind profiles."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f02421bd6d25de26bb6f418d0a54c8c448bbce467284dcc7b379f3faa929f868"
+digest = "sha256:c9d32cc2f197c406ff1480560ff364fa57f45d6c4bd33dc0322bfff51b906f1d"
 
 [[cases]]
 id = "lumen-claim-long-running-stateless-kind"
@@ -447,10 +451,10 @@ source_ref = "projects/lumen/external-contracts/claim-closure/production-claims.
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
-assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
+assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:75629b1992cb64ca0f8b52203d4787abc541bd227d48d12320f2042cdc36ed87"
+digest = "sha256:29e8e91678c2f68b3b41c555dee3123fbfb32390825fdc420d2ee35dbff5a14f"
 
 [[cases]]
 id = "lumen-claim-nested-collapse"
@@ -1007,6 +1011,36 @@ assertions = ["C3: relevance scores and hit existence do not leak documents acro
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:1a26739da22c09efcef7a2801e1380eef98c50fee60e5dfeefd4b150b9ff16ab"
+
+[[cases]]
+id = "lumen-topology-existing-backup-seed"
+capability_id = "replica-sync-bootstrap"
+claim_id = "external-backup-disaster-recovery-seed"
+contract_id = "topology-existing-backup-seed"
+dimension = "behavior"
+source_ref = "projects/lumen/external-contracts/topology/behavior/shard-topology.md#lumen-topology-existing-backup-seed"
+test_path = "projects/lumen/tests/behavior_lumen_topology_existing_backup_seed.rs"
+command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
+required_for_production = true
+assertions = ["The backup/restore e2e gate proves cold snapshot restore; the empty-PVC bootstrap seed path now restores SnapshotV1 before WAL/raft catch-up."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:0eebf9b96dfb58ce0543ca55cb42dca0ae2950e5d8b103568c564e96eede8092"
+
+[[cases]]
+id = "lumen-topology-existing-raft-replica-sync"
+capability_id = "replica-sync-bootstrap"
+claim_id = "raft-log-replica-sync-existing-pvc"
+contract_id = "topology-existing-raft-replica-sync"
+dimension = "stability"
+source_ref = "projects/lumen/external-contracts/topology/behavior/shard-topology.md#lumen-topology-existing-raft-replica-sync"
+test_path = "projects/lumen/tests/stability_lumen_topology_existing_raft_replica_sync.rs"
+command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
+required_for_production = true
+assertions = ["The existing compatibility log convergence gate remains the executable proof for late/second node replay; shard-group topology is now dogfooded by the operator kind profiles."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:bfe3ac929e54ea02817875a951c8962cfe87a4fbba685c5951a22cdb41944715"
 
 [[tool_contracts]]
 id = "lumen-guard-auth-surface"

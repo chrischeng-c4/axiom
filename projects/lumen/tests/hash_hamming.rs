@@ -63,6 +63,7 @@ fn run(e: &Engine, query: QueryNode) -> Vec<(String, f32)> {
             query,
             limit: 100,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,

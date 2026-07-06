@@ -38,11 +38,8 @@ impl ManagedService for Lumen {
     fn status_patch(&self, ready: &ReadyFacts) -> serde_json::Value {
         let name = self.name_any();
         let serving_ready = ready.ready.get(&name).copied().unwrap_or(0) as i32;
-        let desired = if self.spec.replicas_per_shard > 1 {
-            (self.spec.shard_count * self.spec.replicas_per_shard) as i32
-        } else {
-            self.spec.serving.autoscaling.min_replicas
-        };
+        let desired = self.spec.storage_pod_count();
+        let reshard = self.spec.reshard_status();
         let phase = if serving_ready >= desired {
             "Ready"
         } else if serving_ready > 0 {
@@ -56,6 +53,7 @@ impl ManagedService for Lumen {
             "servingReadyReplicas": serving_ready,
             "desiredReplicas": desired,
             "shardCount": self.spec.shard_count,
+            "reshard": reshard,
             "message": format!("{serving_ready}/{desired} serving pods ready"),
         }})
     }

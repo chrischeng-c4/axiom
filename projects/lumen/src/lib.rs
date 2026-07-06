@@ -56,6 +56,7 @@ pub mod raft;
 #[cfg(feature = "raft-wal")]
 pub mod raft_sm;
 pub mod rdb;
+pub mod reshard;
 pub mod routing;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
 /// for `n_docs` rows at one `applied_seq`, written page-aligned for zero-copy
