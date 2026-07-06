@@ -51,7 +51,13 @@ mod tests {
 
     #[test]
     fn test_generate_skeleton_universal() {
-        let skeleton = generate_skeleton("my-spec", "My Spec Title", None, None, Path::new("/tmp"));
+        let skeleton = generate_skeleton(
+            "my-spec",
+            "My Spec Title",
+            None,
+            None,
+            Path::new("/tmp/aw/test/root"),
+        );
         assert!(skeleton.contains("id: my-spec"));
         assert!(skeleton.contains("# My Spec Title"));
         assert!(skeleton.contains("## Overview"));
@@ -77,7 +83,7 @@ mod tests {
             "Annotated Spec",
             None,
             None,
-            Path::new("/tmp"),
+            Path::new("/tmp/aw/test/root"),
         );
         // Verify section type annotations are present (new format: 3 langs only)
         assert!(skeleton.contains("<!-- type: overview lang: markdown -->"));
@@ -97,32 +103,32 @@ mod tests {
 
     #[test]
     fn test_get_specs_dir_no_group() {
-        let base = Path::new("/tmp/change");
+        let base = Path::new("/tmp/aw/test/change");
         let dir = get_specs_dir(base, None);
-        assert_eq!(dir, Path::new("/tmp/change/specs"));
+        assert_eq!(dir, Path::new("/tmp/aw/test/change/specs"));
     }
 
     #[test]
     fn test_get_specs_dir_with_group() {
-        let base = Path::new("/tmp/change");
+        let base = Path::new("/tmp/aw/test/change");
         let dir = get_specs_dir(base, Some("feature-a"));
-        assert_eq!(dir, Path::new("/tmp/change/groups/feature-a/specs"));
+        assert_eq!(dir, Path::new("/tmp/aw/test/change/groups/feature-a/specs"));
     }
 
     #[test]
     fn test_get_spec_path_no_group() {
-        let base = Path::new("/tmp/change");
+        let base = Path::new("/tmp/aw/test/change");
         let path = get_spec_path(base, None, "my-spec");
-        assert_eq!(path, Path::new("/tmp/change/specs/my-spec.md"));
+        assert_eq!(path, Path::new("/tmp/aw/test/change/specs/my-spec.md"));
     }
 
     #[test]
     fn test_get_spec_path_with_group() {
-        let base = Path::new("/tmp/change");
+        let base = Path::new("/tmp/aw/test/change");
         let path = get_spec_path(base, Some("group-1"), "my-spec");
         assert_eq!(
             path,
-            Path::new("/tmp/change/groups/group-1/specs/my-spec.md")
+            Path::new("/tmp/aw/test/change/groups/group-1/specs/my-spec.md")
         );
     }
 

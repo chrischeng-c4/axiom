@@ -149,7 +149,7 @@ pub struct CapabilityDraftArgs {
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
-    /// Write draft to this path instead of /tmp/aw/{project}/capability-map-drafts/.
+    /// Write draft to this path instead of /tmp/aw/workspaces/<workspace>/capability-map-drafts/{project}/.
     #[arg(long)]
     pub output: Option<PathBuf>,
     /// DEPRECATED compatibility no-op. Capability draft emits JSON by default.
@@ -1566,10 +1566,10 @@ fn maybe_write_capability_verify_evidence(
         anyhow::bail!("--write-evidence requires --verify");
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
-        .join(&report.project)
-        .join("capability-verify-reports");
+    let project_root = crate::find_project_root()?;
+    let dir = crate::shared::workspace::workspace_runtime_path(&project_root)
+        .join("capability-verify-reports")
+        .join(&report.project);
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!(
         "{stamp}-{}-capability-verify-report.md",
@@ -1861,7 +1861,7 @@ fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()>
 
 fn render_empty_capability_readme(title: &str, brief: &str) -> String {
     format!(
-        "# {title}\n\n## Brief\n\n{brief}\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
+        "# {title}\n\n## Brief\n\n{brief}\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md). Add that file's `## Brief` here after confirming the project-local rules.\n\n## Capability Contract\n\nThe full project capability contract lives in [CAPABILITIES.md](CAPABILITIES.md). Add that file's `## Brief` here after confirming the capability contract.\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
     )
 }
 
@@ -2408,6 +2408,7 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
     let project_root = crate::find_project_root()?;
     let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
     let report = build_capability_draft_report(
+        &project_root,
         project,
         &cap_path,
         args.output.as_deref(),
@@ -2422,18 +2423,18 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
 }
 
 fn build_capability_draft_report(
+    project_root: &Path,
     project: &str,
     cap_path: &Path,
     output: Option<&Path>,
     cap_path_override: Option<&Path>,
 ) -> Result<CapabilityDraftReport> {
-    let project_root = crate::find_project_root()?;
     let cap_body = std::fs::read_to_string(cap_path)
         .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
     let document = parse_capability_document(&cap_body, cap_path)
         .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
     let profile = complete_capability_profile_for_document(
-        load_capability_profile_report(&project_root, project)?,
+        load_capability_profile_report(project_root, project)?,
         &document,
     );
     if document.requires_format_migration() || !document.legacy_rows.is_empty() {
@@ -2461,7 +2462,7 @@ fn build_capability_draft_report(
         &profile,
         existing_capability_count,
     );
-    let path = write_capability_draft_artifact(project, output, &body)?;
+    let path = write_capability_draft_artifact(project_root, project, output, &body)?;
     let apply_command = if manual_merge_required {
         String::new()
     } else {
@@ -2589,6 +2590,7 @@ fn baseline_capability_title(capability_id: &str) -> &'static str {
 }
 
 fn write_capability_draft_artifact(
+    project_root: &Path,
     project: &str,
     output: Option<&Path>,
     body: &str,
@@ -2597,10 +2599,9 @@ fn write_capability_draft_artifact(
         path.to_path_buf()
     } else {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-        let dir = PathBuf::from("/tmp")
-            .join("aw")
-            .join(project)
-            .join("capability-map-drafts");
+        let dir = crate::shared::workspace::workspace_runtime_path(project_root)
+            .join("capability-map-drafts")
+            .join(project);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
         dir.join(format!(
@@ -2945,36 +2946,38 @@ async fn run_capability_sweep(
     }
     if write_drafts {
         sweep.write_drafts = true;
-        sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
-        sweep.draft_index_path = write_capability_sweep_draft_index(&sweep.drafts)?;
+        sweep.drafts = write_capability_sweep_drafts(&project_root, &sweep.projects)?;
+        sweep.draft_index_path = write_capability_sweep_draft_index(&project_root, &sweep.drafts)?;
     }
     if write_wi_plans {
         sweep.write_wi_plans = true;
         sweep.wi_plans = write_capability_sweep_wi_plans(&sweep.projects).await?;
-        sweep.wi_plan_index_path = write_capability_sweep_wi_plan_index(&sweep.wi_plans)?;
+        sweep.wi_plan_index_path =
+            write_capability_sweep_wi_plan_index(&project_root, &sweep.wi_plans)?;
     }
     if write_action_queue {
         sweep.write_action_queue = true;
-        sweep.action_queue = capability_sweep_action_queue(&sweep.projects);
+        sweep.action_queue = capability_sweep_action_queue(&project_root, &sweep.projects);
         sweep.action_queue_index_path =
-            write_capability_sweep_action_queue_index(&sweep.action_queue)?;
+            write_capability_sweep_action_queue_index(&project_root, &sweep.action_queue)?;
     }
     if write_check_index {
         sweep.write_check_index = true;
         sweep.check_index =
             capability_sweep_check_index(&reports, args.verify, include_issue_inventory);
         sweep.check_index_path = write_capability_sweep_check_index(
+            &project_root,
             &sweep.check_index,
             args.verify,
             include_issue_inventory,
         )?;
     }
     if args.write_rollout {
-        sweep.rollout_index_path = write_capability_sweep_rollout_index(&sweep)?;
+        sweep.rollout_index_path = write_capability_sweep_rollout_index(&project_root, &sweep)?;
     }
     if write_review_packet {
         sweep.write_review_packet = true;
-        sweep.review_packet_path = write_capability_sweep_review_packet(&sweep)?;
+        sweep.review_packet_path = write_capability_sweep_review_packet(&project_root, &sweep)?;
     }
     if args.human {
         print_capability_sweep(&sweep);
@@ -3057,23 +3060,32 @@ fn capability_sweep_report(
 }
 
 fn write_capability_sweep_drafts(
+    project_root: &Path,
     projects: &[CapabilitySweepProject],
 ) -> Result<Vec<CapabilityDraftReport>> {
     capability_sweep_draft_projects(projects)
         .into_iter()
         .map(|project| {
-            build_capability_draft_report(&project.project, &project.cap_path, None, None)
+            build_capability_draft_report(
+                project_root,
+                &project.project,
+                &project.cap_path,
+                None,
+                None,
+            )
         })
         .collect()
 }
 
-fn write_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Result<Option<PathBuf>> {
+fn write_capability_sweep_draft_index(
+    project_root: &Path,
+    drafts: &[CapabilityDraftReport],
+) -> Result<Option<PathBuf>> {
     if drafts.is_empty() {
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
+    let dir = crate::shared::workspace::workspace_runtime_path(project_root)
         .join("capability-map-drafts");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-map-draft-index.md"));
@@ -3220,13 +3232,15 @@ async fn write_capability_sweep_wi_plans(
 }
 
 fn write_capability_sweep_wi_plan_index(
+    project_root: &Path,
     plans: &[crate::cli::issues::CapabilityWiPlanReport],
 ) -> Result<Option<PathBuf>> {
     if plans.is_empty() {
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-wi-plans");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-wi-plans");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-wi-plan-index.md"));
     std::fs::write(&path, render_capability_sweep_wi_plan_index(plans)).with_context(|| {
@@ -3318,6 +3332,7 @@ fn capability_check_index_command(
 }
 
 fn write_capability_sweep_check_index(
+    project_root: &Path,
     entries: &[CapabilityCheckIndexEntry],
     verify: bool,
     include_issue_inventory: bool,
@@ -3326,7 +3341,8 @@ fn write_capability_sweep_check_index(
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-checks");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-checks");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-check-index.md"));
     std::fs::write(
@@ -3387,9 +3403,13 @@ fn render_capability_sweep_check_index(
     out
 }
 
-fn write_capability_sweep_rollout_index(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+fn write_capability_sweep_rollout_index(
+    project_root: &Path,
+    sweep: &CapabilitySweepReport,
+) -> Result<Option<PathBuf>> {
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-rollout");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-rollout");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-rollout-index.md"));
     std::fs::write(&path, render_capability_sweep_rollout_index(sweep)).with_context(|| {
@@ -3469,9 +3489,13 @@ fn rollout_index_path_text(path: &Option<PathBuf>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-fn write_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+fn write_capability_sweep_review_packet(
+    project_root: &Path,
+    sweep: &CapabilitySweepReport,
+) -> Result<Option<PathBuf>> {
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-review");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-review");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-hitl-review-packet.md"));
     std::fs::write(&path, render_capability_sweep_review_packet(sweep)).with_context(|| {
@@ -3692,6 +3716,7 @@ fn capability_sweep_healthy_projects(projects: &[CapabilitySweepProject]) -> Vec
 }
 
 fn capability_sweep_action_queue(
+    project_root: &Path,
     projects: &[CapabilitySweepProject],
 ) -> Vec<CapabilityActionQueueEntry> {
     projects
@@ -3703,7 +3728,10 @@ fn capability_sweep_action_queue(
             action_group: project.next_action_group.clone(),
             target: project.next_action.target.clone(),
             command: capability_action_queue_command(project),
-            latest_evidence_path: latest_capability_verify_evidence_path(&project.project),
+            latest_evidence_path: latest_capability_verify_evidence_path(
+                project_root,
+                &project.project,
+            ),
             reason: project.next_action.reason.clone(),
         })
         .collect()
@@ -3717,11 +3745,10 @@ fn capability_action_queue_command(project: &CapabilitySweepProject) -> String {
     }
 }
 
-fn latest_capability_verify_evidence_path(project: &str) -> Option<PathBuf> {
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
-        .join(project)
-        .join("capability-verify-reports");
+fn latest_capability_verify_evidence_path(project_root: &Path, project: &str) -> Option<PathBuf> {
+    let dir = crate::shared::workspace::workspace_runtime_path(project_root)
+        .join("capability-verify-reports")
+        .join(project);
     let mut paths = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|entry| entry.ok())
@@ -3742,8 +3769,8 @@ fn current_successful_capability_verify_evidence_path(
     if report.next_action.kind != CapabilityActionKind::RunVerify {
         return None;
     }
-    let path = latest_capability_verify_evidence_path(&report.project)?;
     let project_root = crate::find_project_root().ok()?;
+    let path = latest_capability_verify_evidence_path(&project_root, &report.project)?;
     let git_head = current_git_head(&project_root)?;
     if current_git_dirty(&project_root)? {
         return None;
@@ -3845,14 +3872,14 @@ fn is_capability_executable_action(action: &CapabilityAction) -> bool {
 }
 
 fn write_capability_sweep_action_queue_index(
+    project_root: &Path,
     entries: &[CapabilityActionQueueEntry],
 ) -> Result<Option<PathBuf>> {
     if entries.is_empty() {
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
+    let dir = crate::shared::workspace::workspace_runtime_path(project_root)
         .join("capability-action-queue");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-action-queue.md"));
@@ -13320,19 +13347,19 @@ old tail placeholder
 
     #[test]
     fn draft_commands_preserve_cap_path_override() {
-        let cap_path = Path::new("/tmp/aw draft/meter README.md");
-        let draft_path = Path::new("/tmp/aw draft/meter capability draft.md");
+        let cap_path = Path::new("/tmp/aw/test/draft path/meter README.md");
+        let draft_path = Path::new("/tmp/aw/test/draft path/meter capability draft.md");
 
         let apply = capability_apply_draft_command("meter", draft_path, Some(cap_path));
         let check = capability_check_command("meter", Some(cap_path));
 
         assert_eq!(
             apply,
-            "aw capability apply-draft --project meter --draft '/tmp/aw draft/meter capability draft.md' --cap-path '/tmp/aw draft/meter README.md' --reviewed"
+            "aw capability apply-draft --project meter --draft '/tmp/aw/test/draft path/meter capability draft.md' --cap-path '/tmp/aw/test/draft path/meter README.md' --reviewed"
         );
         assert_eq!(
             check,
-            "aw capability check --project meter --cap-path '/tmp/aw draft/meter README.md'"
+            "aw capability check --project meter --cap-path '/tmp/aw/test/draft path/meter README.md'"
         );
     }
 
@@ -14059,7 +14086,8 @@ Gate Inventory:
             false,
         );
 
-        let queue = capability_sweep_action_queue(&sweep.projects)
+        let tmp = tempfile::tempdir().unwrap();
+        let queue = capability_sweep_action_queue(tmp.path(), &sweep.projects)
             .into_iter()
             .map(|entry| (entry.project, entry.action_group, entry.command))
             .collect::<Vec<_>>();
@@ -14090,13 +14118,15 @@ Gate Inventory:
                 action: "capability_draft",
                 project: "pg".to_string(),
                 cap_path: PathBuf::from("projects/pg/README.md"),
-                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "empty_capability_map",
                 candidate_count: 0,
                 agent_review_required: true,
                 review_status: "pending",
-                apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed".to_string(),
+                apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed".to_string(),
                 check_command: "aw capability check --project pg".to_string(),
             },
             CapabilityDraftReport {
@@ -14104,13 +14134,15 @@ Gate Inventory:
                 action: "capability_draft",
                 project: "meter".to_string(),
                 cap_path: PathBuf::from("projects/meter/README.md"),
-                path: PathBuf::from("/tmp/aw/meter/capability-map-drafts/draft.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "prose_candidates",
                 candidate_count: 3,
                 agent_review_required: true,
                 review_status: "pending",
-                apply_command: "aw capability apply-draft --project meter --draft '/tmp/aw/meter/capability-map-drafts/draft.md' --reviewed".to_string(),
+                apply_command: "aw capability apply-draft --project meter --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md' --reviewed".to_string(),
                 check_command: "aw capability check --project meter".to_string(),
             },
         ]);
@@ -14123,11 +14155,11 @@ Gate Inventory:
         ));
         assert!(index.contains("| definition needed | 1 | 0 | define product promises before applying a README capability section |"));
         assert!(index.contains("## Suggested Review Order"));
-        assert!(index.contains("| meter | 3 | /tmp/aw/meter/capability-map-drafts/draft.md | `aw capability check --project meter` |"));
+        assert!(index.contains("| meter | 3 | /tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md | `aw capability check --project meter` |"));
         assert!(index.contains("| pg | empty_capability_map | 0 |"));
-        assert!(index.contains("/tmp/aw/pg/capability-map-drafts/draft.md"));
+        assert!(index.contains("/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md"));
         assert!(index.contains(
-            "`aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed`"
+            "`aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed`"
         ));
         assert!(index.contains("`aw capability check --project pg`"));
         assert!(index.contains("Do not edit README until the capability promise is confirmed."));
@@ -14141,7 +14173,9 @@ Gate Inventory:
                 kind: "capability_plan",
                 project: "lumen".to_string(),
                 backend: "unavailable".to_string(),
-                path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md",
+                ),
                 cap_path: PathBuf::from("projects/lumen/README.md"),
                 capability_count: 17,
                 planning_row_count: 54,
@@ -14158,7 +14192,7 @@ Gate Inventory:
         assert!(index.contains("kind: capability_wi_plan_index"));
         assert!(index.contains("plan_count: 1"));
         assert!(index.contains("| lumen | unavailable | 48 | 3 |"));
-        assert!(index.contains("/tmp/aw/lumen/capability-plan/plan.md"));
+        assert!(index.contains("/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md"));
         assert!(index.contains("`aw wi plan --project lumen`"));
         assert!(index.contains("keep the artifact local/review-only"));
     }
@@ -14183,7 +14217,7 @@ Gate Inventory:
                 command: "aw capability report --project meter --verify --write-evidence"
                     .to_string(),
                 latest_evidence_path: Some(PathBuf::from(
-                    "/tmp/aw/meter/capability-verify-reports/report.md",
+                    "/tmp/aw/workspaces/axiom/capability-verify-reports/meter/report.md",
                 )),
                 reason: "runtime verification must be rerun".to_string(),
             },
@@ -14193,7 +14227,7 @@ Gate Inventory:
         assert!(index.contains("action_count: 2"));
         assert!(index
             .contains("| jet | run_td | WASM And Multi-Target Execution | `aw td create 3783` |"));
-        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` | /tmp/aw/meter/capability-verify-reports/report.md |"));
+        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` | /tmp/aw/workspaces/axiom/capability-verify-reports/meter/report.md |"));
         assert!(index.contains("Execute one command at a time"));
     }
 
@@ -14318,7 +14352,9 @@ Gate Inventory:
             target: "projects/jet/README.md".to_string(),
             reason: "capability format and TD refs are valid".to_string(),
         }];
-        sweep.check_index_path = Some(PathBuf::from("/tmp/aw/capability-checks/check-index.md"));
+        sweep.check_index_path = Some(PathBuf::from(
+            "/tmp/aw/workspaces/axiom/capability-checks/check-index.md",
+        ));
         sweep.write_drafts = true;
         sweep.drafts = vec![
             CapabilityDraftReport {
@@ -14326,14 +14362,16 @@ Gate Inventory:
                 action: "capability_draft",
                 project: "meter".to_string(),
                 cap_path: PathBuf::from("projects/meter/README.md"),
-                path: PathBuf::from("/tmp/aw/meter/capability-map-drafts/draft.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "prose_candidates",
                 candidate_count: 3,
                 agent_review_required: true,
                 review_status: "pending",
                 apply_command:
-                    "aw capability apply-draft --project meter --draft '/tmp/aw/meter/capability-map-drafts/draft.md' --reviewed"
+                    "aw capability apply-draft --project meter --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md' --reviewed"
                         .to_string(),
                 check_command: "aw capability check --project meter".to_string(),
             },
@@ -14342,20 +14380,22 @@ Gate Inventory:
                 action: "capability_draft",
                 project: "pg".to_string(),
                 cap_path: PathBuf::from("projects/pg/README.md"),
-                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "empty_capability_map",
                 candidate_count: 0,
                 agent_review_required: true,
                 review_status: "pending",
                 apply_command:
-                    "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed"
+                    "aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed"
                         .to_string(),
                 check_command: "aw capability check --project pg".to_string(),
             },
         ];
         sweep.draft_index_path = Some(PathBuf::from(
-            "/tmp/aw/capability-map-drafts/draft-index.md",
+            "/tmp/aw/workspaces/axiom/capability-map-drafts/draft-index.md",
         ));
         sweep.write_wi_plans = true;
         sweep.wi_plans = vec![crate::cli::issues::CapabilityWiPlanReport {
@@ -14363,7 +14403,7 @@ Gate Inventory:
             kind: "capability_plan",
             project: "lumen".to_string(),
             backend: "unavailable".to_string(),
-            path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+            path: PathBuf::from("/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md"),
             cap_path: PathBuf::from("projects/lumen/README.md"),
             capability_count: 17,
             planning_row_count: 54,
@@ -14377,7 +14417,7 @@ Gate Inventory:
             plan_command: "aw wi plan --project lumen".to_string(),
         }];
         sweep.wi_plan_index_path = Some(PathBuf::from(
-            "/tmp/aw/capability-wi-plans/wi-plan-index.md",
+            "/tmp/aw/workspaces/axiom/capability-wi-plans/wi-plan-index.md",
         ));
         sweep.write_action_queue = true;
         sweep.action_queue = vec![CapabilityActionQueueEntry {
@@ -14390,19 +14430,23 @@ Gate Inventory:
             reason: "runtime verification must be rerun".to_string(),
         }];
         sweep.action_queue_index_path = Some(PathBuf::from(
-            "/tmp/aw/capability-action-queue/action-queue.md",
+            "/tmp/aw/workspaces/axiom/capability-action-queue/action-queue.md",
         ));
 
         let index = render_capability_sweep_rollout_index(&sweep);
 
         assert!(index.contains("kind: capability_rollout_index"));
         assert!(index.contains("project_count: 2"));
-        assert!(index.contains("| Check index | 1 | /tmp/aw/capability-checks/check-index.md |"));
+        assert!(index.contains(
+            "| Check index | 1 | /tmp/aw/workspaces/axiom/capability-checks/check-index.md |"
+        ));
         assert!(index
-            .contains("| Capability drafts | 2 | /tmp/aw/capability-map-drafts/draft-index.md |"));
-        assert!(index.contains("| WI plans | 1 | /tmp/aw/capability-wi-plans/wi-plan-index.md |"));
+            .contains("| Capability drafts | 2 | /tmp/aw/workspaces/axiom/capability-map-drafts/draft-index.md |"));
+        assert!(index.contains(
+            "| WI plans | 1 | /tmp/aw/workspaces/axiom/capability-wi-plans/wi-plan-index.md |"
+        ));
         assert!(index
-            .contains("| Action queue | 1 | /tmp/aw/capability-action-queue/action-queue.md |"));
+            .contains("| Action queue | 1 | /tmp/aw/workspaces/axiom/capability-action-queue/action-queue.md |"));
         assert!(index.contains("| blocked | define_capability_map:draft | 1 | meter |"));
         assert!(index.contains("Start with the check index"));
         assert!(index.contains("skipped issue inventory alone is not backlog"));
@@ -14423,8 +14467,9 @@ Gate Inventory:
             .projects
             .push(capability_sweep_project(&skipped_inventory));
         sweep.write_review_packet = true;
-        sweep.review_packet_path =
-            Some(PathBuf::from("/tmp/aw/capability-review/review-packet.md"));
+        sweep.review_packet_path = Some(PathBuf::from(
+            "/tmp/aw/workspaces/axiom/capability-review/review-packet.md",
+        ));
 
         let packet = render_capability_sweep_review_packet(&sweep);
 
@@ -14441,10 +14486,10 @@ Gate Inventory:
         assert!(
             packet.contains("| Project | Candidate Roots | Draft | Apply After Review | Check |")
         );
-        assert!(packet.contains("| meter | 3 | /tmp/aw/meter/capability-map-drafts/draft.md | `aw capability apply-draft --project meter --draft '/tmp/aw/meter/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project meter` |"));
+        assert!(packet.contains("| meter | 3 | /tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md | `aw capability apply-draft --project meter --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md' --reviewed` | `aw capability check --project meter` |"));
         assert!(packet.contains("### Definition Needed"));
         assert!(packet.contains("These projects have no confirmed capability roots yet."));
-        assert!(packet.contains("| pg | empty_capability_map | /tmp/aw/pg/capability-map-drafts/draft.md | `aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project pg` |"));
+        assert!(packet.contains("| pg | empty_capability_map | /tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md | `aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed` | `aw capability check --project pg` |"));
         assert!(packet.contains("do not apply README drafts until every product promise"));
     }
 
@@ -14602,6 +14647,14 @@ generated_at: 2026-06-18T00:00:00Z
         let doc = cap_doc(&body);
 
         assert!(body.starts_with("# Cclab Core\n\n## Brief\n\n"));
+        assert!(body.contains("\n## Contributing\n\n"));
+        assert!(body.contains("[CONTRIBUTING.md](CONTRIBUTING.md)"));
+        assert!(body
+            .contains("Add that file's `## Brief` here after confirming the project-local rules."));
+        assert!(body.contains("\n## Capability Contract\n\n"));
+        assert!(body.contains("[CAPABILITIES.md](CAPABILITIES.md)"));
+        assert!(body
+            .contains("Add that file's `## Brief` here after confirming the capability contract."));
         assert!(body.contains("\n## Capabilities\n\n### Capability Index\n\n"));
         assert!(body.contains(
             "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |"

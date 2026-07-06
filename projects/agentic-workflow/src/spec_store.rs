@@ -495,7 +495,7 @@ td_path = "projects/agentic-workflow/tech-design"
     // from_config is a semantic alias for new
     #[test]
     fn test_from_config_is_alias_for_new() {
-        let root = PathBuf::from("/tmp");
+        let root = PathBuf::from("/tmp/aw/test/root");
         let mut scopes = HashMap::new();
         scopes.insert("agentic-workflow".to_string(), "projects".to_string());
 

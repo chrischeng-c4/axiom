@@ -2,7 +2,7 @@
 
 ## Brief
 
-Machine-readable capability contract for Agentic Workflow. The project overview lives in [README.md](README.md).
+Machine-readable capability contract for Agentic Workflow.
 
 ## Capabilities
 
@@ -194,9 +194,9 @@ Surfaces:
 EC Dimensions:
 - behavior: `./target/debug/aw view --snapshot` - repo catalog, terminal status, focused README brief, capability map detail, EC inventory, TD summary, and renderer-neutral surface snapshot are present.
 - behavior: `./target/debug/aw view --check` - headless contract check contains the terminal pane, repo catalog, semantic layout toggle, selected README brief, capability map, EC, and TD detail panes.
-- behavior: `./target/debug/aw view --screenshot /private/tmp/aw-view-app.png` - app-level PNG capture is rendered from the same surface tree without a browser or desktop screen capture.
-- behavior: `./target/debug/aw view --layout top-bottom --screenshot /private/tmp/aw-view-app-top-bottom.png` - repo list stays fixed while the terminal/detail region can switch to top-bottom layout with a visible toggle control.
-- behavior: `./target/debug/aw view --app /private/tmp/AWRepoView.app` - native macOS app bundle is produced and launches the repo-built desktop view.
+- behavior: `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png` - app-level PNG capture is rendered from the same surface tree without a browser or desktop screen capture.
+- behavior: `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png` - repo list stays fixed while the terminal/detail region can switch to top-bottom layout with a visible toggle control.
+- behavior: `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app` - native macOS app bundle is produced and launches the repo-built desktop view.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -206,14 +206,14 @@ Gate Inventory:
 - `cargo test -p agentic-workflow --lib view_repo_snapshot -- --nocapture`
 - `./target/debug/aw view --snapshot`
 - `./target/debug/aw view --check`
-- `./target/debug/aw view --screenshot /private/tmp/aw-view-app.png`
-- `./target/debug/aw view --layout top-bottom --screenshot /private/tmp/aw-view-app-top-bottom.png`
-- `./target/debug/aw view --app /private/tmp/AWRepoView.app`
+- `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png`
+- `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png`
+- `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app`
 - projects/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Repo desktop reader | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib view_repo_snapshot -- --nocapture`; `./target/debug/aw view --snapshot`; `./target/debug/aw view --check`; `./target/debug/aw view --screenshot /private/tmp/aw-view-app.png`; `./target/debug/aw view --layout top-bottom --screenshot /private/tmp/aw-view-app-top-bottom.png`; `./target/debug/aw view --app /private/tmp/AWRepoView.app` |
+| Repo desktop reader | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib view_repo_snapshot -- --nocapture`; `./target/debug/aw view --snapshot`; `./target/debug/aw view --check`; `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png`; `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png`; `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app` |
 
 ### Existing Project Standardization
 

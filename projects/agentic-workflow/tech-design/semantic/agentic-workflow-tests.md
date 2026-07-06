@@ -101,7 +101,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests"
-      - path: "projects/agentic-workflow/tests/sync_check_test.rs"
+      - path: "projects/agentic-workflow/tests/project_registry_check_test.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -151,9 +151,6 @@ semantic_domain:
             kind: "module"
             public: false
           - name: "in_place_lifecycle_test"
-            kind: "module"
-            public: false
-          - name: "init_doc_projection_test"
             kind: "module"
             public: false
           - name: "inplace_mode_test"
@@ -674,7 +671,7 @@ tests:
       - path: "projects/agentic-workflow/tests/issues_remote_round_trip.rs"
       - path: "projects/agentic-workflow/tests/execution_modes_test.rs"
       - path: "projects/agentic-workflow/tests/validate_all_snapshot.rs"
-      - path: "projects/agentic-workflow/tests/sync_check_test.rs"
+      - path: "projects/agentic-workflow/tests/project_registry_check_test.rs"
       - path: "projects/agentic-workflow/tests/cli_tests.rs"
       - path: "projects/agentic-workflow/tests/codegen_full_test.rs"
       - path: "projects/agentic-workflow/tests/project_discovery_test.rs"
@@ -716,7 +713,7 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/agentic-workflow/tests/sync_check_test.rs"
+  - path: "projects/agentic-workflow/tests/project_registry_check_test.rs"
     action: modify
     section: schema
     description: |
@@ -732,9 +729,9 @@ changes:
     action: modify
     section: schema
     description: |
-      Issue #984 (init-projector slice 1/3): registers the new
-      `init_doc_projection_test` module (real-binary smoke coverage for `aw
-      init`'s dual CLAUDE.md/AGENTS.md projection and `aw init --check`).
+      Issue #984 init-projector coverage was removed with the retired
+      top-level init command; root-doc and trait mirror contracts now live in
+      focused read-only tests.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/cli_tests.rs"
     action: modify

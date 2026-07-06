@@ -10,8 +10,8 @@
 //! replaces "remember to edit both" with an executable contract.
 //!
 //! The whitelist constants come from `agentic_workflow::cli::doc_mirror` —
-//! the SAME module `aw init`'s AGENTS.md projection consumes (issue #984
-//! AC3), so the projector and this checker can never disagree.
+//! the SAME module root-doc producers consume (issue #984 AC3), so the
+//! projector and this checker can never disagree.
 
 use agentic_workflow::cli::doc_mirror::{
     AGENTS_TITLE, CLAUDE_TITLE, CODEX_RULES_HEADING, CODEX_TRANSLATE_PREFIX,

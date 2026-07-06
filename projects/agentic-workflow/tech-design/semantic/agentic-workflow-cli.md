@@ -894,12 +894,12 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/agentic-workflow/src/cli"
-      - path: "projects/agentic-workflow/src/cli/sync.rs"
+      - path: "projects/agentic-workflow/src/cli/conf.rs"
         language: "rust"
         ownership_state: "handwrite"
         generator_primitives: ["data_model", "service_method"]
         symbols:
-          - name: "SyncArgs"
+          - name: "ConfArgs"
             kind: "struct"
             public: true
           - name: "run"
@@ -3542,7 +3542,7 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/agentic-workflow/src/cli/sync.rs"
+  - path: "projects/agentic-workflow/src/cli/conf.rs"
     action: modify
     section: schema
     description: |

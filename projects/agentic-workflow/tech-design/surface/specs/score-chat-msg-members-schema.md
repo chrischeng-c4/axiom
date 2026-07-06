@@ -21,9 +21,9 @@ command_refs:
 $id: score-chat-msg-members-schema
 description: |
   Extended data shapes for the `aw chat` verb. Extends projects/agentic-workflow/tech-design/surface/specs/score-chat.md.
-  The channel file at /tmp/aw-channel.md stores messages as consecutive
+  The channel file at /tmp/aw/chat/channel.md stores messages as consecutive
   YAML-frontmatter blocks delimited by `---`, one per message, each followed
-  by the message body. The members registry at /tmp/aw-channel-members.yaml
+  by the message body. The members registry at /tmp/aw/chat/members.yaml
   is a YAML document listing all registered members. CLI auto-fills all
   fields except --to and --body-file; agents must not pre-format YAML.
 
@@ -32,7 +32,7 @@ definitions:
     $id: "#/definitions/ChannelMessage"
     type: object
     description: |
-      One message block inside /tmp/aw-channel.md.
+      One message block inside /tmp/aw/chat/channel.md.
       Serialised as per-message YAML frontmatter delimited by `---` markers
       followed by the body text. CLI auto-fills id, from, timestamp;
       agents supply only --to and --body-file.
@@ -75,7 +75,7 @@ definitions:
   ChannelStorage:
     $id: "#/definitions/ChannelStorage"
     type: string
-    description: "/tmp/aw-channel.md on-disk format."
+    description: "/tmp/aw/chat/channel.md on-disk format."
     x-format: |
       Each message block consists of:
         ---
@@ -94,7 +94,7 @@ definitions:
     $id: "#/definitions/Member"
     type: object
     description: |
-      One entry in /tmp/aw-channel-members.yaml members list. Written
+      One entry in /tmp/aw/chat/members.yaml members list. Written
       by `aw chat members --register`. Identity = branch; name is the
       human-readable label resolved from branch lookup.
     required: [name, branch, wt_path]
@@ -131,8 +131,8 @@ definitions:
     $id: "#/definitions/MembersFile"
     type: object
     description: |
-      /tmp/aw-channel-members.yaml — the members registry. Written and read
-      by `aw chat members`. Replaces the old /tmp/aw-channel-agents.md
+      /tmp/aw/chat/members.yaml — the members registry. Written and read
+      by `aw chat members`. Replaces the old /tmp/aw/chat/agents.md
       per-member markdown file format.
     required: [schema, updated_at, members]
     properties:
@@ -160,13 +160,13 @@ definitions:
       register:
         type: boolean
         description: |
-          Write or upsert caller's Member entry in /tmp/aw-channel-members.yaml.
+          Write or upsert caller's Member entry in /tmp/aw/chat/members.yaml.
           Auto-fills branch (git rev-parse --abbrev-ref HEAD) and wt_path
           (git rev-parse --show-toplevel) and last_seen (Utc::now()).
           Preserves existing projects and capabilities unless explicitly overridden.
       list:
         type: boolean
-        description: Print all registered members from /tmp/aw-channel-members.yaml.
+        description: Print all registered members from /tmp/aw/chat/members.yaml.
       terse:
         type: boolean
         description: Force terse output.
@@ -361,8 +361,8 @@ changes:
         Keep config.toml name as backwards-compat fallback when branch absent
         from members.yaml.
       - Rewrite `run_agents_register` / `run_agents_list` to read and write
-        `/tmp/aw-channel-members.yaml` (MembersFile YAML) instead of the
-        old `/tmp/aw-channel-agents.md` per-member markdown sections.
+        `/tmp/aw/chat/members.yaml` (MembersFile YAML) instead of the
+        old `/tmp/aw/chat/agents.md` per-member markdown sections.
         Upsert logic preserves existing `projects` and `capabilities` fields on
         repeat --register calls; only `last_seen`, `branch`, and `wt_path` are
         always refreshed.
@@ -395,7 +395,7 @@ tests:
       blocks; round-trip parse via parse_channel_markdown returns same ids,
       from, to, and body.
     setup:
-      - remove /tmp/aw-channel.md if present
+      - remove /tmp/aw/chat/channel.md if present
     assertions:
       - post msg1 with to=[test-team] body=hello1; parse channel; msgs[0].id == 1
       - post msg2 with to=[] body=hello2; parse channel; msgs[1].id == 2
@@ -411,7 +411,7 @@ tests:
       Channel file with old pipe-separated format gets rewritten on first post.
       Second post sees new format; no double migration.
     setup:
-      - write /tmp/aw-channel.md with content "## msg-1\nscore | mamba | 2024-01-01T00:00:00Z | hello old\n"
+      - write /tmp/aw/chat/channel.md with content "## msg-1\nscore | mamba | 2024-01-01T00:00:00Z | hello old\n"
     assertions:
       - post one new msg; read channel.md; file does NOT contain pipe-separated lines
       - parse channel; msgs.len() >= 2 (migrated msg + new msg)
@@ -426,7 +426,7 @@ tests:
       from resolved to bar.
     setup:
       - create temp git repo; create branch foo; checkout foo
-      - write /tmp/aw-channel-members.yaml with one member: name=bar branch=foo
+      - write /tmp/aw/chat/members.yaml with one member: name=bar branch=foo
     assertions:
       - detect_team_identity returns "bar" for the temp repo CWD
       - posted message has from == "bar"
@@ -438,7 +438,7 @@ tests:
       No members.yaml present and no config.toml; from falls back to branch name.
     setup:
       - create temp git repo; create branch my-feature; checkout my-feature
-      - ensure /tmp/aw-channel-members.yaml absent
+      - ensure /tmp/aw/chat/members.yaml absent
     assertions:
       - detect_team_identity returns "my-feature" for the temp repo CWD
       - posted message has from == "my-feature"
@@ -450,7 +450,7 @@ tests:
       members --register called twice; second call upserts last_seen but
       preserves user-set projects field; no duplicate entries.
     setup:
-      - remove /tmp/aw-channel-members.yaml if present
+      - remove /tmp/aw/chat/members.yaml if present
     assertions:
       - first --register writes MembersFile with schema == "score-chat-members-v1"
       - first --register entry has branch == current_branch and wt_path == current_wt

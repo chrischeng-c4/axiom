@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/agentic-workflow/tech-design/core/validate/sync_check_test.md#tests
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/core/validate/project_registry_check_test.md#tests
 // CODEGEN-BEGIN
 
 //! External integration tests for project registry drift-check semantics.

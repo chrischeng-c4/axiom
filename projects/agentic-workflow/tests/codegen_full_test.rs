@@ -361,7 +361,7 @@ fn test_task_state_machine_roundtrip() {
 fn dump_task_state_machine_to_tmp() {
     let root = project_root();
     let spec = root.join(".aw/tech-design/crates/cclab-queue/logic/task-state-machine.md");
-    let out_dir = std::path::Path::new("/tmp/aw-roundtrip");
+    let out_dir = std::path::Path::new("/tmp/aw/roundtrip");
     // Clean prior run
     let _ = std::fs::remove_dir_all(out_dir);
     std::fs::create_dir_all(out_dir).unwrap();

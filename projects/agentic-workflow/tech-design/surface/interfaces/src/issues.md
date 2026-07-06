@@ -171,7 +171,7 @@ pub struct DraftArgs {
 #[derive(Debug, Subcommand)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
 pub enum DraftCommand {
-    /// Initialize a local draft work-item under /tmp/aw/{project}/workitems/.
+    /// Initialize a local draft work-item under /tmp/aw/workspaces/<workspace>/workitems/{project}/.
     Init(DraftInitArgs),
     /// Fill sections in a local draft work-item.
     Fill(DraftFillArgs),
@@ -521,7 +521,8 @@ pub struct PlanArgs {
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/capability-plan/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -545,7 +546,8 @@ pub struct EpicizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/epics/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/epics/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/epics/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -569,7 +571,8 @@ pub struct AtomizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/atomize/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -593,7 +596,8 @@ pub struct PrioritizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/priorities/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/priorities/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/priorities/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -650,7 +654,7 @@ pub struct FillSectionArgs {
     pub section: String,
 
     /// Apply mode: merge
-    /// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/body.md` into the
+    /// `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/body.md` into the
     /// checkout issue and emit the next validate envelope. Without this
     /// flag the CLI prints a plain-text brief.
     #[arg(long)]
@@ -694,7 +698,7 @@ pub struct ReviewArgs {
     pub slug: String,
 
     /// Apply mode: append
-    /// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/review.md` under
+    /// `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/review.md` under
     /// `# Reviews` and emit the next validate envelope.
     #[arg(long)]
     pub apply: bool,
@@ -2285,10 +2289,7 @@ async fn run_draft_init(args: DraftInitArgs) -> Result<()> {
     maybe_switch_wi_branch_for_project(&project_root, &project, &tmp_id)?;
     issue.slug = tmp_id.clone();
 
-    let draft_dir = PathBuf::from("/tmp")
-        .join("aw")
-        .join(&project)
-        .join("workitems");
+    let draft_dir = crate::shared::workspace::workitems_path(&project_root).join(&project);
     std::fs::create_dir_all(&draft_dir)
         .with_context(|| format!("failed to create {}", draft_dir.display()))?;
     let draft_path = draft_dir.join(format!("{}.md", tmp_id));
@@ -2539,7 +2540,7 @@ fn looks_like_structured_attempt(body: &str) -> bool {
 
 // ---------------------------------------------------------------------------
 // Fill-section (envelope loop: subagent round-trip via
-// /tmp/aw/workspaces/<workspace>/payloads/<slug>/body.md)
+// /tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/body.md)
 // ---------------------------------------------------------------------------
 
 // Derive the issue workspace path for `<slug>` under the active workspace mode.
@@ -2549,6 +2550,7 @@ fn looks_like_structured_attempt(body: &str) -> bool {
 // @spec projects/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R5
 fn fill_section_payload_path(project_root: &std::path::Path, slug: &str) -> std::path::PathBuf {
     crate::shared::workspace::payloads_path(project_root)
+        .join("wi")
         .join(slug)
         .join("body.md")
 }
@@ -3015,7 +3017,7 @@ async fn run_fill_section_apply(
 
 // ---------------------------------------------------------------------------
 // Review (envelope loop: reviewer round-trip via
-// /tmp/aw/workspaces/<workspace>/payloads/<slug>/review.md)
+// /tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/review.md)
 // ---------------------------------------------------------------------------
 
 // Payload path where the reviewer writes its single bullet for CLI to merge.
@@ -3023,6 +3025,7 @@ async fn run_fill_section_apply(
 // @spec projects/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R10
 fn review_payload_path(project_root: &std::path::Path, slug: &str) -> std::path::PathBuf {
     crate::shared::workspace::payloads_path(project_root)
+        .join("wi")
         .join(slug)
         .join("review.md")
 }
@@ -3671,6 +3674,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         &warnings,
     );
     let path = write_planning_artifact(
+        &project_root,
         &project,
         "capability-plan",
         &title,
@@ -3730,7 +3734,14 @@ async fn run_epicize(args: EpicizeArgs) -> Result<()> {
         &issues,
         capability_document.as_ref(),
     );
-    let path = write_planning_artifact(&project, "epics", &title, args.output.as_deref(), &body)?;
+    let path = write_planning_artifact(
+        &project_root,
+        &project,
+        "epics",
+        &title,
+        args.output.as_deref(),
+        &body,
+    )?;
 
     if args.json {
         println!(
@@ -3782,7 +3793,14 @@ async fn run_atomize(args: AtomizeArgs) -> Result<()> {
         .unwrap_or_else(|| format!("{} atomization", project));
     let candidates = atomize_candidates(&issues);
     let body = render_atomize_plan(&project, &title, &backend_name, &issues, &candidates);
-    let path = write_planning_artifact(&project, "atomize", &title, args.output.as_deref(), &body)?;
+    let path = write_planning_artifact(
+        &project_root,
+        &project,
+        "atomize",
+        &title,
+        args.output.as_deref(),
+        &body,
+    )?;
 
     if args.json {
         println!(
@@ -3821,6 +3839,7 @@ async fn run_prioritize(args: PrioritizeArgs) -> Result<()> {
         .unwrap_or_else(|| format!("{} priority review", project));
     let body = render_prioritize_plan(&project, &title, &backend_name, &lanes, &issues);
     let path = write_planning_artifact(
+        &project_root,
         &project,
         "priorities",
         &title,
@@ -5685,6 +5704,7 @@ fn push_prioritize_lane(out: &mut String, title: &str, issues: &[Issue]) {
 }
 
 fn write_planning_artifact(
+    project_root: &Path,
     project: &str,
     bucket: &str,
     title: &str,
@@ -5692,10 +5712,13 @@ fn write_planning_artifact(
     body: &str,
 ) -> Result<PathBuf> {
     let path = if let Some(path) = output {
+        ensure_planning_output_path_is_explicit(project_root, project, bucket, path)?;
         path.to_path_buf()
     } else {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-        let dir = PathBuf::from("/tmp").join("aw").join(project).join(bucket);
+        let dir = crate::shared::workspace::workitems_path(project_root)
+            .join(project)
+            .join(bucket);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
         dir.join(format!("{}-{}.md", stamp, planning_slug(title)))
@@ -5706,6 +5729,40 @@ fn write_planning_artifact(
     }
     write_file_atomically(&path, body)?;
     Ok(path)
+}
+
+fn ensure_planning_output_path_is_explicit(
+    project_root: &Path,
+    project: &str,
+    bucket: &str,
+    path: &Path,
+) -> Result<()> {
+    if !is_tmp_root_file(path) {
+        return Ok(());
+    }
+
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("plan.md");
+    let suggested = crate::shared::workspace::workitems_path(project_root)
+        .join(project)
+        .join(bucket)
+        .join(filename);
+    anyhow::bail!(
+        "ambiguous planning artifact output `{}`; write WI planning artifacts under \
+         /tmp/aw/workspaces/<workspace>/workitems/<project>/<kind>/ so agents can discover and review them. Use `{}`.",
+        path.display(),
+        suggested.display()
+    );
+}
+
+fn is_tmp_root_file(path: &Path) -> bool {
+    matches!(
+        path.parent().and_then(|parent| parent.to_str()),
+        Some("/tmp" | "/private/tmp")
+    )
 }
 
 fn planning_slug(title: &str) -> String {
@@ -6796,12 +6853,14 @@ Generator ownership is complete; package-manager roadmap remains open.
 
     #[test]
     fn capability_wi_plan_command_preserves_cap_path_override() {
-        let command =
-            capability_wi_plan_command("lumen", Some(Path::new("/tmp/aw plan/lumen README.md")));
+        let command = capability_wi_plan_command(
+            "lumen",
+            Some(Path::new("/tmp/aw/test/plan path/lumen README.md")),
+        );
 
         assert_eq!(
             command,
-            "aw wi plan --project lumen --cap-path '/tmp/aw plan/lumen README.md'"
+            "aw wi plan --project lumen --cap-path '/tmp/aw/test/plan path/lumen README.md'"
         );
     }
 
@@ -6923,6 +6982,29 @@ label = "project:score"
     #[test]
     fn planning_slug_is_filesystem_safe() {
         assert_eq!(planning_slug("Score: Next Run!"), "score-next-run");
+        assert_eq!(planning_slug("   "), "plan");
+    }
+
+    #[test]
+    fn planning_artifact_rejects_tmp_root_output() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let err = write_planning_artifact(
+            tmp.path(),
+            "lumen",
+            "capability-plan",
+            "Lumen operator reshard policy",
+            Some(Path::new("/private/tmp/lumen-operator-reshard-policy.md")),
+            "# draft\n",
+        )
+        .unwrap_err();
+        let message = format!("{err:#}");
+
+        assert!(message.contains("ambiguous planning artifact output"));
+        assert!(message.contains("/private/tmp/lumen-operator-reshard-policy.md"));
+        assert!(message.contains("/tmp/aw/workspaces/"));
+        assert!(
+            message.contains("/workitems/lumen/capability-plan/lumen-operator-reshard-policy.md")
+        );
     }
 
     #[test]
@@ -7731,6 +7813,7 @@ labels:\n\
     fn initialize_payload_file_creates_parent_and_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
         let path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("wi")
             .join("123")
             .join("body.md");
 

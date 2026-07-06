@@ -7,15 +7,15 @@
 //! insertions: a title-line swap, the `## Codex Operational Rules` section
 //! (outside the `aw:start`/`aw:end` managed block), and a slash-command
 //! translation paragraph (inside the managed block). This module is the ONE
-//! definition of that whitelist, consumed by both `aw init`'s AGENTS.md
-//! projection (`crate::cli::init`) and `root_doc_mirror_test`, so the
+//! definition of that whitelist, consumed by both the project asset installer
+//! (`crate::cli::init`) and `root_doc_mirror_test`, so the
 //! projector and the checker can never disagree (issue #984 AC3).
 //!
 //! Only [`CODEX_TRANSLATE_PREFIX`], [`CODEX_TRANSLATE_PARAGRAPH`],
 //! [`CODEX_TRANSLATE_ANCHOR`], and [`agents_block_from_claude_block`] are
-//! actually consumed by `aw init`'s projection: the title-line and
+//! actually consumed by the AGENTS.md projection: the title-line and
 //! `## Codex Operational Rules` constants describe content that sits
-//! OUTSIDE the `aw:start` block, so init's block-replace never touches it —
+//! OUTSIDE the `aw:start` block, so block-replace never touches it —
 //! those two are relevant only to the mirror test's outside-block
 //! normalization.
 
@@ -26,11 +26,11 @@ pub const CLAUDE_TITLE: &str = "# CLAUDE.md - Implementation Essentials";
 pub const AGENTS_TITLE: &str = "# AGENTS.md - Implementation Essentials";
 
 /// Heading of the Codex-only operational-rules section. Lives OUTSIDE the
-/// `aw:start`/`aw:end` block, so `aw init`'s block-replace never touches it.
+/// `aw:start`/`aw:end` block, so block-replace never touches it.
 pub const CODEX_RULES_HEADING: &str = "## Codex Operational Rules";
 
 /// First line of the Codex-only slash-command translation paragraph. Lives
-/// INSIDE the `aw:start` block, so `aw init` inserts it when projecting
+/// INSIDE the `aw:start` block, so the asset installer inserts it when projecting
 /// AGENTS.md.
 pub const CODEX_TRANSLATE_PREFIX: &str = "Codex should translate Claude slash-command references";
 
@@ -46,8 +46,8 @@ pub const CODEX_TRANSLATE_ANCHOR: &str = "### Workflow CLI";
 /// Project the Codex-only slash-command translation paragraph into a
 /// CLAUDE.md `aw:start` block's content, producing the AGENTS.md block.
 ///
-/// `aw init` calls this on the template-derived CLAUDE.md section to build
-/// the section it upserts into AGENTS.md, so the two docs' managed blocks
+/// The asset installer calls this on the template-derived CLAUDE.md section to
+/// build the section it upserts into AGENTS.md, so the two docs' managed blocks
 /// can never drift apart by hand-editing.
 ///
 /// # Panics
@@ -78,17 +78,23 @@ pub fn agents_block_from_claude_block(block: &str) -> String {
 /// takeover). Everything else agent-facing lands in [`SUPPORT_TABLE_VERBS`].
 /// A static allowlist, not a clap `is_hide_set()` filter: no top-level verb
 /// is actually clap-hidden today, so hide-based membership would leave most
-/// verbs (`new`, `generator`, `sync`, `report-issue`, ...) unclassified by
+/// verbs (`new`, `generator`, `conf`, `report-issue`, ...) unclassified by
 /// either table instead of giving every relevant verb one home.
-pub const WORKFLOW_TABLE_VERBS: &[&str] =
-    &["wi", "capability", "td", "ec", "health", "standardize"];
+pub const WORKFLOW_TABLE_VERBS: &[&str] = &[
+    "wi",
+    "capability",
+    "td",
+    "ec",
+    "health",
+    "conf",
+    "standardize",
+];
 
 /// Top-level `Commands` verbs rendered into the generated "Support CLI"
 /// table: the CLI-convention trio (`llm`/`upgrade`/`issue` — see "CLI
 /// Convention: every CLI ships `llm`, `upgrade`, `issue`") plus the
 /// remaining agent-support verbs.
-pub const SUPPORT_TABLE_VERBS: &[&str] =
-    &["init", "chat", "guard", "llm", "upgrade", "issue", "view"];
+pub const SUPPORT_TABLE_VERBS: &[&str] = &["chat", "guard", "llm", "upgrade", "issue", "view"];
 
 /// Marker pair around the generated Workflow CLI table, nested inside the
 /// `aw:start`/`aw:end` managed block.
@@ -186,10 +192,9 @@ fn replace_between_markers(
 }
 
 /// Regenerate both fine-grained CLI tables inside a CLAUDE.md/AGENTS.md
-/// `aw:start` section (issue #985). Runs BEFORE `aw init`'s existing
-/// whole-block diff/upsert/staleness machinery ever sees the section text,
-/// so table drift shows up as ordinary managed-section drift with zero new
-/// detection code (`aw init --check` already covers it for free).
+/// `aw:start` section (issue #985). Runs before the whole-block upsert
+/// machinery sees the section text, so table drift is handled by the doc
+/// producer instead of a separate checker.
 ///
 /// # Panics
 ///
@@ -232,11 +237,11 @@ const SKILL_TREE_LITERAL_SWAPS: &[(&str, &str)] = &[
     ("CLAUDE.md", "AGENTS.md"),
 ];
 
-/// Project a `.claude/skills/<name>/SKILL.md` body into the body `aw init`
-/// installs at `.agents/skills/<name>/SKILL.md`, applying
-/// [`SKILL_TREE_LITERAL_SWAPS`] in order. Consumed by both `aw init`'s
-/// `.agents/skills` installer (`crate::cli::init::install_agents_skills`) and
-/// its staleness check, so the two can never disagree (issue #986 AC3, same
+/// Project a `.claude/skills/<name>/SKILL.md` body into the body installed at
+/// `.agents/skills/<name>/SKILL.md`, applying [`SKILL_TREE_LITERAL_SWAPS`] in
+/// order. Consumed by the `.agents/skills` installer
+/// (`crate::cli::init::install_agents_skills`) so runtime-specific projection
+/// stays centralized (issue #986 AC3, same
 /// shared-whitelist pattern as [`agents_block_from_claude_block`]).
 pub fn agents_skill_body_from_claude_skill_body(body: &str) -> String {
     let mut out = body.to_string();
@@ -394,8 +399,8 @@ pub fn render_projects_table(project_root: &std::path::Path) -> anyhow::Result<S
 /// [`PROJECTS_TABLE_START`]/[`PROJECTS_TABLE_END`] from
 /// `<project_root>/.aw/config.toml` (issue #985). Callers gate on the
 /// markers already being present in `doc_text` — the table is opt-in per
-/// document (see `aw init`'s README projection, which only touches
-/// README.md when it already carries the markers).
+/// document (the README projection only touches README.md when it already
+/// carries the markers).
 pub fn upsert_projects_table(
     project_root: &std::path::Path,
     doc_text: &str,
@@ -746,7 +751,8 @@ mod tests {
         assert!(!rendered.contains("old workflow row"));
         assert!(!rendered.contains("old support row"));
         assert!(rendered.contains("| `aw wi` |"));
-        assert!(rendered.contains("| `aw init` |"));
+        assert!(rendered.contains("| `aw conf` |"));
+        assert!(!rendered.contains("| `aw init` |"));
         assert!(rendered.contains(CLI_TABLE_WORKFLOW_START));
         assert!(rendered.contains(CLI_TABLE_SUPPORT_END));
     }

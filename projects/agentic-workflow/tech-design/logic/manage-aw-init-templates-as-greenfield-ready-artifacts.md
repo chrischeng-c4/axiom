@@ -1,6 +1,6 @@
 ---
 id: aw-greenfield-project-bootstrap
-summary: Add greenfield project bootstrap over managed AW init templates.
+summary: Add greenfield project bootstrap over managed AW asset templates.
 fill_sections: [logic, cli, config, unit-test]
 ---
 
@@ -29,9 +29,9 @@ nodes:
   create_target:
     kind: process
     label: "Create target directory and minimal greenfield marker files"
-  run_init:
+  install_assets:
     kind: process
-    label: "Run init installer against target using managed templates and non-interactive platform defaults"
+    label: "Install managed assets against target using non-interactive platform defaults"
   report:
     kind: terminal
     label: "Print target path and next command for the user"
@@ -49,9 +49,9 @@ edges:
     to: create_target
     label: "missing or reusable"
   - from: create_target
-    to: run_init
+    to: install_assets
     label: "directory ready"
-  - from: run_init
+  - from: install_assets
     to: report
     label: ".aw installed"
 ---
@@ -60,8 +60,8 @@ flowchart TD
     resolve_target --> target_exists{Target exists?}
     target_exists -->|non-empty without force| reject_non_empty([error])
     target_exists -->|missing or reusable| create_target[Create target directory]
-    create_target --> run_init[Install managed AW templates via init]
-    run_init --> report([print next command])
+    create_target --> install_assets[Install managed AW assets]
+    install_assets --> report([print next command])
 ```
 
 ## CLI
@@ -71,7 +71,7 @@ flowchart TD
 commands:
   - name: aw new
     summary: Create a greenfield project directory and bootstrap Agentic Workflow.
-    usage: "aw new <name> [--path <path>] [--force] [--no-init]"
+    usage: "aw new <name> [--path <path>] [--force] [--no-assets]"
     args:
       - name: name
         required: true
@@ -83,19 +83,15 @@ commands:
         description: Explicit target directory. When omitted, target is ./<name>.
       - name: --force
         required: false
-        description: Allow reusing an existing empty directory and pass force refresh to init.
-      - name: --no-init
+        description: Allow reusing an existing non-empty directory and force-refresh managed assets.
+      - name: --no-assets
         required: false
-        description: Create the directory without running aw init.
+        description: Create the directory without installing managed AW assets.
     behavior:
       - Reject existing non-empty target directories unless --force is supplied.
-      - Create the target directory before running init.
-      - Run the same template installer used by aw init so greenfield and refresh paths share managed assets.
+      - Create the target directory before installing managed assets.
+      - Run the shared asset installer so greenfield creation and producer commands share managed assets.
       - Print the resolved project path and next command.
-  - name: aw init
-    summary: Initialize or refresh Agentic Workflow in the current directory.
-    usage: "aw init [--force]"
-    relationship_to_new: "aw new is a greenfield wrapper; aw init remains the in-place bootstrap/refresh command."
 ```
 
 ## Config
@@ -108,9 +104,9 @@ greenfield_bootstrap:
     default_parent: "."
     path_flag: "--path"
     path_flag_semantics: "When supplied, use the exact path as the target directory."
-  init_behavior:
-    default: run_aw_init_after_directory_creation
-    skip_flag: "--no-init"
+  asset_behavior:
+    default: install_assets_after_directory_creation
+    skip_flag: "--no-assets"
     template_source: "projects/agentic-workflow/templates/cli/mainthread"
     issue_platform_selection: "non_interactive_defaults"
   safety:
@@ -149,12 +145,12 @@ requirements:
     priority: high
     verification: unit
   UT4:
-    text: aw new rejects file targets and existing non-empty directories before running init.
+    text: aw new rejects file targets and existing non-empty directories before installing assets.
     type: test
     priority: high
     verification: unit
   UT5:
-    text: aw new delegates bootstrap installation to the same in-place init installer used by aw init.
+    text: aw new delegates bootstrap installation to the shared managed asset installer.
     type: test
     priority: medium
     verification: unit
