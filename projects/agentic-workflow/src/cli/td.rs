@@ -137,13 +137,12 @@ pub struct CreateArgs {
     pub phase: Option<String>,
     /// Per-section apply: merge ONLY the section of the given `type:`
     /// annotation from the payload file at
-    /// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<phase>/<section>.md`
+    /// `/tmp/aw/workspaces/<workspace>/payloads/td/<slug>/<phase>/<section>.json`
     /// into the spec. Other sections in the spec are untouched. Required
     /// for loop-fill flow where the subagent applies one section at a time.
-    /// JSON-payload sections (contract/unit-test class, issue #1097) use a
-    /// `<section>.json` payload instead: write ONLY structured requirements
-    /// data there — never hand-write mermaid or YAML frontmatter — and this
-    /// command renders the YAML frontmatter + `flowchart TD` diagram.
+    /// Payloads are JSON. Generic sections use `{"body":"<section markdown>"}`;
+    /// structured sections such as `unit-test` use their section-specific
+    /// schema and are rendered by this command.
     #[arg(long)]
     pub section: Option<String>,
     /// DEPRECATED compatibility no-op. TD lifecycle envelopes are JSON by default.
@@ -2134,18 +2133,11 @@ fn section_payload_path(
     pass: &str,
     section: &str,
 ) -> String {
-    // Issue #1097: JSON-payload sections (contract/unit-test class) use a
-    // `.json` payload extension so the fill-loop envelope and the file
-    // extension both signal "write data, not diagram syntax".
-    let ext = if td_section_uses_json_payload(section) {
-        "json"
-    } else {
-        "md"
-    };
     crate::shared::workspace::payloads_path(project_root)
+        .join("td")
         .join(slug)
         .join(pass)
-        .join(format!("{section}.{ext}"))
+        .join(format!("{section}.json"))
         .to_string_lossy()
         .into_owned()
 }
@@ -2170,24 +2162,19 @@ fn td_section_payload_template(section: &str) -> Result<String> {
     if !is_supported_td_payload_section_type(st) {
         anyhow::bail!("section '{}' is not supported for new TD payloads", section);
     }
-    if td_section_uses_json_payload(section) {
-        // Issue #1097: the placeholder payload for these sections is raw
-        // JSON data, not a markdown/mermaid-wrapped section template — the
-        // CLI renders the wrapped artifact at apply time.
-        return td_json_payload_template(section);
-    }
     let lang = st.default_lang();
     let body = match lang {
         "markdown" => "(fill)\n".to_string(),
         other => format!("```{}\n(fill)\n```\n", other),
     };
-    Ok(format!(
+    let section_body = format!(
         "## {}\n<!-- type: {} lang: {} -->\n\n{}",
         td_section_title(st.as_str()),
         st.as_str(),
         lang,
         body
-    ))
+    );
+    td_json_payload_template(section, section_body)
 }
 
 fn td_section_title(section: &str) -> String {
@@ -2216,7 +2203,7 @@ fn td_section_title(section: &str) -> String {
         .join(" ")
 }
 
-// ── JSON section payloads (Mermaid Plus contract/unit-test class, #1097) ──
+// ── JSON section payloads ────────────────────────────────────────────────
 //
 // Hand-authoring a structured Mermaid Plus section duplicates facts: the
 // YAML frontmatter and the diagram body both encode the same
@@ -2224,14 +2211,15 @@ fn td_section_title(section: &str) -> String {
 // the agent now writes ONLY that requirements data as JSON; `aw td create
 // --apply` renders the YAML frontmatter presentation and a deterministic
 // `flowchart TD` diagram derived from each requirement's `verify` field.
-// Prose sections and every other Mermaid Plus section kind are unaffected —
-// extend `td_section_uses_json_payload` iteratively as more section kinds
-// convert (issue #1097 scope is contract/unit-test only).
+// Generic sections use a JSON `body` wrapper; structured section kinds can
+// define richer JSON schemas and renderers.
 
-/// Section kinds whose fill-loop payload is JSON data (rendered into the
-/// artifact by the CLI) instead of hand-authored markdown/mermaid text.
-fn td_section_uses_json_payload(section: &str) -> bool {
-    matches!(section, "unit-test")
+/// Generic TD section payload. The JSON transport is uniform for all TD
+/// section files; section-specific structured payloads can still opt into a
+/// richer schema and renderer.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TdBodySectionPayload {
+    pub body: String,
 }
 
 /// Compact JSON schema example embedded directly in fill-loop dispatch text
@@ -2258,7 +2246,7 @@ fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
 fn td_section_fill_reason(section: &str) -> String {
     match td_json_payload_schema_hint(section) {
         Some(hint) => format!("fill the next TD section payload as JSON and apply it. {hint}"),
-        None => "fill the next TD section payload and apply it".to_string(),
+        None => "fill the next TD section payload JSON and apply it. Expected shape: {\"body\":\"<complete section markdown>\"}".to_string(),
     }
 }
 
@@ -2269,13 +2257,13 @@ fn attach_json_payload_schema_hint(
     mut args: serde_json::Value,
     section: &str,
 ) -> serde_json::Value {
-    if let Some(hint) = td_json_payload_schema_hint(section) {
-        if let Some(obj) = args.as_object_mut() {
-            obj.insert(
-                "payload_schema".to_string(),
-                serde_json::Value::String(hint.to_string()),
-            );
-        }
+    if let Some(obj) = args.as_object_mut() {
+        let hint = td_json_payload_schema_hint(section)
+            .unwrap_or(r#"{"body":"<complete section markdown>"}"#);
+        obj.insert(
+            "payload_schema".to_string(),
+            serde_json::Value::String(hint.to_string()),
+        );
     }
     args
 }
@@ -2306,7 +2294,7 @@ pub(crate) struct UnitTestSectionPayload {
 /// Placeholder JSON payload written when a JSON-payload section file does
 /// not exist yet (mirrors `td_section_payload_template`'s md/mermaid
 /// placeholder convention for the other section kinds).
-fn td_json_payload_template(section: &str) -> Result<String> {
+fn td_json_payload_template(section: &str, section_body: String) -> Result<String> {
     match section {
         "unit-test" => {
             let mut requirements = std::collections::BTreeMap::new();
@@ -2326,10 +2314,9 @@ fn td_json_payload_template(section: &str) -> Result<String> {
             };
             Ok(serde_json::to_string_pretty(&payload)?)
         }
-        other => anyhow::bail!(
-            "no JSON payload template registered for section '{}'",
-            other
-        ),
+        _ => Ok(serde_json::to_string_pretty(&TdBodySectionPayload {
+            body: section_body,
+        })?),
     }
 }
 
@@ -2461,7 +2448,19 @@ fn render_td_json_section_payload(section: &str, raw_json: &str) -> Result<Strin
             }
             Ok(render_unit_test_section(&payload))
         }
-        other => anyhow::bail!("no JSON renderer registered for section '{}'", other),
+        _ => {
+            let payload: TdBodySectionPayload = serde_json::from_str(raw_json).map_err(|e| {
+                anyhow::anyhow!(
+                    "'{section}' section payload must be JSON matching the schema (parse error: {e}). Expected shape: {{\"body\":\"<complete section markdown>\"}}"
+                )
+            })?;
+            if payload.body.trim().is_empty() {
+                anyhow::bail!(
+                    "'{section}' section payload JSON field `body` must not be empty. Expected shape: {{\"body\":\"<complete section markdown>\"}}"
+                );
+            }
+            Ok(payload.body)
+        }
     }
 }
 
@@ -2982,7 +2981,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
 /// Apply mode: validate spec in-place, emit dispatch envelope for validate.
 ///
 /// When `--section X` is supplied, reads
-/// `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<phase>/<section>.md` and
+/// `/tmp/aw/workspaces/<workspace>/payloads/td/<slug>/<phase>/<section>.json` and
 /// merges ONLY that section into the spec file before validating
 /// (loop-fill path). When omitted, the caller is expected to have written
 /// the full spec directly — we just validate in-place.
@@ -3006,48 +3005,27 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
     // Per-section merge path: read payload, merge into base spec, write back.
     if let Some(section) = args.section.as_deref() {
         let pass = td_authoring_pass(args.phase.as_deref());
-        let preferred_payload_path = section_payload_path(&project_root, slug, pass, section);
-        // Legacy naming (pre-`<phase>` segment) — still checked so payloads
-        // initialized by an older binary are not silently dropped.
-        let legacy_payload_path = crate::shared::workspace::payloads_path(&project_root)
-            .join(slug)
-            .join(format!("{section}.md"))
-            .to_string_lossy()
-            .into_owned();
-        let payload_path = if std::path::Path::new(&preferred_payload_path).exists() {
-            preferred_payload_path
-        } else if std::path::Path::new(&legacy_payload_path).exists() {
-            legacy_payload_path
-        } else {
-            initialize_td_payload_file(
-                &preferred_payload_path,
-                &td_section_payload_template(section)?,
-            )?;
+        let payload_path = section_payload_path(&project_root, slug, pass, section);
+        if !std::path::Path::new(&payload_path).exists() {
+            initialize_td_payload_file(&payload_path, &td_section_payload_template(section)?)?;
             let msg = format!(
                 "section payload was missing; initialized {}. Fill that file, then rerun this command.",
-                preferred_payload_path
+                payload_path
             );
             return td_error(slug, msg);
-        };
+        }
         let payload_abs = std::path::Path::new(&payload_path);
         let payload_body_raw =
             std::fs::read_to_string(payload_abs).context("failed to read section payload")?;
-        // Issue #1097: JSON-payload sections render the full section text
-        // (heading + YAML frontmatter + generated diagram) from the
-        // agent-written JSON data here, before the unchanged
-        // `merge_spec_section` splice below. A hand-written mermaid/md
-        // payload fails JSON parsing and is rejected with a message naming
-        // the schema violation (AC1) — the payload file is left intact so
-        // the agent can retry with corrected JSON.
-        let payload_body = if td_section_uses_json_payload(section) {
-            match render_td_json_section_payload(section, &payload_body_raw) {
-                Ok(rendered) => rendered,
-                Err(e) => {
-                    return td_error(slug, e.to_string());
-                }
+        // TD section payloads are always JSON. Generic sections carry a
+        // `body` field containing the complete section markdown; structured
+        // sections such as `unit-test` use a section-specific schema and are
+        // rendered here before the unchanged `merge_spec_section` splice.
+        let payload_body = match render_td_json_section_payload(section, &payload_body_raw) {
+            Ok(rendered) => rendered,
+            Err(e) => {
+                return td_error(slug, e.to_string());
             }
-        } else {
-            payload_body_raw
         };
         let base_body = if spec_abs.exists() {
             std::fs::read_to_string(&spec_abs).context("failed to read base spec")?
@@ -5266,10 +5244,12 @@ label = "project:agentic-workflow"
     #[test]
     fn td_section_payload_template_scaffolds_typed_section() {
         let template = td_section_payload_template("logic").unwrap();
-        assert!(template.contains("## Logic"));
-        assert!(template.contains("<!-- type: logic lang: mermaid -->"));
-        assert!(template.contains("```mermaid"));
-        assert!(template.contains("(fill)"));
+        let value: TdBodySectionPayload =
+            serde_json::from_str(&template).expect("logic payload template must be JSON");
+        assert!(value.body.contains("## Logic"));
+        assert!(value.body.contains("<!-- type: logic lang: mermaid -->"));
+        assert!(value.body.contains("```mermaid"));
+        assert!(value.body.contains("(fill)"));
     }
 
     #[test]
@@ -5349,7 +5329,7 @@ label = "project:agentic-workflow"
         let path = section_payload_path(tmp.path(), "123", "contract", "unit-test");
         assert!(path.ends_with("unit-test.json"), "got: {path}");
         let logic_path = section_payload_path(tmp.path(), "123", "contract", "logic");
-        assert!(logic_path.ends_with("logic.md"), "got: {logic_path}");
+        assert!(logic_path.ends_with("logic.json"), "got: {logic_path}");
     }
 
     #[test]
@@ -5495,9 +5475,10 @@ label = "project:agentic-workflow"
     fn initialize_td_payload_file_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
         let payload_path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("td")
             .join("123")
             .join("applicability")
-            .join("logic.md");
+            .join("logic.json");
         let payload_path_s = payload_path.to_string_lossy().into_owned();
 
         assert!(initialize_td_payload_file(&payload_path_s, "first\n").unwrap());

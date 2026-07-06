@@ -119,7 +119,7 @@ nodes:
   start: { kind: start, label: "resolve_identity(cwd)" }
   detect_branch: { kind: process, label: "branch = git rev-parse --abbrev-ref HEAD (from cwd)" }
   detect_toplevel: { kind: process, label: "toplevel = git rev-parse --show-toplevel (from cwd)" }
-  read_members: { kind: process, label: "read /tmp/aw-channel-members.yaml (optional)" }
+  read_members: { kind: process, label: "read /tmp/aw/chat/members.yaml (optional)" }
   lookup_by_branch: { kind: decision, label: "member with branch == branch found?" }
   emit_member_name: { kind: terminal, label: "return member.name" }
   read_caller_config: { kind: process, label: "read {toplevel}/.aw/config.toml (optional)" }
@@ -144,7 +144,7 @@ edges:
 flowchart TD
     start([resolve_identity cwd]) --> detect_branch[branch = git rev-parse --abbrev-ref HEAD]
     detect_branch --> detect_toplevel[toplevel = git rev-parse --show-toplevel]
-    detect_toplevel --> read_members[read /tmp/aw-channel-members.yaml optional]
+    detect_toplevel --> read_members[read /tmp/aw/chat/members.yaml optional]
     read_members --> lookup_by_branch{member with branch == branch found?}
     lookup_by_branch -->|yes| emit_member_name([return member.name])
     lookup_by_branch -->|no| read_caller_config[read toplevel .aw/config.toml optional]
@@ -187,7 +187,7 @@ changes:
          `git -C <cwd> rev-parse --show-toplevel`.
       2. Call git_branch_from_cwd(cwd) -> String using
          `git -C <cwd> rev-parse --abbrev-ref HEAD`.
-      3. Read /tmp/aw-channel-members.yaml; if member.branch == branch,
+      3. Read /tmp/aw/chat/members.yaml; if member.branch == branch,
          return member.name.
       4. Read `<toplevel>/.aw/config.toml`; if [team].name present,
          return it. The path is always relative to the caller's git toplevel,
@@ -248,7 +248,7 @@ tests:
       aw chat post --all --body-file - writes a ChannelMessage with to: []
       in the stored block.
     setup:
-      - remove /tmp/aw-channel.md if present
+      - remove /tmp/aw/chat/channel.md if present
     assertions:
       - post with --all and body=broadcast_body; parse channel; msgs[0].to == []
       - msgs[0].from is non-empty (identity resolved from CWD)
@@ -260,7 +260,7 @@ tests:
       aw chat post --to a,b --body-file - writes a ChannelMessage with
       to: [a, b] in the stored block.
     setup:
-      - remove /tmp/aw-channel.md if present
+      - remove /tmp/aw/chat/channel.md if present
     assertions:
       - post with --to a,b and body=targeted_body; parse channel; msgs[0].to == ["a", "b"]
 
@@ -292,15 +292,15 @@ tests:
     name: identity_from_caller_wt_config_not_main
     kind: unit
     description: |
-      resolve_identity called from a fake WT at /tmp/fake-wt/ that has its own
+      resolve_identity called from a fake WT at /tmp/aw/test/fake-wt/ that has its own
       .aw/config.toml with [team] name = "fake" returns "fake", NOT the name
       from main's config.toml. Verifies that the identity chain reads from
       {caller_git_toplevel}/.aw/config.toml, not a hardcoded path.
     setup:
-      - create temp dir /tmp/fake-wt/; run git init; create .aw/config.toml with [team] name = "fake"
-      - ensure /tmp/aw-channel-members.yaml is absent or does not contain the fake branch
+      - create temp dir /tmp/aw/test/fake-wt/; run git init; create .aw/config.toml with [team] name = "fake"
+      - ensure /tmp/aw/chat/members.yaml is absent or does not contain the fake branch
     assertions:
-      - resolve_identity(cwd=/tmp/fake-wt/) returns "fake"
+      - resolve_identity(cwd=/tmp/aw/test/fake-wt/) returns "fake"
       - result does NOT equal the main WT's [team] name (score)
 ```
 

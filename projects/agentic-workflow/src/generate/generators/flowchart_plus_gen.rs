@@ -392,7 +392,7 @@ mod tests {
     fn test_generate_produces_one_file() {
         let spec = auth_flow_spec();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_fc_gen"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/fc-gen"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();

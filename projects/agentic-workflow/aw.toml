@@ -103,7 +103,7 @@ contract_id = "aw-view-repo-app-bundle"
 category = "behavior"
 td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-app-bundle"
 test_path = "projects/agentic-workflow/tests/behavior_aw_view_repo_app_bundle.rs"
-command = "./target/debug/aw view --app /private/tmp/AWRepoView.app"
+command = "./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app"
 required_for_production = true
 assertions = [
     "native desktop bundle is produced as a macOS .app launcher",
@@ -137,7 +137,7 @@ contract_id = "aw-view-repo-layout-option"
 category = "behavior"
 td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-layout-option"
 test_path = "projects/agentic-workflow/tests/behavior_aw_view_repo_layout_option.rs"
-command = "./target/debug/aw view --layout top-bottom --screenshot /private/tmp/aw-view-app-top-bottom.png"
+command = "./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png"
 required_for_production = true
 assertions = [
     "project list stays fixed while the terminal/detail region can switch layout",
@@ -154,7 +154,7 @@ contract_id = "aw-view-repo-screenshot"
 category = "behavior"
 td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-screenshot"
 test_path = "projects/agentic-workflow/tests/behavior_aw_view_repo_screenshot.rs"
-command = "./target/debug/aw view --screenshot /private/tmp/aw-view-app.png"
+command = "./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png"
 required_for_production = true
 assertions = [
     "app screenshot is produced without a browser or desktop screen capture",

@@ -20,7 +20,7 @@ the **mainthread-only** orchestration spelled out below.
 > `aw-issue-reviewer` / `aw-issue-reviser` subagent to dispatch —
 > those agent definitions were removed atomically with this skill
 > rewrite. Mainthread takes over `--apply` directly: write the section
-> payload to `/tmp/aw/workspaces/<workspace>/payloads/<slug>/<file>.md`
+> payload to `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/<file>.md`
 > (path from the envelope), run
 > `aw wi fill-section --apply --section <X>`, then run
 > `aw wi validate <slug>`. Loop on the emitted dispatch envelope.
@@ -92,7 +92,7 @@ individually so git history is unchanged.
   Phase-1 deprecated shim and is omitted via `skip_serializing_if`).
   Mainthread runs `invoke.command` directly:
   - if the command is `aw wi fill-section --apply`, write the
-    payload to `/tmp/aw/workspaces/<workspace>/payloads/<slug>/body.md`
+    payload to `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/body.md`
     first (or the per-section payload path from the envelope), then run
     the command from mainthread.
   - if the command is `aw wi validate <slug>`, run it; parse the next envelope; loop.
@@ -142,7 +142,7 @@ raw low-level label filter.
 ## Planning operators
 
 Planning commands read the configured issue backend and write local artifacts
-under `/tmp/aw/<project>/`. They do not publish or mutate tracker issues.
+under `/tmp/aw/workspaces/<workspace>/workitems/<project>/`. They do not publish or mutate tracker issues.
 
 Use this lane after `/aw:capability` confirms a capability or when the user gives a
 roadmap-sized request. Large work must stay as `type=epic` or a local planning
@@ -159,16 +159,16 @@ aw capability run --project <name> --non-interactive --max-ticks 1
 - `plan` reads the confirmed capability table from `--cap-path`, `[[projects]].cap_path`,
   or `[[projects]].path/README.md`, cross-checks it against open work-items,
   and writes a local capability-to-WI planning draft under
-  `/tmp/aw/<project>/capability-plan/`.
+  `/tmp/aw/workspaces/<workspace>/workitems/<project>/capability-plan/`.
 - `epicize` inventories every open issue for the project, groups
   requirements into epic candidates, and writes the local classification
-  draft under `/tmp/aw/<project>/epics/`. The artifact explicitly requires
+  draft under `/tmp/aw/workspaces/<workspace>/workitems/<project>/epics/`. The artifact explicitly requires
   agent review before publishing tracker changes.
 - `atomize` inventories epic/roadmap-sized issues and writes atomic WI
-  candidates under `/tmp/aw/<project>/atomize/`. The artifact requires human
+  candidates under `/tmp/aw/workspaces/<workspace>/workitems/<project>/atomize/`. The artifact requires human
   review before any candidate is published.
 - `prioritize` inventories every open issue for the project and writes a
-  local readiness review draft under `/tmp/aw/<project>/priorities/`,
+  local readiness review draft under `/tmp/aw/workspaces/<workspace>/workitems/<project>/priorities/`,
   covering `ready_now`, `blocked_by_dependency`, `needs_atomize`,
   `needs_triage`, and `deferred` lanes.
   The artifact explicitly requires agent review before publishing priority

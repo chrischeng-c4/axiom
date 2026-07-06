@@ -4841,7 +4841,7 @@ ir_digest = "sha256:035178b12262d14530a8bb251fbe99b2f74430e84d39abc623e451cf95aa
 section_count = 3
 
 [[files]]
-path = "core/validate/sync_check_test.md"
+path = "core/validate/project_registry_check_test.md"
 digest = "sha256:1dbe77c6016c5e7d6fe926aae6fab738198641a3dd5e3750292bba3b636c08f0"
 ir_digest = "sha256:f7eb32c82dd6a84ebc018c20f93dd0ff3024c440115409e3f5cf561c63fa57e2"
 section_count = 3
@@ -5569,12 +5569,6 @@ ir_digest = "sha256:251f2e3835e2d646c32960fce66c5a891b94ee014f171cc4bdb686d7a555
 section_count = 4
 
 [[files]]
-path = "surface/specs/init-command.md"
-digest = "sha256:6de79a7a88ddcada1ba7f912ea2edc958d88eb193e76d6c8aae5015c39690984"
-ir_digest = "sha256:6819f9eaf3ce2478db82dbde13cf74d492d7ee765174dbe4f107f42eb3b83bf9"
-section_count = 24
-
-[[files]]
 path = "surface/specs/issue-cli-envelope.md"
 digest = "sha256:488ffbd909875ec1085a6dc00ec2c82edbc3fffdd031e38b6e06e09dabe003bc"
 ir_digest = "sha256:20e0f5907f6fc4666b31c0c337a463dd00e1faf7d567e1c687fe00df819a61cf"
@@ -5815,12 +5809,6 @@ section_count = 2
 path = "surface/validate/tests/in_place_lifecycle_test.md"
 digest = "sha256:b32fe0d849d6c2686409f05bef287d68f1e507dfa05dfe0898f4c14d5ddf7e83"
 ir_digest = "sha256:b5f07e8e11e30986b02422d877aa2e281c62f0194a86e0cb7f4424935fa59368"
-section_count = 2
-
-[[files]]
-path = "surface/validate/tests/init_doc_projection_test.md"
-digest = "sha256:237de0f0a2cd69360a24d3a74725452b256e5ceeb1c9fe56f38aec7457b3d122"
-ir_digest = "sha256:2e5f349c133c1dc0475ccb45c1f5c335b799dc40cdb1da6042e7bf9a8e94509a"
 section_count = 2
 
 [[files]]

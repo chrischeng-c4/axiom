@@ -789,12 +789,9 @@ mod tests {
     );
 
     fn write_temp(name: &str, content: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "migrate-mermaid-{}-{}.md",
-            std::process::id(),
-            name
-        ));
+        let mut path = std::env::temp_dir().join("aw").join("mermaid-migrate");
+        std::fs::create_dir_all(&path).expect("create tmp dir");
+        path.push(format!("{}-{}.md", std::process::id(), name));
         let mut f = std::fs::File::create(&path).expect("create tmp");
         f.write_all(content.as_bytes()).expect("write tmp");
         path
@@ -1089,10 +1086,10 @@ edges:
     #[test]
     fn resolve_payload_path_uses_default_dir() {
         let opts = MigrationOptions {
-            project_root: PathBuf::from("/tmp/xroot"),
+            project_root: PathBuf::from("/tmp/aw/test/xroot"),
             ..Default::default()
         };
-        let p = resolve_payload_path(&opts, Path::new("/tmp/xroot/some/spec.md"), "10-20");
+        let p = resolve_payload_path(&opts, Path::new("/tmp/aw/test/xroot/some/spec.md"), "10-20");
         assert!(p.to_string_lossy().contains(".aw/payloads/migrate-mermaid"));
         assert!(p.to_string_lossy().ends_with("spec-10-20.yaml"));
     }
@@ -1100,12 +1097,12 @@ edges:
     #[test]
     fn resolve_payload_path_honors_override() {
         let opts = MigrationOptions {
-            project_root: PathBuf::from("/tmp/xroot"),
-            payload_path: Some(PathBuf::from("/tmp/custom.yaml")),
+            project_root: PathBuf::from("/tmp/aw/test/xroot"),
+            payload_path: Some(PathBuf::from("/tmp/aw/test/custom.yaml")),
             ..Default::default()
         };
-        let p = resolve_payload_path(&opts, Path::new("/tmp/xroot/some/spec.md"), "1-5");
-        assert_eq!(p, PathBuf::from("/tmp/custom.yaml"));
+        let p = resolve_payload_path(&opts, Path::new("/tmp/aw/test/xroot/some/spec.md"), "1-5");
+        assert_eq!(p, PathBuf::from("/tmp/aw/test/custom.yaml"));
     }
 }
 

@@ -2,7 +2,7 @@
 // CODEGEN-BEGIN
 //! `aw chat` — cross-worktree agent messaging via a shared JSONL channel.
 //!
-//! All communication flows through `/tmp/aw-channel.jsonl` (append-only,
+//! All communication flows through `/tmp/aw/chat/channel.jsonl` (append-only,
 //! ephemeral, one JSON-encoded `ChannelMessage` per line). `listen` streams the
 //! file via `tail -F` and applies a 4-rule default filter
 //! (direct_cue / broadcast / echo / thread_member).
@@ -34,8 +34,8 @@ use chat_members::{
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
-const CHANNEL_PATH: &str = "/tmp/aw-channel.jsonl";
-const MEMBERS_PATH: &str = "/tmp/aw-channel-members.yaml";
+const CHANNEL_PATH: &str = "/tmp/aw/chat/channel.jsonl";
+const MEMBERS_PATH: &str = "/tmp/aw/chat/members.yaml";
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -139,10 +139,10 @@ pub struct ReadArgs {
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-chat-msg-members-schema.md#schema
 #[derive(Debug, Args)]
 pub struct MembersArgs {
-    /// Write or upsert caller's Member entry in `/tmp/aw-channel-members.yaml`.
+    /// Write or upsert caller's Member entry in `/tmp/aw/chat/members.yaml`.
     #[arg(long)]
     pub register: bool,
-    /// Print all registered members from `/tmp/aw-channel-members.yaml`.
+    /// Print all registered members from `/tmp/aw/chat/members.yaml`.
     #[arg(long)]
     pub list: bool,
     /// Project tags this member is active in (comma-separated).
@@ -396,6 +396,10 @@ fn run_post(args: PostArgs, identity: &str) -> Result<()> {
     };
 
     let line = serialize_message_jsonl(&msg)?;
+    if let Some(parent) = channel_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating chat channel directory {}", parent.display()))?;
+    }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -582,6 +586,11 @@ fn run_listen(args: ListenArgs, identity: &str) -> Result<()> {
         Some(name) => name.to_string(),
         None => identity.to_string(),
     };
+
+    if let Some(parent) = Path::new(CHANNEL_PATH).parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating chat channel directory {}", parent.display()))?;
+    }
 
     let mut child = Command::new("tail")
         .args(["-F", "-n", "+1", CHANNEL_PATH])
@@ -1195,7 +1204,7 @@ mod tests {
         )
         .unwrap();
 
-        // Ensure /tmp/aw-channel-members.yaml does not have the fake branch
+        // Ensure /tmp/aw/chat/members.yaml does not have the fake branch
         // (it may exist from other tests, so we rely on branch name being unique)
         let identity =
             resolve_identity(tmp_path).expect("resolve_identity should succeed for fake WT");

@@ -57,7 +57,7 @@ e2e_tests:
     claim_id: repo-desktop-reader
     contract_id: aw-view-repo-screenshot
     category: behavior
-    command: "./target/debug/aw view --screenshot /private/tmp/aw-view-app.png"
+    command: "./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png"
     assertions:
       - "app screenshot is produced without a browser or desktop screen capture"
       - "app screenshot is rendered from the same renderer-neutral surface tree"
@@ -67,7 +67,7 @@ e2e_tests:
     claim_id: repo-desktop-reader
     contract_id: aw-view-repo-layout-option
     category: behavior
-    command: "./target/debug/aw view --layout top-bottom --screenshot /private/tmp/aw-view-app-top-bottom.png"
+    command: "./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png"
     assertions:
       - "project list stays fixed while the terminal/detail region can switch layout"
       - "top-bottom layout screenshot is rendered without changing the default left-right layout"
@@ -78,7 +78,7 @@ e2e_tests:
     claim_id: repo-desktop-reader
     contract_id: aw-view-repo-app-bundle
     category: behavior
-    command: "./target/debug/aw view --app /private/tmp/AWRepoView.app"
+    command: "./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app"
     assertions:
       - "native desktop bundle is produced as a macOS .app launcher"
       - "app bundle launches the repo-built aw view desktop surface"

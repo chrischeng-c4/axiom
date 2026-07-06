@@ -7,7 +7,7 @@
 // @contract aw-view-repo-layout-option
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --layout top-bottom --screenshot /private/tmp/aw-view-app-top-bottom.png
+// @command ./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png
 // AW-EC-END
 
 // Contract: project list stays fixed while the terminal/detail region can switch layout
@@ -18,7 +18,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_view_repo_layout_option() {
     let command =
-        "./target/debug/aw view --layout top-bottom --screenshot /private/tmp/aw-view-app-top-bottom.png";
+        "./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png";
     let id = "aw-view-repo-layout-option";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

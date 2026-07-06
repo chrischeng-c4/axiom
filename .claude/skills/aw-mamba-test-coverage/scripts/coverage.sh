@@ -119,7 +119,7 @@ done < <(find "$SRC" -name '*.rs' ! -path '*/stdlib/*' -print0)
 echo "  Total: $untested files"
 
 # 7. Line coverage via tarpaulin (if JSON report exists)
-TARP_JSON="/tmp/tarp/tarpaulin-report.json"
+TARP_JSON="/tmp/aw/mamba-test-coverage/tarp/tarpaulin-report.json"
 if [ -f "$TARP_JSON" ]; then
   echo ""
   echo -e "${B}Line Coverage (tarpaulin):${N}"
@@ -200,5 +200,5 @@ PYEOF
 else
   echo ""
   echo -e "${Y}Line coverage (tarpaulin): no report found.${N}"
-  echo "  Run: cargo tarpaulin -p mamba --skip-clean --out Json --output-dir /tmp/tarp"
+  echo "  Run: cargo tarpaulin -p mamba --skip-clean --out Json --output-dir /tmp/aw/mamba-test-coverage/tarp"
 fi

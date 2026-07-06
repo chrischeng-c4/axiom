@@ -451,7 +451,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = agent.run("/tmp/test-repo").await.unwrap();
+        let result = agent.run("/tmp/aw/test/repo").await.unwrap();
         let groups: Vec<SpecGroup> = serde_json::from_str(&result).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "crates/agent");
@@ -466,7 +466,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = agent.run("/tmp/test-repo").await.unwrap_err();
+        let err = agent.run("/tmp/aw/test/repo").await.unwrap_err();
         assert!(err.to_string().contains("set_grouping was never called"));
     }
 
@@ -480,7 +480,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = agent.run("/tmp/repo").await.unwrap_err();
+        let err = agent.run("/tmp/aw/test/repo").await.unwrap_err();
         assert!(err.to_string().contains("set_grouping was never called"));
     }
 

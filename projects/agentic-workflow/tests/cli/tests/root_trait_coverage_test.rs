@@ -6,7 +6,7 @@
 //! str>` — general traits with no CONTRIBUTING.md anchor at all).
 //!
 //! Two directions, both checked against the SAME `doc_mirror::TRAITS`
-//! constant that `aw init`'s trait-table projector consumes
+//! constant that the trait-table projector consumes
 //! (`crate::cli::doc_mirror::render_trait_table`), so the generator and this
 //! checker can never disagree (issue #1077 AC3):
 //!

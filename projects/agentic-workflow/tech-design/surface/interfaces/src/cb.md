@@ -1729,10 +1729,10 @@ fn unique_force_regen_temp_root() -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    std::env::temp_dir().join(format!(
-        "agentic-workflow-force-regen-verify-{}-{nanos}",
-        std::process::id()
-    ))
+    std::env::temp_dir()
+        .join("aw")
+        .join("force-regen")
+        .join(format!("{}-{nanos}", std::process::id()))
 }
 
 fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {

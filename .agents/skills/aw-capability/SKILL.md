@@ -31,7 +31,7 @@ promises from inference alone.
    action. Follow the single `next_action` unless it requires HITL.
 4. If `next_action.kind=define_capability_map` and the next command is
    `aw capability draft --project <project>`, run the draft command to write a
-   pending-review artifact under `/tmp/aw/{project}/capability-map-drafts/`.
+   pending-review artifact under `/tmp/aw/workspaces/<workspace>/capability-map-drafts/{project}/`.
    For README prose roots, the artifact proposes candidate roots. For an
    existing README with no capability roots, the artifact is a definition
    worksheet with placeholders. For projects with project-local

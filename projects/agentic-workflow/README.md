@@ -5,6 +5,18 @@
 Workflow protocol and CLI chain for capability-driven project takeover,
 work-item planning, TD/CB lifecycle execution, and production-readiness rollup.
 
+## Contributing
+
+Project-local authoring rules for Agentic Workflow: authoritative inputs,
+self-hosting boundaries, and meta-doc placement. Repo-wide authoring rules
+remain in [../../CONTRIBUTING.md](../../CONTRIBUTING.md). Full rules:
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Capability Contract
+
+Machine-readable capability contract for Agentic Workflow. Full contract:
+[CAPABILITIES.md](CAPABILITIES.md).
+
 ## Overview
 
 Agentic Workflow (`aw`) coordinates bounded project work through a CLI workflow
@@ -128,7 +140,8 @@ belong in capability-map text or ordinary docs, not in TD/EC typed sections.
 
 ## Capabilities
 
-The full machine-readable capability contract lives in [CAPABILITIES.md](CAPABILITIES.md). This README keeps only the large capability map for quick project orientation.
+The quick map below points to the canonical entries in
+[CAPABILITIES.md](CAPABILITIES.md).
 
 ### Large Capabilities
 

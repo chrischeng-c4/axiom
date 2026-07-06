@@ -29,7 +29,7 @@ definitions:
     $id: "#/definitions/ChannelMessage"
     type: object
     description: |
-      One JSONL line in /tmp/aw-channel.jsonl.
+      One JSONL line in /tmp/aw/chat/channel.jsonl.
       Serialised as a single serde_json-encoded JSON object followed by a newline.
       The body field is a normal serde field (no skip); the struct round-trips
       cleanly through serde_json::to_string / serde_json::from_str.
@@ -132,11 +132,11 @@ nodes:
   detect_identity: { kind: process, label: "resolve_identity(cwd) via identity chain" }
   detect_format: { kind: process, label: "Detect output format: tty=human, pipe=terse; --terse/--human overrides" }
   branch_cmd: { kind: decision, label: "subcommand?" }
-  run_post: { kind: process, label: "post: read body-file/stdin, auto-increment msg-id, serialize to JSON + newline, O_APPEND to /tmp/aw-channel.jsonl" }
-  run_list: { kind: process, label: "list: parse_channel /tmp/aw-channel.jsonl (BufRead::lines + serde_json::from_str), apply --mentions/--last/--status filters, render" }
+  run_post: { kind: process, label: "post: read body-file/stdin, auto-increment msg-id, serialize to JSON + newline, O_APPEND to /tmp/aw/chat/channel.jsonl" }
+  run_list: { kind: process, label: "list: parse_channel /tmp/aw/chat/channel.jsonl (BufRead::lines + serde_json::from_str), apply --mentions/--last/--status filters, render" }
   run_read: { kind: process, label: "read: parse_channel, find anchor msg-id, collect thread replies in order, render" }
-  run_agents: { kind: process, label: "agents: register or list via /tmp/aw-channel-agents.md" }
-  tail_spawn: { kind: process, label: "Spawn tail -F -n +1 /tmp/aw-channel.jsonl via Command::new wrapped in TailGuard (Drop calls child.kill().ok() + child.wait().ok())" }
+  run_agents: { kind: process, label: "agents: register or list via /tmp/aw/chat/agents.md" }
+  tail_spawn: { kind: process, label: "Spawn tail -F -n +1 /tmp/aw/chat/channel.jsonl via Command::new wrapped in TailGuard (Drop calls child.kill().ok() + child.wait().ok())" }
   listen_read_line: { kind: process, label: "BufReader::lines() next line from tail -F stdout" }
   parse_line: { kind: decision, label: "serde_json::from_str succeeds?" }
   skip_line: { kind: process, label: "Skip malformed line (warn)" }
@@ -177,11 +177,11 @@ flowchart TD
     start([aw chat cmd]) --> detect_identity[resolve_identity cwd via identity chain]
     detect_identity --> detect_format[Detect format: tty=human pipe=terse\n--terse/--human overrides]
     detect_format --> branch_cmd{subcommand?}
-    branch_cmd -->|post| run_post[Read body-file/stdin\nAuto-increment msg-id\nserialize JSON + newline\nO_APPEND to /tmp/aw-channel.jsonl]
+    branch_cmd -->|post| run_post[Read body-file/stdin\nAuto-increment msg-id\nserialize JSON + newline\nO_APPEND to /tmp/aw/chat/channel.jsonl]
     branch_cmd -->|list| run_list[parse_channel jsonl\nApply filters\nRender]
     branch_cmd -->|read| run_read[parse_channel jsonl\nFind anchor msg-id\nCollect thread\nRender]
-    branch_cmd -->|agents| run_agents[Register or list\n/tmp/aw-channel-agents.md]
-    branch_cmd -->|listen| tail_spawn[Spawn tail -F -n +1 /tmp/aw-channel.jsonl\nvia Command::new wrapped in TailGuard\nDrop impl calls child.kill().ok() + child.wait().ok()]
+    branch_cmd -->|agents| run_agents[Register or list\n/tmp/aw/chat/agents.md]
+    branch_cmd -->|listen| tail_spawn[Spawn tail -F -n +1 /tmp/aw/chat/channel.jsonl\nvia Command::new wrapped in TailGuard\nDrop impl calls child.kill().ok() + child.wait().ok()]
     run_post --> output([Write stdout; exit 0])
     run_list --> output
     run_read --> output
@@ -246,7 +246,7 @@ $id: score-chat-jsonl-cli
 description: |
   Updated CLI contract for aw chat after JSONL migration.
   listen subcommand: --once and --interval removed; --all added.
-  post subcommand: channel path updated to /tmp/aw-channel.jsonl.
+  post subcommand: channel path updated to /tmp/aw/chat/channel.jsonl.
 
 commands:
   chat:
@@ -424,9 +424,9 @@ tests:
       aw chat post writes exactly one JSONL line per message. The line is valid
       JSON that deserialises back to a ChannelMessage with all fields intact including body.
     setup:
-      - remove /tmp/aw-channel.jsonl if present
+      - remove /tmp/aw/chat/channel.jsonl if present
     assertions:
-      - post with --to mamba --body-file - body="hello jsonl"; wc -l /tmp/aw-channel.jsonl == 1
+      - post with --to mamba --body-file - body="hello jsonl"; wc -l /tmp/aw/chat/channel.jsonl == 1
       - line is valid JSON; parsed ChannelMessage.body == "hello jsonl"
       - parsed ChannelMessage.to == ["mamba"]
 
@@ -438,9 +438,9 @@ tests:
       exactly 10 well-formed JSON lines with no interleaving. Uses O_APPEND
       semantics for POSIX atomic writes.
     setup:
-      - remove /tmp/aw-channel.jsonl if present
+      - remove /tmp/aw/chat/channel.jsonl if present
     assertions:
-      - spawn 10 concurrent post processes; wait all; wc -l /tmp/aw-channel.jsonl == 10
+      - spawn 10 concurrent post processes; wait all; wc -l /tmp/aw/chat/channel.jsonl == 10
       - every line parses to a valid ChannelMessage (no partial/corrupted JSON)
 
   - id: T9
@@ -477,11 +477,11 @@ tests:
       NOTE: The issue's R10 originally labeled this test "T7"; that label is superseded
       by the canonical numbering in this spec (T11).
     steps:
-      - run: "aw chat listen > /tmp/listen-out.txt &"
+      - run: "aw chat listen > /tmp/aw/chat/listen-out.txt &"
       - run: "sleep 0.1 && echo 'flush test' | aw chat post --to score --body-file -"
-      - run: "sleep 0.5 && grep 'flush test' /tmp/listen-out.txt"
+      - run: "sleep 0.5 && grep 'flush test' /tmp/aw/chat/listen-out.txt"
     expected: |
-      /tmp/listen-out.txt contains the message body within 500ms of the post completing.
+      /tmp/aw/chat/listen-out.txt contains the message body within 500ms of the post completing.
       Confirms stdout flushing works in pipe mode and tail -F delivers without polling delay.
 ```
 ## Changes
@@ -498,7 +498,7 @@ changes:
       struct round-trips cleanly through serde_json::to_string / serde_json::from_str.
       Update ListenArgs: drop once: bool field; drop interval: u64 field; add all: bool
       with #[clap(long, conflicts_with = "mentions")]. Update CHANNEL_PATH constant
-      from /tmp/aw-channel.md to /tmp/aw-channel.jsonl.
+      from /tmp/aw/chat/channel.md to /tmp/aw/chat/channel.jsonl.
 
   - path: projects/agentic-workflow/src/cli/chat/helpers.rs
     action: modify
@@ -577,7 +577,7 @@ changes:
       Logic section: update run_post node description (JSON + newline via O_APPEND, not markdown block).
       Remove run_listen_once and run_listen_loop nodes; replace branch_listen decision with
       single run_listen node (tail -F streaming with should_emit filter).
-      Update overview channel path reference from /tmp/aw-channel.md to /tmp/aw-channel.jsonl.
+      Update overview channel path reference from /tmp/aw/chat/channel.md to /tmp/aw/chat/channel.jsonl.
 
   - path: projects/agentic-workflow/tech-design/surface/specs/score-chat-msg-members-schema.md
     action: modify

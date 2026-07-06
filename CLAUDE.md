@@ -69,6 +69,7 @@ not a lifecycle bypass.
 | `aw td` | Tech-design and generated-code lifecycle |
 | `aw ec` | External-contract lifecycle: generate tests/tool configs and verify EC gates |
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
+| `aw conf` | Manage `.aw/config.toml` and Agentic Workflow configuration producers |
 | `aw standardize` | Existing-project workflow guidance and bounded remediation |
 <!-- aw:cli-table:workflow:end -->
 
@@ -82,7 +83,7 @@ not a lifecycle bypass.
 `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
 `enrich`, `validate`, `fill-section`, `review`, `arbitrate`, plus the `run`
 driver above. Planning commands write local artifacts under
-`/tmp/aw/{project}/...` and do not publish tracker changes. There is no
+`/tmp/aw/workspaces/<workspace>/workitems/{project}/...` and do not publish tracker changes. There is no
 `estimate`/`sprintize`; use `aw capability run --project <name>` as the
 run-to-end driver instead of cron-style sprint batches.
 
@@ -142,7 +143,6 @@ deliberately separate commands.
 <!-- aw:cli-table:support:start -->
 | Verb | About |
 |------|-------|
-| `aw init` | Bootstrap .aw/ config and installed workflow skills/settings |
 | `aw chat` | Cross-checkout agent messaging via shared plain-text channel |
 | `aw guard` | Agent-runtime direct edit/create guard for Codex and Claude Code |
 | `aw llm` | Offline agent orientation: outline + capability/td/ec pillars + loop |
@@ -151,13 +151,10 @@ deliberately separate commands.
 | `aw view` | Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app |
 <!-- aw:cli-table:support:end -->
 
-`aw init` bootstraps or refreshes `.aw/` config, skills, and settings; it is
-idempotent (`--check` verifies without writing). The installed `aw-*` skill
-copies under `.claude/skills/` and `.agents/skills/` are projections written
-by `aw init` from the `aw` CLI's own skill template source, kept identical
-(modulo a declared per-runtime transform) across both trees; edit the
-template source and re-run `aw init` rather than hand-editing an installed
-copy — `aw init --check` flags a hand-edited installed copy in either tree.
+`aw conf check` verifies `.aw/config.toml`'s generated project registry block
+without writing; `aw conf sync` auto-discovers projects and refreshes that
+block. Other projected artifacts are owned by their own producer commands and
+should be routed through `aw health` once those health checks are wired.
 `aw chat post/list/read/members/listen` is cross-checkout coordination
 through the shared Agentic Workflow chat channel.
 
@@ -214,7 +211,7 @@ Canonical verb: `aw wi`. Legacy work-item aliases are removed from the active
 CLI surface.
 
 - One issue-platform id is one workflow root; do not invent a second slug.
-- Draft/CRRR intermediate state lives under `/tmp/aw/{project}/workitems`.
+- Draft/CRRR intermediate state lives under `/tmp/aw/workspaces/<workspace>/workitems/{project}`.
 - Published state is projected to the issue platform configured in
   `.aw/config.toml`.
 - `.aw/issues/{open,closed}` is retired from the AW ecosystem. Do not create,

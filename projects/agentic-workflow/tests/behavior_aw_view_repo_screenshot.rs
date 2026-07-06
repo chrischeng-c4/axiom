@@ -7,7 +7,7 @@
 // @contract aw-view-repo-screenshot
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --screenshot /private/tmp/aw-view-app.png
+// @command ./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png
 // AW-EC-END
 
 // Contract: app screenshot is produced without a browser or desktop screen capture
@@ -16,7 +16,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_view_repo_screenshot() {
-    let command = "./target/debug/aw view --screenshot /private/tmp/aw-view-app.png";
+    let command =
+        "./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png";
     let id = "aw-view-repo-screenshot";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

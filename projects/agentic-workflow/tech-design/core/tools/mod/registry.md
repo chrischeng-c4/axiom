@@ -474,7 +474,7 @@ pub fn resolve_project_path(args: &Value) -> Result<PathBuf> {
     let ws = path.join(crate::shared::workspace::WORKSPACE_DIR);
     if !ws.exists() {
         anyhow::bail!(
-            "Not a Score project: {} ({} directory not found). Run `aw init` first.",
+            "Not an Agentic Workflow project: {} ({} directory not found). Run the relevant producer command first.",
             path.display(),
             crate::shared::workspace::WORKSPACE_DIR
         );

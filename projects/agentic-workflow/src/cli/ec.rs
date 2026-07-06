@@ -112,7 +112,7 @@ pub struct EcFillArgs {
     pub section: String,
     /// Markdown fragment containing the complete replacement section.
     /// Defaults to
-    /// `/tmp/aw/workspaces/<workspace>/payloads/ec/<draft-id>/<section>.md`.
+    /// `/tmp/aw/workspaces/<workspace>/payloads/ec/<draft-id>/<section>.json`.
     #[arg(long)]
     pub body_file: Option<PathBuf>,
     /// Emit JSON instead of human-readable output.
@@ -852,8 +852,9 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
             relative_to(&ctx.project_root, &body_file)
         );
     }
-    let payload =
+    let payload_raw =
         fs::read_to_string(&body_file).with_context(|| format!("read {}", body_file.display()))?;
+    let payload = render_ec_json_section_payload(&args.section, &payload_raw)?;
     let merged = merge_ec_section(&existing, &args.section, &payload)?;
     fs::write(&path, merged).with_context(|| format!("write {}", path.display()))?;
     let rel = relative_to(&ctx.project_root, &path);
@@ -890,7 +891,7 @@ fn ec_payload_path(project_root: &Path, id: &str, section: &str) -> String {
     crate::shared::workspace::payloads_path(project_root)
         .join("ec")
         .join(id)
-        .join(format!("{section}.md"))
+        .join(format!("{section}.json"))
         .to_string_lossy()
         .into_owned()
 }
@@ -918,11 +919,33 @@ fn ec_section_payload_template(
     args: &EcDraftArgs,
     section: &str,
 ) -> Result<String> {
-    match section {
-        "e2e-test" => Ok(render_ec_e2e_section(id, category, title, args)),
-        "tool-contract" => Ok(render_ec_tool_contract_section(ctx, id, category, args)),
+    let body = match section {
+        "e2e-test" => render_ec_e2e_section(id, category, title, args),
+        "tool-contract" => render_ec_tool_contract_section(ctx, id, category, args),
         _ => bail!("EC section '{section}' is not supported for payload initialization"),
+    };
+    Ok(serde_json::to_string_pretty(&EcBodySectionPayload {
+        body,
+    })?)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct EcBodySectionPayload {
+    body: String,
+}
+
+fn render_ec_json_section_payload(section: &str, raw_json: &str) -> Result<String> {
+    let payload: EcBodySectionPayload = serde_json::from_str(raw_json).map_err(|e| {
+        anyhow::anyhow!(
+            "EC section '{section}' payload must be JSON matching the schema (parse error: {e}). Expected shape: {{\"body\":\"<complete EC section markdown>\"}}"
+        )
+    })?;
+    if payload.body.trim().is_empty() {
+        anyhow::bail!(
+            "EC section '{section}' payload JSON field `body` must not be empty. Expected shape: {{\"body\":\"<complete EC section markdown>\"}}"
+        );
     }
+    Ok(payload.body)
 }
 
 fn render_ec_draft(
@@ -5144,7 +5167,7 @@ tool_contracts:
         let expected_payload_path = crate::shared::workspace::payloads_path(&ctx.project_root)
             .join("ec")
             .join("search-indexing")
-            .join("e2e-test.md")
+            .join("e2e-test.json")
             .to_string_lossy()
             .into_owned();
         assert_eq!(
@@ -5161,12 +5184,16 @@ tool_contracts:
             "e2e-test",
         )
         .unwrap();
-        assert!(e2e.contains("## External Contract"));
-        assert!(e2e.contains("<!-- type: e2e-test lang: yaml -->"));
-        assert!(e2e.contains("capability_id: search-indexing"));
-        assert!(e2e.contains("claim_id: indexing-speed"));
-        assert!(e2e.contains("contract_id: indexing-contract"));
-        assert!(e2e.contains("command: \"cargo test -p demo-crate indexing_speed\""));
+        let e2e: EcBodySectionPayload =
+            serde_json::from_str(&e2e).expect("e2e payload template must be JSON");
+        assert!(e2e.body.contains("## External Contract"));
+        assert!(e2e.body.contains("<!-- type: e2e-test lang: yaml -->"));
+        assert!(e2e.body.contains("capability_id: search-indexing"));
+        assert!(e2e.body.contains("claim_id: indexing-speed"));
+        assert!(e2e.body.contains("contract_id: indexing-contract"));
+        assert!(e2e
+            .body
+            .contains("command: \"cargo test -p demo-crate indexing_speed\""));
 
         let tool = ec_section_payload_template(
             &ctx,
@@ -5177,10 +5204,12 @@ tool_contracts:
             "tool-contract",
         )
         .unwrap();
-        assert!(tool.contains("## Tool Contracts"));
-        assert!(tool.contains("tool_contracts:"));
-        assert!(tool.contains("tool: meter"));
-        assert!(tool.contains("manifest: meter.toml"));
+        let tool: EcBodySectionPayload =
+            serde_json::from_str(&tool).expect("tool-contract payload template must be JSON");
+        assert!(tool.body.contains("## Tool Contracts"));
+        assert!(tool.body.contains("tool_contracts:"));
+        assert!(tool.body.contains("tool: meter"));
+        assert!(tool.body.contains("manifest: meter.toml"));
 
         let err = ec_section_payload_template(
             &ctx,
@@ -5202,7 +5231,7 @@ tool_contracts:
         let payload_path = crate::shared::workspace::payloads_path(tmp.path())
             .join("ec")
             .join("search-indexing")
-            .join("e2e-test.md");
+            .join("e2e-test.json");
         let payload_path_s = payload_path.to_string_lossy().into_owned();
 
         assert!(initialize_ec_payload_file(&payload_path_s, "first\n").unwrap());
