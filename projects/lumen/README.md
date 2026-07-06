@@ -27,8 +27,11 @@ concept, only the caller's `external_id` is.
   caller.
 - **Client API on `:7373`** (HTTP/1.1 + HTTP/2 cleartext — REST clients
   need nothing special; see [HTTP](#http--clients)).
-- **Sharded**: `crc32(collection_id) % shard_count` routes on the client.
-  Shard count is install-time, not online-changeable.
+- **Sharded**: `hash(collection_id, routing_key || external_id)` selects a
+  virtual bucket, and a versioned operator-owned shard map assigns buckets to
+  physical storage shards. `shardCount` controls storage ownership,
+  `replicasPerShard` controls HA/raft quorum per shard, and HPA never changes
+  data ownership.
 - **Agent-first offline integration surface**: `lumen spec` emits the exact
   machine schema, including `lumen spec --format openapi-yaml` for LLM-readable
   OpenAPI, while `lumen llm --topic outline`, `lumen llm --topic workflow`,
@@ -65,7 +68,9 @@ agent integration remain first-class domain roots.
 | Duplicate & Nested Search | - | implemented | verified | conformance | ready | domain: duplicates, group/has_child/collapse, exists, and CJK substring cases |
 | Schema & Ops Lifecycle | - | implemented | verified | conformance | ready | domain: collection DDL, drop-field drain, reindex/replay, stats, and metadata |
 | Elastic Scale | - | implemented | verified | conformance | ready | domain: RAM-hot/disk-all columnar mmap segment tier |
+| Dynamic Shard Topology | 1179 | implemented | verified | conformance, dogfood | ready | domain: versioned virtual-bucket shard map, bounded snapshot-batch reshard movement, operator-managed shard split policy, and multi-shard kind proof |
 | Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
+| Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
 | Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
 | Agent Offline Integration | 4143 | implemented | verified | conformance | ready | domain: installed binary self-onboards agents with spec and llm topics |
@@ -464,18 +469,42 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | ram-hot-disk-all-columnar-mmap-segment-tier-embedded-single-node-log | epic | - | implemented | passing | conformance | projects/lumen/tests/disk_scale_proof.rs<br>projects/lumen/src/storage.rs |
 
+### Dynamic Shard Topology
+
+ID: dynamic-shard-topology
+Type: Service
+Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied.
+EC Dimensions: behavior: `cargo test -p lumen --lib routing::tests` - versioned virtual-bucket shard map and bounded reshard batch conformance; behavior: `cargo test -p lumen --features operator --test operator_render` - operator-owned reshard policy, storage topology, status, and shard-map CRD/render conformance; stability: `projects/lumen/scripts/kind-e2e.sh` - live operator dogfood for shardCount=2 with replicasPerShard=1 and replicasPerShard=3
+Root WI: 1179
+Status: verified
+Required Verification: conformance, dogfood
+Promise:
+Scale storage by moving virtual buckets between physical shards under an
+operator-controlled workflow, while keeping replica HA and HPA-driven query
+capacity separate from data ownership.
+Gate Inventory:
+- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; projects/lumen/src/routing.rs; projects/lumen/src/reshard.rs; projects/lumen/src/operator; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| versioned-virtual-bucket-shard-map | epic | 1182 | implemented | passing | conformance | projects/lumen/src/routing.rs<br>projects/lumen/tests/operator_render.rs |
+| storage-pressure-operator-split-policy | epic | 1180 | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
+| multi-shard-replica-kind-e2e | epic | 1179 | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
+
 ### Backup & Restore
 
 ID: backup-restore
 Type: Service
-Surfaces: CLI: `lumen serve` - snapshot restore and periodic snapshot loop.; Rust API: `LocalFsRdbStore` - local snapshot sink implementation.
+Surfaces: CLI: `lumen serve` - snapshot restore and periodic snapshot loop.; Rust API: `LocalFsRdbStore` - local snapshot sink implementation.; Admin/backup path: external snapshot bytes written through service-backup sinks for cold DR seed.
 EC Dimensions: behavior: `cargo test -p lumen --test backup_restore_e2e` - snapshot/restore conformance
 Root WI: -
 Status: verified
 Required Verification: conformance
 Promise:
-RDB snapshots to a pluggable sink as a cold-start baseline; a starting node
-restores the latest snapshot then tails the write log from that sequence.
+Write RDB snapshots to a pluggable sink as a cold-start and disaster-recovery
+baseline. Live replicas synchronize through raft log/snapshot mechanics; backup
+artifacts seed cold restore and future empty-PVC bootstrap, not normal replica
+replication.
 Gate Inventory:
 - projects/lumen/tests/backup_restore_e2e.rs
 
@@ -483,6 +512,29 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | rdb-snapshot-restore-localfsrdbstore | epic | - | implemented | passing | conformance | projects/lumen/tests/backup_restore_e2e.rs |
 | periodic-snapshotter-serve | epic | - | implemented | passing | smoke | projects/lumen/src/bin/lumen.rs |
+
+### Replica Sync & Bootstrap
+
+ID: replica-sync-bootstrap
+Type: Service
+Surfaces: RaftHost: leader forwarding, append/apply, install snapshot, compaction, and follower catch-up.; Lumen engine state machine: committed `WalRecord` bytes applied into shard-local index state.; Backup/seed: exact `file://` or backup-enabled `s3://bucket/key` SnapshotV1 seed before WAL/raft delta catch-up for empty PVCs.
+EC Dimensions: stability: existing raft and backup tests cover live replica convergence and cold restore separately; behavior: `cargo test -p lumen --bin lumen bootstrap_seed_file_restores_snapshot_before_catchup -- --nocapture` - empty-PVC seed restore before catch-up; behavior: `cargo test -p service-backup` - shared exact object fetch contract
+Root WI: 1181
+Status: verified
+Required Verification: conformance, dogfood
+Promise:
+Make replica behavior agent-readable: existing PVC restarts replay local raft
+state/logs, replacement replicas seed from snapshot/object storage before raft
+delta catch-up, and disaster recovery restores from external backup without
+confusing backup with live replica synchronization.
+Gate Inventory:
+- #1181 empty-PVC replica bootstrap seed path; projects/lumen/src/bin/lumen.rs; projects/lumen/src/raft.rs; projects/lumen/src/raft_sm.rs; libs/raft-host; libs/service-backup
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| raft-log-replica-sync-existing-pvc | epic | - | implemented | passing | conformance | projects/lumen/src/raft.rs<br>projects/lumen/src/raft_sm.rs<br>libs/raft-host |
+| external-backup-disaster-recovery-seed | epic | - | implemented | passing | conformance | projects/lumen/tests/backup_restore_e2e.rs |
+| empty-pvc-object-store-seed-before-raft-catch-up | epic | 1181 | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs<br>libs/service-backup/src/source.rs |
 
 ### Observability
 
@@ -517,8 +569,11 @@ Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Ship both namespaced kustomize deployment artifacts and a CRD/operator path for
-declarative reconcile, with clear production-hardening gaps around validation,
-conditions, TLS/network policy, observability parity, and upgrades.
+declarative reconcile. The default operator watches one namespace and owns
+storage topology, reshard phases, and status conditions for Lumen instances in
+that namespace; cluster-wide operation is an optional platform mode. HPA may
+scale stateless or near-stateless query/read workers, but never changes shard
+ownership.
 Gate Inventory:
 - projects/lumen/k8s; projects/lumen/src/operator; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh
 
@@ -527,6 +582,7 @@ Gate Inventory:
 | kustomize-base-overlays-hpa | epic | - | implemented | passing | conformance | projects/lumen/k8s |
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
 | kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
+| operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
 
 ### Agent Offline Integration
 
@@ -1031,14 +1087,33 @@ an external broker as the default HA path. Mode split:
 
 `lumen serve --wal auto` is the production default: it starts embedded when no
 k8s replica topology is present, and switches to raft when
-`REPLICAS_PER_SHARD > 1` is injected by the operator/StatefulSet. The operator
-never passes special cluster flags — topology comes from the downward API
-(`POD_NAME`, `POD_NAMESPACE`, `SHARD_COUNT`, `REPLICAS_PER_SHARD`,
-`VOTER_COUNT`, `LUMEN_HEADLESS_SERVICE`): one serving pod renders a standalone
-Deployment + HPA, `replicasPerShard > 1` renders a stable serving StatefulSet +
-headless Service. For local multi-node work, `LUMEN_PEERS=host:port,...`
-overrides headless DNS so several `lumen serve --wal raft` processes can run
-on one machine.
+`REPLICAS_PER_SHARD > 1` is injected by the operator/StatefulSet. The storage
+topology contract is `totalPods = shardCount * replicasPerShard`:
+`replicasPerShard` selects the HA mode for each shard group, while
+`shardCount` selects how many physical storage shards own the corpus. A
+deployment with `shardCount > 1` and `replicasPerShard = 1` is sharded but not
+raft-replicated; a deployment with `shardCount = 1` and `replicasPerShard > 1`
+is one shard with raft replicas. StatefulSet pod ordinals map deterministically
+to `shardIndex = ordinal % shardCount` and
+`replicaIndex = ordinal / shardCount`.
+
+The operator never passes special cluster flags — topology comes from the
+downward API (`POD_NAME`, `POD_NAMESPACE`, `SHARD_COUNT`,
+`REPLICAS_PER_SHARD`, `VOTER_COUNT`, `LUMEN_HEADLESS_SERVICE`): one serving pod
+renders a standalone Deployment + HPA, `replicasPerShard > 1` renders stable
+serving StatefulSets + headless Services. For local multi-node work,
+`LUMEN_PEERS=host:port,...` overrides headless DNS so several
+`lumen serve --wal raft` processes can run on one machine.
+
+Dynamic shard growth is an operator workflow, not a direct HPA response. The
+default routing contract uses virtual buckets:
+`bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`,
+then a versioned bucket-to-physical-shard map decides ownership. Search without
+a routing key scatters/gathers across shards; search with a routing key can
+target one shard. Operators should prepare a split around storage pressure
+(for example 50% of the configured shard ceiling), start or recommend split
+based on growth and safety windows, treat high utilization as urgent, and avoid
+auto-split when the max shard size or max shard count is unknown.
 
 Raft responsibility is split by crate/module: `libs/raft-core` (consensus
 state machine and log semantics), `libs/raft-host` (h2c peer transport,
@@ -1049,3 +1124,11 @@ policy lives in `libs/service-backup`), `projects/lumen/src/raft_sm.rs`
 parsing). Legacy broker-backed write logs are not part of the Lumen
 deployment archetype; the NATS backend is compatibility/test surface only, and
 Relay WAL support has been removed from Lumen.
+
+Bootstrap modes are intentionally distinct. A restarted pod with its PVC
+replays local raft state, snapshots, and logs. A new empty-PVC replica can catch
+up through leader snapshot install and AppendEntries today, but the production
+path is to seed from object-store/shard snapshot first and then catch up the
+raft delta, with operator-visible progress and rate limits. External backup is
+the cold disaster-recovery and seed surface; it is not the normal live replica
+synchronization path.

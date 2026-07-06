@@ -774,6 +774,7 @@ mod crux_recovery_tests {
             query,
             limit,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,

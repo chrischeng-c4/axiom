@@ -131,6 +131,7 @@ async fn search_total(engine: &Engine, field: &str, value: &str) -> Option<u64> 
                 }),
                 limit: 10,
                 cursor: None,
+                routing_key: None,
                 sort: None,
                 track_total: true,
                 collapse: None,
