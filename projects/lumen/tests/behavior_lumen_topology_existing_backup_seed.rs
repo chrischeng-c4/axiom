@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --test backup_restore_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: The backup/restore e2e gate proves cold snapshot restore; issue #1181 owns the production seed-then-raft-catch-up path for empty PVC replicas.
+// Contract: The backup/restore e2e gate proves cold snapshot restore; the empty-PVC bootstrap seed path now restores SnapshotV1 before WAL/raft catch-up.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_topology_existing_backup_seed() {

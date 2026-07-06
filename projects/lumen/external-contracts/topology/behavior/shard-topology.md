@@ -36,7 +36,7 @@ e2e_tests:
     category: stability
     command: "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
     assertions:
-      - "The existing compatibility log convergence gate remains the executable proof for late/second node replay until shard-group raft bootstrap receives a dedicated kind gate."
+      - "The existing compatibility log convergence gate remains the executable proof for late/second node replay; shard-group topology is now dogfooded by the operator kind profiles."
   - id: lumen-topology-existing-backup-seed
     capability_id: replica-sync-bootstrap
     claim_id: external-backup-disaster-recovery-seed
@@ -44,13 +44,14 @@ e2e_tests:
     category: behavior
     command: "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
     assertions:
-      - "The backup/restore e2e gate proves cold snapshot restore; issue #1181 owns the production seed-then-raft-catch-up path for empty PVC replicas."
+      - "The backup/restore e2e gate proves cold snapshot restore; the empty-PVC bootstrap seed path now restores SnapshotV1 before WAL/raft catch-up."
 ```
 
-## Planned Evidence
+## Evidence
 
-| WI | Gap | Required proof |
+| WI | Contract | Proof |
 |---:|---|---|
-| 1182 | Versioned virtual-bucket shard map | Multi-shard routing tests covering one large collection and shard-map version coexistence. |
-| 1180 | Operator-owned reshard policy | CRD/operator render tests plus kind status evidence for prepare/splitting/catch-up/complete phases. |
-| 1181 | Empty-PVC replica bootstrap seed | Seed restore followed by raft delta catch-up, with leader load limits and progress status. |
+| 1182 | Versioned virtual-bucket shard map | `cargo test -p lumen reshard`; `cargo test -p lumen` covers multi-shard routing for one large collection and versioned map coexistence. |
+| 1180 | Operator-owned reshard policy | `cargo test -p lumen --features operator --test operator_render -- --nocapture` covers CRD/render/status topology. |
+| 1181 | Empty-PVC replica bootstrap seed | `cargo test -p lumen --bin lumen bootstrap_seed_file_restores_snapshot_before_catchup -- --nocapture` and `cargo test -p lumen` cover seed-before-catch-up. |
+| 1179 | Multi-shard and replicated-shard dogfood | `projects/lumen/scripts/kind-e2e.sh` passes with `shardCount=2, replicasPerShard=1` and `shardCount=2, replicasPerShard=3`. |

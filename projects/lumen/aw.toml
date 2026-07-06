@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:195cd481ed40fe0ee6db7c5e522df8e5e769d68d77a7c1ac5a168debb3c84b32"
+generated_from_td_digest = "sha256:e6d526ed3206227539345e4e00d44663529354ade2f6c89745c6d5f08e1fd798"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -291,7 +291,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_reconcile.rs"
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
-assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources; issue #1180 owns storage-pressure reshard policy and status phases."]
+assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-k8s-stateless-kind"
@@ -303,7 +303,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/stability_lumen_claim_k8s_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
-assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
+assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-lexical-bm25"
@@ -339,7 +339,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_log_fanout.rs"
 command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
 required_for_production = true
-assertions = ["A late or second node can replay the published write stream and converge with live writes; shard-group raft bootstrap receives dedicated follow-up proof under issue #1181."]
+assertions = ["A late or second node can replay the published write stream and converge with live writes; shard-group topology is now dogfooded by the operator kind profiles."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-long-running-stateless-kind"
@@ -351,7 +351,7 @@ td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#l
 test_path = "projects/lumen/tests/stability_lumen_claim_long_running_stateless_kind.rs"
 command = "projects/lumen/scripts/kind-e2e.sh"
 required_for_production = true
-assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."]
+assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-nested-collapse"
@@ -817,7 +817,7 @@ td_ref = "projects/lumen/external-contracts/topology/behavior/shard-topology.md#
 test_path = "projects/lumen/tests/behavior_lumen_topology_existing_backup_seed.rs"
 command = "cargo test -p lumen --test backup_restore_e2e -- --nocapture"
 required_for_production = true
-assertions = ["The backup/restore e2e gate proves cold snapshot restore; issue #1181 owns the production seed-then-raft-catch-up path for empty PVC replicas."]
+assertions = ["The backup/restore e2e gate proves cold snapshot restore; the empty-PVC bootstrap seed path now restores SnapshotV1 before WAL/raft catch-up."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-topology-existing-raft-replica-sync"
@@ -829,7 +829,7 @@ td_ref = "projects/lumen/external-contracts/topology/behavior/shard-topology.md#
 test_path = "projects/lumen/tests/stability_lumen_topology_existing_raft_replica_sync.rs"
 command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
 required_for_production = true
-assertions = ["The existing compatibility log convergence gate remains the executable proof for late/second node replay until shard-group raft bootstrap receives a dedicated kind gate."]
+assertions = ["The existing compatibility log convergence gate remains the executable proof for late/second node replay; shard-group topology is now dogfooded by the operator kind profiles."]
 
 [[aw.ec.generated.tool_manifests]]
 id = "lumen-guard-auth-surface"

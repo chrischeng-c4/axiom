@@ -10,7 +10,7 @@
 // @command cargo test -p lumen --test wal_nats_e2e -- --nocapture
 // AW-EC-END
 
-// Contract: The existing compatibility log convergence gate remains the executable proof for late/second node replay until shard-group raft bootstrap receives a dedicated kind gate.
+// Contract: The existing compatibility log convergence gate remains the executable proof for late/second node replay; shard-group topology is now dogfooded by the operator kind profiles.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_topology_existing_raft_replica_sync() {

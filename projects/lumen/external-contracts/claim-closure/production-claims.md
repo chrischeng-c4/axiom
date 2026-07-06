@@ -81,7 +81,7 @@ e2e_tests:
     category: stability
     command: "cargo test -p lumen --test wal_nats_e2e -- --nocapture"
     assertions:
-      - "A late or second node can replay the published write stream and converge with live writes; shard-group raft bootstrap receives dedicated follow-up proof under issue #1181."
+      - "A late or second node can replay the published write stream and converge with live writes; shard-group topology is now dogfooded by the operator kind profiles."
   - id: lumen-claim-long-running-kustomize-base
     capability_id: long-running-stability
     claim_id: kustomize-base-overlays-hpa
@@ -97,7 +97,7 @@ e2e_tests:
     category: stability
     command: "projects/lumen/scripts/kind-e2e.sh"
     assertions:
-      - "The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."
+      - "The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."
 
   - id: lumen-claim-security-bearer-auth
     capability_id: security-hardening
@@ -350,7 +350,7 @@ e2e_tests:
     category: behavior
     command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
     assertions:
-      - "The kube-rs operator render path reconciles Lumen CRD inputs into serving resources; issue #1180 owns storage-pressure reshard policy and status phases."
+      - "The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."
   - id: lumen-claim-k8s-stateless-kind
     capability_id: kubernetes-native-deployment
     claim_id: kind-api-recovery-no-relay
@@ -358,7 +358,7 @@ e2e_tests:
     category: stability
     command: "projects/lumen/scripts/kind-e2e.sh"
     assertions:
-      - "The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart."
+      - "The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."
 
   - id: lumen-claim-agent-offline-spec
     capability_id: agent-offline-integration
