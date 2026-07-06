@@ -68,7 +68,7 @@ agent integration remain first-class domain roots.
 | Duplicate & Nested Search | - | implemented | verified | conformance | ready | domain: duplicates, group/has_child/collapse, exists, and CJK substring cases |
 | Schema & Ops Lifecycle | - | implemented | verified | conformance | ready | domain: collection DDL, drop-field drain, reindex/replay, stats, and metadata |
 | Elastic Scale | - | implemented | verified | conformance | ready | domain: RAM-hot/disk-all columnar mmap segment tier |
-| Dynamic Shard Topology | 1179 | implemented | partial | conformance | blocked | domain: versioned virtual-bucket shard map plus operator-managed shard split policy; remaining epic proof is kind dogfood plus actual gradual data movement |
+| Dynamic Shard Topology | 1179 | implemented | verified | conformance, dogfood | ready | domain: versioned virtual-bucket shard map, bounded snapshot-batch reshard movement, operator-managed shard split policy, and multi-shard kind proof |
 | Backup & Restore | - | implemented | verified | conformance | ready | domain: RDB snapshots and bounded cold start |
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
@@ -474,22 +474,22 @@ Gate Inventory:
 ID: dynamic-shard-topology
 Type: Service
 Surfaces: CRD/operator: `spec.shardCount`, `spec.replicasPerShard`, `spec.voterCount`, and reshard policy fields - storage ownership and HA topology.; Routing: versioned virtual-bucket map - `bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount`; Search: scatter/gather when no routing key is supplied, targeted shard search when a routing key is supplied.
-EC Dimensions: behavior: `cargo test -p lumen --lib routing::tests` - versioned virtual-bucket shard map conformance; behavior: `cargo test -p lumen --features operator --test operator_render` - operator-owned reshard policy, storage topology, status, and shard-map CRD/render conformance
+EC Dimensions: behavior: `cargo test -p lumen --lib routing::tests` - versioned virtual-bucket shard map and bounded reshard batch conformance; behavior: `cargo test -p lumen --features operator --test operator_render` - operator-owned reshard policy, storage topology, status, and shard-map CRD/render conformance; stability: `projects/lumen/scripts/kind-e2e.sh` - live operator dogfood for shardCount=2 with replicasPerShard=1 and replicasPerShard=3
 Root WI: 1179
-Status: candidate
+Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Scale storage by moving virtual buckets between physical shards under an
 operator-controlled workflow, while keeping replica HA and HPA-driven query
 capacity separate from data ownership.
 Gate Inventory:
-- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; projects/lumen/src/routing.rs; projects/lumen/src/operator; projects/lumen/tests/operator_render.rs
+- #1179 dynamic shard topology epic; #1182 versioned virtual-bucket shard map; #1180 operator reshard policy and storage topology control; projects/lumen/src/routing.rs; projects/lumen/src/reshard.rs; projects/lumen/src/operator; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | versioned-virtual-bucket-shard-map | epic | 1182 | implemented | passing | conformance | projects/lumen/src/routing.rs<br>projects/lumen/tests/operator_render.rs |
 | storage-pressure-operator-split-policy | epic | 1180 | implemented | passing | conformance | projects/lumen/src/operator<br>projects/lumen/tests/operator_render.rs |
-| multi-shard-replica-kind-e2e | epic | 1179 | planned | blocked | dogfood | #1179 |
+| multi-shard-replica-kind-e2e | epic | 1179 | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 
 ### Backup & Restore
 

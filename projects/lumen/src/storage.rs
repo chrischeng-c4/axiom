@@ -43,7 +43,7 @@ use crate::types::{
     SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
     VectorSpec,
 };
-use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
+use crate::vector_index::{FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex, open_backend};
 use roaring::RoaringBitmap;
 
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(300);
@@ -8086,7 +8086,7 @@ enum PageCursor {
 }
 
 fn encode_cursor(json: String) -> String {
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
     STANDARD_NO_PAD.encode(json)
 }
 
@@ -8118,7 +8118,7 @@ fn make_score_cursor(score: f32, eid: &str) -> String {
 }
 
 fn parse_page_cursor(s: &str) -> Option<PageCursor> {
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
     let raw = STANDARD_NO_PAD.decode(s).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
     if let Some(offset) = v.get("offset").and_then(|o| o.as_u64()) {
@@ -8171,7 +8171,7 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 const SNAPSHOT_VERSION: u32 = 1;
 
 /// Top-level snapshot document. JSON-serialisable.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct SnapshotV1 {
     /// Format version. Bump when the wire layout changes
@@ -8180,7 +8180,7 @@ pub struct SnapshotV1 {
     pub collections: BTreeMap<String, CollectionSnapshot>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct CollectionSnapshot {
     pub schema: BTreeMap<String, FieldSpec>,
@@ -8189,7 +8189,7 @@ pub struct CollectionSnapshot {
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum FieldIndexSnapshot {
@@ -10647,7 +10647,7 @@ mod segment_keyword_inverted_diff_tests {
             .__seal_keyword_field_to_segment("c", "cat", dir.path())
             .unwrap();
         assert_terms_dropped(&subject); // RAM `terms` gone — drives from mmap
-                                        // Delete AFTER the seal, with NO re-seal → exercises the tombstone path.
+        // Delete AFTER the seal, with NO re-seal → exercises the tombstone path.
         for d in to_delete {
             subject.delete("c", d, None).unwrap();
         }

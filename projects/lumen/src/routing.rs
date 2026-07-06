@@ -138,6 +138,10 @@ impl VirtualBucketShardMap {
         self.physical_shard_count
     }
 
+    pub fn assignment_for_bucket(&self, bucket: u32) -> Option<u32> {
+        self.assignments.get(bucket as usize).copied()
+    }
+
     pub fn route_document(
         &self,
         collection_id: &str,
