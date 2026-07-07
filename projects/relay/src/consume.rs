@@ -12,12 +12,13 @@ use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::{Body, BodyDataStream, Bytes};
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use service_auth::{Role, RoleMapPrincipal};
 use service_http::ApiErr;
 use tokio::sync::mpsc;
 
@@ -99,9 +100,15 @@ async fn read_up(stream: &mut BodyDataStream, dec: &mut Frames) -> Option<Consum
 )]
 pub async fn consume(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     req: Body,
 ) -> Response {
+    // Consume-family authorization (#1206): a read grant on the subject,
+    // checked before the Subscribe handshake is even read.
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {
+        return deny.into_response();
+    }
     let consumer_id = format!("consume-{}", CONSUMER_SEQ.fetch_add(1, Ordering::Relaxed));
     // Read the handshake before the response head goes out: the protocol's
     // first up-frame must be Subscribe{prefetch}. A missing/undecodable first

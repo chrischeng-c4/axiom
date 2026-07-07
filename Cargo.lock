@@ -10356,6 +10356,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "service-auth",
  "service-http",
  "service-metrics",
  "tempfile",

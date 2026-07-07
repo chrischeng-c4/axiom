@@ -33,6 +33,7 @@
 //! assert!(relay.ack("tasks", &lease.lease_id, Some(lease.epoch)).unwrap());
 //! ```
 
+pub mod auth;
 pub mod config;
 pub mod consume;
 pub mod engine;

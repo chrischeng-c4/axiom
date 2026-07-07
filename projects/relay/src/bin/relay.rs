@@ -68,6 +68,16 @@ struct ServeArgs {
     /// closes, while `/readyz` reports 503 so k8s stops routing.
     #[arg(long, env = "RELAY_GRACE_SECS", default_value_t = 10)]
     grace_secs: u64,
+    /// Request-auth mode for the /v1 data plane: `off` (tokenless dev,
+    /// the default) or `required` (bearer tokens from the registry file).
+    /// Probes stay tokenless either way.
+    #[arg(long, env = "RELAY_AUTH", default_value = "off")]
+    auth: String,
+    /// Bearer-token registry file (JSON `{token: {subject, roles}}`),
+    /// mounted from a Secret in production. Required (and validated at
+    /// startup) when `--auth required`.
+    #[arg(long, env = "RELAY_TOKEN_REGISTRY_FILE")]
+    token_registry_file: Option<String>,
 }
 
 /// `relay llm` flags.
@@ -249,6 +259,21 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    // Resolve the bearer-auth contract (#1206) BEFORE anything serves: with
+    // --auth required a missing/unparseable/empty registry file is a startup
+    // error (nonzero exit), never a per-request 401.
+    let auth = relay::auth::AuthConfig::resolve(
+        &args.auth,
+        args.token_registry_file.as_deref(),
+        std::env::var(relay::auth::LEGACY_TOKENS_ENV)
+            .ok()
+            .as_deref(),
+    )?;
+    tracing::info!(
+        required = auth.required,
+        "request auth resolved (RELAY_AUTH; probes stay tokenless)"
+    );
+
     let mut config = RelayServerConfig::default();
     config.bind = args.bind;
     if let Some(data_dir) = args.data_dir {
@@ -257,7 +282,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     let bind = config.bind.clone();
     let reconcile_interval = Duration::from_millis(config.reconcile_interval_ms);
 
-    let state = AppState::new(config);
+    let state = AppState::with_auth(config, auth);
     // Held for the process lifetime; aborts on drop (i.e. never, since serve runs forever).
     let _reconciler = spawn_reconciler(state.relay_handle(), reconcile_interval);
 
@@ -335,6 +360,23 @@ mod tests {
         assert_eq!(cli.serve.grace_secs, 10);
         let cli = Cli::try_parse_from(["relay", "--grace-secs", "3"]).unwrap();
         assert_eq!(cli.serve.grace_secs, 3);
+        // #1206: the service-auth contract surfaces as serve flags with env
+        // fallback — default off (tokenless dev), `required` + registry file.
+        assert_eq!(cli.serve.auth, "off");
+        assert!(cli.serve.token_registry_file.is_none());
+        let cli = Cli::try_parse_from([
+            "relay",
+            "--auth",
+            "required",
+            "--token-registry-file",
+            "/var/run/secrets/relay/token-registry.json",
+        ])
+        .unwrap();
+        assert_eq!(cli.serve.auth, "required");
+        assert_eq!(
+            cli.serve.token_registry_file.as_deref(),
+            Some("/var/run/secrets/relay/token-registry.json")
+        );
     }
 
     /// R3: build-stamp envs populate ToolInfo (never empty; "unknown" is the

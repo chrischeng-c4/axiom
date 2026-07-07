@@ -14,13 +14,19 @@
 //! data plane; error responses render the shared `{error, message}` envelope
 //! ([`service_http::ApiErr`]); per-op request metrics are recorded by
 //! [`crate::metrics::track`] on the data plane.
+//!
+//! Request auth is the shared `libs/service-auth` bearer contract (#1206):
+//! the blanket `service_auth::auth_middleware` runs on the `/v1` data plane
+//! ONLY (probes stay tokenless), injecting a [`RoleMapPrincipal`] each
+//! handler authorizes on its `{subject}` via [`crate::auth::authorize`] —
+//! publish family = write, consume family = read.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::{header, HeaderMap, StatusCode},
     middleware::from_fn_with_state,
     response::{IntoResponse, Response},
@@ -28,6 +34,7 @@ use axum::{
     Router,
 };
 use chrono::Utc;
+use service_auth::{Role, RoleMapPrincipal, StaticRoleMapVerifier};
 use service_http::{ApiErr, MetricsProvider};
 
 use crate::engine::Relay;
@@ -40,17 +47,21 @@ use crate::wire::{
 };
 
 /// Shared application state: the relay core plus this shard's config, the
-/// per-op request metrics, and the drain flag `/readyz` reports.
+/// per-op request metrics, the drain flag `/readyz` reports, and the bearer
+/// verifier the data-plane auth layer runs (#1206).
 #[derive(Clone)]
 pub struct AppState {
     relay: Arc<Relay>,
     config: Arc<RelayServerConfig>,
     metrics: Arc<RelayMetrics>,
     draining: Arc<AtomicBool>,
+    verifier: Arc<StaticRoleMapVerifier>,
 }
 
 impl AppState {
-    /// Build state with a fresh relay core from `config`.
+    /// Build state with a fresh relay core from `config`. Auth is open
+    /// (tokenless — the `RELAY_AUTH=off` default); production serving builds
+    /// through [`AppState::with_auth`].
     pub fn new(config: RelayServerConfig) -> Self {
         let relay = Relay::new(config.core.clone());
         AppState {
@@ -58,7 +69,22 @@ impl AppState {
             config: Arc::new(config),
             metrics: Arc::new(RelayMetrics::new()),
             draining: Arc::new(AtomicBool::new(false)),
+            verifier: Arc::new(StaticRoleMapVerifier::open()),
         }
+    }
+
+    /// Build state with a resolved auth config (`--auth` /
+    /// `--token-registry-file`): the data-plane auth layer runs the registry
+    /// verifier when auth is required, the open verifier when off.
+    pub fn with_auth(config: RelayServerConfig, auth: crate::auth::AuthConfig) -> Self {
+        let mut state = AppState::new(config);
+        state.verifier = Arc::new(auth.verifier());
+        state
+    }
+
+    /// The bearer verifier the data-plane auth middleware runs.
+    pub fn verifier(&self) -> Arc<StaticRoleMapVerifier> {
+        Arc::clone(&self.verifier)
     }
 
     /// This shard's advertised config.
@@ -108,6 +134,7 @@ impl service_http::MetricsProvider for AppState {
 /// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#logic
 pub fn router(state: AppState) -> Router {
     let req_metrics = state.metrics();
+    let verifier = state.verifier();
     let data_plane = Router::new()
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/publish-batch", post(publish_batch))
@@ -130,8 +157,18 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/ack-batch", post(ack_batch)) // DEPRECATED → /consume
         .route("/v1/{subject}/heartbeat", post(heartbeat)) // DEPRECATED → /consume
         .route("/v1/{subject}/len", get(log_len))
+        // Shared bearer auth (#1206) on the data plane ONLY — probes stay
+        // tokenless. The blanket middleware authenticates (401 on a
+        // missing/unknown token when required) and injects the
+        // RoleMapPrincipal each handler authorizes on its {subject}.
+        .route_layer(from_fn_with_state(
+            verifier,
+            service_auth::auth_middleware::<StaticRoleMapVerifier>,
+        ))
         // Per-op request metrics (counts + latency). route_layer => only for
-        // matched data-plane routes, and MatchedPath is populated.
+        // matched data-plane routes, and MatchedPath is populated. Added
+        // after (= outside) the auth layer so rejected requests are still
+        // counted.
         .route_layer(from_fn_with_state(req_metrics, crate::metrics::track))
         .with_state(state.clone());
 
@@ -200,10 +237,14 @@ fn encode_body<T: serde::Serialize>(cbor: bool, status: StatusCode, value: &T) -
 )]
 pub async fn publish(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Write) {
+        return deny.into_response();
+    }
     let cbor = wants_cbor(&headers);
     let req: PublishRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
@@ -241,10 +282,14 @@ pub async fn publish(
 )]
 pub async fn publish_batch(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Write) {
+        return deny.into_response();
+    }
     let cbor = wants_cbor(&headers);
     let req: PublishBatchRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
@@ -272,10 +317,14 @@ pub async fn publish_batch(
 )]
 pub async fn lease(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {
+        return deny.into_response();
+    }
     let cbor = wants_cbor(&headers);
     let req: LeaseRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
@@ -303,10 +352,14 @@ pub async fn lease(
 )]
 pub async fn ack(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {
+        return deny.into_response();
+    }
     let cbor = wants_cbor(&headers);
     let req: AckRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
@@ -341,10 +394,14 @@ pub async fn ack(
 )]
 pub async fn lease_batch(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {
+        return deny.into_response();
+    }
     let cbor = wants_cbor(&headers);
     let req: LeaseBatchRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
@@ -367,10 +424,14 @@ pub async fn lease_batch(
 )]
 pub async fn ack_batch(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {
+        return deny.into_response();
+    }
     let cbor = wants_cbor(&headers);
     let req: AckBatchRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
@@ -401,10 +462,14 @@ pub async fn ack_batch(
 )]
 pub async fn heartbeat(
     State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {
+        return deny.into_response();
+    }
     let cbor = wants_cbor(&headers);
     let req: HeartbeatRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
@@ -432,7 +497,14 @@ pub async fn heartbeat(
     params(("subject" = String, Path, description = "Target subject")),
     responses((status = 200, description = "Current log length { latest_seq }"))
 )]
-pub async fn log_len(State(st): State<AppState>, Path(subject): Path<String>) -> Response {
+pub async fn log_len(
+    State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
+    Path(subject): Path<String>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {
+        return deny.into_response();
+    }
     match st.relay.log_len(&subject) {
         Ok(latest_seq) => encode_body(
             false,

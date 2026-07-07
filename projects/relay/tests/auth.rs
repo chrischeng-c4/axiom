@@ -100,7 +100,10 @@ async fn publish_requires_write_grant_on_subject() {
     let addr = start_server(Some(required_auth())).await;
     let client = h2c_client();
 
-    assert_eq!(publish(&client, addr, "jobs", "m0", None).await.status(), 401);
+    assert_eq!(
+        publish(&client, addr, "jobs", "m0", None).await.status(),
+        401
+    );
     assert_eq!(
         publish(&client, addr, "jobs", "m0", Some("unknown-token"))
             .await
@@ -279,7 +282,10 @@ async fn probes_stay_tokenless_under_required_auth() {
 async fn off_mode_keeps_tokenless_behavior() {
     let addr = start_server(None).await;
     let client = h2c_client();
-    assert_eq!(publish(&client, addr, "jobs", "m0", None).await.status(), 200);
+    assert_eq!(
+        publish(&client, addr, "jobs", "m0", None).await.status(),
+        200
+    );
     assert_eq!(lease(&client, addr, "jobs", None).await.status(), 200);
 }
 
@@ -290,7 +296,10 @@ async fn off_mode_keeps_tokenless_behavior() {
 fn resolve_fails_fast_on_missing_or_bad_registry() {
     let err = AuthConfig::resolve("required", Some("/nonexistent/relay-registry.json"), None)
         .unwrap_err();
-    assert!(err.to_string().contains("RELAY_TOKEN_REGISTRY_FILE"), "{err:#}");
+    assert!(
+        err.to_string().contains("RELAY_TOKEN_REGISTRY_FILE"),
+        "{err:#}"
+    );
 
     // Required with no registry source at all → empty registry is a
     // misconfiguration.

@@ -54,6 +54,10 @@ h2c = { path = "../../libs/h2c" }
 # /metrics /openapi.json /docs), the h2c + HTTP/1.1 one-port serve loop,
 # SIGTERM-aware graceful drain, and the {error, message} ApiErr envelope.
 service-http = { path = "../../libs/service-http" }
+# Shared request-auth contract (#1206): Bearer extraction + auth_middleware +
+# the role_map StaticRoleMapVerifier implementing RELAY_AUTH=off|required +
+# RELAY_TOKEN_REGISTRY_FILE, with the shared {error, message} 401/403 shape.
+service-auth = { path = "../../libs/service-auth" }
 # Prometheus metric primitives (Counter/Latency + text-format render) for
 # RelayMetrics.
 service-metrics = { path = "../../libs/service-metrics" }

@@ -42,6 +42,18 @@ pub const TOPICS: &[cli_std::llm::Topic] = &[
             Bare `relay` runs the server (env-driven; flags override). Key knobs:\n\n\
             - `--bind` (`RELAY_BIND`, default `0.0.0.0:7000`) — h2c listen address.\n\
             - `--data-dir` (`RELAY_DATA_DIR`) — durable log directory; group-commit fsync.\n\
+            - `--auth` (`RELAY_AUTH`, `off`|`required`, default `off`) — bearer auth on the \
+              /v1 data plane (shared service-auth contract). Probes (`/healthz` `/readyz` \
+              `/metrics` `/openapi.json` `/docs`) stay tokenless either way.\n\
+            - `--token-registry-file` (`RELAY_TOKEN_REGISTRY_FILE`, production \
+              `/var/run/secrets/relay/token-registry.json`) — JSON \
+              `{token: {subject, roles: {\"<subject>|*\": \"read|write|admin\"}}}`; \
+              validated at startup when auth is required (missing/bad file = exit). \
+              publish/publish-batch need `write` on the subject; \
+              consume/lease/ack/heartbeat/len need `read`; `admin >= write >= read`, \
+              `*` grants cover every subject.\n\
+            - clients: `RELAY_URL` for routing + `RELAY_TOKEN` for credentials, sent as \
+              `Authorization: Bearer <token>`.\n\
             - lease reclaim runs on a background reconciler (config `reconcile_interval_ms`).\n\n\
             Delivery model: single-cast work-queue — each message is leased to exactly one \
             competing consumer, acked, then deleted (delete-on-ack retention), with \
