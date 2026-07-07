@@ -154,7 +154,6 @@ flowchart TD
     r5[R5 serve flags] --> src_bin_relay_rs_tests_cli_parse_surface[src/bin/relay.rs::tests::cli_parse_surface]
     r6[R6 probes auth exempt] --> tests_auth_rs_probes_stay_tokenless_under_required_auth[tests/auth.rs::probes_stay_tokenless_under_required_auth]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
