@@ -178,9 +178,6 @@ fn collect_live_agent_docs(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         }
         let rel = path.strip_prefix(root).unwrap_or(&path);
-        if rel == Path::new("projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md") {
-            continue;
-        }
         out.push(rel.to_path_buf());
     }
 }
