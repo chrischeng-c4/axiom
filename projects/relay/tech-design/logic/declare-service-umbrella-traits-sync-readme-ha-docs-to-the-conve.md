@@ -90,7 +90,6 @@ flowchart TD
   dockerfile -->|"byte-equality test"| verify
   llm_topic -->|"spec_cli llm topic test"| verify
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
