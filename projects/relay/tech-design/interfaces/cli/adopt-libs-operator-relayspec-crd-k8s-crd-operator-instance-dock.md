@@ -118,7 +118,6 @@ flowchart TD
     tree --> smoke([kind smoke: single relay image, auto-mode env, zero relay-raft refs])
     dock --> smoke
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
