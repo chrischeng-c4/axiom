@@ -583,6 +583,46 @@ unambiguous as the surface grows.
 | `upgrade` | `<cli> upgrade [--version <tag>] [--check]` | Self-update to the latest `<project>@*` GitHub release. `--check` = report whether newer exists, no install; `--version` = pin a tag. |
 | `issue` | `<cli> issue search [query]` · `view <n>` · `create [--title <t>] [msg…]` | Read **and** write the tool's issues on the tracker. `search` finds this tool's issues (filtered to `project:<name>`; omit the query to list recent), `view <n>` prints one, `create` files a structured issue (auto-attaching `--version` + OS/arch + context, tagged with the `project:<name>` label). |
 
+`llm` is a **cross-scope agent index**, not a feature-local doc page. It must
+teach the smallest command/topic an agent should read across the tool's real
+operating scopes: CLI grammar, workflow, API/spec, auth, deployment,
+operator/k8s, storage/backup, data movement, integration adapters, diagnostics,
+and domain recipes. When a change alters any public command, generated
+artifact, API contract, operator/CRD field, deployment topology, auth model,
+backup/import/export path, or issue/upgrade flow, the change must either update
+the relevant `llm --topic ...` body or explicitly verify that the existing topic
+already teaches the new behavior. Treat a stale `llm` topic as a public CLI
+regression.
+
+`llm` topics should be assembled from one in-code topic registry, not from
+duplicated hand-written command lists. The default `outline` is generated from
+that registry and is the cross-scope table of contents; detail topics own their
+domain body. Tests should lock both levels: the outline advertises every topic
+with the convention-canonical `--topic <id>` flag, and every advertised command
+parses through the real binary. For services, add focused topic assertions for
+the scopes the service exposes (for example deployment topology, storage/backup,
+auth, integration, and query recipes) so cross-scope drift is caught by the same
+patch that introduces it.
+
+Internal libraries may contribute agent-facing `llm` fragments, but they do not
+become standalone user-facing CLIs just to publish docs. A reusable lib with an
+operational contract agents need to understand (for example `libs/operator`,
+`libs/raft-host`, `libs/service-backup`, `libs/service-auth`, `libs/h2c`, or
+`libs/openapi-codegen`) should expose a small `cli_std::llm::Topic` provider or
+constructor from its Rust API. The consuming project decides whether that topic
+belongs in its own `llm` registry, may wrap or prefix the id to fit the
+project's vocabulary, and may omit irrelevant library topics. This keeps the
+source of shared behavior close to the library while keeping the final
+agent-facing outline scoped to the actual tool the agent is driving.
+
+Library-contributed topics must describe the library contract, not the consuming
+project's product policy. Project topics own final choices such as "Lumen uses
+three raft voters" or "this CRD exposes `spec.serving.backup`"; library topics
+own reusable mechanics such as raft ordinal math, backup destination semantics,
+auth registry shape, or operator render layers. When a library contract changes,
+update its topic provider and at least one consuming project's `llm` regression
+test if that project exposes the contract.
+
 Implementation notes not obvious from the signature:
 
 The logic for all three lives in the shared **`libs/cli-std`** crate (`cli_std`),

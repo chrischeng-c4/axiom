@@ -63,6 +63,7 @@
 //! ```
 
 mod error;
+pub mod llm;
 mod middleware;
 pub mod role_map;
 mod verifier;

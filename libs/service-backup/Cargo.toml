@@ -16,6 +16,7 @@ s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:tokio"]
 anyhow = { workspace = true }
 aws-config = { version = "1", optional = true }
 aws-sdk-s3 = { version = "1", optional = true }
+cli-std = { path = "../cli-std", default-features = false }
 serde = { workspace = true }
 schemars = "0.8"
 tokio = { workspace = true, optional = true }

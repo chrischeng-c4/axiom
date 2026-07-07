@@ -296,6 +296,9 @@ fn llm_auth_publishes_token_registry_shape() {
         "Client",
         "auth_token",
         "default_headers",
+        "Shared auth primitive",
+        "<SVC>_TOKEN_REGISTRY_FILE",
+        "service-auth",
     ] {
         assert!(auth.contains(needle), "auth topic missing `{needle}`");
     }
@@ -319,16 +322,22 @@ fn llm_deployment_documents_shard_cluster_topology() {
         "shardIndex = ordinal % shardCount",
         "replicaIndex = ordinal / shardCount",
         "replicasPerShard: 1",
+        "primary/follower replication",
         "replicasPerShard: 2",
         "replicasPerShard: 3",
         "voterCount",
         "HPA is for stateless or near-stateless serving capacity",
+        "HPA-created pods in a single-member topology",
+        "production data fan-out",
         "Dynamic shard growth",
         "50% of the configured shard ceiling",
         "versioned virtual-bucket map",
         "Search without a routing key scatters/gathers",
         "LUMEN_BOOTSTRAP_SEED_URI",
         "Backup is the cold disaster-recovery and seed surface",
+        "Shared raft-host topology primitive",
+        "RaftStateMachine",
+        "REPLICAS_PER_SHARD > 1",
     ] {
         assert!(
             deployment.contains(needle),
@@ -353,7 +362,8 @@ fn llm_storage_documents_unconditional_statefulset_pvc() {
         "replicasPerShard: 1",
         "20Gi",
         "no raft consensus",
-        "HorizontalPodAutoscaler",
+        "legacy single-shard HPA path",
+        "continuously catch",
     ] {
         assert!(storage.contains(needle), "storage topic missing `{needle}`");
     }
@@ -377,6 +387,11 @@ fn llm_storage_documents_shard_replica_and_bootstrap_boundaries() {
         "LUMEN_BOOTSTRAP_SEED_URI",
         "before WAL/raft delta catch-up",
         "not the normal live replica synchronization mechanism",
+        "Shared backup primitive",
+        "BackupDestination",
+        "fetch_backup_object",
+        "Shared raft-host primitive",
+        "RaftStateMachine",
     ] {
         assert!(storage.contains(needle), "storage topic missing `{needle}`");
     }
@@ -529,6 +544,13 @@ fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
         "ACK/retry/DLQ",
         "Do not publish directly to lumen's internal WAL",
         "Ownership boundary",
+        "Shared generated-client primitive",
+        "spec gen --lang ts|py|rust --out <dir>",
+        "GeneratedOutput",
+        "Shared h2c client primitive",
+        "ceil(ln(concurrency))",
+        "Server boundary",
+        "inbound traffic",
     ] {
         assert!(
             integration.contains(needle),

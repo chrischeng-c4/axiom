@@ -34,6 +34,7 @@ use std::time::Duration;
 // `H2cPool` (below) is the simpler reqwest-level round-robin option.
 mod conn;
 mod error;
+pub mod llm;
 mod manager;
 
 pub use error::{H2cError, Result};
