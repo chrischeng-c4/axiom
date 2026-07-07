@@ -1,10 +1,11 @@
-# Raft-backed relay as a StatefulSet: stable identity (relay-<ordinal>), a
-# per-pod PVC for the durable log + raft hard state, and the STANDARD
-# downward-API contract raft-host reads (#544): POD_NAME + the
-# SHARD_COUNT / REPLICAS_PER_SHARD / VOTER_COUNT quartet. The single `relay`
-# entrypoint auto-flips into replica/HA mode when REPLICAS_PER_SHARD > 1 —
-# there is no separate raft bin. Keep spec.replicas ==
-# SHARD_COUNT * REPLICAS_PER_SHARD and VOTER_COUNT odd.
+# relay base: a SMALL single-node direct install for kind / smoke / dev.
+# No raft env is injected (REPLICAS_PER_SHARD unset -> replica_mode() stays
+# false), so this is the plain direct-engine broker on one durable PVC.
+#
+# Production HA does NOT live here: the 3-replica raft topology (downward-API
+# quartet, quorum PDB, resources) is rendered by the operator from a Relay CR —
+# `relay k8s crd render` + `relay k8s operator render` +
+# `relay k8s instance render --profile prod`.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -12,9 +13,8 @@ metadata:
   labels:
     app: relay
 spec:
-  serviceName: relay # the headless Service above (raft peer DNS)
-  replicas: 3
-  podManagementPolicy: Parallel
+  serviceName: relay-headless # stable pod DNS (relay-0.relay-headless)
+  replicas: 1
   selector:
     matchLabels:
       app: relay
@@ -23,7 +23,7 @@ spec:
       labels:
         app: relay
     spec:
-      terminationGracePeriodSeconds: 5
+      terminationGracePeriodSeconds: 10
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -37,38 +37,22 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 7000
           env:
-            # Standard raft-host downward-API contract: pod name -> ordinal ->
-            # (shard, replica); replica_mode() flips HA when
-            # REPLICAS_PER_SHARD > 1. relay is single-group: SHARD_COUNT=1.
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: SHARD_COUNT
-              value: "1"
-            - name: REPLICAS_PER_SHARD
-              value: "3" # must match spec.replicas (x SHARD_COUNT)
-            - name: VOTER_COUNT
-              value: "3"
-            # Headless Service for peer DNS: relay-<ordinal>.relay:<port>.
-            - name: RELAY_PEER_SERVICE
-              value: "relay"
             - name: RELAY_BIND
-              value: "0.0.0.0:8080"
+              value: "0.0.0.0:7000"
             - name: RELAY_DATA_DIR
               value: "/data"
           readinessProbe:
             httpGet:
               path: /readyz
-              port: 8080
+              port: http
             initialDelaySeconds: 2
             periodSeconds: 3
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8080
+              port: http
             initialDelaySeconds: 2
             periodSeconds: 5
           securityContext:

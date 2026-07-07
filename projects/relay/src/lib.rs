@@ -40,12 +40,15 @@ pub mod engine;
 pub mod log;
 pub mod metrics;
 pub mod openapi;
+#[cfg(feature = "operator")]
+pub mod operator;
 pub mod perf_gate;
 pub mod raft;
 pub mod reconciler;
 pub mod server;
 pub mod server_config;
 pub mod shard;
+pub mod tls;
 pub mod types;
 pub mod wire;
 pub mod workqueue;

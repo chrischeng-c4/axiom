@@ -67,8 +67,19 @@ pub const TOPICS: &[cli_std::llm::Topic] = &[
             Service for peer DNS. `RELAY_PEERS=host:port,...` overrides peer DNS for a \
             local multi-node group. No cluster env = plain single-node (zero flags). \
             Limitation: leases/acks are NOT replicated (node-local, like the old driver) \
-            — a failover redelivers unacked work; delivery stays at-least-once. See \
-            projects/relay/k8s.\n",
+            — a failover redelivers unacked work; delivery stays at-least-once.\n\n\
+            Deploy artifacts (offline renders; the checked-in files are fixtures):\n\n\
+            - `relay k8s crd render` — the Relay CustomResourceDefinition \
+              (relay.dev/v1alpha1).\n\
+            - `relay k8s operator render [--namespace relay-system]` — operator \
+              RBAC + Deployment; `relay k8s operator run` runs the controller \
+              (needs a build with `--features operator`).\n\
+            - `relay k8s instance render --profile dev|staging|prod|template` — a \
+              `kind: Relay` CR; prod is the 3-replica raft-HA shape (the operator \
+              renders the StatefulSet topology — `k8s/` base stays a single-node \
+              direct install for kind/smoke).\n\
+            - `relay dockerfile render --variant source|release [--version]` — the \
+              from-source and published-release images.\n",
     },
 ];
 // HANDWRITE-END

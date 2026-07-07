@@ -64,6 +64,23 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false }
 
+# K8s operator (feature `operator`) — the shared libs/operator scaffold + render
+# toolkit (#1208). relay supplies a RelaySpec CRD + ManagedService and gets the
+# reconcile controller for free. Versions mirror the workspace's existing
+# kube-rs users (keep / lumen / mambalibs) so the lockfile stays
+# single-versioned. Optional so the serving image never links kube-rs unless
+# built with `--features operator`.
+kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }
+k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
+schemars = { version = "0.8", optional = true }
+operator = { path = "../../libs/operator", optional = true }
+# YAML serialization for the generated CRD (`relay k8s crd render` in the
+# operator build). Optional: the default build renders from checked-in fixtures.
+serde_yaml = { workspace = true, optional = true }
+# Process-level rustls crypto provider install (operator/kube and the online
+# CLI ops link rustls). Optional so the default build stays provider-free.
+rustls = { version = "0.23", optional = true }
+
 [build-dependencies]
 # Stamp RELAY_GIT_SHA / RELAY_BUILT_AT / RELAY_TARGET for cli-std's ToolInfo.
 build-stamp = { path = "../../libs/build-stamp" }
@@ -73,10 +90,28 @@ default = []
 # self-update / issue — enable the online (HTTPS) paths of the shared CLI-ops
 # lib. Offline builds still ship both commands (`upgrade --check` / the issue
 # create dry-run + pre-filled-URL fallback); release builds enable them.
-self-update = ["cli-std/online"]
-issue = ["cli-std/online"]
+self-update = ["cli-std/online", "rustls-provider"]
+issue = ["cli-std/online", "rustls-provider"]
+# operator — the shared libs/operator scaffold: a RelaySpec CRD + ManagedService
+# render, driven by operator::run. Ships the `relay k8s operator run` controller
+# and the CRD generator; pulls kube-rs, so the serving image stays kube-free
+# unless built with this feature (#1208).
+operator = [
+    "dep:kube",
+    "dep:k8s-openapi",
+    "dep:schemars",
+    "dep:operator",
+    "dep:serde_yaml",
+    "rustls-provider",
+]
+# Private: link rustls + install its process-level crypto provider at startup
+# (src/tls.rs). Enabled by every feature that links a rustls path (operator /
+# online CLI ops), so the default build pays nothing.
+rustls-provider = ["dep:rustls"]
 
 [dev-dependencies]
+# Deploy-CLI render round-trip assertions (tests/deploy_cli.rs, tests/operator.rs).
+serde_yaml = { workspace = true }
 tempfile = "3"
 criterion = "0.5"
 # The deterministic consensus simulation (tests/raft_core.rs) drives the core
