@@ -604,6 +604,25 @@ the scopes the service exposes (for example deployment topology, storage/backup,
 auth, integration, and query recipes) so cross-scope drift is caught by the same
 patch that introduces it.
 
+Internal libraries may contribute agent-facing `llm` fragments, but they do not
+become standalone user-facing CLIs just to publish docs. A reusable lib with an
+operational contract agents need to understand (for example `libs/operator`,
+`libs/raft-host`, `libs/service-backup`, `libs/service-auth`, `libs/h2c`, or
+`libs/openapi-codegen`) should expose a small `cli_std::llm::Topic` provider or
+constructor from its Rust API. The consuming project decides whether that topic
+belongs in its own `llm` registry, may wrap or prefix the id to fit the
+project's vocabulary, and may omit irrelevant library topics. This keeps the
+source of shared behavior close to the library while keeping the final
+agent-facing outline scoped to the actual tool the agent is driving.
+
+Library-contributed topics must describe the library contract, not the consuming
+project's product policy. Project topics own final choices such as "Lumen uses
+three raft voters" or "this CRD exposes `spec.serving.backup`"; library topics
+own reusable mechanics such as raft ordinal math, backup destination semantics,
+auth registry shape, or operator render layers. When a library contract changes,
+update its topic provider and at least one consuming project's `llm` regression
+test if that project exposes the contract.
+
 Implementation notes not obvious from the signature:
 
 The logic for all three lives in the shared **`libs/cli-std`** crate (`cli_std`),
