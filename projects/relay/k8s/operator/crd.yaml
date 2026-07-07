@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:f87cea60" tracker="pending-tracker" reason="The generated Relay CustomResourceDefinition fixture (output of `relay k8s crd render` from the operator build, structural-schema normalized) — backs the offline crd render path in the default (kube-free) build via include_str."
+// TODO: hand-write content for `projects/relay/k8s/operator/crd.yaml`.
+// HANDWRITE-END

@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:213608f8" tracker="pending-tracker" reason="Operator Deployment fixture: runs `relay k8s operator run` from the relay image (built with --features operator), POD_NAME/POD_NAMESPACE downward env for the leader-election Lease, nonroot + readOnlyRootFilesystem hardening; replicas 1 (scale to 2+ safely — the Lease elects one active reconciler)."
+// TODO: hand-write content for `projects/relay/k8s/operator/deployment.yaml`.
+// HANDWRITE-END

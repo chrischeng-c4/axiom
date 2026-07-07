@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:4d255551" tracker="pending-tracker" reason="Operator control-plane RBAC fixture: Namespace relay-system, ServiceAccount relay-operator, ClusterRole (relay.dev relays/status/finalizers; apps statefulsets; core services/serviceaccounts; policy poddisruptionbudgets; coordination.k8s.io leases), ClusterRoleBinding — namespace-substituted by `relay k8s operator render --namespace`."
+// TODO: hand-write content for `projects/relay/k8s/operator/rbac.yaml`.
+// HANDWRITE-END

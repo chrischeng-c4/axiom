@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:07a338e2" tracker="pending-tracker" reason="RelaySpec CustomResource (group relay.dev, v1alpha1, kind Relay, plural relays, namespaced, status RelayStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: operator::ClusterSpec (shardCount defaults 1; relay is a single raft group — render pins it) + storage (default 10Gi), storageClass, graceSecs (default 10), logLevel (Option, RUST_LOG), auth (flat string off|required — no divergent-variant enums in the CRD), tokensSecret (Option<String> Secret name); RelayStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
+// TODO: hand-write content for `projects/relay/src/operator/crd.rs`.
+// HANDWRITE-END

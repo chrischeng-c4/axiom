@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:22fdd793" tracker="pending-tracker" reason="Offline deploy-CLI tests driving the COMPILED relay binary in the default build: every k8s/dockerfile render verb succeeds and round-trips serde_yaml; dockerfile source/release outputs equal the committed fixtures (+ --version substitution); the CRD render is structural-schema safe (no uint32/uint64, minimum floor, kind Relay); operator run without the feature exits nonzero with the rebuild hint; the smoke script has no relay-raft refs and its heredoc manifests parse and carry the auto-mode env; the llm operations topic names the deploy verbs."
+// TODO: hand-write content for `projects/relay/tests/deploy_cli.rs`.
+// HANDWRITE-END

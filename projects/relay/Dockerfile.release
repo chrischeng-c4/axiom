@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:f5280a93" tracker="pending-tracker" reason="Release-image fixture (keep #777 pattern): stage 1 debian:bookworm-slim fetches + sha256-verifies the published relay@<version> linux tarball for TARGETARCH; stage 2 distroless/cc-debian12:nonroot carries only the binary; EXPOSE 7000; ENTRYPOINT /usr/local/bin/relay. Byte-for-byte reproducible by `relay dockerfile render --variant release`."
+// TODO: hand-write content for `projects/relay/Dockerfile.release`.
+// HANDWRITE-END

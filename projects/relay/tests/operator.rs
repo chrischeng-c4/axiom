@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:38a65c0d" tracker="pending-tracker" reason="Feature-gated (#![cfg(feature = 'operator')]) render-shape tests: CRD flattens ClusterSpec + relay knobs (no nested cluster wrapper); render() emits the downward-API StatefulSet with the exact env/probe contract serve reads (POD_NAME/SHARD_COUNT=1/REPLICAS_PER_SHARD/VOTER_COUNT/RELAY_PEER_SERVICE + RELAY_BIND/RELAY_DATA_DIR/RELAY_GRACE_SECS, /readyz + /healthz probes, PVC storage) plus ServiceAccount/Services/PDB; auth Secret wiring is opt-in (env + volume only when auth: required + tokensSecret); status_patch phases Pending/Reconciling/Ready; rustls provider install is idempotent."
+// TODO: hand-write content for `projects/relay/tests/operator.rs`.
+// HANDWRITE-END
