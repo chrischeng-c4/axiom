@@ -106,3 +106,91 @@ flowchart TD
     crd --> cron([shared render cron_job: name-backup CronJob invoking relay backup; RELAY_BACKUP_TOKEN secretKeyRef])
     spec -->|same document| gen
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: relay-backup-tls-spec-cli-verification
+requirements:
+  admin_backup_endpoint:
+    id: R2
+    text: "GET /admin/backup on a live node returns the exact EngineSnapshot bytes RelayStateMachine::snapshot produces (dump_live + applied index): parseable, carrying the published un-acked message."
+    kind: functional
+    risk: medium
+    verify: tests/backup.rs::admin_backup_returns_the_state_machine_snapshot_bytes
+  backup_cli_verb:
+    id: R2
+    text: "relay backup --url <live node> --dest file:///<tmp> (feature backup) fetches the snapshot over HTTP and writes a BackupRunResult-described artifact through the service-backup local sink; retention prunes aged objects."
+    kind: functional
+    risk: medium
+    verify: tests/backup.rs::run_backup_ships_snapshot_to_local_sink (cfg feature backup)
+  backup_endpoint_admin_guarded:
+    id: R2
+    text: "With auth required, GET /admin/backup rejects a missing token (401) and a non-admin token (403), and serves an admin-on-* token (200); probes stay tokenless."
+    kind: functional
+    risk: high
+    verify: tests/backup.rs::admin_backup_requires_admin_when_auth_required
+  backup_round_trip_restore:
+    id: R2
+    text: "A backup artifact written to a file:// destination round-trips: load_snapshot_bytes (load_live merge) on a FRESH engine re-publishes the un-acked message, which a consumer leases back with the original payload; the merge is idempotent per message_id."
+    kind: functional
+    risk: high
+    verify: tests/backup.rs::backup_artifact_round_trips_through_load_live_on_a_fresh_engine
+  cli_surface_parses:
+    id: R1
+    text: "The new Spec/Backup clap arms parse (spec, spec --format openapi-yaml|json-schema, spec gen --lang --out, backup --url --dest --retention-secs) alongside the existing verbs; a backup-less build answers relay backup with the rebuild hint."
+    kind: regression
+    risk: low
+    verify: src/bin/relay.rs::tests::spec_and_backup_verbs_parse
+  crd_backup_cron_render:
+    id: R4
+    text: "RelaySpec.backup (flat URI string destination) renders a <name>-backup CronJob via the shared operator::render::cron_job — schedule, relay backup args (--url cluster-DNS, --dest, --retention-secs), RELAY_BACKUP_TOKEN secretKeyRef when adminTokenSecret set; absent backup renders NO CronJob and the CRD stays structural-schema safe."
+    kind: functional
+    risk: medium
+    verify: tests/operator.rs::backup_cron_job_renders_only_when_policy_set (cfg feature operator)
+  llm_operations_topic:
+    id: R5
+    text: "relay llm operations documents the spec/spec gen verbs, the backup verb + /admin/backup endpoint + CronJob wiring, and the RELAY_PEER_TLS_* / RELAY_PEER_MTLS contract with the seam gap stated honestly."
+    kind: functional
+    risk: low
+    verify: tests/spec_cli.rs::llm_operations_topic_documents_the_new_surfaces
+  peer_tls_env_contract:
+    id: R3
+    text: "peer_tls::PeerTlsConfig::from_env derives RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on: None when nothing set, Some with required=true when all set + on, an error naming the vars on partial config, and a clear path-naming error on a mis-pointed cert path (fail fast)."
+    kind: functional
+    risk: medium
+    verify: src/peer_tls.rs::tests::{from_env_returns_none_when_nothing_set,from_env_loads_when_all_set,from_env_errors_on_partial_config,mis_pointed_cert_path_fails_fast_naming_the_path}
+  peer_tls_rustls_builders:
+    id: R3
+    text: "Scratch PEM material (the service-tls fixture cert/key) builds both rustls server and client configs through the adapter passthroughs — the material is proven usable even though the raft-host/h2c seam cannot terminate mTLS yet (filed gap)."
+    kind: functional
+    risk: low
+    verify: src/peer_tls.rs::tests::builds_rustls_peer_configs_from_pem_material
+  spec_gen_clients:
+    id: R1
+    text: "relay spec gen --lang ts|py|rust --out <dir> writes a non-empty typed client per language via the shared cclab-openapi-codegen; the ts client carries the well-known entry files (types.ts, client.ts, index.ts)."
+    kind: functional
+    risk: medium
+    verify: tests/spec_cli.rs::spec_gen_writes_a_client_for_every_language
+  spec_offline_formats:
+    id: R1
+    text: "relay spec emits parseable OpenAPI as pretty JSON (default), YAML (--format openapi-yaml), and a components-only json-schema view — the same utoipa document /openapi.json serves, offline, listing the /v1 data-plane paths and the new /admin/backup."
+    kind: functional
+    risk: low
+    verify: tests/spec_cli.rs::spec_prints_parseable_openapi_in_every_format
+---
+flowchart TD
+    r1[R1 cli surface parses] --> src_bin_relay_rs_tests_spec_and_backup_verbs_parse[src/bin/relay.rs::tests::spec_and_backup_verbs_parse]
+    r1[R1 spec gen clients] --> tests_spec_cli_rs_spec_gen_writes_a_client_for_every_language[tests/spec_cli.rs::spec_gen_writes_a_client_for_every_language]
+    r1[R1 spec offline formats] --> tests_spec_cli_rs_spec_prints_parseable_openapi_in_every_format[tests/spec_cli.rs::spec_prints_parseable_openapi_in_every_format]
+    r2[R2 admin backup endpoint] --> tests_backup_rs_admin_backup_returns_the_state_machine_snapshot_bytes[tests/backup.rs::admin_backup_returns_the_state_machine_snapshot_bytes]
+    r2[R2 backup cli verb] --> tests_backup_rs_run_backup_ships_snapshot_to_local_sink_cfg_feature_backup[tests/backup.rs::run_backup_ships_snapshot_to_local_sink (cfg feature backup)]
+    r2[R2 backup endpoint admin guarded] --> tests_backup_rs_admin_backup_requires_admin_when_auth_required[tests/backup.rs::admin_backup_requires_admin_when_auth_required]
+    r2[R2 backup round trip restore] --> tests_backup_rs_backup_artifact_round_trips_through_load_live_on_a_fresh_engine[tests/backup.rs::backup_artifact_round_trips_through_load_live_on_a_fresh_engine]
+    r3[R3 peer tls env contract] --> src_peer_tls_rs_tests_from_env_returns_none_when_nothing_set_from_env_loads_when_all_set_from_env_errors_on_partial_config_mis_pointed_cert_path_fails_fast_naming_the_path[src/peer_tls.rs::tests::{from_env_returns_none_when_nothing_set,from_env_loads_when_all_set,from_env_errors_on_partial_config,mis_pointed_cert_path_fails_fast_naming_the_path}]
+    r3[R3 peer tls rustls builders] --> src_peer_tls_rs_tests_builds_rustls_peer_configs_from_pem_material[src/peer_tls.rs::tests::builds_rustls_peer_configs_from_pem_material]
+    r4[R4 crd backup cron render] --> tests_operator_rs_backup_cron_job_renders_only_when_policy_set_cfg_feature_operator[tests/operator.rs::backup_cron_job_renders_only_when_policy_set (cfg feature operator)]
+    r5[R5 llm operations topic] --> tests_spec_cli_rs_llm_operations_topic_documents_the_new_surfaces[tests/spec_cli.rs::llm_operations_topic_documents_the_new_surfaces]
+```
