@@ -278,15 +278,21 @@ mod tests {
             Some(Command::Llm(_))
         ));
         assert!(matches!(
-            Cli::try_parse_from(["relay", "upgrade", "--check"]).unwrap().cmd,
+            Cli::try_parse_from(["relay", "upgrade", "--check"])
+                .unwrap()
+                .cmd,
             Some(Command::Upgrade(_))
         ));
         assert!(matches!(
-            Cli::try_parse_from(["relay", "issue", "search", "lease"]).unwrap().cmd,
+            Cli::try_parse_from(["relay", "issue", "search", "lease"])
+                .unwrap()
+                .cmd,
             Some(Command::Issue(_))
         ));
         assert!(matches!(
-            Cli::try_parse_from(["relay", "issue", "view", "42"]).unwrap().cmd,
+            Cli::try_parse_from(["relay", "issue", "view", "42"])
+                .unwrap()
+                .cmd,
             Some(Command::Issue(_))
         ));
         assert!(matches!(

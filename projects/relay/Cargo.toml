@@ -13,8 +13,8 @@ name = "relay"
 path = "src/lib.rs"
 
 [[bin]]
-name = "relay-server"
-path = "src/bin/relay_server.rs"
+name = "relay"
+path = "src/bin/relay.rs"
 
 # Raft-backed node for k8s (HA): identity/peers from the downward API.
 [[bin]]
@@ -49,6 +49,26 @@ reqwest = { workspace = true }
 
 # Shared h2c client construction (ln(concurrency) pool heuristic) — #468.
 h2c = { path = "../../libs/h2c" }
+
+# The single `relay` CLI bin (CONTRIBUTING.md CLI convention): clap parsing +
+# the standard llm/upgrade/issue ops via the shared cli-std lib. Offline paths
+# always build; the HTTPS paths are pulled in by the `self-update`/`issue`
+# features via `cli-std/online`.
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["env"] }
+cli-std = { path = "../../libs/cli-std", default-features = false }
+
+[build-dependencies]
+# Stamp RELAY_GIT_SHA / RELAY_BUILT_AT / RELAY_TARGET for cli-std's ToolInfo.
+build-stamp = { path = "../../libs/build-stamp" }
+
+[features]
+default = []
+# self-update / issue — enable the online (HTTPS) paths of the shared CLI-ops
+# lib. Offline builds still ship both commands (`upgrade --check` / the issue
+# create dry-run + pre-filled-URL fallback); release builds enable them.
+self-update = ["cli-std/online"]
+issue = ["cli-std/online"]
 
 [dev-dependencies]
 tempfile = "3"

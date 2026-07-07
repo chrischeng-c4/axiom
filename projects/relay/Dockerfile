@@ -4,12 +4,12 @@
 FROM rust:1 AS build
 WORKDIR /src
 COPY --chown=root:root . .
-RUN cargo build --release -p relay --bin relay-raft --bin relay-server
+RUN cargo build --release -p relay --bin relay-raft --bin relay
 
 FROM debian:bookworm-slim
 RUN useradd -m -u 10001 relay
 COPY --chown=relay:relay --from=build /src/target/release/relay-raft /usr/local/bin/relay-raft
-COPY --chown=relay:relay --from=build /src/target/release/relay-server /usr/local/bin/relay-server
+COPY --chown=relay:relay --from=build /src/target/release/relay /usr/local/bin/relay
 USER relay
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/relay-raft"]

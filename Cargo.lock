@@ -10341,9 +10341,13 @@ dependencies = [
 name = "relay"
 version = "0.4.3"
 dependencies = [
+ "anyhow",
  "axum 0.8.9",
+ "build-stamp",
  "chrono",
  "ciborium",
+ "clap",
+ "cli-std",
  "crc32fast",
  "criterion",
  "futures",
