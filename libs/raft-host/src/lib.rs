@@ -13,6 +13,7 @@
 pub mod cluster;
 mod config;
 mod host;
+pub mod llm;
 mod outcome_window;
 mod read_consistency;
 mod state_machine;

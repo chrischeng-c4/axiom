@@ -9,6 +9,8 @@ name = "h2c"
 path = "src/lib.rs"
 
 [dependencies]
+cli-std = { path = "../cli-std", default-features = false }
+
 # Inherit the workspace reqwest (rustls, http2) so the lockfile stays
 # single-versioned; h2c uses prior-knowledge over cleartext. Backs the
 # ergonomic `h2c_client()` / `H2cPool` (the reqwest-level option).

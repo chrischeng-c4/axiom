@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 pub mod emit;
 pub mod ir;
+pub mod llm;
 
 pub use ir::{build_type_map, TypeMap};
 

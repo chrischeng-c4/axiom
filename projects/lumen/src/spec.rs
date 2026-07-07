@@ -241,7 +241,7 @@ Use the smallest topic that answers the task:
 /// Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_deployment_md() -> String {
-    r#"# lumen deployment
+    let mut out = r#"# lumen deployment
 
 ## Artifact layers
 Use the layered service CLI surface so image, cluster API, operator, and
@@ -285,7 +285,8 @@ has ordinals 0 and 3, shard 1 has ordinals 1 and 4, and shard 2 has ordinals
 ## Replica modes
 - `replicasPerShard: 1`: one durable member per shard. It uses the local WAL,
   no raft consensus, and is the simplest topology for dev, small prod, or
-  sharded-but-not-HA deployments.
+  sharded-but-not-HA deployments. It is not a primary/follower replication
+  mode: there is no background follower catching up from a primary.
 - `replicasPerShard: 2`: failover-oriented shape. It adds a second member per
   shard; use it only when the operator/raft policy for the environment is
   intentionally configured for that failover mode.
@@ -300,6 +301,9 @@ HPA is for stateless or near-stateless serving capacity, not for changing
 storage ownership. Do not use HPA to change `shardCount` or to add/remove raft
 members. Lumen attaches HPA only where the rendered topology can tolerate it;
 raft-HA shard groups use a fixed `shardCount * replicasPerShard` peer set.
+HPA-created pods in a single-member topology must not be treated as synced data
+replicas; production data fan-out is `shardCount`, and production HA is
+`replicasPerShard > 1` raft.
 
 ## Dynamic shard growth
 Shard growth is an operator workflow, not a direct response to request load.
@@ -329,14 +333,17 @@ LUMEN_BOOTSTRAP_SEED_URI=s3://bucket/path/shard-0.json
 Backup is the cold disaster-recovery and seed surface; it is not the normal
 live replica synchronization mechanism.
 "#
-    .to_string()
+    .to_string();
+    out.push_str("\n## Shared raft-host topology primitive\n");
+    out.push_str(raft_host::llm::topic().body);
+    out
 }
 
 /// Bearer-token auth + deployment secret contract (`lumen llm --topic auth`)
 /// as Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_auth_md() -> String {
-    format!(
+    let mut out = format!(
         r#"# lumen auth
 
 ## Runtime contract
@@ -394,7 +401,10 @@ Generated Python clients accept either `auth_token="<token>"` or
 `AsyncClient`. Other clients send the same `Authorization: Bearer` header.
 "#,
         token_registry_example_json()
-    )
+    );
+    out.push_str("\n## Shared auth primitive\n");
+    out.push_str(service_auth::llm::topic().body);
+    out
 }
 
 /// The agent workflow model (`lumen llm --topic workflow`) as Markdown — the mental
@@ -490,7 +500,7 @@ adapter boundaries.
 /// integration`) as Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_integration_md() -> String {
-    r#"# lumen integration
+    let mut out = r#"# lumen integration
 
 ## Recommended Postgres / AlloyDB integration
 Use this boundary when Postgres or AlloyDB is the source of truth:
@@ -518,7 +528,12 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
   ACK/retry/DLQ, upstream credentials, source offsets, stale-event suppression,
   and hydration against the source database.
 "#
-    .to_string()
+    .to_string();
+    out.push_str("\n## Shared generated-client primitive\n");
+    out.push_str(cclab_openapi_codegen::llm::topic().body);
+    out.push_str("\n## Shared h2c client primitive\n");
+    out.push_str(h2c::llm::topic().body);
+    out
 }
 
 /// A copy-paste end-to-end (`lumen llm --topic quickstart`) as Markdown:
@@ -611,7 +626,7 @@ pub fn llm_recipes_md() -> String {
 /// `replicasPerShard`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_storage_md() -> String {
-    r#"# lumen storage
+    let mut out = r#"# lumen storage
 
 ## The serving fleet is always a StatefulSet
 The operator (`lumen::operator::render`) renders the serving fleet as a
@@ -630,9 +645,9 @@ consensus; it never changes whether the WAL is durable.
 - One StatefulSet member per shard, with the durable `raft` PVC.
 - No raft peer-identity env — the pod runs a local WAL with no consensus
   overhead.
-- A `HorizontalPodAutoscaler` (`scaleTargetRef.kind: StatefulSet`) still owns
-  the live replica count between `spec.serving.autoscaling.minReplicas` and
-  `maxReplicas`, exactly as it did before the fleet became a StatefulSet.
+- The legacy single-shard HPA path is serving-capacity only. It is not a
+  primary/follower data-replica mode, and extra pods do not continuously catch
+  up a shared shard from a primary.
 
 ## `replicasPerShard > 1` — raft-HA
 - Fixed replica count `shardCount * replicasPerShard` (raft needs a known,
@@ -888,6 +903,11 @@ CRD validation ambiguity (which one wins if both are set?) for no real
 gain. `raftStorageClass` already lets a deployer set any StorageClass name
 they want — the fix here is this guidance, not new API surface.
 "#
-    .to_string()
+    .to_string();
+    out.push_str("\n## Shared backup primitive\n");
+    out.push_str(service_backup::llm::topic().body);
+    out.push_str("\n## Shared raft-host primitive\n");
+    out.push_str(raft_host::llm::topic().body);
+    out
 }
 // CODEGEN-END

@@ -2119,6 +2119,7 @@ name = "cclab-openapi-codegen"
 version = "0.4.3"
 dependencies = [
  "anyhow",
+ "cli-std",
  "serde",
  "serde_json",
 ]
@@ -4877,6 +4878,7 @@ version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
  "bytes",
+ "cli-std",
  "h2 0.4.14",
  "http 1.4.0",
  "http-body-util",
@@ -8253,6 +8255,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "cli-std",
  "futures",
  "k8s-openapi",
  "kube",
@@ -9929,6 +9932,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum 0.8.9",
+ "cli-std",
  "h2c",
  "raft-core",
  "reqwest 0.12.28",
@@ -11348,6 +11352,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
+ "cli-std",
  "http-body-util",
  "serde",
  "serde_json",
@@ -11362,6 +11367,7 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-sdk-s3",
+ "cli-std",
  "schemars",
  "serde",
  "serde_json",
