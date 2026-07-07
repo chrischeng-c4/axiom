@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:279c2a3c" tracker="pending-tracker" reason="New always-compiled thin adapter over libs/service-tls (lumen src/tls.rs #971 pattern): ENV_PREFIX RELAY_PEER, pub PeerTlsConfig {cert,key,ca,required} + From conversions, from_env() deriving RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on|off, rustls_server_config/rustls_client_config passthroughs. Unit tests: none-set => None, all-set + on => required, partial => must-all-be-set error, mis-pointed cert path => error naming the path, PEM fixture builds both rustls configs."
+// TODO: hand-write content for `projects/relay/src/peer_tls.rs`.
+// HANDWRITE-END
