@@ -432,7 +432,7 @@ def f() -> int:
 }
 
 #[test]
-fn test_aot_rejects_runtime_deps() {
+fn test_aot_collects_runtime_imports() {
     let module = parser::parse("[1, 2, 3]\n", FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
     let _ = checker.check_module(&module);
@@ -440,17 +440,21 @@ fn test_aot_rejects_runtime_deps() {
     let mir = lower_hir_to_mir(&hir, &checker.tcx);
 
     let mut backend = CraneliftBackend::new().expect("AOT init failed");
-    let result = backend.codegen(&mir, &checker.tcx);
-    match result {
-        Err(e) => {
-            let err_msg = format!("{e}");
-            assert!(
-                err_msg.contains("runtime library"),
-                "unexpected error: {err_msg}"
-            );
-        }
-        Ok(_) => panic!("expected error for runtime-dependent program"),
-    }
+    let output = backend
+        .codegen(&mir, &checker.tcx)
+        .expect("AOT codegen failed for runtime-linked object");
+
+    let bytes = match output {
+        CodegenOutput::ObjectFile(bytes) => bytes,
+        _ => panic!("expected ObjectFile output"),
+    };
+    assert!(!bytes.is_empty());
+
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.contains("mb_list_new") || text.contains("mb_list_append"),
+        "expected object to retain runtime list imports"
+    );
 }
 
 #[test]
