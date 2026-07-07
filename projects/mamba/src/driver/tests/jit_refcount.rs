@@ -78,6 +78,8 @@ def f() -> int:
     x: int = 10
     x = 20
     return x
+
+f()
 "#,
     );
     assert_eq!(result, 20);
@@ -96,6 +98,8 @@ def f() -> int:
     x = 4
     x = 5
     return x
+
+f()
 "#,
     );
     assert_eq!(result, 5);
@@ -114,6 +118,8 @@ def f() -> int:
     b: int = 200
     c: int = 300
     return a
+
+f()
 "#,
     );
     assert_eq!(result, 100);
@@ -147,6 +153,8 @@ def f() -> int:
     a: int = 42
     b: int = a
     return b
+
+f()
 "#,
     );
     assert_eq!(result, 42);
@@ -163,6 +171,8 @@ def f() -> int:
     c: int = b
     d: int = c
     return d
+
+f()
 "#,
     );
     assert_eq!(result, 7);
@@ -232,6 +242,8 @@ fn test_jit_list_allocation_no_leak() {
 def f() -> int:
     x: list = [1, 2, 3]
     return 42
+
+f()
 "#,
     );
     assert_eq!(result, 42);
@@ -246,6 +258,8 @@ def f() -> int:
     x: list = [1, 2]
     x = [3, 4, 5]
     return 99
+
+f()
 "#,
     );
     assert_eq!(result, 99);
@@ -263,6 +277,8 @@ def f() -> int:
     x: int = 42
     x = 99
     return x
+
+f()
 "#,
     );
     assert_eq!(result, 99);
@@ -276,6 +292,8 @@ fn test_jit_uninitialized_vreg_safe() {
         r#"
 def f() -> int:
     return 0
+
+f()
 "#,
     );
     assert_eq!(result, 0);
@@ -318,6 +336,8 @@ def f() -> int:
         sum = sum + i
         i = i + 1
     return sum
+
+f()
 "#,
     );
     // sum of 0..99 = 4950
@@ -338,6 +358,8 @@ def f() -> int:
     e: int = 5
     total: int = a + b + c + d + e
     return total
+
+f()
 "#,
     );
     assert_eq!(result, 15);
