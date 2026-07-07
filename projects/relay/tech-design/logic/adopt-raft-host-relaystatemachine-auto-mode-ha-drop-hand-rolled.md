@@ -175,3 +175,95 @@ flowchart TD
     r5[R5 raft core sim kept honest] --> tests_raft_core_rs_relay_engines_converge_across_failover[tests/raft_core.rs::relay_engines_converge_across_failover]
     r6[R6 llm operations auto mode] --> src_llm_rs_operations_topic_body_relay_llm_operations[src/llm.rs operations topic body (relay llm operations)]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/relay/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add the raft-host path dependency (shared driver: RaftHost, RaftStore, RaftStateMachine, ClusterTopology, OutcomeWindow, SnapshotPolicy); demote raft-core to dev-dependencies (only the tests/raft_core.rs simulation drives the consensus core directly); drop the [[bin]] relay-raft target."
+  - path: projects/relay/src/raft.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Rewrite from the raft_core re-export shim to the raft-host adoption surface: PubCommand { subject, message_id, payload, headers, priority, not_before } (the replicated command, multi-subject); RelayStateMachine (apply = idempotent Relay::publish_at + OutcomeWindow outcome stash + fsynced applied-marker floor; snapshot = up_to + Relay::dump_live; restore = Relay::load_live + floor := up_to; applied_index recovered from the marker at construction); RelayRaft (single-group wrapper: RaftStore::open on {data_dir}/raft, RaftHost::spawn, router() passthrough, publish() = propose + claim outcome, from_topology(ClusterTopology) constructor, is_leader/leader/applied_index accessors)."
+  - path: projects/relay/src/engine.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Minimal snapshot accessors inside the existing HANDWRITE region: SubjectLive { subject, shard, entries } + Relay::dump_live() (per open (subject, shard): the un-acked tail log.range(committed_watermark), deterministic order) and Relay::load_live(dumps) (idempotent re-publish of each entry via publish_at preserving message_id/headers/not_before/priority/appended_at — dedupe merges on overlap)."
+  - path: projects/relay/src/raft_driver.rs
+    action: delete
+    section: logic
+    impl_mode: hand-written
+    description: "Hand-rolled h2c raft driver (tick/pump/flush loop, persist-before-flush, peer POSTs, redirect-to-leader publish, /raftz) — fully replaced by raft_host::RaftHost."
+  - path: projects/relay/src/raft_store.rs
+    action: delete
+    section: logic
+    impl_mode: hand-written
+    description: "Hand-rolled hard-state file store — replaced by raft_host::RaftStore (which was lifted from this code; identical persist-before-flush contract)."
+  - path: projects/relay/src/raft_config.rs
+    action: delete
+    section: logic
+    impl_mode: hand-written
+    description: "Hand-derived pod ordinal + peer DNS math — replaced by raft_host::cluster::ClusterTopology::from_env (CONTRIBUTING: never re-derive the ordinal math locally)."
+  - path: projects/relay/src/bin/relay_raft.rs
+    action: delete
+    section: logic
+    impl_mode: hand-written
+    description: "The separate relay-raft bin and its bespoke env contract (HOSTNAME/RELAY_REPLICAS/RELAY_SERVICE/...) — HA is now auto-mode inside the single `relay` serve path."
+  - path: projects/relay/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Drop the raft_driver/raft_store/raft_config modules and their re-exports (RaftDriver, RaftStore, RaftClusterConfig, ordinal_from_hostname, peer_urls, and the raft_core type re-exports); export PubCommand, RelayStateMachine, RelayRaft from the rewritten raft module."
+  - path: projects/relay/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "AppState optionally carries Arc<RelayRaft> (set_raft/raft accessors); the publish and publish-batch handlers propose PubCommand through the host when HA is on (returning the engine {seq, deduped} claimed from the OutcomeWindow; idempotent direct-engine fallback if the outcome aged out) and keep the direct-engine path otherwise; all other verbs stay node-local."
+  - path: projects/relay/src/bin/relay.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Auto-mode serve: --peer-service flag (RELAY_PEER_SERVICE, default relay); when raft_host::cluster::replica_mode() — ClusterTopology::from_env('relay', peer_service, port-from-bind, 'RELAY_PEERS'), RelayRaft::from_topology over the serve engine with the core data dir, state.set_raft, app.merge(raft.router()) outside the bearer-auth data plane; single-node path unchanged."
+  - path: projects/relay/src/llm.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Operations topic: replace the relay-raft paragraph with the auto-mode HA story (REPLICAS_PER_SHARD > 1 flips HA on the single bin; standard downward-API quartet; RELAY_PEERS local override; leases stay node-local — at-least-once failover)."
+  - path: projects/relay/Dockerfile
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Build/copy only the single relay binary; ENTRYPOINT /usr/local/bin/relay."
+  - path: projects/relay/k8s/statefulset.yaml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Downward-API env switches to the standard raft-host contract: POD_NAME (metadata.name), SHARD_COUNT=1, REPLICAS_PER_SHARD, VOTER_COUNT, RELAY_PEER_SERVICE + RELAY_BIND/RELAY_DATA_DIR; image relay:dev, single entrypoint; readiness probes /readyz."
+  - path: projects/relay/tests/raft_cluster.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Rewrite against the raft-host stack: an in-process 3-node group (explicit peer maps over real h2c listeners) elects exactly one leader, a leader publish applies on every node's engine, a follower publish is forwarded by the host, a direct follower /raft/publish answers 421 not-leader, and killing the leader re-elects with no committed loss; plus the snapshot path — a small SnapshotPolicy threshold compacts the leader log and a late-started fresh node catches up via InstallSnapshot."
+  - path: projects/relay/tests/raft_persistence.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Rewrite as restart-recovery tests over RelayRaft: a single-node group restarted from its data dir rejoins with applied state intact and accepts new proposes (no double-apply), and the resurrection case — acked work trimmed by delete-on-ack is NOT re-appended by cold replay thanks to the persisted applied floor."
+  - path: projects/relay/tests/raft_config.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Replace the ordinal-math tests (deleted with raft_config.rs) with a topology smoke test: ClusterTopology::from_env over the standard downward-API quartet + RELAY_PEERS override yields relay's node id/membership/peers, and replica_mode() is off without cluster env."
+  - path: projects/relay/tests/raft_core.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Keep the deterministic relay-integration simulation compiling honestly: import the consensus core from raft_core directly (dev-dependency) instead of relay::raft re-exports; scenarios unchanged."
+```
