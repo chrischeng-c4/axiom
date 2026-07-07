@@ -2,10 +2,16 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T14:07:38.019308+00:00"
-digest = "sha256:8031206f70d8e40678edbaac6d815cf7ab654da8518fa64237d2fee454c393ae"
-source_digest = "sha256:8031206f70d8e40678edbaac6d815cf7ab654da8518fa64237d2fee454c393ae"
-ir_digest = "sha256:6331e4a5372aad8ced49e4d47cb3270b970026eaadca1fcab21e9dfc78f482dd"
+generated_at = "2026-07-07T14:27:44.191589+00:00"
+digest = "sha256:ac51156d8e513b1e746ba88e2cbffe20d0055a01622ceac917db869859eeaf01"
+source_digest = "sha256:ac51156d8e513b1e746ba88e2cbffe20d0055a01622ceac917db869859eeaf01"
+ir_digest = "sha256:8ad5db19a6acc75e8e136d6f0f5fdc627486807aa6ee34abedd8f3f33410768b"
+
+[[files]]
+path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
+digest = "sha256:9b2d5e440f6aee26b537d76c22d3cb52e49b3494d86c311f75d571d4633cc52a"
+ir_digest = "sha256:74f58cf04201b1903f2b84421456f14ce5375afc71a7b011e4b42558149d3dff"
+section_count = 3
 
 [[files]]
 path = "interfaces/cli/unify-relay-cli-single-relay-bin-with-cli-std-llm-upgrade-issue.md"
