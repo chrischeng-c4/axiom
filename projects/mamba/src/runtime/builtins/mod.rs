@@ -7,6 +7,7 @@ use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
 use rustc_hash::FxHashMap;
 
+mod assertions;
 mod boxing;
 mod breakpoint;
 mod eval_exec;
@@ -14,6 +15,7 @@ mod range_slice;
 mod set_constructors;
 mod type_objects;
 
+pub use assertions::{mb_assertion_error, mb_assertion_error_no_msg};
 use boxing::format_bytes_inner;
 pub(crate) use boxing::{box_raw_i64_or_bigint, passthrough_boxed_int_candidate};
 pub use boxing::{
@@ -11588,22 +11590,6 @@ pub fn mb_is_truthy(val: MbValue) -> i64 {
         }
     }
     1 // fallback: truthy
-}
-
-/// assert statement failure — raise AssertionError via exception system.
-pub fn mb_assertion_error(msg: MbValue) {
-    let exc_type = MbValue::from_ptr(MbObject::new_str("AssertionError".to_string()));
-    let args = MbValue::from_ptr(MbObject::new_list(vec![msg]));
-    let instance = super::exception::mb_exception_new_with_args(exc_type, args);
-    super::class::mb_raise_instance(instance);
-}
-
-/// assert statement failure — no message variant.
-pub fn mb_assertion_error_no_msg() {
-    super::exception::mb_raise(
-        MbValue::from_ptr(MbObject::new_str("AssertionError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(String::new())),
-    );
 }
 
 #[cfg(test)]
