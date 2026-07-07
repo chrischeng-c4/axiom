@@ -106,7 +106,6 @@ flowchart TD
     crd --> cron([shared render cron_job: name-backup CronJob invoking relay backup; RELAY_BACKUP_TOKEN secretKeyRef])
     spec -->|same document| gen
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
