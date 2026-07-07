@@ -2031,18 +2031,10 @@ impl CodegenBackend for CraneliftBackend {
         // Collect which externs are actually used in the MIR
         let used = collect_used_externs(module);
 
-        // Check for runtime-dependent externs (AOT cannot link mb_* symbols)
-        let runtime_deps: Vec<&String> =
-            used.iter().filter(|name| name.starts_with("mb_")).collect();
-        if !runtime_deps.is_empty() {
-            let names: Vec<&str> = runtime_deps.iter().map(|s| s.as_str()).collect();
-            return Err(crate::error::MambaError::codegen(format!(
-                "AOT build requires runtime library for: {}. Use `cclab mamba run` for JIT execution.",
-                names.join(", ")
-            )));
-        }
-
-        // Merge user externs with runtime externs, but only declare used ones
+        // Merge user externs with runtime externs, but only declare used ones.
+        // The object backend emits undefined imports for `mb_*` helpers and
+        // runtime entrypoints; the host link step resolves them against the
+        // Mamba runtime library.
         let rt_externs = crate::runtime::symbols::runtime_externs();
         let all_externs: Vec<MirExtern> = module
             .externs
