@@ -24,7 +24,7 @@ iteration, use `/lumen:build:debug` instead.
 Run the release-prep script:
 
 ```bash
-.agents/skills/lumen-build-release/scripts/release.sh
+.claude/skills/lumen-build-release/scripts/release.sh
 ```
 
 Capture `RELEASE_TAG=lumen@<version>` from stdout.

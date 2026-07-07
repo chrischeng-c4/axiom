@@ -1,6 +1,7 @@
 ---
 name: vat:build:debug
 description: Build vat in debug mode, commit a debug checkpoint when needed, install it to ~/.cargo/bin/vat, and use a git-hash-suffixed debug version. Use when the user asks for vat debug build, local vat install, or fast iteration build of the vat CLI.
+user-invocable: true
 ---
 
 # /vat:build:debug
