@@ -9,7 +9,6 @@
 # case = "format_exception_one_arg_instance_form"
 # subject = "traceback.format_exception"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

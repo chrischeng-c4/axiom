@@ -123,6 +123,7 @@ macro_rules! dispatch_unary {
 // bases/exec_body are honored, routing to the real type(name, bases, ns) class
 // creator after running exec_body to populate the namespace.
 unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let name = a.first().copied().unwrap_or_else(MbValue::none);
     let bases = a.get(1).copied().unwrap_or_else(MbValue::none);
@@ -148,9 +149,7 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
         if super::super::builtins::mb_callable(meta).as_bool() != Some(true) {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "metaclass is not callable".to_string(),
-                )),
+                MbValue::from_ptr(MbObject::new_str("metaclass is not callable".to_string())),
             );
             return MbValue::none();
         }
@@ -188,6 +187,7 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
     mb_types_new_class_impl(name, bases, exec_body)
 }
 unsafe extern "C" fn dispatch_prepare_class(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let name = a.first().copied().unwrap_or_else(MbValue::none);
     let bases = a.get(1).copied().unwrap_or_else(MbValue::none);
@@ -197,6 +197,31 @@ unsafe extern "C" fn dispatch_prepare_class(args_ptr: *const MbValue, nargs: usi
 dispatch_unary!(dispatch_resolve_bases, mb_types_resolve_bases);
 dispatch_unary!(dispatch_coroutine, mb_types_coroutine);
 dispatch_unary!(dispatch_get_original_bases, mb_types_get_original_bases);
+
+/// types.CellType([contents]) — build a real closure-cell object (#896).
+/// No argument builds an empty cell (`cell_contents` raises ValueError
+/// until it's set); one positional argument builds a filled cell.
+unsafe extern "C" fn dispatch_celltype(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    if a.len() > 1 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "cell expected at most 1 argument, got {}",
+                a.len()
+            ))),
+        );
+        return MbValue::none();
+    }
+    match a.first() {
+        Some(&contents) => super::super::closure::mb_cell_new(contents),
+        None => super::super::closure::mb_cell_new_empty(),
+    }
+}
 
 /// types.SimpleNamespace(**kwargs) — build a namespace Instance, wiring each
 /// keyword (delivered as a trailing kwargs dict) into a writable field.
@@ -311,6 +336,11 @@ pub fn register() {
         ("resolve_bases", dispatch_resolve_bases as usize),
         ("coroutine", dispatch_coroutine as usize),
         ("get_original_bases", dispatch_get_original_bases as usize),
+        // CellType is call-constructible (types.CellType() / CellType(x)),
+        // unlike the other 27 stub type-objects above; this dispatcher entry
+        // overwrites the "CellType" stub inserted by the type_objs loop
+        // above (#896).
+        ("CellType", dispatch_celltype as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -318,9 +348,10 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
         if name == "SimpleNamespace" {
-            super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-                m.borrow_mut().insert(addr as u64, "SimpleNamespace".to_string());
-            });
+            super::super::module::register_native_type_name(
+                addr as u64,
+                "SimpleNamespace".to_string(),
+            );
         }
     }
 
@@ -509,7 +540,11 @@ pub fn mb_types_new_class_impl(name: MbValue, bases: MbValue, exec_body: MbValue
     // that for consistency.
     let _ = super::super::builtins::mb_type3(name, bases, ns);
     if let Some(s) = name.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     }) {
         return MbValue::from_ptr(MbObject::new_str(s));
     }
@@ -536,9 +571,10 @@ fn dict_get_str(dict: MbValue, key: &str) -> Option<MbValue> {
 }
 
 fn dict_without_metaclass(kwds: MbValue, had_metaclass: bool) -> MbValue {
-    let remaining = if kwds.as_ptr().map_or(false, |p| unsafe {
-        matches!(&(*p).data, ObjData::Dict(_))
-    }) {
+    let remaining = if kwds
+        .as_ptr()
+        .map_or(false, |p| unsafe { matches!(&(*p).data, ObjData::Dict(_)) })
+    {
         super::super::dict_ops::mb_dict_copy(kwds)
     } else {
         MbValue::from_ptr(MbObject::new_dict())
@@ -583,7 +619,11 @@ fn most_derived_base_metaclass(bases: MbValue) -> Option<String> {
         if let ObjData::Tuple(items) = &(*ptr).data {
             items.iter().find_map(|base| {
                 let meta = base_metaclass_name(*base)?;
-                if meta == "type" { None } else { Some(meta) }
+                if meta == "type" {
+                    None
+                } else {
+                    Some(meta)
+                }
             })
         } else {
             None
@@ -614,8 +654,7 @@ fn prepare_namespace(meta_name: &str, name: MbValue, bases: MbValue) -> MbValue 
 fn mb_types_prepare_class_impl(name: MbValue, bases: MbValue, kwds: MbValue) -> MbValue {
     let bases = normalized_bases_tuple(bases);
     let explicit_meta = dict_get_str(kwds, "metaclass");
-    let explicit_meta_name = explicit_meta
-        .and_then(super::super::class::resolve_class_name);
+    let explicit_meta_name = explicit_meta.and_then(super::super::class::resolve_class_name);
     let base_meta_name = most_derived_base_metaclass(bases);
     let meta_name = match (explicit_meta_name, base_meta_name) {
         (Some(explicit), Some(base)) if explicit == "type" => base,
@@ -737,24 +776,26 @@ pub fn mb_types_get_original_bases(cls: MbValue) -> MbValue {
     let base_items = super::super::builtins::extract_items(bases);
     let param_items = super::super::builtins::extract_items(params);
     if base_items.len() == 1 && !param_items.is_empty() {
-        let base_name = base_items[0]
-            .as_ptr()
-            .and_then(|ptr| unsafe {
-                if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-                    if class_name == "type" {
-                        fields
-                            .read()
-                            .unwrap()
-                            .get("__name__")
-                            .copied()
-                            .and_then(mb_str_value)
-                    } else {
-                        None
-                    }
+        let base_name = base_items[0].as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                if class_name == "type" {
+                    fields
+                        .read()
+                        .unwrap()
+                        .get("__name__")
+                        .copied()
+                        .and_then(mb_str_value)
                 } else {
                     None
                 }
-            });
+            } else {
+                None
+            }
+        });
         if base_name.as_deref() == Some("typing.Generic") {
             let origin = super::super::builtins::make_type_object("typing.Generic");
             let args = if param_items.len() == 1 {

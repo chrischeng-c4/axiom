@@ -14,14 +14,14 @@
 //     targeted policies.
 //   - Offline; no implicit network or user-home traversal.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use crate::pkgmanage::pkgmgr::cache_prune::{
-    CacheCategory, PrunePolicy, apply_prune_plan, collapse_empty_dirs, enumerate_cache, plan_prune,
+    apply_prune_plan, collapse_empty_dirs, enumerate_cache, plan_prune, CacheCategory, PrunePolicy,
 };
 
 const CACHE_DIR_ENV: &str = "MAMBA_CACHE_DIR";

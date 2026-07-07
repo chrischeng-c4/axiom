@@ -6,7 +6,7 @@
 
 use crate::pkgmanage::pkgmgr::lockfile::{Lockfile, Package};
 use crate::pkgmanage::pkgmgr::pip_inventory::InstalledDist;
-use crate::pkgmanage::pkgmgr::tree::{TreeOptions, render_lockfile_tree};
+use crate::pkgmanage::pkgmgr::tree::{render_lockfile_tree, TreeOptions};
 
 pub fn render_installed_tree(dists: &[InstalledDist], opts: &TreeOptions) -> String {
     let lockfile = installed_to_lockfile(dists);

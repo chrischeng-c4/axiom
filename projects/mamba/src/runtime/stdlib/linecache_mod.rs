@@ -299,6 +299,17 @@ fn resolve_name_loader(module_globals: MbValue) -> Option<(String, MbValue)> {
     Some((name, loader))
 }
 
+fn module_file_from_globals(module_globals: MbValue, module_name: &str) -> Option<String> {
+    dict_str(module_globals, "__file__").or_else(|| {
+        super::super::module::MODULES.with(|mods| {
+            mods.borrow()
+                .get(module_name)
+                .and_then(|module| module.attrs.get("__file__").copied())
+                .and_then(extract_str)
+        })
+    })
+}
+
 /// Call `loader.get_source(name)`. Returns the source string, or None when the
 /// loader lacks `get_source`, returns None, or raises.
 fn loader_get_source(loader: MbValue, name: &str) -> Option<String> {
@@ -518,6 +529,14 @@ pub fn mb_linecache_lazycache(filename: MbValue, module_globals: MbValue) -> MbV
         None => return MbValue::from_bool(false),
     };
     if name.is_empty() || loader.is_none() {
+        if let Some(source_path) = module_file_from_globals(module_globals, &name) {
+            if let (Some((size, mtime)), Some(lines)) =
+                (stat_size_mtime(&source_path), read_file_lines(&source_path))
+            {
+                cache_set(&fname, make_full_entry(size, mtime, &lines, &source_path));
+                return MbValue::from_bool(true);
+            }
+        }
         return MbValue::from_bool(false);
     }
     if super::super::class::mb_getattr(loader, new_str("get_source")).is_none() {
@@ -675,6 +694,13 @@ mod tests {
         path.to_str().unwrap().to_string()
     }
 
+    fn module_globals_with_file(path: &str) -> MbValue {
+        let globals = MbValue::from_ptr(MbObject::new_dict());
+        dict_ops::mb_dict_setitem(globals, new_str("__name__"), new_str("test.module"));
+        dict_ops::mb_dict_setitem(globals, new_str("__file__"), new_str(path));
+        globals
+    }
+
     #[test]
     fn test_clearcache_returns_none() {
         clear();
@@ -693,6 +719,19 @@ mod tests {
         clear();
         let path = write_temp_file("mb_lc_getline.txt", "alpha\nbeta\ngamma\n");
         let r = mb_linecache_getline(make_str(&path), make_int(2), MbValue::none());
+        assert_eq!(get_str(r), "beta\n");
+    }
+
+    #[test]
+    fn test_lazycache_uses_module_file_when_loader_missing() {
+        clear();
+        let path = write_temp_file("mb_lc_lazy_file.txt", "alpha\nbeta\n");
+        let globals = module_globals_with_file(&path);
+        assert_eq!(
+            mb_linecache_lazycache(make_str("fake.py"), globals).as_bool(),
+            Some(true)
+        );
+        let r = mb_linecache_getline(make_str("fake.py"), make_int(2), MbValue::none());
         assert_eq!(get_str(r), "beta\n");
     }
 

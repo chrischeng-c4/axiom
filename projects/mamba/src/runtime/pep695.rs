@@ -22,6 +22,7 @@ use std::collections::HashMap;
 /// Field names used to stash the lazy evaluation thunks on the instances.
 const BOUND_THUNK: &str = "__mb_bound_thunk__";
 const CONSTRAINTS_THUNK: &str = "__mb_constraints_thunk__";
+const DEFAULT_THUNK: &str = "__mb_default_thunk__";
 const VALUE_THUNK: &str = "__mb_value_thunk__";
 
 fn extract_str(v: MbValue) -> Option<String> {
@@ -52,16 +53,17 @@ fn instance_field_set(inst: *mut MbObject, name: &str, value: MbValue) {
     }
 }
 
-/// `__mb_pep695_typevar__(name, kind, bound_thunk, constraints_thunk)`.
+/// `__mb_pep695_typevar__(name, kind, bound_thunk, constraints_thunk, default_thunk)`.
 ///
 /// kind: 0 = TypeVar, 1 = TypeVarTuple, 2 = ParamSpec. The thunks are
 /// zero-arg callables (or None) evaluated lazily on first `__bound__` /
-/// `__constraints__` access.
+/// `__constraints__` / `__default__` access.
 pub fn mb_pep695_typevar(
     name: MbValue,
     kind: MbValue,
     bound_thunk: MbValue,
     constraints_thunk: MbValue,
+    default_thunk: MbValue,
 ) -> MbValue {
     let class_name = match kind.as_int().unwrap_or(0) {
         1 => "TypeVarTuple",
@@ -93,6 +95,9 @@ pub fn mb_pep695_typevar(
     } else {
         instance_field_set(inst, CONSTRAINTS_THUNK, constraints_thunk);
     }
+    if !default_thunk.is_none() {
+        instance_field_set(inst, DEFAULT_THUNK, default_thunk);
+    }
     MbValue::from_ptr(inst)
 }
 
@@ -102,7 +107,12 @@ pub fn mb_pep695_typevar(
 /// kind: 0 = TypeVar, 1 = TypeVarTuple, 2 = ParamSpec. `constraints` holds
 /// the eagerly evaluated constraint values (empty for none). Runtime-call
 /// constructed vars never infer variance (unlike `[T]`-syntax params).
-pub fn make_typevar_instance(name: &str, kind: i64, constraints: Vec<MbValue>) -> MbValue {
+pub fn make_typevar_instance(
+    name: &str,
+    kind: i64,
+    constraints: Vec<MbValue>,
+    default: Option<MbValue>,
+) -> MbValue {
     let class_name = match kind {
         1 => "TypeVarTuple",
         2 => "ParamSpec",
@@ -123,6 +133,9 @@ pub fn make_typevar_instance(name: &str, kind: i64, constraints: Vec<MbValue>) -
         "__constraints__",
         MbValue::from_ptr(MbObject::new_tuple(constraints)),
     );
+    if let Some(default) = default {
+        instance_field_set(inst, "__default__", default);
+    }
     MbValue::from_ptr(inst)
 }
 
@@ -149,7 +162,7 @@ pub fn is_pep695_class(class_name: &str) -> bool {
 }
 
 /// Lazy attribute resolution for TypeVar / TypeAliasType instances: on first
-/// access of `__bound__` / `__constraints__` / `__value__` the stored thunk
+/// access of `__bound__` / `__constraints__` / `__default__` / `__value__` the stored thunk
 /// is called, the result cached in the field, and the thunk slot dropped.
 /// Returns None when the attribute is not lazily managed here (so the normal
 /// instance-field path proceeds).
@@ -160,6 +173,7 @@ pub fn instance_lazy_attr_hook(obj: MbValue, class_name: &str, attr_name: &str) 
     let thunk_field = match attr_name {
         "__bound__" => BOUND_THUNK,
         "__constraints__" => CONSTRAINTS_THUNK,
+        "__default__" => DEFAULT_THUNK,
         "__value__" => VALUE_THUNK,
         _ => return None,
     };
@@ -316,7 +330,13 @@ mod tests {
     #[test]
     fn typevar_builds_named_instance_with_eager_defaults() {
         let name = MbValue::from_ptr(MbObject::new_str("T".to_string()));
-        let tv = mb_pep695_typevar(name, MbValue::from_int(0), MbValue::none(), MbValue::none());
+        let tv = mb_pep695_typevar(
+            name,
+            MbValue::from_int(0),
+            MbValue::none(),
+            MbValue::none(),
+            MbValue::none(),
+        );
         let ptr = tv.as_ptr().expect("instance");
         unsafe {
             if let ObjData::Instance {
@@ -338,7 +358,13 @@ mod tests {
     fn typevar_kind_selects_class_name() {
         let mk = |k: i64| {
             let name = MbValue::from_ptr(MbObject::new_str("P".to_string()));
-            mb_pep695_typevar(name, MbValue::from_int(k), MbValue::none(), MbValue::none())
+            mb_pep695_typevar(
+                name,
+                MbValue::from_int(k),
+                MbValue::none(),
+                MbValue::none(),
+                MbValue::none(),
+            )
         };
         for (k, expected) in [(0, "TypeVar"), (1, "TypeVarTuple"), (2, "ParamSpec")] {
             let v = mk(k);
@@ -349,6 +375,67 @@ mod tests {
                 } else {
                     panic!("expected Instance");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn typevar_default_thunk_is_materialized_lazily() {
+        unsafe extern "C" fn return_nine(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+            MbValue::from_int(9)
+        }
+        let name = MbValue::from_ptr(MbObject::new_str("T".to_string()));
+        let thunk = MbValue::from_func(return_nine as *const () as usize);
+        let tv = mb_pep695_typevar(
+            name,
+            MbValue::from_int(0),
+            MbValue::none(),
+            MbValue::none(),
+            thunk,
+        );
+        let ptr = tv.as_ptr().expect("instance");
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                assert!(!fields.read().unwrap().contains_key("__default__"));
+            } else {
+                panic!("expected Instance");
+            }
+        }
+        let default = instance_lazy_attr_hook(tv, "TypeVar", "__default__")
+            .expect("default should resolve lazily");
+        assert_eq!(default.as_int(), Some(9));
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                assert_eq!(
+                    fields
+                        .read()
+                        .unwrap()
+                        .get("__default__")
+                        .and_then(|v| v.as_int()),
+                    Some(9)
+                );
+            } else {
+                panic!("expected Instance");
+            }
+        }
+    }
+
+    #[test]
+    fn make_typevar_instance_can_store_eager_default() {
+        let tv = make_typevar_instance("T", 0, vec![], Some(MbValue::from_int(7)));
+        let ptr = tv.as_ptr().expect("instance");
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                assert_eq!(
+                    fields
+                        .read()
+                        .unwrap()
+                        .get("__default__")
+                        .and_then(|v| v.as_int()),
+                    Some(7)
+                );
+            } else {
+                panic!("expected Instance");
             }
         }
     }

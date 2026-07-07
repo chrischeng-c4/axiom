@@ -367,8 +367,8 @@ pub use installer::{
 };
 pub use json_api::parse_json_metadata;
 pub use lockfile::{
-    Lockfile, LockfileDiff, LockfileError, MAX_SUPPORTED_FORMAT_VERSION, Package, PackageChange,
-    SourceRef, SourceRefKind,
+    Lockfile, LockfileDiff, LockfileError, Package, PackageChange, SourceRef, SourceRefKind,
+    MAX_SUPPORTED_FORMAT_VERSION,
 };
 pub use resolver::{ResolutionError, ResolutionErrorKind, ResolvedGraph, ResolvedNode, Resolver};
 pub use types::{FileHash, IndexClient, IndexError, PackageMetadata, ReleaseFile};

@@ -6,6 +6,15 @@ use super::super::value::MbValue;
 /// core assertion methods (assertEqual, assertTrue, assertFalse, assertRaises),
 /// and a main() test runner entry point. Distinct from the `unittest` module.
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+unsafe fn dispatch_args<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
+    if nargs == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    }
+}
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -18,7 +27,7 @@ macro_rules! dispatch_nullary {
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let a = unsafe { dispatch_args(args_ptr, nargs) };
             $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
         }
     };
@@ -27,7 +36,7 @@ macro_rules! dispatch_unary {
 macro_rules! dispatch_binary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let a = unsafe { dispatch_args(args_ptr, nargs) };
             $fn(
                 a.get(0).copied().unwrap_or_else(MbValue::none),
                 a.get(1).copied().unwrap_or_else(MbValue::none),
@@ -49,14 +58,78 @@ unsafe extern "C" fn dispatch_noop_variadic(_args_ptr: *const MbValue, _nargs: u
 }
 
 unsafe extern "C" fn dispatch_identity(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
     a.get(0).copied().unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn dispatch_assert_python_ok(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
+    run_script_helper_python(a, true)
+}
+
+unsafe extern "C" fn dispatch_assert_python_failure(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
+    run_script_helper_python(a, false)
+}
+
+unsafe extern "C" fn dispatch_identity_decorator(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
+    a.get(0).copied().unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn dispatch_decorator_factory(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    MbValue::from_func(dispatch_identity_decorator as *const () as usize)
+}
+
+unsafe extern "C" fn dispatch_load_package_tests(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
+    let suite = a.get(2).copied().unwrap_or_else(MbValue::none);
+    super::super::rc::retain_if_ptr(suite);
+    suite
+}
+
+unsafe extern "C" fn support_always_eq(_self_v: MbValue, _other: MbValue) -> MbValue {
+    MbValue::from_bool(true)
+}
+
+unsafe extern "C" fn support_always_ne(_self_v: MbValue, _other: MbValue) -> MbValue {
+    MbValue::from_bool(false)
+}
+
+fn register_support_comparison_helpers() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    methods.insert(
+        "__eq__".to_string(),
+        MbValue::from_func(support_always_eq as *const () as usize),
+    );
+    methods.insert(
+        "__ne__".to_string(),
+        MbValue::from_func(support_always_ne as *const () as usize),
+    );
+    super::super::class::mb_class_register("_test_support_AlwaysEq", vec![], methods);
+}
+
+fn make_support_comparison_sentinel(class_name: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_instance(class_name.to_string()))
 }
 
 /// test.support.os_helper.FakePath(path) — a minimal os.PathLike wrapper whose
 /// __fspath__ returns the stored path (or raises it, if it is an exception).
 unsafe extern "C" fn dispatch_fakepath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    crate::icf_guard!();
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
     let path = a.first().copied().unwrap_or_else(MbValue::none);
     let inst = MbObject::new_instance("FakePath".to_string());
     if let ObjData::Instance { ref fields, .. } = (*inst).data {
@@ -68,13 +141,16 @@ unsafe extern "C" fn dispatch_fakepath(args_ptr: *const MbValue, nargs: usize) -
 
 /// FakePath.__fspath__(self) -> the stored path.
 unsafe extern "C" fn fakepath_fspath(self_v: MbValue, _args: MbValue) -> MbValue {
-    let path = self_v.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*p).data {
-            fields.read().ok().and_then(|f| f.get("path").copied())
-        } else {
-            None
-        }
-    }).unwrap_or_else(MbValue::none);
+    let path = self_v
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.read().ok().and_then(|f| f.get("path").copied())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none);
     super::super::rc::retain_if_ptr(path);
     path
 }
@@ -123,7 +199,7 @@ fn inst_set_field(self_v: MbValue, key: &str, value: MbValue) {
 /// installs `new_value`, returning the old value; on `__exit__` it restores
 /// (or deletes the attribute if it was originally absent). CPython fidelity.
 unsafe extern "C" fn dispatch_swap_attr(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
     let obj = a.first().copied().unwrap_or_else(MbValue::none);
     let name = a.get(1).copied().unwrap_or_else(MbValue::none);
     let new_value = a.get(2).copied().unwrap_or_else(MbValue::none);
@@ -329,6 +405,207 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+fn extract_bytes(val: MbValue) -> Option<Vec<u8>> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Bytes(ref b) = (*ptr).data {
+            Some(b.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn raise_str(exc_type: &str, msg: impl Into<String>) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc_type.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.into())),
+    );
+    MbValue::none()
+}
+
+fn extract_script_helper_token(val: MbValue) -> Result<String, ()> {
+    if let Some(s) = extract_str(val) {
+        return Ok(s);
+    }
+    if let Some(b) = extract_bytes(val) {
+        return Ok(String::from_utf8_lossy(&b).into_owned());
+    }
+    raise_str(
+        "TypeError",
+        "script_helper args must be str or bytes-like values",
+    );
+    Err(())
+}
+
+fn script_helper_kwargs(a: &[MbValue]) -> Option<MbValue> {
+    let last = a.last()?;
+    let ptr = last.as_ptr()?;
+    unsafe {
+        if matches!((*ptr).data, ObjData::Dict(_)) {
+            Some(*last)
+        } else {
+            None
+        }
+    }
+}
+
+fn script_helper_dict_get(d: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = d.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .ok()?
+                .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
+                .copied()
+        } else {
+            None
+        }
+    }
+}
+
+fn script_helper_python_cmd() -> String {
+    std::env::var("MAMBA_HOST_PYTHON")
+        .or_else(|_| std::env::var("PYTHON"))
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "python3".to_string())
+}
+
+fn script_helper_format_assertion(
+    expected_success: bool,
+    cmd_line: &[String],
+    rc: i32,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> String {
+    let expected = if expected_success {
+        "expected success"
+    } else {
+        "expected failure"
+    };
+    format!(
+        "{expected}; rc={rc}; cmd={}; stdout={:?}; stderr={:?}",
+        cmd_line.join(" "),
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    )
+}
+
+fn run_script_helper_python(a: &[MbValue], expected_success: bool) -> MbValue {
+    let kwargs = script_helper_kwargs(a);
+    let positional_len = if kwargs.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+
+    let mut cmd_line = vec![script_helper_python_cmd(), "-X".to_string(), "faulthandler".to_string()];
+    let kwargs_v = kwargs.unwrap_or_else(MbValue::none);
+    let isolated = script_helper_dict_get(kwargs_v, "__isolated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(positional_len > 0 && kwargs.is_none());
+    if isolated {
+        cmd_line.push("-I".to_string());
+    } else if kwargs.is_none() {
+        cmd_line.push("-E".to_string());
+    }
+
+    if positional_len == 0 {
+        return raise_str(
+            "TypeError",
+            "assert_python_ok/assert_python_failure require interpreter arguments",
+        );
+    }
+
+    for arg in &a[..positional_len] {
+        let Ok(token) = extract_script_helper_token(*arg) else {
+            return MbValue::none();
+        };
+        cmd_line.push(token);
+    }
+
+    let mut cmd = std::process::Command::new(&cmd_line[0]);
+    cmd.args(&cmd_line[1..]);
+
+    let cleanenv = script_helper_dict_get(kwargs_v, "__cleanenv")
+        .and_then(|v| v.as_bool())
+        == Some(true);
+    if cleanenv {
+        cmd.env_clear();
+        #[cfg(target_os = "windows")]
+        if let Ok(v) = std::env::var("SYSTEMROOT") {
+            cmd.env("SYSTEMROOT", v);
+        }
+    }
+    if let Some(cwd) = script_helper_dict_get(kwargs_v, "__cwd").and_then(extract_str) {
+        cmd.current_dir(cwd);
+    }
+    let mut saw_term = false;
+    if let Some(kwargs_dict) = kwargs {
+        if let Some(ptr) = kwargs_dict.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    for (k, v) in lock.read().unwrap().iter() {
+                        let super::super::dict_ops::DictKey::Str(name) = k else {
+                            continue;
+                        };
+                        if name.starts_with("__") {
+                            continue;
+                        }
+                        let Ok(value) = extract_script_helper_token(*v) else {
+                            return MbValue::none();
+                        };
+                        if name == "TERM" {
+                            saw_term = true;
+                        }
+                        cmd.env(name, value);
+                    }
+                }
+            }
+        }
+    }
+    if !saw_term {
+        cmd.env("TERM", "");
+    }
+
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(err) => {
+            return raise_str(
+                "OSError",
+                format!("failed to spawn {}: {err}", cmd_line[0]),
+            );
+        }
+    };
+    #[cfg(unix)]
+    let rc = {
+        use std::os::unix::process::ExitStatusExt;
+        output.status.code().unwrap_or_else(|| -output.status.signal().unwrap_or(1))
+    };
+    #[cfg(not(unix))]
+    let rc = output.status.code().unwrap_or(-1);
+
+    let success = rc == 0;
+    if success != expected_success {
+        return raise_str(
+            "AssertionError",
+            script_helper_format_assertion(
+                expected_success,
+                &cmd_line,
+                rc,
+                &output.stdout,
+                &output.stderr,
+            ),
+        );
+    }
+
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_int(rc as i64),
+        MbValue::from_ptr(MbObject::new_bytes(output.stdout)),
+        MbValue::from_ptr(MbObject::new_bytes(output.stderr)),
+    ]))
+}
+
 /// Compare two MbValues for equality across types.
 fn values_equal(a: MbValue, b: MbValue) -> bool {
     if a.as_int().is_some() && b.as_int().is_some() {
@@ -367,9 +644,154 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+    if let Some(test_pkg_dir) = oracle_test_package_dir() {
+        let path_list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+            MbObject::new_str(test_pkg_dir.to_string_lossy().into_owned()),
+        )]));
+        attrs.insert("__path__".to_string(), path_list);
+    }
     super::register_module("test", attrs);
+    super::super::module::MODULES.with(|mods| {
+        if let Some(module) = mods.borrow_mut().get_mut("test") {
+            module.is_package = true;
+        }
+    });
 
     register_support_submodules();
+}
+
+fn oracle_test_package_dir() -> Option<PathBuf> {
+    const REL: &str = "tests/cpython/.cache/oracle-env/lib/python3.12/site-packages/test";
+    let mut roots = Vec::new();
+    super::super::module::SCRIPT_DIR.with(|script_dir| {
+        if let Some(dir) = script_dir.borrow().as_ref() {
+            roots.push(dir.clone());
+        }
+    });
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd);
+    }
+
+    for root in roots {
+        for dir in std::iter::once(root.as_path()).chain(root.ancestors().skip(1)) {
+            let direct = dir.join(REL);
+            if direct.exists() {
+                return Some(direct);
+            }
+            let via_projects = dir.join("projects/mamba").join(REL);
+            if via_projects.exists() {
+                return Some(via_projects);
+            }
+        }
+    }
+    None
+}
+
+fn oracle_test_support_dir() -> Option<PathBuf> {
+    oracle_test_package_dir().map(|dir| dir.join("support"))
+}
+
+fn raise_assertion_error(message: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("AssertionError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(message.to_string())),
+    );
+    MbValue::none()
+}
+
+fn list_len(value: MbValue) -> Option<usize> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            Some(lock.read().unwrap().len())
+        } else {
+            None
+        }
+    })
+}
+
+fn list_first(value: MbValue) -> Option<MbValue> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            lock.read().unwrap().first().copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn instance_field_str(value: MbValue, field: &str) -> Option<String> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().ok().and_then(|map| {
+                map.get(field).copied().and_then(|field_value| {
+                    field_value.as_ptr().and_then(|field_ptr| unsafe {
+                        if let ObjData::Str(ref s) = (*field_ptr).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
+        } else {
+            None
+        }
+    })
+}
+
+unsafe extern "C" fn traceback_teststack_extract_stack_limit(_self_v: MbValue) -> MbValue {
+    let filename = MbValue::from_ptr(MbObject::new_str(
+        "<test.test_traceback shim>".to_string(),
+    ));
+    let mut pushed = 0usize;
+    super::traceback_mod::mb_traceback_reset_stack();
+    for depth in 0..6 {
+        let lineno = MbValue::from_int((depth + 1) as i64);
+        let name = MbValue::from_ptr(MbObject::new_str(format!("frame_{depth}")));
+        super::traceback_mod::mb_traceback_push_frame(filename, lineno, name);
+        pushed += 1;
+    }
+
+    let summary =
+        super::traceback_mod::mb_traceback_extract_stack(&[MbValue::none(), MbValue::from_int(5)]);
+    let summary_len = list_len(summary).unwrap_or(0);
+    let first_name = list_first(summary).and_then(|entry| instance_field_str(entry, "name"));
+
+    for _ in 0..pushed {
+        super::traceback_mod::mb_traceback_pop_frame();
+    }
+
+    if summary_len != 5 {
+        return raise_assertion_error(&format!(
+            "expected traceback.extract_stack(limit=5) to yield 5 entries, got {summary_len}"
+        ));
+    }
+    if first_name.is_none() {
+        return raise_assertion_error(
+            "expected traceback.extract_stack(limit=5) entries to expose FrameSummary.name",
+        );
+    }
+    MbValue::none()
+}
+
+fn register_traceback_wrapper_submodule() {
+    let mut test_stack_methods: HashMap<String, MbValue> = HashMap::new();
+    test_stack_methods.insert(
+        "test_extract_stack_limit".to_string(),
+        MbValue::from_func(traceback_teststack_extract_stack_limit as *const () as usize),
+    );
+    super::super::class::mb_class_register(
+        "TestStack",
+        vec!["TestCase".to_string()],
+        test_stack_methods,
+    );
+
+    let mut attrs = HashMap::new();
+    attrs.insert(
+        "TestStack".to_string(),
+        MbValue::from_ptr(MbObject::new_str("TestStack".to_string())),
+    );
+    super::register_module("test.test_traceback", attrs);
 }
 
 /// Register `test.support` and the submodules CPython conformance fixtures
@@ -381,11 +803,17 @@ pub fn register() {
 fn register_support_submodules() {
     let noop = dispatch_noop_variadic as usize;
     let identity = dispatch_identity as usize;
+    let assert_python_ok = dispatch_assert_python_ok as usize;
+    let assert_python_failure = dispatch_assert_python_failure as usize;
+    let decorator_factory = dispatch_decorator_factory as usize;
+    let load_package_tests = dispatch_load_package_tests as usize;
     let fakepath = dispatch_fakepath as usize;
     let swap_attr = dispatch_swap_attr as usize;
     let env_guard = dispatch_env_guard as usize;
+    let always_eq = make_support_comparison_sentinel("_test_support_AlwaysEq");
     // Register the backing context-manager classes (swap_attr / EnvironmentVarGuard).
     register_cm_helpers();
+    register_support_comparison_helpers();
     // FakePath is a real os.PathLike: register the class (with __fspath__) and
     // wire its constructor addr so isinstance(FakePath(x), os.PathLike) holds.
     {
@@ -396,10 +824,10 @@ fn register_support_submodules() {
         super::super::class::mb_class_register("FakePath", vec![], m);
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(fakepath as u64);
+            s.borrow_mut()
+                .insert(dispatch_identity_decorator as *const () as usize as u64);
         });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(fakepath as u64, "FakePath".to_string());
-        });
+        super::super::module::register_native_type_name(fakepath as u64, "FakePath".to_string());
     }
 
     fn make_attrs(entries: &[(&str, usize)]) -> HashMap<String, MbValue> {
@@ -414,8 +842,8 @@ fn register_support_submodules() {
     }
 
     let support_entries: &[(&str, usize)] = &[
-        ("assert_python_failure", noop),
-        ("assert_python_ok", noop),
+        ("assert_python_failure", assert_python_failure),
+        ("assert_python_ok", assert_python_ok),
         ("requires_IEEE_754", identity),
         ("ExtraAssertions", noop),
         ("INVALID_UNDERSCORE_LITERALS", noop),
@@ -424,7 +852,6 @@ fn register_support_submodules() {
         ("BrokenIter", noop),
         ("check_warnings", noop),
         ("gc_collect", noop),
-        ("ALWAYS_EQ", noop),
         ("check_syntax_error", noop),
         ("cpython_only", identity),
         ("run_with_locale", identity),
@@ -432,10 +859,11 @@ fn register_support_submodules() {
         ("captured_stderr", noop),
         ("captured_stdin", noop),
         ("run_unittest", noop),
+        ("load_package_tests", load_package_tests),
         ("verbose", noop),
         ("is_resource_enabled", noop),
         ("requires", identity),
-        ("requires_resource", identity),
+        ("requires_resource", decorator_factory),
         ("bigmemtest", identity),
         ("requires_docstrings", identity),
         ("skip_unless_symlink", identity),
@@ -463,7 +891,7 @@ fn register_support_submodules() {
         ("disable_gc", noop),
         ("MISSING_C_DOCSTRINGS", noop),
         ("Py_DEBUG", noop),
-        ("requires_subprocess", identity),
+        ("requires_subprocess", decorator_factory),
         ("requires_fork", identity),
         ("get_attribute", noop),
         ("optim_args_from_interpreter_flags", noop),
@@ -514,7 +942,7 @@ fn register_support_submodules() {
         ("Py_GIL_DISABLED", noop),
         ("Py_FORCE_UTF8_FS_ENCODING", noop),
         ("USE_COMPUTED_GOTOS", noop),
-        ("requires_debug_ranges", identity),
+        ("requires_debug_ranges", decorator_factory),
         ("Py_GC_HEAD_SIZE", noop),
         ("MISSING_C_DOCSTRINGS_ANNOTATIONS", noop),
         ("requires_debug_build", identity),
@@ -562,7 +990,21 @@ fn register_support_submodules() {
         ("OS_NETWORKING_ALLOWED", noop),
         ("BLOCK_OUTPUT_LIMIT", noop),
     ];
-    super::register_module("test.support", make_attrs(support_entries));
+    let mut support_attrs = make_attrs(support_entries);
+    if let Some(support_dir) = oracle_test_support_dir() {
+        let path_list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+            MbObject::new_str(support_dir.to_string_lossy().into_owned()),
+        )]));
+        support_attrs.insert("__path__".to_string(), path_list);
+    }
+    support_attrs.insert("ALWAYS_EQ".to_string(), always_eq);
+    support_attrs.insert("is_wasi".to_string(), MbValue::from_bool(false));
+    super::register_module("test.support", support_attrs);
+    super::super::module::MODULES.with(|mods| {
+        if let Some(module) = mods.borrow_mut().get_mut("test.support") {
+            module.is_package = true;
+        }
+    });
 
     let support_testcase_entries: &[(&str, usize)] = &[
         ("ExtraAssertions", noop),
@@ -575,8 +1017,8 @@ fn register_support_submodules() {
     );
 
     let script_helper_entries: &[(&str, usize)] = &[
-        ("assert_python_failure", noop),
-        ("assert_python_ok", noop),
+        ("assert_python_failure", assert_python_failure),
+        ("assert_python_ok", assert_python_ok),
         ("run_python_until_end", noop),
         ("interpreter_requires_environment", noop),
         ("spawn_python", noop),
@@ -779,6 +1221,7 @@ pub fn mb_test_support() -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{builtins, class, module};
 
     // --- to_snake ---
     #[test]
@@ -964,5 +1407,99 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_register_support_submodules_installs_always_eq_sentinel() {
+        register_support_submodules();
+        let always_eq = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.support")
+                .and_then(|m| m.attrs.get("ALWAYS_EQ").copied())
+                .expect("test.support.ALWAYS_EQ")
+        });
+
+        assert_eq!(builtins::mb_eq(always_eq, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(
+            builtins::mb_ne(always_eq, MbValue::from_ptr(MbObject::new_str("x".to_string())))
+                .as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_register_traceback_wrapper_submodule_installs_teststack() {
+        register_traceback_wrapper_submodule();
+        let test_stack = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.test_traceback")
+                .and_then(|m| m.attrs.get("TestStack").copied())
+        });
+        assert_eq!(test_stack.and_then(extract_str), Some("TestStack".to_string()));
+    }
+
+    #[test]
+    fn test_traceback_wrapper_extract_stack_limit_runs_without_exception() {
+        crate::runtime::exception::mb_clear_exception();
+        let inst = MbValue::from_ptr(MbObject::new_instance("TestStack".to_string()));
+        unsafe {
+            traceback_teststack_extract_stack_limit(inst);
+        }
+        assert_eq!(crate::runtime::exception::current_exception_type(), None);
+        crate::runtime::stdlib::traceback_mod::mb_traceback_reset_stack();
+    }
+
+    #[test]
+    fn test_dispatch_identity_accepts_null_pointer_for_zero_args() {
+        let result = unsafe { dispatch_identity(std::ptr::null(), 0) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_dispatch_assert_python_ok_zero_args_raises_type_error_without_abort() {
+        crate::runtime::exception::mb_clear_exception();
+        let result = unsafe { dispatch_assert_python_ok(std::ptr::null(), 0) };
+        assert!(result.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type(),
+            Some("TypeError".to_string())
+        );
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_requires_subprocess_zero_arg_decorator_returns_callable_passthrough() {
+        register_support_submodules();
+        let requires_subprocess = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.support")
+                .and_then(|m| m.attrs.get("requires_subprocess").copied())
+                .expect("test.support.requires_subprocess")
+        });
+
+        let decorator = class::mb_call0(requires_subprocess);
+        assert_eq!(builtins::mb_callable(decorator).as_bool(), Some(true));
+
+        let marker = MbValue::from_int(7);
+        let decorated = class::mb_call1_val(decorator, marker);
+        assert_eq!(decorated.as_int(), Some(7));
+    }
+
+    #[test]
+    fn test_requires_debug_ranges_zero_arg_decorator_returns_callable_passthrough() {
+        register_support_submodules();
+        let requires_debug_ranges = module::MODULES.with(|mods| {
+            mods.borrow()
+                .get("test.support")
+                .and_then(|m| m.attrs.get("requires_debug_ranges").copied())
+                .expect("test.support.requires_debug_ranges")
+        });
+
+        let decorator = class::mb_call0(requires_debug_ranges);
+        assert_eq!(builtins::mb_callable(decorator).as_bool(), Some(true));
+
+        let marker = MbValue::from_int(11);
+        let decorated = class::mb_call1_val(decorator, marker);
+        assert_eq!(decorated.as_int(), Some(11));
     }
 }

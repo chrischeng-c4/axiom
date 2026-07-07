@@ -151,7 +151,8 @@ pub fn mb_file_name(handle: MbValue) -> MbValue {
 
 fn file_path_from_handle(handle: MbValue) -> Option<String> {
     let id = handle.as_int()? as u64;
-    FILES.with(|files| files.borrow().get(&id).map(|file| file.path.clone()))
+    FILES
+        .with(|files| files.borrow().get(&id).map(|file| file.path.clone()))
         .or_else(|| super::stdlib::os_mod::mb_os_fd_path(id as i64))
 }
 
@@ -161,9 +162,8 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
 }
 
 fn patched_open_override(path: MbValue, mode: MbValue) -> Option<MbValue> {
-    let open = super::module::mb_builtin_get(MbValue::from_ptr(MbObject::new_str(
-        "open".to_string(),
-    )));
+    let open =
+        super::module::mb_builtin_get(MbValue::from_ptr(MbObject::new_str("open".to_string())));
     let is_native_open = open
         .as_func()
         .map(|addr| super::module::is_native_func(addr as u64))
@@ -439,7 +439,8 @@ pub fn mb_open_with_opener(
     let real_path = if opener.is_none() {
         path
     } else {
-        let opener_args = MbValue::from_ptr(MbObject::new_list(vec![path, open_flags_for_mode(mode)]));
+        let opener_args =
+            MbValue::from_ptr(MbObject::new_list(vec![path, open_flags_for_mode(mode)]));
         super::builtins::mb_call_spread(opener, opener_args)
     };
     mb_open_ex(real_path, mode, encoding, errors, closefd)
@@ -474,13 +475,15 @@ pub fn mb_file_errors(handle: MbValue) -> MbValue {
 /// Read an optional string field off a file handle as an MbValue str (None when
 /// the handle is unknown or the field is None).
 fn file_str_field(handle: MbValue, f: impl Fn(&MbFile) -> Option<String>) -> MbValue {
-    let Some(id) = handle.as_int() else { return MbValue::none() };
-    FILES.with(|files| {
-        match files.borrow().get(&(id as u64)).and_then(|mf| f(mf)) {
+    let Some(id) = handle.as_int() else {
+        return MbValue::none();
+    };
+    FILES.with(
+        |files| match files.borrow().get(&(id as u64)).and_then(|mf| f(mf)) {
             Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
             None => MbValue::none(),
-        }
-    })
+        },
+    )
 }
 
 fn make_io_instance(class_name: &str, fields: InstanceFields) -> MbValue {
@@ -526,7 +529,9 @@ fn binary_layer_mode(mode: &str) -> String {
 /// files as table-backed integer handles, so synthesize the visible
 /// TextIOWrapper buffer/raw metadata stack for attribute probes.
 pub fn mb_file_buffer(handle: MbValue) -> MbValue {
-    let Some(id) = handle.as_int() else { return MbValue::none() };
+    let Some(id) = handle.as_int() else {
+        return MbValue::none();
+    };
     FILES.with(|files| {
         let files = files.borrow();
         let Some(mf) = files.get(&(id as u64)) else {
@@ -810,14 +815,20 @@ fn raise_file_not_found(path: &str) {
     let strerror = "No such file or directory";
     let message = format!("[Errno 2] {strerror}: '{path}'");
     let mut fields = InstanceFields::default();
-    fields.insert("message".to_string(), MbValue::from_ptr(MbObject::new_str(message)));
+    fields.insert(
+        "message".to_string(),
+        MbValue::from_ptr(MbObject::new_str(message)),
+    );
     fields.insert(
         "__type__".to_string(),
         MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
     );
     fields.insert("__cause__".to_string(), MbValue::none());
     fields.insert("__context__".to_string(), MbValue::none());
-    fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+    fields.insert(
+        "__suppress_context__".to_string(),
+        MbValue::from_bool(false),
+    );
     fields.insert("errno".to_string(), MbValue::from_int(2));
     fields.insert(
         "strerror".to_string(),

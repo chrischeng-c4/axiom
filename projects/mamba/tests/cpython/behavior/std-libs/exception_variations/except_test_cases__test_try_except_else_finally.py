@@ -9,7 +9,6 @@
 # case = "except_test_cases__test_try_except_else_finally"
 # subject = "cpython.test_exception_variations.ExceptTestCases.test_try_except_else_finally"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_exception_variations.py"
 # status = "filled"

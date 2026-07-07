@@ -397,7 +397,9 @@ fn is_text(slf: MbValue) -> bool {
 }
 
 fn newline_of(slf: MbValue) -> Option<String> {
-    inst_field(slf, "_newline").and_then(as_str).filter(|s| !s.is_empty())
+    inst_field(slf, "_newline")
+        .and_then(as_str)
+        .filter(|s| !s.is_empty())
 }
 
 fn encoding_of(slf: MbValue) -> String {

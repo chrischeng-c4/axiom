@@ -129,18 +129,22 @@ unsafe fn arg_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue]
 }
 
 unsafe extern "C" fn dispatch_path(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     mb_pathlib_path_class("PosixPath", unsafe { arg_slice(args_ptr, nargs) })
 }
 
 unsafe extern "C" fn dispatch_purepath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     mb_pathlib_path_class("PurePosixPath", unsafe { arg_slice(args_ptr, nargs) })
 }
 
 unsafe extern "C" fn dispatch_posixpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     mb_pathlib_path_class("PosixPath", unsafe { arg_slice(args_ptr, nargs) })
 }
 
 unsafe extern "C" fn dispatch_windowspath(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     // The concrete flavour that does not match the host OS cannot be
     // instantiated (host here is always POSIX).
     super::super::exception::mb_raise(
@@ -153,10 +157,12 @@ unsafe extern "C" fn dispatch_windowspath(_args_ptr: *const MbValue, _nargs: usi
 }
 
 unsafe extern "C" fn dispatch_pureposixpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     mb_pathlib_path_class("PurePosixPath", unsafe { arg_slice(args_ptr, nargs) })
 }
 
 unsafe extern "C" fn dispatch_purewindowspath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     mb_pathlib_path_class("PureWindowsPath", unsafe { arg_slice(args_ptr, nargs) })
 }
 
@@ -362,33 +368,30 @@ pub fn register() {
 
     // Map the constructor func pointers to their class names so
     // isinstance(obj, pathlib.Path) resolves the func value to a type name.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_path as *const () as usize as u64,
-            "Path".to_string(),
-        );
-        map.insert(
-            dispatch_purepath as *const () as usize as u64,
-            "PurePath".to_string(),
-        );
-        map.insert(
-            dispatch_posixpath as *const () as usize as u64,
-            "PosixPath".to_string(),
-        );
-        map.insert(
-            dispatch_windowspath as *const () as usize as u64,
-            "WindowsPath".to_string(),
-        );
-        map.insert(
-            dispatch_pureposixpath as *const () as usize as u64,
-            "PurePosixPath".to_string(),
-        );
-        map.insert(
-            dispatch_purewindowspath as *const () as usize as u64,
-            "PureWindowsPath".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_path as *const () as usize as u64,
+        "Path".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_purepath as *const () as usize as u64,
+        "PurePath".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_posixpath as *const () as usize as u64,
+        "PosixPath".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_windowspath as *const () as usize as u64,
+        "WindowsPath".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_pureposixpath as *const () as usize as u64,
+        "PurePosixPath".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_purewindowspath as *const () as usize as u64,
+        "PureWindowsPath".to_string(),
+    );
 
     // Legacy mamba-only free-function surface. Kept under the same module
     // namespace so older mamba programs that called `pathlib.exists(p)`

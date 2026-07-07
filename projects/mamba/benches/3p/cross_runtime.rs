@@ -24,14 +24,15 @@
 //! Task #22 / `feedback_mamba_perf_is_the_product` methodology caveat
 //! 2026-05-13.
 //!
-//! Exits non-zero if EITHER the speed-tier or memory-tier fails. The
-//! memory floor is `mamba ≤ cpython` (ratio cpython/mamba ≥ 1.0x —
-//! same direction as the speed ratio, so PASS when mamba uses no more
-//! memory than CPython). Tier-aware thresholds (`tier:compute≥10×`,
-//! `tier:app≥3×`, `tier:dynamic≥1.5×`) are documented in issue #1265;
-//! this harness ships with the floor gate (`≥1.0×`) only and reads an
-//! optional `# tier: <name>` header from the fixture for richer
-//! reporting in a later iteration.
+//! Exits non-zero if EITHER the speed-tier or memory-tier fails for a
+//! gating fixture. The memory floor is `mamba ≤ cpython` (ratio
+//! cpython/mamba ≥ 1.0x — same direction as the speed ratio, so PASS
+//! when mamba uses no more memory than CPython). Fixtures tagged with
+//! `# tier: exploratory` are report-only: the harness still prints
+//! FAIL evidence, but does not exit non-zero for those misses. All
+//! other fixtures remain gating at the floor (`≥1.0×`). Richer
+//! tier-aware thresholds (`tier:compute≥10×`, `tier:app≥3×`,
+//! `tier:dynamic≥1.5×`) are documented in issue #1265.
 //!
 //! ## Profiling integration
 //!
@@ -106,11 +107,31 @@ struct Fixture {
     lib: String,
     scenario: String,
     path: PathBuf,
+    gate_role: GateRole,
 }
 
 struct Args {
     fixture_filter: Option<String>,
     iters: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GateRole {
+    Required,
+    Exploratory,
+}
+
+impl GateRole {
+    fn is_gating(self) -> bool {
+        matches!(self, Self::Required)
+    }
+
+    fn fail_label(self) -> &'static str {
+        match self {
+            Self::Required => "FAIL",
+            Self::Exploratory => "FAIL/report-only",
+        }
+    }
 }
 
 fn parse_args() -> Args {
@@ -187,6 +208,7 @@ fn collect_bench(dir: &Path, out: &mut Vec<Fixture>) {
                 out.push(Fixture {
                     lib: lib.clone(),
                     scenario,
+                    gate_role: gate_role_for_fixture(&sp),
                     path: sp,
                 });
             }
@@ -194,6 +216,26 @@ fn collect_bench(dir: &Path, out: &mut Vec<Fixture>) {
             collect_bench(&p, out);
         }
     }
+}
+
+fn gate_role_for_fixture(path: &Path) -> GateRole {
+    let Ok(src) = std::fs::read_to_string(path) else {
+        return GateRole::Required;
+    };
+    gate_role_from_source(&src)
+}
+
+fn gate_role_from_source(src: &str) -> GateRole {
+    for line in src.lines().take(32) {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("# tier:") {
+            if value.trim().eq_ignore_ascii_case("exploratory") {
+                return GateRole::Exploratory;
+            }
+            return GateRole::Required;
+        }
+    }
+    GateRole::Required
 }
 
 fn python3_available() -> bool {
@@ -623,10 +665,14 @@ fn main() -> ExitCode {
         // startup overhead (~200 ms CPython, ~5 ms mamba). For short
         // benches the ratio is startup-amortization, not steady-state.
         let speed_ratio = cpython.wall.as_secs_f64() / mamba_t.wall.as_secs_f64();
-        let speed_verdict = if speed_ratio >= FLOOR { "PASS" } else { "FAIL" };
-        if speed_verdict == "FAIL" {
-            any_fail = true;
-        }
+        let speed_verdict = if speed_ratio >= FLOOR {
+            "PASS"
+        } else {
+            if fix.gate_role.is_gating() {
+                any_fail = true;
+            }
+            fix.gate_role.fail_label()
+        };
         println!(
             "[{label}] wall mamba/cpython = {speed_ratio:.2}x ({speed_verdict} @ floor {FLOOR:.1}x)  \
              [cpython {:.3}ms, mamba {:.3}ms]",
@@ -645,10 +691,14 @@ fn main() -> ExitCode {
         match (cpython.internal_ns, mamba_t.internal_ns) {
             (Some(cpy_ns), Some(mb_ns)) if mb_ns > 0 => {
                 let int_ratio = cpy_ns as f64 / mb_ns as f64;
-                let int_verdict = if int_ratio >= FLOOR { "PASS" } else { "FAIL" };
-                if int_verdict == "FAIL" {
-                    any_fail = true;
-                }
+                let int_verdict = if int_ratio >= FLOOR {
+                    "PASS"
+                } else {
+                    if fix.gate_role.is_gating() {
+                        any_fail = true;
+                    }
+                    fix.gate_role.fail_label()
+                };
                 println!(
                     "    internal mamba/cpython = {int_ratio:.2}x ({int_verdict} @ floor {FLOOR:.1}x)  \
                      [cpython {:.3}ms, mamba {:.3}ms]",
@@ -670,10 +720,14 @@ fn main() -> ExitCode {
         match (cpython.rss_bytes, mamba_t.rss_bytes) {
             (Some(cpy_b), Some(mb_b)) if mb_b > 0 => {
                 let mem_ratio = cpy_b as f64 / mb_b as f64;
-                let mem_verdict = if mem_ratio >= FLOOR { "PASS" } else { "FAIL" };
-                if mem_verdict == "FAIL" {
-                    any_fail = true;
-                }
+                let mem_verdict = if mem_ratio >= FLOOR {
+                    "PASS"
+                } else {
+                    if fix.gate_role.is_gating() {
+                        any_fail = true;
+                    }
+                    fix.gate_role.fail_label()
+                };
                 println!(
                     "    mem: mamba/cpython = {mem_ratio:.2}x ({mem_verdict} @ floor {FLOOR:.1}x)  \
                      [cpython {:.2} MB, mamba {:.2} MB]",

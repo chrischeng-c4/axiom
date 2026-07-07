@@ -53,6 +53,7 @@ use std::os::raw::c_int;
 macro_rules! disp_variadic {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = if nargs == 0 {
                 &[]
             } else {
@@ -134,16 +135,34 @@ pub fn register() {
     // Map each selector/record constructor func to its class name so
     // `isinstance(DefaultSelector(), selectors.BaseSelector)` and
     // `isinstance(key, selectors.SelectorKey)` resolve through the registry.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut tn = m.borrow_mut();
-        tn.insert(d_selector_key as *const () as u64, "SelectorKey".to_string());
-        tn.insert(d_base_selector as *const () as u64, "BaseSelector".to_string());
-        tn.insert(d_default_selector as *const () as u64, "DefaultSelector".to_string());
-        tn.insert(d_select_selector as *const () as u64, "SelectSelector".to_string());
-        tn.insert(d_poll_selector as *const () as u64, "PollSelector".to_string());
-        tn.insert(d_epoll_selector as *const () as u64, "EpollSelector".to_string());
-        tn.insert(d_kqueue_selector as *const () as u64, "KqueueSelector".to_string());
-    });
+    super::super::module::register_native_type_name(
+        d_selector_key as *const () as u64,
+        "SelectorKey".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_base_selector as *const () as u64,
+        "BaseSelector".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_default_selector as *const () as u64,
+        "DefaultSelector".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_select_selector as *const () as u64,
+        "SelectSelector".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_poll_selector as *const () as u64,
+        "PollSelector".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_epoll_selector as *const () as u64,
+        "EpollSelector".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_kqueue_selector as *const () as u64,
+        "KqueueSelector".to_string(),
+    );
 }
 
 // ── Selector class shells ──
@@ -325,7 +344,9 @@ fn split_method_kwargs(args: MbValue) -> (Vec<MbValue>, Option<MbValue>) {
 }
 
 fn is_dict(v: MbValue) -> bool {
-    v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 /// `data=` keyword from the trailing kwargs dict, if present.
@@ -337,7 +358,11 @@ fn kw_value(kwargs: Option<MbValue>, name: &str) -> Option<MbValue> {
         MbValue::from_ptr(MbObject::new_str(name.to_string())),
         sentinel,
     );
-    if v.to_bits() == sentinel.to_bits() { None } else { Some(v) }
+    if v.to_bits() == sentinel.to_bits() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 fn kw_data(kwargs: Option<MbValue>) -> Option<MbValue> {
@@ -425,7 +450,9 @@ unsafe extern "C" fn m_register(self_v: MbValue, args: MbValue) -> MbValue {
     let (pos, kwargs) = split_method_kwargs(args);
     let fileobj = pos.first().copied().unwrap_or_else(MbValue::none);
     let events = pos.get(1).and_then(|v| v.as_int()).unwrap_or(0);
-    let data = pos.get(2).copied()
+    let data = pos
+        .get(2)
+        .copied()
         .or_else(|| kw_data(kwargs))
         .unwrap_or_else(MbValue::none);
 
@@ -497,7 +524,9 @@ unsafe extern "C" fn m_modify(self_v: MbValue, args: MbValue) -> MbValue {
     let (pos, kwargs) = split_method_kwargs(args);
     let fileobj = pos.first().copied().unwrap_or_else(MbValue::none);
     let events = pos.get(1).and_then(|v| v.as_int()).unwrap_or(0);
-    let data = pos.get(2).copied()
+    let data = pos
+        .get(2)
+        .copied()
         .or_else(|| kw_data(kwargs))
         .unwrap_or_else(MbValue::none);
     let key = fileobj_key(fileobj);
@@ -576,6 +605,17 @@ unsafe extern "C" fn m_close(self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::none()
 }
 
+/// #1021: thin direct-call bridge from `hir_to_mir.rs`'s `direct_method_fn`
+/// fast path (which dispatches to a plain `fn(MbValue) -> MbValue` runtime
+/// symbol) to `m_close`'s variadic-dispatch calling convention
+/// (`unsafe extern "C" fn(self, args)`), used by the generic
+/// `mb_call_method`/selector method-table path. Same close-then-clear-the-map
+/// behavior either way — this only changes how the call is emitted, not what
+/// it does.
+pub fn mb_selectors_close(self_v: MbValue) -> MbValue {
+    unsafe { m_close(self_v, MbValue::none()) }
+}
+
 /// selector.__enter__() -> self (context-manager protocol).
 unsafe extern "C" fn m_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     super::super::rc::retain_if_ptr(self_v);
@@ -623,7 +663,10 @@ fn poll_timeout_ms(timeout: Option<MbValue>) -> Result<c_int, MbValue> {
     if value.is_none() {
         return Ok(-1);
     }
-    let secs = value.as_float().or_else(|| value.as_int().map(|i| i as f64)).unwrap_or(0.0);
+    let secs = value
+        .as_float()
+        .or_else(|| value.as_int().map(|i| i as f64))
+        .unwrap_or(0.0);
     if secs < 0.0 {
         return Err(raise_named("ValueError", "timeout must be non-negative"));
     }
@@ -659,7 +702,9 @@ unsafe extern "C" fn m_select(self_v: MbValue, args: MbValue) -> MbValue {
             let parts = method_pos(pair);
             let sel_key = parts.get(1).copied()?;
             let fd = get_field(sel_key, "fd").and_then(|v| v.as_int())?;
-            let events = get_field(sel_key, "events").and_then(|v| v.as_int()).unwrap_or(0);
+            let events = get_field(sel_key, "events")
+                .and_then(|v| v.as_int())
+                .unwrap_or(0);
             if fd < 0 || fd > c_int::MAX as i64 {
                 return None;
             }
@@ -687,11 +732,7 @@ unsafe extern "C" fn m_select(self_v: MbValue, args: MbValue) -> MbValue {
             }
         })
         .collect();
-    let rc = libc::poll(
-        pollfds.as_mut_ptr(),
-        pollfds.len() as libc::nfds_t,
-        timeout,
-    );
+    let rc = libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, timeout);
     if rc < 0 {
         return select_errno();
     }

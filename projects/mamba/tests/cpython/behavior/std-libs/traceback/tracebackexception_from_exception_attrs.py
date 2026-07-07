@@ -9,7 +9,6 @@
 # case = "tracebackexception_from_exception_attrs"
 # subject = "traceback.TracebackException"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -39,7 +39,11 @@ fn quiet_level(a: &[MbValue]) -> i64 {
     match kwarg(a, "quiet") {
         Some(v) if !v.is_none() => {
             if let Some(b) = v.as_bool() {
-                if b { 1 } else { 0 }
+                if b {
+                    1
+                } else {
+                    0
+                }
             } else {
                 v.as_int().unwrap_or(0)
             }
@@ -102,8 +106,7 @@ fn non_ascii_bytes_literal_line(src: &str) -> Option<usize> {
             continue;
         };
         let quote = bytes[qpos];
-        let triple =
-            qpos + 2 < bytes.len() && bytes[qpos + 1] == quote && bytes[qpos + 2] == quote;
+        let triple = qpos + 2 < bytes.len() && bytes[qpos + 1] == quote && bytes[qpos + 2] == quote;
         let mut k = qpos + if triple { 3 } else { 1 };
         while k < bytes.len() {
             if bytes[k] == b'\\' {
@@ -156,7 +159,11 @@ fn cache_path_for(src: &str, opt: i64) -> String {
     let p = std::path::Path::new(src);
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let parent = p.parent().map(|x| x.to_path_buf()).unwrap_or_default();
-    let suffix = if opt > 0 { format!(".opt-{opt}") } else { String::new() };
+    let suffix = if opt > 0 {
+        format!(".opt-{opt}")
+    } else {
+        String::new()
+    };
     parent
         .join("__pycache__")
         .join(format!("{stem}.{CACHE_TAG}{suffix}.pyc"))
@@ -191,9 +198,10 @@ fn optimize_levels(a: &[MbValue]) -> Vec<i64> {
                     }
                 };
                 if let Some(items) = items {
-                    let mut levels: Vec<i64> =
-                        items.iter().filter_map(|x| x.as_int()).collect();
-                    if levels.is_empty() { levels.push(0); }
+                    let mut levels: Vec<i64> = items.iter().filter_map(|x| x.as_int()).collect();
+                    if levels.is_empty() {
+                        levels.push(0);
+                    }
                     return levels;
                 }
             }
@@ -227,14 +235,17 @@ fn compile_one_file(path: &str, a: &[MbValue]) -> bool {
         emit_syntax_report(path, 1, "invalid syntax", a);
         return false;
     }
-    let legacy = kwarg(a, "legacy").and_then(|v| v.as_bool()).unwrap_or(false);
+    let legacy = kwarg(a, "legacy")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let mut ok = true;
     for lvl in optimize_levels(a) {
         let pyc = if legacy {
             // Legacy layout: `<stem>.pyc` beside the source, no __pycache__.
             let p = std::path::Path::new(path);
             let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            p.parent().unwrap_or_else(|| std::path::Path::new("."))
+            p.parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
                 .join(format!("{stem}.pyc"))
                 .to_string_lossy()
                 .into_owned()
@@ -331,7 +342,9 @@ fn compile_dir_recursive(
     a: &[MbValue],
 ) -> bool {
     let mut ok = true;
-    let Ok(entries) = std::fs::read_dir(dir) else { return true };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return true;
+    };
     let mut subdirs: Vec<std::path::PathBuf> = Vec::new();
     for entry in entries.flatten() {
         let p = entry.path();
@@ -390,14 +403,22 @@ unsafe extern "C" fn dispatch_cache_from_source(args_ptr: *const MbValue, nargs:
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
-    let path = a.first().copied().and_then(extract_str_v).unwrap_or_default();
+    let path = a
+        .first()
+        .copied()
+        .and_then(extract_str_v)
+        .unwrap_or_default();
     // optimization: None → level 0; "" → 0; int/str → that level.
     let opt = match kwarg(a, "optimization") {
         Some(v) if !v.is_none() => {
             if let Some(i) = v.as_int() {
                 i
             } else if let Some(s) = extract_str_v(v) {
-                if s.is_empty() { 0 } else { s.parse::<i64>().unwrap_or(0) }
+                if s.is_empty() {
+                    0
+                } else {
+                    s.parse::<i64>().unwrap_or(0)
+                }
             } else {
                 0
             }

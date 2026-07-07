@@ -9,7 +9,6 @@
 # case = "extract_tb_none_returns_empty_summary"
 # subject = "traceback.extract_tb"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

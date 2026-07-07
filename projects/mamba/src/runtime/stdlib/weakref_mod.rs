@@ -726,6 +726,7 @@ fn make_class_stub(name: &str) -> MbValue {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn dispatch_ref(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_weakref_ref(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -752,6 +753,7 @@ unsafe extern "C" fn dispatch_getweakrefs(args_ptr: *const MbValue, nargs: usize
 }
 
 unsafe extern "C" fn dispatch_weak_set(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     if nargs == 0 {
         return mb_weakref_weak_set_from(MbValue::none());
     }
@@ -760,19 +762,23 @@ unsafe extern "C" fn dispatch_weak_set(args_ptr: *const MbValue, nargs: usize) -
 }
 
 unsafe extern "C" fn dispatch_weak_key_dict(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     mb_weakref_weak_key_dict()
 }
 
 unsafe extern "C" fn dispatch_weak_value_dict(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     mb_weakref_weak_value_dict()
 }
 
 unsafe extern "C" fn dispatch_weak_method(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_weakref_weak_method(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_finalize(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let fin = mb_weakref_finalize(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -1532,7 +1538,7 @@ fn referent_type_name(target: MbValue) -> String {
 
 fn weakref_entry_is_publicly_live(
     wref: MbValue,
-    globals: &std::collections::HashMap<i64, MbValue>,
+    globals: &std::collections::HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
 ) -> bool {
     if !globals
         .values()
@@ -1916,12 +1922,9 @@ pub fn register() {
         ("WeakMethod", dispatch_weak_method as *const () as usize),
         ("finalize", dispatch_finalize as *const () as usize),
     ];
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        for (name, addr) in type_dispatchers {
-            map.insert(*addr as u64, name.to_string());
-        }
-    });
+    for (name, addr) in type_dispatchers {
+        super::super::module::register_native_type_name(*addr as u64, name.to_string());
+    }
 
     // Type placeholders — Instance stubs with `__name__` set.
     let reference_type = make_class_stub("ReferenceType");

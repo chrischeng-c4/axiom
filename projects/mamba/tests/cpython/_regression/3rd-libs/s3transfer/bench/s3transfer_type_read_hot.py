@@ -32,6 +32,24 @@ Goal 2.
 
 import s3transfer
 
+# Fixture repair (#967): `s3transfer/__init__.py` already defines
+# `TransferConfig`/`S3Transfer`/`exceptions` at top level, but the
+# high-level `TransferManager` class lives in the `s3transfer.manager`
+# submodule and `tasks` is a submodule that's never auto-imported by the
+# package — both need an explicit import/rebind before they're valid,
+# identity-stable `s3transfer.<name>` attributes. Under mamba, `s3transfer`
+# is a flat native shim with no real submodules to import — it already
+# registers `TransferManager`/`tasks` directly as top-level attributes, so
+# the (expected) ImportError here is a no-op fallback to that existing shim
+# surface.
+try:
+    import s3transfer.manager
+    import s3transfer.tasks  # noqa: F401
+
+    s3transfer.TransferManager = s3transfer.manager.TransferManager
+except ImportError:
+    pass
+
 
 _TM_BASELINE = s3transfer.TransferManager
 _TC_BASELINE = s3transfer.TransferConfig

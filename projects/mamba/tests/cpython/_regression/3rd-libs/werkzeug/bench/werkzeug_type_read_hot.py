@@ -20,7 +20,28 @@ marker on stderr) and reports the ratio. Floor is 1.0x per #1265
 Goal 2.
 """
 
+import importlib.metadata
+
 import werkzeug
+
+# Fixture repair (#967): modern werkzeug no longer re-exports `Local` or a
+# static `__version__` from top-level `werkzeug/__init__.py` (only
+# `run_simple`/`Client`/`Request`/`Response` are imported there). Rebind
+# both explicitly so they're real, identity-stable package attributes again:
+# `Local` from its home submodule, `__version__` from `importlib.metadata`
+# (no deprecated/dynamic module `__getattr__` involved either way). Under
+# mamba, `werkzeug` is a flat native shim with no real `local` submodule to
+# import — it already registers `Local` directly as a top-level attribute,
+# so the (expected) ImportError here is a no-op fallback to that existing
+# shim attribute; `importlib.metadata.version` is independently supported
+# by mamba, so `__version__` always gets rebound.
+try:
+    import werkzeug.local
+
+    werkzeug.Local = werkzeug.local.Local
+except ImportError:
+    pass
+werkzeug.__version__ = importlib.metadata.version("werkzeug")
 
 
 _RQ_BASELINE = werkzeug.Request

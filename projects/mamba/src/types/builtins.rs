@@ -78,7 +78,7 @@ impl TypeChecker {
         // PEP 695 desugaring intrinsics (see lower::pep695): runtime TypeVar
         // and TypeAliasType construction. Not part of the user-facing builtin
         // surface; only injected by the desugarer.
-        self.def_builtin("__mb_pep695_typevar__", &[str_ty, int, any, any], any);
+        self.def_builtin("__mb_pep695_typevar__", &[str_ty, int, any, any, any], any);
         self.def_builtin("__mb_pep695_type_alias__", &[str_ty, any, any], any);
 
         // Identity / hashing
@@ -222,13 +222,16 @@ impl TypeChecker {
             "ValueError",
             "AttributeError",
             "NameError",
+            "UnboundLocalError",
             "RuntimeError",
             "RecursionError",
             "NotImplementedError",
+            "SystemError",
             "ImportError",
             "ModuleNotFoundError",
             "SyntaxError",
             "IndentationError",
+            "TabError",
             "UnicodeError",
             "UnicodeDecodeError",
             "UnicodeEncodeError",

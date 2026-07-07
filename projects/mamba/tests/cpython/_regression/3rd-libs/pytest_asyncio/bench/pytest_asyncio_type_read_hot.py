@@ -23,6 +23,21 @@ Goal 2.
 
 import pytest_asyncio
 
+# Fixture repair (#967): `Mode` was never re-exported from top-level
+# `pytest_asyncio/__init__.py` (`__all__` is just `("fixture",
+# "is_async_test")`) — it lives in `pytest_asyncio.plugin`. Rebind it
+# explicitly so `pytest_asyncio.Mode` is a real, identity-stable attribute.
+# Under mamba, `pytest_asyncio` is a flat native shim with no real `plugin`
+# submodule to import — it already registers `Mode` directly as a
+# top-level attribute, so the (expected) ImportError here is a no-op
+# fallback to that existing shim attribute.
+try:
+    from pytest_asyncio.plugin import Mode as _Mode
+
+    pytest_asyncio.Mode = _Mode
+except ImportError:
+    pass
+
 
 _V_BASELINE = pytest_asyncio.__version__
 _F_BASELINE = pytest_asyncio.fixture

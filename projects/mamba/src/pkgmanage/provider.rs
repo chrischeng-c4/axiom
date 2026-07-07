@@ -5,7 +5,7 @@
 // package has a mamba-owned distribution name and may expose one or more
 // upstream-compatible import packages such as `httpx`.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MambaProviderPackage {
@@ -262,13 +262,11 @@ mod tests {
         let pkg = resolve_mamba_package("mamba-httpx-compat", None).unwrap();
         let files = provider_files(&pkg).unwrap();
         assert!(files.iter().any(|f| f.relative_path == "httpx/__init__.py"));
-        assert!(
-            files
-                .iter()
-                .find(|f| f.relative_path == "httpx/__init__.py")
-                .unwrap()
-                .body
-                .contains("class Response")
-        );
+        assert!(files
+            .iter()
+            .find(|f| f.relative_path == "httpx/__init__.py")
+            .unwrap()
+            .body
+            .contains("class Response"));
     }
 }

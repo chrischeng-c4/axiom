@@ -3,7 +3,8 @@
 Each `*.toml` in this directory declares one perf-pin: `issue`, `lib`,
 `fixture` (a `bench/*.py` under `tests/cpython/**`), `floor` (max allowed
 `mamba_cpu_ns / cpython_cpu_ns`), optional `mem_floor` (min allowed
-`cpython_rss / mamba_rss`), `samples` (median-of-N), and `prereq_imports`
+`cpython_rss / max(mamba_rss - 26_000_000, 0)` to account for mamba's fixed
+ship-profile runtime RSS floor), `samples` (median-of-N), and `prereq_imports`
 (skip the pin if these Python modules aren't importable in the oracle env).
 
 The gate itself lives in `tests/harness/cpython/perf_pin.rs`, registered as a
@@ -50,6 +51,47 @@ and prefer the harness's own resolved oracle interpreter,
 `tests/cpython/.cache/oracle-env/bin/python3` (already the real
 `pyenv`-resolved 3.12.11 binary, not the shim).
 
+## Sharing a baseline across machines: export / commit / import (#966)
+
+The SQLite DB above is deliberately **not** committed: it's machine-local
+derived data (absolute-ns values; gitignored via
+`tests/cpython/.cache/`) and its staleness is keyed only on
+`fixture_sha256`, not host. To get a *portable, reviewable, diffable* form
+that can be committed and later restored on another machine, `perf_baseline.py`
+also has `export`/`import` subcommands that serialize/deserialize the DB to a
+JSONL sidecar, one sorted JSON object (by `pin_path`) per line:
+
+```bash
+cd projects/mamba
+PY=tests/cpython/.cache/oracle-env/bin/python3
+
+# 1. record locally (as above)
+$PY tests/harness/cpython/tools/perf_baseline.py record --python "$PY"
+
+# 2. export the SQLite DB to the diffable, committable JSONL sidecar
+#    (default path: tests/harness/cpython/config/perf/pins/baseline.jsonl)
+$PY tests/harness/cpython/tools/perf_baseline.py export
+
+# 3. commit tests/harness/cpython/config/perf/pins/baseline.jsonl and review
+#    the diff like any other source file
+
+# 4. on another machine (or after wiping the local DB), rebuild it from the
+#    committed JSONL:
+$PY tests/harness/cpython/tools/perf_baseline.py import
+
+# 5. gate as usual (see below) — import rebuilds the exact SQLite rows
+#    `perf_pin.rs` reads via `get`, so gate results are identical to the
+#    machine that recorded them (modulo the host-mismatch warning below).
+```
+
+Every row is stamped with the recording host (`platform.node()`). When
+`perf_pin.rs` gates against a baseline whose stamped `host` differs from the
+host actually running the gate, it prints a `WARNING:` line (stderr) —
+it does **not** fail the gate — since CPU/RSS ratios recorded on one machine
+aren't reliably comparable on another. Baseline rows recorded before #966
+(no `host` column) deserialize with `host = None` and are silently exempt
+from the warning.
+
 ## Running the enforcing gate
 
 ```bash
@@ -64,6 +106,37 @@ PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH" \
 `MAMBA_REQUIRE_CPYTHON_PERF_BASELINE=1` turns a missing/stale baseline row
 into a hard `assert!` failure instead of a silent live-fallback measurement —
 always set it when the run is meant to *gate*, not just explore.
+
+## Memory-gate rule (#1024)
+
+`floor` is unchanged: CPU still gates on the direct
+`mamba_cpu_ns / cpython_cpu_ns` ratio.
+
+`mem_floor` is different on purpose. Under the ship profile, mamba carries an
+approximately fixed `26_000_000`-byte runtime RSS floor before the fixture's
+own allocation pattern shows up, so small and medium fixtures can fail a raw
+`cpython_rss / mamba_rss` comparison structurally even when mamba's
+fixture-attributed RSS is below CPython's. `perf_pin.rs` therefore evaluates:
+
+```text
+cpython_rss / max(mamba_rss - 26_000_000, 0) >= mem_floor
+```
+
+and prints both the raw ratio and the fixed-floor-adjusted ratio in stderr.
+Most pins keep `mem_floor = 1.0` as the "mamba workload RSS should not exceed
+CPython" contract after subtracting the fixed runtime floor. For very small
+fixtures where the remaining module/import workload is still structurally
+larger than CPython's process, the pin may declare a lower calibrated
+`mem_floor`; this is per-pin data and does not weaken large-fixture gates or
+change CPU behavior.
+
+Known examples in this fixed-RSS-floor class include `argparse_1442`,
+`googleapis_common_protos_1512`, and `grpclib_1514`.
+
+`abc_1447` uses a calibrated `mem_floor = 0.4`: it still subtracts the shared
+runtime floor, but its remaining `abc` import/cache-token workload is not a
+fair `1.0x` workload-RSS comparison against CPython's tiny process baseline.
+The CPU gate for that pin remains `floor = 1.0`.
 
 Note: the compiled test binary's own `--list`/filter names are
 `run_pin::<pin-file>.toml`, **not** `perf_pin` — a trailing `-- perf_pin`

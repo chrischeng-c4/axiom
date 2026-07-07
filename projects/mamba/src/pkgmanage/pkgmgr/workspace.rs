@@ -521,11 +521,9 @@ version = "0.2.0"
         assert_eq!(members[0].name, "alpha-pkg"); // normalized
         assert_eq!(members[0].version, "0.1.0");
         assert!(members[0].root.ends_with("packages/alpha"));
-        assert!(
-            members[0]
-                .pyproject
-                .ends_with("packages/alpha/pyproject.toml")
-        );
+        assert!(members[0]
+            .pyproject
+            .ends_with("packages/alpha/pyproject.toml"));
         assert_eq!(members[1].name, "beta-pkg");
     }
 

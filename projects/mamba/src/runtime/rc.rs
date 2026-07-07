@@ -3,6 +3,7 @@ use indexmap::IndexMap;
 use num_bigint::BigInt;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::sync::atomic::{AtomicU32, Ordering};
 /// Reference-counted heap objects (#280) — thread-safe, no-GIL.
 ///
 /// Every heap-allocated Mamba object starts with a MbObjectHeader containing
@@ -48,7 +49,7 @@ use smallvec::SmallVec;
 ///   mb_bitand, mb_bitor, mb_bitxor, mb_matmul,
 ///   mb_eq, mb_ne, mb_lt, mb_le, mb_gt, mb_ge, mb_not
 ///
-/// ## BORROWED (container/global still owns — retain_if_ptr added)
+/// ## BORROWED (container/global still owns — return_owned added)
 ///
 ///   mb_list_getitem, mb_dict_getitem, mb_tuple_getitem,
 ///   mb_seq_getitem, mb_getattr, mb_getattr_default,
@@ -67,11 +68,9 @@ use smallvec::SmallVec;
 ///   mb_set_add, mb_set_discard, mb_set_remove, mb_set_clear,
 ///   mb_setattr, mb_print, mb_gc_collect
 ///
-/// ## NON-POINTER (returns NaN-boxed i64/f64/bool — retain_if_ptr is no-op)
+/// ## NON-POINTER (returns NaN-boxed i64/f64/bool — no heap refcount)
 ///
 ///   mb_len, mb_is_truthy, mb_hash, mb_id, mb_bool
-use std::sync::atomic::{AtomicU32, Ordering};
-
 #[inline]
 fn is_typed_native_wrapper(val: super::value::MbValue) -> bool {
     let registry_value = cclab_mamba_registry::MbValue::from_bits(val.to_bits());
@@ -245,9 +244,7 @@ impl MbSet {
         if self.position_of(value).is_some() {
             return false;
         }
-        unsafe {
-            super::rc::retain_if_ptr(value);
-        }
+        store_owned(value);
         let pos = self.items.len() as u32;
         self.items.push(value);
         self.buckets.entry(set_hash(value)).or_default().push(pos);
@@ -387,6 +384,15 @@ impl<T: Default> Default for MbRwLock<T> {
 /// callsites stay byte-identical.
 pub type InstanceFields = FxHashMap<String, super::value::MbValue>;
 
+/// Backing map for `ObjData::Dict`.
+///
+/// Runtime dict keys are attacker-controlled Python values, so the storage
+/// table keeps `IndexMap`'s default seeded `RandomState` (SipHash-family)
+/// rather than `FxHash`. Dict-key equality still follows Python semantics in
+/// `DictKey`; this hasher choice is only about protecting the table from
+/// collision-flooding while preserving insertion order.
+pub type MbDictMap = IndexMap<DictKey, super::value::MbValue>;
+
 /// Cycle-capable test — returns true if `v` is a heap pointer to a kind that
 /// can participate in a reference cycle (containers + closures + class
 /// instances). Used by immutable-container allocators (`new_tuple`,
@@ -481,7 +487,7 @@ unsafe impl Sync for MbObject {}
 pub enum ObjData {
     Str(String),
     List(MbRwLock<MbList>),
-    Dict(MbRwLock<IndexMap<DictKey, super::value::MbValue>>),
+    Dict(MbRwLock<MbDictMap>),
     Tuple(Vec<super::value::MbValue>),
     Instance {
         class_name: String,
@@ -617,7 +623,7 @@ impl MbObject {
                 rc: atomic_rc(1),
                 kind: ObjKind::Dict,
             },
-            data: ObjData::Dict(MbRwLock::new(IndexMap::new())),
+            data: ObjData::Dict(MbRwLock::new(MbDictMap::default())),
         });
         let ptr = Box::into_raw(obj);
         super::gc::gc_track(ptr);
@@ -632,7 +638,7 @@ impl MbObject {
                 rc: atomic_rc(1),
                 kind: ObjKind::Dict,
             },
-            data: ObjData::Dict(MbRwLock::new(IndexMap::with_capacity(capacity))),
+            data: ObjData::Dict(MbRwLock::new(MbDictMap::with_capacity(capacity))),
         });
         let ptr = Box::into_raw(obj);
         super::gc::gc_track(ptr);
@@ -1006,7 +1012,11 @@ unsafe fn release_contained_values(obj: *mut MbObject) {
     }
 }
 
-/// Release an MbValue if it's a heap pointer. Helper for container cleanup.
+/// Release a runtime-owned value stored by a container/global slot.
+///
+/// Historical name: this also releases small closure handles and registered
+/// positive integer handles (Decimal, Fraction, and other handle-backed
+/// stdlib objects).
 #[inline]
 pub unsafe fn release_if_ptr(val: super::value::MbValue) {
     if is_typed_native_wrapper(val) {
@@ -1023,10 +1033,23 @@ pub unsafe fn release_if_ptr(val: super::value::MbValue) {
             }
         }
         mb_release(ptr);
+        return;
+    }
+    if super::closure::release_closure_handle_if_live(val) {
+        return;
+    }
+    if let Some(id) = val.as_int() {
+        if id > 0 {
+            super::integer_handle_registry::release(id as u64);
+        }
     }
 }
 
-/// Retain an MbValue if it's a heap pointer. Safe helper for container storage.
+/// Retain a runtime-owned value for container/global storage.
+///
+/// Historical name: this also retains small closure handles and registered
+/// positive integer handles (Decimal, Fraction, and other handle-backed
+/// stdlib objects).
 #[inline]
 pub unsafe fn retain_if_ptr(val: super::value::MbValue) {
     if is_typed_native_wrapper(val) {
@@ -1034,7 +1057,138 @@ pub unsafe fn retain_if_ptr(val: super::value::MbValue) {
     }
     if let Some(ptr) = val.as_ptr() {
         mb_retain(ptr);
+        return;
     }
+    if super::closure::retain_closure_handle_if_live(val) {
+        return;
+    }
+    if let Some(id) = val.as_int() {
+        if id > 0 {
+            super::integer_handle_registry::retain(id as u64);
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_heap_refcount(val: super::value::MbValue) -> Option<u32> {
+    if is_typed_native_wrapper(val) {
+        return None;
+    }
+    let ptr = val.as_ptr()?;
+    if ptr.is_null() {
+        return None;
+    }
+    let rc = unsafe { (*ptr).header.rc.load(Ordering::Relaxed) };
+    if rc == IMMORTAL_REFCOUNT {
+        None
+    } else {
+        Some(rc)
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_assert_refcount_delta(
+    value: super::value::MbValue,
+    before: Option<u32>,
+    expected_delta: u32,
+    caller: &str,
+) {
+    let Some(before) = before else {
+        return;
+    };
+    let Some(ptr) = value.as_ptr() else {
+        return;
+    };
+    let after = unsafe { (*ptr).header.rc.load(Ordering::Relaxed) };
+    debug_assert_eq!(
+        after,
+        before.saturating_add(expected_delta),
+        "{caller}: expected refcount delta +{expected_delta} for {ptr:?}, before={before}, after={after}"
+    );
+}
+
+/// Transfer one new owned reference into a container/global slot.
+#[inline]
+pub fn store_owned(value: super::value::MbValue) -> super::value::MbValue {
+    #[cfg(debug_assertions)]
+    let before = debug_heap_refcount(value);
+    unsafe {
+        retain_if_ptr(value);
+    }
+    #[cfg(debug_assertions)]
+    debug_assert_refcount_delta(value, before, 1, "store_owned");
+    value
+}
+
+/// Transfer one new owned reference to the caller as a return value.
+#[inline]
+pub fn return_owned(value: super::value::MbValue) -> super::value::MbValue {
+    #[cfg(debug_assertions)]
+    let before = debug_heap_refcount(value);
+    unsafe {
+        retain_if_ptr(value);
+    }
+    #[cfg(debug_assertions)]
+    debug_assert_refcount_delta(value, before, 1, "return_owned");
+    value
+}
+
+/// Transfer two independent new owners: one stored owner and one return owner.
+#[inline]
+pub fn store_and_return_owned(value: super::value::MbValue) -> super::value::MbValue {
+    #[cfg(debug_assertions)]
+    let before = debug_heap_refcount(value);
+    unsafe {
+        retain_if_ptr(value);
+        retain_if_ptr(value);
+    }
+    #[cfg(debug_assertions)]
+    debug_assert_refcount_delta(value, before, 2, "store_and_return_owned");
+    value
+}
+
+/// Release a reference currently owned by a container/global slot.
+#[inline]
+pub fn release_owned(value: super::value::MbValue) {
+    unsafe {
+        release_if_ptr(value);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LocalSlotReleaseRule {
+    pub declared_i64: bool,
+    pub raw_value: bool,
+    pub native_bool: bool,
+    pub assigned_on_path: bool,
+    pub borrowed_param: bool,
+    pub return_value: bool,
+}
+
+/// Authoritative emitter-side rule for whether a local slot owns a value that
+/// should be released at a pre-write or epilogue release point.
+#[inline]
+pub fn should_release_local_slot(rule: LocalSlotReleaseRule) -> bool {
+    rule.declared_i64
+        && !rule.raw_value
+        && !rule.native_bool
+        && rule.assigned_on_path
+        && !rule.borrowed_param
+        && !rule.return_value
+}
+
+/// Returning a borrowed parameter creates a new owned result unless the slot
+/// is a native raw value where retain is provably a no-op.
+#[inline]
+pub fn should_retain_borrowed_return(borrowed_param: bool, raw_value: bool) -> bool {
+    borrowed_param && !raw_value
+}
+
+/// Loop pre-seeding may initialize local owner slots, but never borrowed
+/// parameter slots whose original value remains owned by the caller.
+#[inline]
+pub fn should_preseed_loop_owner_slot(borrowed_param: bool) -> bool {
+    !borrowed_param
 }
 
 /// Get the current reference count.
@@ -1063,6 +1217,9 @@ pub unsafe extern "C" fn mb_retain_value(val: u64) {
     }
     if let Some(ptr) = v.as_ptr() {
         mb_retain(ptr);
+        return;
+    }
+    if super::closure::retain_closure_handle_if_live(v) {
         return;
     }
     // #2111: integer-pattern handles (array, hashlib, BytesIO, …) have no
@@ -1101,6 +1258,9 @@ pub unsafe extern "C" fn mb_release_value(val: u64) {
             }
         }
         mb_release(ptr);
+        return;
+    }
+    if super::closure::release_closure_handle_if_live(v) {
         return;
     }
     // #2111: integer-pattern handles (array, hashlib, BytesIO, …) refcounted
@@ -1522,6 +1682,45 @@ mod tests {
             // Cleanup
             mb_release(obj); // frees at rc=0
         }
+    }
+
+    #[test]
+    fn test_store_and_return_owned_adds_two_refs() {
+        unsafe {
+            let obj = MbObject::new_str("owned".into());
+            let val = MbValue::from_ptr(obj);
+            assert_eq!(mb_refcount(obj), 1);
+
+            let returned = store_and_return_owned(val);
+            assert_eq!(returned.to_bits(), val.to_bits());
+            assert_eq!(mb_refcount(obj), 3);
+
+            release_owned(returned);
+            release_owned(val);
+            assert_eq!(mb_refcount(obj), 1);
+            mb_release(obj);
+        }
+    }
+
+    #[test]
+    fn test_local_slot_release_rule_excludes_borrowed_params() {
+        let base = LocalSlotReleaseRule {
+            declared_i64: true,
+            raw_value: false,
+            native_bool: false,
+            assigned_on_path: true,
+            borrowed_param: false,
+            return_value: false,
+        };
+        assert!(should_release_local_slot(base));
+        assert!(!should_release_local_slot(LocalSlotReleaseRule {
+            borrowed_param: true,
+            ..base
+        }));
+        assert!(!should_release_local_slot(LocalSlotReleaseRule {
+            return_value: true,
+            ..base
+        }));
     }
 
     #[test]

@@ -151,9 +151,91 @@ fn load_ptr(id: usize) -> usize {
 
 // ── Legacy shell dispatchers (kept for names that stay out of scope) ──
 
-unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+// #1040 follow-up: this file's `dispatch_class_shell` used to be handed out
+// as the SAME function address to every class-shell name registered here
+// (the 68-name baseline loop, `cdll`/`windll`/`oledll`/`pydll`/`WinError`,
+// and the `ctypes.wintypes` type-name loop all shared it). Because
+// FUNC_NAMES/NATIVE_FUNC_ADDRS are address-keyed, whichever name registered
+// last (in HashMap iteration order, which is nondeterministic per process)
+// won `X.__name__` for every other class sharing that address -- the same
+// #962/#954 symptom. The fix: give every class-shell name a genuinely
+// distinct function pointer, drawn from a pool of `SHELL_POOL_SIZE`
+// individually fold-immune trivial stub functions, indexed via a
+// thread-local "next free slot" counter (`next_shell_slot`) so every call
+// site simply draws a fresh slot per name -- no manual per-call `pool_start`
+// bookkeeping required, since `register()` runs registration sequentially
+// on a single thread at module-init time.
+//
+// IMPORTANT: this pool does NOT use `icf_guard!()` directly. That macro
+// derives its fingerprint from `module_path!()`/`line!()`/`column!()`, which
+// are resolved at the span of the *macro definition's* literal tokens -- for
+// a single `macro_rules!` invocation that expands a `$(...)* ` repetition
+// into N functions, every repetition shares that ONE span, so
+// `line!()`/`column!()` come back IDENTICAL for all N and `icf_guard!()`
+// silently fails to discriminate them. LLVM then folds all "distinct"
+// shells back onto a single address, reproducing the exact bug one level
+// down. The fix here instead fingerprints on `stringify!($name)`, which DOES
+// vary per repetition (driven by the captured `$name` token's text, not by
+// span), giving every pool slot a genuinely distinct compiled body.
+const SHELL_POOL_SIZE: usize = 106;
+type ShellFn = unsafe extern "C" fn(*const MbValue, usize) -> MbValue;
+
+macro_rules! def_shell_pool {
+    ($($name:ident),* $(,)?) => {
+        $(
+            unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue {
+                ::std::hint::black_box(crate::runtime::module::icf_fingerprint(concat!(
+                    module_path!(),
+                    "::",
+                    stringify!($name)
+                )));
+                MbValue::from_ptr(MbObject::new_dict())
+            }
+        )*
+        const SHELL_POOL: [ShellFn; SHELL_POOL_SIZE] = [$($name),*];
+    };
 }
+def_shell_pool!(
+    shell_00, shell_01, shell_02, shell_03, shell_04, shell_05, shell_06, shell_07, shell_08,
+    shell_09, shell_10, shell_11, shell_12, shell_13, shell_14, shell_15, shell_16, shell_17,
+    shell_18, shell_19, shell_20, shell_21, shell_22, shell_23, shell_24, shell_25, shell_26,
+    shell_27, shell_28, shell_29, shell_30, shell_31, shell_32, shell_33, shell_34, shell_35,
+    shell_36, shell_37, shell_38, shell_39, shell_40, shell_41, shell_42, shell_43, shell_44,
+    shell_45, shell_46, shell_47, shell_48, shell_49, shell_50, shell_51, shell_52, shell_53,
+    shell_54, shell_55, shell_56, shell_57, shell_58, shell_59, shell_60, shell_61, shell_62,
+    shell_63, shell_64, shell_65, shell_66, shell_67, shell_68, shell_69, shell_70, shell_71,
+    shell_72, shell_73, shell_74, shell_75, shell_76, shell_77, shell_78, shell_79, shell_80,
+    shell_81, shell_82, shell_83, shell_84, shell_85, shell_86, shell_87, shell_88, shell_89,
+    shell_90, shell_91, shell_92, shell_93, shell_94, shell_95, shell_96, shell_97, shell_98,
+    shell_99, shell_100, shell_101, shell_102, shell_103, shell_104, shell_105,
+);
+
+/// Pool slot at `idx` as a raw function-pointer address.
+fn shell_addr(idx: usize) -> usize {
+    SHELL_POOL[idx] as usize
+}
+
+thread_local! {
+    static NEXT_SHELL_SLOT: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+/// Draw the next unused pool slot index. `register()` runs sequentially on
+/// a single thread at module-init time, so a simple monotonic counter gives
+/// every class-shell name a fresh, non-overlapping slot with no manual
+/// per-call range bookkeeping.
+fn next_shell_slot() -> usize {
+    NEXT_SHELL_SLOT.with(|c| {
+        let v = c.get();
+        assert!(
+            v < SHELL_POOL_SIZE,
+            "shell pool exhausted (SHELL_POOL_SIZE={}); bump it",
+            SHELL_POOL_SIZE
+        );
+        c.set(v + 1);
+        v
+    })
+}
+
 unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
@@ -518,6 +600,7 @@ fn raw_to_value(raw: RawResult, name: &str) -> MbValue {
 // ── CDLL ──
 
 unsafe extern "C" fn dispatch_cdll_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let name_arg = a.first().copied().unwrap_or_else(MbValue::none);
     let name_val: Option<String> = if name_arg.is_none() {
@@ -557,7 +640,10 @@ unsafe extern "C" fn dispatch_cdll_new(args_ptr: *const MbValue, nargs: usize) -
     set_field(
         inst,
         "_name",
-        name_val.as_deref().map(new_str).unwrap_or_else(MbValue::none),
+        name_val
+            .as_deref()
+            .map(new_str)
+            .unwrap_or_else(MbValue::none),
     );
     inst
 }
@@ -689,19 +775,29 @@ unsafe extern "C" fn dispatch_sizeof(args_ptr: *const MbValue, nargs: usize) -> 
     let Some(v) = a.first().copied() else {
         return raise_type_error("sizeof() takes at least 1 argument");
     };
-    let name = ctype_name_of(v).or_else(|| instance_class_name(v)).or_else(|| {
-        v.as_ptr().and_then(|p| unsafe {
-            if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
-                if class_name == "type" {
-                    fields.read().unwrap().get("__name__").and_then(|n| extract_str(*n))
+    let name = ctype_name_of(v)
+        .or_else(|| instance_class_name(v))
+        .or_else(|| {
+            v.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                } = (*p).data
+                {
+                    if class_name == "type" {
+                        fields
+                            .read()
+                            .unwrap()
+                            .get("__name__")
+                            .and_then(|n| extract_str(*n))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
-            }
-        })
-    });
+            })
+        });
     match name.as_deref() {
         Some(n) if is_known_ctype_name(n) => MbValue::from_int(ctype_byte_size(n)),
         _ => raise_type_error("this type has no size"),
@@ -746,7 +842,11 @@ fn classify_arg(
             bytes.copy_from_slice(&i.to_ne_bytes());
         }
         let raw_ptr = Box::into_raw(Box::new(bytes));
-        out_params.push(OutParam { buf: raw_ptr, target: wrapped, ctype_name: cn });
+        out_params.push(OutParam {
+            buf: raw_ptr,
+            target: wrapped,
+            ctype_name: cn,
+        });
         return Ok(ArgSlot::Int(raw_ptr as i64));
     }
     // An actual ctype scalar instance (e.g. `c_int(5)`): unwrap `.value`
@@ -848,14 +948,13 @@ extern "C" fn cfuncptr_call(self_v: MbValue, args_list: MbValue) -> MbValue {
     };
     let func_addr = load_ptr(addr_id as usize);
 
-    let argtypes_names: Option<Vec<Option<String>>> =
-        get_field(self_v, "argtypes").and_then(|v| {
-            if v.is_none() {
-                None
-            } else {
-                Some(extract_args(v).iter().map(|t| ctype_name_of(*t)).collect())
-            }
-        });
+    let argtypes_names: Option<Vec<Option<String>>> = get_field(self_v, "argtypes").and_then(|v| {
+        if v.is_none() {
+            None
+        } else {
+            Some(extract_args(v).iter().map(|t| ctype_name_of(*t)).collect())
+        }
+    });
     if let Some(ref names) = argtypes_names {
         if names.len() != call_args.len() {
             return raise_type_error(&format!(
@@ -873,7 +972,9 @@ extern "C" fn cfuncptr_call(self_v: MbValue, args_list: MbValue) -> MbValue {
     let mut saw_int = false;
     let mut saw_float = false;
     for (i, val) in call_args.iter().copied().enumerate() {
-        let hint = argtypes_names.as_ref().and_then(|v| v.get(i).cloned().flatten());
+        let hint = argtypes_names
+            .as_ref()
+            .and_then(|v| v.get(i).cloned().flatten());
         match classify_arg(i, val, hint.as_deref(), &mut out_params) {
             Ok(ArgSlot::Int(x)) => {
                 saw_int = true;
@@ -906,7 +1007,8 @@ extern "C" fn cfuncptr_call(self_v: MbValue, args_list: MbValue) -> MbValue {
 
     let restype_field = get_field(self_v, "restype");
     let is_void = matches!(restype_field, Some(v) if v.is_none());
-    let restype_name = restype_field.and_then(|v| if v.is_none() { None } else { ctype_name_of(v) });
+    let restype_name =
+        restype_field.and_then(|v| if v.is_none() { None } else { ctype_name_of(v) });
     let shape = ret_shape_for(restype_name.as_deref());
 
     let raw = if saw_float {
@@ -1052,6 +1154,7 @@ fn generic_scalar_new(cls: &'static str, raw: Option<MbValue>) -> MbValue {
 macro_rules! scalar_ctor {
     ($fn_name:ident, $cls:literal) => {
         unsafe extern "C" fn $fn_name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             generic_scalar_new($cls, a.first().copied())
         }
@@ -1121,8 +1224,16 @@ fn register_class(class_name: &str, bases: &[&str], methods: &[MethodSpec]) {
 }
 
 fn register_classes() {
-    register_class("CDLL", &["object"], &[("__getattr__", cdll_getattr as usize, false)]);
-    register_class("CFuncPtr", &["object"], &[("__call__", cfuncptr_call as usize, true)]);
+    register_class(
+        "CDLL",
+        &["object"],
+        &[("__getattr__", cdll_getattr as usize, false)],
+    );
+    register_class(
+        "CFuncPtr",
+        &["object"],
+        &[("__call__", cfuncptr_call as usize, true)],
+    );
     register_class(
         "Array",
         &["object"],
@@ -1158,42 +1269,135 @@ fn make_ctypes_exception_type_object(name: &str) -> MbValue {
 pub fn register() {
     register_classes();
 
-    let shell = dispatch_class_shell as *const () as usize;
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
 
     // Baseline: every name ctypes has ever exposed here gets a shell first,
     // so nothing observable via `hasattr`/presence fixtures disappears.
     // Real implementations below overwrite the ones this issue is scoped to.
+    let mut baseline_addrs: Vec<usize> = Vec::new();
     for name in [
-        "CDLL", "PyDLL", "WinDLL", "OleDLL", "LibraryLoader", "Structure", "Union", "Array",
-        "BigEndianStructure", "LittleEndianStructure", "c_byte", "c_ubyte", "c_char", "c_char_p",
-        "c_double", "c_longdouble", "c_float", "c_int", "c_uint", "c_int8", "c_uint8", "c_int16",
-        "c_uint16", "c_int32", "c_uint32", "c_int64", "c_uint64", "c_long", "c_ulong",
-        "c_longlong", "c_ulonglong", "c_short", "c_ushort", "c_size_t", "c_ssize_t", "c_void_p",
-        "c_wchar", "c_wchar_p", "c_bool", "POINTER", "pointer", "byref", "cast", "addressof",
-        "alignment", "sizeof", "string_at", "wstring_at", "memmove", "memset", "CFUNCTYPE",
-        "WINFUNCTYPE", "PYFUNCTYPE", "HRESULT", "ArgumentError", "Error", "ARRAY",
-        "BigEndianUnion", "LittleEndianUnion", "SetPointerType", "c_buffer", "c_time_t",
-        "c_voidp", "create_string_buffer", "create_unicode_buffer", "py_object", "resize",
+        "CDLL",
+        "PyDLL",
+        "WinDLL",
+        "OleDLL",
+        "LibraryLoader",
+        "Structure",
+        "Union",
+        "Array",
+        "BigEndianStructure",
+        "LittleEndianStructure",
+        "c_byte",
+        "c_ubyte",
+        "c_char",
+        "c_char_p",
+        "c_double",
+        "c_longdouble",
+        "c_float",
+        "c_int",
+        "c_uint",
+        "c_int8",
+        "c_uint8",
+        "c_int16",
+        "c_uint16",
+        "c_int32",
+        "c_uint32",
+        "c_int64",
+        "c_uint64",
+        "c_long",
+        "c_ulong",
+        "c_longlong",
+        "c_ulonglong",
+        "c_short",
+        "c_ushort",
+        "c_size_t",
+        "c_ssize_t",
+        "c_void_p",
+        "c_wchar",
+        "c_wchar_p",
+        "c_bool",
+        "POINTER",
+        "pointer",
+        "byref",
+        "cast",
+        "addressof",
+        "alignment",
+        "sizeof",
+        "string_at",
+        "wstring_at",
+        "memmove",
+        "memset",
+        "CFUNCTYPE",
+        "WINFUNCTYPE",
+        "PYFUNCTYPE",
+        "HRESULT",
+        "ArgumentError",
+        "Error",
+        "ARRAY",
+        "BigEndianUnion",
+        "LittleEndianUnion",
+        "SetPointerType",
+        "c_buffer",
+        "c_time_t",
+        "c_voidp",
+        "create_string_buffer",
+        "create_unicode_buffer",
+        "py_object",
+        "resize",
         "pythonapi",
     ] {
-        attrs.insert(name.to_string(), MbValue::from_func(shell));
+        let f = shell_addr(next_shell_slot());
+        baseline_addrs.push(f);
+        attrs.insert(name.to_string(), MbValue::from_func(f));
     }
-    attrs.insert("cdll".into(), MbValue::from_func(dispatch_class_shell as usize));
-    attrs.insert("windll".into(), MbValue::from_func(dispatch_class_shell as usize));
-    attrs.insert("oledll".into(), MbValue::from_func(dispatch_class_shell as usize));
-    attrs.insert("pydll".into(), MbValue::from_func(dispatch_class_shell as usize));
-    attrs.insert("get_errno".into(), MbValue::from_func(dispatch_int_zero as usize));
-    attrs.insert("set_errno".into(), MbValue::from_func(dispatch_int_zero as usize));
-    attrs.insert("get_last_error".into(), MbValue::from_func(dispatch_int_zero as usize));
-    attrs.insert("set_last_error".into(), MbValue::from_func(dispatch_int_zero as usize));
-    attrs.insert("FormatError".into(), MbValue::from_func(dispatch_empty_str as usize));
-    attrs.insert("WinError".into(), MbValue::from_func(dispatch_class_shell as usize));
-    attrs.insert("DllCanUnloadNow".into(), MbValue::from_func(dispatch_int_zero as usize));
-    attrs.insert("DllGetClassObject".into(), MbValue::from_func(dispatch_int_zero as usize));
-    attrs.insert("GetLastError".into(), MbValue::from_func(dispatch_int_zero as usize));
+    let cdll_addr = shell_addr(next_shell_slot());
+    let windll_addr = shell_addr(next_shell_slot());
+    let oledll_addr = shell_addr(next_shell_slot());
+    let pydll_addr = shell_addr(next_shell_slot());
+    attrs.insert("cdll".into(), MbValue::from_func(cdll_addr));
+    attrs.insert("windll".into(), MbValue::from_func(windll_addr));
+    attrs.insert("oledll".into(), MbValue::from_func(oledll_addr));
+    attrs.insert("pydll".into(), MbValue::from_func(pydll_addr));
+    attrs.insert(
+        "get_errno".into(),
+        MbValue::from_func(dispatch_int_zero as usize),
+    );
+    attrs.insert(
+        "set_errno".into(),
+        MbValue::from_func(dispatch_int_zero as usize),
+    );
+    attrs.insert(
+        "get_last_error".into(),
+        MbValue::from_func(dispatch_int_zero as usize),
+    );
+    attrs.insert(
+        "set_last_error".into(),
+        MbValue::from_func(dispatch_int_zero as usize),
+    );
+    attrs.insert(
+        "FormatError".into(),
+        MbValue::from_func(dispatch_empty_str as usize),
+    );
+    let win_error_addr = shell_addr(next_shell_slot());
+    attrs.insert("WinError".into(), MbValue::from_func(win_error_addr));
+    attrs.insert(
+        "DllCanUnloadNow".into(),
+        MbValue::from_func(dispatch_int_zero as usize),
+    );
+    attrs.insert(
+        "DllGetClassObject".into(),
+        MbValue::from_func(dispatch_int_zero as usize),
+    );
+    attrs.insert(
+        "GetLastError".into(),
+        MbValue::from_func(dispatch_int_zero as usize),
+    );
+    register_addrs(&baseline_addrs);
     register_addrs(&[
-        shell,
+        cdll_addr,
+        windll_addr,
+        oledll_addr,
+        pydll_addr,
+        win_error_addr,
         dispatch_int_zero as usize,
         dispatch_empty_str as usize,
     ]);
@@ -1209,12 +1413,16 @@ pub fn register() {
     attrs.insert("SIZEOF_TIME_T".into(), MbValue::from_int(8));
 
     // ── Real substrate: CDLL/PyDLL construction ──
-    attrs.insert("CDLL".into(), MbValue::from_func(dispatch_cdll_new as usize));
-    attrs.insert("PyDLL".into(), MbValue::from_func(dispatch_cdll_new as usize));
+    attrs.insert(
+        "CDLL".into(),
+        MbValue::from_func(dispatch_cdll_new as usize),
+    );
+    attrs.insert(
+        "PyDLL".into(),
+        MbValue::from_func(dispatch_cdll_new as usize),
+    );
     register_addrs(&[dispatch_cdll_new as usize]);
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(dispatch_cdll_new as u64, "CDLL".to_string());
-    });
+    super::super::module::register_native_type_name(dispatch_cdll_new as u64, "CDLL".to_string());
 
     // ── Real substrate: scalar c_* constructors ──
     let scalar_ctors: [(&str, usize); 29] = [
@@ -1251,18 +1459,25 @@ pub fn register() {
     for (name, addr) in scalar_ctors {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
         register_addrs(&[addr]);
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(addr as u64, name.to_string());
-        });
+        super::super::module::register_native_type_name(addr as u64, name.to_string());
     }
     // c_voidp is a spelling alias for c_void_p.
     attrs.insert("c_voidp".into(), MbValue::from_func(ctor_c_void_p as usize));
 
     // ── Real substrate: POINTER/pointer/byref/sizeof ──
-    attrs.insert("POINTER".into(), MbValue::from_func(dispatch_pointer_type as usize));
-    attrs.insert("pointer".into(), MbValue::from_func(dispatch_pointer as usize));
+    attrs.insert(
+        "POINTER".into(),
+        MbValue::from_func(dispatch_pointer_type as usize),
+    );
+    attrs.insert(
+        "pointer".into(),
+        MbValue::from_func(dispatch_pointer as usize),
+    );
     attrs.insert("byref".into(), MbValue::from_func(dispatch_byref as usize));
-    attrs.insert("sizeof".into(), MbValue::from_func(dispatch_sizeof as usize));
+    attrs.insert(
+        "sizeof".into(),
+        MbValue::from_func(dispatch_sizeof as usize),
+    );
     register_addrs(&[
         dispatch_pointer_type as usize,
         dispatch_pointer as usize,
@@ -1271,7 +1486,10 @@ pub fn register() {
     ]);
 
     // ── ctypes.ArgumentError — unregistered type-object, see doc comment. ──
-    attrs.insert("ArgumentError".into(), make_ctypes_exception_type_object("ArgumentError"));
+    attrs.insert(
+        "ArgumentError".into(),
+        make_ctypes_exception_type_object("ArgumentError"),
+    );
 
     super::register_module("ctypes", attrs);
 
@@ -1299,7 +1517,10 @@ pub fn register() {
         make_ctypes_callable_shell(
             "Array",
             "_ctypes",
-            &[("__getitem__", array_getitem), ("__setitem__", array_setitem)],
+            &[
+                ("__getitem__", array_getitem),
+                ("__setitem__", array_setitem),
+            ],
         ),
     );
     ctypes_internal.insert(
@@ -1309,30 +1530,74 @@ pub fn register() {
     for name in ["Structure", "Union"] {
         ctypes_internal.insert(name.to_string(), make_type_obj(name, "_ctypes"));
     }
-    ctypes_internal.insert("POINTER".to_string(), MbValue::from_func(dispatch_pointer_type as usize));
-    ctypes_internal.insert("pointer".to_string(), MbValue::from_func(dispatch_pointer as usize));
+    ctypes_internal.insert(
+        "POINTER".to_string(),
+        MbValue::from_func(dispatch_pointer_type as usize),
+    );
+    ctypes_internal.insert(
+        "pointer".to_string(),
+        MbValue::from_func(dispatch_pointer as usize),
+    );
     ctypes_internal.insert("alignment".to_string(), MbValue::from_func(alignment));
     ctypes_internal.insert("buffer_info".to_string(), MbValue::from_func(buffer_info));
-    ctypes_internal.insert("sizeof".to_string(), MbValue::from_func(dispatch_sizeof as usize));
+    ctypes_internal.insert(
+        "sizeof".to_string(),
+        MbValue::from_func(dispatch_sizeof as usize),
+    );
     ctypes_internal.insert("Py_INCREF".to_string(), MbValue::from_func(py_incref));
     ctypes_internal.insert("Py_DECREF".to_string(), MbValue::from_func(py_decref));
     super::register_module("_ctypes", ctypes_internal);
 
     // ── ctypes.util / ctypes.wintypes — unchanged shells. ──
     let mut util_attrs = HashMap::new();
-    util_attrs.insert("find_library".to_string(), MbValue::from_func(dispatch_noop as usize));
-    util_attrs.insert("find_msvcrt".to_string(), MbValue::from_func(dispatch_noop as usize));
+    util_attrs.insert(
+        "find_library".to_string(),
+        MbValue::from_func(dispatch_noop as usize),
+    );
+    util_attrs.insert(
+        "find_msvcrt".to_string(),
+        MbValue::from_func(dispatch_noop as usize),
+    );
     register_addrs(&[dispatch_noop as usize]);
     super::register_module("ctypes.util", util_attrs);
 
     let mut wintypes_attrs = HashMap::new();
+    let mut wintypes_addrs: Vec<usize> = Vec::new();
     for cn in [
-        "BOOL", "BYTE", "WORD", "DWORD", "UINT", "INT", "FLOAT", "LPVOID", "LPCVOID", "HANDLE",
-        "HWND", "HMODULE", "HINSTANCE", "HKEY", "HMENU", "HRESULT", "LPCWSTR", "LPWSTR", "LPCSTR",
-        "LPSTR", "LARGE_INTEGER", "ULARGE_INTEGER", "SIZE", "POINT", "RECT", "FILETIME",
-        "SYSTEMTIME", "MSG", "BSTR",
+        "BOOL",
+        "BYTE",
+        "WORD",
+        "DWORD",
+        "UINT",
+        "INT",
+        "FLOAT",
+        "LPVOID",
+        "LPCVOID",
+        "HANDLE",
+        "HWND",
+        "HMODULE",
+        "HINSTANCE",
+        "HKEY",
+        "HMENU",
+        "HRESULT",
+        "LPCWSTR",
+        "LPWSTR",
+        "LPCSTR",
+        "LPSTR",
+        "LARGE_INTEGER",
+        "ULARGE_INTEGER",
+        "SIZE",
+        "POINT",
+        "RECT",
+        "FILETIME",
+        "SYSTEMTIME",
+        "MSG",
+        "BSTR",
     ] {
-        wintypes_attrs.insert(cn.to_string(), MbValue::from_func(shell));
+        let f = shell_addr(next_shell_slot());
+        wintypes_addrs.push(f);
+        wintypes_attrs.insert(cn.to_string(), MbValue::from_func(f));
     }
+    register_addrs(&wintypes_addrs);
     super::register_module("ctypes.wintypes", wintypes_attrs);
 }

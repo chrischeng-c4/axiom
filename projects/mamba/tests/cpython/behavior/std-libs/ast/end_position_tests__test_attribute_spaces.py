@@ -9,12 +9,11 @@
 # case = "end_position_tests__test_attribute_spaces"
 # subject = "cpython.test_ast.EndPositionTests.test_attribute_spaces"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
 import builtins
 import dis

@@ -863,6 +863,11 @@ impl Encoder {
             self.failed = true;
             return Err(());
         }
+        if class_name == "memoryview" {
+            raise_type_error("cannot pickle memoryview objects");
+            self.failed = true;
+            return Err(());
+        }
 
         if super::enum_class::is_enum_member(val) {
             if let Some(raw) = super::enum_class::int_member_value(val) {
@@ -1453,11 +1458,7 @@ impl<'a> Decoder<'a> {
     fn find_class(&mut self, module: &str, name: &str) -> MbValue {
         if let Some(unpickler) = self.unpickler {
             let args = MbValue::from_ptr(MbObject::new_list(vec![new_str(module), new_str(name)]));
-            let value = super::super::class::mb_call_method(
-                unpickler,
-                new_str("find_class"),
-                args,
-            );
+            let value = super::super::class::mb_call_method(unpickler, new_str("find_class"), args);
             if super::super::exception::current_exception_type().is_some() {
                 self.error = true;
                 return MbValue::none();

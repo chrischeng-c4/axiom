@@ -278,23 +278,25 @@ pub(crate) fn stop_iteration_exception_value() -> MbValue {
 }
 
 fn resume_await_iterator(iterator: MbValue, value: MbValue) -> AwaitResume {
-    if super::async_rt::is_known_coroutine(iterator) {
-        let yielded = super::async_rt::mb_coroutine_send(iterator, value);
-        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
-            let result = stop_iteration_exception_value();
-            super::exception::mb_clear_exception();
-            return AwaitResume::Complete(result);
-        }
-        return AwaitResume::Yield(yielded);
+    if let Some(polled) = poll_asyncio_future(iterator) {
+        return match polled {
+            FuturePoll::Pending => AwaitResume::Yield(iterator),
+            FuturePoll::Ready(result) => AwaitResume::Complete(result),
+        };
     }
-    if let Some(coro) = super::async_rt::coroutine_wrapper_target(iterator) {
-        let yielded = super::async_rt::mb_coroutine_send(coro, value);
-        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
-            let result = stop_iteration_exception_value();
-            super::exception::mb_clear_exception();
-            return AwaitResume::Complete(result);
+    if let Some(coro) = super::async_rt::await_target_coroutine(iterator) {
+        match super::async_rt::mb_coroutine_send_for_await(coro, value) {
+            super::async_rt::CoroutineAwaitPoll::Yielded(yielded) => {
+                return AwaitResume::Yield(yielded);
+            }
+            super::async_rt::CoroutineAwaitPoll::Complete(result) => {
+                super::async_rt::tombstone_completed_coroutine(coro);
+                return AwaitResume::Complete(result);
+            }
+            super::async_rt::CoroutineAwaitPoll::Error => {
+                return AwaitResume::Yield(MbValue::none());
+            }
         }
-        return AwaitResume::Yield(yielded);
     }
     if super::generator::is_known_generator(iterator) {
         let yielded = super::generator::mb_generator_send(iterator, value);
@@ -313,23 +315,16 @@ fn resume_await_iterator(iterator: MbValue, value: MbValue) -> AwaitResume {
 }
 
 fn throw_await_iterator(iterator: MbValue, exc_type: MbValue, exc_msg: MbValue) -> AwaitResume {
-    if super::async_rt::is_known_coroutine(iterator) {
-        let yielded = super::async_rt::mb_coroutine_throw(iterator, exc_type, exc_msg);
-        if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
-            let result = stop_iteration_exception_value();
-            super::exception::mb_clear_exception();
-            return AwaitResume::Complete(result);
-        }
-        if super::exception::current_exception_type().is_some() {
-            return AwaitResume::Complete(MbValue::none());
-        }
-        return AwaitResume::Yield(yielded);
+    if poll_asyncio_future(iterator).is_some() {
+        super::exception::mb_raise(exc_type, exc_msg);
+        return AwaitResume::Complete(MbValue::none());
     }
-    if let Some(coro) = super::async_rt::coroutine_wrapper_target(iterator) {
+    if let Some(coro) = super::async_rt::await_target_coroutine(iterator) {
         let yielded = super::async_rt::mb_coroutine_throw(coro, exc_type, exc_msg);
         if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
             let result = stop_iteration_exception_value();
             super::exception::mb_clear_exception();
+            super::async_rt::tombstone_completed_coroutine(coro);
             return AwaitResume::Complete(result);
         }
         if super::exception::current_exception_type().is_some() {
@@ -370,6 +365,7 @@ pub(crate) fn mb_coroutine_resume_pending_await(
                     super::rc::release_if_ptr(pending);
                 }
             }
+            coro.suspend_requested = false;
             coro.awaiting = false;
         }
     }
@@ -395,6 +391,7 @@ pub(crate) fn mb_coroutine_throw_pending_await(
                     super::rc::release_if_ptr(pending);
                 }
             }
+            coro.suspend_requested = false;
             coro.awaiting = false;
         }
     }
@@ -482,10 +479,24 @@ impl EventLoop {
                 continue;
             }
 
-            // Step the coroutine
-            mb_coroutine_step(MbValue::from_int(coro_id as i64));
+            let coro_handle = MbValue::from_int(coro_id as i64);
+            let has_pending_await = COROUTINES
+                .read()
+                .unwrap()
+                .get(&coro_id)
+                .and_then(|coro| coro.pending_await)
+                .is_some();
 
-            if super::exception::current_exception_type().is_some() {
+            if has_pending_await {
+                super::async_rt::mb_coroutine_send(coro_handle, MbValue::none());
+            } else {
+                mb_coroutine_step(coro_handle);
+            }
+
+            let current_exc = super::exception::current_exception_type();
+            if current_exc.as_deref() == Some("StopIteration") {
+                super::exception::mb_clear_exception();
+            } else if current_exc.is_some() {
                 if let Some(coro) = COROUTINES.write().unwrap().get_mut(&coro_id) {
                     coro.exhausted = true;
                 }
@@ -534,6 +545,22 @@ impl EventLoop {
                     .unwrap_or(false)
             })
         {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let all_pending_futures = !self.ready_queue.is_empty()
+            && self.ready_queue.iter().all(|tid| {
+                let tasks = TASKS.read().unwrap();
+                let Some(task) = tasks.get(tid) else {
+                    return false;
+                };
+                COROUTINES
+                    .read()
+                    .unwrap()
+                    .get(&task.coroutine_id)
+                    .and_then(|coro| coro.pending_await)
+                    .is_some_and(asyncio_future_is_pending)
+            });
+        if all_pending_futures {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
@@ -632,6 +659,15 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         // `None` to the caller.
         let known = COROUTINES.read().unwrap().contains_key(&(id as u64));
         if !known {
+            if super::async_rt::is_completed_coroutine(awaitable) {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "cannot reuse already awaited coroutine".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
             let method = lookup_dunder(awaitable, "__await__");
             if !method.is_none() {
                 return await_via_dunder(awaitable, method);
@@ -679,6 +715,7 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             unsafe {
                 super::rc::retain_if_ptr(result);
             }
+            super::async_rt::tombstone_completed_coroutine(awaitable);
             return result;
         }
         if super::async_rt::has_current_coroutine() {
@@ -747,6 +784,7 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         unsafe {
             super::rc::retain_if_ptr(result);
         }
+        super::async_rt::tombstone_completed_coroutine(awaitable);
         result
     } else if let Some(result) = await_asyncio_task(awaitable) {
         unsafe {
@@ -921,7 +959,35 @@ fn await_asyncio_task(awaitable: MbValue) -> Option<MbValue> {
 }
 
 fn await_asyncio_future(awaitable: MbValue) -> Option<MbValue> {
-    let (class_name, state, result) = awaitable.as_ptr().and_then(|ptr| unsafe {
+    match poll_asyncio_future(awaitable)? {
+        FuturePoll::Pending => {
+            if super::async_rt::has_current_coroutine() {
+                mb_coroutine_suspend_current(awaitable);
+                Some(awaitable)
+            } else {
+                let max_iterations = 100_000;
+                for _ in 0..max_iterations {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    match poll_asyncio_future(awaitable) {
+                        Some(FuturePoll::Pending) => continue,
+                        Some(FuturePoll::Ready(result)) => return Some(result),
+                        None => return None,
+                    }
+                }
+                Some(awaitable)
+            }
+        }
+        FuturePoll::Ready(result) => Some(result),
+    }
+}
+
+enum FuturePoll {
+    Pending,
+    Ready(MbValue),
+}
+
+fn poll_asyncio_future(awaitable: MbValue) -> Option<FuturePoll> {
+    let (class_name, state, result, exception) = awaitable.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance {
             ref class_name,
             ref fields,
@@ -940,7 +1006,11 @@ fn await_asyncio_future(awaitable: MbValue) -> Option<MbValue> {
                 })
                 .unwrap_or_default();
             let result = fields.get("_result").copied().unwrap_or_else(MbValue::none);
-            Some((class_name.clone(), state, result))
+            let exception = fields
+                .get("_exception")
+                .copied()
+                .unwrap_or_else(MbValue::none);
+            Some((class_name.clone(), state, result, exception))
         } else {
             None
         }
@@ -951,10 +1021,64 @@ fn await_asyncio_future(awaitable: MbValue) -> Option<MbValue> {
     match state.as_str() {
         "CANCELLED" => {
             raise_cancelled_error();
-            Some(MbValue::none())
+            Some(FuturePoll::Ready(MbValue::none()))
         }
-        "FINISHED" => Some(result),
-        _ => Some(awaitable),
+        "FINISHED" => {
+            if !exception.is_none() {
+                super::class::mb_raise_instance(exception);
+                Some(FuturePoll::Ready(MbValue::none()))
+            } else {
+                Some(FuturePoll::Ready(result))
+            }
+        }
+        _ => Some(FuturePoll::Pending),
+    }
+}
+
+fn asyncio_future_is_pending(awaitable: MbValue) -> bool {
+    matches!(
+        poll_asyncio_future_state(awaitable),
+        Some(FutureState::Pending)
+    )
+}
+
+enum FutureState {
+    Pending,
+    Finished,
+    Cancelled,
+}
+
+fn poll_asyncio_future_state(awaitable: MbValue) -> Option<FutureState> {
+    let (class_name, state) = awaitable.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            let fields = fields.read().unwrap();
+            let state = fields
+                .get("_state")
+                .and_then(|v| v.as_ptr())
+                .map(|p| {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        s.clone()
+                    } else {
+                        String::new()
+                    }
+                })
+                .unwrap_or_default();
+            Some((class_name.clone(), state))
+        } else {
+            None
+        }
+    })?;
+    if class_name != "asyncio.Future" {
+        return None;
+    }
+    match state.as_str() {
+        "PENDING" => Some(FutureState::Pending),
+        "CANCELLED" => Some(FutureState::Cancelled),
+        _ => Some(FutureState::Finished),
     }
 }
 

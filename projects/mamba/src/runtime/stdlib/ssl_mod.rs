@@ -183,8 +183,78 @@ unsafe extern "C" fn dispatch_rand_bytes(a: *const MbValue, n: usize) -> MbValue
     MbValue::from_ptr(MbObject::new_bytes(bytes))
 }
 
-unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+// #1040 follow-up: this file's `dispatch_class_shell` used to be handed out
+// as the SAME function address to every class-shell name registered here,
+// across every `register_*` call in this file. Because FUNC_NAMES/
+// NATIVE_FUNC_ADDRS are address-keyed, whichever name registered last (in
+// HashMap iteration order, which is nondeterministic per process) won
+// `X.__name__` for every other class sharing that address -- the same
+// #962/#954 symptom. The fix: give every class-shell name a genuinely
+// distinct function pointer, drawn from a pool of `SHELL_POOL_SIZE`
+// individually fold-immune trivial stub functions, indexed via a
+// thread-local "next free slot" counter (`next_shell_slot`) so every call
+// site simply draws a fresh slot per name -- no manual per-call `pool_start`
+// bookkeeping required, since `register()` runs registration sequentially
+// on a single thread at module-init time.
+//
+// IMPORTANT: this pool does NOT use `icf_guard!()` directly. That macro
+// derives its fingerprint from `module_path!()`/`line!()`/`column!()`, which
+// are resolved at the span of the *macro definition's* literal tokens -- for
+// a single `macro_rules!` invocation that expands a `$(...)* ` repetition
+// into N functions, every repetition shares that ONE span, so
+// `line!()`/`column!()` come back IDENTICAL for all N and `icf_guard!()`
+// silently fails to discriminate them. LLVM then folds all "distinct"
+// shells back onto a single address, reproducing the exact bug one level
+// down. The fix here instead fingerprints on `stringify!($name)`, which DOES
+// vary per repetition (driven by the captured `$name` token's text, not by
+// span), giving every pool slot a genuinely distinct compiled body.
+const SHELL_POOL_SIZE: usize = 12;
+type ShellFn = unsafe extern "C" fn(*const MbValue, usize) -> MbValue;
+
+macro_rules! def_shell_pool {
+    ($($name:ident),* $(,)?) => {
+        $(
+            unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue {
+                ::std::hint::black_box(crate::runtime::module::icf_fingerprint(concat!(
+                    module_path!(),
+                    "::",
+                    stringify!($name)
+                )));
+                MbValue::from_ptr(MbObject::new_dict())
+            }
+        )*
+        const SHELL_POOL: [ShellFn; SHELL_POOL_SIZE] = [$($name),*];
+    };
+}
+def_shell_pool!(
+    shell_00, shell_01, shell_02, shell_03, shell_04, shell_05, shell_06, shell_07, shell_08,
+    shell_09, shell_10, shell_11,
+);
+
+/// Pool slot at `idx` as a raw function-pointer address.
+fn shell_addr(idx: usize) -> usize {
+    SHELL_POOL[idx] as usize
+}
+
+thread_local! {
+    static NEXT_SHELL_SLOT: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+/// Draw the next unused pool slot index. `register()` runs sequentially on
+/// a single thread at module-init time, so a simple monotonic counter gives
+/// every class-shell name a fresh, non-overlapping slot with no manual
+/// per-call range bookkeeping.
+fn next_shell_slot() -> usize {
+    NEXT_SHELL_SLOT.with(|c| {
+        let v = c.get();
+        assert!(
+            v < SHELL_POOL_SIZE,
+            "shell pool exhausted (SHELL_POOL_SIZE={}); bump it",
+            SHELL_POOL_SIZE
+        );
+        c.set(v + 1);
+        v
+    })
 }
 
 // ── SSLContext as a real registered class ───────────────────────────────────
@@ -370,7 +440,11 @@ fn memory_bio_eof_written(inst: MbValue) -> bool {
 
 fn memory_bio_set_state(inst: MbValue, data: Vec<u8>, eof_written: bool) {
     let pending = data.len() as i64;
-    set_field(inst, "_buffer", MbValue::from_ptr(MbObject::new_bytes(data)));
+    set_field(
+        inst,
+        "_buffer",
+        MbValue::from_ptr(MbObject::new_bytes(data)),
+    );
     set_field(inst, "_eof_written", MbValue::from_bool(eof_written));
     set_field(inst, "pending", MbValue::from_int(pending));
     set_field(inst, "eof", MbValue::from_bool(eof_written && pending == 0));
@@ -383,7 +457,9 @@ fn is_non_contiguous_memoryview(v: MbValue) -> bool {
     unsafe {
         if let ObjData::Instance { class_name, fields } = &(*ptr).data {
             if class_name == "memoryview" {
-                return fields.read().unwrap()
+                return fields
+                    .read()
+                    .unwrap()
                     .get("_contiguous")
                     .and_then(|flag| flag.as_bool())
                     == Some(false);
@@ -404,12 +480,18 @@ unsafe extern "C" fn memory_bio_init(self_v: MbValue, args: MbValue) -> MbValue 
 unsafe extern "C" fn memory_bio_write(self_v: MbValue, args: MbValue) -> MbValue {
     let data_arg = first_arg(args);
     if is_non_contiguous_memoryview(data_arg) {
-        return raise_err("BufferError", "memoryview: underlying buffer is not contiguous");
+        return raise_err(
+            "BufferError",
+            "memoryview: underlying buffer is not contiguous",
+        );
     }
     let Some(bytes) = super::super::builtins::try_bytes_like(data_arg) else {
         return raise_err(
             "TypeError",
-            &format!("a bytes-like object is required, not '{}'", py_type_name(data_arg)),
+            &format!(
+                "a bytes-like object is required, not '{}'",
+                py_type_name(data_arg)
+            ),
         );
     };
     let mut buf = memory_bio_buffer(self_v);
@@ -430,7 +512,10 @@ unsafe extern "C" fn memory_bio_read(self_v: MbValue, args: MbValue) -> MbValue 
             None => {
                 return raise_err(
                     "TypeError",
-                    &format!("'{}' object cannot be interpreted as an integer", py_type_name(size_arg)),
+                    &format!(
+                        "'{}' object cannot be interpreted as an integer",
+                        py_type_name(size_arg)
+                    ),
                 );
             }
         }
@@ -996,7 +1081,8 @@ unsafe extern "C" fn ctx_wrap_socket(self_v: MbValue, args: MbValue) -> MbValue 
         ],
     );
     let sock = pos.first().copied().unwrap_or_else(MbValue::none);
-    let is_instance = sock.as_ptr()
+    let is_instance = sock
+        .as_ptr()
         .map(|p| matches!((*p).data, ObjData::Instance { .. }))
         .unwrap_or(false);
     if !is_instance {
@@ -1007,12 +1093,18 @@ unsafe extern "C" fn ctx_wrap_socket(self_v: MbValue, args: MbValue) -> MbValue 
     }
     let server_side = kwarg(kwargs, "server_side")
         .or_else(|| pos.get(1).copied())
-        .map(|v| super::super::builtins::mb_bool(v).as_bool().unwrap_or(false))
+        .map(|v| {
+            super::super::builtins::mb_bool(v)
+                .as_bool()
+                .unwrap_or(false)
+        })
         .unwrap_or(false);
-    let server_hostname = kwarg(kwargs, "server_hostname")
-        .or_else(|| pos.get(4).copied());
+    let server_hostname = kwarg(kwargs, "server_hostname").or_else(|| pos.get(4).copied());
     if server_side && server_hostname.map_or(false, |v| !v.is_none()) {
-        return raise_err("ValueError", "server_hostname can only be specified in client mode");
+        return raise_err(
+            "ValueError",
+            "server_hostname can only be specified in client mode",
+        );
     }
     if let Some(v) = server_hostname {
         if let Some(err) = validate_server_hostname(v) {
@@ -1035,12 +1127,8 @@ unsafe extern "C" fn ctx_wrap_socket(self_v: MbValue, args: MbValue) -> MbValue 
 }
 
 unsafe extern "C" fn ctx_wrap_bio(self_v: MbValue, args: MbValue) -> MbValue {
-    let (pos, kwargs) = split_method_kwargs(
-        args,
-        &["server_side", "server_hostname", "session"],
-    );
-    let server_hostname = kwarg(kwargs, "server_hostname")
-        .or_else(|| pos.get(3).copied());
+    let (pos, kwargs) = split_method_kwargs(args, &["server_side", "server_hostname", "session"]);
+    let server_hostname = kwarg(kwargs, "server_hostname").or_else(|| pos.get(3).copied());
     if let Some(v) = server_hostname {
         if let Some(err) = validate_server_hostname(v) {
             return err;
@@ -1126,10 +1214,13 @@ fn is_allowed_kwargs_dict(v: MbValue, allowed: &[&str]) -> bool {
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
-            return !map.is_empty() && map.keys().all(|k| matches!(
-                k,
-                DictKey::Str(s) if allowed.contains(&s.as_str())
-            ));
+            return !map.is_empty()
+                && map.keys().all(|k| {
+                    matches!(
+                        k,
+                        DictKey::Str(s) if allowed.contains(&s.as_str())
+                    )
+                });
         }
     }
     false
@@ -1151,7 +1242,11 @@ fn kwarg(kwargs: Option<MbValue>, key: &str) -> Option<MbValue> {
     let ptr = kwargs?.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock.read().unwrap().get(&DictKey::Str(key.to_string())).copied();
+            return lock
+                .read()
+                .unwrap()
+                .get(&DictKey::Str(key.to_string()))
+                .copied();
         }
     }
     None
@@ -1180,7 +1275,10 @@ fn validate_server_hostname(v: MbValue) -> Option<MbValue> {
         return Some(raise_err("TypeError", "server_hostname cannot contain NUL"));
     }
     if s.is_empty() || s.starts_with('.') {
-        return Some(raise_err("ValueError", "server_hostname cannot be empty or start with a dot"));
+        return Some(raise_err(
+            "ValueError",
+            "server_hostname cannot be empty or start with a dot",
+        ));
     }
     None
 }
@@ -1368,7 +1466,10 @@ fn register_ssl_classes() {
             ("set_ecdh_curve", ctx_set_ecdh_curve as usize),
             ("wrap_socket", ctx_wrap_socket as usize),
             ("wrap_bio", ctx_wrap_bio as usize),
-            ("set_servername_callback", ctx_set_servername_callback as usize),
+            (
+                "set_servername_callback",
+                ctx_set_servername_callback as usize,
+            ),
         ];
         for (m, addr) in typed {
             super::super::module::register_variadic_func(*addr as u64);
@@ -1441,7 +1542,8 @@ pub fn register() {
     // Protocol constants (CPython 3.12 ssl.h verbatim). These are
     // `_SSLMethod` IntEnum members, not raw ints; aliases share the canonical
     // member for their value (PROTOCOL_SSLv23 aliases PROTOCOL_TLS).
-    let ssl_method_values = super::enum_class::register_int_enum("_SSLMethod", ssl_method_members());
+    let ssl_method_values =
+        super::enum_class::register_int_enum("_SSLMethod", ssl_method_members());
     for ((name, _), member) in ssl_method_members().iter().zip(ssl_method_values.iter()) {
         attrs.insert((*name).into(), *member);
     }
@@ -1758,7 +1860,7 @@ pub fn register() {
             "create_default_context",
             dispatch_create_default_context as *const () as usize,
         ),
-        ("SSLSession", dispatch_class_shell as *const () as usize),
+        ("SSLSession", shell_addr(next_shell_slot())),
         ("wrap_socket", dispatch_wrap_socket as *const () as usize),
         (
             "match_hostname",
@@ -1792,20 +1894,14 @@ pub fn register() {
         ),
         ("RAND_add", dispatch_rand_status as *const () as usize),
         // Enum classes (CPython EnumType) — callable stubs so callable()/hasattr pass.
-        (
-            "AlertDescription",
-            dispatch_class_shell as *const () as usize,
-        ),
-        ("Options", dispatch_class_shell as *const () as usize),
-        ("SSLErrorNumber", dispatch_class_shell as *const () as usize),
-        ("VerifyFlags", dispatch_class_shell as *const () as usize),
-        ("VerifyMode", dispatch_class_shell as *const () as usize),
+        ("AlertDescription", shell_addr(next_shell_slot())),
+        ("Options", shell_addr(next_shell_slot())),
+        ("SSLErrorNumber", shell_addr(next_shell_slot())),
+        ("VerifyFlags", shell_addr(next_shell_slot())),
+        ("VerifyMode", shell_addr(next_shell_slot())),
         // Additional classes/types.
-        (
-            "DefaultVerifyPaths",
-            dispatch_class_shell as *const () as usize,
-        ),
-        ("socket", dispatch_class_shell as *const () as usize),
+        ("DefaultVerifyPaths", shell_addr(next_shell_slot())),
+        ("socket", shell_addr(next_shell_slot())),
         // Module-level functions.
         (
             "create_connection",
@@ -1815,7 +1911,7 @@ pub fn register() {
             "get_protocol_name",
             dispatch_der_to_pem as *const () as usize,
         ),
-        ("namedtuple", dispatch_class_shell as *const () as usize),
+        ("namedtuple", shell_addr(next_shell_slot())),
     ];
     for (name, addr) in dispatchers {
         attrs.insert((*name).into(), MbValue::from_func(*addr));

@@ -9,12 +9,11 @@
 # case = "test_traceback_exception__test_from_exception"
 # subject = "cpython.test_traceback.TestTracebackException.test_from_exception"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import unittest, io
 from test import test_traceback
 _suite = unittest.defaultTestLoader.loadTestsFromName("TestTracebackException.test_from_exception", test_traceback)

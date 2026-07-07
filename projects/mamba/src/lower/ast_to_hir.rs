@@ -645,15 +645,21 @@ fn ast_container_is_all_float(
 /// call never trips it. Checked in CPython's surfacing order so a single-fault
 /// call yields the right message: duplicate value, positional-only-as-keyword,
 /// Recursively collect names `f` that have `f.__defaults__` or
-/// `f.__kwdefaults__` assigned anywhere in the statement tree. Such a runtime
-/// mutation changes the effective default arguments, so static arg-count
-/// validation must not fire for those functions.
+/// `f.__kwdefaults__` assigned OR deleted (`del f.__defaults__`) anywhere in
+/// the statement tree. Such a runtime mutation changes the effective default
+/// arguments, so static arg-count validation must not fire for those
+/// functions.
 fn collect_mutated_defaults(
     stmts: &[Spanned<ast::Stmt>],
     out: &mut std::collections::HashSet<String>,
 ) {
     for s in stmts {
-        if let ast::Stmt::Assign { target, .. } = &s.node {
+        let attr_target = match &s.node {
+            ast::Stmt::Assign { target, .. } => Some(target),
+            ast::Stmt::Del(target) => Some(target),
+            _ => None,
+        };
+        if let Some(target) = attr_target {
             if let ast::Expr::Attr { object, attr } = &target.node {
                 if (attr == "__defaults__" || attr == "__kwdefaults__")
                     && matches!(&object.node, ast::Expr::Ident(_))
@@ -880,10 +886,34 @@ fn collect_local_float_env(
                 if let ast::Expr::Ident(name) = &target.node {
                     let h = ast_expr_float_hint(&value.node, env, func_ret_float);
                     match env.get(name).copied() {
-                        // Promote toward float; once float, a later int/unknown
-                        // assignment makes it unknown (could be either at return).
+                        // Mutually-exclusive if/else branches both assigning
+                        // the same name are threaded through this same `env`
+                        // sequentially (not cloned+merged), so a clash here is
+                        // most often TWO BRANCHES of one assignment (e.g.
+                        // colorsys's `if l<=0.5: m2=... else: m2=...`), not a
+                        // true sequential retype. Demoting straight to
+                        // `Unknown` on any clash (old behavior) then defaults
+                        // the raw-int convention downstream (#977) even when
+                        // one branch is provably `Float` — a real float value
+                        // from that branch then has its bits reinterpreted as
+                        // an int the next time this local is used (e.g. as a
+                        // callee argument). Widen to `Boxed` instead whenever
+                        // either side is Float/Boxed, matching the same
+                        // safe-default merge `collect_call_arg_hints` already
+                        // uses for clashing call-site hints (#953); only a
+                        // genuinely non-float clash (Int vs Unknown) falls
+                        // back to `Unknown`.
                         Some(prev) if prev != h => {
-                            env.insert(name.clone(), FloatHint::Unknown);
+                            let merged = if prev == FloatHint::Boxed
+                                || h == FloatHint::Boxed
+                                || prev == FloatHint::Float
+                                || h == FloatHint::Float
+                            {
+                                FloatHint::Boxed
+                            } else {
+                                FloatHint::Unknown
+                            };
+                            env.insert(name.clone(), merged);
                         }
                         _ => {
                             env.insert(name.clone(), h);
@@ -1077,7 +1107,19 @@ fn collect_call_arg_hints(
                     }
                 }
                 ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. } => {
-                    walk_stmts(body, env, func_ret, out, seen);
+                    // #977: a nested call site's args are often locals
+                    // assigned earlier in THIS function's own body (e.g.
+                    // `m1 = 2.0*l - m2; ...; _v(m1, m2, ...)`), not module
+                    // globals. Walking with the bare outer `env` (module
+                    // globals only) sees every such local as Unknown, which
+                    // demotes/loses the callee's per-position Float hint —
+                    // the callee param then keeps the raw-int default and a
+                    // real float argument's IEEE-754 bits get reinterpreted
+                    // as an int at the call. Layer in this function's own
+                    // locally-assigned float hints before walking its body.
+                    let mut local_env = env.clone();
+                    collect_local_float_env(body, &mut local_env, func_ret);
+                    walk_stmts(body, &local_env, func_ret, out, seen);
                 }
                 // #948: a call site whose ONLY appearance in the module is
                 // inside a `try`/`except`/`finally` or `with` body was
@@ -1916,17 +1958,16 @@ fn expr_collect_value_compared_params(
             }
         }
     };
-    let mark_order_pair =
-        |lhs: &Spanned<ast::Expr>,
-         rhs: &Spanned<ast::Expr>,
-         out: &mut std::collections::HashSet<String>| {
-            if !is_numeric_literal_expr(rhs) {
-                mark(lhs, out);
-            }
-            if !is_numeric_literal_expr(lhs) {
-                mark(rhs, out);
-            }
-        };
+    let mark_order_pair = |lhs: &Spanned<ast::Expr>,
+                           rhs: &Spanned<ast::Expr>,
+                           out: &mut std::collections::HashSet<String>| {
+        if !is_numeric_literal_expr(rhs) {
+            mark(lhs, out);
+        }
+        if !is_numeric_literal_expr(lhs) {
+            mark(rhs, out);
+        }
+    };
     if let BinOp { op, lhs, rhs } = expr {
         match op {
             ast::BinOp::Eq | ast::BinOp::NotEq | ast::BinOp::In | ast::BinOp::NotIn => {
@@ -2057,6 +2098,347 @@ fn expr_collect_value_compared_params(
             for g in generators {
                 rec(&g.iter, out);
                 for c in &g.conditions {
+                    rec(c, out);
+                }
+            }
+        }
+        FString(parts) => {
+            fn walk_parts(
+                parts: &[ast::FStringPart],
+                out: &mut std::collections::HashSet<String>,
+                rec: &impl Fn(&Spanned<ast::Expr>, &mut std::collections::HashSet<String>),
+            ) {
+                for p in parts {
+                    if let ast::FStringPart::Expr(e, spec) = p {
+                        rec(e, out);
+                        if let Some(sp) = spec {
+                            walk_parts(sp, out, rec);
+                        }
+                    }
+                }
+            }
+            walk_parts(parts, out, &rec);
+        }
+        Yield(opt) => {
+            if let Some(e) = opt {
+                rec(e, out);
+            }
+        }
+        YieldFrom(e) | Await(e) | Starred(e) => rec(e, out),
+        Walrus { value, .. } => rec(value, out),
+        ChainedCompare { operands, .. } => {
+            for e in operands {
+                rec(e, out);
+            }
+        }
+        // Lambda has its own param scope; same-named params shadow ours.
+        Lambda { .. } => {}
+        _ => {}
+    }
+}
+
+/// Mark `e` as truthiness-tested if it's a bare Ident naming one of `params`,
+/// recursing into `and`/`or`/`not` operands (short-circuit evaluation
+/// truth-tests each one in turn) so a chain like `args and args[0] != '-'`
+/// still catches the leading bare `args`.
+fn mark_truthy_tested(
+    e: &Spanned<ast::Expr>,
+    params: &std::collections::HashSet<String>,
+    out: &mut std::collections::HashSet<String>,
+) {
+    match &e.node {
+        ast::Expr::Ident(n) => {
+            if params.contains(n) {
+                out.insert(n.clone());
+            }
+        }
+        ast::Expr::BinOp {
+            op: ast::BinOp::And | ast::BinOp::Or,
+            lhs,
+            rhs,
+        } => {
+            mark_truthy_tested(lhs, params, out);
+            mark_truthy_tested(rhs, params, out);
+        }
+        ast::Expr::UnaryOp {
+            op: ast::UnaryOp::Not,
+            operand,
+        } => {
+            mark_truthy_tested(operand, params, out);
+        }
+        _ => {}
+    }
+}
+
+/// Collect the names of params whose bare identifier is directly
+/// *truthiness-tested* — the condition of an `if`/`while`/ternary, an
+/// `assert` test, a comprehension `if` filter, a match guard, or an operand
+/// of `and`/`or`/`not` (#1015).
+///
+/// `lower_cond_as_bool` (hir_to_mir.rs) compiles an Int-typed condition as a
+/// raw machine `!= 0` compare — correct for a genuine int, but wrong for a
+/// boxed non-int value: a list reassigned via `args = args[1:]` or via
+/// `opts, args = do_shorts(...)` unpacking is still a non-null pointer once
+/// boxed, so `while args:` never observes the empty-list falsy case and the
+/// loop-condition re-check after the reassignment loops forever. Promote
+/// such params out of the raw-int default the same way
+/// `collect_value_compared_params` promotes value-compared ones.
+fn collect_truthy_tested_params(
+    body: &[Spanned<ast::Stmt>],
+    param_names: &std::collections::HashSet<String>,
+    out: &mut std::collections::HashSet<String>,
+) {
+    for stmt in body {
+        stmt_collect_truthy_tested_params(&stmt.node, param_names, out);
+    }
+}
+
+fn stmt_collect_truthy_tested_params(
+    stmt: &ast::Stmt,
+    params: &std::collections::HashSet<String>,
+    out: &mut std::collections::HashSet<String>,
+) {
+    use ast::Stmt::*;
+    let scan = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
+        expr_collect_truthy_tested_params(&e.node, params, out);
+    };
+    match stmt {
+        ExprStmt(e) | Del(e) => scan(e, out),
+        Return(opt) => {
+            if let Some(e) = opt {
+                scan(e, out);
+            }
+        }
+        VarDecl { value, .. } => scan(value, out),
+        Assign { target, value } => {
+            scan(target, out);
+            scan(value, out);
+        }
+        AugAssign { target, value, .. } => {
+            scan(target, out);
+            scan(value, out);
+        }
+        If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+        } => {
+            mark_truthy_tested(condition, params, out);
+            scan(condition, out);
+            collect_truthy_tested_params(body, params, out);
+            for (c, b) in elif_clauses {
+                mark_truthy_tested(c, params, out);
+                scan(c, out);
+                collect_truthy_tested_params(b, params, out);
+            }
+            if let Some(b) = else_body {
+                collect_truthy_tested_params(b, params, out);
+            }
+        }
+        While {
+            condition,
+            body,
+            else_body,
+        } => {
+            mark_truthy_tested(condition, params, out);
+            scan(condition, out);
+            collect_truthy_tested_params(body, params, out);
+            if let Some(b) = else_body {
+                collect_truthy_tested_params(b, params, out);
+            }
+        }
+        For {
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | AsyncFor {
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
+            scan(iter, out);
+            collect_truthy_tested_params(body, params, out);
+            if let Some(b) = else_body {
+                collect_truthy_tested_params(b, params, out);
+            }
+        }
+        Match { expr, arms } => {
+            scan(expr, out);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    mark_truthy_tested(g, params, out);
+                    scan(g, out);
+                }
+                collect_truthy_tested_params(&a.body, params, out);
+            }
+        }
+        Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
+            collect_truthy_tested_params(body, params, out);
+            for h in handlers {
+                collect_truthy_tested_params(&h.body, params, out);
+            }
+            if let Some(b) = else_body {
+                collect_truthy_tested_params(b, params, out);
+            }
+            if let Some(b) = finally_body {
+                collect_truthy_tested_params(b, params, out);
+            }
+        }
+        Raise { value, from } => {
+            if let Some(e) = value {
+                scan(e, out);
+            }
+            if let Some(e) = from {
+                scan(e, out);
+            }
+        }
+        With { items, body } | AsyncWith { items, body } => {
+            for w in items {
+                scan(&w.context, out);
+            }
+            collect_truthy_tested_params(body, params, out);
+        }
+        Assert { test, msg } => {
+            mark_truthy_tested(test, params, out);
+            scan(test, out);
+            if let Some(e) = msg {
+                scan(e, out);
+            }
+        }
+        // Nested defs/classes have their own scope; their params shadow ours.
+        FnDef { .. } | AsyncFnDef { .. } | ClassDef { .. } | EnumDef { .. } => {}
+        _ => {}
+    }
+}
+
+fn expr_collect_truthy_tested_params(
+    expr: &ast::Expr,
+    params: &std::collections::HashSet<String>,
+    out: &mut std::collections::HashSet<String>,
+) {
+    use ast::Expr::*;
+    // `and`/`or` truth-test each operand wherever the expression lives (not
+    // just directly in an `if`/`while` condition — e.g. `y = args and z`).
+    if let BinOp {
+        op: ast::BinOp::And | ast::BinOp::Or,
+        lhs,
+        rhs,
+    } = expr
+    {
+        mark_truthy_tested(lhs, params, out);
+        mark_truthy_tested(rhs, params, out);
+    }
+    if let UnaryOp {
+        op: ast::UnaryOp::Not,
+        operand,
+    } = expr
+    {
+        mark_truthy_tested(operand, params, out);
+    }
+    if let IfExpr { condition, .. } = expr {
+        mark_truthy_tested(condition, params, out);
+    }
+    // Recurse into every sub-expression so nested and/or/not/ternary/
+    // comprehension-filter chains are found regardless of where they live.
+    let rec = |e: &Spanned<ast::Expr>, out: &mut std::collections::HashSet<String>| {
+        expr_collect_truthy_tested_params(&e.node, params, out);
+    };
+    match expr {
+        BinOp { lhs, rhs, .. } => {
+            rec(lhs, out);
+            rec(rhs, out);
+        }
+        UnaryOp { operand, .. } => rec(operand, out),
+        Call { func, args } => {
+            rec(func, out);
+            for a in args {
+                match a {
+                    ast::CallArg::Positional(e)
+                    | ast::CallArg::StarArg(e)
+                    | ast::CallArg::DoubleStarArg(e) => rec(e, out),
+                    ast::CallArg::Keyword { value, .. } => rec(value, out),
+                }
+            }
+        }
+        Attr { object, .. } => rec(object, out),
+        Index { object, index } => {
+            rec(object, out);
+            rec(index, out);
+        }
+        Slice { start, stop, step } => {
+            if let Some(e) = start {
+                rec(e, out);
+            }
+            if let Some(e) = stop {
+                rec(e, out);
+            }
+            if let Some(e) = step {
+                rec(e, out);
+            }
+        }
+        ListLit(es) | SetLit(es) | TupleLit(es) | UnpackTarget(es) => {
+            for e in es {
+                rec(e, out);
+            }
+        }
+        DictLit(pairs) => {
+            for (k, v) in pairs {
+                if let Some(k) = k {
+                    rec(k, out);
+                }
+                rec(v, out);
+            }
+        }
+        IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            rec(body, out);
+            rec(condition, out);
+            rec(else_body, out);
+        }
+        ListComp {
+            element,
+            generators,
+        }
+        | SetComp {
+            element,
+            generators,
+        }
+        | GeneratorExpr {
+            element,
+            generators,
+        } => {
+            rec(element, out);
+            for g in generators {
+                rec(&g.iter, out);
+                for c in &g.conditions {
+                    mark_truthy_tested(c, params, out);
+                    rec(c, out);
+                }
+            }
+        }
+        DictComp {
+            key,
+            value,
+            generators,
+        } => {
+            rec(key, out);
+            rec(value, out);
+            for g in generators {
+                rec(&g.iter, out);
+                for c in &g.conditions {
+                    mark_truthy_tested(c, params, out);
                     rec(c, out);
                 }
             }
@@ -2538,16 +2920,25 @@ fn collect_ast_bindings_inner(pat: &ast::Pattern, names: &mut std::collections::
 /// from the AST parameter list of a `def`. Kinds follow CPython's
 /// `inspect.Parameter` ordinals; defaults are captured only when they are
 /// simple literals (everything else records "has a default" with a None
-/// placeholder). Keep declared receivers in the metadata: unbound functions
-/// such as `Class.__init__` expose `self`, while bound-method presentation
-/// skips it later when the receiver is already supplied.
+/// placeholder, UNLESS `frozen` supplies a def-time-evaluated hidden symbol
+/// for that parameter — see `frozen_param_info` / #1047). Keep declared
+/// receivers in the metadata: unbound functions such as `Class.__init__`
+/// expose `self`, while bound-method presentation skips it later when the
+/// receiver is already supplied.
+///
+/// `frozen` aligns by index with `params` and is only non-empty for
+/// top-level `def`/`async def` (the callers that already run
+/// `frozen_param_info`); pass `&[]` elsewhere to keep prior behavior
+/// (opaque non-literal defaults splice as `None` on value-call routes,
+/// unchanged for methods/nested defs).
 fn func_sig_meta(
     params: &[ast::Param],
     return_ty: &Option<Spanned<ast::TypeExpr>>,
+    frozen: &[ParamInfo],
 ) -> crate::hir::HirFuncSig {
     use crate::hir::{HirFuncSig, HirParamSig, HirSigDefault};
     let mut out = Vec::new();
-    for p in params {
+    for (idx, p) in params.iter().enumerate() {
         let kind = match p.kind {
             ast::ParamKind::Star => 2u8,
             ast::ParamKind::DoubleStar => 4u8,
@@ -2576,11 +2967,25 @@ fn func_sig_meta(
                 _ => (Option::None, true),
             },
         };
+        // Non-literal default: pick up the hidden def-time-frozen symbol
+        // (if `frozen_param_info` produced one for this index) so lowering
+        // can splice the real computed value into FUNC_PARAMS instead of
+        // `None`. Literal defaults never need this — their value is already
+        // embedded above.
+        let frozen_default = if default_opaque {
+            frozen.get(idx).and_then(|(_, def, _)| match def {
+                Some(ParamDefault::Frozen(HirExpr::Var(sym, ty))) => Some((*sym, *ty)),
+                _ => Option::None,
+            })
+        } else {
+            Option::None
+        };
         out.push(HirParamSig {
             name: p.name.clone(),
             kind,
             default,
             default_opaque,
+            frozen_default,
             annotation: annotation_repr_opt(&p.ty.node),
         });
     }
@@ -3077,6 +3482,18 @@ struct AstLowerer<'a> {
     current_match_subject_ty: Option<TypeId>,
     /// Snapshot of outer function's local names for nonlocal resolution in nested functions.
     outer_scope_names: HashMap<String, SymbolId>,
+    /// #1053: SymbolIds pre-reserved for every name THIS function's own body
+    /// assigns anywhere (full-body prescan; mirrors `local_assigned_names`
+    /// but computed at function entry, before any statement is lowered).
+    /// CPython closures capture by scope, not by textual order — a nested
+    /// `def` occurring before an enclosing local's assignment must still see
+    /// it. `local_names` only holds names bound *so far* in the sequential
+    /// walk of this function's body, so a nested def lowered early would
+    /// otherwise miss later-assigned enclosing locals. This map lets the
+    /// `outer_scope_names` merge (below) see ALL eventual locals up front,
+    /// and lets `define_local` reuse the same id when the real assignment is
+    /// lowered later, so both sides share one symbol/cell.
+    reserved_local_syms: HashMap<String, SymbolId>,
     /// Synthetic SymbolIds that are shared via nonlocal (Cell variables in outer, Free in inner).
     /// These must be stored/loaded via global storage so both functions share the same slot.
     cell_override_syms: std::collections::HashSet<SymbolId>,
@@ -3169,7 +3586,36 @@ struct AstLowerer<'a> {
     /// Module-scope names that have been deleted. The resolver still knows
     /// the symbol, so statement lowering must emit the CPython NameError path
     /// for direct reads until a later assignment rebinds the name.
+    ///
+    /// NOTE: this set is ALSO (ab)used by `restore_comp_scope` (P0-R5) to
+    /// mark a comprehension's loop-variable name as absent from the
+    /// enclosing scope once the comprehension closes, when that name did
+    /// not previously exist as an outer local — an unrelated, narrower
+    /// purpose that predates #1054. Do NOT read this set from a general
+    /// (bare-Ident) read site: `save_comp_scope`/`restore_comp_scope`'s
+    /// bookkeeping does not always agree with whether a name is a real,
+    /// already-assigned module global (e.g. a plain, non-annotated
+    /// reassignment does not mirror into `local_names`, so a comprehension
+    /// reusing that name can make `restore_comp_scope` believe it never
+    /// existed) — see `module_del_stmt_names` for the actual-`del` marker a
+    /// general read check should consult instead.
     module_deleted_names: std::collections::HashSet<String>,
+    /// #1054: module-scope names that have been `del`'d by an ACTUAL `del`
+    /// statement (unlike `module_deleted_names` above, this set is written
+    /// ONLY by `Stmt::Del` and cleared ONLY by a later reassignment — never
+    /// touched by comprehension scope save/restore), so a general
+    /// (bare-Ident) read check can safely consult it without tripping over
+    /// the comprehension-scope-isolation use of `module_deleted_names`.
+    module_del_stmt_names: std::collections::HashSet<String>,
+    /// #1054: function-local names that have been `del`'d somewhere earlier
+    /// in THIS function's textual body (mirrors `module_deleted_names`, but
+    /// scoped per-function and reset at each function's entry/exit like
+    /// `local_assigned_names`/`local_declared_names`). A read reaching
+    /// `Expr::Ident` while the name is in this set raises UnboundLocalError
+    /// (CPython: a `del`'d local is not associated with a value), same as an
+    /// unbound-before-first-assignment read; a later reassignment removes
+    /// the name from this set.
+    local_deleted_names: std::collections::HashSet<String>,
     /// Temporary name→SymbolId overrides for synthetic function bodies whose
     /// `global` declaration must bind to a module-local synthetic SymbolId.
     forced_global_names: HashMap<String, SymbolId>,
@@ -3217,6 +3663,7 @@ impl<'a> AstLowerer<'a> {
             next_local_sym: 1_000_000,
             current_match_subject_ty: None,
             outer_scope_names: HashMap::new(),
+            reserved_local_syms: HashMap::new(),
             cell_override_syms: std::collections::HashSet::new(),
             func_param_info: HashMap::new(),
             arg_bind_sigs: HashMap::new(),
@@ -3235,6 +3682,8 @@ impl<'a> AstLowerer<'a> {
             module_float_globals: HashMap::new(),
             module_unbound_annotation_names: std::collections::HashSet::new(),
             module_deleted_names: std::collections::HashSet::new(),
+            module_del_stmt_names: std::collections::HashSet::new(),
+            local_deleted_names: std::collections::HashSet::new(),
             forced_global_names: HashMap::new(),
             decorated_top_level_names: std::collections::HashMap::new(),
             in_function_body: false,
@@ -3259,11 +3708,44 @@ impl<'a> AstLowerer<'a> {
             self.local_types.insert(existing, ty);
             return existing;
         }
+        // #1053: if this name was pre-reserved by the full-body prescan (see
+        // `reserved_local_syms`), reuse that id — a nested def lowered earlier
+        // in this same body may already have captured it via `outer_scope_names`,
+        // and both sides must share one symbol/cell.
+        if let Some(&reserved) = self.reserved_local_syms.get(name) {
+            self.local_names.insert(name.to_string(), reserved);
+            self.local_types.insert(reserved, ty);
+            return reserved;
+        }
         let id = SymbolId(self.next_local_sym);
         self.next_local_sym += 1;
         self.local_names.insert(name.to_string(), id);
         self.local_types.insert(id, ty);
         id
+    }
+
+    /// Resolve the SymbolId that an `import` statement's locally-bound name
+    /// should use (#951). Mirrors the plain-Assign arm's scoping rule: a name
+    /// this function assigns to (per the `local_assigned_names` pre-scan,
+    /// which also covers import bindings — see
+    /// `resolve::pass::collect_assignment_targets`) that hasn't been
+    /// registered as a local yet always gets a FRESH per-function-scope
+    /// symbol, since Python locals always shadow same-named outer/module
+    /// symbols — this is what disambiguates two sibling functions that each
+    /// do `import urllib.parse`. Otherwise reuse the existing (module-level
+    /// or outer-scope) symbol so module-level imports keep using the same
+    /// resolver-assigned SymbolId the checker already registered — required
+    /// for the module's externally-visible attrs table to still find it.
+    fn resolve_import_bound_symbol(&mut self, name: &str, span: Span) -> SymbolId {
+        let is_function_local_target = self.local_assigned_names.iter().any(|n| n == name)
+            && !self.local_declared_names.iter().any(|n| n == name)
+            && !self.local_names.contains_key(name);
+        if is_function_local_target {
+            self.define_local(name, self.checker.tcx.any())
+        } else {
+            self.resolve_name(name, span)
+                .unwrap_or_else(|| self.define_local(name, self.checker.tcx.any()))
+        }
     }
 
     fn fresh_function_impl_symbol(&mut self, display_name: &str, ty: TypeId) -> SymbolId {
@@ -3277,6 +3759,9 @@ impl<'a> AstLowerer<'a> {
     /// Get the type of a symbol (local first, then checker).
     fn get_type(&self, sym: SymbolId) -> TypeId {
         if let Some(&ty) = self.local_types.get(&sym) {
+            return ty;
+        }
+        if let Some(&ty) = self.result.sym_types.get(&sym) {
             return ty;
         }
         self.checker.get_sym_type(sym.0)
@@ -3468,8 +3953,35 @@ impl<'a> AstLowerer<'a> {
                 self.func_param_float_hint.insert(fname.clone(), merged);
             }
         }
-        // Functions never called in this module: no param hint (stay int).
-        let _ = have_call;
+        // Functions never called anywhere in this module (no in-module
+        // call-site evidence at all, `have_call` empty for them): a
+        // module-level unannotated function like this can still be invoked
+        // cross-module (`import mymod; mymod.f(0.5)`), which dispatches
+        // through the dynamic mb_call_spread/dispatch_jit_frame bridge and
+        // always hands the callee properly NaN-boxed MbValue arguments.
+        // collect_call_arg_hints only sees THIS module's AST, so it has zero
+        // visibility into that caller — silently keeping the raw-int default
+        // is unsound: the moment the callee's body touches the param, a
+        // boxed float's IEEE-754 bits get reinterpreted as an int (#953).
+        // Force the boxed/`any` convention for every unannotated param of
+        // such a function instead, so it unboxes safely no matter what a
+        // caller we can't see actually passes.
+        for (fname, mask) in &unannotated_params {
+            if have_call.contains(fname) || self.func_param_float_hint.contains_key(fname) {
+                continue;
+            }
+            let boxed: Vec<FloatHint> = mask
+                .iter()
+                .map(|&is_unann| {
+                    if is_unann {
+                        FloatHint::Boxed
+                    } else {
+                        FloatHint::Unknown
+                    }
+                })
+                .collect();
+            self.func_param_float_hint.insert(fname.clone(), boxed);
+        }
 
         // Fixpoint over function return float-ness. Seed all unknown, then
         // repeatedly recompute each function's return hint using current param
@@ -3546,7 +4058,8 @@ impl<'a> AstLowerer<'a> {
                     // Register param info for kwargs resolution at call sites.
                     let (param_info, default_setup) =
                         self.frozen_param_info(name, params, stmt.span);
-                    self.func_param_info.insert(name.clone(), param_info);
+                    self.func_param_info
+                        .insert(name.clone(), param_info.clone());
                     // Param shape for static call-site arg-binding validation.
                     // Most decorators can replace the callable with an arbitrary
                     // wrapper whose signature differs. A small allowlist preserves
@@ -3626,7 +4139,7 @@ impl<'a> AstLowerer<'a> {
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        let declared_sig = func_sig_meta(params, return_ty);
+                        let declared_sig = func_sig_meta(params, return_ty, &param_info);
                         func.is_generator = contains_yield(body);
                         func.decorators = decorators
                             .iter()
@@ -3678,6 +4191,26 @@ impl<'a> AstLowerer<'a> {
                                 redef: true,
                                 func_sig: Some(declared_sig.clone()),
                             });
+                        } else if declared_sig
+                            .params
+                            .iter()
+                            .any(|p| p.frozen_default.is_some())
+                        {
+                            // Plain (non-decorated) def with >=1 non-literal
+                            // default: emit a placeholder so FUNC_PARAMS gets
+                            // re-registered AFTER `default_setup`'s hidden-symbol
+                            // Let runs. Module init otherwise primes FUNC_PARAMS
+                            // for every function up front (before top-level
+                            // statements, including this def's own default_setup,
+                            // execute), so the frozen value wouldn't exist yet.
+                            // See emit_func_sig_metadata_for_value (#1047).
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                bind_name: None,
+                                span: stmt.span,
+                                redef: false,
+                                func_sig: Some(declared_sig.clone()),
+                            });
                         }
                         // Introspection: record the declared signature shape so
                         // module init can prime the runtime FUNC_PARAMS registry
@@ -3701,7 +4234,8 @@ impl<'a> AstLowerer<'a> {
                 } => {
                     let (param_info, default_setup) =
                         self.frozen_param_info(name, params, stmt.span);
-                    self.func_param_info.insert(name.clone(), param_info);
+                    self.func_param_info
+                        .insert(name.clone(), param_info.clone());
                     let is_decorated = !decorators.is_empty();
                     let overload_decorated = decorators
                         .iter()
@@ -3739,7 +4273,7 @@ impl<'a> AstLowerer<'a> {
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
-                        let declared_sig = func_sig_meta(params, return_ty);
+                        let declared_sig = func_sig_meta(params, return_ty, &param_info);
                         let has_yield = contains_yield(body);
                         // `async def f(): yield` is an async generator — CPython
                         // returns an async-generator object, not a coroutine.
@@ -3792,6 +4326,20 @@ impl<'a> AstLowerer<'a> {
                                 bind_name: None,
                                 span: stmt.span,
                                 redef: true,
+                                func_sig: Some(declared_sig.clone()),
+                            });
+                        } else if declared_sig
+                            .params
+                            .iter()
+                            .any(|p| p.frozen_default.is_some())
+                        {
+                            // Plain async def with >=1 non-literal default —
+                            // see the sync FnDef arm's identical branch (#1047).
+                            self.result.top_level.push(HirStmt::FuncDefPlaceholder {
+                                name: func.name,
+                                bind_name: None,
+                                span: stmt.span,
+                                redef: false,
                                 func_sig: Some(declared_sig.clone()),
                             });
                         }
@@ -3990,6 +4538,16 @@ impl<'a> AstLowerer<'a> {
         // functions.  Without this, a variable from 2+ levels up is invisible
         // because outer_scope_names only contained the immediate parent's locals.
         let mut new_outer = self.outer_scope_names.clone();
+        // #1053: also fold in names reserved-but-not-yet-bound by the enclosing
+        // function's own full-body prescan (see `reserved_local_syms`), so a
+        // nested def sees an enclosing local assigned LATER in the same body,
+        // not just the ones bound sequentially so far — CPython closures
+        // capture by scope, not by textual def-vs-assignment order.
+        new_outer.extend(
+            self.reserved_local_syms
+                .iter()
+                .map(|(k, v)| (k.clone(), *v)),
+        );
         // Child locals shadow grandparent names via extend overwrite semantics.
         new_outer.extend(self.local_names.iter().map(|(k, v)| (k.clone(), *v)));
         self.outer_scope_names = new_outer;
@@ -3999,6 +4557,41 @@ impl<'a> AstLowerer<'a> {
         self.enter_local_scope();
         let saved_in_function_body = self.in_function_body;
         self.in_function_body = true;
+
+        // #1053: prescan THIS function's OWN body for every name it assigns
+        // anywhere, and reserve stable SymbolIds for them now — before params
+        // or any body statement is lowered. Nested `def`s are lowered inline
+        // while walking this body sequentially, so without this, a name this
+        // function assigns LATER in its body would be invisible to a nested
+        // def's `outer_scope_names` merge (above), which only sees names
+        // bound so far. `define_local` (see above) reuses these reserved ids
+        // when the real assignment is eventually lowered, so the nested def's
+        // capture and the enclosing assignment share the same symbol/cell.
+        // Runs before params are bound so a param name that happens to match
+        // an ENCLOSING scope's still-pending reserved name isn't affected —
+        // params must see THIS function's own (freshly built) reservations.
+        let mut early_assigned: Vec<String> = Vec::new();
+        let mut early_declared: Vec<String> = Vec::new();
+        crate::resolve::pass::collect_assignment_targets(
+            body,
+            &mut early_assigned,
+            &mut early_declared,
+        );
+        crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut early_assigned);
+        let saved_reserved_local_syms = std::mem::take(&mut self.reserved_local_syms);
+        let mut new_reserved: HashMap<String, SymbolId> = HashMap::new();
+        for n in &early_assigned {
+            if early_declared.iter().any(|d| d == n) {
+                // global/nonlocal: resolves to the outer binding, not a fresh local.
+                continue;
+            }
+            if !new_reserved.contains_key(n) {
+                let id = SymbolId(self.next_local_sym);
+                self.next_local_sym += 1;
+                new_reserved.insert(n.clone(), id);
+            }
+        }
+        self.reserved_local_syms = new_reserved;
 
         // Define params in local scope with their actual annotation types (#827 R5).
         // Method params use `any` because they receive NaN-boxed MbValues via mb_call_method.
@@ -4028,6 +4621,11 @@ impl<'a> AstLowerer<'a> {
             let mut found = std::collections::HashSet::new();
             if !param_name_set.is_empty() {
                 collect_value_compared_params(body, &param_name_set, &mut found);
+                // A param whose bare identifier is truthiness-tested (`while p:`,
+                // `if p:`, `p and ...`, `not p`, …) hits the same raw-int-default
+                // hazard as value-comparison — fold into the same set so the
+                // numeric-exclusion filter below applies uniformly (#1015).
+                collect_truthy_tested_params(body, &param_name_set, &mut found);
                 // Exclude params also used numerically (arithmetic / ordering /
                 // numeric builtins). A float/int param passed as NaN-boxed bits
                 // must keep the raw-int ABI for the native numeric fast path;
@@ -4210,6 +4808,11 @@ impl<'a> AstLowerer<'a> {
         let saved_declared = std::mem::take(&mut self.local_declared_names);
         self.local_assigned_names = pre_assigned;
         self.local_declared_names = pre_declared;
+        // #1054: this function's own `del`'d-name tracking starts clean —
+        // deletions in an enclosing/sibling function must not leak in, and
+        // this function's own deletions must not leak out (mirrors
+        // local_assigned_names/local_declared_names' save-restore above).
+        let saved_local_deleted = std::mem::take(&mut self.local_deleted_names);
 
         // Pre-register this function's return type *before* lowering the body
         // so recursive calls inside the body can resolve their own callee's
@@ -4227,9 +4830,14 @@ impl<'a> AstLowerer<'a> {
 
         self.local_assigned_names = saved_local_assigned;
         self.local_declared_names = saved_declared;
+        self.local_deleted_names = saved_local_deleted;
+        // #1053: restore the enclosing function's reservation map now that
+        // this function's own body is fully lowered.
+        self.reserved_local_syms = saved_reserved_local_syms;
 
         // Collect cell symbols discovered while lowering this function body.
-        let captures: Vec<SymbolId> = self.cell_override_syms.iter().copied().collect();
+        let mut captures: Vec<SymbolId> = self.cell_override_syms.iter().copied().collect();
+        captures.sort_by_key(|sym| sym.0);
 
         // Flush the local_types accumulated during this function's body into sym_types
         // BEFORE restoring. Without this, pattern capture bindings (e.g. `case [x]`)
@@ -4267,7 +4875,7 @@ impl<'a> AstLowerer<'a> {
             name: name_id,
             params: hir_params,
             return_ty: ret_ty,
-            func_sig: Some(func_sig_meta(params, _return_ty)),
+            func_sig: Some(func_sig_meta(params, _return_ty, &[])),
             bind_name: None,
             body: hir_body,
             span,
@@ -4490,6 +5098,7 @@ impl<'a> AstLowerer<'a> {
             // need textual materialization so metaclass inheritance,
             // __init_subclass__, and metaclass __new__/__init__ observe source
             // order.
+            let has_method_decorators = cls.methods.iter().any(|m| !m.decorators.is_empty());
             let has_cross_class_property_decorator = cls.methods.iter().any(|m| {
                 m.decorators.iter().any(|dec| {
                     matches!(
@@ -4503,6 +5112,7 @@ impl<'a> AstLowerer<'a> {
             if !cls.decorators.is_empty()
                 || !cls.class_attr_assigns.is_empty()
                 || !cls.class_body_stmts.is_empty()
+                || has_method_decorators
                 || !cls.runtime_base_exprs.is_empty()
                 || cls.runtime_base_list_expr.is_some()
                 || !cls.class_kwargs.is_empty()
@@ -4984,6 +5594,14 @@ impl<'a> AstLowerer<'a> {
                     ..
                 } => {
                     let is_async_method = matches!(stmt.node, ast::Stmt::AsyncFnDef { .. });
+                    // #1052: extend #1047's frozen-param-info mechanism (def-time
+                    // evaluation of non-literal defaults) from plain functions to
+                    // class methods. Computed here — before `hidden_class_locals`
+                    // hides class-body attrs and before `lower_fn_inner` clears
+                    // local scope — so a default expression sees the same names
+                    // CPython would (the class body's executing scope).
+                    let (method_param_info, method_default_setup) =
+                        self.frozen_param_info(mname, params, stmt.span);
                     // Always allocate a fresh SymbolId for each class method.
                     // Using define_local would reuse the same SymbolId when multiple classes
                     // define methods with the same name (e.g. two `__enter__` methods), causing
@@ -5065,9 +5683,37 @@ impl<'a> AstLowerer<'a> {
                         .entry(method_sym)
                         .or_insert_with(|| mname.to_string());
                     if let Some(mut m) = lowered_method {
+                        let declared_method_sig =
+                            func_sig_meta(params, return_ty, &method_param_info);
                         self.result
                             .func_sigs
-                            .insert(m.name.0, func_sig_meta(params, return_ty));
+                            .insert(m.name.0, declared_method_sig.clone());
+                        // #1052: emit the hidden def-time symbol(s) ahead of the
+                        // class's ClassDefPlaceholder (class_body_stmts runs at
+                        // that position — see emit_class_body_stmts_for). If any
+                        // param picked up a frozen_default, also re-register
+                        // FUNC_PARAMS right after: the early module-init priming
+                        // pass primes every function's FUNC_PARAMS with `None`
+                        // for opaque defaults before ANY top-level/class-body
+                        // statement (including this Let) has run, so a second,
+                        // correctly-timed registration is needed — mirroring the
+                        // plain-function FuncDefPlaceholder redo in the FnDef arm
+                        // above (#1047). emit_func_sig_metadata_for_value already
+                        // works generically off HirParamSig.frozen_default.
+                        class_body_stmts.extend(method_default_setup);
+                        if declared_method_sig
+                            .params
+                            .iter()
+                            .any(|p| p.frozen_default.is_some())
+                        {
+                            class_body_stmts.push(HirStmt::FuncDefPlaceholder {
+                                name: m.name,
+                                bind_name: None,
+                                span: stmt.span,
+                                redef: false,
+                                func_sig: Some(declared_method_sig.clone()),
+                            });
+                        }
                         let has_yield = contains_yield(mbody);
                         if is_async_method {
                             // `async def` method: route same way the top-level
@@ -5425,6 +6071,11 @@ impl<'a> AstLowerer<'a> {
                 };
                 if !self.in_function_body {
                     self.module_deleted_names.remove(name);
+                    // #1054: reassignment un-poisons a previously del'd global.
+                    self.module_del_stmt_names.remove(name);
+                } else {
+                    // #1054: reassignment un-poisons a previously del'd local.
+                    self.local_deleted_names.remove(name);
                 }
                 Some(HirStmt::Let {
                     target: sym,
@@ -5516,6 +6167,11 @@ impl<'a> AstLowerer<'a> {
                         let sym = self.define_local(name, val.ty());
                         if !self.in_function_body {
                             self.module_deleted_names.remove(name);
+                            // #1054: reassignment un-poisons a previously del'd global.
+                            self.module_del_stmt_names.remove(name);
+                        } else {
+                            // #1054: reassignment un-poisons a previously del'd local.
+                            self.local_deleted_names.remove(name);
                         }
                         return Some(HirStmt::Let {
                             target: sym,
@@ -5527,6 +6183,11 @@ impl<'a> AstLowerer<'a> {
                     let sym = self.resolve_name(name, stmt.span)?;
                     if !self.in_function_body {
                         self.module_deleted_names.remove(name);
+                        // #1054: reassignment un-poisons a previously del'd global.
+                        self.module_del_stmt_names.remove(name);
+                    } else {
+                        // #1054: reassignment un-poisons a previously del'd local.
+                        self.local_deleted_names.remove(name);
                     }
                     // If the HIR-inferred val type is a primitive but the
                     // checker tagged the symbol Any (typically because
@@ -6022,11 +6683,17 @@ impl<'a> AstLowerer<'a> {
                         }
                     }
                 }
+                // Resolve the locally-bound symbol(s) HERE, in the enclosing
+                // scope's `local_names` map, so MIR lowering can consume the
+                // exact per-scope SymbolId instead of re-resolving by name
+                // string module-wide (#951 — the latter conflates same-named
+                // locals across sibling functions).
+                let mut bound_symbols: Vec<SymbolId> = Vec::new();
                 if let Some(names) = names {
                     for (orig, alias) in names {
                         if orig != "*" {
                             let bound = alias.as_deref().unwrap_or(orig.as_str());
-                            self.define_local(bound, self.checker.tcx.any());
+                            bound_symbols.push(self.resolve_import_bound_symbol(bound, stmt.span));
                         }
                     }
                 } else {
@@ -6034,7 +6701,7 @@ impl<'a> AstLowerer<'a> {
                         .as_deref()
                         .or_else(|| module.first().map(String::as_str));
                     if let Some(bound) = bound {
-                        self.define_local(bound, self.checker.tcx.any());
+                        bound_symbols.push(self.resolve_import_bound_symbol(bound, stmt.span));
                     }
                 }
                 Some(HirStmt::Import {
@@ -6043,6 +6710,7 @@ impl<'a> AstLowerer<'a> {
                         names: names.clone(),
                         module_alias: module_alias.clone(),
                         span: stmt.span,
+                        bound_symbols,
                     },
                     span: stmt.span,
                 })
@@ -6085,7 +6753,18 @@ impl<'a> AstLowerer<'a> {
                 if !self.in_function_body {
                     if let ast::Expr::Ident(name) = &target.node {
                         self.module_deleted_names.insert(name.clone());
+                        // #1054: also mark the dedicated actual-`del` set (see
+                        // its doc comment) so the general bare-Ident read
+                        // check below can raise without also tripping on
+                        // `module_deleted_names`'s unrelated comprehension
+                        // scope-isolation use.
+                        self.module_del_stmt_names.insert(name.clone());
                     }
+                } else if let ast::Expr::Ident(name) = &target.node {
+                    // #1054: poison the local so a subsequent read (before any
+                    // rebind) raises UnboundLocalError, matching CPython —
+                    // `del x` unbinds `x` from the function's local namespace.
+                    self.local_deleted_names.insert(name.clone());
                 }
                 let lv = self.lower_lvalue(target)?;
                 Some(HirStmt::Del {
@@ -6195,7 +6874,7 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     return_ty
                 };
-                let declared_sig = func_sig_meta(params, return_ty);
+                let declared_sig = func_sig_meta(params, return_ty, &[]);
                 // PEP 695: see the module-level FnDef arm — type-param names
                 // must reach the param/return type lowering.
                 let saved_tps = std::mem::replace(
@@ -6263,7 +6942,7 @@ impl<'a> AstLowerer<'a> {
                     &mut self.active_type_params,
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
-                let declared_sig = func_sig_meta(params, return_ty);
+                let declared_sig = func_sig_meta(params, return_ty, &[]);
                 let lowered = if is_decorated {
                     self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                 } else {
@@ -6374,31 +7053,59 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Expr::BoolLit(b) => Some(HirExpr::BoolLit(*b, self.checker.tcx.bool())),
             ast::Expr::NoneLit => Some(HirExpr::NoneLit(self.checker.tcx.none())),
-            // `...` lowers as a read of the builtin `Ellipsis` symbol, which
-            // hir_to_mir folds to MirConst::Ellipsis — same singleton as the
-            // name `Ellipsis`, so `... is Ellipsis` holds.
-            ast::Expr::Ellipsis => {
-                let sym = self.resolve_name("Ellipsis", expr.span)?;
-                Some(HirExpr::Var(sym, self.checker.tcx.any()))
-            }
+            ast::Expr::Ellipsis => Some(HirExpr::EllipsisLit(self.checker.tcx.any())),
             ast::Expr::Ident(name) => {
                 if self.is_function_local_unbound_read(name) {
                     return Some(self.unbound_local_error_expr(name));
                 }
+                // #1054: `del` poisons the binding — a read reaching here
+                // (i.e. not already caught by one of the narrower bare-Ident
+                // pre-checks) before any later rebind must raise, matching
+                // CPython's NameError (module scope) / UnboundLocalError
+                // (function scope) rather than silently reading back `None`.
+                if self.in_function_body {
+                    if self.local_deleted_names.contains(name.as_str()) {
+                        return Some(self.unbound_local_error_expr(name));
+                    }
+                } else if self.module_del_stmt_names.contains(name.as_str()) {
+                    return Some(self.deferred_name_read_expr(name));
+                }
                 let sym = if let Some(&id) = self.local_names.get(name.as_str()) {
                     id
                 } else if let Some(&outer_id) = self.outer_scope_names.get(name.as_str()) {
-                    // Implicit capture: inner function reads outer function's variable
-                    // without an explicit `nonlocal` declaration (read-only capture).
-                    // Register in local_names so future lookups find it directly,
-                    // and mark as cell so the outer function stores it to global storage.
-                    self.local_names.insert(name.to_string(), outer_id);
-                    self.cell_override_syms.insert(outer_id);
-                    outer_id
+                    if self.checker.symbols.lookup(name) == Some(outer_id) {
+                        // #1183: module/global names can leak into
+                        // outer_scope_names via the enclosing scope merge.
+                        // If the resolver's global lookup points at the SAME
+                        // symbol, this read is not a closure capture — keep it
+                        // as a plain Var/global read so async lowering does not
+                        // record a bogus cell_override capture.
+                        outer_id
+                    } else {
+                        // Implicit capture: inner function reads outer function's variable
+                        // without an explicit `nonlocal` declaration (read-only capture).
+                        // Register in local_names so future lookups find it directly,
+                        // and mark as cell so the outer function stores it to global storage.
+                        self.local_names.insert(name.to_string(), outer_id);
+                        self.cell_override_syms.insert(outer_id);
+                        outer_id
+                    }
                 } else if let Some(id) = self.checker.symbols.lookup(name) {
                     id
                 } else {
-                    return None;
+                    // #1048: the checker could not resolve `name` ANYWHERE —
+                    // not a local, not an outer-scope capture, not a
+                    // module/global/builtin symbol. This is the terminal
+                    // state of `allow_runtime_unresolved_names`'s run-mode
+                    // deferral (check_expr.rs's `Expr::Ident` arm): `mamba
+                    // run` intentionally defers this to a runtime check
+                    // (CPython itself only resolves free names at read
+                    // time) rather than hard-erroring the way `mamba build`
+                    // correctly does. Returning `None` here used to lower
+                    // the read to a silent `None` value (dropped
+                    // assignment/arg, or an inert `None` operand); raise
+                    // NameError at THIS read instead, matching CPython.
+                    return Some(self.deferred_name_read_expr(name));
                 };
                 let ty = self.get_type(sym);
                 Some(HirExpr::Var(sym, ty))
@@ -6674,10 +7381,7 @@ impl<'a> AstLowerer<'a> {
                                     any_ty,
                                 )),
                                 args: vec![HirExpr::StrLit(
-                                    format!(
-                                        "sorted expected 1 argument, got {}",
-                                        positional_count
-                                    ),
+                                    format!("sorted expected 1 argument, got {}", positional_count),
                                     str_ty,
                                 )],
                                 ty: any_ty,
@@ -7820,13 +8524,23 @@ impl<'a> AstLowerer<'a> {
                     };
                     fname
                         .as_ref()
-                        .and_then(|n| self.func_param_info.get(n))
-                        .map(|info| {
+                        .and_then(|n| self.func_param_info.get(n).map(|info| (n, info)))
+                        .map(|(n, info)| {
                             let regular_count = info
                                 .iter()
                                 .filter(|(_, _, k)| *k == ast::ParamKind::Regular)
                                 .count();
-                            pos_count < regular_count && info.iter().any(|(_, d, _)| d.is_some())
+                            // A function with runtime-mutated __defaults__ may have
+                            // installed defaults it never had at the source
+                            // signature (`f.__defaults__ = (...)` on a function
+                            // defined without any) — the static
+                            // `info.any(d.is_some())` check can't see that, so
+                            // also route through default-fill (and from there,
+                            // `build_mutated_defaults_call`) whenever the callee
+                            // is a known-mutated function short on positionals.
+                            pos_count < regular_count
+                                && (info.iter().any(|(_, d, _)| d.is_some())
+                                    || self.funcs_with_mutated_defaults.contains(n))
                         })
                         .unwrap_or(false)
                 };
@@ -7916,6 +8630,9 @@ impl<'a> AstLowerer<'a> {
                             let has_dstar = param_info
                                 .iter()
                                 .any(|(_, _, k)| *k == ast::ParamKind::DoubleStar);
+                            if has_dstar {
+                                return Some(self.build_spread_kwargs_call(f, args, any_ty));
+                            }
                             if has_star && !kwonly_names.is_empty() {
                                 return Some(self.build_spread_kwargs_call(f, args, any_ty));
                             }
@@ -8091,6 +8808,9 @@ impl<'a> AstLowerer<'a> {
                             | "quote" | "unquote"
                             // property(fget=, fset=, fdel=, doc=) keyword form
                             | "property"
+                            // typing constructor factories accept default=
+                            // and read it from a trailing kwargs dict.
+                            | "TypeVar" | "TypeVarTuple" | "ParamSpec"
                             // decimal.localcontext(prec=, rounding=, Emin=, …)
                             // and Context(...) read a trailing kwargs dict.
                             | "localcontext" | "Context"
@@ -8303,6 +9023,35 @@ impl<'a> AstLowerer<'a> {
                     } else {
                         self.checker.tcx.any()
                     }
+                } else if let HirExpr::Attr { attr, .. } = &f {
+                    if matches!(attr.as_str(), "index" | "count") {
+                        self.checker.tcx.int()
+                    } else {
+                        self.checker.tcx.any()
+                    }
+                } else if let Some(class_name) = self.checker.native_ctor_class_call(func) {
+                    // #1021: `queue.Queue()` / `selectors.DefaultSelector()` —
+                    // a whole-module-import constructor call the checker
+                    // already resolved to a concrete `Ty::Class` (see
+                    // `native_ctor_class_call`). *Find* (not re-intern —
+                    // `self.checker` is a shared `&TypeChecker`, `intern`
+                    // needs `&mut`) the already-interned TypeId so the Call
+                    // HIR node's own `.ty` matches what the checker inferred,
+                    // instead of the blanket `any_ty` this branch otherwise
+                    // falls back to for every non-user-function callee. Same
+                    // NaN-boxed representation as Any (see `box_operand` in
+                    // `hir_to_mir.rs`), so this never risks the Cranelift
+                    // primitive-unboxing mismatch the comment above warns
+                    // about — it only sharpens an Any-boxed value's static
+                    // type, never changes its runtime representation.
+                    self.checker
+                        .tcx
+                        .find(&crate::types::Ty::Class {
+                            name: class_name.to_string(),
+                            fields: Vec::new(),
+                            match_args: None,
+                        })
+                        .unwrap_or_else(|| self.checker.tcx.any())
                 } else {
                     self.checker.tcx.any()
                 };
@@ -8349,8 +9098,31 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Expr::Index { object, index } => {
                 let obj = self.lower_expr(object)?;
-                let idx = self.lower_expr(index)?;
-                let ty = self.checker.tcx.any();
+                // PEP 695 variadic type arguments use a starred AST node in
+                // subscription position (`tuple[*Ts]`). Runtime lowering wants
+                // the underlying type-parameter object there, not iterable
+                // display unpacking semantics. Without this, the starred index
+                // fails to lower, which silently drops the surrounding lazy
+                // alias thunk from the call-arg filter_map and shifts
+                // `__mb_pep695_type_alias__`'s args left.
+                let idx = match &index.node {
+                    ast::Expr::Starred(inner) => self.lower_expr(inner)?,
+                    _ => self.lower_expr(index)?,
+                };
+                let ty = match self.checker.tcx.get(obj.ty()) {
+                    crate::types::Ty::List(inner) => *inner,
+                    crate::types::Ty::Tuple(items) => {
+                        if let HirExpr::IntLit(i, _) = &idx {
+                            items
+                                .get(*i as usize)
+                                .copied()
+                                .unwrap_or_else(|| self.checker.tcx.any())
+                        } else {
+                            self.checker.tcx.any()
+                        }
+                    }
+                    _ => self.checker.tcx.any(),
+                };
                 Some(HirExpr::Index {
                     object: Box::new(obj),
                     index: Box::new(idx),
@@ -8450,10 +9222,37 @@ impl<'a> AstLowerer<'a> {
                 condition,
                 else_body,
             } => {
-                let then_val = self.lower_expr(body)?;
                 let cond = self.lower_expr(condition)?;
-                let else_val = self.lower_expr(else_body)?;
-                let ty = then_val.ty();
+                // #1045: lower each branch INDEPENDENTLY. A branch that fails
+                // to lower (e.g. a name the checker deferred to runtime via
+                // `allow_runtime_unresolved_names` — see check_expr.rs's
+                // `Expr::Ident` arm — has no HIR symbol, so `lower_expr`
+                // returns `None` for it) must not take the whole `IfExpr`
+                // down with it via `?`: that previously dropped the ENTIRE
+                // enclosing statement, silently discarding the OTHER
+                // branch's already-successfully-lowered construction (e.g. a
+                // user-class `B(5)` call) even when that branch is the one
+                // actually reached at runtime. A branch that fails to lower
+                // becomes an inert `None` value instead — observable only if
+                // that branch is actually selected at runtime, matching the
+                // silent-None mamba already gives a straight-line unresolved
+                // name (see `run()`'s `allow_runtime_unresolved_names`).
+                let none_ty = self.checker.tcx.none();
+                let then_val = self
+                    .lower_expr(body)
+                    .unwrap_or_else(|| HirExpr::NoneLit(none_ty));
+                let else_val = self
+                    .lower_expr(else_body)
+                    .unwrap_or_else(|| HirExpr::NoneLit(none_ty));
+                // The ternary's own type is the MEET of both branches: only
+                // trust the "then" branch's type when the "else" branch
+                // independently agrees, so a mistyped/undefined sibling
+                // cannot mis-tag the live branch's runtime value (#1045).
+                let ty = if then_val.ty() == else_val.ty() {
+                    then_val.ty()
+                } else {
+                    self.checker.tcx.any()
+                };
                 Some(HirExpr::IfExpr {
                     cond: Box::new(cond),
                     then_val: Box::new(then_val),
@@ -8747,11 +9546,11 @@ impl<'a> AstLowerer<'a> {
                         && !self.local_declared_names.iter().any(|n| n == target)
                         && !self.local_names.contains_key(target);
                 let sym = if is_function_local_target {
-                    let id = SymbolId(self.next_local_sym);
-                    self.next_local_sym += 1;
-                    self.local_names.insert(target.to_string(), id);
-                    self.local_types.insert(id, ty);
-                    id
+                    // #1053: go through define_local so a walrus target
+                    // pre-reserved by the full-body prescan (a nested def may
+                    // already have captured it via outer_scope_names) reuses
+                    // that SAME id instead of minting a fresh, uncaptured one.
+                    self.define_local(target, ty)
                 } else if let Some(id) = self.resolve_name(target, expr.span) {
                     id
                 } else if let Some(&outer_id) = self.outer_scope_names.get(target.as_str()) {
@@ -8995,23 +9794,56 @@ impl<'a> AstLowerer<'a> {
         })
     }
 
-    /// P0-R5: Save outer `local_names` entries for comprehension variable names.
-    /// Returns saved entries so `restore_comp_scope` can undo the shadowing.
-    fn save_comp_scope(&self, gens: &[ast::Comprehension]) -> Vec<(String, Option<SymbolId>)> {
-        gens.iter()
-            .map(|g| {
-                let name = g.targets.first().cloned().unwrap_or_default();
-                let saved = self.local_names.get(&name).copied();
-                (name, saved)
-            })
-            .collect()
+    /// P0-R5: Save outer `local_names` entries for comprehension variable names,
+    /// then REMOVE them from `local_names` so `lower_comprehensions`'s
+    /// `define_local` call (which reuses an existing `local_names` entry
+    /// rather than allocating a fresh symbol — see `define_local`) cannot see
+    /// the outer binding. Without this removal the shadowing was save-only:
+    /// whenever the outer scope already had a `local_names` entry for the
+    /// same name (annotated module globals mirror one in via the VarDecl arm
+    /// for REPL/sym_names purposes; function-scope locals always have one),
+    /// the comprehension's loop variable silently reused the OUTER symbol
+    /// instead of getting its own — the loop then overwrote the outer
+    /// binding's storage slot with raw loop values (issue #1064: `x: int =
+    /// 99; [x*x for x in range(5)]` left `x` reading back as reinterpreted
+    /// raw-int bits through the boxed/float path). Covers every comprehension
+    /// target name (`var` + tuple-unpack `extra_vars`), not just the first,
+    /// since `lower_comprehensions` calls `define_local` for all of them.
+    ///
+    /// ALSO shadows `reserved_local_syms` the same way: `define_local` falls
+    /// back to a name's `reserved_local_syms` entry (#1053's full-body
+    /// prescan id, reserved so a nested `def` can close over a not-yet-bound
+    /// enclosing local) when `local_names` has no entry — a function-scope
+    /// local that shares its name with a comprehension loop variable is
+    /// prescanned/reserved for the WHOLE function body (the prescan doesn't
+    /// know comprehensions have their own scope), so clearing `local_names`
+    /// alone still let the loop variable fall through to that same reserved
+    /// id. Returns saved entries so `restore_comp_scope` can undo both.
+    fn save_comp_scope(
+        &mut self,
+        gens: &[ast::Comprehension],
+    ) -> Vec<(String, Option<SymbolId>, Option<SymbolId>)> {
+        let mut saved = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for g in gens {
+            for name in &g.targets {
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                let old_local = self.local_names.remove(name);
+                let old_reserved = self.reserved_local_syms.remove(name);
+                saved.push((name.clone(), old_local, old_reserved));
+            }
+        }
+        saved
     }
 
-    /// P0-R5: Restore outer `local_names` after comprehension lowering so loop
-    /// variables do not leak into the enclosing scope.
-    fn restore_comp_scope(&mut self, saved: Vec<(String, Option<SymbolId>)>) {
-        for (name, old_sym) in saved {
-            match old_sym {
+    /// P0-R5: Restore outer `local_names` (and `reserved_local_syms`) after
+    /// comprehension lowering so loop variables do not leak into the
+    /// enclosing scope.
+    fn restore_comp_scope(&mut self, saved: Vec<(String, Option<SymbolId>, Option<SymbolId>)>) {
+        for (name, old_local, old_reserved) in saved {
+            match old_local {
                 Some(id) => {
                     self.local_names.insert(name.clone(), id);
                     if !self.in_function_body {
@@ -9021,8 +9853,16 @@ impl<'a> AstLowerer<'a> {
                 None => {
                     self.local_names.remove(&name);
                     if !self.in_function_body {
-                        self.module_deleted_names.insert(name);
+                        self.module_deleted_names.insert(name.clone());
                     }
+                }
+            }
+            match old_reserved {
+                Some(id) => {
+                    self.reserved_local_syms.insert(name, id);
+                }
+                None => {
+                    self.reserved_local_syms.remove(&name);
                 }
             }
         }
@@ -9296,6 +10136,21 @@ impl<'a> AstLowerer<'a> {
         }
     }
 
+    /// #1048: build a guarded runtime read for an `Expr::Ident` the checker
+    /// deferred to `Any` because it could not resolve it anywhere (see the
+    /// call site in `lower_expr`'s `Expr::Ident` arm). Calls
+    /// `mb_deferred_name_read`, which still resolves a name legitimately
+    /// bound at runtime via a wildcard `from module import *` and otherwise
+    /// raises NameError with CPython's exact message at THIS read.
+    fn deferred_name_read_expr(&self, name: &str) -> HirExpr {
+        let any_ty = self.checker.tcx.any();
+        HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_deferred_name_read".to_string(), any_ty)),
+            args: vec![HirExpr::StrLit(name.to_string(), self.checker.tcx.str())],
+            ty: any_ty,
+        }
+    }
+
     fn build_mutated_defaults_call(
         &mut self,
         f: HirExpr,
@@ -9348,13 +10203,21 @@ impl<'a> AstLowerer<'a> {
             return None;
         }
 
-        let defaults_attr = HirExpr::Attr {
-            object: Box::new(f.clone()),
-            attr: "__defaults__".to_string(),
-            ty: any_ty,
-        };
         let int_ty = self.checker.tcx.int();
         let regular_count = regular_params.len() as i64;
+        // Read each unsupplied positional's live default via a runtime call
+        // (`mb_func_default_at`) rather than indexing `f.__defaults__`
+        // directly: after `del f.__defaults__` (or an under-sized
+        // replacement tuple), the offset may not resolve to any live
+        // default, and the call-time contract is a TypeError ("missing
+        // required positional argument"), not a silent `None`/index error
+        // (#897 R2). mb_func_default_at reads the same live FUNC_PARAMS
+        // store that `f.__defaults__` assignment/deletion mutate.
+        let default_at = |f: &HirExpr, offset: i64| HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_func_default_at".to_string(), any_ty)),
+            args: vec![f.clone(), HirExpr::IntLit(offset, int_ty)],
+            ty: any_ty,
+        };
         let mut hir_args = Vec::with_capacity(regular_params.len());
         for (i, (name, _, _)) in regular_params.into_iter().enumerate() {
             if i < positional_values.len() {
@@ -9364,17 +10227,9 @@ impl<'a> AstLowerer<'a> {
                     hir_args.push(expr.clone());
                     continue;
                 }
-                hir_args.push(HirExpr::Index {
-                    object: Box::new(defaults_attr.clone()),
-                    index: Box::new(HirExpr::IntLit(i as i64 - regular_count, int_ty)),
-                    ty: any_ty,
-                });
+                hir_args.push(default_at(&f, i as i64 - regular_count));
             } else {
-                hir_args.push(HirExpr::Index {
-                    object: Box::new(defaults_attr.clone()),
-                    index: Box::new(HirExpr::IntLit(i as i64 - regular_count, int_ty)),
-                    ty: any_ty,
-                });
+                hir_args.push(default_at(&f, i as i64 - regular_count));
             }
         }
         Some(HirExpr::Call {
@@ -9600,6 +10455,7 @@ fn lower_aug_op(op: ast::AugOp) -> HirBinOp {
 mod tests {
     use super::*;
     use crate::parser::ast::*;
+    use crate::source::FileId;
 
     fn sp<T>(node: T) -> Spanned<T> {
         Spanned::new(node, Span::dummy())
@@ -10832,7 +11688,11 @@ mod tests {
         let outer = hir
             .classes
             .iter()
-            .find(|class| hir.sym_names.get(&class.name).is_some_and(|name| name == "Outer"))
+            .find(|class| {
+                hir.sym_names
+                    .get(&class.name)
+                    .is_some_and(|name| name == "Outer")
+            })
             .expect("Outer class should be present");
         assert!(
             outer
@@ -10896,6 +11756,43 @@ mod tests {
         // Decorator ident "dataclass" is unresolvable → decorators is empty
         // (that's correct behavior — the test just verifies no crash)
         let _ = &hir.classes[0].decorators;
+    }
+
+    #[test]
+    fn test_lower_class_with_decorated_method_produces_placeholder() {
+        let hir = helper_lower_with_classes(
+            vec![sp(Stmt::ClassDef {
+                decorators: vec![],
+                name: "DecoratedMethodHolder".to_string(),
+                type_params: vec![],
+                bases: vec![],
+                keyword_args: vec![],
+                body: vec![sp(Stmt::FnDef {
+                    decorators: vec![sp(Expr::Ident("decorator".to_string()))],
+                    name: "__repr__".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![sp(Stmt::Return(None))],
+                })],
+            })],
+            &["DecoratedMethodHolder", "decorator"],
+        );
+        let class = hir
+            .classes
+            .iter()
+            .find(|class| {
+                hir.sym_names
+                    .get(&class.name)
+                    .is_some_and(|name| name == "DecoratedMethodHolder")
+            })
+            .expect("class should lower");
+        assert!(
+            hir.top_level.iter().any(
+                |stmt| matches!(stmt, HirStmt::ClassDefPlaceholder { name, .. } if *name == class.name)
+            ),
+            "classes with decorated methods must materialize at a textual placeholder"
+        );
     }
 
     #[test]
@@ -11145,6 +12042,185 @@ mod tests {
         } else {
             panic!("expected Import");
         }
+    }
+
+    #[test]
+    fn test_async_function_module_import_read_is_not_recorded_as_capture() {
+        let src = r#"
+import asyncio
+
+async def main():
+    return asyncio.Queue
+"#;
+        let module = crate::parser::parse(src, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        let import_sym = match &hir.top_level[0] {
+            HirStmt::Import { import, .. } => import
+                .bound_symbols
+                .first()
+                .copied()
+                .expect("import should bind asyncio"),
+            other => panic!("expected top-level import, got {other:?}"),
+        };
+        let func = hir
+            .functions
+            .iter()
+            .find(|func| func.is_async)
+            .expect("expected async function");
+        assert!(
+            !func.captures.contains(&import_sym),
+            "module import bindings must resolve as globals, not closure captures"
+        );
+        let HirStmt::Return {
+            value: Some(HirExpr::Attr { object, attr, .. }),
+            ..
+        } = &func.body[0]
+        else {
+            panic!("expected async function body to return an attribute read");
+        };
+        assert_eq!(attr, "Queue");
+        assert!(
+            matches!(&**object, HirExpr::Var(sym, _) if *sym == import_sym),
+            "async function should read the same asyncio symbol bound by the import"
+        );
+    }
+
+    #[test]
+    fn test_nested_function_local_read_still_records_real_capture() {
+        let src = r#"
+def outer():
+    x = 1
+    def inner():
+        return x
+    return inner
+"#;
+        let module = crate::parser::parse(src, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        let inner = hir
+            .functions
+            .iter()
+            .find(|func| !func.captures.is_empty())
+            .expect("expected inner function");
+        let captured = inner.captures[0];
+        let outer_binds_capture = hir.functions.iter().any(|func| {
+            func.body.iter().any(|stmt| match stmt {
+                HirStmt::Let { target, .. } => *target == captured,
+                HirStmt::Assign {
+                    target: HirLValue::Var(sym),
+                    ..
+                } => *sym == captured,
+                _ => false,
+            })
+        });
+        assert!(
+            outer_binds_capture,
+            "nested function should still capture enclosing function locals"
+        );
+    }
+
+    #[test]
+    fn test_nested_capture_list_index_preserves_element_type() {
+        let src = r#"
+def outer():
+    x = [1]
+    def inner():
+        return x[0] <= 2
+    return inner
+"#;
+        let module = crate::parser::parse(src, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        let inner = hir
+            .functions
+            .iter()
+            .find(|func| !func.captures.is_empty())
+            .expect("expected inner function");
+        let Some(HirStmt::Return {
+            value:
+                Some(HirExpr::BinOp {
+                    lhs,
+                    rhs,
+                    op: HirBinOp::LtEq,
+                    ..
+                }),
+            ..
+        }) = inner.body.first()
+        else {
+            panic!("expected return x[0] <= 2 in inner body");
+        };
+        assert_eq!(lhs.ty(), checker.tcx.int());
+        assert_eq!(rhs.ty(), checker.tcx.int());
+    }
+
+    #[test]
+    fn test_async_nested_capture_does_not_reuse_listcomp_target_symbol() {
+        let src = r#"
+import asyncio
+
+async def main():
+    sem = asyncio.Semaphore(2)
+    async def worker():
+        return sem
+    xs = [worker() for _ in range(3)]
+    return xs
+"#;
+        let module = crate::parser::parse(src, FileId(0)).expect("parse failed");
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+        let worker = hir
+            .functions
+            .iter()
+            .find(|func| !func.captures.is_empty())
+            .expect("expected worker function to capture sem");
+        let sem_sym = worker
+            .captures
+            .iter()
+            .copied()
+            .find(|sym| hir.sym_names.get(sym).is_some_and(|name| name == "sem"))
+            .expect("worker should capture sem");
+        let main = hir
+            .functions
+            .iter()
+            .find(|func| {
+                func.body.iter().any(|stmt| {
+                    matches!(
+                        stmt,
+                        HirStmt::Let {
+                            value: HirExpr::ListComp { .. },
+                            ..
+                        } | HirStmt::Assign {
+                            value: HirExpr::ListComp { .. },
+                            ..
+                        }
+                    )
+                })
+            })
+            .expect("expected outer function with list comprehension");
+        let comp_var = main
+            .body
+            .iter()
+            .find_map(|stmt| match stmt {
+                HirStmt::Let {
+                    value: HirExpr::ListComp { generators, .. },
+                    ..
+                } => generators.first().map(|gen| gen.var),
+                HirStmt::Assign {
+                    value: HirExpr::ListComp { generators, .. },
+                    ..
+                } => generators.first().map(|gen| gen.var),
+                _ => None,
+            })
+            .expect("expected list comprehension in main");
+        assert_ne!(
+            comp_var, sem_sym,
+            "list comprehension loop target must not reuse a captured outer local"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -12036,6 +13112,80 @@ mod tests {
             &args[2],
             HirExpr::Dict { entries, .. }
                 if matches!(entries.as_slice(), [(HirExpr::StrLit(name, _), _)] if name == "_O2__arg")
+        ));
+    }
+
+    #[test]
+    fn test_lower_typevar_ident_call_with_kwargs_uses_trailing_kwargs_dict() {
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Call {
+            func: Box::new(sp(Expr::Ident("TypeVar".to_string()))),
+            args: vec![
+                CallArg::Positional(sp(Expr::StrLit("T".to_string()))),
+                CallArg::Keyword {
+                    name: "default".to_string(),
+                    value: sp(Expr::Ident("int".to_string())),
+                },
+            ],
+        })))]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { args, .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected lowered TypeVar call");
+        };
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0], HirExpr::StrLit(name, _) if name == "T"));
+        assert!(matches!(
+            &args[1],
+            HirExpr::Dict { entries, .. }
+                if matches!(entries.as_slice(), [(HirExpr::StrLit(name, _), _)] if name == "default")
+        ));
+    }
+
+    #[test]
+    fn test_lower_type_alias_variadic_value_keeps_lazy_thunk_and_params() {
+        let mut module = crate::parser::parse("type V[*Ts] = tuple[*Ts]\n", FileId(0))
+            .expect("parse failed");
+        crate::lower::pep695::desugar_module(&mut module);
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        let alias_assign = hir
+            .top_level
+            .iter()
+            .find_map(|stmt| match stmt {
+                HirStmt::Assign {
+                    value: HirExpr::Call { func, args, .. },
+                    ..
+                } if args.len() == 3
+                    && matches!(
+                        func.as_ref(),
+                        HirExpr::Var(_, _) | HirExpr::StrLit(_, _)
+                    )
+                    && matches!(&args[1], HirExpr::Lambda { .. }) =>
+                {
+                    Some(args)
+                }
+                _ => None,
+            })
+            .expect("expected full type-alias constructor call");
+
+        assert!(matches!(&alias_assign[0], HirExpr::StrLit(name, _) if name == "V"));
+        assert!(matches!(
+            &alias_assign[2],
+            HirExpr::Tuple { elements, .. }
+                if matches!(elements.as_slice(), [HirExpr::Var(_, _)])
+        ));
+        let HirExpr::Lambda { body, .. } = &alias_assign[1] else {
+            panic!("expected lazy alias thunk");
+        };
+        assert!(matches!(
+            body.as_ref(),
+            HirExpr::Index { object, index, .. }
+                if matches!(object.as_ref(), HirExpr::Var(_, _))
+                    && matches!(index.as_ref(), HirExpr::Var(_, _))
         ));
     }
 

@@ -143,11 +143,9 @@ members = ["packages/*"]
         "workspace dir --package must succeed; stderr: {}",
         String::from_utf8_lossy(&member.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&member.stdout)
-            .trim_end()
-            .ends_with("packages/alpha")
-    );
+    assert!(String::from_utf8_lossy(&member.stdout)
+        .trim_end()
+        .ends_with("packages/alpha"));
 }
 
 #[test]

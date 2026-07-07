@@ -8,9 +8,135 @@ use super::super::value::MbValue;
 /// curses, the audio family, the deprecated mail tools).
 use std::collections::HashMap;
 
+/// #1040 follow-up: `dispatch_class_shell` is kept as a MARKER address only.
+/// Every call site below still writes `dispatch_class_shell as *const () as
+/// usize` (for `dispatchers` tuples) or a bare class name (for the `classes`
+/// list) exactly as before -- `build_attrs` (below) detects the marker
+/// address / every `classes` entry and transparently substitutes a genuinely
+/// distinct `SHELL_POOL` slot before the value is ever inserted into a
+/// module's attrs. This file funnels literally every `dispatch_class_shell`
+/// use (all 63 `register_with` calls + the direct `build_attrs` calls) through
+/// that one chokepoint, so centralizing the fix there covers the whole file
+/// without editing any of the ~300 individual call sites.
 unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
+    crate::icf_guard!();
     MbValue::from_ptr(MbObject::new_dict())
 }
+
+// #1040 follow-up: this file's `dispatch_class_shell` used to be handed out
+// as the SAME function address to every class-shell name registered here,
+// across every `register_*` call in this file. Because FUNC_NAMES/
+// NATIVE_FUNC_ADDRS are address-keyed, whichever name registered last (in
+// HashMap iteration order, which is nondeterministic per process) won
+// `X.__name__` for every other class sharing that address -- the same
+// #962/#954 symptom. The fix: give every class-shell name a genuinely
+// distinct function pointer, drawn from a pool of `SHELL_POOL_SIZE`
+// individually fold-immune trivial stub functions, indexed via a
+// thread-local "next free slot" counter (`next_shell_slot`) so every call
+// site simply draws a fresh slot per name -- no manual per-call `pool_start`
+// bookkeeping required, since `register()` runs registration sequentially
+// on a single thread at module-init time.
+//
+// IMPORTANT: this pool does NOT use `icf_guard!()` directly. That macro
+// derives its fingerprint from `module_path!()`/`line!()`/`column!()`, which
+// are resolved at the span of the *macro definition's* literal tokens -- for
+// a single `macro_rules!` invocation that expands a `$(...)* ` repetition
+// into N functions, every repetition shares that ONE span, so
+// `line!()`/`column!()` come back IDENTICAL for all N and `icf_guard!()`
+// silently fails to discriminate them. LLVM then folds all "distinct"
+// shells back onto a single address, reproducing the exact bug one level
+// down. The fix here instead fingerprints on `stringify!($name)`, which DOES
+// vary per repetition (driven by the captured `$name` token's text, not by
+// span), giving every pool slot a genuinely distinct compiled body.
+const SHELL_POOL_SIZE: usize = 340;
+type ShellFn = unsafe extern "C" fn(*const MbValue, usize) -> MbValue;
+
+macro_rules! def_shell_pool {
+    ($($name:ident),* $(,)?) => {
+        $(
+            unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue {
+                ::std::hint::black_box(crate::runtime::module::icf_fingerprint(concat!(
+                    module_path!(),
+                    "::",
+                    stringify!($name)
+                )));
+                MbValue::from_ptr(MbObject::new_dict())
+            }
+        )*
+        const SHELL_POOL: [ShellFn; SHELL_POOL_SIZE] = [$($name),*];
+    };
+}
+def_shell_pool!(
+    shell_00, shell_01, shell_02, shell_03, shell_04, shell_05, shell_06, shell_07, shell_08,
+    shell_09, shell_10, shell_11, shell_12, shell_13, shell_14, shell_15, shell_16, shell_17,
+    shell_18, shell_19, shell_20, shell_21, shell_22, shell_23, shell_24, shell_25, shell_26,
+    shell_27, shell_28, shell_29, shell_30, shell_31, shell_32, shell_33, shell_34, shell_35,
+    shell_36, shell_37, shell_38, shell_39, shell_40, shell_41, shell_42, shell_43, shell_44,
+    shell_45, shell_46, shell_47, shell_48, shell_49, shell_50, shell_51, shell_52, shell_53,
+    shell_54, shell_55, shell_56, shell_57, shell_58, shell_59, shell_60, shell_61, shell_62,
+    shell_63, shell_64, shell_65, shell_66, shell_67, shell_68, shell_69, shell_70, shell_71,
+    shell_72, shell_73, shell_74, shell_75, shell_76, shell_77, shell_78, shell_79, shell_80,
+    shell_81, shell_82, shell_83, shell_84, shell_85, shell_86, shell_87, shell_88, shell_89,
+    shell_90, shell_91, shell_92, shell_93, shell_94, shell_95, shell_96, shell_97, shell_98,
+    shell_99, shell_100, shell_101, shell_102, shell_103, shell_104, shell_105, shell_106,
+    shell_107, shell_108, shell_109, shell_110, shell_111, shell_112, shell_113, shell_114,
+    shell_115, shell_116, shell_117, shell_118, shell_119, shell_120, shell_121, shell_122,
+    shell_123, shell_124, shell_125, shell_126, shell_127, shell_128, shell_129, shell_130,
+    shell_131, shell_132, shell_133, shell_134, shell_135, shell_136, shell_137, shell_138,
+    shell_139, shell_140, shell_141, shell_142, shell_143, shell_144, shell_145, shell_146,
+    shell_147, shell_148, shell_149, shell_150, shell_151, shell_152, shell_153, shell_154,
+    shell_155, shell_156, shell_157, shell_158, shell_159, shell_160, shell_161, shell_162,
+    shell_163, shell_164, shell_165, shell_166, shell_167, shell_168, shell_169, shell_170,
+    shell_171, shell_172, shell_173, shell_174, shell_175, shell_176, shell_177, shell_178,
+    shell_179, shell_180, shell_181, shell_182, shell_183, shell_184, shell_185, shell_186,
+    shell_187, shell_188, shell_189, shell_190, shell_191, shell_192, shell_193, shell_194,
+    shell_195, shell_196, shell_197, shell_198, shell_199, shell_200, shell_201, shell_202,
+    shell_203, shell_204, shell_205, shell_206, shell_207, shell_208, shell_209, shell_210,
+    shell_211, shell_212, shell_213, shell_214, shell_215, shell_216, shell_217, shell_218,
+    shell_219, shell_220, shell_221, shell_222, shell_223, shell_224, shell_225, shell_226,
+    shell_227, shell_228, shell_229, shell_230, shell_231, shell_232, shell_233, shell_234,
+    shell_235, shell_236, shell_237, shell_238, shell_239, shell_240, shell_241, shell_242,
+    shell_243, shell_244, shell_245, shell_246, shell_247, shell_248, shell_249, shell_250,
+    shell_251, shell_252, shell_253, shell_254, shell_255, shell_256, shell_257, shell_258,
+    shell_259, shell_260, shell_261, shell_262, shell_263, shell_264, shell_265, shell_266,
+    shell_267, shell_268, shell_269, shell_270, shell_271, shell_272, shell_273, shell_274,
+    shell_275, shell_276, shell_277, shell_278, shell_279, shell_280, shell_281, shell_282,
+    shell_283, shell_284, shell_285, shell_286, shell_287, shell_288, shell_289, shell_290,
+    shell_291, shell_292, shell_293, shell_294, shell_295, shell_296, shell_297, shell_298,
+    shell_299, shell_300, shell_301, shell_302, shell_303, shell_304, shell_305, shell_306,
+    shell_307, shell_308, shell_309, shell_310, shell_311, shell_312, shell_313, shell_314,
+    shell_315, shell_316, shell_317, shell_318, shell_319, shell_320, shell_321, shell_322,
+    shell_323, shell_324, shell_325, shell_326, shell_327, shell_328, shell_329, shell_330,
+    shell_331, shell_332, shell_333, shell_334, shell_335, shell_336, shell_337, shell_338,
+    shell_339,
+);
+
+/// Pool slot at `idx` as a raw function-pointer address.
+fn shell_addr(idx: usize) -> usize {
+    SHELL_POOL[idx] as usize
+}
+
+thread_local! {
+    static NEXT_SHELL_SLOT: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+/// Draw the next unused pool slot index. `register()` runs sequentially on
+/// a single thread at module-init time, so a simple monotonic counter gives
+/// every class-shell name a fresh, non-overlapping slot with no manual
+/// per-call range bookkeeping.
+fn next_shell_slot() -> usize {
+    NEXT_SHELL_SLOT.with(|c| {
+        let v = c.get();
+        assert!(
+            v < SHELL_POOL_SIZE,
+            "shell pool exhausted (SHELL_POOL_SIZE={}); bump it",
+            SHELL_POOL_SIZE
+        );
+        c.set(v + 1);
+        v
+    })
+}
+
 unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
@@ -301,14 +427,29 @@ fn build_attrs(
     consts_str: &[(&str, &str)],
 ) -> HashMap<String, MbValue> {
     let mut attrs = HashMap::new();
-    let shell = dispatch_class_shell as *const () as usize;
-    let mut addrs = vec![shell];
+    // #1040: every `classes` entry used to share ONE `dispatch_class_shell`
+    // address across the WHOLE file (267+ names), and every `dispatchers`
+    // tuple using the `dispatch_class_shell` marker address shared that same
+    // one address too -- both are the exact FUNC_NAMES/NATIVE_FUNC_ADDRS
+    // address-collision bug from #962/#954. Give each a fresh, genuinely
+    // distinct SHELL_POOL slot instead; `dispatch_class_shell` itself is
+    // never handed out anymore, only used as a marker to detect (and
+    // replace) the legacy shared address in `dispatchers` tuples.
+    let class_shell_marker = dispatch_class_shell as *const () as usize;
+    let mut addrs = Vec::new();
     for cn in classes {
-        attrs.insert((*cn).into(), MbValue::from_func(shell));
+        let f = shell_addr(next_shell_slot());
+        addrs.push(f);
+        attrs.insert((*cn).into(), MbValue::from_func(f));
     }
     for (n, a) in dispatchers {
-        attrs.insert((*n).into(), MbValue::from_func(*a));
-        addrs.push(*a);
+        let addr = if *a == class_shell_marker {
+            shell_addr(next_shell_slot())
+        } else {
+            *a
+        };
+        attrs.insert((*n).into(), MbValue::from_func(addr));
+        addrs.push(addr);
     }
     for (n, v) in consts_int {
         attrs.insert((*n).into(), MbValue::from_int(*v));
@@ -908,7 +1049,11 @@ pub fn register() {
     );
     register_with(
         "multiprocessing.sharedctypes",
-        &["SynchronizedBase", "SynchronizedArray", "SynchronizedString"],
+        &[
+            "SynchronizedBase",
+            "SynchronizedArray",
+            "SynchronizedString",
+        ],
         &[
             ("Array", dispatch_noop as *const () as usize),
             ("RawArray", dispatch_noop as *const () as usize),
@@ -971,7 +1116,10 @@ pub fn register() {
         &[
             ("main", dispatch_noop as *const () as usize),
             ("read_signed", dispatch_int_zero as *const () as usize),
-            ("set_forkserver_preload", dispatch_noop as *const () as usize),
+            (
+                "set_forkserver_preload",
+                dispatch_noop as *const () as usize,
+            ),
             ("write_signed", dispatch_noop as *const () as usize),
         ],
         &[],
@@ -982,9 +1130,15 @@ pub fn register() {
         &[],
         &[
             ("freeze_support", dispatch_noop as *const () as usize),
-            ("get_command_line", dispatch_empty_list as *const () as usize),
+            (
+                "get_command_line",
+                dispatch_empty_list as *const () as usize,
+            ),
             ("get_executable", dispatch_empty_str as *const () as usize),
-            ("get_preparation_data", dispatch_empty_dict as *const () as usize),
+            (
+                "get_preparation_data",
+                dispatch_empty_dict as *const () as usize,
+            ),
             ("import_main_path", dispatch_noop as *const () as usize),
             ("is_forking", dispatch_false as *const () as usize),
             ("prepare", dispatch_noop as *const () as usize),

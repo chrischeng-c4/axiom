@@ -215,6 +215,12 @@ pub fn mb_list_from(elements: Vec<MbValue>) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(elements))
 }
 
+macro_rules! retain_owned_args {
+    ($($arg:ident),*) => {
+        $( super::rc::store_owned($arg); )*
+    };
+}
+
 /// Fixed-arity list constructors. Used by MakeList codegen for small
 /// literals (n ∈ {1..8}) to collapse `1 + N` FFI calls
 /// (`new_with_capacity` + N × `append_unchecked`) into a single call.
@@ -229,77 +235,27 @@ pub fn mb_list_from(elements: Vec<MbValue>) -> MbValue {
 /// (one heap alloc). On the criterion micro-bench `list_literal_4` this
 /// is the ≥30% reduction the issue asks for.
 pub fn mb_list_new_1(a: MbValue) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-    }
+    retain_owned_args!(a);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a]))
 }
 
 pub fn mb_list_new_2(a: MbValue, b: MbValue) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-    }
+    retain_owned_args!(a, b);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b]))
 }
 
 pub fn mb_list_new_3(a: MbValue, b: MbValue, c: MbValue) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-    }
+    retain_owned_args!(a, b, c);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c]))
 }
 
 pub fn mb_list_new_4(a: MbValue, b: MbValue, c: MbValue, d: MbValue) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-        if d.is_ptr() {
-            super::rc::retain_if_ptr(d);
-        }
-    }
+    retain_owned_args!(a, b, c, d);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d]))
 }
 
 pub fn mb_list_new_5(a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-        if d.is_ptr() {
-            super::rc::retain_if_ptr(d);
-        }
-        if e.is_ptr() {
-            super::rc::retain_if_ptr(e);
-        }
-    }
+    retain_owned_args!(a, b, c, d, e);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e]))
 }
 
@@ -311,26 +267,7 @@ pub fn mb_list_new_6(
     e: MbValue,
     f: MbValue,
 ) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-        if d.is_ptr() {
-            super::rc::retain_if_ptr(d);
-        }
-        if e.is_ptr() {
-            super::rc::retain_if_ptr(e);
-        }
-        if f.is_ptr() {
-            super::rc::retain_if_ptr(f);
-        }
-    }
+    retain_owned_args!(a, b, c, d, e, f);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f]))
 }
 
@@ -343,29 +280,7 @@ pub fn mb_list_new_7(
     f: MbValue,
     g: MbValue,
 ) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-        if d.is_ptr() {
-            super::rc::retain_if_ptr(d);
-        }
-        if e.is_ptr() {
-            super::rc::retain_if_ptr(e);
-        }
-        if f.is_ptr() {
-            super::rc::retain_if_ptr(f);
-        }
-        if g.is_ptr() {
-            super::rc::retain_if_ptr(g);
-        }
-    }
+    retain_owned_args!(a, b, c, d, e, f, g);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f, g]))
 }
 
@@ -379,32 +294,7 @@ pub fn mb_list_new_8(
     g: MbValue,
     h: MbValue,
 ) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-        if d.is_ptr() {
-            super::rc::retain_if_ptr(d);
-        }
-        if e.is_ptr() {
-            super::rc::retain_if_ptr(e);
-        }
-        if f.is_ptr() {
-            super::rc::retain_if_ptr(f);
-        }
-        if g.is_ptr() {
-            super::rc::retain_if_ptr(g);
-        }
-        if h.is_ptr() {
-            super::rc::retain_if_ptr(h);
-        }
-    }
+    retain_owned_args!(a, b, c, d, e, f, g, h);
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f, g, h]))
 }
 
@@ -422,35 +312,7 @@ pub fn mb_list_new_9(
     h: MbValue,
     i: MbValue,
 ) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-        if d.is_ptr() {
-            super::rc::retain_if_ptr(d);
-        }
-        if e.is_ptr() {
-            super::rc::retain_if_ptr(e);
-        }
-        if f.is_ptr() {
-            super::rc::retain_if_ptr(f);
-        }
-        if g.is_ptr() {
-            super::rc::retain_if_ptr(g);
-        }
-        if h.is_ptr() {
-            super::rc::retain_if_ptr(h);
-        }
-        if i.is_ptr() {
-            super::rc::retain_if_ptr(i);
-        }
-    }
+    retain_owned_args!(a, b, c, d, e, f, g, h, i);
     MbValue::from_ptr(MbObject::new_list(vec![a, b, c, d, e, f, g, h, i]))
 }
 
@@ -466,38 +328,7 @@ pub fn mb_list_new_10(
     i: MbValue,
     j: MbValue,
 ) -> MbValue {
-    unsafe {
-        if a.is_ptr() {
-            super::rc::retain_if_ptr(a);
-        }
-        if b.is_ptr() {
-            super::rc::retain_if_ptr(b);
-        }
-        if c.is_ptr() {
-            super::rc::retain_if_ptr(c);
-        }
-        if d.is_ptr() {
-            super::rc::retain_if_ptr(d);
-        }
-        if e.is_ptr() {
-            super::rc::retain_if_ptr(e);
-        }
-        if f.is_ptr() {
-            super::rc::retain_if_ptr(f);
-        }
-        if g.is_ptr() {
-            super::rc::retain_if_ptr(g);
-        }
-        if h.is_ptr() {
-            super::rc::retain_if_ptr(h);
-        }
-        if i.is_ptr() {
-            super::rc::retain_if_ptr(i);
-        }
-        if j.is_ptr() {
-            super::rc::retain_if_ptr(j);
-        }
-    }
+    retain_owned_args!(a, b, c, d, e, f, g, h, i, j);
     MbValue::from_ptr(MbObject::new_list(vec![a, b, c, d, e, f, g, h, i, j]))
 }
 
@@ -713,8 +544,7 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
                         let actual = if idx < 0 { idx + len } else { idx };
                         if actual >= 0 && actual < len {
                             let val = items[actual as usize];
-                            super::rc::retain_if_ptr(val);
-                            return val;
+                            return super::rc::return_owned(val);
                         }
                         drop(items);
                         // CPython: out-of-range list index raises (#32).
@@ -731,8 +561,7 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
                         let actual = if idx < 0 { idx + len } else { idx };
                         if actual >= 0 && actual < len {
                             let val = items[actual as usize];
-                            super::rc::retain_if_ptr(val);
-                            return val;
+                            return super::rc::return_owned(val);
                         }
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
@@ -798,9 +627,9 @@ pub fn mb_list_setitem(list: MbValue, index: MbValue, value: MbValue) {
                         let actual = if idx < 0 { idx + len } else { idx };
                         if actual >= 0 && actual < len {
                             let old = items[actual as usize];
-                            super::rc::retain_if_ptr(value);
+                            super::rc::store_owned(value);
                             items[actual as usize] = value;
-                            super::rc::release_if_ptr(old);
+                            super::rc::release_owned(old);
                             mark_list_mutated(list);
                         } else {
                             // CPython: out-of-range store raises IndexError.
@@ -1023,12 +852,12 @@ pub fn mb_list_setslice(
                         return;
                     }
                     for &v in &new_elems {
-                        super::rc::retain_if_ptr(v);
+                        super::rc::store_owned(v);
                     }
                     for (idx, new_value) in indices.into_iter().zip(new_elems.into_iter()) {
                         let old = items[idx];
                         items[idx] = new_value;
-                        super::rc::release_if_ptr(old);
+                        super::rc::release_owned(old);
                     }
                     mark_list_mutated(list);
                     return;
@@ -1046,11 +875,11 @@ pub fn mb_list_setslice(
 
                 // Retain new elements
                 for &v in &new_elems {
-                    super::rc::retain_if_ptr(v);
+                    super::rc::store_owned(v);
                 }
                 // Release old elements in the replaced range
                 for &old in &items[s..e] {
-                    super::rc::release_if_ptr(old);
+                    super::rc::release_owned(old);
                 }
                 // Replace the slice. SmallVec has no `splice`; do a
                 // drain + insert_from_slice instead.
@@ -1239,12 +1068,7 @@ pub fn mb_list_append(list: MbValue, item: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                // Skip retain for inline values (int, float, bool, none) — they are
-                // not heap pointers so retain_if_ptr is a no-op but still costs a
-                // function call + branch. Only retain for pointer values.
-                if item.is_ptr() {
-                    super::rc::retain_if_ptr(item);
-                }
+                super::rc::store_owned(item);
                 // Fast path: try non-blocking write (succeeds when uncontended)
                 match lock.try_write() {
                     Ok(mut items) => items.push(item),
@@ -1258,8 +1082,7 @@ pub fn mb_list_append(list: MbValue, item: MbValue) {
 
 /// Fast-path list append for JIT-generated code in single-threaded contexts.
 /// Skips the RwLock try_write/write dance — uses a direct write lock with
-/// unchecked unwrap. Also skips retain for non-pointer items (common in list
-/// comprehensions over range() which produce integers).
+/// unchecked unwrap.
 ///
 /// # Safety
 /// Caller must ensure `list` is a valid list MbValue and there are no
@@ -1268,9 +1091,7 @@ pub fn mb_list_append_unchecked(list: MbValue, item: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                if item.is_ptr() {
-                    super::rc::retain_if_ptr(item);
-                }
+                super::rc::store_owned(item);
                 // Single-threaded JIT context: try_write always succeeds, use
                 // unwrap_unchecked to skip the Result branch.
                 lock.try_write().unwrap_unchecked().push(item);
@@ -1421,7 +1242,7 @@ pub fn mb_list_extend(list: MbValue, other: MbValue) {
         if let (Some(ptr), Some(cloned)) = (list.as_ptr(), cloned) {
             if let ObjData::List(ref lock) = (*ptr).data {
                 for elem in &cloned {
-                    super::rc::retain_if_ptr(*elem);
+                    super::rc::store_owned(*elem);
                 }
                 lock.write().unwrap().extend(cloned);
                 mark_list_mutated(list);
@@ -1550,10 +1371,7 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         if super::exception::mb_has_exception().as_bool() == Some(true) {
                             return;
                         }
-                        if mutation_watch
-                            .as_ref()
-                            .is_some_and(|watch| watch.mutated())
-                        {
+                        if mutation_watch.as_ref().is_some_and(|watch| watch.mutated()) {
                             raise_list_modified_during_sort();
                             return;
                         }
@@ -1562,10 +1380,7 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                     indexed.sort_by(|a, b| {
                         stable_order_for_reverse(mb_value_cmp_pub(a.1, b.1), do_reverse)
                     });
-                    if mutation_watch
-                        .as_ref()
-                        .is_some_and(|watch| watch.mutated())
-                    {
+                    if mutation_watch.as_ref().is_some_and(|watch| watch.mutated()) {
                         raise_list_modified_during_sort();
                         return;
                     }
@@ -1826,7 +1641,37 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     // instead of silently truncating with `as u8`.
                     return super::bytes_ops::mb_bytes_contains(container, value);
                 }
-                ObjData::Instance { .. } => {
+                ObjData::Instance { ref class_name, .. } => {
+                    // Instance `__dict__` proxy (#1036): `'k' in obj.__dict__`
+                    // has no `__contains__`/`__iter__` registered on the
+                    // proxy's (nonexistent) class, so this fell through to
+                    // the generic iterator-protocol fallback below, which
+                    // calls `mb_iter` and raised "not iterable". Route
+                    // straight to the same dict-aware `mb_dict_contains`
+                    // the write paths (#969) use.
+                    if class_name == "__instance_dict_proxy__" {
+                        return super::dict_ops::mb_dict_contains(container, value);
+                    }
+                    // Dict view containment (`x in d.keys()/values()/items()`):
+                    // dispatch to the dict-view-aware, snapshot-based check
+                    // instead of falling through to the generic iterator
+                    // protocol below. The generic path drives a live,
+                    // mutation-tracking iterator (`IterKind::DictView`) whose
+                    // `source` dict can be mutated out from under it by a
+                    // user-defined `__eq__` invoked mid-scan (e.g. `d.clear()`
+                    // inside `__eq__`), which is a use-after-free hazard; the
+                    // dict-view path snapshots the view's elements once up
+                    // front via `mb_dict_items`/`mb_dict_values` (which retain
+                    // their values) before ever calling into `__eq__`, so a
+                    // mutation triggered mid-comparison cannot invalidate data
+                    // still being scanned.
+                    if let Some(result) = super::dict_ops::dict_view_method(
+                        container,
+                        "__contains__",
+                        MbValue::from_ptr(MbObject::new_list(vec![value])),
+                    ) {
+                        return result;
+                    }
                     // Flag composite containment: `Color.RED in (RED | BLUE)`.
                     if let Some(found) =
                         super::stdlib::enum_class::flag_member_contains(container, value)
@@ -2198,6 +2043,52 @@ pub fn mb_list_repeat(list: MbValue, n: MbValue) -> MbValue {
                     ))),
                 );
                 return MbValue::none();
+            }
+        }
+    }
+    MbValue::none()
+}
+
+/// list *= n -> repeat IN PLACE, returning the mutated receiver. Backs
+/// `list.__imul__`, which CPython implements by growing the same list object
+/// (identity preserved), unlike `list * n` (`mb_list_repeat` above), which
+/// always allocates a new list. Used directly by a no-override list-SUBCLASS
+/// instance's `*=` (`class LS(list): pass`); the return value is ignored by
+/// that caller, which rebinds the (unchanged) receiver itself. (#1026)
+pub fn mb_list_repeat_inplace(list: MbValue, n: MbValue) -> MbValue {
+    unsafe {
+        if let Some(ptr) = list.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let count = n.as_int().or_else(|| n.as_bool().map(|b| b as i64));
+                match count {
+                    Some(count) if count <= 0 => {
+                        lock.write().unwrap().clear();
+                    }
+                    Some(count) => {
+                        let original = lock.read().unwrap().clone();
+                        if count > 1 {
+                            let mut extra =
+                                Vec::with_capacity(original.len() * (count as usize - 1));
+                            for _ in 1..count {
+                                extra.extend_from_slice(&original);
+                            }
+                            for elem in &extra {
+                                super::rc::retain_if_ptr(*elem);
+                            }
+                            lock.write().unwrap().extend(extra);
+                        }
+                    }
+                    None => {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "can't multiply sequence by non-int of type '{}'",
+                                super::builtins::value_type_name(n)
+                            ))),
+                        );
+                    }
+                }
+                mark_list_mutated(list);
             }
         }
     }

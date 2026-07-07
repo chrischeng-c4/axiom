@@ -4,13 +4,24 @@ use super::rc::{MbObject, ObjData};
 /// Implements Python-compatible dict methods. All mutable access goes
 /// through RwLock guards for thread-safety.
 use super::value::MbValue;
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use rustc_hash::FxHashMap;
+use std::sync::OnceLock;
 
-static DICT_VERSIONS: OnceLock<Mutex<HashMap<usize, u64>>> = OnceLock::new();
+// #960: DICT_VERSIONS is a global side-table (every dict's mutation-detection
+// counter, keyed by object pointer) touched on every `bump_dict_version` call
+// — i.e. on every dict insert/delete across the *entire* runtime, while the
+// caller still holds that dict's own per-object write guard (see
+// `mb_dict_setitem` et al.). A `std::sync::Mutex<HashMap<..>>` here means two
+// threads mutating two unrelated dicts still serialize on this one lock, and
+// pay `SipHash`'s per-op setup cost hashing a plain pointer. `parking_lot`
+// (already used for the per-object container lock, rc.rs:333) drops the
+// uncontended lock/unlock to a single uncontended CAS with no syscall, and
+// `FxHashMap` (already used for `InstanceFields`, rc.rs:388) is a much
+// cheaper hash for pointer-sized keys that don't need DoS resistance.
+static DICT_VERSIONS: OnceLock<parking_lot::Mutex<FxHashMap<usize, u64>>> = OnceLock::new();
 
-fn dict_versions() -> &'static Mutex<HashMap<usize, u64>> {
-    DICT_VERSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+fn dict_versions() -> &'static parking_lot::Mutex<FxHashMap<usize, u64>> {
+    DICT_VERSIONS.get_or_init(|| parking_lot::Mutex::new(FxHashMap::default()))
 }
 
 fn dict_identity(dict: MbValue) -> Option<usize> {
@@ -28,19 +39,14 @@ pub(crate) fn dict_version(dict: MbValue) -> u64 {
     let Some(id) = dict_identity(dict) else {
         return 0;
     };
-    dict_versions()
-        .lock()
-        .unwrap()
-        .get(&id)
-        .copied()
-        .unwrap_or(0)
+    dict_versions().lock().get(&id).copied().unwrap_or(0)
 }
 
 fn bump_dict_version(dict: MbValue) {
     let Some(id) = dict_identity(dict) else {
         return;
     };
-    let mut versions = dict_versions().lock().unwrap();
+    let mut versions = dict_versions().lock();
     let entry = versions.entry(id).or_insert(0);
     *entry = entry.wrapping_add(1);
 }
@@ -105,8 +111,7 @@ fn instance_dict_getitem(proxy: MbValue, key: MbValue) -> Option<MbValue> {
         if let Some(ptr) = target.as_ptr() {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 if let Some(v) = fields.read().unwrap().get(&name).copied() {
-                    super::rc::retain_if_ptr(v);
-                    return Some(v);
+                    return Some(super::rc::return_owned(v));
                 }
             }
         }
@@ -118,25 +123,18 @@ fn instance_dict_getitem(proxy: MbValue, key: MbValue) -> Option<MbValue> {
 fn instance_dict_get(proxy: MbValue, key: MbValue, default: MbValue) -> Option<MbValue> {
     let target = instance_dict_proxy_target(proxy)?;
     let Some(name) = instance_dict_key_name(key) else {
-        unsafe {
-            super::rc::retain_if_ptr(default);
-        }
-        return Some(default);
+        return Some(super::rc::return_owned(default));
     };
     unsafe {
         if let Some(ptr) = target.as_ptr() {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 if let Some(v) = fields.read().unwrap().get(&name).copied() {
-                    super::rc::retain_if_ptr(v);
-                    return Some(v);
+                    return Some(super::rc::return_owned(v));
                 }
             }
         }
     }
-    unsafe {
-        super::rc::retain_if_ptr(default);
-    }
-    Some(default)
+    Some(super::rc::return_owned(default))
 }
 
 fn instance_dict_setitem(proxy: MbValue, key: MbValue, value: MbValue) -> bool {
@@ -149,10 +147,10 @@ fn instance_dict_setitem(proxy: MbValue, key: MbValue, value: MbValue) -> bool {
     unsafe {
         if let Some(ptr) = target.as_ptr() {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                super::rc::retain_if_ptr(value);
+                super::rc::store_owned(value);
                 let old = fields.write().unwrap().insert(name, value);
                 if let Some(prev) = old {
-                    super::rc::release_if_ptr(prev);
+                    super::rc::release_owned(prev);
                 }
             }
         }
@@ -172,7 +170,7 @@ fn instance_dict_delitem(proxy: MbValue, key: MbValue) -> bool {
         if let Some(ptr) = target.as_ptr() {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 if let Some(old) = fields.write().unwrap().remove(&name) {
-                    super::rc::release_if_ptr(old);
+                    super::rc::release_owned(old);
                     return true;
                 }
             }
@@ -210,27 +208,22 @@ fn instance_dict_pop(proxy: MbValue, key: MbValue, default: Option<MbValue>) -> 
 fn instance_dict_setdefault(proxy: MbValue, key: MbValue, default: MbValue) -> Option<MbValue> {
     let target = instance_dict_proxy_target(proxy)?;
     let Some(name) = instance_dict_key_name(key) else {
-        unsafe {
-            super::rc::retain_if_ptr(default);
-        }
-        return Some(default);
+        return Some(super::rc::return_owned(default));
     };
     unsafe {
         if let Some(ptr) = target.as_ptr() {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut guard = fields.write().unwrap();
                 if let Some(v) = guard.get(&name).copied() {
-                    super::rc::retain_if_ptr(v);
-                    return Some(v);
+                    return Some(super::rc::return_owned(v));
                 }
-                super::rc::retain_if_ptr(default);
+                let returned = super::rc::store_and_return_owned(default);
                 guard.insert(name, default);
-                super::rc::retain_if_ptr(default);
-                return Some(default);
+                return Some(returned);
             }
         }
     }
-    Some(default)
+    Some(super::rc::return_owned(default))
 }
 
 fn instance_dict_keys(proxy: MbValue) -> Option<MbValue> {
@@ -322,11 +315,170 @@ fn instance_dict_contains(proxy: MbValue, key: MbValue) -> Option<MbValue> {
     unsafe {
         if let Some(ptr) = target.as_ptr() {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                return Some(MbValue::from_bool(fields.read().unwrap().contains_key(&name)));
+                return Some(MbValue::from_bool(
+                    fields.read().unwrap().contains_key(&name),
+                ));
             }
         }
     }
     Some(MbValue::from_bool(false))
+}
+
+/// Snapshot an instance `__dict__` proxy's live fields into a fresh, real
+/// `ObjData::Dict` (#969) — attribute names are always strings, so only
+/// string keys are copied. `unwrap_dictlike_data` uses this so read-only
+/// dict-shaped operations that expect a real dict (`==`, `in`, `len`,
+/// iteration, `dict(d)`) treat the proxy the same way they already treat
+/// `ChainMap`/`defaultdict`/etc. Mutations never go through this snapshot —
+/// they use the dedicated `instance_dict_*` write paths above, which write
+/// straight into the live `InstanceFields`.
+pub(crate) fn instance_dict_proxy_snapshot(proxy: MbValue) -> Option<MbValue> {
+    let target = instance_dict_proxy_target(proxy)?;
+    let out = mb_dict_new();
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let guard = fields.read().unwrap();
+                for (k, &v) in guard.iter() {
+                    if k.as_str() == "__ns_order__" {
+                        continue;
+                    }
+                    let key = MbValue::from_ptr(MbObject::new_str(k.clone()));
+                    mb_dict_setitem(out, key, v);
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Insert `(name, value)` pairs directly into `target`'s `InstanceFields`,
+/// matching the retain/release discipline `instance_dict_setitem` uses for a
+/// single key: the target gains a new reference to `value`, and any
+/// overwritten prior value releases the reference it held.
+fn instance_fields_update(target: MbValue, pairs: Vec<(String, MbValue)>) {
+    if pairs.is_empty() {
+        return;
+    }
+    unsafe {
+        if let Some(ptr) = target.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut guard = fields.write().unwrap();
+                for (name, value) in pairs {
+                    super::rc::retain_if_ptr(value);
+                    let old = guard.insert(name, value);
+                    if let Some(prev) = old {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `instance.__dict__.update(other)` (#969) — `__dict__` is a live proxy
+/// over `InstanceFields`, not a real `ObjData::Dict`, so the generic
+/// `mb_dict_update` (which requires an `ObjData::Dict` receiver) silently
+/// no-ops on it. Mirrors the source-shape handling `mb_dict_update` gives a
+/// real dict (dict / list-of-pairs / tuple-of-pairs / dict-like instance),
+/// plus another instance `__dict__` proxy as a source, and writes straight
+/// into the target instance's fields the same way `instance_dict_setitem`
+/// does for a single key. Returns `false` when `proxy` is not an instance
+/// `__dict__` proxy so callers fall back to the real-dict path unchanged.
+fn instance_dict_update(proxy: MbValue, other: MbValue) -> bool {
+    let Some(target) = instance_dict_proxy_target(proxy) else {
+        return false;
+    };
+    // `other` may itself be an instance `__dict__` proxy
+    // (`d.update(other_obj.__dict__)`) — read its target's fields directly.
+    if let Some(other_target) = instance_dict_proxy_target(other) {
+        let pairs: Vec<(String, MbValue)> = unsafe {
+            other_target
+                .as_ptr()
+                .and_then(|p| match &(*p).data {
+                    ObjData::Instance { ref fields, .. } => Some(
+                        fields
+                            .read()
+                            .unwrap()
+                            .iter()
+                            .filter(|(k, _)| k.as_str() != "__ns_order__")
+                            .map(|(k, &v)| (k.clone(), v))
+                            .collect(),
+                    ),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        instance_fields_update(target, pairs);
+        return true;
+    }
+    let Some(other_ptr) = other.as_ptr() else {
+        return true;
+    };
+    fn pair_key_value(item: MbValue) -> Option<(MbValue, MbValue)> {
+        let pp = item.as_ptr()?;
+        unsafe {
+            match &(*pp).data {
+                ObjData::Tuple(ref t) if t.len() == 2 => Some((t[0], t[1])),
+                ObjData::List(ref l) => {
+                    let l = l.read().unwrap();
+                    if l.len() == 2 {
+                        Some((l[0], l[1]))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+    }
+    let pairs: Vec<(String, MbValue)> = unsafe {
+        match &(*other_ptr).data {
+            ObjData::Dict(ref lock) => lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|(k, v)| match k {
+                    DictKey::Str(s) => Some((s.clone(), *v)),
+                    _ => None,
+                })
+                .collect(),
+            ObjData::List(ref lock) => lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|&item| {
+                    let (k, v) = pair_key_value(item)?;
+                    instance_dict_key_name(k).map(|name| (name, v))
+                })
+                .collect(),
+            ObjData::Tuple(ref items) => items
+                .iter()
+                .filter_map(|&item| {
+                    let (k, v) = pair_key_value(item)?;
+                    instance_dict_key_name(k).map(|name| (name, v))
+                })
+                .collect(),
+            ObjData::Instance { .. } => super::class::unwrap_dictlike_data(other)
+                .and_then(|backing| backing.as_ptr())
+                .map(|bp| match &(*bp).data {
+                    ObjData::Dict(ref src) => src
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|(k, v)| match k {
+                            DictKey::Str(s) => Some((s.clone(), *v)),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    };
+    instance_fields_update(target, pairs);
+    true
 }
 
 /// Type-preserving dict key. Distinguishes int from string keys so that
@@ -449,14 +601,107 @@ impl Drop for DictKey {
     }
 }
 
+fn dict_string_hash_value(text: &str) -> i64 {
+    super::string_ops::string_hash_value(text)
+}
+
+fn dict_codepoints_hash_value(codepoints: &[u32]) -> i64 {
+    super::string_ops::codepoints_hash_value(codepoints)
+}
+
+fn dict_key_string_like_hash_value(key: &DictKey) -> Option<i64> {
+    match key {
+        DictKey::Str(s) => Some(dict_string_hash_value(s)),
+        DictKey::StrCodepoints(codepoints) => Some(dict_codepoints_hash_value(codepoints)),
+        _ => None,
+    }
+}
+
+fn dict_builtin_str_payload_key(instance: MbValue) -> Option<DictKey> {
+    let ptr = instance.as_ptr()?;
+    let class_name = unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, .. } => class_name.clone(),
+            _ => return None,
+        }
+    };
+    if !super::class::class_mro_list(&class_name)
+        .into_iter()
+        .any(|ancestor| ancestor == "str")
+    {
+        return None;
+    }
+    let overrides_eq_or_hash = super::class::class_own_members(&class_name)
+        .into_iter()
+        .any(|(name, _, _)| matches!(name.as_str(), "__eq__" | "__hash__"));
+    if overrides_eq_or_hash {
+        return None;
+    }
+    if let Some((base, payload)) = super::class::builtin_data_payload(instance) {
+        if base == "str" {
+            return Some(to_dict_key(payload));
+        }
+    }
+    let rendered = super::builtins::mb_str(instance);
+    let key = match to_dict_key(rendered) {
+        key @ DictKey::Str(_) | key @ DictKey::StrCodepoints(_) => Some(key),
+        _ => None,
+    };
+    unsafe {
+        super::rc::release_if_ptr(rendered);
+    }
+    key
+}
+
+fn dict_instance_builtin_str_key(ptr: usize) -> Option<DictKey> {
+    dict_builtin_str_payload_key(MbValue::from_ptr(ptr as *mut MbObject))
+}
+
+fn dict_key_string_like_eq_instance_without_python(
+    key: &DictKey,
+    hash_val: i64,
+    ptr: usize,
+) -> bool {
+    let Some(expected_hash) = dict_key_string_like_hash_value(key) else {
+        return false;
+    };
+    if expected_hash != hash_val {
+        return false;
+    }
+    dict_instance_builtin_str_key(ptr).is_some_and(|payload_key| &payload_key == key)
+}
+
+fn dict_key_string_like_eq_instance(key: &DictKey, hash_val: i64, ptr: usize) -> bool {
+    let Some(expected_hash) = dict_key_string_like_hash_value(key) else {
+        return false;
+    };
+    if expected_hash != hash_val {
+        return false;
+    }
+    if let Some(payload_key) = dict_instance_builtin_str_key(ptr) {
+        return &payload_key == key;
+    }
+    let instance = MbValue::from_ptr(ptr as *mut MbObject);
+    let other = dict_key_to_mbvalue(key);
+    let eq = super::builtins::mb_eq(instance, other)
+        .as_bool()
+        .unwrap_or(false);
+    unsafe {
+        super::rc::release_if_ptr(other);
+    }
+    eq
+}
+
 impl std::hash::Hash for DictKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            // Str hashes identically to `str` so that `Equivalent<DictKey> for str`
-            // lookups hit the correct bucket without allocating a DictKey.
-            DictKey::Str(s) => s.hash(state),
-            // All other variants include the discriminant to avoid collisions
-            // between e.g. Int(42) and Str("42").
+            // String-like keys and custom instance keys that compare equal to
+            // them must share the same Python-semantic hash domain (#1028).
+            DictKey::Str(s) => dict_string_hash_value(s).hash(state),
+            DictKey::StrCodepoints(codepoints) => {
+                dict_codepoints_hash_value(codepoints).hash(state)
+            }
+            DictKey::Instance { hash_val, .. } => hash_val.hash(state),
             _ => {
                 std::mem::discriminant(self).hash(state);
                 match self {
@@ -465,13 +710,13 @@ impl std::hash::Hash for DictKey {
                     DictKey::Bytes(b) => b.hash(state),
                     DictKey::Bool(b) => b.hash(state),
                     DictKey::None => {}
-                    DictKey::StrCodepoints(codepoints) => codepoints.hash(state),
-                    DictKey::Instance { hash_val, .. } => hash_val.hash(state),
                     DictKey::Other(s) => s.hash(state),
                     DictKey::Func(addr) => addr.hash(state),
                     DictKey::Tuple { hash_val, .. } => hash_val.hash(state),
                     DictKey::FrozenSet { hash_val, .. } => hash_val.hash(state),
-                    DictKey::Str(_) => unreachable!(),
+                    DictKey::Str(_) | DictKey::StrCodepoints(_) | DictKey::Instance { .. } => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -485,6 +730,14 @@ impl PartialEq for DictKey {
             (DictKey::Float(a), DictKey::Float(b)) => a == b,
             (DictKey::Str(a), DictKey::Str(b)) => a == b,
             (DictKey::StrCodepoints(a), DictKey::StrCodepoints(b)) => a == b,
+            (key @ DictKey::Str(_), DictKey::Instance { hash_val, ptr, .. })
+            | (key @ DictKey::StrCodepoints(_), DictKey::Instance { hash_val, ptr, .. }) => {
+                dict_key_string_like_eq_instance_without_python(key, *hash_val, *ptr)
+            }
+            (DictKey::Instance { hash_val, ptr, .. }, key @ DictKey::Str(_))
+            | (DictKey::Instance { hash_val, ptr, .. }, key @ DictKey::StrCodepoints(_)) => {
+                dict_key_string_like_eq_instance_without_python(key, *hash_val, *ptr)
+            }
             (DictKey::Bytes(a), DictKey::Bytes(b)) => a == b,
             (DictKey::Bool(a), DictKey::Bool(b)) => a == b,
             (DictKey::None, DictKey::None) => true,
@@ -567,15 +820,41 @@ impl PartialEq for DictKey {
 }
 impl Eq for DictKey {}
 
-/// Allow `map.get("key")` on `IndexMap<DictKey, V>` — matches only `DictKey::Str`.
-/// Hash compatibility: `DictKey::Str(s)` hashes identically to `s: str`.
+struct BorrowedDictStrKey<'a>(&'a str);
+
+impl std::hash::Hash for BorrowedDictStrKey<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        dict_string_hash_value(self.0).hash(state);
+    }
+}
+
+impl indexmap::Equivalent<DictKey> for BorrowedDictStrKey<'_> {
+    fn equivalent(&self, key: &DictKey) -> bool {
+        matches!(key, DictKey::Str(s) if s.as_str() == self.0)
+    }
+}
+
+/// Exact plain-string lookup in a real dict map using the same string-hash
+/// domain as `DictKey::Str`. Callers that probe `ObjData::Dict` directly must
+/// use this helper (or construct `DictKey::Str`) rather than `map.get(&str)`,
+/// because `DictKey::Str` no longer shares Rust `str` hashing after #1028.
+pub(crate) fn dict_get_exact_str(
+    map: &indexmap::IndexMap<DictKey, MbValue>,
+    key: &str,
+) -> Option<MbValue> {
+    map.get(&BorrowedDictStrKey(key)).copied()
+}
+
+/// Borrowed `str` lookup remains available for internal exact-string metadata
+/// probes (`"__class__"`, `"data"`, etc.). User-facing dict operations no
+/// longer rely on it because custom object keys can be hash-/eq-compatible
+/// with strings without sharing Rust's `Hash for str` domain.
 impl indexmap::Equivalent<DictKey> for str {
     fn equivalent(&self, key: &DictKey) -> bool {
         matches!(key, DictKey::Str(s) if s.as_str() == self)
     }
 }
 
-/// Allow `map.get(&name)` on `IndexMap<DictKey, V>` where `name: String`.
 impl indexmap::Equivalent<DictKey> for String {
     fn equivalent(&self, key: &DictKey) -> bool {
         matches!(key, DictKey::Str(s) if s == self)
@@ -596,7 +875,10 @@ fn format_bytes_key(data: &[u8]) -> String {
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
             b'\t' => out.push_str("\\t"),
-            c if c == quote => { out.push('\\'); out.push(c as char); }
+            c if c == quote => {
+                out.push('\\');
+                out.push(c as char);
+            }
             0x20..=0x7E => out.push(b as char),
             c => out.push_str(&format!("\\x{c:02x}")),
         }
@@ -612,7 +894,11 @@ impl std::fmt::Display for DictKey {
             DictKey::Float(bits) => write!(f, "{}", dict_key_display(&DictKey::Float(*bits))),
             DictKey::Str(s) => write!(f, "{s}"),
             DictKey::StrCodepoints(codepoints) => {
-                write!(f, "{}", super::string_ops::escape_codepoints_non_ascii(codepoints))
+                write!(
+                    f,
+                    "{}",
+                    super::string_ops::escape_codepoints_non_ascii(codepoints)
+                )
             }
             DictKey::Bytes(b) => write!(f, "{}", format_bytes_key(b)),
             DictKey::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
@@ -754,6 +1040,9 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
                     };
                 }
                 ObjData::Instance { class_name, .. } => {
+                    if let Some(key) = dict_builtin_str_payload_key(val) {
+                        return key;
+                    }
                     // Dispatch __hash__ to bucket by Python's hash; fall back to
                     // pointer identity when the class defines no __hash__.
                     let h = super::builtins::mb_hash(val)
@@ -793,19 +1082,258 @@ enum DictLookup {
     Error,
 }
 
-fn dict_lookup_index(map: &indexmap::IndexMap<DictKey, MbValue>, needle: &DictKey) -> DictLookup {
-    for (index, key) in map.keys().enumerate() {
-        if key == needle {
-            if has_pending_exception() {
-                return DictLookup::Error;
+enum DictReadLookup {
+    Hit(MbValue),
+    Miss,
+    Error,
+}
+
+enum DictReadCandidate {
+    Exact,
+    Deferred,
+    Miss,
+}
+
+fn with_exact_plain_str<R>(value: MbValue, f: impl FnOnce(&str) -> R) -> Option<R> {
+    let ptr = value.as_ptr()?;
+    unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            if super::string_ops::surrogate_codepoints(value).is_none() {
+                return Some(f(s));
             }
-            return DictLookup::Hit(index);
-        }
-        if has_pending_exception() {
-            return DictLookup::Error;
         }
     }
-    DictLookup::Miss
+    None
+}
+
+fn dict_read_candidate(stored: &DictKey, needle: &DictKey) -> DictReadCandidate {
+    match (stored, needle) {
+        (DictKey::Str(a), DictKey::Str(b)) if a == b => DictReadCandidate::Exact,
+        (DictKey::StrCodepoints(a), DictKey::StrCodepoints(b)) if a == b => {
+            DictReadCandidate::Exact
+        }
+        (
+            DictKey::Instance {
+                hash_val: ha,
+                ptr: pa,
+                ..
+            },
+            DictKey::Instance {
+                hash_val: hb,
+                ptr: pb,
+                ..
+            },
+        ) => {
+            if ha != hb {
+                DictReadCandidate::Miss
+            } else if pa == pb {
+                DictReadCandidate::Exact
+            } else {
+                DictReadCandidate::Deferred
+            }
+        }
+        (DictKey::Str(_) | DictKey::StrCodepoints(_), DictKey::Instance { hash_val, .. }) => {
+            if dict_key_string_like_hash_value(stored) == Some(*hash_val) {
+                DictReadCandidate::Deferred
+            } else {
+                DictReadCandidate::Miss
+            }
+        }
+        (DictKey::Instance { hash_val, .. }, key @ DictKey::Str(_))
+        | (DictKey::Instance { hash_val, .. }, key @ DictKey::StrCodepoints(_)) => {
+            if Some(*hash_val) == dict_key_string_like_hash_value(key) {
+                DictReadCandidate::Deferred
+            } else {
+                DictReadCandidate::Miss
+            }
+        }
+        _ => DictReadCandidate::Miss,
+    }
+}
+
+fn dict_read_deferred_eq(stored: &DictKey, needle: &DictKey) -> bool {
+    match (stored, needle) {
+        (key @ DictKey::Str(_), DictKey::Instance { hash_val, ptr, .. })
+        | (key @ DictKey::StrCodepoints(_), DictKey::Instance { hash_val, ptr, .. }) => {
+            dict_key_string_like_eq_instance(key, *hash_val, *ptr)
+        }
+        (DictKey::Instance { hash_val, ptr, .. }, key @ DictKey::Str(_))
+        | (DictKey::Instance { hash_val, ptr, .. }, key @ DictKey::StrCodepoints(_)) => {
+            dict_key_string_like_eq_instance(key, *hash_val, *ptr)
+        }
+        (
+            DictKey::Instance {
+                hash_val: ha,
+                ptr: pa,
+                ..
+            },
+            DictKey::Instance {
+                hash_val: hb,
+                ptr: pb,
+                ..
+            },
+        ) => {
+            if ha != hb {
+                return false;
+            }
+            if pa == pb {
+                return true;
+            }
+            let a_val = MbValue::from_ptr(*pa as *mut MbObject);
+            let b_val = MbValue::from_ptr(*pb as *mut MbObject);
+            super::builtins::mb_eq(a_val, b_val)
+                .as_bool()
+                .unwrap_or(false)
+        }
+        _ => stored == needle,
+    }
+}
+
+fn dict_read_lookup_owned(
+    lock: &super::rc::MbRwLock<super::rc::MbDictMap>,
+    key: MbValue,
+    needle: &DictKey,
+) -> DictReadLookup {
+    let guard = match lock.try_read() {
+        Ok(g) => g,
+        Err(_) => lock.read().unwrap(),
+    };
+
+    if let Some(value) =
+        with_exact_plain_str(key, |text| guard.get(&BorrowedDictStrKey(text)).copied()).flatten()
+    {
+        return DictReadLookup::Hit(super::rc::return_owned(value));
+    }
+
+    if !matches!(
+        needle,
+        DictKey::Str(_) | DictKey::StrCodepoints(_) | DictKey::Instance { .. }
+    ) {
+        return match dict_lookup_index(&guard, needle) {
+            DictLookup::Hit(index) => guard
+                .get_index(index)
+                .map(|(_, &v)| DictReadLookup::Hit(super::rc::return_owned(v)))
+                .unwrap_or(DictReadLookup::Miss),
+            DictLookup::Miss => DictReadLookup::Miss,
+            DictLookup::Error => DictReadLookup::Error,
+        };
+    }
+
+    let mut exact_hit = None;
+    let mut deferred = Vec::new();
+    for (stored, &value) in guard.iter() {
+        match dict_read_candidate(stored, needle) {
+            DictReadCandidate::Exact => {
+                exact_hit = Some(super::rc::return_owned(value));
+                break;
+            }
+            DictReadCandidate::Deferred => {
+                deferred.push((stored.clone(), super::rc::return_owned(value)));
+            }
+            DictReadCandidate::Miss => {}
+        }
+    }
+    drop(guard);
+
+    if let Some(value) = exact_hit {
+        for (_, owned) in deferred {
+            super::rc::release_owned(owned);
+        }
+        return DictReadLookup::Hit(value);
+    }
+
+    let mut hit_index = None;
+    for (index, (stored, _)) in deferred.iter().enumerate() {
+        if dict_read_deferred_eq(stored, needle) {
+            hit_index = Some(index);
+            break;
+        }
+        if has_pending_exception() {
+            for (_, owned) in deferred {
+                super::rc::release_owned(owned);
+            }
+            return DictReadLookup::Error;
+        }
+    }
+
+    let mut hit_value = None;
+    for (index, (_, owned)) in deferred.into_iter().enumerate() {
+        if Some(index) == hit_index {
+            hit_value = Some(owned);
+        } else {
+            super::rc::release_owned(owned);
+        }
+    }
+    match hit_value {
+        Some(value) => DictReadLookup::Hit(value),
+        None => DictReadLookup::Miss,
+    }
+}
+
+fn dict_resolve_stored_key(
+    lock: &super::rc::MbRwLock<super::rc::MbDictMap>,
+    needle: &DictKey,
+) -> Result<Option<DictKey>, ()> {
+    let guard = match lock.try_read() {
+        Ok(g) => g,
+        Err(_) => lock.read().unwrap(),
+    };
+
+    if !matches!(
+        needle,
+        DictKey::Str(_) | DictKey::StrCodepoints(_) | DictKey::Instance { .. }
+    ) {
+        return match dict_lookup_index(&guard, needle) {
+            DictLookup::Hit(index) => Ok(guard.get_index(index).map(|(stored, _)| stored.clone())),
+            DictLookup::Miss => Ok(None),
+            DictLookup::Error => Err(()),
+        };
+    }
+
+    let mut exact_hit = None;
+    let mut deferred = Vec::new();
+    for (stored, _) in guard.iter() {
+        match dict_read_candidate(stored, needle) {
+            DictReadCandidate::Exact => {
+                exact_hit = Some(stored.clone());
+                break;
+            }
+            DictReadCandidate::Deferred => deferred.push(stored.clone()),
+            DictReadCandidate::Miss => {}
+        }
+    }
+    drop(guard);
+
+    if let Some(stored) = exact_hit {
+        return Ok(Some(stored));
+    }
+
+    for stored in deferred {
+        if dict_read_deferred_eq(&stored, needle) {
+            return Ok(Some(stored));
+        }
+        if has_pending_exception() {
+            return Err(());
+        }
+    }
+    Ok(None)
+}
+
+fn dict_lookup_index(map: &super::rc::MbDictMap, needle: &DictKey) -> DictLookup {
+    // Hash-based lookup (was an O(n) linear scan over `map.keys()`, making
+    // every dict op — and therefore every dict-building loop — O(n^2)/O(n^3).
+    // `IndexMap::get_index_of` uses `needle`'s `Hash`/`Eq` (the same
+    // `PartialEq for DictKey` used by the old scan, including its `__eq__`
+    // dispatch for Instance/Tuple/FrozenSet keys on hash collision), so
+    // lookup semantics are unchanged — only the algorithmic complexity is.
+    let index = map.get_index_of(needle);
+    if has_pending_exception() {
+        return DictLookup::Error;
+    }
+    match index {
+        Some(index) => DictLookup::Hit(index),
+        None => DictLookup::Miss,
+    }
 }
 
 /// Convert a DictKey back to an MbValue for iteration/display.
@@ -977,6 +1505,59 @@ pub fn mb_dict_from_pairs(iterable: MbValue) -> MbValue {
                     return dict;
                 }
                 ObjData::Instance { .. } => {
+                    // dict-SUBCLASS instance (`class DS(dict): pass`) stores
+                    // its raw dict payload behind a hidden builtin-data field
+                    // (see `dict_like_operand` in builtins.rs, #1026) rather
+                    // than the `_data`-backed shape handled below. Iterating
+                    // it yields *keys* (dict iteration semantics), so without
+                    // this check the generic pair-fallback further down
+                    // treated each key as a (k, v) pair, building {None:
+                    // None} instead of copying the payload. (#1039)
+                    if let Some(("dict", payload)) =
+                        super::class::builtin_data_payload_if_unoverridden(iterable, "__iter__")
+                    {
+                        if let Some(pp) = payload.as_ptr() {
+                            if let ObjData::Dict(ref src) = (*pp).data {
+                                let guard = src.read().unwrap();
+                                for (k, &v) in guard.iter() {
+                                    let kv = dict_key_to_mbvalue(k);
+                                    super::rc::retain_if_ptr(v);
+                                    mb_dict_setitem(dict, kv, v);
+                                }
+                                return dict;
+                            }
+                        }
+                    }
+                    // dict-SUBCLASS instance with __iter__ overridden (the
+                    // fast-path gate above didn't fire): CPython's dict_merge
+                    // only takes the raw-storage fast path when the operand's
+                    // `__iter__` is unmodified; once it's overridden, dict()
+                    // falls back to the *mapping protocol* — call `.keys()`
+                    // (honoring a keys() override, else the live default view
+                    // of the real payload) and subscript each key via
+                    // `__getitem__` (honoring a __getitem__ override, else the
+                    // real payload). Verified against the CPython 3.12 oracle:
+                    // keys()/__getitem__ overrides only take effect once
+                    // __iter__ is also overridden; if __iter__ is left alone,
+                    // CPython's raw-storage fast path fires above and ignores
+                    // keys()/__getitem__ overrides entirely. (#1050, #1039
+                    // residual)
+                    if let Some(("dict", _)) = super::class::builtin_data_payload(iterable) {
+                        let keys_method = super::class::mb_getattr(iterable, new_str("keys"));
+                        let keys_result = super::class::mb_call0(keys_method);
+                        let khandle = super::iter::mb_iter(keys_result);
+                        if !khandle.is_none() {
+                            loop {
+                                if super::iter::mb_has_next(khandle).as_bool() != Some(true) {
+                                    break;
+                                }
+                                let key = super::iter::mb_next(khandle);
+                                let value = super::class::mb_obj_getitem(iterable, key);
+                                mb_dict_setitem(dict, key, value);
+                            }
+                            return dict;
+                        }
+                    }
                     // dict-like collections instances (defaultdict, Counter,
                     // OrderedDict) store their entries under a backing `_data`
                     // dict. Iterating them yields *keys* (not pairs), so the
@@ -993,6 +1574,32 @@ pub fn mb_dict_from_pairs(iterable: MbValue) -> MbValue {
                                 }
                                 return dict;
                             }
+                        }
+                    }
+                    // Duck-typed mapping, no dict inheritance at all (#1056):
+                    // a plain class exposing `keys()` (+ `__getitem__`) with
+                    // no dict ancestor never reaches `builtin_data_payload`
+                    // above (that's dict-subclass-only), so without this
+                    // check it fell straight into the generic iterable
+                    // fallback below and blew up on `mb_iter` (no `__iter__`).
+                    // CPython's `dict_update_common` probes for `.keys()`
+                    // (`_PyObject_LookupAttrId`) before ever trying the
+                    // iterable-of-pairs path — mirror that priority here via
+                    // the same keys()+`__getitem__` merge #1050 uses above.
+                    if super::class::mb_hasattr(iterable, new_str("keys")).as_bool() == Some(true) {
+                        let keys_method = super::class::mb_getattr(iterable, new_str("keys"));
+                        let keys_result = super::class::mb_call0(keys_method);
+                        let khandle = super::iter::mb_iter(keys_result);
+                        if !khandle.is_none() {
+                            loop {
+                                if super::iter::mb_has_next(khandle).as_bool() != Some(true) {
+                                    break;
+                                }
+                                let key = super::iter::mb_next(khandle);
+                                let value = super::class::mb_obj_getitem(iterable, key);
+                                mb_dict_setitem(dict, key, value);
+                            }
+                            return dict;
                         }
                     }
                     let handle = super::iter::mb_iter(iterable);
@@ -1069,21 +1676,11 @@ pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                let guard = match lock.try_read() {
-                    Ok(g) => g,
-                    Err(_) => lock.read().unwrap(),
-                };
-                match dict_lookup_index(&guard, &dk) {
-                    DictLookup::Hit(index) => {
-                        if let Some((_, &v)) = guard.get_index(index) {
-                            super::rc::retain_if_ptr(v);
-                            return v;
-                        }
-                    }
-                    DictLookup::Error => return MbValue::none(),
-                    DictLookup::Miss => {}
+                match dict_read_lookup_owned(lock, key, &dk) {
+                    DictReadLookup::Hit(value) => return value,
+                    DictReadLookup::Error => return MbValue::none(),
+                    DictReadLookup::Miss => {}
                 }
-                drop(guard);
                 let key_repr = dict_key_raw_str(&dk);
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
@@ -1107,27 +1704,16 @@ pub fn mb_dict_get(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                let guard = match lock.try_read() {
-                    Ok(g) => g,
-                    Err(_) => lock.read().unwrap(),
-                };
-                match dict_lookup_index(&guard, &dk) {
-                    DictLookup::Hit(index) => {
-                        if let Some((_, &val)) = guard.get_index(index) {
-                            super::rc::retain_if_ptr(val);
-                            return val;
-                        }
-                    }
-                    DictLookup::Error => return MbValue::none(),
-                    DictLookup::Miss => {}
+                match dict_read_lookup_owned(lock, key, &dk) {
+                    DictReadLookup::Hit(value) => return value,
+                    DictReadLookup::Error => return MbValue::none(),
+                    DictReadLookup::Miss => {}
                 }
-                super::rc::retain_if_ptr(default);
-                return default;
+                return super::rc::return_owned(default);
             }
         }
     }
-    unsafe { super::rc::retain_if_ptr(default) };
-    default
+    super::rc::return_owned(default)
 }
 
 /// dict[key] = value
@@ -1156,29 +1742,31 @@ pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
+                let matched = match dict_resolve_stored_key(lock, &dk) {
+                    Ok(matched) => matched,
+                    Err(()) => return,
+                };
                 let mut map = match lock.try_write() {
                     Ok(m) => m,
                     Err(_) => lock.write().unwrap(),
                 };
-                match dict_lookup_index(&map, &dk) {
-                    DictLookup::Hit(index) => {
+                if let Some(stored_key) = matched {
+                    if let Some(index) = map.get_index_of(&stored_key) {
                         if let Some((_, existing)) = map.get_index_mut(index) {
-                            super::rc::retain_if_ptr(value);
+                            super::rc::store_owned(value);
                             let old_val = *existing;
                             *existing = value;
-                            super::rc::release_if_ptr(old_val);
+                            super::rc::release_owned(old_val);
                         }
+                        return;
                     }
-                    DictLookup::Miss => {
-                        super::rc::retain_if_ptr(value);
-                        map.insert(dk, value);
-                        if has_pending_exception() {
-                            return;
-                        }
-                        bump_dict_version(dict);
-                    }
-                    DictLookup::Error => return,
                 }
+                super::rc::store_owned(value);
+                map.insert(dk, value);
+                if has_pending_exception() {
+                    return;
+                }
+                bump_dict_version(dict);
             }
         }
     }
@@ -1268,14 +1856,13 @@ pub fn mb_dict_contains(dict: MbValue, key: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                let guard = match lock.try_read() {
-                    Ok(g) => g,
-                    Err(_) => lock.read().unwrap(),
-                };
-                return match dict_lookup_index(&guard, &dk) {
-                    DictLookup::Hit(_) => MbValue::from_bool(true),
-                    DictLookup::Miss => MbValue::from_bool(false),
-                    DictLookup::Error => MbValue::none(),
+                return match dict_read_lookup_owned(lock, key, &dk) {
+                    DictReadLookup::Hit(value) => {
+                        super::rc::release_owned(value);
+                        MbValue::from_bool(true)
+                    }
+                    DictReadLookup::Miss => MbValue::from_bool(false),
+                    DictReadLookup::Error => MbValue::none(),
                 };
             }
         }
@@ -1354,7 +1941,11 @@ fn dict_view_class_kind(class_name: &str) -> Option<&'static str> {
 pub(crate) fn dict_view_data(view: MbValue) -> Option<MbValue> {
     let ptr = view.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             dict_view_class_kind(class_name)?;
             return fields.read().unwrap().get("_data").copied();
         }
@@ -1481,12 +2072,9 @@ fn reject_plain_non_iterable(value: MbValue) -> Option<MbValue> {
     let is_plain_non_iterable = value.is_none()
         || value.is_bool()
         || value.as_float().is_some()
-        || value
-            .as_int()
-            .is_some_and(|i| {
-                !super::iter::is_iter_handle(value)
-                    && !super::file_io::is_file_handle(i as u64)
-            });
+        || value.as_int().is_some_and(|i| {
+            !super::iter::is_iter_handle(value) && !super::file_io::is_file_handle(i as u64)
+        });
     if !is_plain_non_iterable {
         return None;
     }
@@ -1510,7 +2098,11 @@ pub(crate) fn dict_view_eq(a: MbValue, b: MbValue) -> Option<bool> {
     let b_is_setlike = dict_view_is_setlike(b);
     if a_is_setlike && (b_is_setlike || is_set_or_frozenset(b)) {
         let left = dict_view_as_set(a)?;
-        let right = if b_is_setlike { dict_view_as_set(b)? } else { b };
+        let right = if b_is_setlike {
+            dict_view_as_set(b)?
+        } else {
+            b
+        };
         return Some(super::builtins::mb_eq(left, right).as_bool() == Some(true));
     }
     if b_is_setlike && is_set_or_frozenset(a) {
@@ -1627,7 +2219,11 @@ pub(crate) fn mappingproxy_from_mapping(data: MbValue) -> MbValue {
 pub(crate) fn mappingproxy_mapping(proxy: MbValue) -> Option<MbValue> {
     let ptr = proxy.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             if class_name == "mappingproxy" {
                 let data = fields.read().unwrap().get("_mapping").copied();
                 return data.filter(|v| !v.is_none());
@@ -1765,32 +2361,45 @@ pub fn mb_dict_setdefault(dict: MbValue, key: MbValue, default: MbValue) -> MbVa
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let mut map = lock.write().unwrap();
-                match dict_lookup_index(&map, &dk) {
-                    DictLookup::Hit(index) => {
-                        if let Some((_, &val)) = map.get_index(index) {
-                            super::rc::retain_if_ptr(val);
-                            return val;
-                        }
-                    }
-                    DictLookup::Miss => {
-                        map.insert(dk, default);
-                        if has_pending_exception() {
-                            return MbValue::none();
-                        }
-                        bump_dict_version(dict);
-                        super::rc::retain_if_ptr(default);
-                        return default;
-                    }
-                    DictLookup::Error => return MbValue::none(),
+                // Single hash-table probe via `Entry`, not a `get_index_of`
+                // Hit/Miss check followed by a separate `insert` on Miss:
+                // `IndexMap::insert` re-hashes and re-probes the same
+                // collision bucket to decide overwrite-vs-append, which for
+                // a key with a custom `__eq__`/`__hash__` means the key's
+                // `__eq__` gets invoked a second time for one `setdefault`
+                // call. CPython's `test_setdefault_atomic` asserts exactly
+                // one `__eq__` call across a miss, so the double probe is a
+                // conformance bug (and pure overhead on the hit path too).
+                let entry = map.entry(dk);
+                if has_pending_exception() {
+                    return MbValue::none();
                 }
+                match entry {
+                    indexmap::map::Entry::Occupied(occ) => {
+                        let val = *occ.get();
+                        super::rc::return_owned(val)
+                    }
+                    indexmap::map::Entry::Vacant(vac) => {
+                        let returned = super::rc::store_and_return_owned(default);
+                        vac.insert(default);
+                        bump_dict_version(dict);
+                        returned
+                    }
+                }
+            } else {
+                super::rc::return_owned(default)
             }
+        } else {
+            super::rc::return_owned(default)
         }
     }
-    default
 }
 
 /// dict.update(other) — merge other dict into this one
 pub fn mb_dict_update(dict: MbValue, other: MbValue) {
+    if instance_dict_update(dict, other) {
+        return;
+    }
     unsafe {
         let Some(dict_ptr) = dict.as_ptr() else {
             return;
@@ -1798,6 +2407,48 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
         let ObjData::Dict(ref dict_lock) = (*dict_ptr).data else {
             return;
         };
+
+        // Fast path: when `other` is itself a plain dict (the common case —
+        // `d.update(other_dict)`) and neither lock is currently contended,
+        // merge directly under both locks at once so each source key can be
+        // looked up by borrow — no `DictKey` clone — and only cloned into
+        // an owned key on an actual Miss (insert). `try_write`/`try_read`
+        // never block, so this can't deadlock; any contention (including
+        // the self-aliasing `d.update(d)` case, where `dict`'s own read
+        // guard would make its `try_write` fail) simply falls through to
+        // the always-correct clone-first path below.
+        if let Some(other_ptr) = other.as_ptr() {
+            if let ObjData::Dict(ref other_lock) = (*other_ptr).data {
+                if let Ok(mut map) = dict_lock.try_write() {
+                    if let Ok(other_map) = other_lock.try_read() {
+                        let mut changed_keys = false;
+                        for (k, v) in other_map.iter() {
+                            match dict_lookup_index(&map, k) {
+                                DictLookup::Hit(index) => {
+                                    if let Some((_, existing)) = map.get_index_mut(index) {
+                                        *existing = *v;
+                                    }
+                                }
+                                DictLookup::Miss => {
+                                    map.insert(k.clone(), *v);
+                                    if has_pending_exception() {
+                                        return;
+                                    }
+                                    changed_keys = true;
+                                }
+                                DictLookup::Error => return,
+                            }
+                        }
+                        drop(other_map);
+                        drop(map);
+                        if changed_keys {
+                            bump_dict_version(dict);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
 
         // Collect pairs from `other` first to avoid holding two locks.
         let pairs: Vec<(DictKey, MbValue)> = if let Some(ptr) = other.as_ptr() {
@@ -1879,8 +2530,70 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
                         } else {
                             return;
                         }
+                    } else if super::class::mb_hasattr(other, new_str("keys")).as_bool()
+                        == Some(true)
+                    {
+                        // Duck-typed mapping (#1056): a plain class exposing
+                        // `keys()` (+ `__getitem__`), or a dict subclass —
+                        // neither was handled here at all before (unlike
+                        // `mb_dict_from_pairs`'s dict() constructor, which
+                        // #1050 already routes dict subclasses through this
+                        // same keys()+getitem merge). CPython's
+                        // `dict_update_common` probes `.keys()` before ever
+                        // trying the iterable-of-pairs path, ahead of the
+                        // plain-iterable fallback handled in the `else` arm
+                        // below.
+                        let keys_method = super::class::mb_getattr(other, new_str("keys"));
+                        let keys_result = super::class::mb_call0(keys_method);
+                        let khandle = super::iter::mb_iter(keys_result);
+                        if khandle.is_none() {
+                            return;
+                        }
+                        let mut out = Vec::new();
+                        loop {
+                            if super::iter::mb_has_next(khandle).as_bool() != Some(true) {
+                                break;
+                            }
+                            let key = super::iter::mb_next(khandle);
+                            let value = super::class::mb_obj_getitem(other, key);
+                            super::rc::retain_if_ptr(value);
+                            out.push((to_dict_key(key), value));
+                        }
+                        out
                     } else {
-                        return;
+                        // Iterable-of-pairs Instance (#1062, #1056 residual):
+                        // no `keys()` and no dict-like backing, so this isn't
+                        // a mapping at all — CPython's `dict_update_common`
+                        // falls back to `PyDict_MergeFromSeq2` here, iterating
+                        // `other` and destructuring each element as a (key,
+                        // value) 2-sequence (mirrors `mb_dict_from_pairs`'s
+                        // generic fallback). A bad-shape element raises the
+                        // same ValueError/TypeError CPython does — see
+                        // `pair_from_update_seq_element` below.
+                        let handle = super::iter::mb_iter(other);
+                        if handle.is_none() {
+                            return;
+                        }
+                        let mut out = Vec::new();
+                        let mut idx: usize = 0;
+                        loop {
+                            if super::iter::mb_has_next(handle).as_bool() != Some(true) {
+                                break;
+                            }
+                            let item = super::iter::mb_next(handle);
+                            if has_pending_exception() {
+                                return;
+                            }
+                            match pair_from_update_seq_element(item, idx) {
+                                Some((k, v)) => {
+                                    super::rc::retain_if_ptr(v);
+                                    out.push((to_dict_key(k), v));
+                                }
+                                None => return,
+                            }
+                            idx += 1;
+                        }
+                        out
                     }
                 }
                 _ => return,
@@ -1916,6 +2629,127 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
             bump_dict_version(dict);
         }
     }
+}
+
+/// Convert one element of a `dict.update(iterable_of_pairs)` source into a
+/// `(key, value)` pair, mirroring CPython's `PyDict_MergeFromSeq2` (itself
+/// `PySequence_Fast` + a length-2 check). `idx` is the element's 0-based
+/// position — used only for the two CPython error messages below, which a
+/// bad-shape element reached through a bare-`__iter__` Instance (#1062) must
+/// match exactly. Returns `None` after raising the corresponding exception:
+///   - element isn't sequence-like at all → TypeError "cannot convert
+///     dictionary update sequence element #{idx} to a sequence"
+///   - element is sequence-like but not exactly length 2 → ValueError
+///     "dictionary update sequence element #{idx} has length {len}; 2 is
+///     required"
+fn pair_from_update_seq_element(item: MbValue, idx: usize) -> Option<(MbValue, MbValue)> {
+    unsafe {
+        // Fast paths for the common tuple/list-of-2 shapes (avoids a full
+        // mb_iter round-trip for the overwhelmingly common case).
+        if let Some(ptr) = item.as_ptr() {
+            match &(*ptr).data {
+                ObjData::Tuple(ref t) => {
+                    if t.len() == 2 {
+                        return Some((t[0], t[1]));
+                    }
+                    raise_update_seq_length_error(idx, t.len());
+                    return None;
+                }
+                ObjData::List(ref lock) => {
+                    let l = lock.read().unwrap();
+                    let len = l.len();
+                    if len == 2 {
+                        return Some((l[0], l[1]));
+                    }
+                    drop(l);
+                    raise_update_seq_length_error(idx, len);
+                    return None;
+                }
+                _ => {}
+            }
+        }
+        // Generic fallback (str, set, generator, a user `__iter__`/
+        // `__getitem__` object, ...): drain via the iterator protocol, then
+        // apply the length-2 check.
+        let handle = super::iter::mb_iter(item);
+        if handle.is_none() {
+            // mb_iter already raised its own "'X' object is not iterable"
+            // TypeError; CPython's actual wording at this call site is the
+            // "cannot convert ... to a sequence" TypeError below.
+            super::exception::clear_current_exception();
+            raise_update_seq_convert_error(idx);
+            return None;
+        }
+        let mut items = Vec::new();
+        loop {
+            if super::iter::mb_has_next(handle).as_bool() != Some(true) {
+                break;
+            }
+            items.push(super::iter::mb_next(handle));
+            if has_pending_exception() {
+                return None;
+            }
+        }
+        if items.len() == 2 {
+            let k = items[0];
+            let v = items[1];
+            Some((k, v))
+        } else {
+            raise_update_seq_length_error(idx, items.len());
+            None
+        }
+    }
+}
+
+fn raise_update_seq_length_error(idx: usize, len: usize) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "dictionary update sequence element #{idx} has length {len}; 2 is required"
+        ))),
+    );
+}
+
+fn raise_update_seq_convert_error(idx: usize) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "cannot convert dictionary update sequence element #{idx} to a sequence"
+        ))),
+    );
+}
+
+/// `{**other}` dict-display unpack (PEP 448) calls this STRICT wrapper
+/// instead of `mb_dict_update` directly. CPython's `DICT_UPDATE` bytecode
+/// (`PyDict_Update` → `dict_merge`) has no iterable-of-pairs fallback the way
+/// `dict.update()` / `d |= other` does (`dict_update_common`'s
+/// `PyDict_MergeFromSeq2` path) — an Instance exposing only `__iter__` (no
+/// `keys()`, no dict-like backing) must raise `TypeError: '<type>' object is
+/// not a mapping`, not silently iterate pairs the way `mb_dict_update`'s
+/// Instance `else` arm now does (#1062 `{**pairs_obj}` audit). Every other
+/// shape (real dict, dict-like collections instance, duck-typed `keys()`
+/// mapping, list/tuple-of-pairs, ...) is untouched here — delegated straight
+/// to `mb_dict_update` so `{**x}` and `.update(x)` stay identical there.
+pub fn mb_dict_merge_mapping_only(dict: MbValue, other: MbValue) {
+    unsafe {
+        if let Some(ptr) = other.as_ptr() {
+            if matches!((*ptr).data, ObjData::Instance { .. }) {
+                let is_mapping_shape = super::class::unwrap_dictlike_data(other).is_some()
+                    || super::class::mb_hasattr(other, new_str("keys")).as_bool() == Some(true);
+                if !is_mapping_shape {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{}' object is not a mapping",
+                            super::builtins::value_type_name(other)
+                        ))),
+                    );
+                    return;
+                }
+            }
+        }
+    }
+    mb_dict_update(dict, other);
 }
 
 /// dict.clear()
@@ -2290,7 +3124,12 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
     if let Some(ref cls) = stub_class {
         if matches!(
             cls.as_str(),
-            "Element" | "ElementTree" | "XMLParser" | "XMLPullParser" | "TreeBuilder"
+            "Element"
+                | "ElementTree"
+                | "XMLParser"
+                | "XMLPullParser"
+                | "TreeBuilder"
+                | "XMLParserType"
         ) {
             if let Some(result) =
                 super::stdlib::xml_mod::dispatch_xml_stub_method(cls, name, receiver, args)
@@ -2456,6 +3295,8 @@ pub(crate) fn dict_stub_class(receiver: MbValue) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::hash::{BuildHasher, Hash, Hasher};
 
     fn str_val(s: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(s.to_string()))
@@ -2525,6 +3366,54 @@ mod tests {
         dictlike_with_backing("collections.UserDict", backing)
     }
 
+    const STR_EQ_KEY_CLASS: &str = "DictKeyStrEqKey1028";
+
+    extern "C" fn str_eq_key_hash(_self_v: MbValue, _args: MbValue) -> MbValue {
+        super::super::builtins::mb_hash(str_val("key3"))
+    }
+
+    extern "C" fn str_eq_key_eq(_self_v: MbValue, args: MbValue) -> MbValue {
+        let other = list_get(args, 0);
+        unsafe {
+            if let Some(ptr) = other.as_ptr() {
+                match &(*ptr).data {
+                    ObjData::Str(s) => return MbValue::from_bool(s == "key3"),
+                    ObjData::Instance { class_name, .. } => {
+                        return MbValue::from_bool(class_name == STR_EQ_KEY_CLASS);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        MbValue::from_bool(false)
+    }
+
+    fn make_str_eq_key_instance() -> MbValue {
+        let hash_addr = str_eq_key_hash as usize;
+        let eq_addr = str_eq_key_eq as usize;
+        super::super::module::register_variadic_func(hash_addr as u64);
+        super::super::module::register_variadic_func(eq_addr as u64);
+        let mut methods = HashMap::new();
+        methods.insert("__hash__".to_string(), MbValue::from_func(hash_addr));
+        methods.insert("__eq__".to_string(), MbValue::from_func(eq_addr));
+        super::super::class::mb_class_register(STR_EQ_KEY_CLASS, vec![], methods);
+        MbValue::from_ptr(MbObject::new_instance(STR_EQ_KEY_CLASS.to_string()))
+    }
+
+    const STR_SUBCLASS_KEY_CLASS: &str = "DictKeyStrSubclass1028";
+
+    fn make_str_subclass_key_instance(text: &str) -> MbValue {
+        super::super::class::mb_class_register(
+            STR_SUBCLASS_KEY_CLASS,
+            vec!["str".to_string()],
+            HashMap::new(),
+        );
+        super::super::class::mb_instance_new_with_init(
+            str_val(STR_SUBCLASS_KEY_CLASS),
+            MbValue::from_ptr(MbObject::new_list(vec![str_val(text)])),
+        )
+    }
+
     // ── new ──
 
     #[test]
@@ -2540,6 +3429,93 @@ mod tests {
         let d = mb_dict_new();
         mb_dict_setitem(d, str_val("key"), MbValue::from_int(42));
         assert_eq!(mb_dict_getitem(d, str_val("key")).as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_dict_string_hash_matches_mb_hash_for_str() {
+        let text = "key3";
+        assert_eq!(
+            dict_string_hash_value(text),
+            super::super::builtins::mb_hash(str_val(text))
+                .as_int()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_str_and_instance_equal_keys_share_storage_hash() {
+        let instance = make_str_eq_key_instance();
+        let str_key = DictKey::Str("key3".to_string());
+        let inst_key = to_dict_key(instance);
+        let state = std::hash::RandomState::new();
+
+        let mut str_hasher = state.build_hasher();
+        str_key.hash(&mut str_hasher);
+
+        let mut inst_hasher = state.build_hasher();
+        inst_key.hash(&mut inst_hasher);
+
+        assert_eq!(str_hasher.finish(), inst_hasher.finish());
+    }
+
+    #[test]
+    fn test_str_and_instance_equal_keys_round_trip() {
+        let d = mb_dict_new();
+        let instance_key = make_str_eq_key_instance();
+        let other_instance_key = make_str_eq_key_instance();
+
+        mb_dict_setitem(d, str_val("key3"), MbValue::from_int(44));
+        assert_eq!(mb_dict_getitem(d, instance_key).as_int(), Some(44));
+
+        let d2 = mb_dict_new();
+        mb_dict_setitem(d2, instance_key, MbValue::from_int(44));
+        assert_eq!(mb_dict_getitem(d2, str_val("key3")).as_int(), Some(44));
+        assert_eq!(mb_dict_getitem(d2, other_instance_key).as_int(), Some(44));
+
+        mb_dict_setitem(d2, str_val("key3"), MbValue::from_int(45));
+        assert_eq!(mb_dict_len(d2).as_int(), Some(1));
+        assert_eq!(mb_dict_getitem(d2, other_instance_key).as_int(), Some(45));
+    }
+
+    #[test]
+    fn test_str_subclass_keys_round_trip() {
+        let d = mb_dict_new();
+        let subclass_key = make_str_subclass_key_instance("key3");
+        let other_subclass_key = make_str_subclass_key_instance("key3");
+
+        mb_dict_setitem(d, subclass_key, MbValue::from_int(44));
+        assert_eq!(mb_dict_getitem(d, str_val("key3")).as_int(), Some(44));
+        assert_eq!(mb_dict_getitem(d, other_subclass_key).as_int(), Some(44));
+
+        mb_dict_setitem(d, str_val("key3"), MbValue::from_int(45));
+        assert_eq!(mb_dict_len(d).as_int(), Some(1));
+        assert_eq!(mb_dict_getitem(d, other_subclass_key).as_int(), Some(45));
+    }
+
+    #[test]
+    fn test_str_subclass_keys_survive_mixed_workload() {
+        let subclass_key = make_str_subclass_key_instance("key3");
+        let other_subclass_key = make_str_subclass_key_instance("key3");
+        let custom_key = make_str_eq_key_instance();
+        let other_custom_key = make_str_eq_key_instance();
+
+        let mut dicts = Vec::new();
+        for key in [subclass_key, custom_key] {
+            let d = mb_dict_new();
+            mb_dict_setitem(d, str_val("key1"), MbValue::from_int(42));
+            mb_dict_setitem(d, str_val("key2"), MbValue::from_int(43));
+            mb_dict_setitem(d, key, MbValue::from_int(44));
+            dicts.push(d);
+        }
+
+        let first = dicts[0];
+        assert_eq!(mb_dict_len(first).as_int(), Some(3));
+        assert_eq!(mb_dict_getitem(first, str_val("key3")).as_int(), Some(44));
+        assert_eq!(
+            mb_dict_getitem(first, other_subclass_key).as_int(),
+            Some(44)
+        );
+        assert_eq!(mb_dict_getitem(first, other_custom_key).as_int(), Some(44));
     }
 
     /// Two literal tuples with structurally-equal elements must hash to the

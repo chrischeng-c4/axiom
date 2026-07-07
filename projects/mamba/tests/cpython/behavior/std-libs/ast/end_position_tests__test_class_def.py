@@ -9,7 +9,6 @@
 # case = "end_position_tests__test_class_def"
 # subject = "cpython.test_ast.EndPositionTests.test_class_def"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"

@@ -9,12 +9,11 @@
 # case = "a_s_t_helpers__test__test_literal_eval_syntax_errors"
 # subject = "cpython.test_ast.ASTHelpers_Test.test_literal_eval_syntax_errors"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import unittest, io
 from test.test_ast import test_ast
 _suite = unittest.defaultTestLoader.loadTestsFromName("ASTHelpers_Test.test_literal_eval_syntax_errors", test_ast)

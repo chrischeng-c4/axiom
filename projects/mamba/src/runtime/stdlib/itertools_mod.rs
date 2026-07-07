@@ -104,6 +104,7 @@ unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue
 }
 
 unsafe extern "C" fn dispatch_chain(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     let mut items: Vec<MbValue> = Vec::new();
     for arg in a {
@@ -472,12 +473,10 @@ pub fn register() {
         MbValue::from_func(from_iterable_addr),
     );
     super::super::class::mb_class_register("chain", Vec::new(), chain_methods);
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(
-            dispatch_chain as *const () as usize as u64,
-            "chain".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_chain as *const () as usize as u64,
+        "chain".to_string(),
+    );
 
     super::register_module("itertools", attrs);
 }
@@ -1207,7 +1206,11 @@ pub fn mb_itertools_groupby(iterable: MbValue, key: MbValue) -> MbValue {
         if same {
             continue;
         } else {
-            groups.push(super::super::iter::GroupByGroupSpec { key: cur_key, start, end: idx });
+            groups.push(super::super::iter::GroupByGroupSpec {
+                key: cur_key,
+                start,
+                end: idx,
+            });
             cur_key = k;
             start = idx;
         }

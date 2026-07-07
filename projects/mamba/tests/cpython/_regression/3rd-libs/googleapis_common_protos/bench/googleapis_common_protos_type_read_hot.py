@@ -26,6 +26,27 @@ Goal 2.
 
 import google.rpc
 
+# Fixture repair (#967): `google.rpc` doesn't auto-import any of its pb2
+# submodules, so `status_pb2`/`code_pb2`/`error_details_pb2` need an
+# explicit import (a side effect of which binds them onto the parent
+# package). `context_pb2` no longer exists as a flat module at all — the
+# upstream package reorganized it under a `google.rpc.context` subpackage
+# (as `attribute_context_pb2`); rebind that submodule onto the expected
+# `context_pb2` name so the attribute-read hot path is unchanged. Under
+# mamba, `google.rpc` is a flat native shim with no real pb2 submodules to
+# import — it already registers all four names directly as top-level
+# attributes, so the (expected) ImportError here is a no-op fallback to
+# that existing shim surface.
+try:
+    import google.rpc.code_pb2  # noqa: F401
+    import google.rpc.error_details_pb2  # noqa: F401
+    import google.rpc.status_pb2  # noqa: F401
+    from google.rpc.context import attribute_context_pb2 as _context_pb2
+
+    google.rpc.context_pb2 = _context_pb2
+except ImportError:
+    pass
+
 
 _S_BASELINE = google.rpc.status_pb2
 _C_BASELINE = google.rpc.code_pb2

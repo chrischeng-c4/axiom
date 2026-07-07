@@ -2381,10 +2381,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "Differ",
         name: "__init__",
         kind: SigKind::Method,
-        params: &[
-            p("linejunk", CoreTy::Typed),
-            p("charjunk", CoreTy::Typed),
-        ],
+        params: &[p("linejunk", CoreTy::Typed), p("charjunk", CoreTy::Typed)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -2897,7 +2894,10 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "",
         name: "get_python_inc",
         kind: SigKind::ModuleFn,
-        params: &[p("plat_specific", CoreTy::Typed), p("prefix", CoreTy::Typed)],
+        params: &[
+            p("plat_specific", CoreTy::Typed),
+            p("prefix", CoreTy::Typed),
+        ],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -3129,10 +3129,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "Message",
         name: "as_bytes",
         kind: SigKind::Method,
-        params: &[
-            p("unixfrom", CoreTy::Bool),
-            p("policy", CoreTy::Unknown),
-        ],
+        params: &[p("unixfrom", CoreTy::Bool), p("policy", CoreTy::Unknown)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -3141,10 +3138,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "Message",
         name: "set_payload",
         kind: SigKind::Method,
-        params: &[
-            p("payload", CoreTy::Typed),
-            p("charset", CoreTy::Unknown),
-        ],
+        params: &[p("payload", CoreTy::Typed), p("charset", CoreTy::Unknown)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -3153,10 +3147,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "Message",
         name: "get_payload",
         kind: SigKind::Method,
-        params: &[
-            p("i", CoreTy::Int),
-            p("decode", CoreTy::Unknown),
-        ],
+        params: &[p("i", CoreTy::Int), p("decode", CoreTy::Unknown)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -3223,10 +3214,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "MIMEMessage",
         name: "__init__",
         kind: SigKind::Method,
-        params: &[
-            p("_msg", CoreTy::Typed),
-            p("_subtype", CoreTy::Str),
-        ],
+        params: &[p("_msg", CoreTy::Typed), p("_subtype", CoreTy::Str)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -3253,10 +3241,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "",
         name: "formataddr",
         kind: SigKind::ModuleFn,
-        params: &[
-            p("pair", CoreTy::Tuple),
-            p("charset", CoreTy::Typed),
-        ],
+        params: &[p("pair", CoreTy::Tuple), p("charset", CoreTy::Typed)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -3463,6 +3448,39 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         name: "getopt",
         kind: SigKind::Method,
         params: &[p("args", CoreTy::Typed), p("object", CoreTy::Typed)],
+        enforceable: true,
+        ret: CoreTy::Unknown,
+    },
+    // POSITIVE (args only): getopt.getopt/gnu_getopt's vendored (#868 round 6)
+    // pure-Python bodies never validate `args`'s type before indexing/slicing
+    // it, so a bare wrong-typed object (`class _W: pass`) would otherwise only
+    // fail with the wrong exception kind at runtime instead of the required
+    // compile-time TypeError. Force a compile-time wall on `args` alone (same
+    // shape as colorsys's `h: float` wall above); `shortopts`/`longopts` mirror
+    // the typeshed-generated row unchanged.
+    StdlibSig {
+        module: "getopt",
+        qualifier: "",
+        name: "getopt",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("args", CoreTy::Typed),
+            p("shortopts", CoreTy::Str),
+            p("longopts", CoreTy::Typed),
+        ],
+        enforceable: true,
+        ret: CoreTy::Unknown,
+    },
+    StdlibSig {
+        module: "getopt",
+        qualifier: "",
+        name: "gnu_getopt",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("args", CoreTy::Typed),
+            p("shortopts", CoreTy::Str),
+            p("longopts", CoreTy::Typed),
+        ],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5501,17 +5519,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: false,
         ret: CoreTy::Unknown,
     },
+    // POSITIVE (h only): hsv_to_rgb(h, s, v) short-circuits to `(v, v, v)`
+    // when `s == 0.0` without ever touching `h` — the vendored pure-Python
+    // body (unlike the native dispatcher, which validates all three args
+    // unconditionally) then never raises for a wrong-typed `h` when the
+    // fixture also passes `s=0.0`. Force a compile-time wall on `h` alone so
+    // `hsv_to_rgb("not_a_float", 0.0, 0.0)` is still rejected regardless of
+    // control flow; `s`/`v` stay Unknown since their own runtime paths (`==`,
+    // multiplication) already raise unconditionally.
     StdlibSig {
         module: "colorsys",
         qualifier: "",
         name: "hsv_to_rgb",
         kind: SigKind::ModuleFn,
         params: &[
-            p("h", CoreTy::Unknown),
+            p("h", CoreTy::Float),
             p("s", CoreTy::Unknown),
             p("v", CoreTy::Unknown),
         ],
-        enforceable: false,
+        enforceable: true,
         ret: CoreTy::Unknown,
     },
     StdlibSig {
@@ -5527,17 +5553,21 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: false,
         ret: CoreTy::Unknown,
     },
+    // POSITIVE (h only): hls_to_rgb(h, l, s) short-circuits to `(l, l, l)`
+    // when `s == 0.0` without ever touching `h` — same vendored-source gap as
+    // hsv_to_rgb above. Force a compile-time wall on `h` alone; `l`/`s` stay
+    // Unknown since their own runtime paths already raise unconditionally.
     StdlibSig {
         module: "colorsys",
         qualifier: "",
         name: "hls_to_rgb",
         kind: SigKind::ModuleFn,
         params: &[
-            p("h", CoreTy::Unknown),
+            p("h", CoreTy::Float),
             p("l", CoreTy::Unknown),
             p("s", CoreTy::Unknown),
         ],
-        enforceable: false,
+        enforceable: true,
         ret: CoreTy::Unknown,
     },
     StdlibSig {
@@ -5579,12 +5609,26 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: false,
         ret: CoreTy::Unknown,
     },
-    // NOTE: textwrap.indent is deliberately NOT overridden. Its runtime raises
-    // AttributeError on a non-str (CPython's `text.splitlines(True)`), but the
-    // `type/std-libs/textwrap/indent__text_as_str_wrong` STRICT_TYPE fixture
-    // requires the compile-time wall to raise TypeError. Those two contracts
-    // conflict for `indent(<int>, …)`, and the type-dimension enforcement wins,
-    // so the wall stays and errors/indent_non_str_raises remains unmet.
+    // RECONCILED: textwrap.indent(text, prefix, predicate=...) raises
+    // AttributeError at RUNTIME on a non-str text (`text.splitlines(True)`),
+    // so ordinary/errors fixtures must be allowed to reach the dispatcher.
+    // The strict-type fixture
+    // `type/std-libs/textwrap/indent__text_as_str_wrong.py` still intentionally
+    // asserts a compile-time TypeError; `check_expr.rs` gates that stricter wall
+    // behind `self.strict_type_fixture`, analogous to the keyword helpers.
+    StdlibSig {
+        module: "textwrap",
+        qualifier: "",
+        name: "indent",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("text", CoreTy::Unknown),
+            p("prefix", CoreTy::Str),
+            p("predicate", CoreTy::Unknown),
+        ],
+        enforceable: false,
+        ret: CoreTy::Unknown,
+    },
     // NEGATIVE: shlex.quote(s) — `quote(42)` is a RUNTIME TypeError (CPython's
     // `_find_unsafe(s)` regex over a non-str → "expected string or bytes-like
     // object"); the dispatcher raises it. Keep the type wall out of the way.
@@ -6494,7 +6538,10 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "",
         name: "RawValue",
         kind: SigKind::ModuleFn,
-        params: &[p("typecode_or_type", CoreTy::Str), p("args", CoreTy::Unknown)],
+        params: &[
+            p("typecode_or_type", CoreTy::Str),
+            p("args", CoreTy::Unknown),
+        ],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -6503,7 +6550,10 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "",
         name: "Value",
         kind: SigKind::ModuleFn,
-        params: &[p("typecode_or_type", CoreTy::Str), p("args", CoreTy::Unknown)],
+        params: &[
+            p("typecode_or_type", CoreTy::Str),
+            p("args", CoreTy::Unknown),
+        ],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -6656,6 +6706,15 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         name: "__round__",
         kind: SigKind::Method,
         params: &[p("ndigits", CoreTy::Int)],
+        enforceable: true,
+        ret: CoreTy::Unknown,
+    },
+    StdlibSig {
+        module: "ntpath",
+        qualifier: "",
+        name: "commonpath",
+        kind: SigKind::ModuleFn,
+        params: &[p("paths", CoreTy::Typed)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -7156,7 +7215,10 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "",
         name: "tokenize",
         kind: SigKind::ModuleFn,
-        params: &[p("readline", CoreTy::Typed), p("tokeneater", CoreTy::Unknown)],
+        params: &[
+            p("readline", CoreTy::Typed),
+            p("tokeneater", CoreTy::Unknown),
+        ],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -7427,6 +7489,32 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     // Misc stdlib strict-wall probes where generated rows collapse protocols,
     // literals, or overload-heavy constructor shapes to Unknown/Typed. Keep the
     // probed leading wall precise and leave the rest skip-safe.
+    StdlibSig {
+        module: "fileinput",
+        qualifier: "",
+        name: "input",
+        kind: SigKind::ModuleFn,
+        params: &[
+            p("files", CoreTy::Typed),
+            p("inplace", CoreTy::Unknown),
+            p("backup", CoreTy::Str),
+        ],
+        enforceable: true,
+        ret: CoreTy::Unknown,
+    },
+    StdlibSig {
+        module: "fileinput",
+        qualifier: "FileInput",
+        name: "__init__",
+        kind: SigKind::Method,
+        params: &[
+            p("files", CoreTy::Typed),
+            p("inplace", CoreTy::Unknown),
+            p("backup", CoreTy::Str),
+        ],
+        enforceable: true,
+        ret: CoreTy::Unknown,
+    },
     StdlibSig {
         module: "genericpath",
         qualifier: "",
@@ -8407,7 +8495,10 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "DynamicClassAttribute",
         name: "__get__",
         kind: SigKind::Method,
-        params: &[p("instance", CoreTy::Unknown), p("ownerclass", CoreTy::Typed)],
+        params: &[
+            p("instance", CoreTy::Unknown),
+            p("ownerclass", CoreTy::Typed),
+        ],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -8852,12 +8943,8 @@ mod tests {
 
     #[test]
     fn curated_distutils_command_walls_override_unknown_rows() {
-        let get_outputs = get(
-            "distutils.command.build_py",
-            "build_py",
-            "get_outputs",
-        )
-        .expect("build_py.get_outputs present");
+        let get_outputs = get("distutils.command.build_py", "build_py", "get_outputs")
+            .expect("build_py.get_outputs present");
         assert!(get_outputs.enforceable);
         assert_eq!(get_outputs.kind, SigKind::Method);
         assert_eq!(get_outputs.params[0].name, "include_bytecode");
@@ -8918,8 +9005,8 @@ mod tests {
         assert_eq!(init.params[0].ty, CoreTy::Typed);
 
         for name in ["exclude_pattern", "include_pattern"] {
-            let sig = get("distutils.filelist", "FileList", name)
-                .expect("FileList pattern row present");
+            let sig =
+                get("distutils.filelist", "FileList", name).expect("FileList pattern row present");
             assert!(sig.enforceable, "{name}");
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, "pattern");
@@ -8962,23 +9049,23 @@ mod tests {
 
     #[test]
     fn curated_distutils_sysconfig_walls_override_unknown_rows() {
-        let config_var = get("distutils.sysconfig", "", "get_config_var")
-            .expect("get_config_var row present");
+        let config_var =
+            get("distutils.sysconfig", "", "get_config_var").expect("get_config_var row present");
         assert!(config_var.enforceable);
         assert_eq!(config_var.kind, SigKind::ModuleFn);
         assert_eq!(config_var.params[0].name, "name");
         assert_eq!(config_var.params[0].ty, CoreTy::Str);
 
-        let config_vars = get("distutils.sysconfig", "", "get_config_vars")
-            .expect("get_config_vars row present");
+        let config_vars =
+            get("distutils.sysconfig", "", "get_config_vars").expect("get_config_vars row present");
         assert!(config_vars.enforceable);
         assert_eq!(config_vars.kind, SigKind::ModuleFn);
         assert_eq!(config_vars.params[0].name, "arg");
         assert_eq!(config_vars.params[0].ty, CoreTy::Str);
         assert!(!config_vars.params[0].star);
 
-        let python_inc = get("distutils.sysconfig", "", "get_python_inc")
-            .expect("get_python_inc row present");
+        let python_inc =
+            get("distutils.sysconfig", "", "get_python_inc").expect("get_python_inc row present");
         assert!(python_inc.enforceable);
         assert_eq!(python_inc.kind, SigKind::ModuleFn);
         assert_eq!(python_inc.params[0].name, "plat_specific");
@@ -8986,8 +9073,8 @@ mod tests {
         assert_eq!(python_inc.params[1].name, "prefix");
         assert_eq!(python_inc.params[1].ty, CoreTy::Typed);
 
-        let python_lib = get("distutils.sysconfig", "", "get_python_lib")
-            .expect("get_python_lib row present");
+        let python_lib =
+            get("distutils.sysconfig", "", "get_python_lib").expect("get_python_lib row present");
         assert!(python_lib.enforceable);
         assert_eq!(python_lib.kind, SigKind::ModuleFn);
         assert_eq!(python_lib.params[0].name, "plat_specific");
@@ -8998,8 +9085,8 @@ mod tests {
 
     #[test]
     fn curated_distutils_util_walls_override_unknown_rows() {
-        let byte_compile = get("distutils.util", "", "byte_compile")
-            .expect("byte_compile row present");
+        let byte_compile =
+            get("distutils.util", "", "byte_compile").expect("byte_compile row present");
         assert!(byte_compile.enforceable);
         assert_eq!(byte_compile.kind, SigKind::ModuleFn);
         assert_eq!(byte_compile.params[0].name, "py_files");
@@ -9031,8 +9118,8 @@ mod tests {
         assert_eq!(doc_test.params[0].name, "examples");
         assert_eq!(doc_test.params[0].ty, CoreTy::List);
 
-        let finder = get("doctest", "DocTestFinder", "__init__")
-            .expect("DocTestFinder.__init__ present");
+        let finder =
+            get("doctest", "DocTestFinder", "__init__").expect("DocTestFinder.__init__ present");
         assert!(finder.enforceable);
         assert_eq!(finder.kind, SigKind::Method);
         assert_eq!(finder.params[0].name, "verbose");
@@ -9140,8 +9227,8 @@ mod tests {
             ("attach", "payload"),
             ("get_body", "preferencelist"),
         ] {
-            let sig = get("email.message", "MIMEPart", name)
-                .expect("email.message MIMEPart row present");
+            let sig =
+                get("email.message", "MIMEPart", name).expect("email.message MIMEPart row present");
             assert!(sig.enforceable, "MIMEPart.{name}");
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, param_name, "MIMEPart.{name}");
@@ -9160,8 +9247,8 @@ mod tests {
             ("get_filename", "failobj"),
             ("get_params", "failobj"),
         ] {
-            let sig = get("email.message", "Message", name)
-                .expect("email.message Message row present");
+            let sig =
+                get("email.message", "Message", name).expect("email.message Message row present");
             assert!(sig.enforceable, "Message.{name}");
             assert_eq!(sig.kind, SigKind::Method);
             assert_eq!(sig.params[0].name, param_name, "Message.{name}");
@@ -9326,8 +9413,8 @@ mod tests {
 
     #[test]
     fn curated_distutils_fancy_getopt_walls() {
-        let func = get("distutils.fancy_getopt", "", "fancy_getopt")
-            .expect("fancy_getopt row present");
+        let func =
+            get("distutils.fancy_getopt", "", "fancy_getopt").expect("fancy_getopt row present");
         assert!(func.enforceable);
         assert_eq!(func.kind, SigKind::ModuleFn);
         assert_eq!(func.params[0].name, "options");
@@ -9493,11 +9580,11 @@ mod tests {
     }
 
     #[test]
-    fn generated_enforceable_rows_have_a_scalar_and_no_star() {
+    fn generated_enforceable_rows_have_checkable_prefix_and_safe_star_tail() {
         // The invariant: every row the hook will ENFORCE must (a) carry at least
         // one checkable param (Int/Float/Str/Typed/Bytes/Bool/Complex/List/Tuple/Dict/
-        // Type/IntOrStr) and (b) have no star param (positional alignment past
-        // `*args` is uncertain).
+        // Type/IntOrStr) before any `*args` tail and (b) represent any star tail
+        // as a trailing Unknown row that the hook skips.
         // Unknown/None params are skipped, while Bytes/MemoryView/Complex/List/Tuple/Dict/Type
         // are negative scalar walls that reject impossible concrete scalars and leave
         // dynamic/buffer/object values as Any-skips; Bool goes through the generic
@@ -9520,33 +9607,45 @@ mod tests {
                 s.name
             );
             assert!(
-                s.params.iter().any(|p| matches!(
-                    p.ty,
-                    CoreTy::Int
-                        | CoreTy::Float
-                        | CoreTy::Str
-                        | CoreTy::Typed
-                        | CoreTy::TypedNamed(_)
-                        | CoreTy::Bytes
-                        | CoreTy::MemoryView
-                        | CoreTy::Complex
-                        | CoreTy::List
-                        | CoreTy::Tuple
-                        | CoreTy::Dict
-                        | CoreTy::Bool
-                        | CoreTy::Type
-                        | CoreTy::IntOrStr
-                )),
+                s.params.iter().any(|p| !p.star
+                    && matches!(
+                        p.ty,
+                        CoreTy::Int
+                            | CoreTy::Float
+                            | CoreTy::Str
+                            | CoreTy::Typed
+                            | CoreTy::TypedNamed(_)
+                            | CoreTy::Bytes
+                            | CoreTy::MemoryView
+                            | CoreTy::Complex
+                            | CoreTy::List
+                            | CoreTy::Tuple
+                            | CoreTy::Dict
+                            | CoreTy::Bool
+                            | CoreTy::Type
+                            | CoreTy::IntOrStr
+                    )),
                 "{}.{} enforceable with no checkable (scalar/Typed) param",
                 s.module,
                 s.name,
             );
-            for prm in s.params {
-                assert!(
-                    !prm.star,
-                    "{}.{} enforceable with a star param",
-                    s.module, s.name
-                );
+            for (idx, prm) in s.params.iter().enumerate() {
+                if prm.star {
+                    assert_eq!(
+                        idx,
+                        s.params.len() - 1,
+                        "{}.{} star param must be the trailing tail",
+                        s.module,
+                        s.name
+                    );
+                    assert_eq!(
+                        prm.ty,
+                        CoreTy::Unknown,
+                        "{}.{} star tail must stay Unknown/skipped",
+                        s.module,
+                        s.name
+                    );
+                }
             }
         }
     }
@@ -9584,7 +9683,10 @@ mod tests {
             ("PurePath", "is_relative_to", "other", CoreTy::Typed),
         ] {
             let sig = get("pathlib", qualifier, name).expect("pathlib row present");
-            assert!(sig.enforceable, "pathlib.{qualifier}.{name} must stay enforceable");
+            assert!(
+                sig.enforceable,
+                "pathlib.{qualifier}.{name} must stay enforceable"
+            );
             assert_eq!(sig.params[0].name, first_param);
             assert_eq!(sig.params[0].ty, first_ty);
         }
@@ -9592,6 +9694,19 @@ mod tests {
         let walk = get("pathlib", "Path", "walk").expect("Path.walk row present");
         assert_eq!(walk.params[2].name, "follow_symlinks");
         assert_eq!(walk.params[2].ty, CoreTy::Bool);
+    }
+
+    #[test]
+    fn curated_fileinput_walls_override_unknown_generated_rows() {
+        let input = get("fileinput", "", "input").expect("fileinput.input present");
+        assert!(input.enforceable);
+        assert_eq!(input.params[0].name, "files");
+        assert_eq!(input.params[0].ty, CoreTy::Typed);
+
+        let init = get("fileinput", "FileInput", "__init__").expect("FileInput.__init__ present");
+        assert!(init.enforceable);
+        assert_eq!(init.params[0].name, "files");
+        assert_eq!(init.params[0].ty, CoreTy::Typed);
     }
 
     #[test]
@@ -9676,11 +9791,32 @@ mod tests {
             ("gzip", "GzipFile", "__init__", 0, "filename", CoreTy::Typed),
             ("imghdr", "", "what", 0, "file", CoreTy::Typed),
             ("imghdr", "", "what", 1, "h", CoreTy::Bytes),
-            ("importlib.util", "", "module_for_loader", 0, "fxn", CoreTy::Typed),
+            (
+                "importlib.util",
+                "",
+                "module_for_loader",
+                0,
+                "fxn",
+                CoreTy::Typed,
+            ),
             ("importlib.util", "", "set_loader", 0, "fxn", CoreTy::Typed),
             ("importlib.util", "", "set_package", 0, "fxn", CoreTy::Typed),
-            ("inspect", "", "classify_class_attrs", 0, "cls", CoreTy::Type),
-            ("inspect", "Signature", "__init__", 0, "parameters", CoreTy::Typed),
+            (
+                "inspect",
+                "",
+                "classify_class_attrs",
+                0,
+                "cls",
+                CoreTy::Type,
+            ),
+            (
+                "inspect",
+                "Signature",
+                "__init__",
+                0,
+                "parameters",
+                CoreTy::Typed,
+            ),
             ("inspect", "", "formatargspec", 0, "args", CoreTy::List),
             ("inspect", "", "formatargvalues", 0, "args", CoreTy::List),
             ("inspect", "", "get_annotations", 0, "obj", CoreTy::Typed),
@@ -9688,24 +9824,101 @@ mod tests {
             ("inspect", "", "getasyncgenstate", 0, "agen", CoreTy::Typed),
             ("inspect", "", "getblock", 0, "lines", CoreTy::List),
             ("inspect", "", "getcallargs", 0, "func", CoreTy::Typed),
-            ("inspect", "", "getcoroutinelocals", 0, "coroutine", CoreTy::Typed),
-            ("inspect", "", "getcoroutinestate", 0, "coroutine", CoreTy::Typed),
-            ("inspect", "", "getgeneratorstate", 0, "generator", CoreTy::Typed),
+            (
+                "inspect",
+                "",
+                "getcoroutinelocals",
+                0,
+                "coroutine",
+                CoreTy::Typed,
+            ),
+            (
+                "inspect",
+                "",
+                "getcoroutinestate",
+                0,
+                "coroutine",
+                CoreTy::Typed,
+            ),
+            (
+                "inspect",
+                "",
+                "getgeneratorstate",
+                0,
+                "generator",
+                CoreTy::Typed,
+            ),
             ("inspect", "", "getmembers", 1, "predicate", CoreTy::Typed),
-            ("inspect", "", "getmembers_static", 1, "predicate", CoreTy::Typed),
+            (
+                "inspect",
+                "",
+                "getmembers_static",
+                1,
+                "predicate",
+                CoreTy::Typed,
+            ),
             ("inspect", "", "getmro", 0, "cls", CoreTy::Type),
             ("inspect", "", "isasyncgenfunction", 0, "obj", CoreTy::Typed),
-            ("inspect", "", "iscoroutinefunction", 0, "obj", CoreTy::Typed),
-            ("inspect", "", "isgeneratorfunction", 0, "obj", CoreTy::Typed),
-            ("inspect", "", "markcoroutinefunction", 0, "func", CoreTy::Typed),
+            (
+                "inspect",
+                "",
+                "iscoroutinefunction",
+                0,
+                "obj",
+                CoreTy::Typed,
+            ),
+            (
+                "inspect",
+                "",
+                "isgeneratorfunction",
+                0,
+                "obj",
+                CoreTy::Typed,
+            ),
+            (
+                "inspect",
+                "",
+                "markcoroutinefunction",
+                0,
+                "func",
+                CoreTy::Typed,
+            ),
             ("inspect", "", "unwrap", 0, "func", CoreTy::Typed),
             ("inspect", "", "walktree", 0, "classes", CoreTy::List),
-            ("ipaddress", "IPv4Network", "__init__", 1, "strict", CoreTy::Bool),
-            ("ipaddress", "IPv6Network", "__init__", 1, "strict", CoreTy::Bool),
-            ("ipaddress", "", "get_mixed_type_key", 0, "obj", CoreTy::Typed),
+            (
+                "ipaddress",
+                "IPv4Network",
+                "__init__",
+                1,
+                "strict",
+                CoreTy::Bool,
+            ),
+            (
+                "ipaddress",
+                "IPv6Network",
+                "__init__",
+                1,
+                "strict",
+                CoreTy::Bool,
+            ),
+            (
+                "ipaddress",
+                "",
+                "get_mixed_type_key",
+                0,
+                "obj",
+                CoreTy::Typed,
+            ),
             ("ipaddress", "", "ip_interface", 0, "address", CoreTy::Typed),
             ("ipaddress", "", "ip_network", 0, "address", CoreTy::Typed),
-            ("ipaddress", "", "summarize_address_range", 0, "first", CoreTy::Typed),
+            (
+                "ipaddress",
+                "",
+                "summarize_address_range",
+                0,
+                "first",
+                CoreTy::Typed,
+            ),
             (
                 "importlib.metadata._meta",
                 "SimplePath",
@@ -9899,14 +10112,7 @@ mod tests {
                 "token",
                 CoreTy::Tuple,
             ),
-            (
-                "lib2to3.pytree",
-                "Base",
-                "replace",
-                0,
-                "new",
-                CoreTy::Typed,
-            ),
+            ("lib2to3.pytree", "Base", "replace", 0, "new", CoreTy::Typed),
             (
                 "lib2to3.refactor",
                 "RefactoringTool",
@@ -9965,14 +10171,7 @@ mod tests {
                 CoreTy::Bool,
             ),
             ("logging", "", "captureWarnings", 0, "capture", CoreTy::Bool),
-            (
-                "logging",
-                "",
-                "getLevelName",
-                0,
-                "level",
-                CoreTy::IntOrStr,
-            ),
+            ("logging", "", "getLevelName", 0, "level", CoreTy::IntOrStr),
             ("logging", "", "log", 0, "level", CoreTy::Int),
             ("logging", "", "makeLogRecord", 0, "dict", CoreTy::Typed),
             (
@@ -10025,14 +10224,7 @@ mod tests {
                 "logger",
                 CoreTy::Typed,
             ),
-            (
-                "logging",
-                "LoggerAdapter",
-                "log",
-                0,
-                "level",
-                CoreTy::Int,
-            ),
+            ("logging", "LoggerAdapter", "log", 0, "level", CoreTy::Int),
             (
                 "logging",
                 "LoggerAdapter",
@@ -10105,7 +10297,14 @@ mod tests {
                 "address",
                 CoreTy::Typed,
             ),
-            ("logging.config", "", "dictConfig", 0, "config", CoreTy::Typed),
+            (
+                "logging.config",
+                "",
+                "dictConfig",
+                0,
+                "config",
+                CoreTy::Typed,
+            ),
             ("lzma", "", "open", 0, "filename", CoreTy::Typed),
             ("mmap", "mmap", "__delitem__", 0, "key", CoreTy::Typed),
             ("mmap", "mmap", "__exit__", 0, "exc_type", CoreTy::Typed),
@@ -10497,7 +10696,14 @@ mod tests {
                 "obj",
                 CoreTy::Typed,
             ),
-            ("numbers", "Integral", "__round__", 0, "ndigits", CoreTy::Int),
+            (
+                "numbers",
+                "Integral",
+                "__round__",
+                0,
+                "ndigits",
+                CoreTy::Int,
+            ),
             ("numbers", "Real", "__round__", 0, "ndigits", CoreTy::Int),
             ("ntpath", "", "join", 0, "path", CoreTy::Typed),
             ("ntpath", "", "realpath", 0, "path", CoreTy::Typed),
@@ -10654,7 +10860,14 @@ mod tests {
                 "format",
                 CoreTy::Str,
             ),
-            ("html.parser", "HTMLParser", "goahead", 0, "end", CoreTy::Bool),
+            (
+                "html.parser",
+                "HTMLParser",
+                "goahead",
+                0,
+                "end",
+                CoreTy::Bool,
+            ),
             ("pkgutil", "", "extend_path", 0, "path", CoreTy::Typed),
             ("pdb", "", "runcall", 0, "func", CoreTy::Typed),
             ("pdb", "Pdb", "curframe_locals", 0, "value", CoreTy::Typed),
@@ -10669,7 +10882,14 @@ mod tests {
             ("pdb", "Pdb", "print_stack_trace", 0, "count", CoreTy::Typed),
             ("pipes", "Template", "debug", 0, "flag", CoreTy::Bool),
             ("platform", "", "platform", 0, "aliased", CoreTy::Bool),
-            ("pprint", "PrettyPrinter", "format", 1, "context", CoreTy::Dict),
+            (
+                "pprint",
+                "PrettyPrinter",
+                "format",
+                1,
+                "context",
+                CoreTy::Dict,
+            ),
             (
                 "py_compile",
                 "PyCompileError",
@@ -10767,8 +10987,7 @@ mod tests {
         assert_eq!(mailbox.params[0].name, "path");
         assert_eq!(mailbox.params[0].ty, CoreTy::Typed);
 
-        let subdir =
-            get("mailbox", "MaildirMessage", "set_subdir").expect("set_subdir present");
+        let subdir = get("mailbox", "MaildirMessage", "set_subdir").expect("set_subdir present");
         assert!(subdir.enforceable);
         assert_eq!(subdir.params[0].name, "subdir");
         assert_eq!(subdir.params[0].ty, CoreTy::Str);
@@ -10781,8 +11000,8 @@ mod tests {
 
     #[test]
     fn curated_optparse_constructor_walls_override_unknown_generated_rows() {
-        let container =
-            get("optparse", "OptionContainer", "__init__").expect("OptionContainer.__init__ present");
+        let container = get("optparse", "OptionContainer", "__init__")
+            .expect("OptionContainer.__init__ present");
         assert!(container.enforceable);
         assert_eq!(container.params[0].name, "option_class");
         assert_eq!(container.params[0].ty, CoreTy::Type);

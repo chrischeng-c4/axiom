@@ -1,6 +1,6 @@
 // `mamba tool` — uv-style tool command family.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::path::PathBuf;
 

@@ -11,6 +11,9 @@ use super::value::MbValue;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+const GEVENT_GREENLET_MIGRATION_GUIDE: &str =
+    "projects/mamba/docs/migrations/gevent-greenlet-to-asyncio.md";
+
 /// A loaded module's namespace.
 pub struct MbModule {
     pub name: String,
@@ -94,6 +97,83 @@ thread_local! {
     /// execution in `compile_and_exec_module()`.
     pub(crate) static CURRENT_MODULE_PACKAGE: std::cell::RefCell<Option<String>> =
         std::cell::RefCell::new(None);
+    /// Audit trail for `register_native_type_name`: every time a NATIVE_TYPE_NAMES
+    /// address key is overwritten with a DIFFERENT name than it already held
+    /// (#962). The final `NATIVE_TYPE_NAMES` map alone can never reveal this —
+    /// last-write-wins silently hides the earlier registration — so this log is
+    /// the only way to detect a collision after the fact. Entries are
+    /// `(addr, previous_name, new_name)`.
+    pub static NATIVE_TYPE_NAME_COLLISIONS: std::cell::RefCell<Vec<(u64, String, String)>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+/// Compile-time-evaluable FNV-1a 64-bit hash of a string. Used by
+/// [`icf_guard!`] to derive a unique per-callsite fingerprint (#962).
+pub const fn icf_fingerprint(s: &str) -> u64 {
+    let bytes = s.as_bytes();
+    let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a 64-bit offset basis
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3); // FNV-1a 64-bit prime
+        i += 1;
+    }
+    hash
+}
+
+/// Insert `(addr, name)` into [`NATIVE_TYPE_NAMES`], recording a collision into
+/// [`NATIVE_TYPE_NAME_COLLISIONS`] if `addr` was already registered under a
+/// DIFFERENT name (#962). Every stdlib registration site that used to call
+/// `NATIVE_TYPE_NAMES.with(|m| m.borrow_mut().insert(addr, name))` directly
+/// should route through this function instead, so an address collision (e.g.
+/// from LLVM identical-code-folding merging two dispatcher stubs onto one
+/// machine address, #954) is caught by a test-time lint rather than silently
+/// misidentifying a class at runtime.
+pub fn register_native_type_name(addr: u64, name: String) {
+    NATIVE_TYPE_NAMES.with(|m| {
+        let mut map = m.borrow_mut();
+        if let Some(existing) = map.get(&addr) {
+            if *existing != name {
+                let prev = existing.clone();
+                NATIVE_TYPE_NAME_COLLISIONS.with(|c| {
+                    c.borrow_mut().push((addr, prev, name.clone()));
+                });
+            }
+        }
+        map.insert(addr, name);
+    });
+}
+
+/// Optimization-barrier guard against LLVM identical-code-folding (ICF, aka
+/// MergeFunctions) collisions in address-keyed dispatcher registration
+/// (#962, generalizing the #954 one-off fix in `bdb_mod.rs`).
+///
+/// Dozens of stdlib dispatcher stubs share a trivially-identical compiled
+/// body (e.g. `{ MbValue::from_ptr(MbObject::new_dict()) }`). Any such
+/// dispatcher whose address is registered into `NATIVE_TYPE_NAMES` is a
+/// candidate for LLVM folding two logically-distinct dispatchers onto one
+/// shared machine address — after which `NATIVE_TYPE_NAMES` resolves the
+/// wrong class name for that address (#954: `id(FTP) == id(Breakpoint)`).
+///
+/// Invoke this as the first statement of every dispatcher fn body that gets
+/// registered into `NATIVE_TYPE_NAMES`. It black-boxes a per-callsite
+/// fingerprint derived from `module_path!()`/`line!()`/`column!()`, which are
+/// resolved at the macro's *invocation* site (Rust span hygiene propagates
+/// through nested macro expansions), so every guarded function — whether
+/// hand-written or generated via a `macro_rules!` dispatcher template — gets
+/// a distinct compiled body, making it fold-immune regardless of how trivial
+/// the rest of the body is.
+#[macro_export]
+macro_rules! icf_guard {
+    () => {
+        ::std::hint::black_box($crate::runtime::module::icf_fingerprint(concat!(
+            module_path!(),
+            ":",
+            line!(),
+            ":",
+            column!()
+        )));
+    };
 }
 
 // ── Module Management ──
@@ -181,6 +261,10 @@ fn propagate_submodule_to_parents(full_name: &str) {
 /// returns the partially-initialized module instead of recursing infinitely.
 pub fn mb_import(module_name: MbValue) -> MbValue {
     let name = extract_str(module_name).unwrap_or_default();
+
+    if blocked_import_root(&name).is_some() {
+        return raise_blocked_import(&name);
+    }
 
     // Check cache first — return same pointer so `import X; import X as Y; X is Y` holds.
     // Natively-registered modules (mb_module_register) are already in MODULES with
@@ -289,6 +373,24 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
     val
 }
 
+fn blocked_import_root(name: &str) -> Option<&'static str> {
+    ["gevent", "greenlet"].into_iter().find(|blocked| {
+        name == *blocked
+            || name
+                .strip_prefix(blocked)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+    })
+}
+
+fn raise_blocked_import(name: &str) -> MbValue {
+    let exc_type = MbValue::from_ptr(MbObject::new_str("ImportError".to_string()));
+    let msg = MbValue::from_ptr(MbObject::new_str(format!(
+        "Import of '{name}' is blocked in mamba. gevent/greenlet have no compatibility shim here; migrate to asyncio/native async instead. See {GEVENT_GREENLET_MIGRATION_GUIDE}"
+    )));
+    super::exception::mb_raise(exc_type, msg);
+    MbValue::none()
+}
+
 fn ensure_parent_packages(name: &str) -> bool {
     let parts: Vec<&str> = name.split('.').collect();
     if parts.len() <= 1 {
@@ -308,6 +410,36 @@ fn ensure_parent_packages(name: &str) -> bool {
         }
     }
     true
+}
+
+fn module_package_dirs(module: &MbModule) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(path_val) = module.attrs.get("__path__").copied() {
+        if let Some(ptr) = path_val.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    for entry in lock.read().unwrap().iter() {
+                        if let Some(path) = extract_str(*entry) {
+                            let candidate = PathBuf::from(path);
+                            if !dirs.iter().any(|existing| existing == &candidate) {
+                                dirs.push(candidate);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(parent) = module.file.as_ref().and_then(|f| f.parent()) {
+        let candidate = parent.to_path_buf();
+        if !dirs.iter().any(|existing| existing == &candidate) {
+            dirs.push(candidate);
+        }
+    }
+
+    dirs
 }
 
 /// Insert `name → val` into `sys.modules` (the dict stored as sys.modules attr).
@@ -676,23 +808,54 @@ pub fn mb_module_getattr(module_name: MbValue, attr: MbValue) -> MbValue {
         if !module.is_package {
             return None;
         }
-        // Get the package directory from __path__ or from the file path.
-        let pkg_dir = module
-            .file
-            .as_ref()
-            .and_then(|f| f.parent())
-            .map(|p| p.to_path_buf())?;
-        // Probe for sub-module file.
-        probe_module_path(&pkg_dir, &[&attr_name])
+        module_package_dirs(module)
+            .into_iter()
+            .find_map(|pkg_dir| probe_module_path(&pkg_dir, &[&attr_name]))
     });
 
     if let Some(sub_path) = sub_module_path {
         let sub_name = format!("{}.{}", name, attr_name);
+
+        // Pre-register a sentinel MbModule entry for the sub-module BEFORE
+        // executing its body — mirrors the sentinel insertion `mb_import`
+        // performs for regular imports (#950). Without this, `compile_and_
+        // exec_module`'s "store attrs into MODULES" step has no entry keyed
+        // by `sub_name` to write into (silent no-op), so the subsequent
+        // `mods.get(&sub_name)` lookup below misses entirely and this whole
+        // R5 auto-load silently fails — the exact gap that made `from pkg
+        // import submodule` mis-resolve while `import pkg.submodule` (which
+        // goes through mb_import's own sentinel) worked.
+        let sub_is_pkg = sub_path
+            .file_name()
+            .map(|f| f == "__init__.py")
+            .unwrap_or(false);
+        MODULES.with(|mods| {
+            mods.borrow_mut()
+                .entry(sub_name.clone())
+                .or_insert_with(|| MbModule {
+                    name: sub_name.clone(),
+                    file: Some(sub_path.clone()),
+                    attrs: HashMap::new(),
+                    is_package: sub_is_pkg,
+                    cached_value: None,
+                });
+        });
         compile_and_exec_module(&sub_path, &sub_name);
 
-        // Store the sub-module as an attribute of the parent package.
-        let sub_val = MODULES.with(|mods| mods.borrow().get(&sub_name).map(|m| module_to_value(m)));
+        // Store the sub-module as an attribute of the parent package. Use
+        // module_to_value_and_cache (not module_to_value) so the sub-module
+        // itself gets a stable cached identity — matching mb_import's Rule 2
+        // (`import X; import X as Y; X is Y`) in case the sub-module is also
+        // reached later via a dotted `import pkg.sub`.
+        let sub_val = MODULES.with(|mods| {
+            mods.borrow_mut()
+                .get_mut(&sub_name)
+                .map(module_to_value_and_cache)
+        });
         if let Some(val) = sub_val {
+            // CPython also registers the sub-module in sys.modules (the
+            // same side effect `mb_import` produces for a dotted import).
+            update_sys_modules(&sub_name, val);
             MODULES.with(|mods| {
                 if let Some(m) = mods.borrow_mut().get_mut(&name) {
                     // Fix C-prime: registry takes its own +1 so a JIT-side drop
@@ -701,9 +864,34 @@ pub fn mb_module_getattr(module_name: MbValue, attr: MbValue) -> MbValue {
                     unsafe {
                         super::rc::retain_if_ptr(val);
                     }
-                    if let Some(prev) = m.attrs.insert(attr_name, val) {
+                    if let Some(prev) = m.attrs.insert(attr_name.clone(), val) {
                         unsafe {
                             super::rc::release_if_ptr(prev);
+                        }
+                    }
+                    // The parent package's module object may already be a
+                    // materialized dict (`cached_value`, e.g. from the
+                    // `mb_import("pkgtest")` that ran just before this
+                    // from-import lowering's mb_module_getattr call) — a
+                    // frozen snapshot taken before this sub-module existed.
+                    // Patch it in place so plain attribute access
+                    // (`pkgtest.leaf`, dispatched by class.rs's dict
+                    // fast-path directly against that snapshot) also sees
+                    // the newly-loaded sub-module, per CPython's "submodule
+                    // becomes an attribute of the package" rule (#950 R1).
+                    if let Some(cached) = m.cached_value {
+                        if let Some(cptr) = cached.as_ptr() {
+                            unsafe {
+                                if let ObjData::Dict(ref lock) = (*cptr).data {
+                                    let mut dict_map = lock.write().unwrap();
+                                    super::rc::retain_if_ptr(val);
+                                    if let Some(prev) =
+                                        dict_map.insert(attr_name.clone().into(), val)
+                                    {
+                                        super::rc::release_if_ptr(prev);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1138,11 +1326,11 @@ pub fn mb_register_builtins() {
 fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
     use super::closure::{
         restore_global_id_namespace, save_and_clear_global_id_namespace,
-        snapshot_global_id_namespace,
+        snapshot_current_module_global_id_namespace,
     };
     use crate::codegen::cranelift::jit::CraneliftJitBackend;
     use crate::codegen::{CodegenBackend as _, CodegenOutput};
-    use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
+    use crate::lower::{lower_hir_to_mir_with_symbols_src, lower_module};
     use crate::parser;
     use crate::source::span::FileId;
     use crate::types::TypeChecker;
@@ -1222,7 +1410,13 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
     }
 
     // 5. Lower HIR → MIR
-    let mir_module = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+    let module_path = path.to_string_lossy().to_string();
+    let mir_module = lower_hir_to_mir_with_symbols_src(
+        &hir,
+        &checker.tcx,
+        &checker.symbols,
+        Some((module_path.as_str(), source.as_str())),
+    );
 
     // 5b. Determine if this is a package module (__init__.py) — R4.
     let is_pkg = path
@@ -1246,9 +1440,17 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
             .map(|(p, _)| p.to_string())
             .unwrap_or_default()
     };
+    let file_attr = path.display().to_string();
 
     // 6. Save caller's globals and clear for module execution
     let saved_globals = save_and_clear_global_id_namespace();
+    super::closure::push_active_module_name(module_name.to_string());
+    if let Some(file_sym) = checker.symbols.lookup("__file__") {
+        super::closure::mb_global_set_id(
+            MbValue::from_bits(file_sym.0 as u64),
+            str_value(&file_attr),
+        );
+    }
     if let Some(package_sym) = checker.symbols.lookup("__package__") {
         super::closure::mb_global_set_id(
             MbValue::from_bits(package_sym.0 as u64),
@@ -1268,6 +1470,17 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
         *cp.borrow_mut() = Some(package_attr.clone());
     });
 
+    // 6c. Mark this module's own SymbolIds as "active" for the duration of
+    // its top-level execution (#983). Nested imports triggered from within
+    // main_fn() below finish by merging their leftover raw globals back via
+    // merge_global_id_namespace; without this, a nested submodule's raw id
+    // can numerically collide with this module's own not-yet-written slot
+    // (every module's SymbolTable restarts numbering from the same builtin
+    // baseline) and get mistaken for it, flakily corrupting this module's
+    // attrs depending on HashMap iteration order.
+    let active_sym_ids: HashSet<i64> = sym_names.keys().map(|id| id.0 as i64).collect();
+    super::closure::push_active_module_sym_ids(active_sym_ids);
+
     // 7. JIT compile
     let jit_result = (|| -> Option<HashMap<i64, MbValue>> {
         let mut backend = Box::new(CraneliftJitBackend::new().ok()?);
@@ -1280,7 +1493,7 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
                 let _result = main_fn();
 
                 // 9. Collect all globals set during module execution
-                let module_globals = snapshot_global_id_namespace();
+                let module_globals = snapshot_current_module_global_id_namespace();
 
                 // 10. Map SymbolId integers back to names and store as module attrs.
                 // Values in GLOBAL_ID_NAMESPACE are raw JIT values (unboxed i64 for
@@ -1311,7 +1524,16 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
                     if let Some(ptr) = backend.get_func_ptr(*sym_id) {
                         // NaN-box the function pointer with TAG_FUNC (matching
                         // MirConst::FuncRef encoding in the JIT backend).
-                        attrs.insert(func_name.clone(), MbValue::from_func(ptr as usize));
+                        let func = MbValue::from_func(ptr as usize);
+                        super::closure::mb_func_set_name(
+                            func,
+                            MbValue::from_ptr(MbObject::new_str(func_name.clone())),
+                        );
+                        super::closure::mb_func_set_module(
+                            func,
+                            MbValue::from_ptr(MbObject::new_str(module_name.to_string())),
+                        );
+                        attrs.insert(func_name.clone(), func);
                     }
                 }
 
@@ -1343,6 +1565,7 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
                         attrs.insert("__path__".into(), path_list);
                     }
                 }
+                attrs.insert("__file__".into(), str_value(&file_attr));
                 attrs.insert(
                     "__package__".into(),
                     MbValue::from_ptr(MbObject::new_str(package_attr.clone())),
@@ -1370,18 +1593,13 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
         }
     })();
 
+    // This module's own top-level execution (and any nested imports it
+    // triggered) is done — pop its "active" SymbolId set (#983, see 6c).
+    super::closure::pop_active_module_sym_ids();
+    super::closure::pop_active_module_name();
+
     // 11. Restore caller's globals regardless of success/failure
     restore_global_id_namespace(saved_globals);
-
-    // 11a. Persist the imported module's own global-id bindings (module-level
-    // variables and `import` results) back into the shared namespace. The
-    // module's functions read these via mb_global_get_id when invoked later
-    // from the caller; without this, every module-level constant/import is
-    // None inside an imported module's functions. SymbolIds are unique per
-    // compilation, so re-inserting cannot clobber the caller's globals.
-    if let Some(module_globals) = &jit_result {
-        crate::runtime::closure::merge_global_id_namespace(module_globals);
-    }
 
     // 11b. Restore CURRENT_MODULE_PACKAGE — R3.
     CURRENT_MODULE_PACKAGE.with(|cp| {
@@ -1520,6 +1738,30 @@ pub fn build_introspection_state(
 /// 2. SEARCH_PATHS — configured search paths (defaults to ["."])
 fn find_module(name: &str) -> Option<PathBuf> {
     let parts: Vec<&str> = name.split('.').collect();
+
+    if parts.len() > 1 {
+        let parent_found = MODULES.with(|mods| {
+            let mods = mods.borrow();
+            for idx in (1..parts.len()).rev() {
+                let parent = parts[..idx].join(".");
+                let Some(module) = mods.get(&parent) else {
+                    continue;
+                };
+                if !module.is_package {
+                    continue;
+                }
+                for base in module_package_dirs(module) {
+                    if let Some(found) = probe_module_path(&base, &parts[idx..]) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        });
+        if parent_found.is_some() {
+            return parent_found;
+        }
+    }
 
     // Check SCRIPT_DIR first (#1190)
     let script_dir_result = SCRIPT_DIR.with(|sd| {
@@ -1665,7 +1907,8 @@ pub fn is_module_value(v: MbValue) -> bool {
 /// Returns `None` when the module is not loaded, has no cached value, or the
 /// attribute is absent. The returned value carries a fresh +1 reference.
 pub fn mb_module_value_getattr(module_name: &str, attr: &str) -> Option<MbValue> {
-    let cached = MODULES.with(|mods| mods.borrow().get(module_name).and_then(|m| m.cached_value))?;
+    let cached =
+        MODULES.with(|mods| mods.borrow().get(module_name).and_then(|m| m.cached_value))?;
     let ptr = cached.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -1689,7 +1932,8 @@ pub fn mb_module_value_getattr(module_name: &str, attr: &str) -> Option<MbValue>
 pub fn mb_module_attr_lookup(module_name: &str, attr: &str) -> Option<MbValue> {
     let val = MODULES.with(|mods| {
         let mods = mods.borrow();
-        mods.get(module_name).and_then(|m| m.attrs.get(attr).copied())
+        mods.get(module_name)
+            .and_then(|m| m.attrs.get(attr).copied())
     })?;
     unsafe {
         super::rc::retain_if_ptr(val);
@@ -1764,6 +2008,7 @@ pub(crate) fn cleanup_module_jit_backends() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::class;
 
     fn s(name: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(name.to_string()))
@@ -1833,6 +2078,431 @@ mod tests {
         let attr = MbValue::from_ptr(MbObject::new_str("getcwd".to_string()));
         let getcwd = mb_module_getattr(mod_name, attr);
         assert!(!getcwd.is_none(), "os.getcwd should be accessible");
+    }
+
+    /// #962 R2: build/test-time lint — no two [`NATIVE_TYPE_NAMES`] entries may
+    /// share an address unless the pairing is an explicitly reviewed,
+    /// intentional shared-dispatcher registration (a single dispatcher
+    /// function deliberately reused for a small family of shell/enum-like
+    /// classes, e.g. `socket`'s `AddressInfo`/`MsgFlag`/`SocketType`/...
+    /// chain, which all register the *same* literal function address on
+    /// purpose). Any `(prev, new)` pair NOT in this allowlist means two
+    /// DIFFERENT dispatcher bodies ended up at the same machine address —
+    /// i.e. an LLVM identical-code-folding collision, the #954 bug class —
+    /// and must be fixed with a per-dispatcher `icf_guard!()` (see
+    /// `register_native_type_name` and `icf_guard!` above), not allowlisted.
+    ///
+    /// To prove this lint actually catches a new collision: temporarily add
+    /// a second trivially-bodied `unsafe extern "C" fn` byte-identical to an
+    /// existing one, register it into NATIVE_TYPE_NAMES under a new name via
+    /// `register_native_type_name` WITHOUT an `icf_guard!()` call, and rerun
+    /// this test — it fails with a descriptive panic naming the unexpected
+    /// pair. Remove the addition afterward; it must never be committed.
+    #[test]
+    fn test_no_unreviewed_native_type_name_collisions_962() {
+        mb_register_builtins();
+        let collisions = NATIVE_TYPE_NAME_COLLISIONS.with(|c| c.borrow().clone());
+
+        // Audited 2026-07 (#962): every pairing below is a single dispatcher
+        // function deliberately registered under multiple stdlib class
+        // names (verified by reading each *_mod.rs registration site, not
+        // by two distinct function bodies happening to fold together).
+        const ALLOWED_COLLISIONS: &[(&str, &str)] = &[
+            // socket_mod.rs: one shared "enum shell" dispatcher address
+            // looped over this whole name family on purpose.
+            ("AddressInfo", "MsgFlag"),
+            ("MsgFlag", "SocketType"),
+            ("SocketType", "SocketIO"),
+            ("SocketIO", "IntEnum"),
+            ("IntEnum", "IntFlag"),
+            // email_mod.rs: BytesIO/StringIO both explicitly wired to the
+            // same dispatch_dict_shell placeholder.
+            ("BytesIO", "StringIO"),
+        ];
+
+        for (addr, prev, new) in &collisions {
+            let pair = (prev.as_str(), new.as_str());
+            assert!(
+                ALLOWED_COLLISIONS.contains(&pair),
+                "#962: NATIVE_TYPE_NAMES address {addr:#x} was registered as \
+                 {prev:?} and then overwritten with {new:?}, but this pair is \
+                 not in the reviewed ALLOWED_COLLISIONS allowlist. This means \
+                 two distinct dispatcher function bodies now share a machine \
+                 address (an identical-code-folding collision — the #954 bug \
+                 class: id(X) == id(Y) for unrelated classes). Add an \
+                 icf_guard!() call to whichever dispatcher body is missing \
+                 one, or if this really is an intentional shared-dispatcher \
+                 registration, add the pair to ALLOWED_COLLISIONS above only \
+                 after confirming (by reading the registration site) that a \
+                 single function is deliberately reused, not two folded ones."
+            );
+        }
+    }
+
+    /// #954 regression (R3): `bdb.Breakpoint`'s dispatcher must never again
+    /// collapse onto the same machine address as `long_tail_mod`'s shared
+    /// `dispatch_class_shell` (used by, among others, `ftplib.FTP`) — the
+    /// exact collision that made `id(bdb.Breakpoint) == id(ftplib.FTP)` and
+    /// caused `object.__new__(FTP)` to construct a `Breakpoint` instance.
+    /// `dispatch_breakpoint` keeps its original one-off `black_box(0xB2EA_u32)`
+    /// fingerprint (see `bdb_mod.rs`) in addition to now also being covered
+    /// by the general `icf_guard!()` migration; this test pins both the
+    /// address-distinctness and the NATIVE_TYPE_NAMES resolution.
+    #[test]
+    fn test_954_ftp_breakpoint_address_distinct() {
+        mb_register_builtins();
+
+        let ftp_mod = MbValue::from_ptr(MbObject::new_str("ftplib".to_string()));
+        let ftp_attr = MbValue::from_ptr(MbObject::new_str("FTP".to_string()));
+        let ftp = mb_module_getattr(ftp_mod, ftp_attr);
+        let ftp_addr =
+            ftp.as_func()
+                .expect("ftplib.FTP should be a native dispatcher func value") as u64;
+
+        let bdb_mod_name = MbValue::from_ptr(MbObject::new_str("bdb".to_string()));
+        let bp_attr = MbValue::from_ptr(MbObject::new_str("Breakpoint".to_string()));
+        let bp = mb_module_getattr(bdb_mod_name, bp_attr);
+        let bp_addr = bp
+            .as_func()
+            .expect("bdb.Breakpoint should be a native dispatcher func value")
+            as u64;
+
+        assert_ne!(
+            ftp_addr, bp_addr,
+            "#954 regression: ftplib.FTP and bdb.Breakpoint must not share a \
+             dispatcher address (an ICF fold here previously made \
+             id(FTP) == id(Breakpoint), so object.__new__(FTP) wrongly \
+             constructed a Breakpoint instance)"
+        );
+
+        let bp_name = NATIVE_TYPE_NAMES.with(|m| m.borrow().get(&bp_addr).cloned());
+        assert_eq!(
+            bp_name.as_deref(),
+            Some("Breakpoint"),
+            "bdb.Breakpoint's dispatcher address must resolve to its own class name"
+        );
+
+        let ftp_name = NATIVE_TYPE_NAMES.with(|m| m.borrow().get(&ftp_addr).cloned());
+        assert_ne!(
+            ftp_name.as_deref(),
+            Some("Breakpoint"),
+            "#954 regression: ftplib.FTP's dispatcher address must not resolve to \"Breakpoint\""
+        );
+    }
+
+    /// #962 follow-up (2026-07): `X.__name__` for a raw dispatcher-function
+    /// "class" value (the common shape for `long_tail_mod.rs`'s stub
+    /// classes) resolves through `closure::FUNC_NAMES`
+    /// (`mb_func_get_name`/`mb_func_set_name`, keyed by the func value's raw
+    /// bits), NOT through `NATIVE_TYPE_NAMES` — `test_954_...` above only
+    /// pins the latter, so it could not have caught this. `long_tail_mod.rs`
+    /// used to hand every class name across EVERY `register_*` call in that
+    /// file (e.g. ftplib's `FTP` and `_thread`'s `LockType`) the SAME single
+    /// `dispatch_class_shell` address; `mb_module_register`'s per-attr
+    /// FUNC_NAMES-naming loop then let whichever name registered last win
+    /// globally, so `ftplib.FTP.__name__` read back as `"LockType"`
+    /// (observed live: `FTP is Breakpoint == False` but
+    /// `FTP.__name__ == "LockType"`). A first fix (one shell function per
+    /// `register_*` call) still left WITHIN-call collisions (all of
+    /// ftplib's own sibling class names shared one address, so `FTP.__name__`
+    /// misread as a sibling like `"error_perm"`). The real fix is
+    /// `long_tail_mod.rs`'s `SHELL_POOL`: one genuinely distinct, individually
+    /// fold-immune stub function per class name. This test pins
+    /// `.__name__` end-to-end (the actual bug-manifesting path) for both the
+    /// cross-module pair from the live repro and same-call sibling names,
+    /// so a regression here — including the pool's own construction
+    /// aliasing every slot back onto one address again — fails loudly.
+    #[test]
+    fn test_962_long_tail_shell_pool_names_distinct() {
+        mb_register_builtins();
+
+        fn func_name(module: &str, attr: &str) -> String {
+            let val = mb_module_getattr(s(module), s(attr));
+            let func = val.as_func().unwrap_or_else(|| {
+                panic!("{module}.{attr} should be a native dispatcher func value")
+            });
+            let name_val = crate::runtime::closure::mb_func_get_name(MbValue::from_func(func));
+            unsafe {
+                match name_val.as_ptr().map(|p| &(*p).data) {
+                    Some(ObjData::Str(s)) => s.clone(),
+                    _ => panic!("{module}.{attr}.__name__ did not resolve to a string"),
+                }
+            }
+        }
+
+        // The live repro from #962's follow-up report: a cross-module pair
+        // that shared long_tail_mod.rs's old single shell address.
+        assert_eq!(
+            func_name("ftplib", "FTP"),
+            "FTP",
+            "#962 follow-up regression: ftplib.FTP.__name__ must read back as \
+             \"FTP\", not a same-address sibling from elsewhere in long_tail_mod.rs \
+             (e.g. \"LockType\")"
+        );
+        assert_eq!(
+            func_name("_thread", "LockType"),
+            "LockType",
+            "#962 follow-up regression: _thread.LockType.__name__ must not be \
+             clobbered by a later same-file registration"
+        );
+        assert_eq!(
+            func_name("_thread", "allocate_lock"),
+            "allocate_lock",
+            "#962 follow-up regression: _thread.allocate_lock (a dispatcher, not \
+             a class-shell slot) must not share an address with LockType/RLock/\
+             _local/error"
+        );
+
+        // Within-call sibling collision: all of ftplib's OWN class names
+        // used to share one shell address post-fix-attempt-1.
+        for sibling in [
+            "FTP_TLS",
+            "Netrc",
+            "error_reply",
+            "error_temp",
+            "error_perm",
+            "error_proto",
+            "all_errors",
+        ] {
+            assert_eq!(
+                func_name("ftplib", sibling),
+                sibling,
+                "#962 follow-up regression: ftplib.{sibling}.__name__ must read \
+                 back as its own name, not a sibling shell class sharing the \
+                 same call's pool slot"
+            );
+        }
+    }
+
+    /// #1040 follow-up: the same `__name__`-collision bug as
+    /// `test_962_long_tail_shell_pool_names_distinct` above, found in 13 more
+    /// stdlib shell files that each still handed ONE shared
+    /// `dispatch_class_shell` address (or, in `long_tail4_mod.rs`'s io-stream
+    /// case, one shared REAL validating constructor address) to every class
+    /// name registered within that file. Covers the 3 most name-dense files
+    /// (`long_tail2_mod.rs`, `long_tail3_mod.rs`, `long_tail4_mod.rs`) plus a
+    /// spot-check pair for each remaining touched file. Checks both
+    /// directions of the bug: (a) same-call sibling names must resolve
+    /// `__name__` back to themselves, not a sibling that shared one pool
+    /// slot; (b) two unrelated calls/modules must no longer collapse onto
+    /// the exact same raw address (checked directly, since same-named
+    /// siblings across modules would read back the same `__name__` string
+    /// either way and couldn't otherwise prove the addresses differ).
+    #[test]
+    fn test_1040_shell_pool_names_distinct() {
+        mb_register_builtins();
+
+        fn func_name(module: &str, attr: &str) -> String {
+            let val = mb_module_getattr(s(module), s(attr));
+            let func = val.as_func().unwrap_or_else(|| {
+                panic!("{module}.{attr} should be a native dispatcher func value")
+            });
+            let name_val = crate::runtime::closure::mb_func_get_name(MbValue::from_func(func));
+            unsafe {
+                match name_val.as_ptr().map(|p| &(*p).data) {
+                    Some(ObjData::Str(s)) => s.clone(),
+                    _ => panic!("{module}.{attr}.__name__ did not resolve to a string"),
+                }
+            }
+        }
+
+        fn func_addr(module: &str, attr: &str) -> u64 {
+            mb_module_getattr(s(module), s(attr))
+                .as_func()
+                .unwrap_or_else(|| {
+                    panic!("{module}.{attr} should be a native dispatcher func value")
+                }) as u64
+        }
+
+        // -- long_tail2_mod.rs: logging.handlers sibling family (17 handler
+        // classes registered via one `register_with` call's `classes` list).
+        for sibling in [
+            "StreamHandler",
+            "FileHandler",
+            "NullHandler",
+            "WatchedFileHandler",
+            "RotatingFileHandler",
+            "SocketHandler",
+            "QueueHandler",
+            "QueueListener",
+        ] {
+            assert_eq!(
+                func_name("logging.handlers", sibling),
+                sibling,
+                "#1040: logging.handlers.{sibling}.__name__ must read back as \
+                 its own name, not a same-call sibling sharing one pool slot"
+            );
+        }
+        // Cross-module pair: the SAME class name registered by two DIFFERENT
+        // register_with calls must draw independent slots, not collapse onto
+        // long_tail2_mod's old single shared dispatch_class_shell address.
+        assert_ne!(
+            func_addr("json.decoder", "JSONDecodeError"),
+            func_addr("json.scanner", "JSONDecodeError"),
+            "#1040: json.decoder.JSONDecodeError and json.scanner.JSONDecodeError \
+             must not share long_tail2_mod's old single dispatch_class_shell address"
+        );
+
+        // -- long_tail3_mod.rs: distutils.errors sibling family (16 error
+        // classes) plus a classes-list-vs-dispatchers-tuple pair.
+        for sibling in [
+            "DistutilsError",
+            "DistutilsModuleError",
+            "DistutilsClassError",
+            "DistutilsSetupError",
+            "CCompilerError",
+            "CompileError",
+            "LinkError",
+        ] {
+            assert_eq!(
+                func_name("distutils.errors", sibling),
+                sibling,
+                "#1040: distutils.errors.{sibling}.__name__ must read back as \
+                 its own name, not a same-call sibling"
+            );
+        }
+        assert_eq!(func_name("distutils.core", "Distribution"), "Distribution");
+        assert_eq!(func_name("distutils.core", "Command"), "Command");
+        assert_ne!(
+            func_addr("distutils.core", "Distribution"),
+            func_addr("distutils.core", "setup"),
+            "#1040: distutils.core.Distribution (classes list) and .setup \
+             (dispatchers tuple, ex-marker) must not share an address"
+        );
+
+        // -- long_tail4_mod.rs: xml.sax's hand-rolled 11-way collision (8
+        // classes + 3 functions, register_xml_sax_package bypasses
+        // register_with entirely and needed its own fix).
+        for sibling in [
+            "ContentHandler",
+            "ErrorHandler",
+            "InputSource",
+            "SAXException",
+            "SAXNotRecognizedException",
+        ] {
+            assert_eq!(
+                func_name("xml.sax", sibling),
+                sibling,
+                "#1040: xml.sax.{sibling}.__name__ must read back as its own name"
+            );
+        }
+        for fn_name in ["make_parser", "parse", "parseString"] {
+            assert_eq!(
+                func_name("xml.sax", fn_name),
+                fn_name,
+                "#1040: xml.sax.{fn_name}.__name__ must read back as its own name"
+            );
+        }
+        assert_ne!(
+            func_addr("xml.sax", "ContentHandler"),
+            func_addr("xml.sax", "make_parser"),
+            "#1040: xml.sax.ContentHandler (class) and .make_parser (function) \
+             must not share register_xml_sax_package's old single shell address"
+        );
+
+        // long_tail4_mod.rs: register_codec_module's `getregentry` (called 81
+        // times, once per encodings.* codec module) used to share
+        // dispatch_class_shell's address with unrelated names elsewhere in
+        // the SAME file (e.g. punycode's "T"/"adapt" family).
+        assert_ne!(
+            func_addr("encodings.ascii", "getregentry"),
+            func_addr("encodings.punycode", "T"),
+            "#1040: encodings.ascii.getregentry must not share an address with \
+             encodings.punycode.T (both used to be dispatch_class_shell)"
+        );
+        assert_ne!(
+            func_addr("encodings.ascii", "getregentry"),
+            func_addr("encodings.cp037", "getregentry"),
+            "#1040: two different encodings.* modules' getregentry must draw \
+             independent SHELL_POOL slots, not the same shared address"
+        );
+
+        // long_tail4_mod.rs: register_punycode_module's OWN 12-way
+        // intra-function collision (getregentry + 11 function_name entries).
+        for sibling in [
+            "adapt",
+            "punycode_decode",
+            "punycode_encode",
+            "selective_find",
+            "segregate",
+            "T",
+        ] {
+            assert_eq!(
+                func_name("encodings.punycode", sibling),
+                sibling,
+                "#1040: encodings.punycode.{sibling}.__name__ must read back as \
+                 its own name, not a same-function sibling"
+            );
+        }
+
+        // long_tail4_mod.rs: _io's BufferedReader/BufferedWriter/TextIOWrapper
+        // used to all share `dispatch_io_stream_constructor`'s own address (a
+        // real validating constructor, not a trivial SHELL_POOL slot).
+        for sibling in ["BufferedReader", "BufferedWriter", "TextIOWrapper"] {
+            assert_eq!(
+                func_name("_io", sibling),
+                sibling,
+                "#1040: _io.{sibling}.__name__ must read back as its own name, \
+                 not a sibling sharing dispatch_io_stream_constructor's address"
+            );
+        }
+        assert_ne!(
+            func_addr("_io", "BufferedReader"),
+            func_addr("_io", "BufferedWriter"),
+            "#1040: _io.BufferedReader and _io.BufferedWriter must not share \
+             dispatch_io_stream_constructor's address"
+        );
+        assert_ne!(
+            func_addr("_io", "BufferedReader"),
+            func_addr("_io", "TextIOWrapper"),
+            "#1040: _io.BufferedReader and _io.TextIOWrapper must not share \
+             dispatch_io_stream_constructor's address"
+        );
+
+        // -- Spot pairs, one per remaining fixed file. --
+
+        // dev_tools_mod.rs: pyclbr.Class vs symtable.Symbol (the file's own
+        // explicit worked example, per its #962/#954 doc comment).
+        assert_ne!(
+            func_addr("pyclbr", "Class"),
+            func_addr("symtable", "Symbol"),
+            "#1040: pyclbr.Class and symtable.Symbol must not share an address"
+        );
+        assert_eq!(func_name("pyclbr", "Class"), "Class");
+        assert_eq!(func_name("symtable", "Symbol"), "Symbol");
+
+        // http_mod.rs: http.client's HTTPConnection/HTTPSConnection
+        // (client_attrs Vec-accumulation fix).
+        assert_ne!(
+            func_addr("http.client", "HTTPConnection"),
+            func_addr("http.client", "HTTPSConnection"),
+            "#1040: http.client.HTTPConnection and .HTTPSConnection must not \
+             share an address"
+        );
+        assert_eq!(func_name("http.client", "HTTPConnection"), "HTTPConnection");
+        assert_eq!(
+            func_name("http.client", "HTTPSConnection"),
+            "HTTPSConnection"
+        );
+
+        // ssl_mod.rs: the "enum shell" name family.
+        assert_ne!(
+            func_addr("ssl", "AlertDescription"),
+            func_addr("ssl", "Options"),
+            "#1040: ssl.AlertDescription and ssl.Options must not share an address"
+        );
+        assert_eq!(func_name("ssl", "AlertDescription"), "AlertDescription");
+        assert_eq!(func_name("ssl", "Options"), "Options");
+
+        // xmlrpc_mod.rs: xmlrpc.client's class-shell family.
+        assert_ne!(
+            func_addr("xmlrpc.client", "ServerProxy"),
+            func_addr("xmlrpc.client", "Fault"),
+            "#1040: xmlrpc.client.ServerProxy and .Fault must not share an address"
+        );
+        assert_eq!(func_name("xmlrpc.client", "ServerProxy"), "ServerProxy");
+        assert_eq!(func_name("xmlrpc.client", "Fault"), "Fault");
+        assert_eq!(func_name("xmlrpc.client", "Marshaller"), "Marshaller");
     }
 
     #[test]
@@ -1974,6 +2644,87 @@ mod tests {
             "exception type should be ImportError"
         );
         super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_import_gevent_is_blocked_with_asyncio_guidance() {
+        cleanup_all_modules();
+        mb_register_builtins();
+
+        let result = mb_import(s("gevent"));
+        assert!(
+            result.is_none(),
+            "blocked imports should fail at import time"
+        );
+
+        let exc = super::super::exception::mb_get_exception();
+        assert_eq!(
+            super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("ImportError")
+        );
+        let msg = super::super::exception::get_exception_message_pub(exc).unwrap_or_default();
+        assert!(
+            msg.contains("asyncio"),
+            "blocked import message should point users at asyncio"
+        );
+        assert!(
+            msg.contains(GEVENT_GREENLET_MIGRATION_GUIDE),
+            "blocked import message should point users at the migration guide"
+        );
+        super::super::exception::mb_clear_exception();
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_import_greenlet_is_blocked_with_asyncio_guidance() {
+        cleanup_all_modules();
+        mb_register_builtins();
+
+        let result = mb_import(s("greenlet"));
+        assert!(
+            result.is_none(),
+            "blocked imports should fail at import time"
+        );
+
+        let exc = super::super::exception::mb_get_exception();
+        assert_eq!(
+            super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("ImportError")
+        );
+        let msg = super::super::exception::get_exception_message_pub(exc).unwrap_or_default();
+        assert!(
+            msg.contains("asyncio"),
+            "blocked import message should point users at asyncio"
+        );
+        assert!(
+            msg.contains(GEVENT_GREENLET_MIGRATION_GUIDE),
+            "blocked import message should point users at the migration guide"
+        );
+        super::super::exception::mb_clear_exception();
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_import_gevent_submodule_is_blocked_via_parent_package() {
+        cleanup_all_modules();
+        mb_register_builtins();
+
+        let result = mb_import(s("gevent.monkey"));
+        assert!(
+            result.is_none(),
+            "submodule imports should fail at import time"
+        );
+
+        let exc = super::super::exception::mb_get_exception();
+        assert_eq!(
+            super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("ImportError")
+        );
+        let msg = super::super::exception::get_exception_message_pub(exc).unwrap_or_default();
+        assert!(msg.contains("gevent.monkey"));
+        assert!(msg.contains("asyncio"));
+        super::super::exception::mb_clear_exception();
+        cleanup_all_modules();
     }
 
     #[test]
@@ -2541,11 +3292,7 @@ mod tests {
             *cp.borrow_mut() = Some("mamba_rel_pkg.sub".to_string());
         });
 
-        let value = mb_module_getattr_relative(
-            s("sibling_a"),
-            2,
-            s("SENTINEL_A"),
-        );
+        let value = mb_module_getattr_relative(s("sibling_a"), 2, s("SENTINEL_A"));
         assert_eq!(extract_str(value).as_deref(), Some("a-value"));
         cleanup_all_modules();
     }
@@ -2632,6 +3379,33 @@ mod tests {
     }
 
     #[test]
+    fn test_file_import_primes_function_source_info() {
+        cleanup_all_modules();
+
+        let dir = tempfile::tempdir().unwrap();
+        let mod_path = dir.path().join("source_info_mod.py");
+        std::fs::write(&mod_path, "\n\ndef imported_func():\n    return 1\n").unwrap();
+
+        mb_set_script_dir(dir.path().to_path_buf());
+        let result = mb_import(s("source_info_mod"));
+        assert!(result.is_ptr(), "import should succeed");
+
+        let func = mb_module_getattr(s("source_info_mod"), s("imported_func"));
+        let code = class::mb_getattr(func, s("__code__"));
+        assert!(code.is_ptr(), "imported function should expose __code__");
+
+        let filename = class::mb_getattr(code, s("co_filename"));
+        assert_eq!(
+            extract_str(filename).as_deref(),
+            Some(mod_path.to_string_lossy().as_ref())
+        );
+        let firstlineno = class::mb_getattr(code, s("co_firstlineno"));
+        assert_eq!(firstlineno.as_int(), Some(3));
+
+        cleanup_all_modules();
+    }
+
+    #[test]
     fn test_dotted_import_loads_parent_packages() {
         cleanup_all_modules();
 
@@ -2684,6 +3458,37 @@ mod tests {
 
         let value = mb_module_getattr(s("pkg_dunder_test.sub.leaf"), s("LEAF_PACKAGE"));
         assert_eq!(extract_str(value).as_deref(), Some("pkg_dunder_test.sub"));
+        cleanup_all_modules();
+    }
+
+    #[test]
+    fn test_imported_module_body_reads_file_dunder() {
+        cleanup_all_modules();
+
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_dir = dir.path().join("pkg_file_test");
+        let sub_dir = pkg_dir.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(pkg_dir.join("__init__.py"), "").unwrap();
+        std::fs::write(sub_dir.join("__init__.py"), "").unwrap();
+        let leaf_path = sub_dir.join("leaf.py");
+        std::fs::write(&leaf_path, "LEAF_FILE = __file__\n").unwrap();
+
+        mb_set_script_dir(dir.path().to_path_buf());
+        let result = mb_import(s("pkg_file_test.sub.leaf"));
+        assert!(result.is_ptr(), "leaf import should succeed");
+
+        let value = mb_module_getattr(s("pkg_file_test.sub.leaf"), s("LEAF_FILE"));
+        assert_eq!(
+            extract_str(value).as_deref(),
+            Some(leaf_path.to_string_lossy().as_ref())
+        );
+
+        let file_attr = mb_module_getattr(s("pkg_file_test.sub.leaf"), s("__file__"));
+        assert_eq!(
+            extract_str(file_attr).as_deref(),
+            Some(leaf_path.to_string_lossy().as_ref())
+        );
         cleanup_all_modules();
     }
 

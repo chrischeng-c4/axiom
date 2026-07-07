@@ -90,7 +90,9 @@ fn replacement_readiness_uses_platform_readiness_tool() {
     assert!(text.contains("platform_dimension"));
     assert!(text.contains("\"--json\""));
     assert!(
-        !text.contains("platform/OS/process/network/TLS coverage is not yet proven as a replacement gate"),
+        !text.contains(
+            "platform/OS/process/network/TLS coverage is not yet proven as a replacement gate"
+        ),
         "platform readiness must not regress to a blocked placeholder"
     );
 }

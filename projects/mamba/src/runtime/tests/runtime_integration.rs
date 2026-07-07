@@ -11,6 +11,18 @@ fn str_val(s: &str) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s.to_string()))
 }
 
+fn assert_bigint_value(val: MbValue, expected: i128) {
+    let actual = unsafe { crate::runtime::bigint_ops::extract_bigint(val) }
+        .expect("expected BigInt")
+        .to_string();
+    assert_eq!(actual, expected.to_string());
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            crate::runtime::rc::mb_release(ptr);
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════
 // Group 1: Value lifecycle with GC (5 tests)
 // ═══════════════════════════════════════════════════════════
@@ -395,6 +407,57 @@ fn test_unbox_int_roundtrip() {
 
     let val = MbValue::from_int(99);
     assert_eq!(mb_unbox_int(val), 99i64);
+}
+
+/// mb_box_int promotes raw boundary aliases instead of passing them through.
+#[test]
+fn test_box_int_alias_boundaries_promote_to_bigint() {
+    use crate::runtime::builtins::mb_box_int;
+
+    assert_bigint_value(mb_box_int(-(1i64 << 50)), -(1i128 << 50));
+    assert_bigint_value(mb_box_int(-(1i64 << 51)), -(1i128 << 51));
+    assert_bigint_value(mb_box_int(-(1i64 << 51) + 1), -(1i128 << 51) + 1);
+    assert_bigint_value(mb_box_int(-(1i64 << 51) + 16), -(1i128 << 51) + 16);
+    assert_bigint_value(mb_box_int(1i64 << 50), 1i128 << 50);
+}
+
+/// mb_box_int preserves an actual heap BigInt pointer, not raw pointer aliases.
+#[test]
+fn test_box_int_preserves_real_bigint_pointer() {
+    use crate::runtime::bigint_ops::bigint_from_i128;
+    use crate::runtime::builtins::mb_box_int;
+
+    let original = bigint_from_i128(1i128 << 80);
+    let boxed = mb_box_int(original.to_bits() as i64);
+    assert_eq!(boxed.to_bits(), original.to_bits());
+    assert_bigint_value(boxed, 1i128 << 80);
+    if let Some(ptr) = original.as_ptr() {
+        unsafe {
+            crate::runtime::rc::mb_release(ptr);
+        }
+    }
+}
+
+/// mb_box_int still preserves a real registered TAG_FUNC value.
+#[test]
+fn test_box_int_preserves_registered_function_value() {
+    use crate::runtime::builtins::mb_box_int;
+    use crate::runtime::module::NATIVE_FUNC_ADDRS;
+
+    extern "C" fn dummy_native(_: *const MbValue, _: usize) -> MbValue {
+        MbValue::none()
+    }
+
+    let addr = dummy_native as *const () as usize as u64;
+    NATIVE_FUNC_ADDRS.with(|set| {
+        set.borrow_mut().insert(addr);
+    });
+    let func = MbValue::from_func(addr as usize);
+    let boxed = mb_box_int(func.to_bits() as i64);
+    assert_eq!(boxed.as_func(), Some(addr as usize));
+    NATIVE_FUNC_ADDRS.with(|set| {
+        set.borrow_mut().remove(&addr);
+    });
 }
 
 // ═══════════════════════════════════════════════════════════

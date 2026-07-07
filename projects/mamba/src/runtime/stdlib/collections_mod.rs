@@ -50,6 +50,7 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
 }
 
 unsafe extern "C" fn dispatch_counter_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_counter_new(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
@@ -58,6 +59,7 @@ unsafe extern "C" fn dispatch_counter_most_common(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_counter_most_common(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -82,6 +84,7 @@ fn dict_get_str_key(v: MbValue, key: &str) -> Option<MbValue> {
 }
 
 unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     // The lowerer packs keyword args (`deque(maxlen=3)`,
     // `deque(xs, maxlen=3)`) into a trailing dict positional; recover
@@ -142,6 +145,7 @@ unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) 
 }
 
 unsafe extern "C" fn dispatch_deque_appendleft(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_deque_appendleft(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -150,11 +154,13 @@ unsafe extern "C" fn dispatch_deque_appendleft(args_ptr: *const MbValue, nargs: 
 }
 
 unsafe extern "C" fn dispatch_deque_popleft(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_deque_popleft(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_deque_append(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_deque_append(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -163,11 +169,13 @@ unsafe extern "C" fn dispatch_deque_append(args_ptr: *const MbValue, nargs: usiz
 }
 
 unsafe extern "C" fn dispatch_deque_pop(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_deque_pop(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_deque_rotate(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_deque_rotate(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -176,27 +184,35 @@ unsafe extern "C" fn dispatch_deque_rotate(args_ptr: *const MbValue, nargs: usiz
 }
 
 unsafe extern "C" fn dispatch_ordereddict_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_ordereddict_new(a)
 }
 
 unsafe extern "C" fn dispatch_defaultdict_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     let inst = mb_defaultdict_new(a.get(0).copied().unwrap_or_else(MbValue::none));
     // `defaultdict(int, a=1)` — the lowerer packs kwargs into a trailing
-    // dict positional — and CPython's positional-mapping form
-    // `defaultdict(int, {'a': 1})` both seed the backing dict.
+    // dict positional — `defaultdict(int, {'a': 1})` (a mapping), and
+    // `defaultdict(int, iterable_of_pairs)` (list/generator/zip/...) all seed
+    // the backing dict, mirroring `dict()`'s own remaining-args contract.
+    // Previously this only recognized a literal `ObjData::Dict` pointer, so
+    // list-of-pairs and int-tagged iterator handles (zip/generators) were
+    // silently dropped — the same root cause as #1066's OrderedDict ctor bug.
+    // Route through `mb_dict_from_pairs` (as `mb_ordereddict_new` now does)
+    // to cover all of those uniformly.
     if let Some(ptr) = inst.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let data = fields.read().unwrap().get("_data").copied();
                 if let Some(data) = data {
                     for extra in a.iter().skip(1) {
-                        if let Some(ep) = extra.as_ptr() {
-                            if matches!((*ep).data, ObjData::Dict(_)) {
-                                super::super::dict_ops::mb_dict_update(data, *extra);
-                            }
+                        if extra.is_none() {
+                            continue;
                         }
+                        let pairs_dict = super::super::dict_ops::mb_dict_from_pairs(*extra);
+                        super::super::dict_ops::mb_dict_update(data, pairs_dict);
                     }
                 }
             }
@@ -206,6 +222,7 @@ unsafe extern "C" fn dispatch_defaultdict_new(args_ptr: *const MbValue, nargs: u
 }
 
 unsafe extern "C" fn dispatch_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     // Keyword args (`rename=True`, `defaults=(...)`, `module=...`) arrive as
     // a trailing dict positional under the lowering convention.
@@ -218,21 +235,25 @@ unsafe extern "C" fn dispatch_namedtuple(args_ptr: *const MbValue, nargs: usize)
 }
 
 unsafe extern "C" fn dispatch_userdict_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_userdict_new(a)
 }
 
 unsafe extern "C" fn dispatch_userlist_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_userlist_new(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_userstring_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_userstring_new(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
 unsafe extern "C" fn dispatch_chainmap_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     // ChainMap takes variadic dict arguments — pack into a list.
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     let args_list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
@@ -244,6 +265,7 @@ unsafe extern "C" fn dispatch_chainmap_new(args_ptr: *const MbValue, nargs: usiz
 /// Counter: increment `mapping[elem]` by one for each element of `iterable`,
 /// starting missing keys at zero. Mutates `mapping` in place, returns None.
 unsafe extern "C" fn dispatch_count_elements(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_as_slice(args_ptr, nargs) };
     let mapping = a.first().copied().unwrap_or_else(MbValue::none);
     let iterable = a.get(1).copied().unwrap_or_else(MbValue::none);
@@ -315,19 +337,26 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
         if COLLECTIONS_TYPES.contains(&name) {
-            // Register the FULL-DOTTED name so it matches the class_name these
-            // dispatchers actually stamp on their instances (e.g. deque() makes
-            // a "collections.deque" Instance) — keeps object.__new__ / isinstance
-            // / type() consistent.
-            let dotted = format!("collections.{name}");
-            super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-                m.borrow_mut().insert(addr as u64, dotted);
-            });
+            // Most collections types stamp their dotted module-qualified runtime
+            // class_name onto instances, but the User* wrappers follow CPython's
+            // bare `__name__` while their `type(...).__module__` stays
+            // "collections". Keep the mapping local so instance `type()` and the
+            // native class-object identity path agree.
+            let native_name = match name {
+                "UserDict" | "UserList" | "UserString" => name.to_string(),
+                _ => format!("collections.{name}"),
+            };
+            super::super::module::register_native_type_name(addr as u64, native_name);
         }
     }
 
     register_chainmap_class();
     register_userdict_class();
+    register_userlist_class();
+    register_userstring_class();
+    for name in ["UserDict", "UserList", "UserString"] {
+        seed_collections_type_object(name);
+    }
 
     super::register_module("collections", attrs);
 }
@@ -376,88 +405,8 @@ fn raise_value_error(msg: &str) -> MbValue {
 }
 
 pub fn mb_counter_new(iterable: MbValue) -> MbValue {
-    use crate::runtime::dict_ops::DictKey;
-    let mut counts: indexmap::IndexMap<DictKey, i64> = indexmap::IndexMap::new();
-
-    // CPython: Counter(non-iterable scalar) raises TypeError.
-    if iterable.as_int().is_some() || iterable.as_float().is_some() || iterable.is_bool() {
-        return raise_type_error("'int' object is not iterable");
-    }
-    // CPython: unhashable elements (lists/dicts/sets) raise TypeError.
-    if let Some(ptr) = iterable.as_ptr() {
-        unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                for item in lock.read().unwrap().iter() {
-                    if let Some(ip) = item.as_ptr() {
-                        let unhashable = matches!(
-                            (*ip).data,
-                            ObjData::List(_) | ObjData::Dict(_) | ObjData::Set(_)
-                        );
-                        if unhashable {
-                            return raise_type_error("unhashable type: 'list'");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(ptr) = iterable.as_ptr() {
-        unsafe {
-            match &(*ptr).data {
-                ObjData::List(ref lock) => {
-                    for item in lock.read().unwrap().iter() {
-                        if let Some(i) = item.as_int() {
-                            *counts.entry(DictKey::Int(i)).or_insert(0) += 1;
-                        } else if let Some(s) = extract_str(*item) {
-                            *counts.entry(DictKey::Str(s)).or_insert(0) += 1;
-                        } else if let Some(b) = item.as_bool() {
-                            *counts.entry(DictKey::Bool(b)).or_insert(0) += 1;
-                        }
-                    }
-                }
-                ObjData::Tuple(ref items) => {
-                    for item in items.iter() {
-                        if let Some(i) = item.as_int() {
-                            *counts.entry(DictKey::Int(i)).or_insert(0) += 1;
-                        } else if let Some(s) = extract_str(*item) {
-                            *counts.entry(DictKey::Str(s)).or_insert(0) += 1;
-                        } else if let Some(b) = item.as_bool() {
-                            *counts.entry(DictKey::Bool(b)).or_insert(0) += 1;
-                        }
-                    }
-                }
-                ObjData::Str(ref s) => {
-                    for ch in s.chars() {
-                        *counts.entry(DictKey::Str(ch.to_string())).or_insert(0) += 1;
-                    }
-                }
-                // Counter(mapping) — counts come straight from the mapping's
-                // values (CPython semantics, including zero and negative
-                // counts). This is also the path `Counter(a=3)` takes: the
-                // lowerer packs kwargs into a trailing dict positional.
-                ObjData::Dict(ref lock) => {
-                    for (k, v) in lock.read().unwrap().iter() {
-                        if let Some(i) = v.as_int() {
-                            counts.insert(k.clone(), i);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
     // Build dict MbValue for the internal data.
     let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            for (key, count) in &counts {
-                map.insert(key.clone().into(), MbValue::from_int(*count));
-            }
-        }
-    }
     let dict_val = MbValue::from_ptr(dict);
 
     let mut fields = FxHashMap::default();
@@ -472,13 +421,78 @@ pub fn mb_counter_new(iterable: MbValue) -> MbValue {
             fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
-    MbValue::from_ptr(Box::into_raw(obj))
+    let counter = MbValue::from_ptr(Box::into_raw(obj));
+
+    // Counter(mapping) copies counts from mapping values directly. This also
+    // covers Counter/OrderedDict/defaultdict instances through their unwrapped
+    // backing dict.
+    if let Some(mapping) = super::super::class::unwrap_dictlike_data(iterable) {
+        if let Some(ptr) = mapping.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let mut out = if let Some(dp) = dict_val.as_ptr() {
+                        if let ObjData::Dict(ref out_lock) = (*dp).data {
+                            out_lock.write().unwrap()
+                        } else {
+                            return counter;
+                        }
+                    } else {
+                        return counter;
+                    };
+                    for (k, v) in lock.read().unwrap().iter() {
+                        if let Some(i) = v.as_int() {
+                            out.insert(k.clone(), MbValue::from_int(i));
+                        }
+                    }
+                }
+            }
+        }
+        return counter;
+    }
+
+    if iterable.is_none() {
+        return counter;
+    }
+
+    let iter_handle = super::super::iter::mb_iter(iterable);
+    if !super::super::iter::is_iter_handle(iter_handle) {
+        return raise_type_error(&format!(
+            "'{}' object is not iterable",
+            super::super::builtins::value_type_name(iterable)
+        ));
+    }
+
+    let items = match super::super::iter::drain_iter_to_vec(iter_handle) {
+        Some(items) => items,
+        None => {
+            let mut items = Vec::new();
+            loop {
+                if super::super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
+                    break;
+                }
+                let item = super::super::iter::mb_next(iter_handle);
+                if item.is_none() {
+                    break;
+                }
+                items.push(item);
+            }
+            items
+        }
+    };
+    for item in items {
+        if let Some(tn) = super::super::set_ops::unhashable_type_name(item) {
+            return raise_type_error(&format!("unhashable type: '{tn}'"));
+        }
+        let cur = super::super::dict_ops::mb_dict_get(dict_val, item, MbValue::from_int(0));
+        let next = MbValue::from_int(cur.as_int().unwrap_or(0) + 1);
+        super::super::dict_ops::mb_dict_setitem(dict_val, item, next);
+    }
+
+    counter
 }
 
 /// Extract the internal IndexMap from a Counter (Instance or dict).
-fn counter_data(
-    counter: MbValue,
-) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
+fn counter_data(counter: MbValue) -> crate::runtime::rc::MbDictMap {
     if let Some(ptr) = counter.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -497,7 +511,7 @@ fn counter_data(
             }
         }
     }
-    indexmap::IndexMap::new()
+    crate::runtime::rc::MbDictMap::default()
 }
 
 /// collections.Counter.most_common(n) -> list of (key, count) tuples
@@ -1119,9 +1133,27 @@ fn userdict_backing_from_args(args: &[MbValue]) -> MbValue {
     backing
 }
 
+/// `type(UserList()).__module__ == "collections"` while `.__name__` stays bare.
+fn seed_collections_type_object(name: &str) {
+    let type_obj = super::super::builtins::make_type_object(name);
+    if let Some(ptr) = type_obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let old = fields.write().unwrap().insert(
+                    "__module__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str("collections".to_string())),
+                );
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+}
+
 /// collections.UserDict(initialdata=None, **kwargs) -> UserDict Instance
 pub fn mb_userdict_new(args: &[MbValue]) -> MbValue {
-    user_wrapper_make("collections.UserDict", userdict_backing_from_args(args))
+    user_wrapper_make("UserDict", userdict_backing_from_args(args))
 }
 
 /// `UserDict.__init__` for registered subclasses (`class Sub(UserDict)`).
@@ -1158,8 +1190,42 @@ fn register_userdict_class() {
     super::super::class::mb_class_register("UserDict", vec![], m);
 }
 
-/// collections.UserList(initlist=None) -> UserList Instance
-pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
+/// `UserList.__init__` for registered subclasses (`class Sub(UserList)`).
+unsafe extern "C" fn userlist_init(self_v: MbValue, args: MbValue) -> MbValue {
+    let initlist = extract_list(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
+    let data = userlist_backing(initlist);
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let old = fields.write().unwrap().insert("_data".to_string(), data);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+fn register_userlist_class() {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut m: Map<String, MbValue> = Map::new();
+    m.insert(
+        "__init__".to_string(),
+        var(userlist_init as *const () as usize),
+    );
+    super::super::class::mb_class_register("collections.UserList", vec![], m.clone());
+    super::super::class::mb_class_register("UserList", vec![], m);
+}
+
+fn userlist_backing(initlist: MbValue) -> MbValue {
     let data: Vec<MbValue> = if initlist.is_none() {
         Vec::new()
     } else {
@@ -1171,10 +1237,12 @@ pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
             })
             .collect()
     };
-    user_wrapper_make(
-        "collections.UserList",
-        MbValue::from_ptr(MbObject::new_list(data)),
-    )
+    MbValue::from_ptr(MbObject::new_list(data))
+}
+
+/// collections.UserList(initlist=None) -> UserList Instance
+pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
+    user_wrapper_make("UserList", userlist_backing(initlist))
 }
 
 /// collections.UserString(seq) -> UserString Instance
@@ -1182,6 +1250,10 @@ pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
 /// Accepts a str (clone) or an int (decimal form, matching `str(int)`);
 /// other types stringify through mb_str.
 pub fn mb_userstring_new(seq: MbValue) -> MbValue {
+    user_wrapper_make("UserString", userstring_backing(seq))
+}
+
+fn userstring_backing(seq: MbValue) -> MbValue {
     let s = if let Some(s) = extract_str(seq) {
         s
     } else if let Some(n) = seq.as_int() {
@@ -1191,10 +1263,42 @@ pub fn mb_userstring_new(seq: MbValue) -> MbValue {
     } else {
         extract_str(super::super::builtins::mb_str(seq)).unwrap_or_default()
     };
-    user_wrapper_make(
-        "collections.UserString",
-        MbValue::from_ptr(MbObject::new_str(s)),
-    )
+    MbValue::from_ptr(MbObject::new_str(s))
+}
+
+/// `UserString.__init__` for registered subclasses (`class Sub(UserString)`).
+unsafe extern "C" fn userstring_init(self_v: MbValue, args: MbValue) -> MbValue {
+    let seq = extract_list(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
+    let data = userstring_backing(seq);
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let old = fields.write().unwrap().insert("_data".to_string(), data);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+fn register_userstring_class() {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut m: Map<String, MbValue> = Map::new();
+    m.insert(
+        "__init__".to_string(),
+        var(userstring_init as *const () as usize),
+    );
+    super::super::class::mb_class_register("collections.UserString", vec![], m.clone());
+    super::super::class::mb_class_register("UserString", vec![], m);
 }
 
 /// collections.deque_appendleft(deque, val) -> None
@@ -1312,30 +1416,23 @@ pub fn mb_ordereddict_new(args: &[MbValue]) -> MbValue {
     // Build the backing dict. CPython accepts a mapping, an iterable of pairs,
     // or no arg; kwargs lower into a trailing dict positional in mamba's call
     // convention.
+    //
+    // Every positional routes through `mb_dict_from_pairs` — the same
+    // reference-quality machinery `dict()` uses (#1039/#1050/#1056) — rather
+    // than a hand-rolled `arg.as_ptr()` match. The old match only recognized
+    // ObjData::Dict/List/Tuple/Instance pointers, so any iterator *handle*
+    // (zip/map/filter/generator results are int-tagged, not heap pointers —
+    // see `mb_zip`) fell through `as_ptr() == None` and was silently dropped,
+    // constructing an empty OrderedDict from `OrderedDict(zip(...))` (#1066).
+    // `mb_dict_from_pairs` already drains int-tagged iterator handles via
+    // `mb_iter`/`mb_next` in addition to covering mappings/pairs/Instances.
     let backing = super::super::dict_ops::mb_dict_new();
     for arg in args {
         if arg.is_none() {
             continue;
         }
-        if let Some(ptr) = arg.as_ptr() {
-            unsafe {
-                match &(*ptr).data {
-                    ObjData::Dict(_) => {
-                        super::super::dict_ops::mb_dict_update(backing, *arg);
-                    }
-                    ObjData::List(_) | ObjData::Tuple(_) => {
-                        // Iterable of (k, v) pairs.
-                        let pairs_dict = super::super::dict_ops::mb_dict_from_pairs(*arg);
-                        super::super::dict_ops::mb_dict_update(backing, pairs_dict);
-                    }
-                    ObjData::Instance { .. } => {
-                        // Other dict-like Instances flow through update().
-                        super::super::dict_ops::mb_dict_update(backing, *arg);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        let pairs_dict = super::super::dict_ops::mb_dict_from_pairs(*arg);
+        super::super::dict_ops::mb_dict_update(backing, pairs_dict);
     }
     let mut fields = FxHashMap::default();
     fields.insert("_data".into(), backing);
@@ -2467,7 +2564,7 @@ pub fn mb_chainmap_new(args: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::{builtins, class, dict_ops};
+    use crate::runtime::{builtins, class, dict_ops, iter};
 
     use super::*;
 
@@ -2476,9 +2573,7 @@ mod tests {
     }
 
     /// Helper: extract the _data dict from a Counter Instance.
-    fn counter_get_data(
-        counter: MbValue,
-    ) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
+    fn counter_get_data(counter: MbValue) -> crate::runtime::rc::MbDictMap {
         super::counter_data(counter)
     }
 
@@ -2597,9 +2692,20 @@ mod tests {
     #[test]
     fn test_counter_non_list_input() {
         let result = mb_counter_new(MbValue::from_int(42));
-        // Should return empty counter for non-list
-        let data = counter_get_data(result);
-        assert_eq!(data.len(), 0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_counter_iterator_tuple_keys() {
+        let zipped = iter::mb_zip(
+            MbValue::from_ptr(MbObject::new_list(vec![s("a")])),
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)])),
+        );
+        let counter = mb_counter_new(zipped);
+        let data = counter_get_data(counter);
+        let pair = MbValue::from_ptr(MbObject::new_tuple(vec![s("a"), MbValue::from_int(1)]));
+        let key = crate::runtime::dict_ops::to_dict_key(pair);
+        assert_eq!(data.get(&key).and_then(|v| v.as_int()), Some(1));
     }
 
     #[test]
@@ -2820,6 +2926,29 @@ mod tests {
         user_wrapper_data(v).expect("expected user wrapper").1
     }
 
+    fn type_field_str(v: MbValue, field: &str) -> Option<String> {
+        let ty = builtins::mb_type(v);
+        let ptr = ty.as_ptr()?;
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                return fields
+                    .read()
+                    .ok()?
+                    .get(field)
+                    .and_then(|val| extract_str(*val));
+            }
+        }
+        None
+    }
+
+    fn assert_wrapper_type_metadata(v: MbValue, name: &str) {
+        assert_eq!(type_field_str(v, "__name__").as_deref(), Some(name));
+        assert_eq!(
+            type_field_str(v, "__module__").as_deref(),
+            Some("collections")
+        );
+    }
+
     #[test]
     fn test_userdict_empty() {
         let d = mb_userdict_new(&[]);
@@ -2860,6 +2989,12 @@ mod tests {
     }
 
     #[test]
+    fn test_userdict_type_metadata_uses_bare_name_and_collections_module() {
+        seed_collections_type_object("UserDict");
+        assert_wrapper_type_metadata(mb_userdict_new(&[]), "UserDict");
+    }
+
+    #[test]
     fn test_userlist_empty() {
         let l = mb_userlist_new(MbValue::none());
         let backing = wrapper_backing(l);
@@ -2896,6 +3031,39 @@ mod tests {
     }
 
     #[test]
+    fn test_userlist_subclass_init_sets_backing_data() {
+        register_userlist_class();
+        class::mb_class_register(
+            "MyList",
+            vec!["UserList".to_string()],
+            std::collections::HashMap::new(),
+        );
+        let self_v = user_wrapper_make("MyList", MbValue::none());
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+            MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]),
+        )]));
+        unsafe { userlist_init(self_v, args) };
+        let backing = wrapper_backing(self_v);
+        unsafe {
+            let ptr = backing.as_ptr().unwrap();
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].as_int(), Some(1));
+                assert_eq!(items[1].as_int(), Some(2));
+            } else {
+                panic!("expected List backing");
+            }
+        }
+    }
+
+    #[test]
+    fn test_userlist_type_metadata_uses_bare_name_and_collections_module() {
+        seed_collections_type_object("UserList");
+        assert_wrapper_type_metadata(mb_userlist_new(MbValue::none()), "UserList");
+    }
+
+    #[test]
     fn test_userstring_from_str() {
         let s = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
         let r = mb_userstring_new(s);
@@ -2912,5 +3080,25 @@ mod tests {
     fn test_userstring_from_none_empty() {
         let r = mb_userstring_new(MbValue::none());
         assert_eq!(extract_str(wrapper_backing(r)), Some(String::new()));
+    }
+
+    #[test]
+    fn test_userstring_subclass_init_sets_backing_data() {
+        register_userstring_class();
+        class::mb_class_register(
+            "MyStr",
+            vec!["UserString".to_string()],
+            std::collections::HashMap::new(),
+        );
+        let self_v = user_wrapper_make("MyStr", MbValue::none());
+        let args = MbValue::from_ptr(MbObject::new_list(vec![s("abc")]));
+        unsafe { userstring_init(self_v, args) };
+        assert_eq!(extract_str(wrapper_backing(self_v)).as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn test_userstring_type_metadata_uses_bare_name_and_collections_module() {
+        seed_collections_type_object("UserString");
+        assert_wrapper_type_metadata(mb_userstring_new(MbValue::none()), "UserString");
     }
 }

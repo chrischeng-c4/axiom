@@ -31,6 +31,22 @@ Goal 2.
 
 import botocore
 
+# Fixture repair (#967): `botocore/__init__.py` doesn't import any of these
+# four submodules itself, so `botocore.<name>` raises AttributeError until
+# each submodule has been imported at least once (import binds it onto the
+# parent package as a side effect). Under mamba, `botocore` is a flat native
+# shim with no real submodules to import — it already registers all four
+# names directly as top-level attributes, so the (expected)
+# ModuleNotFoundError here is a no-op fallback to that existing shim
+# surface.
+try:
+    import botocore.client  # noqa: F401
+    import botocore.errorfactory  # noqa: F401
+    import botocore.exceptions  # noqa: F401
+    import botocore.session  # noqa: F401
+except ImportError:
+    pass
+
 
 _SESSION_BASELINE = botocore.session
 _CLIENT_BASELINE = botocore.client

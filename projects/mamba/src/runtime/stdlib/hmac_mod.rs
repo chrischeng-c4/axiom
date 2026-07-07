@@ -474,11 +474,8 @@ fn is_custom_digestmod(val: MbValue) -> bool {
 }
 
 fn block_size_attr(val: MbValue) -> Option<i64> {
-    let got = super::super::class::mb_getattr_default(
-        val,
-        str_value("block_size"),
-        MbValue::none(),
-    );
+    let got =
+        super::super::class::mb_getattr_default(val, str_value("block_size"), MbValue::none());
     if super::super::exception::current_exception_type().is_some() {
         return None;
     }
@@ -486,15 +483,11 @@ fn block_size_attr(val: MbValue) -> Option<i64> {
 }
 
 fn class_block_size_attr(class_name: &str) -> Option<i64> {
-    super::super::class::class_attr_lookup(class_name, "block_size")
-        .and_then(|v| v.as_int())
+    super::super::class::class_attr_lookup(class_name, "block_size").and_then(|v| v.as_int())
 }
 
 fn runtime_warning(message: &str) -> bool {
-    super::super::stdlib::warnings_mod::warn_impl(
-        str_value(message),
-        str_value("RuntimeWarning"),
-    );
+    super::super::stdlib::warnings_mod::warn_impl(str_value(message), str_value("RuntimeWarning"));
     super::super::exception::current_exception_type().is_some()
 }
 
@@ -754,6 +747,7 @@ fn split_kwargs(a: &[MbValue]) -> (&[MbValue], MbValue) {
 }
 
 unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, kw) = split_kwargs(a);
     // key/msg/digestmod: positional first, then keyword override.
@@ -826,24 +820,42 @@ unsafe extern "C" fn dispatch_compare_digest(args_ptr: *const MbValue, nargs: us
 // the four instance methods (`update`, `hexdigest`, `digest`, `copy`) here so
 // `callable(hmac.HMAC.update)` and friends hold.
 //
-// These method values are placeholder dispatchers used solely to populate the
-// registry table for the unbound-method/callability bridge — surface fixtures
-// only probe `callable(HMAC.<m>)`. Real method calls on a live HMAC handle
-// (`h.update(b"x")`) route through class.rs `mb_call_method`'s int-handle
-// dispatch arm (which calls `mb_hmac_*` directly), NOT through these stubs —
-// so behavior is unaffected. The stubs are never on a live call path; they
-// return None to satisfy the method ABI shape.
+unsafe extern "C" fn method_update(self_v: MbValue, args: MbValue) -> MbValue {
+    let data = args
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read().unwrap().first().copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none);
+    mb_hmac_update(self_v, data)
+}
 
-unsafe extern "C" fn method_stub(_self_v: MbValue, _args: MbValue) -> MbValue {
-    MbValue::none()
+unsafe extern "C" fn method_hexdigest(self_v: MbValue, _args: MbValue) -> MbValue {
+    mb_hmac_hexdigest(self_v)
+}
+
+unsafe extern "C" fn method_digest(self_v: MbValue, _args: MbValue) -> MbValue {
+    mb_hmac_digest(self_v)
+}
+
+unsafe extern "C" fn method_copy(self_v: MbValue, _args: MbValue) -> MbValue {
+    mb_hmac_copy(self_v)
 }
 
 fn register_hmac_class() {
     let mut map: HashMap<String, MbValue> = HashMap::new();
-    let stub = method_stub as usize;
-    super::super::module::register_variadic_func(stub as u64);
-    for name in ["update", "hexdigest", "digest", "copy"] {
-        map.insert(name.to_string(), MbValue::from_func(stub));
+    for (name, addr) in [
+        ("update", method_update as usize),
+        ("hexdigest", method_hexdigest as usize),
+        ("digest", method_digest as usize),
+        ("copy", method_copy as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        map.insert(name.to_string(), MbValue::from_func(addr));
     }
     super::super::class::mb_class_register("HMAC", vec![], map);
 }
@@ -875,10 +887,10 @@ pub fn register() {
     // class. Record its address in NATIVE_TYPE_NAMES so that
     // `isinstance(h, hmac.HMAC)` resolves the target type name to "HMAC"
     // (the class.rs isinstance arm then matches it against hmac handles).
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(dispatch_new as usize as u64, "HMAC".to_string());
-    });
+    super::super::module::register_native_type_name(
+        dispatch_new as usize as u64,
+        "HMAC".to_string(),
+    );
 
     // Register the HMAC class + its instance methods (`update`, `hexdigest`,
     // `digest`, `copy`) in CLASS_REGISTRY so mb_getattr's func->native-class

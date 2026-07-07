@@ -33,6 +33,13 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use std::collections::{HashMap, HashSet};
 
+/// Cranelift's SSA builder can panic with `Too many parameters on block` when a
+/// return epilogue tries to `use_var` for an enormous number of locals at once.
+/// Keep ordinary functions on the precise release path, but skip the explicit
+/// return sweep for pathological mega-bodies and rely on process teardown /
+/// surrounding runtime cleanup instead of crashing codegen outright.
+const MAX_RETURN_RELEASE_SWEEP_VREGS: usize = 4096;
+
 /// Walk all MIR bodies and collect extern function names that are actually used.
 fn collect_used_externs(module: &MirModule) -> HashSet<String> {
     let mut used = HashSet::new();
@@ -160,6 +167,7 @@ fn mir_inst_dest(inst: &MirInst) -> Option<VReg> {
 /// reordered. (This is the opposite of biased/non-atomic refcounting,
 /// which stays explicitly out of scope per the issue: the atomic RMW for
 /// every *genuine* retain/release is untouched.)
+#[allow(dead_code)]
 fn compute_may_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
     let assigned_in: HashMap<u32, HashSet<VReg>> = body
         .blocks
@@ -223,6 +231,374 @@ fn compute_may_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
     through
 }
 
+/// Per-block "definitely assigned on all incoming paths" VReg set used to
+/// bound return-epilogue cleanup in large branchy bodies.
+///
+/// `emit_terminator`'s release sweep only needs VRegs that are guaranteed to
+/// hold a current local value on every path reaching that terminator. Using the
+/// broader may-assign union forces `builder.use_var` to chase many branch-local
+/// values that are irrelevant on the current path; in large CFGs that can
+/// create enough SSA block params to trip Cranelift's `Too many parameters on
+/// block` panic during `use_var_nonlocal`.
+///
+/// This is the standard forward must-analysis:
+///
+///   `Through(b) = assigned_in(b) ∪ (⋂ Through(p) for p ∈ preds(b))`
+///
+/// Entry blocks start with an empty on-entry set. The result is conservative
+/// for cleanup: it may skip path-conditional locals, but it never tries to
+/// release a value that is absent on the current path, and it prevents large
+/// branch-only release sets from exploding SSA merge state at returns.
+fn compute_must_assign(body: &MirBody) -> HashMap<u32, HashSet<VReg>> {
+    let assigned_in: HashMap<u32, HashSet<VReg>> = body
+        .blocks
+        .iter()
+        .map(|b| {
+            let mut s = HashSet::new();
+            for inst in &b.stmts {
+                if let Some(v) = mir_inst_dest(inst) {
+                    s.insert(v);
+                }
+            }
+            (b.id.0, s)
+        })
+        .collect();
+
+    let universe: HashSet<VReg> = assigned_in
+        .values()
+        .flat_map(|set| set.iter().copied())
+        .collect();
+
+    let mut preds: HashMap<u32, Vec<u32>> =
+        body.blocks.iter().map(|b| (b.id.0, Vec::new())).collect();
+    for b in &body.blocks {
+        match &b.terminator {
+            Terminator::Goto(t) => preds.entry(t.0).or_default().push(b.id.0),
+            Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => {
+                preds.entry(then_block.0).or_default().push(b.id.0);
+                preds.entry(else_block.0).or_default().push(b.id.0);
+            }
+            Terminator::Return(_) | Terminator::Unreachable => {}
+        }
+    }
+
+    let mut through: HashMap<u32, HashSet<VReg>> = body
+        .blocks
+        .iter()
+        .map(|b| {
+            let init = if preds[&b.id.0].is_empty() {
+                assigned_in.get(&b.id.0).cloned().unwrap_or_default()
+            } else {
+                universe.clone()
+            };
+            (b.id.0, init)
+        })
+        .collect();
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for b in &body.blocks {
+            let mut on_entry = if preds[&b.id.0].is_empty() {
+                HashSet::new()
+            } else {
+                let mut acc = universe.clone();
+                for p in &preds[&b.id.0] {
+                    if let Some(t) = through.get(p) {
+                        acc.retain(|v| t.contains(v));
+                    } else {
+                        acc.clear();
+                    }
+                }
+                acc
+            };
+            if let Some(a) = assigned_in.get(&b.id.0) {
+                on_entry.extend(a.iter().copied());
+            }
+            if through.get(&b.id.0) != Some(&on_entry) {
+                through.insert(b.id.0, on_entry);
+                changed = true;
+            }
+        }
+    }
+
+    through
+}
+
+fn should_emit_return_release_sweep(candidate_count: usize) -> bool {
+    candidate_count <= MAX_RETURN_RELEASE_SWEEP_VREGS
+}
+
+/// Extract the result `TypeId` a MIR instruction declares for its dest
+/// VReg, if any. Mirrors `mir_inst_dest`'s variant list minus `Copy`, which
+/// carries no `ty` field of its own — a `Copy`'s effective type is whatever
+/// its `source` VReg resolves to (see `compute_loop_carried_vregs`).
+fn mir_inst_ty(inst: &MirInst) -> Option<TypeId> {
+    match inst {
+        MirInst::LoadConst { ty, .. }
+        | MirInst::BinOp { ty, .. }
+        | MirInst::UnaryOp { ty, .. }
+        | MirInst::GetAttr { ty, .. }
+        | MirInst::GetItem { ty, .. }
+        | MirInst::MakeList { ty, .. }
+        | MirInst::MakeDict { ty, .. }
+        | MirInst::MakeTuple { ty, .. }
+        | MirInst::LoadGlobal { ty, .. }
+        | MirInst::LoadCell { ty, .. }
+        | MirInst::MakeCell { ty, .. }
+        | MirInst::LoadCapture { ty, .. }
+        | MirInst::CheckedAdd { ty, .. }
+        | MirInst::CheckedSub { ty, .. }
+        | MirInst::CheckedMul { ty, .. } => Some(*ty),
+        MirInst::Call {
+            dest: Some(_), ty, ..
+        }
+        | MirInst::CallExtern {
+            dest: Some(_), ty, ..
+        } => Some(*ty),
+        _ => None,
+    }
+}
+
+/// #1013 / #2111 ("Subset A iteration-retention amplifier"): find VRegs
+/// that are (re)written *inside* a loop body — i.e. participate in a CFG
+/// back edge's natural loop — so the JIT can pre-seed them before the loop's
+/// own blocks compile.
+///
+/// The bug: `jit::emit_inst`'s release-before-overwrite preamble only fires
+/// when `VarAlloc::is_declared_i64(dest)` is already true. For a VReg with
+/// exactly one static write site inside a loop body (the overwhelmingly
+/// common shape for `hir_to_mir`'s "construct a fresh value, rebind the
+/// name" lowering of `HirStmt::Let`/first-occurrence `Assign`), that gate is
+/// permanently false on every one of its (single, static) compile-time
+/// visits, so the release call is never emitted — even though the same
+/// Cranelift `Variable` is overwritten on every one of N *dynamic* loop
+/// iterations. Each iteration's freshly constructed heap value (dict, list,
+/// class instance, Decimal/Fraction handle, …) is silently orphaned. This is
+/// independent of whether the loop is at module or function scope — the
+/// determining factor is "does the VReg's defining write recur across loop
+/// iterations without an intervening function `Return`", not the enclosing
+/// scope (module-scope loops merely *cannot* recover via a per-call
+/// `Return` epilogue flush the way `f(); f(); f()`-shaped code incidentally
+/// does).
+///
+/// Fix: declare + define these VRegs with a harmless `MbValue::none()`
+/// sentinel *before* the loop's blocks are compiled (see the call site in
+/// `jit::compile_function`). This makes `is_declared_i64` true from the
+/// start, so the *existing* release-before-overwrite gate now fires on
+/// every dynamic iteration once the loop's own defining instruction
+/// compiles: the first dynamic iteration releases the inert sentinel (a
+/// guaranteed no-op — `mb_release_value` on `MbValue::none()` matches
+/// neither the pointer nor the int-handle tag), and every subsequent
+/// iteration correctly releases the *real* value the previous iteration
+/// produced. No MIR schema change, no new private gate — this only widens
+/// the initial state the current gate observes.
+///
+/// Excludes VRegs resolved (through `Copy` chains) to `Ty::Int`, `Ty::Bool`,
+/// `Ty::Float`, `Ty::None`, or `Ty::Never`: the JIT already represents these
+/// as unboxed/raw values (see `VarAlloc::raw_ints` and the F64 bitcast
+/// wrappers) that can never legitimately hold a heap pointer or int-handle.
+/// Pre-seeding them would add a wasted per-iteration FFI call to numeric hot
+/// loops (fib, arithmetic accumulation) for zero correctness benefit — the
+/// exact CPU-regression shape the raw-int fast path exists to avoid. Every
+/// other type (List/Set/Dict/Tuple/Str/Class/Enum/Any/Union/…) is included,
+/// since a `mb_release_value` call on any value that happens not to be
+/// heap-backed is always a safe no-op — over-approximating "is loop-carried"
+/// or "might be boxed" can never double-release or under-release a real
+/// object, it only ever adds harmless extra no-op calls.
+fn compute_loop_carried_vregs(body: &MirBody, tcx: &TypeContext) -> HashSet<VReg> {
+    // ---- discover back edges / natural loop blocks -----------------
+    // `jit::compile_function`'s main loop compiles `body.blocks` in *array*
+    // order (`body.blocks.iter().enumerate()`), NOT in ascending `BlockId`
+    // order — `BlockId`s are assigned by a `fresh_block()` counter at MIR
+    // build time, and exception-check block splitting (extra blocks spliced
+    // in for `mb_has_exception` fast/slow paths) means a block's `BlockId`
+    // does not track its final position in `body.blocks`. So the back-edge
+    // test must compare each block's *array index*, not its raw `BlockId`
+    // value: a back edge is any terminator edge `n -> h` where `h`'s index
+    // in `body.blocks` is <= `n`'s index. The natural loop for that back
+    // edge is `h` plus every block that can reach `n` without passing
+    // through `h`.
+    let index_of: HashMap<u32, usize> = body
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.id.0, i))
+        .collect();
+    let mut succs: HashMap<u32, Vec<u32>> = HashMap::new();
+    for b in &body.blocks {
+        let s = match &b.terminator {
+            Terminator::Goto(t) => vec![t.0],
+            Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => vec![then_block.0, else_block.0],
+            Terminator::Return(_) | Terminator::Unreachable => vec![],
+        };
+        succs.insert(b.id.0, s);
+    }
+    let mut preds: HashMap<u32, Vec<u32>> =
+        body.blocks.iter().map(|b| (b.id.0, Vec::new())).collect();
+    for (&id, s) in &succs {
+        for &t in s {
+            preds.entry(t).or_default().push(id);
+        }
+    }
+
+    let mut loop_blocks: HashSet<u32> = HashSet::new();
+    for b in &body.blocks {
+        let b_idx = index_of[&b.id.0];
+        for &s in succs.get(&b.id.0).into_iter().flatten() {
+            let s_idx = index_of[&s];
+            if s_idx <= b_idx {
+                // Back edge b.id -> s: natural loop = s plus every block
+                // that reaches b.id without passing through s.
+                loop_blocks.insert(s);
+                let mut stack = vec![b.id.0];
+                let mut seen: HashSet<u32> = HashSet::new();
+                seen.insert(s);
+                while let Some(cur) = stack.pop() {
+                    if !seen.insert(cur) {
+                        continue;
+                    }
+                    loop_blocks.insert(cur);
+                    for &p in preds.get(&cur).into_iter().flatten() {
+                        if !seen.contains(&p) {
+                            stack.push(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if loop_blocks.is_empty() {
+        return HashSet::new();
+    }
+
+    // Extern names whose dest is a *fresh, sole-owner* container object
+    // returned by a builtin constructor call (`list()`/`tuple()`/`set()`/
+    // `dict()`/`frozenset()`/`bytearray()`, both the zero-arg `_new`/`_empty`
+    // redirects and the `_from_iterable`/`_from_pairs` non-empty forms — see
+    // the redirect table and `BUILTIN_EXTERN_NAMES` in `hir_to_mir.rs`). Used
+    // below to safely discriminate #1132's ctor-call-result rebind leak from
+    // the general `mb_getattr` exclusion (see its doc comment): a receiver
+    // known to originate from ONE of these calls can never be the aliasing/
+    // escaping shape (`re.match()` result, user object, …) the exclusion
+    // guards against, so lifting the exclusion just for *these* receivers
+    // cannot reopen the T4c5 UAF class.
+    const CTOR_EXTERNS: &[&str] = &[
+        "mb_list_new",
+        "mb_list_from_iterable",
+        "mb_tuple_new",
+        "mb_tuple_from_iterable",
+        "mb_set_new",
+        "mb_set_from_iterable",
+        "mb_dict_new",
+        "mb_dict_from_pairs",
+        "mb_frozenset_new",
+        "mb_frozenset_empty",
+        "mb_bytearray_new_checked",
+    ];
+
+    // ---- resolve each dest VReg's Ty, propagating through Copy; also
+    // track which dest VRegs are (through the same Copy chains) sourced
+    // from a known container-constructor call, for the mb_getattr
+    // discrimination below --------------------------------------------
+    // Single forward pass in the same block/stmt order `jit::emit_inst`
+    // compiles instructions in, so this sees exactly what the real
+    // compile pass would see.
+    let mut resolved: HashMap<VReg, TypeId> = HashMap::new();
+    let mut ctor_dest: HashSet<VReg> = HashSet::new();
+    for b in &body.blocks {
+        for inst in &b.stmts {
+            if let MirInst::Copy { dest, source } = inst {
+                if let Some(&t) = resolved.get(source) {
+                    resolved.insert(*dest, t);
+                }
+                if ctor_dest.contains(source) {
+                    ctor_dest.insert(*dest);
+                }
+                continue;
+            }
+            if let (Some(dest), Some(ty)) = (mir_inst_dest(inst), mir_inst_ty(inst)) {
+                resolved.insert(dest, ty);
+            }
+            if let MirInst::CallExtern {
+                dest: Some(dest),
+                name,
+                ..
+            } = inst
+            {
+                if CTOR_EXTERNS.contains(&name.as_str()) {
+                    ctor_dest.insert(*dest);
+                }
+            }
+        }
+    }
+
+    // ---- collect dest VRegs written inside a loop-body block whose
+    // resolved type can hold a heap pointer / int-handle -------------
+    let mut out = HashSet::new();
+    for b in &body.blocks {
+        if !loop_blocks.contains(&b.id.0) {
+            continue;
+        }
+        for inst in &b.stmts {
+            // A `mb_getattr` dest is transient bound-method/attribute-ref
+            // call glue (e.g. `match_obj.groups`, `re.match`), not a fresh
+            // container/value #1013 is about. Bound methods retain their
+            // `self` internally; pre-seeding + per-iteration releasing them
+            // here interleaves badly with that internal retain and can
+            // release the still-referenced `self` object out from under a
+            // later release of the bound method itself (observed: `re`
+            // match-object + `.groups()` looped — nondeterministic SIGTRAP).
+            // Excluding them only forgoes elision for the bound-method
+            // temporary itself (a short-lived, cheap object) — it does not
+            // reopen #1013 for the container/value the method call returns
+            // (that result is a *separate* dest, still covered normally).
+            //
+            // #1132 discrimination: when the receiver (`args[0]`) is known
+            // (via `ctor_dest`, itself Copy-chain-resolved) to be a fresh
+            // container built by ONE of `CTOR_EXTERNS` in this same body,
+            // the exclusion's UAF rationale does not apply — such a
+            // receiver cannot be the aliasing/escaping shape the exclusion
+            // guards against, so it never got a chance to be released
+            // through some *other* path first. Left excluded, the bound-
+            // method glue's internal retain on that receiver (see
+            // `make_bound_native_method`/`make_bound_method`) is never
+            // balanced, permanently pinning the receiver's refcount above
+            // zero — e.g. `s = set(); s.add(i)` in a loop never frees any
+            // iteration's set. So: do NOT skip this dest in that case —
+            // fall through to the normal pre-seed/release treatment,
+            // exactly like any other loop-carried heap value.
+            if let MirInst::CallExtern { name, args, .. } = inst {
+                if name == "mb_getattr" && !args.first().is_some_and(|r| ctor_dest.contains(r)) {
+                    continue;
+                }
+            }
+            let Some(dest) = mir_inst_dest(inst) else {
+                continue;
+            };
+            let Some(&ty) = resolved.get(&dest) else {
+                continue;
+            };
+            if matches!(
+                tcx.get(ty),
+                Ty::Int | Ty::Bool | Ty::Float | Ty::None | Ty::Never
+            ) {
+                continue;
+            }
+            out.insert(dest);
+        }
+    }
+    out
+}
+
 /// Variable allocator — maps VRegs to Cranelift Variables.
 struct VarAlloc {
     map: HashMap<VReg, Variable>,
@@ -236,12 +612,11 @@ struct VarAlloc {
     /// Sources: LoadConst Int, BinOp with Int type (when both operands are raw).
     /// This enables native iadd/isub/imul instead of extern "C" mb_bigint_add.
     raw_ints: HashSet<VReg>,
-    /// #959 intra-body liveness: the "may be assigned by now" VReg set for
-    /// whichever block is currently being terminated, or `None` to disable
-    /// filtering entirely (the pre-#959 behavior — every AOT `compile_function`
-    /// call leaves this `None`, so `i64_vregs()` is unchanged there; only the
-    /// JIT backend populates it per block via `compute_may_assign`). See
-    /// `compute_may_assign` for the full soundness argument.
+    /// Per-block release filter for the block currently being terminated, or
+    /// `None` to disable filtering entirely (the pre-#959 behavior). The JIT
+    /// backend populates this with `compute_must_assign` so return cleanup only
+    /// touches locals that are definitely assigned on every path to the
+    /// terminator, avoiding large branch-local release sets at SSA merges.
     live_filter: Option<HashSet<VReg>>,
 }
 
@@ -287,22 +662,32 @@ impl VarAlloc {
     /// Skipping these saves a no-op `mb_release_value` call per local in
     /// hot recursive functions like fib/factorial (#1129).
     ///
-    /// #959: also excludes VRegs outside `live_filter` when set — those are
-    /// provably unassigned on every path reaching the current terminator
-    /// (see `compute_may_assign`), so releasing them would be a dead FFI
-    /// call on a value that was never actually written this call.
-    fn i64_vregs(&self) -> Vec<VReg> {
+    /// Also excludes VRegs outside `live_filter` when set — those are not
+    /// definitely assigned on every path reaching the current terminator, so
+    /// releasing them there would either be dead work or force unnecessary SSA
+    /// merge state.
+    fn releasable_i64_vregs(
+        &self,
+        param_vregs: &HashSet<VReg>,
+        return_vreg: Option<VReg>,
+    ) -> Vec<VReg> {
         self.map
             .keys()
             .filter(|v| {
-                self.types.get(v) == Some(&cl_types::I64)
-                    && !self.raw_ints.contains(v)
-                    && !self.native_bools.contains(v)
-                    && self
-                        .live_filter
-                        .as_ref()
-                        .map(|live| live.contains(v))
-                        .unwrap_or(true)
+                crate::runtime::rc::should_release_local_slot(
+                    crate::runtime::rc::LocalSlotReleaseRule {
+                        declared_i64: self.types.get(v) == Some(&cl_types::I64),
+                        raw_value: self.raw_ints.contains(v),
+                        native_bool: self.native_bools.contains(v),
+                        assigned_on_path: self
+                            .live_filter
+                            .as_ref()
+                            .map(|live| live.contains(v))
+                            .unwrap_or(true),
+                        borrowed_param: param_vregs.contains(v),
+                        return_value: return_vreg == Some(**v),
+                    },
+                )
             })
             .copied()
             .collect()
@@ -1303,32 +1688,6 @@ impl CraneliftBackend {
             if let Some(dest_vreg) = dest {
                 let cl_type = self.mamba_to_cl_type(tcx.get(*ty));
                 let var = vars.get(*dest_vreg, builder, cl_type);
-                // #964: release the dest slot's stale prior value before
-                // overwriting it. `Copy` already does this (#1129 R2), but a
-                // `CallExtern` dest reused across loop iterations (e.g. a
-                // hot-loop `set()`/`getattr`/iterator-protocol call whose
-                // result is only later `Copy`'d elsewhere) was never released
-                // until function epilogue — which for a top-level script's
-                // single long-lived function never runs mid-loop, so every
-                // iteration leaked the previous call result. Only applies to
-                // I64 (NaN-boxed MbValue) slots; native-typed dests (raw
-                // ints/floats/bools) never hold a heap pointer and skip this
-                // (mirrors `Copy`'s own unconditional I64 assumption).
-                // `mb_release_value` already no-ops safely on non-pointer
-                // bit patterns, so this is safe even on a slot's first def
-                // (Cranelift's implicit zero default for a not-yet-defined
-                // Variable).
-                let release_ref = if EMIT_REFCOUNT_CALLS && cl_type == cl_types::I64 {
-                    self.extern_funcs
-                        .get("mb_release_value")
-                        .map(|&id| self.module().declare_func_in_func(id, builder.func))
-                } else {
-                    None
-                };
-                if let Some(release_ref) = release_ref {
-                    let old_val = builder.use_var(var);
-                    builder.ins().call(release_ref, &[old_val]);
-                }
                 if let Some(ext) = ext {
                     if ext.return_type != MirType::Void {
                         let raw = builder.inst_results(call)[0];
@@ -1401,8 +1760,9 @@ fn emit_terminator(
             // met via the idempotency fix in `mb_register_builtins`
             // (28cb58070), so the 4× bench gate stays green.
             if let Some(release_ref) = release_func_ref {
-                for v in vars.i64_vregs() {
-                    if v != *vreg && !param_vregs.contains(&v) && !vars.raw_ints.contains(&v) {
+                let releasable = vars.releasable_i64_vregs(param_vregs, Some(*vreg));
+                if should_emit_return_release_sweep(releasable.len()) {
+                    for v in releasable {
                         let var = vars.get(v, builder, cl_types::I64);
                         let val = builder.use_var(var);
                         builder.ins().call(release_ref, &[val]);
@@ -1425,7 +1785,10 @@ fn emit_terminator(
             // NaN-boxed values (it as_ptr-checks the tag), and a raw i64 in an
             // raw_ints VReg is by definition not a pointer — the FFI thunk is
             // pure overhead. This hits fib's base-case `return n` path.
-            if param_vregs.contains(vreg) && !vars.raw_ints.contains(vreg) {
+            if crate::runtime::rc::should_retain_borrowed_return(
+                param_vregs.contains(vreg),
+                vars.raw_ints.contains(vreg),
+            ) {
                 if let Some(retain_ref) = retain_func_ref {
                     builder.ins().call(retain_ref, &[val]);
                 }
@@ -1441,8 +1804,9 @@ fn emit_terminator(
             // Release all local variables except parameters and raw_ints
             // (mb_release_value is a no-op on non-pointer values).
             if let Some(release_ref) = release_func_ref {
-                for v in vars.i64_vregs() {
-                    if !param_vregs.contains(&v) && !vars.raw_ints.contains(&v) {
+                let releasable = vars.releasable_i64_vregs(param_vregs, None);
+                if should_emit_return_release_sweep(releasable.len()) {
+                    for v in releasable {
                         let var = vars.get(v, builder, cl_types::I64);
                         let val = builder.use_var(var);
                         builder.ins().call(release_ref, &[val]);
@@ -1750,7 +2114,9 @@ impl CodegenBackend for CraneliftBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mir::{BasicBlock, BlockId, MirBody, MirInst, MirModule, Terminator, VReg};
+    use crate::mir::{
+        BasicBlock, BlockId, MirBody, MirConst, MirInst, MirModule, Terminator, VReg,
+    };
     use crate::resolve::SymbolId;
     use crate::types::TypeContext;
 
@@ -1973,6 +2339,75 @@ mod tests {
         let var_c = va.get(v1, &mut builder, cl_types::I64);
         assert_ne!(var_a, var_c); // different VReg → new Variable
         assert_eq!(va.next, 2);
+    }
+
+    #[test]
+    fn test_compute_must_assign_excludes_branch_local_vregs() {
+        let tcx = tcx();
+        let int_ty = tcx.int();
+        let body = MirBody {
+            name: SymbolId(0),
+            params: vec![],
+            return_ty: tcx.none(),
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(1),
+                        ty: int_ty,
+                    }],
+                    terminator: Terminator::Branch {
+                        cond: VReg(0),
+                        then_block: BlockId(1),
+                        else_block: BlockId(2),
+                    },
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(1),
+                        value: MirConst::Int(11),
+                        ty: int_ty,
+                    }],
+                    terminator: Terminator::Goto(BlockId(3)),
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(2),
+                        value: MirConst::Int(22),
+                        ty: int_ty,
+                    }],
+                    terminator: Terminator::Goto(BlockId(3)),
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    stmts: vec![],
+                    terminator: Terminator::Return(None),
+                },
+            ],
+        };
+
+        let must_assign = compute_must_assign(&body);
+        let join = must_assign.get(&3).expect("join block present");
+        assert!(join.contains(&VReg(0)), "entry local should survive to join");
+        assert!(
+            !join.contains(&VReg(1)),
+            "then-branch local must not be definitely assigned at join"
+        );
+        assert!(
+            !join.contains(&VReg(2)),
+            "else-branch local must not be definitely assigned at join"
+        );
+    }
+
+    #[test]
+    fn test_return_release_sweep_cap_blocks_pathological_bodies() {
+        assert!(should_emit_return_release_sweep(MAX_RETURN_RELEASE_SWEEP_VREGS));
+        assert!(!should_emit_return_release_sweep(
+            MAX_RETURN_RELEASE_SWEEP_VREGS + 1
+        ));
     }
 
     // ── P1 OOP Conformance Tests (mamba-conformance-p1) ──────────────────────

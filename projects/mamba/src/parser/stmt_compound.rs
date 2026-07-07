@@ -862,6 +862,31 @@ mod tests {
     }
 
     #[test]
+    fn test_fn_def_with_type_param_default() {
+        match parse_stmt("def foo[T = int]():\n    pass\n") {
+            Stmt::FnDef { type_params, .. } => {
+                assert_eq!(type_params.len(), 1);
+                assert!(matches!(
+                    type_params[0].default.as_ref().map(|expr| &expr.node),
+                    Some(Expr::Ident(name)) if name == "int"
+                ));
+            }
+            other => panic!("expected FnDef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_fn_def_rejects_non_default_type_param_after_default() {
+        let err = parser::parse("def foo[T = int, S]():\n    pass\n", fid())
+            .expect_err("expected syntax error");
+        assert!(
+            err.to_string()
+                .contains("non-default type parameter follows default type parameter"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_fn_def_with_params() {
         match parse_stmt("def foo(a: int, b: str):\n    pass\n") {
             Stmt::FnDef { params, .. } => {
@@ -933,6 +958,31 @@ mod tests {
             }
             other => panic!("expected ClassDef, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_class_def_with_type_param_default() {
+        match parse_stmt("class Foo[T = int]:\n    pass\n") {
+            Stmt::ClassDef { type_params, .. } => {
+                assert_eq!(type_params.len(), 1);
+                assert!(matches!(
+                    type_params[0].default.as_ref().map(|expr| &expr.node),
+                    Some(Expr::Ident(name)) if name == "int"
+                ));
+            }
+            other => panic!("expected ClassDef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_class_def_rejects_non_default_type_param_after_default() {
+        let err = parser::parse("class Foo[T = int, S]:\n    pass\n", fid())
+            .expect_err("expected syntax error");
+        assert!(
+            err.to_string()
+                .contains("non-default type parameter follows default type parameter"),
+            "unexpected error: {err}"
+        );
     }
 
     // --- Enum def ---
@@ -1522,6 +1572,34 @@ mod tests {
             }
             other => panic!("expected TypeAlias, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_type_alias_with_type_param_default() {
+        match parse_stmt("type Container[T = int] = list[T]\n") {
+            Stmt::TypeAlias {
+                name, type_params, ..
+            } => {
+                assert_eq!(name, "Container");
+                assert_eq!(type_params.len(), 1);
+                assert!(matches!(
+                    type_params[0].default.as_ref().map(|expr| &expr.node),
+                    Some(Expr::Ident(name)) if name == "int"
+                ));
+            }
+            other => panic!("expected TypeAlias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_type_alias_rejects_non_default_type_param_after_default() {
+        let err = parser::parse("type Container[T = int, S] = tuple[T, S]\n", fid())
+            .expect_err("expected syntax error");
+        assert!(
+            err.to_string()
+                .contains("non-default type parameter follows default type parameter"),
+            "unexpected error: {err}"
+        );
     }
 
     // --- type used as expression (not alias) ---

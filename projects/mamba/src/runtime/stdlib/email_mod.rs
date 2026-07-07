@@ -871,9 +871,14 @@ extern "C" fn m_get_charset(this: MbValue) -> MbValue {
 fn base64_has_char_defect(s: &str) -> bool {
     let mut seen_pad = false;
     for c in s.chars() {
-        if c.is_whitespace() { continue; }
+        if c.is_whitespace() {
+            continue;
+        }
         let b = c as u32;
-        if b == '=' as u32 { seen_pad = true; continue; }
+        if b == '=' as u32 {
+            seen_pad = true;
+            continue;
+        }
         let is_alpha = c.is_ascii_alphanumeric() || c == '+' || c == '/';
         if !is_alpha || seen_pad {
             return true;
@@ -1015,7 +1020,11 @@ fn quoted_header_param(value: &str) -> String {
 
 fn append_payload_part(parent: MbValue, part: MbValue) {
     let cur = field_get(parent, "_payload").unwrap_or_else(MbValue::none);
-    if cur.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::List(_)) }).unwrap_or(false) {
+    if cur
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::List(_)) })
+        .unwrap_or(false)
+    {
         if let Some(ptr) = cur.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
@@ -1032,7 +1041,11 @@ fn append_payload_part(parent: MbValue, part: MbValue) {
 
 fn ensure_multipart_mixed(parent: MbValue) {
     let cur = field_get(parent, "_payload").unwrap_or_else(MbValue::none);
-    if cur.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::List(_)) }).unwrap_or(false) {
+    if cur
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::List(_)) })
+        .unwrap_or(false)
+    {
         return;
     }
 
@@ -1041,7 +1054,11 @@ fn ensure_multipart_mixed(parent: MbValue) {
         retain(ct);
         header_append(body_part, "Content-Type", ct);
     } else {
-        header_append(body_part, "Content-Type", new_str("text/plain; charset=\"utf-8\""));
+        header_append(
+            body_part,
+            "Content-Type",
+            new_str("text/plain; charset=\"utf-8\""),
+        );
     }
     if let Some(cte) = header_get_first(parent, "content-transfer-encoding") {
         retain(cte);
@@ -1078,13 +1095,20 @@ unsafe extern "C" fn m_add_attachment(this: MbValue, args: MbValue) -> MbValue {
     ensure_multipart_mixed(this);
 
     let part = new_message("EmailMessage");
-    header_append(part, "Content-Type", new_str(format!("{maintype}/{subtype}")));
+    header_append(
+        part,
+        "Content-Type",
+        new_str(format!("{maintype}/{subtype}")),
+    );
     header_append(part, "Content-Transfer-Encoding", new_str("7bit"));
     if let Some(name) = filename {
         header_append(
             part,
             "Content-Disposition",
-            new_str(format!("attachment; filename=\"{}\"", quoted_header_param(&name))),
+            new_str(format!(
+                "attachment; filename=\"{}\"",
+                quoted_header_param(&name)
+            )),
         );
     } else {
         header_append(part, "Content-Disposition", new_str("attachment"));
@@ -1144,9 +1168,10 @@ unsafe extern "C" fn m_set_content(this: MbValue, args: MbValue) -> MbValue {
 fn message_as_string(this: MbValue) -> String {
     let mut out = String::new();
     let payload = field_get(this, "_payload").unwrap_or_else(MbValue::none);
-    let is_multipart = payload.as_ptr().map(|p| unsafe {
-        matches!((*p).data, ObjData::List(_))
-    }).unwrap_or(false);
+    let is_multipart = payload
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::List(_)) })
+        .unwrap_or(false);
     let payload_text = if let Some(s) = extract_str(payload) {
         s
     } else if let Some(b) = extract_bytes(payload) {
@@ -1169,9 +1194,12 @@ fn message_as_string(this: MbValue) -> String {
     if is_multipart {
         let boundary = header_get_first(this, "content-type")
             .map(value_to_string)
-            .and_then(|ct| parse_param_list(&ct).into_iter()
-                .find(|(name, _)| name.to_lowercase() == "boundary")
-                .map(|(_, value)| email_unquote(&value)))
+            .and_then(|ct| {
+                parse_param_list(&ct)
+                    .into_iter()
+                    .find(|(name, _)| name.to_lowercase() == "boundary")
+                    .map(|(_, value)| email_unquote(&value))
+            })
             .unwrap_or_else(|| "mamba-boundary".to_string());
         for part in args_items(payload) {
             out.push_str("--");
@@ -1447,9 +1475,12 @@ fn build_message_from_text(text: &str, class_name: &str) -> MbValue {
     }
     if let Some(boundary) = header_get_first(m, "content-type")
         .map(value_to_string)
-        .and_then(|ct| parse_param_list(&ct).into_iter()
-            .find(|(name, _)| name.to_lowercase() == "boundary")
-            .map(|(_, value)| email_unquote(&value)))
+        .and_then(|ct| {
+            parse_param_list(&ct)
+                .into_iter()
+                .find(|(name, _)| name.to_lowercase() == "boundary")
+                .map(|(_, value)| email_unquote(&value))
+        })
     {
         let marker = format!("--{boundary}");
         let mut parts = Vec::new();
@@ -2088,7 +2119,9 @@ extern "C" fn m_charset_str(this: MbValue) -> MbValue {
 extern "C" fn m_charset_init(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let name = pos.first().and_then(|v| extract_str(*v))
+    let name = pos
+        .first()
+        .and_then(|v| extract_str(*v))
         .unwrap_or_else(|| "us-ascii".to_string());
     field_set(this, "input_charset", new_str(name.to_lowercase()));
     MbValue::none()
@@ -2518,11 +2551,7 @@ fn message_methods() -> Vec<(&'static str, *const (), bool)> {
         ("add_header", m_add_header as *const (), true),
         ("replace_header", m_replace_header as *const (), false),
         ("get_content_type", m_get_content_type as *const (), false),
-        (
-            "get_content",
-            m_get_content as *const (),
-            false,
-        ),
+        ("get_content", m_get_content as *const (), false),
         (
             "get_content_maintype",
             m_get_content_maintype as *const (),
@@ -2565,9 +2594,7 @@ fn message_methods() -> Vec<(&'static str, *const (), bool)> {
 fn register_ctor(attrs: &mut HashMap<String, MbValue>, name: &str, addr: usize, type_name: &str) {
     attrs.insert(name.to_string(), MbValue::from_func(addr));
     reg_native(addr);
-    NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(addr as u64, type_name.to_string());
-    });
+    super::super::module::register_native_type_name(addr as u64, type_name.to_string());
 }
 
 fn register_func(attrs: &mut HashMap<String, MbValue>, name: &str, addr: usize) {
@@ -2968,7 +2995,11 @@ fn register_email_charset() {
         "Charset",
     );
     register_func(&mut attrs, "add_alias", dispatch_noop as *const () as usize);
-    register_func(&mut attrs, "add_charset", dispatch_noop as *const () as usize);
+    register_func(
+        &mut attrs,
+        "add_charset",
+        dispatch_noop as *const () as usize,
+    );
     register_func(&mut attrs, "add_codec", dispatch_noop as *const () as usize);
     // surface: missing CPython module constants (auto-added)
     attrs.insert("QP".into(), MbValue::from_int(1));

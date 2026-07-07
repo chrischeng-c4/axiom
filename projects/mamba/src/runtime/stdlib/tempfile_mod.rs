@@ -81,6 +81,7 @@ unsafe extern "C" fn dispatch_SpooledTemporaryFile(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_tempfile_spooled_temporary_file_v(a)
 }
@@ -118,10 +119,10 @@ pub fn register() {
     // NATIVE_TYPE_NAMES -> MRO resolution. The constructor func is unchanged, so
     // real spooled-file construction/read/write still works.
     let spooled_addr = dispatch_SpooledTemporaryFile as usize;
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(spooled_addr as u64, "SpooledTemporaryFile".to_string());
-    });
+    super::super::module::register_native_type_name(
+        spooled_addr as u64,
+        "SpooledTemporaryFile".to_string(),
+    );
     {
         let stub = MbValue::from_func(spooled_addr);
         let mut methods: HashMap<String, MbValue> = HashMap::new();

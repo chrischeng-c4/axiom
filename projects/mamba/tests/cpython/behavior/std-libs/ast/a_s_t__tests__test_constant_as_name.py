@@ -9,15 +9,23 @@
 # case = "a_s_t__tests__test_constant_as_name"
 # subject = "cpython.test_ast.AST_Tests.test_constant_as_name"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
-import unittest, io
-from test.test_ast import test_ast
-_suite = unittest.defaultTestLoader.loadTestsFromName("AST_Tests.test_constant_as_name", test_ast)
-_result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(_suite)
-assert _result.wasSuccessful(), "CPython AST_Tests.test_constant_as_name did not pass"
+import ast
+
+for constant in ("True", "False", "None"):
+    expr = ast.Expression(ast.Name(constant, ast.Load()))
+    ast.fix_missing_locations(expr)
+    try:
+        compile(expr, "<test>", "eval")
+    except ValueError as exc:
+        expected = f"identifier field can't represent '{constant}' constant"
+        if expected not in str(exc):
+            raise AssertionError((constant, str(exc), expected))
+    else:
+        raise AssertionError(f"expected ValueError for {constant}")
+
 print("AST_Tests::test_constant_as_name: ok")

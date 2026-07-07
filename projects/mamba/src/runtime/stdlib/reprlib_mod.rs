@@ -721,9 +721,28 @@ unsafe extern "C" fn dispatch_recursive_repr(a: *const MbValue, n: usize) -> MbV
     make_identity_decorator()
 }
 
+/// Cached address of `identity_decorator`, reified exactly once.
+///
+/// Under the multi-codegen-unit build profile (no LTO), casting a `fn` item
+/// to a raw address (`identity_decorator as *const () as usize`) at two
+/// separate call sites is not guaranteed to yield the same numeric address
+/// (each codegen unit may independently materialize its own copy). This
+/// module registers that address into `NATIVE_FUNC_ADDRS` (in `register()`)
+/// and also embeds it into `MbValue`s handed out by `make_identity_decorator`;
+/// if the two sites disagree, `is_native_func` fails to recognize the
+/// embedded address, `mb_call1_val`/`mb_call0` fall through to the wrong
+/// (scalar) calling convention, and `identity_decorator` segfaults
+/// dereferencing a bogus pointer. Caching in a `OnceLock` guarantees a single
+/// reification shared by both consumers.
+static IDENTITY_DECORATOR_ADDR: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+fn identity_decorator_addr() -> usize {
+    *IDENTITY_DECORATOR_ADDR.get_or_init(|| identity_decorator as *const () as usize)
+}
+
 /// A decorator that returns its argument unchanged.
 fn make_identity_decorator() -> MbValue {
-    MbValue::from_func(identity_decorator as *const () as usize)
+    MbValue::from_func(identity_decorator_addr())
 }
 
 unsafe extern "C" fn identity_decorator(a: *const MbValue, n: usize) -> MbValue {
@@ -777,7 +796,7 @@ pub fn register() {
         for (_, addr) in dispatchers {
             set.insert(*addr as u64);
         }
-        set.insert(identity_decorator as *const () as u64);
+        set.insert(identity_decorator_addr() as u64);
     });
     super::register_module("reprlib", attrs);
 }

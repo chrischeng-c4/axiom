@@ -114,9 +114,10 @@ fn third_party_readiness_emits_required_tiers_and_state_vocabulary() {
         .as_array()
         .expect("evidence_commands array");
     assert!(
-        commands
-            .iter()
-            .any(|cmd| cmd.as_str().unwrap_or("").contains("mamba add --provider mamba")),
+        commands.iter().any(|cmd| cmd
+            .as_str()
+            .unwrap_or("")
+            .contains("mamba add --provider mamba")),
         "#711 evidence must include mamba-managed provider install path"
     );
 }

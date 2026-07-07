@@ -10,10 +10,26 @@ use rustc_hash::FxHashMap;
 /// - Decorator application (wrapping functions)
 use std::collections::{HashMap, HashSet};
 
+const CLOSURE_HANDLE_BASE: i64 = 1i64 << 39;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ScopedSymbolKey {
+    module: String,
+    symbol: i64,
+}
+
 /// A closure object — a function paired with its captured environment.
 pub struct MbClosure {
+    /// Lightweight handle refcount for runtime-owned closure values.
+    pub refs: u32,
     /// Name of the function
     pub name: String,
+    /// Docstring metadata copied onto this closure handle, when present.
+    pub doc: Option<String>,
+    /// Defining module metadata copied onto this closure handle, when present.
+    pub module: Option<String>,
+    /// `__wrapped__` back-reference for functools.wraps/update_wrapper.
+    pub wrapped: Option<MbValue>,
     /// Captured variables: name → MbValue
     pub captures: Vec<MbValue>,
     /// Captured variable SymbolIds. These line up with `capture_cells`.
@@ -41,8 +57,157 @@ pub struct MbClosure {
 thread_local! {
     static CLOSURES: std::cell::RefCell<Vec<Option<MbClosure>>> =
         std::cell::RefCell::new(Vec::new());
-    static ACTIVE_CELLS: std::cell::RefCell<HashMap<i64, MbValue>> =
+    static ACTIVE_CELLS: std::cell::RefCell<HashMap<ScopedSymbolKey, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
+    static ACTIVE_MODULE_NAMES: std::cell::RefCell<Vec<String>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+fn closure_slot_index(raw: i64) -> Option<usize> {
+    if raw < CLOSURE_HANDLE_BASE {
+        return None;
+    }
+    Some((raw - CLOSURE_HANDLE_BASE) as usize)
+}
+
+fn with_live_closure<R>(closure_handle: MbValue, read: impl FnOnce(&MbClosure) -> R) -> Option<R> {
+    let id = closure_handle.as_int()?;
+    let idx = closure_slot_index(id)?;
+    CLOSURES.with(|closures| {
+        let vec = closures.borrow();
+        vec.get(idx).and_then(|slot| slot.as_ref()).map(read)
+    })
+}
+
+fn with_live_closure_mut<R>(
+    closure_handle: MbValue,
+    write: impl FnOnce(&mut MbClosure) -> R,
+) -> Option<R> {
+    let id = closure_handle.as_int()?;
+    let idx = closure_slot_index(id)?;
+    CLOSURES.with(|closures| {
+        let mut vec = closures.borrow_mut();
+        vec.get_mut(idx).and_then(|slot| slot.as_mut()).map(write)
+    })
+}
+
+fn allocate_closure_slot(closure: MbClosure) -> MbValue {
+    CLOSURES.with(|closures| {
+        let mut vec = closures.borrow_mut();
+        if let Some((idx, slot)) = vec.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
+            *slot = Some(closure);
+            return MbValue::from_int(CLOSURE_HANDLE_BASE + idx as i64);
+        }
+        let id = CLOSURE_HANDLE_BASE + vec.len() as i64;
+        vec.push(Some(closure));
+        MbValue::from_int(id)
+    })
+}
+
+fn teardown_closure(closure: MbClosure) {
+    if let Some(wrapped) = closure.wrapped {
+        unsafe {
+            super::rc::release_if_ptr(wrapped);
+        }
+    }
+    for cap in closure.captures {
+        unsafe {
+            super::rc::release_if_ptr(cap);
+        }
+    }
+    for def in closure.defaults {
+        unsafe {
+            super::rc::release_if_ptr(def);
+        }
+    }
+}
+
+fn force_take_live_closure(closure_handle: MbValue) -> Option<MbClosure> {
+    let id = closure_handle.as_int()?;
+    let idx = closure_slot_index(id)?;
+    CLOSURES.with(|closures| {
+        let mut vec = closures.borrow_mut();
+        if idx < vec.len() {
+            vec[idx].take()
+        } else {
+            None
+        }
+    })
+}
+
+fn dec_ref_or_take_live_closure(closure_handle: MbValue) -> Option<Option<MbClosure>> {
+    let id = closure_handle.as_int()?;
+    let idx = closure_slot_index(id)?;
+    CLOSURES.with(|closures| {
+        let mut vec = closures.borrow_mut();
+        let slot = vec.get_mut(idx)?;
+        let closure = slot.as_mut()?;
+        if closure.refs > 1 {
+            closure.refs -= 1;
+            Some(None)
+        } else {
+            Some(slot.take())
+        }
+    })
+}
+
+pub(crate) fn current_active_module_name() -> String {
+    ACTIVE_MODULE_NAMES
+        .with(|names| names.borrow().last().cloned())
+        .unwrap_or_else(|| "__main__".to_string())
+}
+
+fn scoped_symbol_key(symbol: i64) -> ScopedSymbolKey {
+    ScopedSymbolKey {
+        module: current_active_module_name(),
+        symbol,
+    }
+}
+
+pub fn push_active_module_name(name: String) {
+    ACTIVE_MODULE_NAMES.with(|names| names.borrow_mut().push(name));
+}
+
+pub fn pop_active_module_name() {
+    ACTIVE_MODULE_NAMES.with(|names| {
+        names.borrow_mut().pop();
+    });
+}
+
+fn callable_module_name(func: MbValue) -> Option<String> {
+    let target = if func.as_int().is_some() {
+        let inner = mb_closure_get_func(func);
+        if !inner.is_none() {
+            inner
+        } else {
+            func
+        }
+    } else {
+        func
+    };
+    let module = extract_str(mb_func_get_module(target)).filter(|name| !name.is_empty());
+    if module.is_some() {
+        return module;
+    }
+    if !mb_func_get_name(target).is_none() {
+        return Some(current_active_module_name());
+    }
+    None
+}
+
+pub fn with_callable_module<R>(func: MbValue, call: impl FnOnce() -> R) -> R {
+    let Some(module_name) = callable_module_name(func) else {
+        return call();
+    };
+    struct ModuleGuard;
+    impl Drop for ModuleGuard {
+        fn drop(&mut self) {
+            pop_active_module_name();
+        }
+    }
+    push_active_module_name(module_name);
+    let _guard = ModuleGuard;
+    call()
 }
 
 // ── Closure Creation ──
@@ -53,7 +218,11 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
     let captured_vars = extract_list(captures);
 
     let closure = MbClosure {
+        refs: 1,
         name: closure_name,
+        doc: None,
+        module: None,
+        wrapped: None,
         captures: captured_vars,
         capture_ids: Vec::new(),
         capture_cells: Vec::new(),
@@ -61,12 +230,7 @@ pub fn mb_closure_new(name: MbValue, func: MbValue, captures: MbValue) -> MbValu
         defaults: Vec::new(),
         arity: 0,
     };
-    CLOSURES.with(|closures| {
-        let mut vec = closures.borrow_mut();
-        let id = (vec.len() + 1) as u64; // IDs start at 1
-        vec.push(Some(closure));
-        MbValue::from_int(id as i64)
-    })
+    allocate_closure_slot(closure)
 }
 
 /// Create a closure whose captures are backed by active cell handles.
@@ -84,7 +248,11 @@ pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbVa
     let captures: Vec<MbValue> = cells.iter().map(|&cell| mb_cell_get(cell)).collect();
 
     let closure = MbClosure {
+        refs: 1,
         name: closure_name,
+        doc: None,
+        module: None,
+        wrapped: None,
         captures,
         capture_ids: ids,
         capture_cells: cells,
@@ -92,12 +260,7 @@ pub fn mb_closure_new_with_cells(name: MbValue, func: MbValue, capture_ids: MbVa
         defaults: Vec::new(),
         arity: 0,
     };
-    CLOSURES.with(|closures| {
-        let mut vec = closures.borrow_mut();
-        let id = (vec.len() + 1) as u64;
-        vec.push(Some(closure));
-        MbValue::from_int(id as i64)
-    })
+    allocate_closure_slot(closure)
 }
 
 /// Set default argument values on an existing closure.
@@ -110,24 +273,30 @@ pub fn mb_closure_set_defaults(closure_handle: MbValue, defaults_list: MbValue) 
 
 fn set_closure_defaults_values(closure_handle: MbValue, vals: Vec<MbValue>) {
     if let Some(id) = closure_handle.as_int() {
-        CLOSURES.with(|closures| {
+        let old_defaults = CLOSURES.with(|closures| {
             let mut vec = closures.borrow_mut();
-            let idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(idx) = closure_slot_index(id) else {
+                return Vec::new();
+            };
             if let Some(Some(c)) = vec.get_mut(idx) {
-                // REQ: R1 — release prior defaults before overwriting
-                for old_val in c.defaults.drain(..) {
-                    unsafe {
-                        super::rc::release_if_ptr(old_val);
-                    }
-                }
-                for &new_val in &vals {
-                    unsafe {
-                        super::rc::retain_if_ptr(new_val);
-                    }
-                }
+                let old = std::mem::take(&mut c.defaults);
                 c.defaults = vals;
+                return old;
             }
+            Vec::new()
         });
+        for old_val in old_defaults {
+            unsafe {
+                super::rc::release_if_ptr(old_val);
+            }
+        }
+        if let Some(defaults) = closure_defaults(closure_handle).get(..) {
+            for &new_val in defaults {
+                unsafe {
+                    super::rc::retain_if_ptr(new_val);
+                }
+            }
+        }
     }
 }
 
@@ -138,7 +307,9 @@ pub fn mb_closure_set_arity(closure_handle: MbValue, arity: MbValue) {
     if let (Some(id), Some(n)) = (closure_handle.as_int(), arity.as_int()) {
         CLOSURES.with(|closures| {
             let mut vec = closures.borrow_mut();
-            let idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(idx) = closure_slot_index(id) else {
+                return;
+            };
             if let Some(Some(c)) = vec.get_mut(idx) {
                 c.arity = n.max(0) as usize;
             }
@@ -151,7 +322,9 @@ pub fn closure_arity(closure_handle: MbValue) -> usize {
     if let Some(id) = closure_handle.as_int() {
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
-            let idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(idx) = closure_slot_index(id) else {
+                return 0;
+            };
             vec.get(idx)
                 .and_then(|slot| slot.as_ref())
                 .map(|c| c.arity)
@@ -168,7 +341,9 @@ pub fn closure_defaults(closure_handle: MbValue) -> Vec<MbValue> {
     if let Some(id) = closure_handle.as_int() {
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
-            let idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(idx) = closure_slot_index(id) else {
+                return Vec::new();
+            };
             vec.get(idx)
                 .and_then(|slot| slot.as_ref())
                 .map(|c| c.defaults.clone())
@@ -182,21 +357,23 @@ pub fn closure_defaults(closure_handle: MbValue) -> Vec<MbValue> {
 /// Get a captured variable by index.
 pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValue {
     if let (Some(id), Some(idx)) = (closure_handle.as_int(), index.as_int()) {
-        CLOSURES.with(|closures| {
+        let val = CLOSURES.with(|closures| {
             let vec = closures.borrow();
-            let slot_idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(slot_idx) = closure_slot_index(id) else {
+                return MbValue::none();
+            };
             let closure = vec.get(slot_idx).and_then(|slot| slot.as_ref());
             if let Some(cell) = closure.and_then(|c| c.capture_cells.get(idx as usize).copied()) {
                 return mb_cell_get(cell);
             }
-            let val = closure
+            closure
                 .and_then(|c| c.captures.get(idx as usize).copied())
-                .unwrap_or(MbValue::none());
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
-            val
-        })
+                .unwrap_or(MbValue::none())
+        });
+        unsafe {
+            super::rc::retain_if_ptr(val);
+        }
+        val
     } else {
         MbValue::none()
     }
@@ -205,9 +382,11 @@ pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValu
 /// Set a captured variable by index (for mutable closures).
 pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: MbValue) {
     if let (Some(id), Some(idx)) = (closure_handle.as_int(), index.as_int()) {
-        CLOSURES.with(|closures| {
+        let old_capture = CLOSURES.with(|closures| {
             let mut vec = closures.borrow_mut();
-            let slot_idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(slot_idx) = closure_slot_index(id) else {
+                return None;
+            };
             if let Some(Some(c)) = vec.get_mut(slot_idx) {
                 let idx = idx as usize;
                 if let Some(cell) = c.capture_cells.get(idx).copied() {
@@ -216,13 +395,17 @@ pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: Mb
                 if idx >= c.captures.len() {
                     c.captures.resize(idx + 1, MbValue::none());
                 }
-                // REQ: R1 — release prior capture value before overwriting
-                unsafe {
-                    super::rc::release_if_ptr(c.captures[idx]);
-                }
+                let old = c.captures[idx];
                 c.captures[idx] = value;
+                return Some(old);
             }
+            None
         });
+        if let Some(old_capture) = old_capture {
+            unsafe {
+                super::rc::release_if_ptr(old_capture);
+            }
+        }
     }
 }
 
@@ -231,7 +414,9 @@ pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
     if let Some(id) = closure_handle.as_int() {
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
-            let idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(idx) = closure_slot_index(id) else {
+                return Vec::new();
+            };
             vec.get(idx)
                 .and_then(|slot| slot.as_ref())
                 .map(|c| c.capture_cells.clone())
@@ -244,10 +429,12 @@ pub fn closure_capture_cells(closure_handle: MbValue) -> Vec<MbValue> {
 
 /// Run a closure body with its captured cells installed as the active cell map.
 pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) -> R {
-    let pairs: Vec<(i64, MbValue)> = if let Some(id) = closure_handle.as_int() {
+    let pairs: Vec<(ScopedSymbolKey, MbValue)> = if let Some(id) = closure_handle.as_int() {
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
-            let idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(idx) = closure_slot_index(id) else {
+                return Vec::new();
+            };
             vec.get(idx)
                 .and_then(|slot| slot.as_ref())
                 .map(|c| {
@@ -255,6 +442,7 @@ pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) 
                         .iter()
                         .copied()
                         .zip(c.capture_cells.iter().copied())
+                        .map(|(id, cell)| (scoped_symbol_key(id), cell))
                         .collect()
                 })
                 .unwrap_or_default()
@@ -270,7 +458,7 @@ pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) 
         let mut cells = cells.borrow_mut();
         pairs
             .iter()
-            .map(|(id, cell)| (*id, cells.insert(*id, *cell)))
+            .map(|(id, cell)| (id.clone(), cells.insert(id.clone(), *cell)))
             .collect::<Vec<_>>()
     });
     let result = call();
@@ -290,20 +478,22 @@ pub fn with_closure_cells<R>(closure_handle: MbValue, call: impl FnOnce() -> R) 
 /// Get the underlying function of a closure.
 pub fn mb_closure_get_func(closure_handle: MbValue) -> MbValue {
     if let Some(id) = closure_handle.as_int() {
-        CLOSURES.with(|closures| {
+        let val = CLOSURES.with(|closures| {
             let vec = closures.borrow();
-            let idx = (id as u64).wrapping_sub(1) as usize;
-            let val = vec
+            let Some(idx) = closure_slot_index(id) else {
+                return MbValue::none();
+            };
+            vec
                 .get(idx)
                 .and_then(|slot| slot.as_ref())
                 .map(|c| c.func)
-                .unwrap_or(MbValue::none());
-            // REQ: R2 — retain returned func, symmetric with mb_closure_get_capture
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
-            val
-        })
+                .unwrap_or(MbValue::none())
+        });
+        // REQ: R2 — retain returned func, symmetric with mb_closure_get_capture
+        unsafe {
+            super::rc::retain_if_ptr(val);
+        }
+        val
     } else {
         MbValue::none()
     }
@@ -312,28 +502,35 @@ pub fn mb_closure_get_func(closure_handle: MbValue) -> MbValue {
 /// Release a closure's resources, cascading rc releases on captures and
 /// defaults so heap values referenced only via the closure get freed.
 pub fn mb_closure_release(closure_handle: MbValue) {
-    if let Some(id) = closure_handle.as_int() {
-        let dead = CLOSURES.with(|closures| {
-            let mut vec = closures.borrow_mut();
-            let idx = (id as u64).wrapping_sub(1) as usize;
-            if idx < vec.len() {
-                vec[idx].take()
-            } else {
-                None
-            }
-        });
-        if let Some(closure) = dead {
-            for cap in closure.captures {
-                unsafe {
-                    super::rc::release_if_ptr(cap);
-                }
-            }
-            for def in closure.defaults {
-                unsafe {
-                    super::rc::release_if_ptr(def);
-                }
-            }
+    if let Some(closure) = force_take_live_closure(closure_handle) {
+        teardown_closure(closure);
+    }
+}
+
+pub(crate) fn retain_closure_handle_if_live(value: MbValue) -> bool {
+    if with_live_closure(value, |_| ()).is_none() {
+        return false;
+    }
+    with_live_closure_mut(value, |closure| {
+        closure.refs = closure.refs.saturating_add(1);
+    })
+    .is_some()
+}
+
+pub(crate) fn release_closure_handle_if_live(value: MbValue) -> bool {
+    match dec_ref_or_take_live_closure(value) {
+        None => false,
+        Some(None) => true,
+        Some(Some(closure)) => {
+            teardown_closure(closure);
+            true
         }
+    }
+}
+
+fn release_rebound_global_value(prev: MbValue) {
+    unsafe {
+        super::rc::release_if_ptr(prev);
     }
 }
 
@@ -600,6 +797,40 @@ pub fn mb_func_set_pos_defaults(func: MbValue, defaults_value: MbValue) -> bool 
     updated
 }
 
+/// Look up the call-time default value for a positional parameter of `func`
+/// at Python-style negative offset `offset` (`-1` = last positional default,
+/// `-2` = second-to-last, ...), reading the function's LIVE declared-parameter
+/// defaults — the same store `f.__defaults__ = ...` / `del f.__defaults__`
+/// mutate via `mb_func_set_pos_defaults`. `build_mutated_defaults_call`
+/// (ast_to_hir.rs) emits a call to this instead of indexing `f.__defaults__`
+/// directly, so a still-missing default (after `del f.__defaults__`, or a
+/// replacement tuple too short to cover every unsupplied argument) raises the
+/// same "missing required positional argument" TypeError CPython raises at
+/// call time (#897 R2), instead of silently reading `None`/indexing out of
+/// bounds.
+pub fn mb_func_default_at(func: MbValue, offset: MbValue) -> MbValue {
+    let off = offset.as_int().unwrap_or(0);
+    let params = func_params(func).unwrap_or_default();
+    let defaults: Vec<MbValue> = params
+        .iter()
+        .filter(|p| p.kind <= 1 && p.has_default)
+        .map(|p| p.default)
+        .collect();
+    let n = defaults.len() as i64;
+    let idx = n + off;
+    if idx >= 0 && idx < n {
+        return defaults[idx as usize];
+    }
+    let fname = extract_str(mb_func_get_name(func)).unwrap_or_else(|| "<function>".to_string());
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "{fname}() missing required positional argument"
+        ))),
+    );
+    MbValue::none()
+}
+
 /// Register a function's textual return annotation.
 pub fn mb_func_set_retanno(func: MbValue, anno: MbValue) {
     if let Some(s) = extract_str(anno) {
@@ -671,12 +902,21 @@ pub fn mb_func_get_annotations(func: MbValue) -> MbValue {
 /// Register a function's name (called at definition time so `f.__name__` works).
 pub fn mb_func_set_name(func: MbValue, name: MbValue) {
     let fname = extract_str(name).unwrap_or_default();
+    if with_live_closure_mut(func, |closure| closure.name = fname.clone()).is_some() {
+        return;
+    }
+    if func.as_func().is_none() {
+        return;
+    }
     let key = func.to_bits();
     FUNC_NAMES.with(|m| m.borrow_mut().insert(key, fname));
 }
 
 /// Get a function's registered name. Returns None-MbValue if not registered.
 pub fn mb_func_get_name(func: MbValue) -> MbValue {
+    if let Some(name) = with_live_closure(func, |closure| closure.name.clone()) {
+        return MbValue::from_ptr(MbObject::new_str(name));
+    }
     let key = func.to_bits();
     FUNC_NAMES.with(|m| {
         m.borrow()
@@ -690,12 +930,23 @@ pub fn mb_func_get_name(func: MbValue) -> MbValue {
 /// for every top-level def whose body starts with a bare string literal.
 pub fn mb_func_set_doc(func: MbValue, doc: MbValue) {
     let fdoc = extract_str(doc).unwrap_or_default();
+    if with_live_closure_mut(func, |closure| closure.doc = Some(fdoc.clone())).is_some() {
+        return;
+    }
+    if func.as_func().is_none() {
+        return;
+    }
     let key = func.to_bits();
     FUNC_DOCS.with(|m| m.borrow_mut().insert(key, fdoc));
 }
 
 /// Get a function's registered docstring. Returns None-MbValue if not registered.
 pub fn mb_func_get_doc(func: MbValue) -> MbValue {
+    if let Some(doc) = with_live_closure(func, |closure| closure.doc.clone()) {
+        return doc
+            .map(|s| MbValue::from_ptr(MbObject::new_str(s)))
+            .unwrap_or_else(MbValue::none);
+    }
     let key = func.to_bits();
     FUNC_DOCS.with(|m| {
         m.borrow()
@@ -708,12 +959,23 @@ pub fn mb_func_get_doc(func: MbValue) -> MbValue {
 /// Register a function's module name (for `f.__module__`).
 pub fn mb_func_set_module(func: MbValue, module: MbValue) {
     let module_name = extract_str(module).unwrap_or_default();
+    if with_live_closure_mut(func, |closure| closure.module = Some(module_name.clone())).is_some() {
+        return;
+    }
+    if func.as_func().is_none() {
+        return;
+    }
     let key = func.to_bits();
     FUNC_MODULES.with(|m| m.borrow_mut().insert(key, module_name));
 }
 
 /// Get a function's registered module. Returns None-MbValue if not registered.
 pub fn mb_func_get_module(func: MbValue) -> MbValue {
+    if let Some(module) = with_live_closure(func, |closure| closure.module.clone()) {
+        return module
+            .map(|s| MbValue::from_ptr(MbObject::new_str(s)))
+            .unwrap_or_else(MbValue::none);
+    }
     let key = func.to_bits();
     FUNC_MODULES.with(|m| {
         m.borrow()
@@ -853,10 +1115,39 @@ pub fn func_freevars(func: MbValue) -> Option<Vec<(String, i64)>> {
 /// function metadata registries). Used to gate `__code__` synthesis so we don't
 /// fabricate a code object for arbitrary ints / pointers.
 pub fn mb_func_is_registered(func: MbValue) -> bool {
+    if with_live_closure(func, |_| ()).is_some() {
+        return true;
+    }
     let key = func.to_bits();
     FUNC_NAMES.with(|m| m.borrow().contains_key(&key))
         || FUNC_ARGCOUNTS.with(|m| m.borrow().contains_key(&key))
         || FUNC_VARNAMES.with(|m| m.borrow().contains_key(&key))
+}
+
+pub(crate) fn mb_closure_set_wrapped(closure_handle: MbValue, wrapped: MbValue) -> bool {
+    unsafe {
+        super::rc::retain_if_ptr(wrapped);
+    }
+    let prev = with_live_closure_mut(closure_handle, |closure| closure.wrapped.replace(wrapped));
+    match prev {
+        Some(Some(prev)) => {
+            unsafe {
+                super::rc::release_if_ptr(prev);
+            }
+            true
+        }
+        Some(None) => true,
+        None => {
+            unsafe {
+                super::rc::release_if_ptr(wrapped);
+            }
+            false
+        }
+    }
+}
+
+pub(crate) fn mb_closure_get_wrapped(closure_handle: MbValue) -> Option<MbValue> {
+    with_live_closure(closure_handle, |closure| closure.wrapped).flatten()
 }
 
 /// Register a function's source location (`co_firstlineno` / `co_filename`).
@@ -913,6 +1204,20 @@ pub fn mb_cell_new(value: MbValue) -> MbValue {
     })
 }
 
+/// Create a new, genuinely EMPTY cell (`types.CellType()` with no argument;
+/// #896). Distinct from `mb_cell_new(none)`, which holds the Python value
+/// `None` — an empty cell's slot is `None` at the Rust level, so
+/// `cell_contents` reads raise ValueError until the cell is set via
+/// `mb_cell_set`.
+pub fn mb_cell_new_empty() -> MbValue {
+    CELLS.with(|cells| {
+        let mut vec = cells.borrow_mut();
+        let id = (vec.len() + 1) as u64; // IDs start at 1
+        vec.push(None);
+        MbValue::from_int(id as i64)
+    })
+}
+
 /// Get the value stored in a cell.
 pub fn mb_cell_get(cell_handle: MbValue) -> MbValue {
     if let Some(id) = cell_handle.as_int() {
@@ -930,6 +1235,72 @@ pub fn mb_cell_get(cell_handle: MbValue) -> MbValue {
         })
     } else {
         MbValue::none()
+    }
+}
+
+/// Result of a `cell_contents` attribute read (#896): distinguishes a handle
+/// that isn't a live cell at all (so the generic attribute-lookup fallback
+/// should run instead) from a genuinely empty cell (unset — reads raise
+/// ValueError) from a filled cell (holds a real value, including Python
+/// `None`).
+pub enum CellContentsRead {
+    NotACell,
+    Empty,
+    Value(MbValue),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CellCompareValue {
+    NotACell,
+    Empty,
+    Value(MbValue),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ActiveCellSnapshot {
+    Empty,
+    Value(MbValue),
+}
+
+pub(crate) fn mb_cell_compare_value(cell_handle: MbValue) -> CellCompareValue {
+    let Some(id) = cell_handle.as_int() else {
+        return CellCompareValue::NotACell;
+    };
+    CELLS.with(|cells| {
+        let vec = cells.borrow();
+        let idx = (id as u64).wrapping_sub(1) as usize;
+        match vec.get(idx) {
+            None => CellCompareValue::NotACell,
+            Some(None) => CellCompareValue::Empty,
+            Some(Some(val)) => CellCompareValue::Value(*val),
+        }
+    })
+}
+
+pub fn mb_cell_handle_raw_is_live(raw: i64) -> i64 {
+    if raw <= 0 {
+        return 0;
+    }
+    CELLS.with(|cells| {
+        let idx = (raw as u64).wrapping_sub(1) as usize;
+        i64::from(idx < cells.borrow().len())
+    })
+}
+
+/// Checked `cell_contents` read used by the `.cell_contents` attribute
+/// accessor. Unlike `mb_cell_get`, this never silently collapses "empty" and
+/// "invalid handle" into a `None` value — callers use the variant to decide
+/// whether to raise ValueError (empty) or fall through (not a cell).
+pub fn mb_cell_contents_read(cell_handle: MbValue) -> CellContentsRead {
+    match mb_cell_compare_value(cell_handle) {
+        CellCompareValue::NotACell => CellContentsRead::NotACell,
+        CellCompareValue::Empty => CellContentsRead::Empty,
+        CellCompareValue::Value(val) => {
+            unsafe {
+                super::rc::retain_if_ptr(val);
+            }
+            CellContentsRead::Value(val)
+        }
     }
 }
 
@@ -956,16 +1327,38 @@ pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
     }
 }
 
+pub fn mb_cell_clear(cell_handle: MbValue) {
+    if let Some(id) = cell_handle.as_int() {
+        CELLS.with(|cells| {
+            let mut vec = cells.borrow_mut();
+            let idx = (id as u64).wrapping_sub(1) as usize;
+            if idx < vec.len() {
+                if let Some(prev) = vec[idx] {
+                    unsafe {
+                        super::rc::release_if_ptr(prev);
+                    }
+                }
+                vec[idx] = None;
+            }
+        });
+    }
+}
+
 fn active_cell_for_id(key: i64) -> MbValue {
+    let scoped = scoped_symbol_key(key);
     ACTIVE_CELLS.with(|cells| {
         let mut cells = cells.borrow_mut();
-        if let Some(cell) = cells.get(&key).copied() {
+        if let Some(cell) = cells.get(&scoped).copied() {
             return cell;
         }
-        let initial = GLOBAL_ID_NAMESPACE
-            .with(|ns| ns.borrow().get(&key).copied().unwrap_or_else(MbValue::none));
+        let initial = GLOBAL_ID_NAMESPACE.with(|ns| {
+            ns.borrow()
+                .get(&scoped)
+                .copied()
+                .unwrap_or_else(MbValue::none)
+        });
         let cell = mb_cell_new(initial);
-        cells.insert(key, cell);
+        cells.insert(scoped, cell);
         cell
     })
 }
@@ -980,18 +1373,58 @@ pub fn mb_capture_cell_reset_id(id: MbValue, value: MbValue) {
     let key = id.to_bits() as i64;
     let cell = mb_cell_new(value);
     ACTIVE_CELLS.with(|cells| {
-        cells.borrow_mut().insert(key, cell);
+        cells.borrow_mut().insert(scoped_symbol_key(key), cell);
+    });
+}
+
+/// #1053: pre-vivify a fresh, genuinely EMPTY (unbound) cell for `id` — used
+/// when a nested closure captures an enclosing local before that local's own
+/// first textual assignment has run this invocation (the enclosing-scope
+/// prescan fix lets a nested def capture a name assigned later in the
+/// textual body, matching CPython's whole-body scoping). Unlike
+/// `mb_capture_cell_reset_id`, this installs an empty cell (Rust-level
+/// `None` slot, distinct from the Python value `None`) so a read through it
+/// before the real assignment still raises NameError instead of silently
+/// observing an unbound placeholder as `None`.
+pub fn mb_capture_cell_reset_empty_id(id: MbValue) {
+    let key = id.to_bits() as i64;
+    let cell = mb_cell_new_empty();
+    ACTIVE_CELLS.with(|cells| {
+        cells.borrow_mut().insert(scoped_symbol_key(key), cell);
     });
 }
 
 fn active_cell_get_id_raw(key: i64) -> Option<MbValue> {
-    ACTIVE_CELLS
-        .with(|cells| cells.borrow().get(&key).copied())
-        .map(mb_cell_get)
+    let scoped = scoped_symbol_key(key);
+    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied())?;
+    // #1053: an empty cell (see `mb_capture_cell_reset_empty_id`) is a state
+    // ONLY EVER produced by that function — it means a nested closure
+    // captured this enclosing-scope local before the enclosing function's
+    // own first textual assignment to it has run yet this invocation
+    // (CPython's `LOAD_DEREF` does the equivalent runtime NULL-cell check
+    // and raises `NameError` unconditionally; there's no legitimate reading
+    // of an empty cell). Raise directly here rather than falling through to
+    // `mb_global_get_id_raw`'s missing-global fallback, since that fallback
+    // is gated by `missing_global_should_raise_name_error()` — a flag that's
+    // off for ordinary function bodies (only ever enabled for the unrelated
+    // pep695 generic-param scenario) and so would silently swallow this
+    // as `None` instead of raising.
+    match mb_cell_contents_read(cell) {
+        CellContentsRead::Value(v) => Some(v),
+        CellContentsRead::Empty => {
+            let name = MODULE_SYM_INFO
+                .with(|m| m.borrow().get(&key).map(|(name, _)| name.clone()))
+                .unwrap_or_else(|| format!("<symbol {key}>"));
+            raise_missing_global_name_error(&name);
+            Some(MbValue::none())
+        }
+        CellContentsRead::NotACell => None,
+    }
 }
 
 fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
-    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&key).copied());
+    let scoped = scoped_symbol_key(key);
+    let cell = ACTIVE_CELLS.with(|cells| cells.borrow().get(&scoped).copied());
     if let Some(cell) = cell {
         mb_cell_set(cell, value);
         true
@@ -1006,10 +1439,37 @@ fn active_cell_set_id_raw(key: i64, value: MbValue) -> bool {
 thread_local! {
     static GLOBAL_NAMESPACE: std::cell::RefCell<HashMap<String, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
-    static GLOBAL_ID_NAMESPACE: std::cell::RefCell<HashMap<i64, MbValue>> =
+    static GLOBAL_ID_NAMESPACE: std::cell::RefCell<HashMap<ScopedSymbolKey, MbValue>> =
         std::cell::RefCell::new(HashMap::new());
     static MISSING_GLOBAL_RAISES_NAME_ERROR: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
+    /// Stack of "active module" SymbolId sets (#983). The top entry is the
+    /// set of SymbolIds owned by whichever module's top-level code is
+    /// currently executing. `compile_and_exec_module` (module.rs) pushes a
+    /// module's own id set before running its `__main__` and pops it after,
+    /// so nested imports triggered mid-execution are bracketed by their
+    /// parent's ownership set. Every module's SymbolTable restarts numbering
+    /// from the same builtin baseline (resolve/scope.rs), so raw SymbolId
+    /// integers are unique only WITHIN one compilation, not across nested
+    /// compiles — `merge_global_id_namespace` consults the top of this stack
+    /// to avoid donating a finished nested module's leftover raw global into
+    /// a slot that numerically collides with the still-executing outer
+    /// module's own (possibly not-yet-written) slot.
+    static ACTIVE_MODULE_SYM_IDS: std::cell::RefCell<Vec<HashSet<i64>>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+/// Push the set of SymbolIds owned by the module about to execute its
+/// top-level code (#983). Must be paired with `pop_active_module_sym_ids`.
+pub fn push_active_module_sym_ids(ids: HashSet<i64>) {
+    ACTIVE_MODULE_SYM_IDS.with(|s| s.borrow_mut().push(ids));
+}
+
+/// Pop the SymbolId set pushed by the matching `push_active_module_sym_ids`.
+pub fn pop_active_module_sym_ids() {
+    ACTIVE_MODULE_SYM_IDS.with(|s| {
+        s.borrow_mut().pop();
+    });
 }
 
 pub(crate) fn set_missing_global_name_error_enabled(enabled: bool) -> bool {
@@ -1047,6 +1507,40 @@ pub fn mb_global_get(name: MbValue) -> MbValue {
     })
 }
 
+/// Guarded runtime read for an identifier the checker deferred to `Any`
+/// because it could not resolve it ANYWHERE — not a local, not an
+/// outer-scope capture, not a module/global/builtin symbol (#1048). This is
+/// the terminal state of `allow_runtime_unresolved_names`'s run-mode
+/// deferral (check_expr.rs): `mamba run` intentionally doesn't hard-error
+/// on a name it can't statically resolve (CPython itself only resolves
+/// free names at read time, not at compile time), but the terminal lowering
+/// used to be a silent `None`-valued read (`ast_to_hir.rs`'s `Expr::Ident`
+/// arm returned `None`, which unwound to a dropped statement or an inert
+/// `None`). CPython instead raises `NameError` at the moment of the read.
+///
+/// Checks the string-keyed `GLOBAL_NAMESPACE` — the same namespace a
+/// wildcard `from module import *` binds into via `mb_global_set`
+/// (`runtime/module.rs`) — so a name that becomes legitimately bound at
+/// runtime through that path still resolves; genuine forward references,
+/// late-bound function calls, and builtins never reach this function at all
+/// (they resolve through the checker's ordinary symbol table at HIR-lowering
+/// time, same as `mamba build`). Anything still missing raises NameError
+/// with CPython's exact message, mirroring `mb_unbound_local_error_value`'s
+/// call-then-raise-then-return-None shape so the standard post-call
+/// exception-check/try-except machinery picks it up unchanged.
+pub fn mb_deferred_name_read(name: MbValue) -> MbValue {
+    let var_name = extract_str(name).unwrap_or_default();
+    let val = GLOBAL_NAMESPACE.with(|ns| ns.borrow().get(&var_name).copied());
+    if let Some(v) = val {
+        unsafe {
+            super::rc::retain_if_ptr(v);
+        }
+        return v;
+    }
+    raise_missing_global_name_error(&var_name);
+    MbValue::none()
+}
+
 /// Set a global variable.
 pub fn mb_global_set(name: MbValue, value: MbValue) {
     let var_name = extract_str(name).unwrap_or_default();
@@ -1057,9 +1551,7 @@ pub fn mb_global_set(name: MbValue, value: MbValue) {
     GLOBAL_NAMESPACE.with(|ns| {
         let old = ns.borrow_mut().insert(var_name, value);
         if let Some(prev) = old {
-            unsafe {
-                super::rc::release_if_ptr(prev);
-            }
+            release_rebound_global_value(prev);
         }
     });
 }
@@ -1077,8 +1569,9 @@ pub fn mb_global_get_id_raw(key: i64) -> MbValue {
     if let Some(val) = active_cell_get_id_raw(key) {
         return val;
     }
+    let scoped = scoped_symbol_key(key);
     GLOBAL_ID_NAMESPACE.with(|ns| {
-        let val = ns.borrow().get(&key).copied();
+        let val = ns.borrow().get(&scoped).copied();
         if val.is_none() && missing_global_should_raise_name_error() {
             let name = MODULE_SYM_INFO
                 .with(|m| m.borrow().get(&key).map(|(name, _)| name.clone()))
@@ -1100,17 +1593,16 @@ pub fn mb_global_set_id(id: MbValue, value: MbValue) {
     if active_cell_set_id_raw(key, value) {
         return;
     }
+    let scoped = scoped_symbol_key(key);
     // Retain the value so it survives the JIT epilogue releasing the source VReg.
     unsafe {
         super::rc::retain_if_ptr(value);
     }
     GLOBAL_ID_NAMESPACE.with(|ns| {
-        let old = ns.borrow_mut().insert(key, value);
+        let old = ns.borrow_mut().insert(scoped, value);
         // Release the previous value being overwritten.
         if let Some(prev) = old {
-            unsafe {
-                super::rc::release_if_ptr(prev);
-            }
+            release_rebound_global_value(prev);
         }
     });
 }
@@ -1119,8 +1611,9 @@ pub fn mb_global_set_id(id: MbValue, value: MbValue) {
 /// The id is passed as raw i64 (not NaN-boxed).
 pub fn mb_global_del_id(id: MbValue) {
     let key = id.to_bits() as i64;
+    let scoped = scoped_symbol_key(key);
     GLOBAL_ID_NAMESPACE.with(|ns| {
-        let old = ns.borrow_mut().remove(&key);
+        let old = ns.borrow_mut().remove(&scoped);
         if let Some(prev) = old {
             unsafe {
                 super::rc::release_if_ptr(prev);
@@ -1154,57 +1647,165 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
 
 // ── Global namespace save/restore for module import isolation (#1190) ──
 
-/// Save and clear the current GLOBAL_ID_NAMESPACE, returning the previous contents.
-/// Used by module import to isolate module-level globals from the caller's globals.
-pub fn save_and_clear_global_id_namespace() -> HashMap<i64, MbValue> {
+fn current_module_symbol_entries(ns: &HashMap<ScopedSymbolKey, MbValue>) -> HashMap<i64, MbValue> {
+    let current_module = current_active_module_name();
+    ns.iter()
+        .filter(|(key, _)| key.module == current_module)
+        .map(|(key, value)| (key.symbol, *value))
+        .collect()
+}
+
+fn remove_current_module_symbol_entries(ns: &mut HashMap<ScopedSymbolKey, MbValue>) {
+    let current_module = current_active_module_name();
+    ns.retain(|key, _| key.module != current_module);
+}
+
+/// Save and clear the current module's GLOBAL_ID_NAMESPACE slice, returning the
+/// previous raw SymbolId entries for that module only.
+pub(crate) fn save_and_clear_global_id_namespace() -> HashMap<i64, MbValue> {
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let mut ns = ns.borrow_mut();
-        let saved = ns.clone();
-        ns.clear();
+        let saved = current_module_symbol_entries(&ns);
+        remove_current_module_symbol_entries(&mut ns);
         saved
     })
 }
 
-/// Restore a previously saved GLOBAL_ID_NAMESPACE.
-pub fn restore_global_id_namespace(saved: HashMap<i64, MbValue>) {
+/// Restore a previously saved GLOBAL_ID_NAMESPACE slice for the current module.
+pub(crate) fn restore_global_id_namespace(saved: HashMap<i64, MbValue>) {
     GLOBAL_ID_NAMESPACE.with(|ns| {
-        *ns.borrow_mut() = saved;
+        let mut ns = ns.borrow_mut();
+        remove_current_module_symbol_entries(&mut ns);
+        let current_module = current_active_module_name();
+        for (symbol, value) in saved {
+            ns.insert(
+                ScopedSymbolKey {
+                    module: current_module.clone(),
+                    symbol,
+                },
+                value,
+            );
+        }
     });
 }
 
-/// Replace the current GLOBAL_ID_NAMESPACE and return the previous contents.
+/// Replace the full GLOBAL_ID_NAMESPACE and return the previous contents.
 ///
 /// Worker OS threads have their own Rust thread-local runtime state. Thread
 /// targets still need to resolve the defining module's globals through the
 /// same SymbolId-keyed namespace used by JIT code, so threading installs a
 /// snapshot before invoking a target and restores the previous namespace after.
-pub fn replace_global_id_namespace(next: HashMap<i64, MbValue>) -> HashMap<i64, MbValue> {
+pub(crate) fn replace_global_id_namespace(
+    next: HashMap<ScopedSymbolKey, MbValue>,
+) -> HashMap<ScopedSymbolKey, MbValue> {
     GLOBAL_ID_NAMESPACE.with(|ns| std::mem::replace(&mut *ns.borrow_mut(), next))
 }
 
-/// Snapshot the current GLOBAL_ID_NAMESPACE (non-destructive).
-pub fn snapshot_global_id_namespace() -> HashMap<i64, MbValue> {
+/// Snapshot the full GLOBAL_ID_NAMESPACE (non-destructive).
+pub(crate) fn snapshot_global_id_namespace() -> HashMap<ScopedSymbolKey, MbValue> {
     GLOBAL_ID_NAMESPACE.with(|ns| ns.borrow().clone())
+}
+
+/// Snapshot only the active module's raw SymbolId globals.
+pub(crate) fn snapshot_current_module_global_id_namespace() -> HashMap<i64, MbValue> {
+    GLOBAL_ID_NAMESPACE.with(|ns| current_module_symbol_entries(&ns.borrow()))
 }
 
 /// Merge entries into the current GLOBAL_ID_NAMESPACE without clearing it.
 ///
-/// Used after an imported module finishes executing: its module-level global
-/// bindings (constants and `import` results) are merged back so the module's
-/// own functions can read them when invoked later from the caller. SymbolIds
-/// are unique per compilation, so these keys never collide with the caller's.
-/// Existing entries are not overwritten (the caller's namespace wins on the
-/// off chance of a shared id), and contained pointer values are retained.
-pub fn merge_global_id_namespace(entries: &HashMap<i64, MbValue>) {
+/// Module-qualified keys make raw SymbolId collisions impossible across
+/// sibling/imported modules, so workers can simply overwrite by scoped key.
+pub(crate) fn merge_global_id_namespace(entries: &HashMap<ScopedSymbolKey, MbValue>) {
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let mut ns = ns.borrow_mut();
         for (k, v) in entries {
-            ns.entry(*k).or_insert_with(|| {
+            unsafe {
+                super::rc::retain_if_ptr(*v);
+            }
+            if let Some(prev) = ns.insert(k.clone(), *v) {
                 unsafe {
-                    super::rc::retain_if_ptr(*v);
+                    super::rc::release_if_ptr(prev);
                 }
-                *v
-            });
+            }
+        }
+    });
+}
+
+fn snapshot_active_cells_from_map(
+    cells: &HashMap<ScopedSymbolKey, MbValue>,
+) -> HashMap<ScopedSymbolKey, ActiveCellSnapshot> {
+    cells
+        .iter()
+        .filter_map(|(key, cell)| match mb_cell_contents_read(*cell) {
+            CellContentsRead::Value(value) => Some((key.clone(), ActiveCellSnapshot::Value(value))),
+            CellContentsRead::Empty => Some((key.clone(), ActiveCellSnapshot::Empty)),
+            CellContentsRead::NotACell => None,
+        })
+        .collect()
+}
+
+fn install_active_cell_snapshots(entries: HashMap<ScopedSymbolKey, ActiveCellSnapshot>) {
+    ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        cells.clear();
+        for (key, snapshot) in entries {
+            let cell = match snapshot {
+                ActiveCellSnapshot::Empty => mb_cell_new_empty(),
+                ActiveCellSnapshot::Value(value) => {
+                    let cell = mb_cell_new(value);
+                    unsafe {
+                        super::rc::release_if_ptr(value);
+                    }
+                    cell
+                }
+            };
+            cells.insert(key, cell);
+        }
+    });
+}
+
+/// Replace the full ACTIVE_CELLS map and return a value snapshot of the previous contents.
+pub(crate) fn replace_active_cells(
+    next: HashMap<ScopedSymbolKey, ActiveCellSnapshot>,
+) -> HashMap<ScopedSymbolKey, ActiveCellSnapshot> {
+    let previous = ACTIVE_CELLS.with(|cells| snapshot_active_cells_from_map(&cells.borrow()));
+    install_active_cell_snapshots(next);
+    previous
+}
+
+/// Snapshot the full ACTIVE_CELLS map as value snapshots (non-destructive).
+pub(crate) fn snapshot_active_cells() -> HashMap<ScopedSymbolKey, ActiveCellSnapshot> {
+    ACTIVE_CELLS.with(|cells| snapshot_active_cells_from_map(&cells.borrow()))
+}
+
+/// Merge ACTIVE_CELLS from another thread/runtime snapshot.
+pub(crate) fn merge_active_cells(entries: &HashMap<ScopedSymbolKey, ActiveCellSnapshot>) {
+    ACTIVE_CELLS.with(|cells| {
+        let mut cells = cells.borrow_mut();
+        for (key, snapshot) in entries {
+            if let Some(cell) = cells.get(key).copied() {
+                match snapshot {
+                    ActiveCellSnapshot::Empty => mb_cell_clear(cell),
+                    ActiveCellSnapshot::Value(value) => {
+                        mb_cell_set(cell, *value);
+                        unsafe {
+                            super::rc::release_if_ptr(*value);
+                        }
+                    }
+                }
+            } else {
+                let cell = match snapshot {
+                    ActiveCellSnapshot::Empty => mb_cell_new_empty(),
+                    ActiveCellSnapshot::Value(value) => {
+                        let cell = mb_cell_new(*value);
+                        unsafe {
+                            super::rc::release_if_ptr(*value);
+                        }
+                        cell
+                    }
+                };
+                cells.insert(key.clone(), cell);
+            }
         }
     });
 }
@@ -1282,7 +1883,7 @@ pub fn build_globals_dict() -> MbValue {
     use super::dict_ops;
     let dict = dict_ops::mb_dict_new();
 
-    let id_ns = GLOBAL_ID_NAMESPACE.with(|ns| ns.borrow().clone());
+    let id_ns = snapshot_current_module_global_id_namespace();
     let sym_info = MODULE_SYM_INFO.with(|m| m.borrow().clone());
 
     for (id, raw) in &id_ns {
@@ -1340,8 +1941,11 @@ pub fn build_globals_dict() -> MbValue {
 pub(crate) fn cleanup_all_closures() {
     let _ = CLOSURES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = ACTIVE_CELLS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = ACTIVE_MODULE_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = GLOBAL_ID_NAMESPACE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = ACTIVE_MODULE_SYM_IDS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     MISSING_GLOBAL_RAISES_NAME_ERROR.with(|flag| flag.set(false));
     let _ = FUNC_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_DOCS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
@@ -1355,10 +1959,14 @@ pub(crate) fn cleanup_all_closures() {
     let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_LINES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_FILES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = MODULE_SYM_INFO.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = MODULE_FUNC_INFO.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::builtins;
+
     use super::*;
 
     #[test]
@@ -1395,6 +2003,240 @@ mod tests {
         mb_global_set(name, MbValue::from_int(42));
         let name2 = MbValue::from_ptr(MbObject::new_str("x".to_string()));
         assert_eq!(mb_global_get(name2).as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_module_scoped_global_ids_do_not_collide() {
+        cleanup_all_closures();
+
+        mb_global_set_id(MbValue::from_bits(7), MbValue::from_int(11));
+        push_active_module_name("other.mod".to_string());
+        mb_global_set_id(MbValue::from_bits(7), MbValue::from_int(22));
+        assert_eq!(mb_global_get_id(MbValue::from_bits(7)).as_int(), Some(22));
+        pop_active_module_name();
+
+        assert_eq!(mb_global_get_id(MbValue::from_bits(7)).as_int(), Some(11));
+        push_active_module_name("other.mod".to_string());
+        assert_eq!(mb_global_get_id(MbValue::from_bits(7)).as_int(), Some(22));
+        pop_active_module_name();
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_module_scoped_active_cells_do_not_collide() {
+        cleanup_all_closures();
+
+        mb_capture_cell_reset_id(MbValue::from_bits(9), MbValue::from_int(101));
+        push_active_module_name("other.mod".to_string());
+        mb_capture_cell_reset_id(MbValue::from_bits(9), MbValue::from_int(202));
+        assert_eq!(mb_global_get_id(MbValue::from_bits(9)).as_int(), Some(202));
+        pop_active_module_name();
+
+        assert_eq!(mb_global_get_id(MbValue::from_bits(9)).as_int(), Some(101));
+        push_active_module_name("other.mod".to_string());
+        assert_eq!(mb_global_get_id(MbValue::from_bits(9)).as_int(), Some(202));
+        pop_active_module_name();
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_closure_local_function_metadata_round_trips_without_plain_ints() {
+        cleanup_all_closures();
+
+        let closure = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("wrapper".to_string())),
+            MbValue::from_int(7),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let wrapped = MbValue::from_ptr(MbObject::new_str("wrapped-target".to_string()));
+
+        mb_func_set_name(
+            closure,
+            MbValue::from_ptr(MbObject::new_str("wrapped_name".to_string())),
+        );
+        mb_func_set_doc(
+            closure,
+            MbValue::from_ptr(MbObject::new_str("wrapped doc".to_string())),
+        );
+        mb_func_set_module(
+            closure,
+            MbValue::from_ptr(MbObject::new_str("wrapped.mod".to_string())),
+        );
+        assert!(mb_closure_set_wrapped(closure, wrapped));
+
+        assert_eq!(extract_str(mb_func_get_name(closure)).as_deref(), Some("wrapped_name"));
+        assert_eq!(extract_str(mb_func_get_doc(closure)).as_deref(), Some("wrapped doc"));
+        assert_eq!(
+            extract_str(mb_func_get_module(closure)).as_deref(),
+            Some("wrapped.mod")
+        );
+        assert_eq!(mb_closure_get_wrapped(closure), Some(wrapped));
+
+        let plain = MbValue::from_int(4242);
+        mb_func_set_name(plain, MbValue::from_ptr(MbObject::new_str("plain".to_string())));
+        mb_func_set_doc(plain, MbValue::from_ptr(MbObject::new_str("plain doc".to_string())));
+        mb_func_set_module(
+            plain,
+            MbValue::from_ptr(MbObject::new_str("plain.mod".to_string())),
+        );
+
+        assert!(mb_func_get_name(plain).is_none());
+        assert!(mb_func_get_doc(plain).is_none());
+        assert!(mb_func_get_module(plain).is_none());
+        assert_eq!(mb_closure_get_wrapped(plain), None);
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_global_set_releases_overwritten_live_closure_handles() {
+        cleanup_all_closures();
+
+        let name = MbValue::from_ptr(MbObject::new_str("wrapped_global".to_string()));
+        let closure1 = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("c1".to_string())),
+            MbValue::from_int(11),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let closure2 = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("c2".to_string())),
+            MbValue::from_int(22),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+
+        mb_global_set(name, closure1);
+        assert!(release_closure_handle_if_live(closure1));
+        assert_eq!(mb_closure_get_func(closure1).as_int(), Some(11));
+
+        mb_global_set(name, closure2);
+        assert!(release_closure_handle_if_live(closure2));
+        assert!(mb_closure_get_func(closure1).is_none());
+        assert_eq!(mb_closure_get_func(closure2).as_int(), Some(22));
+
+        let plain = MbValue::from_int(77);
+        assert!(!retain_closure_handle_if_live(plain));
+        assert!(!release_closure_handle_if_live(plain));
+        mb_global_set(name, plain);
+        assert!(mb_closure_get_func(closure2).is_none());
+        assert_eq!(mb_global_get(name).as_int(), Some(77));
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_global_set_id_releases_overwritten_live_closure_handles() {
+        cleanup_all_closures();
+
+        let id = MbValue::from_bits(707);
+        let closure1 = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("c1".to_string())),
+            MbValue::from_int(101),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let closure2 = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("c2".to_string())),
+            MbValue::from_int(202),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+
+        mb_global_set_id(id, closure1);
+        assert!(release_closure_handle_if_live(closure1));
+        assert_eq!(mb_closure_get_func(closure1).as_int(), Some(101));
+
+        mb_global_set_id(id, closure2);
+        assert!(release_closure_handle_if_live(closure2));
+        assert!(mb_closure_get_func(closure1).is_none());
+        assert_eq!(mb_closure_get_func(closure2).as_int(), Some(202));
+
+        let plain = MbValue::from_int(88);
+        assert!(!retain_closure_handle_if_live(plain));
+        assert!(!release_closure_handle_if_live(plain));
+        mb_global_set_id(id, plain);
+        assert!(mb_closure_get_func(closure2).is_none());
+        assert_eq!(mb_global_get_id(id).as_int(), Some(88));
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_released_closure_slot_is_reused_on_next_allocation() {
+        cleanup_all_closures();
+
+        let closure1 = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("c1".to_string())),
+            MbValue::from_int(301),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let closure2 = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("c2".to_string())),
+            MbValue::from_int(302),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(closure1.as_int(), Some(CLOSURE_HANDLE_BASE));
+        assert_eq!(closure2.as_int(), Some(CLOSURE_HANDLE_BASE + 1));
+
+        mb_closure_release(closure1);
+        assert!(mb_closure_get_func(closure1).is_none());
+
+        let closure3 = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("c3".to_string())),
+            MbValue::from_int(303),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert_eq!(closure3.as_int(), Some(CLOSURE_HANDLE_BASE));
+        assert_eq!(mb_closure_get_func(closure3).as_int(), Some(303));
+        assert_eq!(mb_closure_get_func(closure2).as_int(), Some(302));
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_closure_handle_retain_release_refcounts() {
+        cleanup_all_closures();
+
+        let closure = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("rc".to_string())),
+            MbValue::from_int(401),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert!(retain_closure_handle_if_live(closure));
+        assert!(release_closure_handle_if_live(closure));
+        assert_eq!(mb_closure_get_func(closure).as_int(), Some(401));
+        assert!(release_closure_handle_if_live(closure));
+        assert!(mb_closure_get_func(closure).is_none());
+
+        let plain = MbValue::from_int(123);
+        assert!(!retain_closure_handle_if_live(plain));
+        assert!(!release_closure_handle_if_live(plain));
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_global_overwrite_keeps_aliased_closure_live_until_last_release() {
+        cleanup_all_closures();
+
+        let name = MbValue::from_ptr(MbObject::new_str("aliased_global".to_string()));
+        let closure = mb_closure_new(
+            MbValue::from_ptr(MbObject::new_str("aliased".to_string())),
+            MbValue::from_int(501),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+
+        assert!(retain_closure_handle_if_live(closure));
+        mb_global_set(name, closure);
+        assert!(release_closure_handle_if_live(closure));
+        assert_eq!(mb_closure_get_func(closure).as_int(), Some(501));
+
+        mb_global_set(name, MbValue::from_int(0));
+        assert_eq!(mb_closure_get_func(closure).as_int(), Some(501));
+
+        assert!(release_closure_handle_if_live(closure));
+        assert!(mb_closure_get_func(closure).is_none());
+
+        cleanup_all_closures();
     }
 
     // ── Additional tests ──
@@ -1557,6 +2399,28 @@ mod tests {
     fn test_cell_invalid_handle() {
         let bad = MbValue::from_int(999999);
         assert!(mb_cell_get(bad).is_none());
+    }
+
+    #[test]
+    fn test_cell_comparisons_follow_contents() {
+        cleanup_all_closures();
+
+        let two = mb_cell_new(MbValue::from_int(2));
+        let three = mb_cell_new(MbValue::from_int(3));
+        let neg_int = mb_cell_new(MbValue::from_int(-36));
+        let neg_float = mb_cell_new(MbValue::from_float(-36.0));
+        let truthy = mb_cell_new(MbValue::from_bool(true));
+        let empty_a = mb_cell_new_empty();
+        let empty_b = mb_cell_new_empty();
+        let saturday = mb_cell_new(MbValue::from_ptr(MbObject::new_str("saturday".to_string())));
+
+        assert_eq!(builtins::mb_lt(two, three).as_bool(), Some(true));
+        assert_eq!(builtins::mb_eq(neg_int, neg_float).as_bool(), Some(true));
+        assert_eq!(builtins::mb_gt(truthy, empty_a).as_bool(), Some(true));
+        assert_eq!(builtins::mb_lt(empty_b, saturday).as_bool(), Some(true));
+        assert_eq!(builtins::mb_eq(empty_a, empty_b).as_bool(), Some(true));
+
+        cleanup_all_closures();
     }
 
     #[test]

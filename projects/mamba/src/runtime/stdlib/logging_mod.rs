@@ -655,6 +655,7 @@ unsafe extern "C" fn dispatch_currentframe(_args_ptr: *const MbValue, _nargs: us
 
 // StreamHandler(stream=None)
 unsafe extern "C" fn dispatch_streamhandler(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     let stream = a
         .first()
@@ -693,6 +694,7 @@ fn stderr_stream() -> MbValue {
 
 // Handler()
 unsafe extern "C" fn dispatch_handler(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     let level = a.first().and_then(|v| v.as_int()).unwrap_or(0);
     make_instance(
@@ -707,6 +709,7 @@ unsafe extern "C" fn dispatch_handler(args_ptr: *const MbValue, nargs: usize) ->
 
 // NullHandler()
 unsafe extern "C" fn dispatch_nullhandler(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     make_instance(
         "NullHandler",
         vec![
@@ -719,6 +722,7 @@ unsafe extern "C" fn dispatch_nullhandler(_args_ptr: *const MbValue, _nargs: usi
 
 // FileHandler(filename, ...) — minimal: store filename, no real file I/O.
 unsafe extern "C" fn dispatch_filehandler(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     make_instance(
         "FileHandler",
@@ -733,6 +737,7 @@ unsafe extern "C" fn dispatch_filehandler(args_ptr: *const MbValue, nargs: usize
 
 // Formatter(fmt=None, datefmt=None, style='%')
 unsafe extern "C" fn dispatch_formatter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     let fmt = arg_or_none(a, 0);
     let datefmt = arg_or_none(a, 1);
@@ -783,11 +788,13 @@ unsafe extern "C" fn dispatch_bufferingformatter(
     _args_ptr: *const MbValue,
     _nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     make_instance("BufferingFormatter", vec![])
 }
 
 // Filter(name='')
 unsafe extern "C" fn dispatch_filter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     let name = if a.is_empty() || a[0].is_none() {
         new_str("")
@@ -799,6 +806,7 @@ unsafe extern "C" fn dispatch_filter(args_ptr: *const MbValue, nargs: usize) -> 
 
 // LogRecord(name, level, pathname, lineno, msg, args, exc_info, ...)
 unsafe extern "C" fn dispatch_logrecord(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     let name = arg_or_none(a, 0);
     let level = arg_or_none(a, 1);
@@ -1507,6 +1515,7 @@ extern "C" fn m_logrecord_str(this: MbValue) -> MbValue {
 
 // ── Manager (man = logging.Manager(None)) ──
 unsafe extern "C" fn dispatch_manager(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     make_instance(
         "Manager",
         vec![
@@ -1582,7 +1591,10 @@ fn register_native_class(name: &str, methods: Vec<(&str, *const ())>) {
 /// BaseConfigurator(config) — stores the config dict for later cfg://
 /// resolution via convert(). Wired as the `logging.config.BaseConfigurator`
 /// module attr in long_tail2_mod.
-pub unsafe extern "C" fn dispatch_baseconfigurator(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn dispatch_baseconfigurator(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let config = arg_or_none(a, 0);
     make_instance("BaseConfigurator", vec![("config", config)])
@@ -1615,10 +1627,17 @@ fn cfg_index(d: MbValue, idx: &str) -> MbValue {
                         super::super::dict_ops::DictKey::Str(idx.to_string())
                     };
                     return match lock.read().unwrap().get(&key).copied() {
-                        Some(v) => { retain(v); v }
+                        Some(v) => {
+                            retain(v);
+                            v
+                        }
                         None => raise(
                             "KeyError",
-                            if is_digit { idx.to_string() } else { format!("'{idx}'") },
+                            if is_digit {
+                                idx.to_string()
+                            } else {
+                                format!("'{idx}'")
+                            },
                         ),
                     };
                 }
@@ -1651,7 +1670,10 @@ fn cfg_index(d: MbValue, idx: &str) -> MbValue {
             }
         }
     }
-    raise("TypeError", format!("'{idx}' index into non-subscriptable object"))
+    raise(
+        "TypeError",
+        format!("'{idx}' index into non-subscriptable object"),
+    )
 }
 
 /// Split a leading WORD (`[A-Za-z_]\w*`) off `s`; returns (word, rest).
@@ -1685,7 +1707,10 @@ fn cfg_convert(this: MbValue, value: &str) -> MbValue {
     while !rest.is_empty() {
         if let Some(after_dot) = rest.strip_prefix('.') {
             let Some((attr, r)) = split_word(after_dot) else {
-                return raise("ValueError", format!("Unable to convert {value:?} at {rest:?}"));
+                return raise(
+                    "ValueError",
+                    format!("Unable to convert {value:?} at {rest:?}"),
+                );
             };
             d = match dict_lookup_str(d, attr) {
                 Some(v) => v,
@@ -1694,7 +1719,10 @@ fn cfg_convert(this: MbValue, value: &str) -> MbValue {
             rest = r;
         } else if rest.starts_with('[') {
             let Some(close) = rest.find(']') else {
-                return raise("ValueError", format!("Unable to convert {value:?} at {rest:?}"));
+                return raise(
+                    "ValueError",
+                    format!("Unable to convert {value:?} at {rest:?}"),
+                );
             };
             let idx = &rest[1..close];
             let after = &rest[close + 1..];
@@ -1704,7 +1732,10 @@ fn cfg_convert(this: MbValue, value: &str) -> MbValue {
             }
             rest = after;
         } else {
-            return raise("ValueError", format!("Unable to convert {value:?} at {rest:?}"));
+            return raise(
+                "ValueError",
+                format!("Unable to convert {value:?} at {rest:?}"),
+            );
         }
     }
     retain(d);
@@ -1719,7 +1750,10 @@ extern "C" fn m_baseconfigurator_convert(this: MbValue, value: MbValue) -> MbVal
         // CONVERT_PATTERN: ^(?P<prefix>[a-z]+)://(?P<suffix>.*)$
         if let Some(pos) = s.find("://") {
             let prefix = &s[..pos];
-            if !prefix.is_empty() && prefix.bytes().all(|b| b.is_ascii_lowercase()) && prefix == "cfg" {
+            if !prefix.is_empty()
+                && prefix.bytes().all(|b| b.is_ascii_lowercase())
+                && prefix == "cfg"
+            {
                 return cfg_convert(this, &s[pos + 3..]);
             }
         }
@@ -1917,9 +1951,7 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(*addr as u64);
         });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(*addr as u64, type_name.to_string());
-        });
+        super::super::module::register_native_type_name(*addr as u64, type_name.to_string());
     }
 
     // ── Plain module-level function dispatchers ──
