@@ -128,7 +128,6 @@ flowchart TD
     r5[R5 llm grace knob documented] --> projects_relay_tests_spec_cli_rs_llm_operations_topic_documents_the_new_surfaces[projects/relay/tests/spec_cli.rs llm_operations_topic_documents_the_new_surfaces]
     r1r2[R1R2 capability contract parses at baseline] --> aw_capability_check_project_relay_manual_gate_compared_against_the_pre_change_baseline_output[aw capability check --project relay (manual gate, compared against the pre-change baseline output)]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
