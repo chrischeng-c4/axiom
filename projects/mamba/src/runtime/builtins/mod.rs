@@ -7,6 +7,7 @@ use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
 use rustc_hash::FxHashMap;
 
+mod any_all;
 mod assertions;
 mod async_iteration;
 mod boxing;
@@ -20,6 +21,7 @@ mod set_constructors;
 mod truthiness;
 mod type_objects;
 
+pub use any_all::{mb_all, mb_any};
 pub use assertions::{mb_assertion_error, mb_assertion_error_no_msg};
 pub use async_iteration::{mb_aiter, mb_anext, mb_anext_default};
 use boxing::format_bytes_inner;
@@ -8086,38 +8088,6 @@ pub fn mb_max_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
         super::rc::retain_if_ptr(result);
     }
     result
-}
-
-// ── Missing builtins (#420) ──
-
-/// any(iterable) — return True if any element is truthy.
-pub fn mb_any(args: MbValue) -> MbValue {
-    let iter = super::iter::mb_iter(args);
-    if iter.is_none() {
-        return MbValue::none();
-    }
-    while super::iter::mb_has_next(iter).as_bool() == Some(true) {
-        let item = super::iter::mb_next(iter);
-        if mb_bool(item).as_bool().unwrap_or(false) {
-            return MbValue::from_bool(true);
-        }
-    }
-    MbValue::from_bool(false)
-}
-
-/// all(iterable) — return True if all elements are truthy.
-pub fn mb_all(args: MbValue) -> MbValue {
-    let iter = super::iter::mb_iter(args);
-    if iter.is_none() {
-        return MbValue::none();
-    }
-    while super::iter::mb_has_next(iter).as_bool() == Some(true) {
-        let item = super::iter::mb_next(iter);
-        if !mb_bool(item).as_bool().unwrap_or(false) {
-            return MbValue::from_bool(false);
-        }
-    }
-    MbValue::from_bool(true)
 }
 
 /// Python-compatible banker's rounding (round half to even) for a scaled float.
