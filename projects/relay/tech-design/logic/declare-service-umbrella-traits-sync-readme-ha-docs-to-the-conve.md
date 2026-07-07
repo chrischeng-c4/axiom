@@ -38,25 +38,25 @@ entry: traits
 nodes:
   traits:
     label: "aw.toml traits -> service umbrella + honest extras"
-    kind: step
+    kind: start
   readme_sync:
     label: "README: replace relay-server/relay-raft rows with single relay bin + WI #1204-#1209 work-roots"
-    kind: step
+    kind: process
   readme_new:
     label: "README: add 4 umbrella-derived capability sections (std endpoints, cli-std, chainable, ec-gates)"
-    kind: step
+    kind: process
   ha_doc:
     label: "HA.md: auto-mode, RelayStateMachine, lease/ack limitation, RELAY_PEERS, operator CR, backup, peer-TLS gap"
-    kind: step
+    kind: process
   dockerfile:
     label: "Dockerfile EXPOSE 8080 -> 7000 (include_str! keeps render byte-equal)"
-    kind: step
+    kind: process
   llm_topic:
     label: "llm operations topic += --grace-secs / RELAY_GRACE_SECS"
-    kind: step
+    kind: process
   verify:
     label: "aw capability check >= baseline; cargo test -p relay green"
-    kind: outcome
+    kind: terminal
 edges:
   - from: traits
     to: readme_new
@@ -89,4 +89,43 @@ flowchart TD
   ha_doc -->|"Deploy-row requirement satisfied"| verify
   dockerfile -->|"byte-equality test"| verify
   llm_topic -->|"spec_cli llm topic test"| verify
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: relay-declare-service-umbrella-sync-docs-verification
+requirements:
+  capability-contract-parses-at-baseline:
+    id: R1R2
+    text: "With the service-umbrella traits in aw.toml and the synced README capability contract (no relay-server/relay-raft references; four umbrella-derived capability sections added), `aw capability check --project relay` parses the contract and reports no new blockers beyond the pre-existing baseline."
+    kind: regression
+    risk: medium
+    verify: aw capability check --project relay (manual gate, compared against the pre-change baseline output)
+  dockerfile-byte-equality:
+    id: R4
+    text: "After EXPOSE 8080 -> 7000 in the committed Dockerfile, `relay dockerfile render --variant source` reproduces the committed fixture byte-for-byte (render reads the fixture via include_str!)."
+    kind: regression
+    risk: low
+    verify: projects/relay/tests/deploy_cli.rs dockerfile_render_reproduces_committed_fixtures
+  ha-doc-matches-shipped-semantics:
+    id: R3
+    text: "HA.md's claims (auto-mode flip on REPLICAS_PER_SHARD>1, publish-only replication, fsynced applied-index marker, node-local lease/ack at-least-once failover, RELAY_PEERS override, backup/restore merge semantics) match the shipped raft/backup behavior already gated by the raft and backup test suites."
+    kind: functional
+    risk: low
+    verify: projects/relay/tests/raft_cluster.rs, projects/relay/tests/raft_persistence.rs, projects/relay/tests/backup.rs (existing gates; HA.md is descriptive)
+  llm-grace-knob-documented:
+    id: R5
+    text: "The `relay llm` operations topic documents the --grace-secs / RELAY_GRACE_SECS graceful-drain knob alongside the existing serve/auth/peer-TLS/backup/deploy surfaces."
+    kind: functional
+    risk: low
+    verify: projects/relay/tests/spec_cli.rs llm_operations_topic_documents_the_new_surfaces
+---
+flowchart TD
+    r3[R3 ha doc matches shipped semantics] --> projects_relay_tests_raft_cluster_rs_projects_relay_tests_raft_persistence_rs_projects_relay_tests_backup_rs_existing_gates_ha_md_is_descriptive[projects/relay/tests/raft_cluster.rs, projects/relay/tests/raft_persistence.rs, projects/relay/tests/backup.rs (existing gates; HA.md is descriptive)]
+    r4[R4 dockerfile byte equality] --> projects_relay_tests_deploy_cli_rs_dockerfile_render_reproduces_committed_fixtures[projects/relay/tests/deploy_cli.rs dockerfile_render_reproduces_committed_fixtures]
+    r5[R5 llm grace knob documented] --> projects_relay_tests_spec_cli_rs_llm_operations_topic_documents_the_new_surfaces[projects/relay/tests/spec_cli.rs llm_operations_topic_documents_the_new_surfaces]
+    r1r2[R1R2 capability contract parses at baseline] --> aw_capability_check_project_relay_manual_gate_compared_against_the_pre_change_baseline_output[aw capability check --project relay (manual gate, compared against the pre-change baseline output)]
 ```
