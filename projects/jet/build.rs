@@ -1,5 +1,6 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-build-rs" reason="Build provenance stamping is hand-written until AW has a deterministic build-script generator primitive.">
 // Stamp build provenance into the binary for the standard CLI ops
-// (`llm` / `upgrade` / `report-issue`, via `cli-std`): the target triple
+// (`llm` / `upgrade` / `issue`, via `cli-std`): the target triple
 // `jet upgrade` matches against release assets, plus a best-effort git sha and
 // build timestamp. All three are best-effort and never fail the build.
 
@@ -41,3 +42,4 @@ fn short_sha() -> Option<String> {
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!sha.is_empty()).then_some(sha)
 }
+// </HANDWRITE>

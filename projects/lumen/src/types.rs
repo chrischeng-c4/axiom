@@ -218,15 +218,28 @@ pub struct SearchRequest {
     pub limit: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Optional caller-owned routing key for sharded deployments. When present,
+    /// a sharded router can target the one shard that owns
+    /// `(collection_id, routing_key)` instead of scatter/gathering every shard.
+    /// Writes default to `external_id` as the routing key, so one large
+    /// collection can still spread across shards without caller help.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing_key: Option<String>,
     /// Sort results by one or more fields instead of by relevance score.
     /// When absent, results are ranked by score (BM25 / constant) then
-    /// external_id. Number and keyword fields are sortable (up to 2 keys);
+    /// external_id. Number and keyword fields are sortable (up to 4 keys);
     /// single number-field sorts use the keyset planner, keyword and composite
-    /// sorts use the materialized fallback. Rows missing a sort-key value are
-    /// currently excluded from sorted results (and from `total`). A `sort`
-    /// cannot be combined with an offset cursor — that returns 400; page a
-    /// sorted result with the keyset cursor returned in the response, or
-    /// over-fetch and slice.
+    /// sorts use the materialized fallback. Rows missing a sort-key value
+    /// follow the per-key `missing` mode: `exclude` (the default) drops them
+    /// from the page and from `total`; `first`/`last` keep them — placed
+    /// before/after all present values and counted in `total`, like SQL
+    /// `NULLS FIRST`/`NULLS LAST`. A query containing `has_child` can be
+    /// sorted by parent fields; it routes through the materialized sort path
+    /// with exact `total`. `sort` remains incompatible with `knn`, `rrf`, and
+    /// `hamming`, and cannot be combined with an offset cursor — those return
+    /// 400. Page a sorted result with the keyset cursor returned in the
+    /// response, or over-fetch and slice.
+    /// @spec projects/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<Vec<SortSpec>>,
     /// Whether to compute the exact total match count. Defaults to `true`
@@ -595,6 +608,15 @@ pub struct CacheStats {
 // Errors
 // ---------------------------------------------------------------------------
 
+// The runtime `{error, message}` envelope this shape describes now lives in
+// `service_http::ErrorEnvelope` (`src/api.rs`'s `ApiErr` renders it); this
+// struct stays a distinct local definition purely to keep the OpenAPI schema
+// name (`ApiError`) and its doc-comment-derived `description` byte-identical
+// — `#[derive(ToSchema)]` fixes both at the type's own definition site, so
+// neither a `pub type` alias nor a `#[schema(as = ...)]` override on the
+// shared struct can reproduce lumen's pre-existing name/description without
+// baking lumen's spec-path text into the generic `libs/service-http` crate
+// (see #1005).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
 pub struct ApiError {

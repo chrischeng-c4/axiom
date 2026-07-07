@@ -197,18 +197,22 @@ flowchart TD
 changes:
   - path: .aw/tech-design/crates/jet/interfaces/trace/format.md
     action: create
+    section: doc
     purpose: Re-home and normalize the Jet trace file format contract.
     impl_mode: hand-written
   - path: .aw/tech-design/crates/jet/testing/trace-format.md
     action: delete
+    section: doc
     purpose: Remove stale testing-directory note without section annotations.
     impl_mode: hand-written
   - path: crates/jet/src/trace/manifest.rs
     action: none
+    section: doc
     purpose: Existing trace manifest representation described by this spec.
     impl_mode: hand-written
   - path: crates/jet/src/trace/archive.rs
     action: none
+    section: doc
     purpose: Existing trace archive writer described by this spec.
     impl_mode: hand-written
 ```

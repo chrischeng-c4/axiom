@@ -9,7 +9,8 @@ set -uo pipefail
 
 HOOK="${HOOK:-$(git rev-parse --show-toplevel)/.claude/hooks/hook2-pre-apply-guard.sh}"
 SLUG="test-fixture-slug-r7"
-LOCK="/tmp/aw-apply-lock-${SLUG}"
+LOCK="/tmp/aw/locks/apply-${SLUG}"
+mkdir -p "$(dirname "$LOCK")"
 trap 'rm -f "$LOCK"' EXIT
 
 run_hook() {

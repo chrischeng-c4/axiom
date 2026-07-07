@@ -1,7 +1,7 @@
 ---
 id: semantic-jet-tests-fixtures-jet-test-api-compat
 summary: Semantic coverage for "projects/jet/tests/fixtures/jet-test-api-compat"
-fill_sections: [tests, changes]
+fill_sections: [e2e-test, changes]
 capability_refs:
   - id: rust-native-frontend-toolchain
     role: primary
@@ -13,8 +13,8 @@ capability_refs:
 
 # Semantic TD: jet/tests/fixtures/jet-test-api-compat
 
-## Tests
-<!-- type: tests lang: yaml -->
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
 
 ```yaml
 frontend_semantic:
@@ -61,7 +61,7 @@ coverage_kind: semantic
 changes:
   - path: "projects/jet/tests/fixtures/jet-test-api-compat/lifecycle-and-snapshot.spec.js"
     action: modify
-    section: tests
+    section: e2e-test
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written

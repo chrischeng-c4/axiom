@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: openapi-driven-mock-http-service-spec-responses
+    claim: openapi-driven-mock-http-service-spec-responses
     coverage: partial
     rationale: "Adds an OpenAPI mock engine (spec -> response from example/schema) as both a standalone openapi preset and an http-mock proxy source, so an agent can stand up a working fake of a documented API with no stubs/recording and no app code change."
 ---
@@ -221,6 +221,7 @@ e2e_tests:
   - id: vat-openapi-standalone-and-proxy-smoke
     name: "OpenAPI mock serves spec responses standalone and via the http-mock proxy"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: openapi-driven-mock-http-service-spec-responses
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_openapi -- --nocapture"
@@ -230,14 +231,16 @@ e2e_tests:
   - id: vat-openapi-preset-run-smoke
     name: "openapi preset serves a spec-derived response to the runner"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: openapi-driven-mock-http-service-spec-responses
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat openapi_preset_serves_spec -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulator_openapi -- --nocapture --include-ignored"
     assertions:
       - "a preset = openapi vat.toml run exports OPENAPI_MOCK_HOST and the runner curls a documented operation, getting the spec-derived response with no app code change."
   - id: vat-openapi-lean-build
     name: "lean build still compiles"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: openapi-driven-mock-http-service-spec-responses
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"

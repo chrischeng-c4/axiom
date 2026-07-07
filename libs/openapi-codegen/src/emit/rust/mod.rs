@@ -121,13 +121,19 @@ mod tests {
     fn reqwest_client_method_typed() {
         let out = generate(SPEC, &opts()).unwrap();
         let client = file(&out, "client.rs");
+        assert!(client.contains("pub struct TransportPolicy"));
+        assert!(client.contains("const DEFAULT_MAX_CONNECTIONS: usize = 128;"));
+        assert!(client.contains("const DEFAULT_MAX_KEEPALIVE_CONNECTIONS: usize = 16;"));
+        assert!(client.contains("pub enum ClientError"));
+        assert!(client.contains("impl fmt::Display for ClientError"));
+        assert!(client.contains("impl std::error::Error for ClientError"));
+        assert!(client.contains("fn acquire_slot(&self) -> ClientResult<SlotGuard>"));
         assert!(client.contains("http: reqwest::blocking::Client,"));
-        assert!(
-            client.contains("pub fn get_pet_by_id(&self, pet_id: i64) -> reqwest::Result<Pet> {")
-        );
+        assert!(client.contains("pub fn get_pet_by_id(&self, pet_id: i64) -> ClientResult<Pet> {"));
         assert!(client.contains("let url = format!(\"{}/pets/{}\", self.base_url, pet_id);"));
         assert!(client.contains("self.http.get(url)"));
-        assert!(client.contains("resp.json()"));
+        assert!(client.contains("let _slot = self.acquire_slot()?;"));
+        assert!(client.contains("Ok(resp.json()?)"));
     }
 
     #[test]

@@ -174,7 +174,7 @@ commands:
           `.aw/payloads/<slug>/<id>.md` into the matching block; on
           the last marker, runs `cb check` as a gate, commits
           `Lifecycle-Stage: Cb-Fill`, advances phase to `cb_filled`,
-          and dispatches `aw td merge`.
+          and dispatches `aw td code-check`.
         args:
           - name: slug
             required: true
@@ -373,14 +373,14 @@ edges:
     event: "reader normalises alias"
   - from: cb_genned
     to: td_merged
-    event: "aw td merge"
+    event: "aw td code-check"
 ---
 stateDiagram-v2
     [*] --> td_reviewed
     td_reviewed --> cb_genned : aw cb gen
     td_reviewed --> td_gen_coded : aw td gen-code (deprecated)
     td_gen_coded --> cb_genned : reader normalises alias
-    cb_genned --> td_merged : aw td merge
+    cb_genned --> td_merged : aw td code-check
     td_merged --> [*]
 ```
 ## Logic: td-check path resolution
@@ -543,7 +543,7 @@ definitions:
       - TdRevise
       - CbGen
       - TdGenCode
-      - TdMerge
+      - TdCodeCheck
     x-rust-enum:
       derive: [Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize]
       variants:
@@ -568,8 +568,8 @@ definitions:
         - name: TdGenCode
           rename: "Td-GenCode"
           doc: "Legacy trailer alias for Cb-Gen. Recognised by readers for one release."
-        - name: TdMerge
-          rename: "Td-Merge"
+        - name: TdCodeCheck
+          rename: "Cb-CodeCheck"
           doc: "Spec merged."
 
   DeprecationAuditFinding:

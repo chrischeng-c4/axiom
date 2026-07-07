@@ -68,7 +68,7 @@ sequenceDiagram
 The `score-cb-fill` skill rewrite drives a different envelope shape than the
 issues/td CRRR flow above: it loops once per HANDWRITE marker emitted by
 `aw cb fill` (brief mode), then runs `aw cb check` as the gate, then
-`aw td merge` as the terminal advance. Implementer must wire the
+`aw td code-check` as the terminal advance. Implementer must wire the
 mainthread loop to this envelope rhythm — not the single-payload CRRR
 rhythm of the issues/td flow.
 
@@ -103,11 +103,11 @@ messages:
     name: score_cb_check
   - from: CLI
     to: Mainthread
-    name: dispatch_td_merge
+    name: dispatch_td_code_check
     returns: DispatchEnvelope
   - from: Mainthread
     to: CLI
-    name: score_td_merge
+    name: score_td_code_check
   - from: CLI
     to: Mainthread
     name: done_envelope
@@ -122,8 +122,8 @@ sequenceDiagram
         CLI->>Mainthread: dispatch (agent: null, next marker OR cb check)
     end
     Mainthread->>CLI: aw cb check (drift/coverage gate)
-    CLI->>Mainthread: dispatch (agent: null, invoke: td merge)
-    Mainthread->>CLI: aw td merge
+    CLI->>Mainthread: dispatch (agent: null, invoke: td code-check)
+    Mainthread->>CLI: aw td code-check
     CLI->>Mainthread: done envelope
 ```
 ## Changes
@@ -186,7 +186,7 @@ changes:
       envelope, write each marker's body to
       `.aw/payloads/<slug>/cb_fill_<marker>.md`, run
       `aw cb fill --apply --marker <id>`, repeat until all markers
-      filled, then `aw cb check` then `aw td merge`. Sweep the
+      filled, then `aw cb check` then `aw td code-check`. Sweep the
       same table/prose phrasings (`` Dispatch `score-cb-handwriter`
       agent ``, `score-cb-handwriter subagent`) so they do not survive.
 
@@ -368,7 +368,7 @@ grep -rEi 'Dispatch[[:space:]]*`?score-(issue|td|cb)-[a-z-]+`?[[:space:]]*agent|
 **Verdict:** needs-revision
 
 - [changes] R4 acceptance grep `'Agent(subagent_type=score-'` will miss table-style references like `` Dispatch `score-td-author` agent `` that exist in the installed `.claude/skills/score-td-create/SKILL.md`. The Changes table includes the file as `modify` but the acceptance grep would not flag residual stale language post-Phase-2. Either broaden the grep to `'subagent_type=score-\|Dispatch.*score-.*agent\|Agent(subagent_type=score-'` so the audit catches both wordings, or add an explicit second grep to R4 acceptance that scans for `Dispatch.*score-(issue|td|cb)-` markdown table cells.
-- [interaction] The Interaction Mermaid diagram only depicts the issues CRRR flow (`aw wi create` → fill-section → validate → done). The Changes section also rewrites `score-cb-fill/SKILL.md` whose loop is materially different — per-marker fill, then `cb check`, then `td merge`. Add a second sequence diagram (or extend the existing one with the cb-fill branch) so the implementer can see exactly which envelope shape they are wiring for the cb-fill skill rewrite.
+- [interaction] The Interaction Mermaid diagram only depicts the issues CRRR flow (`aw wi create` → fill-section → validate → done). The Changes section also rewrites `score-cb-fill/SKILL.md` whose loop is materially different — per-marker fill, then `cb check`, then `td code-check`. Add a second sequence diagram (or extend the existing one with the cb-fill branch) so the implementer can see exactly which envelope shape they are wiring for the cb-fill skill rewrite.
 
 ## Review 2
 <!-- type: review lang: markdown -->
@@ -376,7 +376,7 @@ grep -rEi 'Dispatch[[:space:]]*`?score-(issue|td|cb)-[a-z-]+`?[[:space:]]*agent|
 **Verdict:** approved
 
 - [changes] (checklist-item-1) Round 1 finding resolved. The R4 acceptance grep subsection now runs two greps: Form 1 catches `Agent(subagent_type=score-` code-style invocations; Form 2's regex catches `` Dispatch `score-*` agent ``, `score-* subagent`, and `subagent_type[:=]"?score-` table/prose phrasings. Each of the four skill-rewrite descriptions explicitly calls out sweeping table/prose phrasing, giving implementers unambiguous acceptance criteria for both wording forms.
-- [interaction] (checklist-item-3) Round 1 finding resolved. A second Mermaid Plus sequence diagram (`id: mainthread-only-cb-fill-loop`) is present with a prose explanation distinguishing its per-marker loop rhythm from the CRRR flow. The diagram covers `aw cb fill` brief → per-marker loop → `aw cb check` gate → `aw td merge` terminal, giving implementers the exact envelope shape needed when wiring the cb-fill skill rewrite.
+- [interaction] (checklist-item-3) Round 1 finding resolved. A second Mermaid Plus sequence diagram (`id: mainthread-only-cb-fill-loop`) is present with a prose explanation distinguishing its per-marker loop rhythm from the CRRR flow. The diagram covers `aw cb fill` brief → per-marker loop → `aw cb check` gate → `aw td code-check` terminal, giving implementers the exact envelope shape needed when wiring the cb-fill skill rewrite.
 
 ## Traceability Changes
 <!-- type: changes lang: yaml -->

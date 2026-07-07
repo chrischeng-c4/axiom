@@ -56,9 +56,9 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         ),
         Case::new(
             "sed",
-            vec!["sed", "-n", "2,4p", fixture.sed_file()],
+            vec!["sed", "-n", "1,1024p", fixture.sed_file()],
             "/usr/bin/sed",
-            vec!["-n", "2,4p", fixture.sed_file()],
+            vec!["-n", "1,1024p", fixture.sed_file()],
         ),
         Case::new(
             "grep",
@@ -71,6 +71,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
     for case in success_cases {
         assert_success_parity(&cap, &case)?;
     }
+    let mut wc_cap_args = vec!["wc", "-l"];
+    wc_cap_args.extend(fixture.wc_files().iter().map(String::as_str));
+    let mut wc_original_args = vec!["-l"];
+    wc_original_args.extend(fixture.wc_files().iter().map(String::as_str));
+    let wc_case = Case::new("wc", wc_cap_args, "/usr/bin/wc", wc_original_args);
+    assert_success_parity(&cap, &wc_case)?;
 
     let run_success_cases = [
         (
@@ -111,15 +117,21 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         ),
         (
             "run sed",
-            format!("sed -n 2,4p {}", fixture.sed_file()),
+            format!("sed -n 1,1024p {}", fixture.sed_file()),
             "/usr/bin/sed",
-            vec!["-n", "2,4p", fixture.sed_file()],
+            vec!["-n", "1,1024p", fixture.sed_file()],
         ),
         (
             "run grep",
             format!("grep -R NEEDLE {}", fixture.grep_root()),
             "/usr/bin/grep",
             vec!["-R", "NEEDLE", fixture.grep_root()],
+        ),
+        (
+            "run wc",
+            format!("wc -l {}", fixture.wc_files().join(" ")),
+            "/usr/bin/wc",
+            wc_case.original_args.clone(),
         ),
     ];
 
@@ -177,6 +189,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             "/usr/bin/grep",
             vec!["-R", "NEEDLE", missing.as_str()],
         ),
+        Case::new(
+            "wc",
+            vec!["wc", "-l", missing.as_str()],
+            "/usr/bin/wc",
+            vec!["-l", missing.as_str()],
+        ),
     ];
 
     for case in error_cases {
@@ -232,6 +250,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             "/usr/bin/grep",
             vec!["-R", "NEEDLE", missing.as_str()],
         ),
+        (
+            "run wc",
+            format!("wc -l {}", missing),
+            "/usr/bin/wc",
+            vec!["-l", missing.as_str()],
+        ),
     ];
 
     for (name, command, original_program, original_args) in run_error_cases {
@@ -252,6 +276,83 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         vec!["-R", "ABSENT", fixture.grep_root()],
     );
     assert_quiet_nonzero_parity(&cap, &no_match)?;
+
+    Ok(())
+}
+
+#[test]
+fn installed_frontend_exposes_standard_agent_commands() -> Result<()> {
+    let temp = tempfile::tempdir().context("create frontend tempdir")?;
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir(&bin_dir)?;
+    let cap = build_cap_frontend(&bin_dir)?;
+
+    let help = run(&cap, &["--help"])?;
+    assert!(
+        help.status.success(),
+        "cap --help failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&help.stdout),
+        String::from_utf8_lossy(&help.stderr)
+    );
+    let help_stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(help_stdout.contains("Usage: cap "), "{help_stdout}");
+    assert!(!help_stdout.contains("Usage: cap-full "), "{help_stdout}");
+    for verb in ["llm", "upgrade", "issue", "report-issue"] {
+        assert!(
+            help_stdout.contains(verb),
+            "installed cap help missing {verb}:\n{help_stdout}"
+        );
+    }
+
+    let llm = run(&cap, &["llm", "--topic", "outline", "--format", "json"])?;
+    assert!(
+        llm.status.success(),
+        "cap llm failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&llm.stdout),
+        String::from_utf8_lossy(&llm.stderr)
+    );
+    let llm_stdout = String::from_utf8_lossy(&llm.stdout);
+    assert!(llm_stdout.contains("\"project\": \"cap\""), "{llm_stdout}");
+    assert!(llm_stdout.contains("\"id\": \"workflow\""), "{llm_stdout}");
+
+    for args in [
+        vec![
+            "issue",
+            "create",
+            "--title",
+            "cap: smoke",
+            "--dry-run",
+            "smoke",
+        ],
+        vec![
+            "report-issue",
+            "--title",
+            "cap: smoke",
+            "--dry-run",
+            "smoke",
+        ],
+    ] {
+        let out = run(&cap, &args)?;
+        assert!(
+            out.status.success(),
+            "cap {} failed:\nstdout:\n{}\nstderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("labels: project:cap"), "{stdout}");
+        assert!(stdout.contains("## Diagnostics"), "{stdout}");
+    }
+
+    let passthrough = run(&cap, &["sh", "-c", "printf cap-path-ok"])?;
+    assert!(
+        passthrough.status.success(),
+        "cap passthrough failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&passthrough.stdout),
+        String::from_utf8_lossy(&passthrough.stderr)
+    );
+    assert_eq!(passthrough.stdout, b"cap-path-ok");
 
     Ok(())
 }
@@ -504,6 +605,7 @@ struct Fixture {
     sort_file: String,
     sed_file: String,
     grep_root: String,
+    wc_files: Vec<String>,
 }
 
 /// @spec projects/cap/tech-design/semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md#source
@@ -514,8 +616,9 @@ impl Fixture {
 
         let list_dir = data.join("list");
         fs::create_dir(&list_dir)?;
-        fs::write(list_dir.join("b.txt"), b"b\n")?;
-        fs::write(list_dir.join("a.txt"), b"a\n")?;
+        for idx in 0..1024 {
+            fs::write(list_dir.join(format!("item-{idx:04}.txt")), b"x\n")?;
+        }
 
         let cat_file = data.join("cat.txt");
         fs::write(&cat_file, b"alpha\nbeta\n")?;
@@ -525,7 +628,9 @@ impl Fixture {
 
         let find_root = data.join("find");
         fs::create_dir(&find_root)?;
-        fs::write(find_root.join("only.txt"), b"found\n")?;
+        for idx in 0..512 {
+            fs::write(find_root.join(format!("only-{idx:04}.txt")), b"found\n")?;
+        }
 
         let du_root = data.join("du");
         fs::create_dir(&du_root)?;
@@ -538,11 +643,27 @@ impl Fixture {
         }
 
         let sed_file = data.join("sed.txt");
-        fs::write(&sed_file, b"one\ntwo\nthree\nfour\nfive\n")?;
+        let mut sed = fs::File::create(&sed_file)?;
+        for idx in 0..1100 {
+            writeln!(sed, "line {idx:04}")?;
+        }
 
         let grep_root = data.join("grep");
         fs::create_dir(&grep_root)?;
-        fs::write(grep_root.join("match.txt"), b"plain\nNEEDLE here\n")?;
+        for idx in 0..64 {
+            fs::write(
+                grep_root.join(format!("match-{idx:04}.txt")),
+                b"plain\nNEEDLE here\n",
+            )?;
+        }
+        let wc_root = data.join("wc");
+        fs::create_dir(&wc_root)?;
+        let mut wc_files = Vec::new();
+        for idx in 0..64 {
+            let file = wc_root.join(format!("count-{idx:04}.txt"));
+            fs::write(&file, b"one\ntwo\n")?;
+            wc_files.push(path_string(&file));
+        }
 
         Ok(Self {
             list_dir: path_string(&list_dir),
@@ -553,6 +674,7 @@ impl Fixture {
             sort_file: path_string(&sort_file),
             sed_file: path_string(&sed_file),
             grep_root: path_string(&grep_root),
+            wc_files,
         })
     }
 
@@ -579,6 +701,9 @@ impl Fixture {
     }
     fn grep_root(&self) -> &str {
         &self.grep_root
+    }
+    fn wc_files(&self) -> &[String] {
+        &self.wc_files
     }
 }
 

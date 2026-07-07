@@ -161,7 +161,7 @@ pub fn generate_tests(spec_content: &str) -> TestsGenOutput {
 ///       exit_code: 0
 ///       stdout_contains: ["ok"]
 ///       artifacts:
-///         - path: "/tmp/out.json"
+///         - path: "/tmp/aw/demo/out.json"
 ///           exists: true
 ///           contains: ["ok"]
 /// ```
@@ -740,7 +740,7 @@ e2e_tests:
       exit_code: 0
       stdout_contains: ["ok"]
       artifacts:
-        - path: "/tmp/aw-demo-output.txt"
+        - path: "/tmp/aw/demo/output.txt"
           exists: true
           contains: ["done"]
 ```
@@ -752,7 +752,7 @@ e2e_tests:
         assert!(out.code.contains("stdout.contains(\"ok\")"));
         assert!(out
             .code
-            .contains("Path::new(\"/tmp/aw-demo-output.txt\").exists()"));
+            .contains("Path::new(\"/tmp/aw/demo/output.txt\").exists()"));
         assert!(out.code.contains("artifact_content.contains(\"done\")"));
     }
 

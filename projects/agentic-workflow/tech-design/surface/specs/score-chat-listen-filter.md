@@ -280,11 +280,11 @@ tests:
       non-tty pipe). Post a message with aw chat post from another shell. Confirm
       the listener prints the message within 1000ms of the post completing.
     steps:
-      - run: "aw chat listen --once > /tmp/listen-out.txt &"
+      - run: "aw chat listen --once > /tmp/aw/chat/listen-out.txt &"
       - run: "sleep 0.1 && aw chat post --to score --body-file - <<< 'flush test'"
-      - run: "sleep 0.5 && grep 'flush test' /tmp/listen-out.txt"
+      - run: "sleep 0.5 && grep 'flush test' /tmp/aw/chat/listen-out.txt"
     expected: |
-      /tmp/listen-out.txt contains the message body within 500ms. The test confirms
+      /tmp/aw/chat/listen-out.txt contains the message body within 500ms. The test confirms
       that stdout flushing is not blocked by line-buffering in pipe mode.
 ```
 

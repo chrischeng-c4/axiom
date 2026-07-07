@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-tests.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_auth-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Self-contained integration test for the built-in Firebase Auth emulator.
 //! Spawns `vat emulator firebase-auth`, drives signUp -> signInWithPassword ->
@@ -50,6 +50,7 @@ fn post(addr: &str, path: &str, body: &str) -> Value {
 }
 
 struct Killed(Child);
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_auth-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();

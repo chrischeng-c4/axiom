@@ -14,8 +14,8 @@ promises from inference alone.
 ## Contract
 
 - Human API: `/aw:capability <prompt>`.
-- Agent API: use `aw run`, `aw capability report|next|draft|apply-draft|init|migrate|run|check|sweep`,
-  `aw standardize --project <project>`, `aw wi list/show`, `aw td ...`, and `aw td ...`
+- Agent API: use `aw capability report|next|draft|apply-draft|init|migrate|run|check|sweep`,
+  `aw standardize audit --project <project>`, `aw wi list/show`, and `aw td ...`
   as needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
   implied by `[[projects]].path`.
@@ -31,7 +31,7 @@ promises from inference alone.
    action. Follow the single `next_action` unless it requires HITL.
 4. If `next_action.kind=define_capability_map` and the next command is
    `aw capability draft --project <project>`, run the draft command to write a
-   pending-review artifact under `/tmp/aw/{project}/capability-map-drafts/`.
+   pending-review artifact under `/tmp/aw/workspaces/<workspace>/capability-map-drafts/{project}/`.
    For README prose roots, the artifact proposes candidate roots. For an
    existing README with no capability roots, the artifact is a definition
    worksheet with placeholders. For projects with project-local
@@ -52,7 +52,8 @@ promises from inference alone.
 6. If `next_action.kind=format_migration_required`, run
    `aw capability migrate --project <project>`, then rerun
    `aw capability check --project <project>`.
-7. For root-driven execution, run `aw run --project <project> --max-ticks 1`
+7. For root-driven execution, run
+   `aw capability run --project <project> --non-interactive --max-ticks 1`
    and follow `invoke.command` plus `agent_prompt` until
    `completion.workflow_complete=true` or `requires_hitl=true`. Do not stop on
    `action=done` alone; a child root can be done while the parent still needs

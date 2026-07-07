@@ -90,6 +90,28 @@ requirementDiagram
     test_three_key_sort_orders - verifies -> R1
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Allow sort specs to carry up to four ordered keys."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Evaluate and compare multi-key sort tuples through the planner."
+  - path: projects/lumen/tests/planner_diff.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Verify three- and four-key sort behavior remains deterministic."
+```
+
 # Reviews
 
 ### Review 1
@@ -105,3 +127,20 @@ requirementDiagram
 
 - [logic] Correct contract matching the implementation.
 - [unit-test] Requirements bound to concrete tests.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Raise the multi-key materialized sort validation cap to four keys."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Cover three-key sort ordering and rejection above the four-key cap."
+```

@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:0975f5c4" tracker="pending-tracker" reason="gRPC client over TLS-to-real-host, routed through the MITM, reaches the local emulator + sink; trailer forwarding proven by the call succeeding."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_grpc_mitm_routing-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Integration test for network sandbox v2: transparent gRPC routing.
 //!
 //! Drives a real gRPC call to `https://cloudtasks.googleapis.com` THROUGH the
@@ -50,6 +51,7 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_grpc_mitm_routing-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -287,4 +289,4 @@ async fn grpc_routed_through_mitm_reaches_emulator() {
         "missing task body (reuse): {got2}"
     );
 }
-// HANDWRITE-END
+// CODEGEN-END

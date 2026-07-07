@@ -110,80 +110,6 @@ fn read_issue_fixture(root: &std::path::Path, slug: &str) -> String {
     std::fs::read_to_string(issue_path(root, slug)).unwrap()
 }
 
-fn write_td_review_fixture(root: &std::path::Path, slug: &str, spec_rel: &str) {
-    std::fs::create_dir_all(root.join("projects/agentic-workflow/tech-design/surface/specs"))
-        .unwrap();
-    std::fs::create_dir_all(root.join(".aw")).unwrap();
-    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
-    write_issue_fixture(
-        root,
-        slug,
-        format!(
-            "---\n\
-             type: bug\n\
-             title: review dirty spec\n\
-             state: open\n\
-             labels: [\"type:bug\", \"project:agentic-workflow\"]\n\
-             phase: td_created\n\
-             branch: td-{slug}\n\
-             ---\n\n\
-             ## Problem\n\n\
-             Review apply must accept the dirty spec payload.\n"
-        ),
-    );
-    std::fs::write(
-        root.join(spec_rel),
-        "---\n\
-         id: review-dirty-spec\n\
-         fill_sections: [logic, changes]\n\
-         ---\n\n\
-         # Review Dirty Spec\n\n\
-         ## Logic\n\
-         <!-- type: logic lang: mermaid -->\n\n\
-         ```mermaid\n\
-         ---\n\
-         id: review-dirty-spec-logic\n\
-         entry: start\n\
-         nodes:\n\
-           start:\n\
-             kind: start\n\
-             label: \"start\"\n\
-           done:\n\
-             kind: terminal\n\
-             label: \"done\"\n\
-         edges:\n\
-           - from: start\n\
-             to: done\n\
-             label: ok\n\
-         ---\n\
-         flowchart TD\n\
-             start([start]) --> done([done])\n\
-         ```\n\n\
-         ## Changes\n\
-         <!-- type: changes lang: yaml -->\n\n\
-         ```yaml\n\
-         changes:\n\
-           - path: projects/agentic-workflow/src/cli/td.rs\n\
-             action: modify\n\
-             impl_mode: hand-written\n\
-             description: Accept the dirty spec path for review apply.\n\
-         ```\n",
-    )
-    .unwrap();
-}
-
-fn append_needs_revision_review(root: &std::path::Path, spec_rel: &str) {
-    let spec_path = root.join(spec_rel);
-    let mut spec = std::fs::read_to_string(&spec_path).unwrap();
-    spec.push_str(
-        "\n# Reviews\n\n\
-         ## Review 1\n\
-         **Verdict:** needs-revision\n\n\
-         - [logic] Exercise the dirty spec handoff path.\n",
-    );
-    std::fs::write(spec_path, spec).unwrap();
-}
-
 /// `td init` in InPlace mode should switch the host repo from `main` to branch
 /// `td-<slug>` and NOT provision a `.aw/worktrees/td-<slug>/` dir.
 #[test]
@@ -441,6 +367,151 @@ fn td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file() {
     );
     let updated = read_issue_fixture(root, legacy_slug);
     assert!(updated.contains("branch: td-1887"), "{updated}");
+}
+
+/// Issue #939: `aw td create` must record the spec path it provisions/locates
+/// for the issue in `Issue.implements`, so `cb.rs`'s tier-1
+/// `Issue.implements` scope resolution (#854) has real data instead of
+/// always falling through to tier-3 derived-path guessing. Uses an explicit
+/// `--spec-path` so the recorded value is deterministic rather than
+/// depending on `default_spec_path_for_issue_in_project`'s derivation.
+#[test]
+fn td_create_records_spec_path_in_issue_implements() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
+    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+
+    let slug = "demo-939-implements-test";
+    let issue_body = format!(
+        "---\n\
+         slug: {slug}\n\
+         title: demo 939 implements flow\n\
+         state: open\n\
+         type: enhancement\n\
+         labels: [\"project:agentic-workflow\"]\n\
+         ---\n\n# Body\n",
+    );
+    write_issue_fixture(root, slug, issue_body);
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap"])
+        .status()
+        .unwrap();
+
+    let spec_path = "custom/td-939-implements-test.md";
+    let out = Command::new(&bin)
+        .arg("td")
+        .arg("create")
+        .arg(slug)
+        .arg("--spec-path")
+        .arg(spec_path)
+        .current_dir(root)
+        .output()
+        .expect("run aw td create");
+    assert!(
+        out.status.success(),
+        "td create should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let updated_issue = read_issue_fixture(root, slug);
+    assert!(
+        updated_issue.contains("implements:") && updated_issue.contains(spec_path),
+        "td create must record --spec-path in Issue.implements:\n{}",
+        updated_issue
+    );
+}
+
+/// Issue #939 idempotency: an issue that already carries the target spec
+/// path in `Issue.implements` (e.g. adopted from a prior partial run) must
+/// not gain a duplicate entry when `aw td create` provisions it. Pre-seeds
+/// `implements` directly in the fixture rather than issuing two live CLI
+/// calls, since a bare (non-`--apply`) repeat `aw td create` call requires a
+/// fully clean tree that the first call's own uncommitted section payload
+/// file would otherwise trip.
+#[test]
+fn td_create_does_not_duplicate_existing_implements_entry() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::create_dir_all(root.join(".aw/tech-design")).unwrap();
+    std::fs::write(root.join(".aw/config.toml"), "").unwrap();
+
+    let slug = "demo-939-implements-idempotent-test";
+    let spec_path = "custom/td-939-implements-idempotent-test.md";
+    let issue_body = format!(
+        "---\n\
+         slug: {slug}\n\
+         title: demo 939 implements idempotency\n\
+         state: open\n\
+         type: enhancement\n\
+         labels: [\"project:agentic-workflow\"]\n\
+         implements: [\"{spec_path}\"]\n\
+         ---\n\n# Body\n",
+    );
+    write_issue_fixture(root, slug, issue_body);
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap"])
+        .status()
+        .unwrap();
+
+    let out = Command::new(&bin)
+        .arg("td")
+        .arg("create")
+        .arg(slug)
+        .arg("--spec-path")
+        .arg(spec_path)
+        .current_dir(root)
+        .output()
+        .expect("run aw td create");
+    assert!(
+        out.status.success(),
+        "td create should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let updated_issue = read_issue_fixture(root, slug);
+    // Scope the count to the YAML frontmatter only: the issue body also
+    // carries a `<!-- score:workflow-state -->` comment block whose
+    // `expected_command`/`dirty_paths` fields legitimately echo the same
+    // `--spec-path` string, which would otherwise inflate a whole-file
+    // substring count without any `implements` duplication at all.
+    let frontmatter = updated_issue.splitn(3, "---").nth(1).unwrap_or("");
+    assert_eq!(
+        frontmatter.matches(spec_path).count(),
+        1,
+        "implements must not duplicate a spec path the issue already carried:\n{}",
+        updated_issue
+    );
 }
 
 /// In InPlace mode, repeated `enter_workspace_for_verb(provision_if_missing=false)`

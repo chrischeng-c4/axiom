@@ -1,14 +1,7 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Use git root as project directory
+# /jet:build:debug — thin wrapper over jet's canonical build script.
+# projects/jet/build.sh owns toolchain selection, the debug build, and install.
 cd "$(git rev-parse --show-toplevel)"
-
-cargo build -p jet && \
-  rm -f ~/.cargo/bin/jet && cp target/debug/jet ~/.cargo/bin/jet && chmod +x ~/.cargo/bin/jet && \
-  codesign -s - -f ~/.cargo/bin/jet 2>/dev/null || true
-
-echo "Installed: $(~/.cargo/bin/jet --version 2>/dev/null || echo 'jet')"
-
-echo ""
-echo "Build complete."
+exec projects/jet/build.sh debug

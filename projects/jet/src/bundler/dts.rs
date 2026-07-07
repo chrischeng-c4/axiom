@@ -1,9 +1,10 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d172c696" tracker="pending-tracker" reason="New isolatedDeclarations-style declaration emitter: parse a library entry with tree-sitter-typescript, walk top-level exported declarations, emit type/interface/enum decls verbatim and `export declare` signatures for explicitly-typed exported values, error on untyped exports, and return the assembled `<entry>.d.ts` text (external type imports preserved)."
+// <HANDWRITE gap="missing-generator:logic:d172c696" tracker="standardize-gap-projects-jet-src-bundler-dts-rs" reason="New isolatedDeclarations-style declaration emitter: parse a library entry with tree-sitter-typescript, walk top-level exported declarations, emit type/interface/enum decls verbatim and `export declare` signatures for explicitly-typed exported values, error on untyped exports, and return the assembled `<entry>.d.ts` text (external type imports preserved).">
 //! isolatedDeclarations-style `.d.ts` emission for `jet build --lib`.
 //!
-//! Mirrors the TypeScript 5.5 `isolatedDeclarations` model: declarations are
-//! emitted from the *explicit* types at the export boundary, never from full
-//! type inference. Per library entry we:
+//! Mirrors the TypeScript 5.5 `isolatedDeclarations` model where practical:
+//! declarations are emitted from explicit export-boundary types or from a small
+//! deterministic set of local return-expression inferences, never from a whole
+//! program type-check. Per library entry we:
 //!
 //!   1. tree-sitter parse the entry source (TSX grammar, a superset that also
 //!      parses plain TS/JS),
@@ -15,7 +16,8 @@
 //!      `#private` members dropped, `async` stripped from ambient methods,
 //!   4. for exported values (`export const`, `export function`) emit an
 //!      `export declare`-style signature with the body dropped — requiring an
-//!      explicit type annotation (isolatedDeclarations: error otherwise),
+//!      explicit type annotation or a locally inferable return type
+//!      (isolatedDeclarations: error otherwise),
 //!   5. preserve `import`/`export … from "pkg"` re-exports so external type
 //!      references still resolve,
 //!   6. assemble and return the entry's `.d.ts` text.
@@ -24,9 +26,40 @@
 //! `// TODO(#171 follow-up)` marker rather than crashing the build.
 //!
 //! @issue #171
+//! @issue #722
+//! @issue #784
+//! @issue #796
+//! @issue #797
+//! @issue #799
+//! @issue #937
 
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
 use tree_sitter::Node;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclarationEmit {
+    pub(crate) text: String,
+    pub(crate) diagnostics: Vec<DtsDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DtsDiagnostic {
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+    pub(crate) message: String,
+}
+
+impl DtsDiagnostic {
+    fn new(node: Node, message: String) -> Self {
+        let position = node.start_position();
+        Self {
+            line: position.row + 1,
+            column: position.column + 1,
+            message,
+        }
+    }
+}
 
 /// Emit the `.d.ts` text for one library entry's source.
 ///
@@ -34,10 +67,23 @@ use tree_sitter::Node;
 /// returned string is the full `.d.ts` content (imports preserved, exported
 /// declarations reduced to type-only signatures).
 ///
-/// Errors (isolatedDeclarations contract): an exported `const`/`let`/`var` or
-/// `function` that lacks an explicit type annotation cannot have its type
-/// emitted without inference, so this returns `Err`.
+/// Errors (isolatedDeclarations contract): an exported `const`/`let`/`var` that
+/// lacks an explicit type annotation, or an exported function/member whose
+/// return type is neither explicit nor locally inferable, cannot have its type
+/// emitted safely, so this returns `Err`.
 pub fn emit_declarations(entry_source: &str) -> Result<String> {
+    let emit = emit_declarations_with_diagnostics(entry_source)?;
+    if emit.diagnostics.is_empty() {
+        Ok(emit.text)
+    } else {
+        Err(anyhow!(format_diagnostics(&emit.diagnostics)))
+    }
+}
+
+/// Emit declaration text plus all isolatedDeclarations diagnostics for one
+/// source module. Fatal parser/setup errors still return `Err`; declaration
+/// contract violations are collected in source order.
+pub(crate) fn emit_declarations_with_diagnostics(entry_source: &str) -> Result<DeclarationEmit> {
     let mut parser = tree_sitter::Parser::new();
     let language: tree_sitter::Language = tree_sitter_typescript::LANGUAGE_TSX.into();
     parser
@@ -49,6 +95,7 @@ pub fn emit_declarations(entry_source: &str) -> Result<String> {
     let root = tree.root_node();
 
     let mut out = String::new();
+    let mut diagnostics = Vec::new();
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
         match child.kind() {
@@ -59,7 +106,7 @@ pub fn emit_declarations(entry_source: &str) -> Result<String> {
                 push_line(&mut out, node_text(child, entry_source).trim_end());
             }
             "export_statement" => {
-                emit_export_statement(child, entry_source, &mut out)?;
+                emit_export_statement(child, entry_source, &mut out, &mut diagnostics)?;
             }
             // Top-level (non-exported) declarations are NOT part of the public
             // API surface, so they are dropped from the `.d.ts`. The exception
@@ -72,13 +119,41 @@ pub fn emit_declarations(entry_source: &str) -> Result<String> {
         }
     }
 
-    Ok(out)
+    Ok(DeclarationEmit {
+        text: out,
+        diagnostics,
+    })
+}
+
+fn format_diagnostics(diagnostics: &[DtsDiagnostic]) -> String {
+    let mut message = format!(
+        "dts: isolatedDeclarations found {} error(s)",
+        diagnostics.len()
+    );
+    for diagnostic in diagnostics {
+        message.push_str(&format!(
+            "\n  - line {}:{}: {}",
+            diagnostic.line, diagnostic.column, diagnostic.message
+        ));
+    }
+    message
 }
 
 /// Emit one top-level `export_statement` into `out`.
-fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<()> {
+fn emit_export_statement(
+    node: Node,
+    source: &str,
+    out: &mut String,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<()> {
     // `export { A, B }` / `export { A } from "./x"` / `export type { … }` /
     // `export * from "./x"` — re-export forms have no inner declaration node.
+    if let Some(lines) = svgr_reexport_declarations(node, source) {
+        for line in lines {
+            push_line(out, &line);
+        }
+        return Ok(());
+    }
     if let Some(line) = reexport_line(node, source) {
         push_line(out, &line);
         return Ok(());
@@ -103,7 +178,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
             }
             "class_declaration" | "abstract_class_declaration" => {
                 let is_abstract = child.kind() == "abstract_class_declaration";
-                let decl = emit_class_declaration(child, source);
+                let decl = emit_class_declaration(child, source, diagnostics)?;
                 // Ambient classes are valid as `export declare class` /
                 // `export declare abstract class`; a default-exported class is
                 // emitted as `export default class` (no `declare` — TS forbids
@@ -120,13 +195,14 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
                 return Ok(());
             }
             "function_declaration" | "generator_function_declaration" => {
-                let sig = emit_function_signature(child, source)?;
-                let prefix = if is_default {
-                    "export default function "
-                } else {
-                    "export declare function "
-                };
-                push_line(out, &format!("{prefix}{sig};"));
+                if let Some(sig) = emit_function_signature(child, source, diagnostics)? {
+                    let prefix = if is_default {
+                        "export default function "
+                    } else {
+                        "export declare function "
+                    };
+                    push_line(out, &format!("{prefix}{sig};"));
+                }
                 return Ok(());
             }
             // `export function f(): R;` with no body already parses as a
@@ -143,7 +219,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
                 return Ok(());
             }
             "lexical_declaration" | "variable_declaration" => {
-                emit_value_declaration(child, source, out)?;
+                emit_value_declaration(child, source, out, diagnostics)?;
                 return Ok(());
             }
             // `export default <expr>` (identifier / call / object). Without an
@@ -159,7 +235,7 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
             // statically determinable. Emit a synthetic `_default` of that
             // type and re-export it as the default.
             "as_expression" | "satisfies_expression" | "parenthesized_expression" if is_default => {
-                if let Some(ty) = default_export_annotated_type(child, source) {
+                if let Some(ty) = annotated_expression_type(child, source) {
                     push_line(out, &format!("declare const _default: {ty};"));
                     push_line(out, "export default _default;");
                     return Ok(());
@@ -195,13 +271,13 @@ fn emit_export_statement(node: Node, source: &str, out: &mut String) -> Result<(
 /// carries one: `expr as Type`, `expr satisfies Type`, or a parenthesized
 /// wrapper around either. Returns the type text, or `None` when the expression
 /// has no boundary annotation.
-fn default_export_annotated_type(node: Node, source: &str) -> Option<String> {
+fn annotated_expression_type(node: Node, source: &str) -> Option<String> {
     match node.kind() {
         // `(inner)` — the inner expression has no field name on this grammar,
         // so unwrap the first named child and recurse.
         "parenthesized_expression" => {
             let inner = first_named_child(node)?;
-            default_export_annotated_type(inner, source)
+            annotated_expression_type(inner, source)
         }
         // `expr as Type` / `expr satisfies Type` — the type is the trailing
         // named child (`type` field is not set on this grammar).
@@ -236,7 +312,12 @@ fn first_named_child<'a>(node: Node<'a>) -> Option<Node<'a>> {
 ///
 /// isolatedDeclarations: each declarator must carry an explicit type
 /// annotation; otherwise we cannot emit its declared type without inference.
-fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<()> {
+fn emit_value_declaration(
+    node: Node,
+    source: &str,
+    out: &mut String,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<()> {
     // `const` / `let` / `var` keyword text precedes the declarators.
     let kind_kw = leading_value_keyword(node, source).unwrap_or("const");
 
@@ -245,10 +326,14 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
         if child.kind() != "variable_declarator" {
             continue;
         }
-        let name = child
-            .child_by_field_name("name")
-            .map(|n| node_text(n, source))
-            .ok_or_else(|| anyhow!("dts: export {kind_kw} without a name"))?;
+        let Some(name_node) = child.child_by_field_name("name") else {
+            diagnostics.push(DtsDiagnostic::new(
+                child,
+                format!("export {kind_kw} without a name"),
+            ));
+            continue;
+        };
+        let name = node_text(name_node, source);
         let type_node = child.child_by_field_name("type");
         match type_node {
             Some(t) => {
@@ -261,10 +346,22 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
                 );
             }
             None => {
-                return Err(anyhow!(
-                    "dts: isolatedDeclarations error — exported `{kind_kw} {name}` \
-                     lacks an explicit type annotation; add `: <Type>` so its \
-                     declaration can be emitted without type inference"
+                if kind_kw == "const" {
+                    if let Some(inferred) = infer_variable_declarator_type(child, source) {
+                        push_line(
+                            out,
+                            &format!("export declare {kind_kw} {name}: {inferred};"),
+                        );
+                        continue;
+                    }
+                }
+                diagnostics.push(DtsDiagnostic::new(
+                    child,
+                    format!(
+                        "isolatedDeclarations error — exported `{kind_kw} {name}` \
+                         lacks an explicit type annotation; add `: <Type>` so its \
+                         declaration can be emitted without type inference"
+                    ),
                 ));
             }
         }
@@ -272,18 +369,286 @@ fn emit_value_declaration(node: Node, source: &str, out: &mut String) -> Result<
     Ok(())
 }
 
+fn infer_variable_declarator_type(node: Node, source: &str) -> Option<String> {
+    let value = node
+        .child_by_field_name("value")
+        .or_else(|| last_named_child(node))?;
+    if let Some(inferred) = annotated_expression_type(value, source) {
+        return Some(inferred);
+    }
+    if let Some(inferred) = infer_arrow_function_type(value, source) {
+        return Some(inferred);
+    }
+    infer_object_literal_type(value, source)
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#logic
+fn infer_arrow_function_type(node: Node, source: &str) -> Option<String> {
+    if node.kind() != "arrow_function" {
+        return None;
+    }
+
+    let params_node = node
+        .child_by_field_name("parameters")
+        .or_else(|| find_child_by_kind(node, "formal_parameters"))?;
+    let params = normalize_arrow_parameters_for_type(node_text(params_node, source).trim())?;
+
+    let ret_node = node.child_by_field_name("return_type")?;
+    let ret = node_text(ret_node, source);
+    let ret = ret.trim().trim_start_matches(':').trim();
+    if ret.is_empty() {
+        return None;
+    }
+
+    let type_params = node
+        .child_by_field_name("type_parameters")
+        .map(|n| node_text(n, source).trim().to_string())
+        .unwrap_or_default();
+    Some(format!("{type_params}{params} => {ret}"))
+}
+
+fn normalize_arrow_parameters_for_type(params: &str) -> Option<String> {
+    let inner = params
+        .trim()
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(params)
+        .trim();
+    if inner.is_empty() {
+        return Some("()".to_string());
+    }
+
+    let empty_param_types = HashMap::new();
+    let mut normalized = Vec::new();
+    for raw_param in split_top_level(inner, ',') {
+        let raw_param = raw_param.trim();
+        let is_rest = raw_param.starts_with("...");
+        let param_without_rest = raw_param.trim_start_matches("...").trim();
+        let (param_head, default_value) = split_once_top_level(param_without_rest, '=')
+            .map(|(left, right)| (left.trim(), Some(right.trim())))
+            .unwrap_or((param_without_rest, None));
+        let param = param_head.trim();
+        if param.is_empty() {
+            continue;
+        }
+        if let Some((name, ty)) = split_once_top_level(param, ':') {
+            let name = name.trim();
+            let ty = ty.trim();
+            if name.is_empty() || ty.is_empty() {
+                return None;
+            }
+            let optional = name.ends_with('?') || default_value.is_some();
+            let name = name.trim_end_matches('?').trim();
+            let is_binding_pattern = is_supported_binding_pattern(name);
+            if !is_identifier(name) && !is_binding_pattern {
+                return None;
+            }
+            if is_binding_pattern && optional {
+                return None;
+            }
+            let rest = if is_rest { "..." } else { "" };
+            let marker = if optional && !is_rest && !is_binding_pattern {
+                "?"
+            } else {
+                ""
+            };
+            normalized.push(format!("{rest}{name}{marker}: {ty}"));
+            continue;
+        }
+        let Some(default_value) = default_value else {
+            return None;
+        };
+        if is_rest {
+            return None;
+        }
+        let name = param.trim_end_matches('?').trim();
+        if !is_identifier(name) {
+            return None;
+        }
+        let ty = infer_expression_type(default_value, &empty_param_types)?;
+        normalized.push(format!("{name}?: {ty}"));
+    }
+    Some(format!("({})", normalized.join(", ")))
+}
+
+fn is_supported_binding_pattern(name: &str) -> bool {
+    (name.starts_with('{') && name.ends_with('}')) || (name.starts_with('[') && name.ends_with(']'))
+}
+
+fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
+    if node.kind() != "object" {
+        return None;
+    }
+    let text = node_text(node, source).trim();
+    let inner = text.strip_prefix('{')?.strip_suffix('}')?.trim();
+    if inner.is_empty() {
+        return Some("{}".to_string());
+    }
+
+    let mut members = Vec::new();
+    let empty_param_types = HashMap::new();
+    for raw_property in split_top_level(inner, ',') {
+        let property = raw_property.trim();
+        if property.is_empty() {
+            continue;
+        }
+        if property.starts_with("...") || property.starts_with('[') {
+            return None;
+        }
+        if let Some(member) = infer_object_method_member_type(property) {
+            members.push(format!("    {member};"));
+            continue;
+        }
+        let (key, value) = split_once_top_level(property, ':')?;
+        let key = key.trim();
+        if !is_supported_object_literal_key(key) {
+            return None;
+        }
+        let ty = infer_arrow_function_type_from_text(value.trim())
+            .or_else(|| infer_expression_type(value.trim(), &empty_param_types))?;
+        members.push(format!("    {key}: {ty};"));
+    }
+
+    if members.is_empty() {
+        return Some("{}".to_string());
+    }
+    Some(format!("{{\n{}\n}}", members.join("\n")))
+}
+
+fn is_supported_object_literal_key(key: &str) -> bool {
+    is_identifier(key) || is_string_literal(key) || is_number_literal(key)
+}
+
+fn infer_object_method_member_type(property: &str) -> Option<String> {
+    let open = property.find('(')?;
+    let close = matching_delimiter(property, open, '(', ')')?;
+    let prefix = property[..open].trim();
+    let name = prefix.strip_prefix("async").unwrap_or(prefix).trim();
+    if !is_supported_object_literal_key(name) {
+        return None;
+    }
+    let params = &property[open..=close];
+    let rest = property[close + 1..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let body_start = rest.find('{')?;
+    let ret = rest[..body_start].trim();
+    if ret.is_empty() {
+        return None;
+    }
+    Some(format!("{name}{params}: {ret}"))
+}
+
+fn infer_arrow_function_type_from_text(expr: &str) -> Option<String> {
+    let (left, _) = split_once_top_level_arrow(expr)?;
+    let (params, ret) = split_arrow_head_params_and_return(left)?;
+    let params = normalize_arrow_parameters_for_type(params.trim())?;
+    let ret = ret.trim();
+    if ret.is_empty() {
+        return None;
+    }
+    Some(format!("{params} => {ret}"))
+}
+
+fn split_arrow_head_params_and_return(head: &str) -> Option<(&str, &str)> {
+    let head = head.trim();
+    let head = head.strip_prefix("async").unwrap_or(head).trim_start();
+    if head.starts_with('(') {
+        let close = matching_delimiter(head, 0, '(', ')')?;
+        let params = &head[..=close];
+        let rest = head[close + 1..].trim_start();
+        let ret = rest.strip_prefix(':')?.trim_start();
+        return Some((params, ret));
+    }
+    split_once_top_level(head, ':')
+}
+
+fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth -= 1,
+            '=' if depth == 0 && text[idx..].starts_with("=>") => {
+                return Some((&text[..idx], &text[idx + 2..]));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn matching_delimiter(text: &str, open_idx: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices().skip_while(|(idx, _)| *idx < open_idx) {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            _ if ch == open => depth += 1,
+            _ if ch == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Build a function signature string (name + type params + params + return
 /// type) with the body dropped.
 ///
 /// isolatedDeclarations: an exported function should declare its return type
-/// explicitly. We do not hard-error on a missing return type (a `void`-bodied
-/// helper is common); instead the signature is emitted as written and the
-/// return annotation, if present, is preserved verbatim.
-fn emit_function_signature(node: Node, source: &str) -> Result<String> {
-    let name = node
-        .child_by_field_name("name")
-        .map(|n| node_text(n, source))
-        .ok_or_else(|| anyhow!("dts: exported function without a name"))?;
+/// explicitly. For compatibility with `tsc --declaration` on common library
+/// shapes, the emitter also infers a small set of local return expressions
+/// (`number`, `string`, `boolean`, primitive unions, and `void`) instead of
+/// silently turning them into implicit `any`.
+fn emit_function_signature(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        diagnostics.push(DtsDiagnostic::new(
+            node,
+            "exported function without a name".to_string(),
+        ));
+        return Ok(None);
+    };
+    let name = node_text(name_node, source);
 
     let type_params = node
         .child_by_field_name("type_parameters")
@@ -293,12 +658,27 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
         .child_by_field_name("parameters")
         .map(|n| node_text(n, source))
         .unwrap_or("()");
-    let ret = node
-        .child_by_field_name("return_type")
-        .map(|n| node_text(n, source))
-        .unwrap_or("");
+    let ret = match node.child_by_field_name("return_type") {
+        Some(n) => node_text(n, source).to_string(),
+        None => infer_function_return_type(node, source)?
+            .map(|ty| format!(": {ty}"))
+            .unwrap_or_else(|| {
+                diagnostics.push(DtsDiagnostic::new(
+                    node,
+                    format!(
+                        "isolatedDeclarations error — exported function `{name}` \
+                         lacks an explicit or locally inferable return type; add \
+                         `: <Type>` so its declaration can be emitted safely"
+                    ),
+                ));
+                String::new()
+            }),
+    };
+    if ret.is_empty() && !matches!(node.child_by_field_name("return_type"), Some(_)) {
+        return Ok(None);
+    }
 
-    Ok(format!("{name}{type_params}{params}{ret}"))
+    Ok(Some(format!("{name}{type_params}{params}{ret}")))
 }
 
 /// Emit a class declaration reduced to its public ambient surface.
@@ -318,7 +698,11 @@ fn emit_function_signature(node: Node, source: &str) -> Result<String> {
 ///   * `private` / `protected` accessibility members are dropped, as are
 ///     `#private` fields and methods (not part of the public ambient surface
 ///     for an isolatedDeclarations-style emit).
-fn emit_class_declaration(node: Node, source: &str) -> String {
+fn emit_class_declaration(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<String> {
     let name = node
         .child_by_field_name("name")
         .map(|n| node_text(n, source))
@@ -346,55 +730,67 @@ fn emit_class_declaration(node: Node, source: &str) -> String {
     let Some(body) = node.child_by_field_name("body") else {
         // No body field — emit an empty ambient class shape.
         header.push_str(" {\n}");
-        return header;
+        return Ok(header);
     };
 
     let mut members = String::new();
     let mut cursor = body.walk();
     for member in body.named_children(&mut cursor) {
-        if let Some(line) = reduce_class_member(member, source) {
+        if let Some(line) = reduce_class_member(member, source, diagnostics)? {
             members.push_str("    ");
             members.push_str(&line);
             members.push('\n');
         }
     }
 
-    if members.is_empty() {
+    let decl = if members.is_empty() {
         format!("{header} {{\n}}")
     } else {
         format!("{header} {{\n{members}}}")
-    }
+    };
+    Ok(decl)
 }
 
 /// Reduce one class-body member to its ambient signature line (without the
 /// trailing newline / leading indentation), or `None` when the member is
 /// dropped (`private` / `protected` / `#private`, or an unreducible shape).
-fn reduce_class_member(node: Node, source: &str) -> Option<String> {
-    match node.kind() {
-        "method_definition" => reduce_method(node, source),
-        "public_field_definition" => reduce_field(node, source),
+fn reduce_class_member(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
+    let line = match node.kind() {
+        "method_definition" => reduce_method(node, source, diagnostics),
+        "public_field_definition" => reduce_field(node, source, diagnostics),
         // index signatures (`[key: string]: T;`) are already declaration-only.
-        "index_signature" => Some(format!(
+        "index_signature" => Ok(Some(format!(
             "{};",
             node_text(node, source).trim_end_matches(';')
-        )),
+        ))),
         // Static initialization blocks, decorators-only members, etc. carry no
         // public type surface — drop them.
-        _ => None,
-    }
+        _ => Ok(None),
+    }?;
+    Ok(line)
 }
 
 /// Reduce a `method_definition` to a signature line. Drops the body and
 /// `async`; keeps `static` / `get` / `set` / `readonly` modifiers.
-fn reduce_method(node: Node, source: &str) -> Option<String> {
+fn reduce_method(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
     // `#private` methods are never part of the public surface.
-    let name_node = node.child_by_field_name("name")?;
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
     if name_node.kind() == "private_property_identifier" {
-        return None;
+        return Ok(None);
     }
     // `private` / `protected` members are dropped from the ambient surface.
     if has_dropped_accessibility(node, source) {
-        return None;
+        return Ok(None);
     }
 
     let name = node_text(name_node, source);
@@ -435,24 +831,452 @@ fn reduce_method(node: Node, source: &str) -> Option<String> {
         .child_by_field_name("parameters")
         .map(|n| node_text(n, source))
         .unwrap_or("()");
-    let ret = node
-        .child_by_field_name("return_type")
-        .map(|n| node_text(n, source))
-        .unwrap_or("");
+    let is_constructor = name == "constructor";
+    let is_setter = has_child_kind(node, "set");
+    let ret = match node.child_by_field_name("return_type") {
+        Some(n) => node_text(n, source).to_string(),
+        None if is_constructor || is_setter => String::new(),
+        None => infer_function_return_type(node, source)?
+            .map(|ty| format!(": {ty}"))
+            .unwrap_or_else(|| {
+                diagnostics.push(DtsDiagnostic::new(
+                    node,
+                    format!(
+                        "isolatedDeclarations error — exported class member `{name}` \
+                         lacks an explicit or locally inferable return type; add \
+                         `: <Type>` so its declaration can be emitted safely"
+                    ),
+                ));
+                String::new()
+            }),
+    };
+    if ret.is_empty()
+        && !is_constructor
+        && !is_setter
+        && node.child_by_field_name("return_type").is_none()
+    {
+        return Ok(None);
+    }
 
-    Some(format!("{modifiers}{name}{optional}{params}{ret};"))
+    Ok(Some(format!("{modifiers}{name}{optional}{params}{ret};")))
+}
+
+/// Infer a safe return type for a function-like node from its local body. This
+/// is intentionally bounded: it handles primitive literal returns, typed
+/// parameter identifiers, template strings, and arithmetic/string/boolean
+/// binary expressions. Unknown shapes return `None`, keeping the build
+/// fail-loud instead of emitting `any`.
+fn infer_function_return_type(node: Node, source: &str) -> Result<Option<String>> {
+    let param_types = node
+        .child_by_field_name("parameters")
+        .map(|n| parse_parameter_type_map(node_text(n, source)))
+        .unwrap_or_default();
+    let Some(body) = node
+        .child_by_field_name("body")
+        .or_else(|| find_child_by_kind(node, "statement_block"))
+    else {
+        return Ok(None);
+    };
+
+    let mut returns = Vec::new();
+    collect_return_statement_types(body, source, &param_types, &mut returns);
+    if returns.is_empty() {
+        return Ok(Some("void".to_string()));
+    }
+    union_return_types(returns)
+}
+
+fn collect_return_statement_types(
+    node: Node,
+    source: &str,
+    param_types: &HashMap<String, String>,
+    out: &mut Vec<Option<String>>,
+) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "return_statement" => out.push(infer_return_statement_type(child, source, param_types)),
+            kind if nested_return_scope(kind) => {}
+            _ => collect_return_statement_types(child, source, param_types, out),
+        }
+    }
+}
+
+fn nested_return_scope(kind: &str) -> bool {
+    matches!(
+        kind,
+        "function_declaration"
+            | "generator_function_declaration"
+            | "function"
+            | "function_expression"
+            | "generator_function"
+            | "arrow_function"
+            | "method_definition"
+            | "class_declaration"
+            | "abstract_class_declaration"
+            | "class"
+    )
+}
+
+fn infer_return_statement_type(
+    node: Node,
+    source: &str,
+    param_types: &HashMap<String, String>,
+) -> Option<String> {
+    if let Some(expr_node) = first_named_child(node) {
+        if let Some(ty) = annotated_expression_type(expr_node, source) {
+            return Some(ty);
+        }
+    }
+
+    let text = node_text(node, source).trim();
+    let expr = text
+        .strip_prefix("return")
+        .unwrap_or(text)
+        .trim()
+        .trim_end_matches(';')
+        .trim();
+    if expr.is_empty() {
+        return Some("void".to_string());
+    }
+    infer_expression_type(expr, param_types)
+}
+
+fn union_return_types(types: Vec<Option<String>>) -> Result<Option<String>> {
+    let mut known = Vec::new();
+    for ty in types {
+        let Some(ty) = ty else {
+            return Ok(None);
+        };
+        known.push(ty);
+    }
+    if known.is_empty() {
+        return Ok(Some("void".to_string()));
+    }
+
+    let mixed_with_void = known.len() > 1 && known.iter().any(|ty| ty == "void");
+    let mut unique = Vec::new();
+    for ty in known {
+        let ty = if mixed_with_void && ty == "void" {
+            "undefined".to_string()
+        } else {
+            ty
+        };
+        if !unique.iter().any(|seen| seen == &ty) {
+            unique.push(ty);
+        }
+    }
+    Ok(Some(unique.join(" | ")))
+}
+
+fn parse_parameter_type_map(params: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let inner = params
+        .trim()
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(params)
+        .trim();
+    if inner.is_empty() {
+        return out;
+    }
+
+    for raw_param in split_top_level(inner, ',') {
+        let param_head = split_once_top_level(&raw_param, '=')
+            .map(|(left, _)| left)
+            .unwrap_or(raw_param.as_str());
+        let param = param_head.trim().trim_start_matches("...").trim();
+        let Some((name, ty)) = split_once_top_level(param, ':') else {
+            continue;
+        };
+        let name = name.trim().trim_end_matches('?').trim();
+        if is_identifier(name) {
+            out.insert(name.to_string(), ty.trim().to_string());
+        }
+    }
+    out
+}
+
+fn infer_expression_type(expr: &str, param_types: &HashMap<String, String>) -> Option<String> {
+    let expr = trim_wrapping_parens(expr.trim());
+    if expr.is_empty() {
+        return None;
+    }
+    if is_string_literal(expr) || expr.starts_with('`') {
+        return Some("string".to_string());
+    }
+    if is_number_literal(expr) {
+        return Some("number".to_string());
+    }
+    if matches!(expr, "true" | "false") {
+        return Some("boolean".to_string());
+    }
+    if matches!(expr, "null" | "undefined") {
+        return Some(expr.to_string());
+    }
+    if is_identifier(expr) {
+        return param_types.get(expr).cloned();
+    }
+
+    if let Some((left, op, right)) = split_binary_expression(expr) {
+        let left_ty = infer_expression_type(left, param_types)?;
+        let right_ty = infer_expression_type(right, param_types)?;
+        return match op {
+            "+" if left_ty == "string" || right_ty == "string" => Some("string".to_string()),
+            "+" if left_ty == "number" && right_ty == "number" => Some("number".to_string()),
+            "-" | "*" | "/" | "%" if left_ty == "number" && right_ty == "number" => {
+                Some("number".to_string())
+            }
+            "===" | "!==" | "==" | "!=" | "<" | "<=" | ">" | ">=" => Some("boolean".to_string()),
+            "&&" | "||" if left_ty == right_ty => Some(left_ty),
+            "??" if left_ty == right_ty => Some(left_ty),
+            _ => None,
+        };
+    }
+
+    None
+}
+
+fn trim_wrapping_parens(mut expr: &str) -> &str {
+    loop {
+        let trimmed = expr.trim();
+        if !(trimmed.starts_with('(') && trimmed.ends_with(')')) {
+            return trimmed;
+        }
+        if !outer_parens_wrap(trimmed) {
+            return trimmed;
+        }
+        expr = &trimmed[1..trimmed.len() - 1];
+    }
+}
+
+fn outer_parens_wrap(expr: &str) -> bool {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in expr.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && idx != expr.len() - 1 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+fn is_string_literal(expr: &str) -> bool {
+    (expr.starts_with('"') && expr.ends_with('"'))
+        || (expr.starts_with('\'') && expr.ends_with('\''))
+}
+
+fn is_number_literal(expr: &str) -> bool {
+    let expr = expr.trim();
+    if expr.is_empty() {
+        return false;
+    }
+    let expr = expr.strip_prefix('-').unwrap_or(expr);
+    expr.parse::<f64>().is_ok()
+        || expr.starts_with("0x")
+        || expr.starts_with("0b")
+        || expr.starts_with("0o")
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
+fn split_binary_expression(expr: &str) -> Option<(&str, &str, &str)> {
+    const GROUPS: &[&[&str]] = &[
+        &["??", "||"],
+        &["&&"],
+        &["===", "!==", "==", "!=", "<=", ">=", "<", ">"],
+        &["+", "-"],
+        &["*", "/", "%"],
+    ];
+    for ops in GROUPS {
+        if let Some((idx, op)) = find_top_level_operator(expr, ops) {
+            let left = expr[..idx].trim();
+            let right = expr[idx + op.len()..].trim();
+            if !left.is_empty() && !right.is_empty() {
+                return Some((left, op, right));
+            }
+        }
+    }
+    None
+}
+
+fn find_top_level_operator<'a>(expr: &str, ops: &'a [&str]) -> Option<(usize, &'a str)> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut found = None;
+    for (idx, ch) in expr.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if depth == 0 => {
+                for op in ops {
+                    if expr[idx..].starts_with(op) && !is_unary_sign(expr, idx, op) {
+                        found = Some((idx, *op));
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+fn is_unary_sign(expr: &str, idx: usize, op: &str) -> bool {
+    if op != "+" && op != "-" {
+        return false;
+    }
+    let left = expr[..idx].trim_end();
+    left.is_empty()
+        || left.ends_with('(')
+        || left.ends_with('[')
+        || left.ends_with('{')
+        || left.ends_with(',')
+        || left.ends_with('=')
+        || left.ends_with(':')
+        || left.ends_with('?')
+        || left.ends_with('+')
+        || left.ends_with('-')
+        || left.ends_with('*')
+        || left.ends_with('/')
+        || left.ends_with('%')
+        || left.ends_with('!')
+        || left.ends_with('<')
+        || left.ends_with('>')
+        || left.ends_with('&')
+        || left.ends_with('|')
+}
+
+fn split_top_level(text: &str, delimiter: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth -= 1,
+            _ if ch == delimiter && depth == 0 => {
+                parts.push(text[start..idx].to_string());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(text[start..].to_string());
+    parts
+}
+
+fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, &'a str)> {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth -= 1,
+            _ if ch == delimiter && depth == 0 => {
+                return Some((&text[..idx], &text[idx + ch.len_utf8()..]));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Reduce a `public_field_definition` to a `field: Type;` line, dropping the
 /// initializer. Keeps `static` / `readonly`. Drops `private` / `protected` /
 /// `#private` fields.
-fn reduce_field(node: Node, source: &str) -> Option<String> {
-    let name_node = node.child_by_field_name("name")?;
+fn reduce_field(
+    node: Node,
+    source: &str,
+    diagnostics: &mut Vec<DtsDiagnostic>,
+) -> Result<Option<String>> {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
     if name_node.kind() == "private_property_identifier" {
-        return None;
+        return Ok(None);
     }
     if has_dropped_accessibility(node, source) {
-        return None;
+        return Ok(None);
     }
 
     let name = node_text(name_node, source);
@@ -492,8 +1316,19 @@ fn reduce_field(node: Node, source: &str) -> Option<String> {
         .child_by_field_name("type")
         .map(|n| node_text(n, source).trim().to_string())
         .unwrap_or_default();
+    if ty.is_empty() {
+        diagnostics.push(DtsDiagnostic::new(
+            node,
+            format!(
+                "isolatedDeclarations error — exported class field `{name}` \
+                 lacks an explicit type annotation; add `: <Type>` so its \
+                 declaration can be emitted without type inference"
+            ),
+        ));
+        return Ok(None);
+    }
 
-    Some(format!("{modifiers}{name}{marker}{ty};"))
+    Ok(Some(format!("{modifiers}{name}{marker}{ty};")))
 }
 
 /// True when the member carries a `private` or `protected` accessibility
@@ -529,6 +1364,71 @@ fn reexport_line(node: Node, source: &str) -> Option<String> {
     }
     // A re-export never wraps a declaration node; emit verbatim.
     Some(node_text(node, source).trim_end().to_string())
+}
+
+fn svgr_reexport_declarations(node: Node, source: &str) -> Option<Vec<String>> {
+    if !has_child_kind(node, "export_clause") {
+        return None;
+    }
+    let text = node_text(node, source).trim_end();
+    let spec = export_from_specifier(text)?;
+    if !is_svg_specifier_for_dts(spec) {
+        return None;
+    }
+    let aliases = svgr_reexport_aliases(text);
+    if aliases.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec!["import type { FC, SVGProps } from \"react\";".to_string()];
+    for alias in aliases {
+        lines.push(format!(
+            "export declare const {alias}: FC<SVGProps<SVGSVGElement>>;"
+        ));
+    }
+    Some(lines)
+}
+
+fn export_from_specifier(text: &str) -> Option<&str> {
+    let after = text.rsplit_once(" from ")?.1.trim();
+    let quote = after.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &after[1..];
+    let end = rest.find(quote)?;
+    Some(&rest[..end])
+}
+
+fn is_svg_specifier_for_dts(spec: &str) -> bool {
+    let path = spec.split(['?', '#']).next().unwrap_or(spec);
+    path.ends_with(".svg")
+}
+
+fn svgr_reexport_aliases(text: &str) -> Vec<String> {
+    let Some(open) = text.find('{') else {
+        return Vec::new();
+    };
+    let Some(close) = text[open..].find('}').map(|idx| open + idx) else {
+        return Vec::new();
+    };
+    text[open + 1..close]
+        .split(',')
+        .filter_map(|binding| svgr_reexport_alias(binding.trim()))
+        .collect()
+}
+
+fn svgr_reexport_alias(binding: &str) -> Option<String> {
+    let mut parts = binding.split_whitespace();
+    let first = parts.next()?;
+    if first != "ReactComponent" {
+        return None;
+    }
+    match (parts.next(), parts.next(), parts.next()) {
+        (None, None, None) => Some(first.to_string()),
+        (Some("as"), Some(alias), None) if is_identifier(alias) => Some(alias.to_string()),
+        _ => None,
+    }
 }
 
 /// Detect `export * from "x"` whose `*` is an anonymous token, not a named
@@ -617,6 +1517,56 @@ mod tests {
     }
 
     #[test]
+    fn infers_exported_function_number_return() {
+        let src = "export function add(a: number, b: number) { return a + b; }\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare function add(a: number, b: number): number;"),
+            "function return inferred from typed numeric params, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_function_as_expression_return() {
+        let src = r#"export interface UploadApi {
+    open(): Promise<void>;
+}
+export function createUploadApi() {
+    const api = {};
+    return api as UploadApi;
+}
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare function createUploadApi(): UploadApi;"),
+            "return as-expression should use its asserted type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_class_member_string_return() {
+        let src = r#"export class Greeter {
+    greet(name: string) { return `hi ${name}`; }
+}
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("greet(name: string): string;"),
+            "method return inferred from template string, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn uninferrable_exported_function_return_errors() {
+        let src = "export function makeThing() { return createThing(); }\n";
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("locally inferable return type"),
+            "unknown return expression must stay fail-loud, got: {err}"
+        );
+    }
+
+    #[test]
     fn emits_typed_const_signature() {
         let src = "export const VERSION: string = \"1.0.0\";\n";
         let dts = emit_declarations(src).unwrap();
@@ -627,6 +1577,165 @@ mod tests {
         assert!(
             !dts.contains("1.0.0"),
             "const initializer must be dropped, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_as_expression_signature() {
+        let src = r#"export interface UploadApi {
+    open(): Promise<void>;
+}
+export const uploadApi = {
+    async open() {},
+} as UploadApi;
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const uploadApi: UploadApi;"),
+            "const as-expression should use its asserted type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_plain_object_literal_const_signature() {
+        let src = r#"export const UPLOAD_ACCEPT_TYPE = {
+    JPG: "image/jpeg",
+    PNG: "image/png",
+    PDF: "application/pdf",
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const UPLOAD_ACCEPT_TYPE: {"),
+            "object literal const should synthesize a declaration type, got:\n{dts}"
+        );
+        for expected in ["JPG: string;", "PNG: string;", "PDF: string;"] {
+            assert!(
+                dts.contains(expected),
+                "object property {expected:?} should be emitted, got:\n{dts}"
+            );
+        }
+        assert!(
+            !dts.contains("image/jpeg"),
+            "object literal values must not leak into .d.ts, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_function_type() {
+        let src = "export const delay = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const delay: (ms: number) => Promise<void>;"),
+            "typed arrow const should synthesize a callable declaration type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_default_param_type() {
+        let src = "export const withDefault = (a: number, b = 6): number => a + b;\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const withDefault: (a: number, b?: number) => number;"),
+            "default-valued arrow param should synthesize an optional parameter type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_literal_function_property_type() {
+        let src = r#"export const _Table = {
+    rowNo: (idx: number, page: number, pageSize: number): number =>
+        idx + 1 + (page - 1) * pageSize,
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("rowNo: (idx: number, page: number, pageSize: number) => number;"),
+            "object literal function property should synthesize a callable property type, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_literal_method_with_object_assign_computed_key_body() {
+        let src = r#"export const columns = {
+    render(rows: Array<{ key: string }>): Record<string, number> {
+        return Object.assign({}, ...rows.map((row) => ({ [row.key]: 1 })));
+    },
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("render(rows: Array<{ key: string }>): Record<string, number>;"),
+            "object method with computed object body should use explicit boundary types, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_literal_async_arrow_with_destructured_typed_param() {
+        let src = r#"export const handlers = {
+    load: async ({ id }: { id: string }): Promise<string> => id,
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("load: ({ id }: { id: string }) => Promise<string>;"),
+            "async object arrow with typed destructured param should emit, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_const_arrow_with_destructured_typed_param() {
+        let src = r#"export const load = ({ id }: { id: string }): Promise<string> => Promise.resolve(id);
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const load: ({ id }: { id: string }) => Promise<string>;"),
+            "const arrow with typed destructured param should emit, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_object_literal_async_method_with_plain_typed_params() {
+        let src = r#"export const handlers = {
+    async save(id: string, count: number): Promise<number> {
+        return count;
+    },
+};
+"#;
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("save(id: string, count: number): Promise<number>;"),
+            "async object method with typed params should emit, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn infers_exported_generic_const_arrow_function_type() {
+        let src = "export const identity = <T>(value: T): T => value;\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("export declare const identity: <T>(value: T) => T;"),
+            "generic typed arrow const should preserve type parameters, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn untyped_exported_const_arrow_param_errors() {
+        let src = "export const delay = (ms): Promise<void> => Promise.resolve();\n";
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "untyped arrow params must stay fail-loud, got: {err}"
+        );
+    }
+
+    #[test]
+    fn exported_const_arrow_without_return_type_errors() {
+        let src = "export const delay = (ms: number) => Promise.resolve();\n";
+        let err = emit_declarations(src).unwrap_err();
+        assert!(
+            err.to_string().contains("isolatedDeclarations"),
+            "arrow const without return type must stay fail-loud, got: {err}"
         );
     }
 
@@ -658,6 +1767,20 @@ mod tests {
         assert!(
             dts.contains("export { Helper } from \"./helper\""),
             "re-export preserved, got:\n{dts}"
+        );
+    }
+
+    #[test]
+    fn preserves_svgr_asset_reexport_from() {
+        let src = "export { ReactComponent as ErrorCircleIcon } from \"./icons/error.svg\";\n";
+        let dts = emit_declarations(src).unwrap();
+        assert!(
+            dts.contains("import type { FC, SVGProps } from \"react\";"),
+            "SVGR declaration should import React component types, got:\n{dts}"
+        );
+        assert!(
+            dts.contains("export declare const ErrorCircleIcon: FC<SVGProps<SVGSVGElement>>;"),
+            "SVGR asset re-export must emit a concrete component declaration, got:\n{dts}"
         );
     }
 
@@ -808,4 +1931,4 @@ mod tests {
         assert!(dts.contains("export declare const VALUE: number;"));
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

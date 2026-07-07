@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:99fe4be9" tracker="pending-tracker" reason="In-process mock npm registry (axum) e2e: jet publish a built library to the mock registry, then resolve+download it back (install round-trip), asserting the tarball contains the built JS/.d.ts and that scoped private-registry routing + Bearer auth are exercised. Plus metadata-validation unit tests (missing main/exports path -> error; auto-fill from build output)."
+// <HANDWRITE gap="missing-generator:unit-test:99fe4be9" tracker="standardize-gap-projects-jet-tests-publish-library-publish-e2e-rs" reason="In-process mock npm registry (axum) e2e: jet publish a built library to the mock registry, then resolve+download it back (install round-trip), asserting the tarball contains the built JS/.d.ts and that scoped private-registry routing + Bearer auth are exercised. Plus metadata-validation unit tests (missing main/exports path -> error; auto-fill from build output).">
 //! End-to-end `jet publish --build` against an in-process mock npm registry.
 //!
 //! What this exercises (all hermetic — no real network, no Verdaccio/npm):
@@ -300,9 +300,258 @@ fn tarball_entry_paths(tarball: &[u8]) -> Vec<String> {
     paths
 }
 
+/// Decompress a gzipped tar and return package/package.json as JSON.
+fn tarball_package_json(tarball: &[u8]) -> serde_json::Value {
+    use flate2::read::GzDecoder;
+    let gz = GzDecoder::new(tarball);
+    let mut archive = tar::Archive::new(gz);
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().unwrap().to_string_lossy() == "package/package.json" {
+            return serde_json::from_reader(entry).unwrap();
+        }
+    }
+    panic!("tarball did not contain package/package.json");
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // E2E test
 // ──────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn pack_nested_workspace_rewrites_workspace_protocols_in_package_json() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("pnpm-workspace.yaml"),
+        "packages:\n  - packages/*\n",
+    )
+    .unwrap();
+
+    for (rel, name, version) in [
+        ("packages/core", "@acme/core", "3.2.0-beta.0"),
+        ("packages/devkit", "@acme/devkit", "0.4.0"),
+        ("packages/forms", "@acme/forms", "2.1.0"),
+        ("packages/theme", "@acme/theme", "5.0.1"),
+    ] {
+        let pkg_dir = root.join(rel);
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            format!(r#"{{"name":"{name}","version":"{version}"}}"#),
+        )
+        .unwrap();
+    }
+
+    let widget = root.join("packages/widget");
+    std::fs::create_dir_all(widget.join("dist")).unwrap();
+    std::fs::write(
+        widget.join("dist/index.js"),
+        "export const widget = true;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        widget.join("package.json"),
+        r#"{
+  "name": "@acme/widget",
+  "version": "1.0.0",
+  "files": ["dist"],
+  "dependencies": {
+    "@acme/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@acme/devkit": "workspace:*"
+  },
+  "peerDependencies": {
+    "@acme/forms": "workspace:^"
+  },
+  "optionalDependencies": {
+    "@acme/theme": "workspace:~"
+  }
+}"#,
+    )
+    .unwrap();
+
+    let tarball_path = Publisher::new(widget.clone())
+        .pack()
+        .expect("pack nested workspace package");
+    let manifest = tarball_package_json(&std::fs::read(tarball_path).unwrap());
+
+    assert_eq!(
+        manifest["dependencies"]["@acme/core"].as_str(),
+        Some("3.2.0-beta.0"),
+        "workspace:* dependency must rewrite to the sibling's exact version"
+    );
+    assert_eq!(
+        manifest["devDependencies"]["@acme/devkit"].as_str(),
+        Some("0.4.0"),
+        "devDependencies must be rewritten too because package.json is published as-is"
+    );
+    assert_eq!(
+        manifest["peerDependencies"]["@acme/forms"].as_str(),
+        Some("^2.1.0"),
+        "workspace:^ peer dependency must rewrite to a caret semver range"
+    );
+    assert_eq!(
+        manifest["optionalDependencies"]["@acme/theme"].as_str(),
+        Some("~5.0.1"),
+        "workspace:~ optional dependency must rewrite to a tilde semver range"
+    );
+
+    let packed_manifest = serde_json::to_string(&manifest).unwrap();
+    assert!(
+        !packed_manifest.contains("workspace:"),
+        "packed package.json must not leak workspace protocol ranges: {packed_manifest}"
+    );
+}
+
+#[tokio::test]
+async fn publish_dry_run_previews_without_uploading_to_registry() {
+    let (base_url, store) = spawn_mock_registry().await;
+
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let pkg_name = "@acme/dry-run";
+
+    std::fs::create_dir_all(root.join("dist")).unwrap();
+    std::fs::write(root.join("dist/index.js"), "export const dryRun = true;\n").unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        format!(
+            r#"{{
+  "name": "{pkg_name}",
+  "version": "2.0.0",
+  "main": "./dist/index.js",
+  "files": ["dist"]
+}}"#
+        ),
+    )
+    .unwrap();
+
+    let registry_host = base_url.trim_start_matches("http://");
+    std::fs::write(
+        root.join(".npmrc"),
+        format!("@acme:registry={base_url}/\n//{registry_host}/:_authToken=dry-token\n"),
+    )
+    .unwrap();
+
+    let preview = Publisher::new(root.to_path_buf())
+        .dry_run("beta", Some("restricted"))
+        .expect("dry-run preview");
+
+    assert_eq!(preview.name, pkg_name);
+    assert_eq!(preview.version, "2.0.0");
+    assert_eq!(preview.tag, "beta");
+    assert_eq!(preview.access, "restricted");
+    assert!(
+        preview.registry.starts_with(&base_url),
+        "dry-run must resolve scoped registry to the mock URL, got {}",
+        preview.registry
+    );
+    assert_eq!(preview.tarball_file, "@acme/dry-run-2.0.0.tgz");
+    assert!(
+        preview.tarball_bytes > 0,
+        "dry-run must create tarball bytes for preview"
+    );
+    assert!(
+        preview.files.iter().any(|p| p == "package/package.json"),
+        "preview must list package.json: {:?}",
+        preview.files
+    );
+    assert!(
+        preview.files.iter().any(|p| p == "package/dist/index.js"),
+        "preview must list dist entry: {:?}",
+        preview.files
+    );
+    assert_eq!(
+        preview.package_json["main"].as_str(),
+        Some("./dist/index.js"),
+        "preview must expose the transformed package.json"
+    );
+
+    let report = preview.report();
+    assert!(report.contains("jet publish --dry-run"), "{report}");
+    assert!(report.contains("registry:"), "{report}");
+    assert!(report.contains("package.json:"), "{report}");
+
+    let guard = store.lock().unwrap();
+    assert!(
+        guard.is_empty(),
+        "dry-run must not PUT anything to the mock registry: {:?}",
+        guard.keys().collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+// @spec .aw/tech-design/projects/jet/config/jet-publish-ignores-publishconfig-registry-and-npmrc-scope-regis.md#unit-test
+async fn publish_config_registry_overrides_scoped_npmrc_for_dry_run_and_publish() {
+    let (intended_registry, intended_store) = spawn_mock_registry().await;
+    let (wrong_registry, wrong_store) = spawn_mock_registry().await;
+
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let pkg_name = "@acme/private-widget";
+
+    std::fs::create_dir_all(root.join("dist")).unwrap();
+    std::fs::write(
+        root.join("dist/index.js"),
+        "export const privateWidget = true;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        format!(
+            r#"{{
+  "name": "{pkg_name}",
+  "version": "3.0.0",
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "publishConfig": {{
+    "registry": "{intended_registry}/"
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+
+    let intended_host = intended_registry.trim_start_matches("http://");
+    let wrong_host = wrong_registry.trim_start_matches("http://");
+    std::fs::write(
+        root.join(".npmrc"),
+        format!(
+            "@acme:registry={wrong_registry}/\n//{wrong_host}/:_authToken=wrong-token\n//{intended_host}/:_authToken=intended-token\n"
+        ),
+    )
+    .unwrap();
+
+    let preview = Publisher::new(root.to_path_buf())
+        .dry_run("beta", Some("restricted"))
+        .expect("publishConfig-routed dry-run preview");
+    assert!(
+        preview.registry.starts_with(&intended_registry),
+        "publishConfig.registry must win over scoped .npmrc in dry-run, got {}",
+        preview.registry
+    );
+
+    Publisher::new(root.to_path_buf())
+        .publish("beta", Some("restricted"))
+        .await
+        .expect("publishConfig-routed publish");
+
+    let intended = intended_store.lock().unwrap();
+    assert!(
+        intended.contains_key(pkg_name),
+        "publish must PUT to publishConfig.registry store"
+    );
+    drop(intended);
+
+    let wrong = wrong_store.lock().unwrap();
+    assert!(
+        wrong.is_empty(),
+        "scoped .npmrc fallback registry must not receive the publish when publishConfig.registry is set"
+    );
+}
 
 #[tokio::test]
 async fn publish_built_library_to_mock_registry_and_resolve_back() {
@@ -446,4 +695,4 @@ export function makeWidget(n: number): Widget {
         "downloaded tarball bytes must be byte-identical to what was published"
     );
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -722,7 +722,7 @@ mod tests {
         );
         assert_eq!(
             crate_from_relative_path("projects/agentic-workflow/state-machine.md"),
-            "sdd"
+            "agentic-workflow"
         );
         // Top-level spec
         assert_eq!(crate_from_relative_path("change-spec-logic.md"), "");

@@ -11,6 +11,7 @@
 //! @issue #170
 
 use jet::bundler::types::OutputFormat;
+use jet::bundler::types::SourceMapOption;
 use jet::bundler::{build_library, BundleOptions, Bundler, LibBuildOptions};
 use std::collections::HashSet;
 use tempfile::tempdir;
@@ -43,6 +44,7 @@ fn run_lib_build(
         entry: Vec::new(),
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     };
     build_library(options).expect("library build must succeed")
 }
@@ -129,6 +131,39 @@ export function go(a, b) {
     );
 }
 
+#[test]
+fn lib_build_consumes_local_scss_side_effect_imports() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "style-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        "import './style.scss';\nexport const Button = (): string => 'button';\n",
+    );
+    write_file(root, "src/style.scss", ".button { color: red; }\n");
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm]);
+    let code = &result.entries[0].code;
+    assert!(
+        !code.contains("style.scss"),
+        "SCSS side-effect imports should not survive as JS imports, got:\n{code}"
+    );
+    assert!(
+        code.contains("Button"),
+        "entry source should still be bundled, got:\n{code}"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (b) Optional CJS emission
 // ──────────────────────────────────────────────────────────────────────────
@@ -198,6 +233,63 @@ export function go(a) { return merge({}, { a }); }
     );
 }
 
+#[test]
+fn lib_cjs_multiline_class_export_assignment_stays_after_body_and_types_are_stripped() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "typed-class-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export class Greeter {
+    greet(name: string): string {
+        return `hello ${name}`;
+    }
+}
+
+export const version: string = "1.0.0";
+"#,
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let esm = result
+        .entries
+        .iter()
+        .find(|e| e.format == OutputFormat::Esm)
+        .expect("ESM output present");
+    let cjs = cjs_code(&result);
+
+    assert!(
+        !esm.code.contains(": string") && !cjs.contains(": string"),
+        "library JS outputs must strip TypeScript annotations.\nESM:\n{}\nCJS:\n{}",
+        esm.code,
+        cjs
+    );
+    assert!(
+        cjs.contains("class Greeter") && cjs.contains("greet(name)"),
+        "CJS output must preserve the class body as JavaScript, got:\n{cjs}"
+    );
+    let body_pos = cjs
+        .find("return `hello ${name}`;")
+        .expect("class method body present");
+    let export_pos = cjs
+        .find("exports.Greeter = Greeter;")
+        .expect("Greeter export assignment present");
+    assert!(
+        export_pos > body_pos,
+        "exports.Greeter assignment must be emitted after the class body, got:\n{cjs}"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (c) Multi-entry from two `exports` entries
 // ──────────────────────────────────────────────────────────────────────────
@@ -263,6 +355,174 @@ export function client() { return useState(0); }
         "client.js",
         "`./client` → client.js, got {:?}",
         client.path
+    );
+}
+
+#[test]
+fn lib_build_consumes_js_side_effect_scss_imports() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "asset-import-lib",
+            "version": "1.0.0",
+            "module": "./src/index.js"
+        }"#,
+    );
+    write_file(root, "src/styles.scss", ".box { color: red; }\n");
+    write_file(
+        root,
+        "src/index.js",
+        "import './styles.scss';\nexport const Box = 'box';\n",
+    );
+
+    let options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
+    };
+    let result = build_library(options).expect("SCSS side-effect import should build");
+    let code = &result.entries[0].code;
+    assert!(
+        !code.contains("styles.scss") && code.contains("Box"),
+        "SCSS side-effect import should be consumed without dropping the entry, got:\n{code}"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#unit-test
+fn lib_build_skips_configured_css_export_and_merges_once() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "css-export-lib",
+            "version": "1.0.0",
+            "type": "module",
+            "exports": {
+                ".": {
+                    "types": "./dist/index.d.ts",
+                    "import": "./dist/index.js",
+                    "require": "./dist/index.cjs"
+                },
+                "./style.css": "./dist/style.css"
+            }
+        }"#,
+    );
+    write_file(root, "src/index.js", "export const Button = 'button';\n");
+    write_file(root, "dist/style.css", ".button { color: red; }\n");
+
+    let options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: Vec::new(),
+        css_merge: vec!["dist/style.css".to_string()],
+        raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
+    };
+
+    let result = build_library(options)
+        .expect("configured CSS export must be handled by css_merge, not as a JS entry");
+    assert_eq!(result.entries.len(), 1, "only the JS entry should build");
+    assert_eq!(result.entries[0].subpath, ".");
+    assert!(
+        result.entries[0].code.contains("Button"),
+        "JS source entry should be built, got:\n{}",
+        result.entries[0].code
+    );
+    assert!(
+        result
+            .assets
+            .iter()
+            .any(|asset| asset.path.ends_with("style.css")),
+        "merged style.css should be reported as an asset, got {:?}",
+        result.assets
+    );
+    let css = std::fs::read_to_string(root.join("dist/style.css")).unwrap();
+    assert_eq!(
+        css, ".button { color: red; }\n",
+        "css_merge should not duplicate the source when out_dir/style.css is also the configured CSS source"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#unit-test
+fn lib_build_skips_unconfigured_css_export_entry() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "css-export-entry-lib",
+            "version": "1.0.0",
+            "type": "module",
+            "main": "./dist/index.js",
+            "exports": {
+                ".": "./dist/index.js",
+                "./style.css": "./dist/style.css"
+            }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        "export const hello = (): string => 'hello';\n",
+    );
+
+    let options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
+    };
+
+    let result = build_library(options).expect("non-code CSS export must not be built as an entry");
+    assert_eq!(
+        result.entries.len(),
+        1,
+        "only the JS entry should be built, got {:?}",
+        result
+            .entries
+            .iter()
+            .map(|entry| entry.subpath.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(result.entries[0].subpath, ".");
+    assert!(
+        result.entries[0].code.contains("hello"),
+        "JS entry should still build, got:\n{}",
+        result.entries[0].code
     );
 }
 
@@ -339,10 +599,17 @@ exports.run = function(x) { return util.double(x); };
 /// Build a library at `root` with `preserve_modules` on (ESM) and return the
 /// result.
 fn run_lib_build_preserve(root: &std::path::Path) -> jet::bundler::LibBuildResult {
+    run_lib_build_preserve_with_formats(root, vec![OutputFormat::Esm])
+}
+
+fn run_lib_build_preserve_with_formats(
+    root: &std::path::Path,
+    formats: Vec<OutputFormat>,
+) -> jet::bundler::LibBuildResult {
     let options = LibBuildOptions {
         project_root: root.to_path_buf(),
         out_dir: root.join("dist"),
-        formats: vec![OutputFormat::Esm],
+        formats,
         conditions: vec!["import".to_string(), "default".to_string()],
         extra_externals: HashSet::new(),
         preserve_modules: true,
@@ -351,6 +618,7 @@ fn run_lib_build_preserve(root: &std::path::Path) -> jet::bundler::LibBuildResul
         entry: Vec::new(),
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     };
     build_library(options).expect("preserve-modules library build must succeed")
 }
@@ -457,6 +725,105 @@ export function go(a) { return useState(double(a)); }
     );
 }
 
+#[test]
+fn lib_preserve_modules_emits_dual_esm_cjs_tree() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "my-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts",
+            "dependencies": { "lodash-es": "^4.0.0" }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/lib/form-input/form-input.ts",
+        r#"import { trim } from "lodash-es";
+
+export function formInput(x: string): string {
+    return trim(x);
+}
+
+export const fieldKind: string = "text";
+"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export * from "./lib/form-input/form-input";
+export { formInput as renamedInput } from "./lib/form-input/form-input";
+"#,
+    );
+
+    let result =
+        run_lib_build_preserve_with_formats(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let dist = root.join("dist");
+
+    for rel in [
+        "index.js",
+        "index.cjs",
+        "lib/form-input/form-input.js",
+        "lib/form-input/form-input.cjs",
+    ] {
+        assert!(dist.join(rel).is_file(), "expected emitted file {rel}");
+    }
+
+    let index_esm = std::fs::read_to_string(dist.join("index.js")).unwrap();
+    assert!(
+        index_esm.contains("./lib/form-input/form-input.js"),
+        "ESM entry must point at the emitted .js sibling, got:\n{index_esm}"
+    );
+    assert!(
+        !index_esm.contains(".cjs"),
+        "ESM entry must not reference CJS siblings, got:\n{index_esm}"
+    );
+
+    let index_cjs = std::fs::read_to_string(dist.join("index.cjs")).unwrap();
+    assert!(
+        index_cjs.contains("require(\"./lib/form-input/form-input.cjs\")"),
+        "CJS entry must require the emitted .cjs sibling, got:\n{index_cjs}"
+    );
+    assert!(
+        index_cjs.contains(
+            "exports.renamedInput = require(\"./lib/form-input/form-input.cjs\").formInput;"
+        ),
+        "renamed re-export must bind through the CJS sibling, got:\n{index_cjs}"
+    );
+
+    let module_cjs = std::fs::read_to_string(dist.join("lib/form-input/form-input.cjs")).unwrap();
+    assert!(
+        module_cjs.contains("const { trim } = require(\"lodash-es\");"),
+        "external dependency must stay external via require(), got:\n{module_cjs}"
+    );
+    assert!(
+        module_cjs.contains("function formInput(x)")
+            && module_cjs.contains("exports.formInput = formInput;"),
+        "CJS module must expose the function export, got:\n{module_cjs}"
+    );
+    assert!(
+        !module_cjs.contains(": string"),
+        "preserve-modules CJS output must strip TypeScript annotations, got:\n{module_cjs}"
+    );
+
+    let esm_count = result
+        .entries
+        .iter()
+        .filter(|entry| entry.format == OutputFormat::Esm)
+        .count();
+    let cjs_count = result
+        .entries
+        .iter()
+        .filter(|entry| entry.format == OutputFormat::Cjs)
+        .count();
+    assert_eq!(esm_count, 2, "two source modules -> two ESM outputs");
+    assert_eq!(cjs_count, 2, "two source modules -> two CJS outputs");
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (f) IIFE: loadable global-var assignment
 // ──────────────────────────────────────────────────────────────────────────
@@ -503,6 +870,7 @@ export const VERSION = "1.0.0";
         entry: Vec::new(),
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     };
     let result = build_library(options).expect("iife library build must succeed");
     assert_eq!(result.entries.len(), 1, "single entry → single IIFE file");
@@ -578,6 +946,7 @@ fn lib_iife_default_global_name_derived_from_package_name() {
         entry: Vec::new(),
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     };
     let result = build_library(options).expect("iife build must succeed");
     let code = &result.entries[0].code;
@@ -1068,6 +1437,7 @@ fn lib_explicit_entry_overrides_exports() {
         entry: vec!["src/main.ts".to_string()],
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     };
     let result = build_library(options).expect("explicit-entry build must succeed");
     assert!(!result.entries.is_empty());
@@ -1075,6 +1445,51 @@ fn lib_explicit_entry_overrides_exports() {
         result.entries[0].code.contains("answer"),
         "explicit entry src/main.ts must be the built source, got:\n{}",
         result.entries[0].code
+    );
+}
+
+#[test]
+fn lib_build_external_sourcemap_writes_map_and_url_comment() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "sourcemap-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(root, "src/index.ts", "export const answer: number = 42;\n");
+
+    let options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::External,
+    };
+    let result = build_library(options).expect("sourcemap library build must succeed");
+    let js = root.join("dist/index.js");
+    let map = root.join("dist/index.js.map");
+
+    assert!(js.is_file(), "JS output exists");
+    assert!(map.is_file(), "external source map must be written");
+    assert!(
+        result.entries[0]
+            .code
+            .contains("//# sourceMappingURL=index.js.map"),
+        "JS output must point at the external map, got:\n{}",
+        result.entries[0].code
+    );
+    let map_json = std::fs::read_to_string(map).unwrap();
+    assert!(
+        map_json.contains("\"sources\":[\"src/index.ts\"]"),
+        "source map should point at the original library entry, got:\n{map_json}"
     );
 }
 // HANDWRITE-END

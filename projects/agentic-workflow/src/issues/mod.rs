@@ -125,7 +125,7 @@ pub fn resolve_default_backend(
     let config_path = project_root.join(".aw/config.toml");
     if !config_path.exists() {
         anyhow::bail!(
-            "no .aw/config.toml found at {} — run `aw init` and configure [agentic_workflow.issue_platform] or [agentic_workflow.repo_platform]",
+            "no .aw/config.toml found at {} — run `aw conf sync` and configure [agentic_workflow.issue_platform] or [agentic_workflow.repo_platform]",
             project_root.display()
         );
     }

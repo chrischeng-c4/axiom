@@ -1,0 +1,19 @@
+# HANDWRITE-BEGIN gap="missing-generator:surface-manifest" tracker="pending-tracker" reason="Manifest for the shared renderer-neutral UI element crate extracted from jet-wasm."
+[package]
+name = "cclab-surface"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Renderer-neutral UI element model shared by Jet WASM, native desktop readers, renderers, and parity tools"
+
+[lib]
+name = "cclab_surface"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+# HANDWRITE-END

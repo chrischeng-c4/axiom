@@ -27,18 +27,18 @@ Public API manifest for `projects/lumen/src/api.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 332 |  |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1081 |  |
-| `AppState` | projects/lumen/src/api.rs | struct | pub | 48 |  |
-| `new` | projects/lumen/src/api.rs | function | pub | 228 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
-| `open` | projects/lumen/src/api.rs | function | pub | 249 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | projects/lumen/src/api.rs | function | pub | 1035 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | projects/lumen/src/api.rs | function | pub | 335 | router(state: AppState) -> Router |
-| `with_cluster` | projects/lumen/src/api.rs | function | pub | 232 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
-| `with_components` | projects/lumen/src/api.rs | function | pub | 207 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<WriteCoordinator>,     ) -> Self |
-| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 237 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
-| `with_wal` | projects/lumen/src/api.rs | function | pub | 199 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
-| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 242 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 349 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1104 |  |
+| `AppState` | projects/lumen/src/api.rs | struct | pub | 55 |  |
+| `new` | projects/lumen/src/api.rs | function | pub | 234 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
+| `open` | projects/lumen/src/api.rs | function | pub | 255 | open(engine: Arc<Engine>) -> Self |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 1086 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 388 | router(state: AppState) -> Router |
+| `with_cluster` | projects/lumen/src/api.rs | function | pub | 238 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
+| `with_components` | projects/lumen/src/api.rs | function | pub | 213 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
+| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 243 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
+| `with_wal` | projects/lumen/src/api.rs | function | pub | 205 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
+| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 248 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -64,18 +64,25 @@ use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
     middleware::from_fn_with_state,
-    response::{Html, IntoResponse, Json},
+    response::{IntoResponse, Json},
     routing::{delete, get, post, put},
     Router,
 };
 use serde::Deserialize;
-use utoipa::OpenApi;
+use service_http::{MetricsProvider, ReadinessHook};
+use utoipa::{
+    openapi::{
+        self,
+        security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
+    },
+    Modify, OpenApi,
+};
 
 use axum::http::HeaderMap;
 
-use crate::auth::{auth_middleware, AuthConfig, AuthContext, Role};
+use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
 use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::WriteCoordinator;
+use crate::coordinator::{WriteCoordinator, WriteSink};
 use crate::log_entry::RaftLogEntry;
 use crate::raft::{ClusterStateView, ReadConsistency};
 use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
@@ -97,10 +104,10 @@ pub struct AppState {
     /// Read/search backend. Defaults to the local engine; sharded serving can
     /// replace it with a fan-in router while keeping writes/stats local.
     pub search_backend: Arc<dyn SearchBackend>,
-    /// Writes go through the coordinator: publish to the log, wait for
-    /// the local apply loop, return the outcome. Reads use `engine`
-    /// directly. See `coordinator` / `wal`.
-    pub writer: Arc<WriteCoordinator>,
+    /// Writes go through a [`WriteSink`]: the WAL-seam coordinator for
+    /// embedded/nats, or the raft host for `--wal raft`. Reads use
+    /// `engine` directly. See `coordinator` / `wal` / `raft_sm`.
+    pub writer: Arc<dyn WriteSink>,
     /// Write/mutation backend. Defaults to the local coordinator; sharded
     /// serving can replace it with a document-router that fans out writes
     /// across independent shard coordinators.
@@ -149,7 +156,7 @@ impl SearchBackend for LocalEngineSearch {
 
 #[derive(Clone)]
 struct LocalWriteBackend {
-    writer: Arc<WriteCoordinator>,
+    writer: Arc<dyn WriteSink>,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
@@ -239,8 +246,7 @@ impl WriteBackend for LocalWriteBackend {
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl AppState {
-    /// Build state with an explicit write log (e.g. a broker-backed one
-    /// for clustered deployments). Spawns the apply loop.
+    /// Build state with an explicit write log. Spawns the apply loop.
     pub fn with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self {
         let writer = WriteCoordinator::start(wal, engine.clone());
         Self::with_components(engine, auth, writer)
@@ -252,7 +258,7 @@ impl AppState {
     pub fn with_components(
         engine: Arc<Engine>,
         auth: Arc<AuthConfig>,
-        writer: Arc<WriteCoordinator>,
+        writer: Arc<dyn WriteSink>,
     ) -> Self {
         Self {
             search_backend: Arc::new(LocalEngineSearch {
@@ -308,8 +314,8 @@ impl AppState {
         license(name = "MIT")
     ),
     servers(
-        (url = "http://lumen-svc:8080", description = "in-cluster ClusterIP"),
-        (url = "http://localhost:8080", description = "local dev")
+        (url = "http://lumen-svc:7373", description = "in-cluster ClusterIP"),
+        (url = "http://localhost:7373", description = "local dev")
     ),
     tags(
         (name = "Collections", description = "Schema lifecycle"),
@@ -358,6 +364,15 @@ impl AppState {
         crate::types::RrfQuery,
         crate::types::ExistsQuery,
         crate::types::DuplicatedQuery,
+        // #200: these are $ref'd by QueryNode / SearchRequest but were not
+        // registered, so the emitted OpenAPI had dangling refs. SortSpec also
+        // pulls in SortOrder + SortMissing.
+        crate::types::IdsQuery,
+        crate::types::HasChildQuery,
+        crate::types::HammingQuery,
+        crate::types::SortSpec,
+        crate::types::SortOrder,
+        crate::types::SortMissing,
         SearchHit,
         SearchResponse,
         DuplicatesRequest,
@@ -371,10 +386,48 @@ impl AppState {
         crate::raft::ClusterStateView,
         crate::raft::PeerAddr,
         crate::raft::RaftRole,
-    ))
+    )),
+    modifiers(&SecurityAddon),
+    security(("bearerAuth" = []))
 )]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub struct ApiDoc;
+
+struct SecurityAddon;
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearerAuth",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .bearer_format("opaque")
+                        .description(Some(
+                            "Send `Authorization: Bearer <LUMEN_TOKEN>` when `LUMEN_AUTH=required`.",
+                        ))
+                        .build(),
+                ),
+            );
+        }
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl ReadinessHook for Engine {
+    fn is_draining(&self) -> bool {
+        Engine::is_draining(self)
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
+impl MetricsProvider for Engine {
+    fn render_metrics(&self) -> String {
+        self.metrics().render()
+    }
+}
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
@@ -382,7 +435,7 @@ pub fn router(state: AppState) -> Router {
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) stay open so K8s probes and Prometheus scrape can hit
     // them without a token even when auth is required.
-    let auth_state = state.auth.clone();
+    let auth_state = Arc::new(LumenVerifier::new(state.auth.clone()));
     let data_plane = Router::new()
         .route("/collections", get(list_collections))
         .route(
@@ -414,32 +467,30 @@ pub fn router(state: AppState) -> Router {
         // bodies with 413 before they hit a handler.
         .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024));
 
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+    let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
+    let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
+    let admin = Router::new()
         .route("/version", get(version))
-        .route("/metrics", get(metrics))
-        .route("/debug/cluster", get(debug_cluster))
-        .route("/openapi.json", get(openapi_spec))
-        .route("/docs", get(docs_swagger))
-        .merge(data_plane)
+        .route("/debug/cluster", get(debug_cluster));
+
+    probes
+        .merge(admin.with_state(state.clone()))
+        .merge(data_plane.with_state(state))
         // One tracing span per HTTP request — structured request logs always, and
         // the source spans the OTLP layer exports as traces when LUMEN_OTLP_ENDPOINT
         // is set. INFO level so the default `info` EnvFilter keeps it.
-        .layer(
-            tower_http::trace::TraceLayer::new_for_http().make_span_with(
-                tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO),
-            ),
-        )
-        .with_state(state)
+        .layer(service_http::trace_layer())
 }
 
 #[utoipa::path(
     get,
     path = "/metrics",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Prometheus text-format metrics", body = String))
 )]
+/// OpenAPI metadata for the shared `/metrics` implementation in service-http.
+#[allow(dead_code)]
 async fn metrics(
     State(state): State<AppState>,
 ) -> (StatusCode, [(&'static str, &'static str); 1], String) {
@@ -455,6 +506,7 @@ async fn metrics(
     get,
     path = "/debug/cluster",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Cluster state snapshot", body = ClusterStateView))
 )]
 async fn debug_cluster(State(state): State<AppState>) -> Json<ClusterStateView> {
@@ -490,8 +542,11 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
     get,
     path = "/healthz",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Process is alive", body = String))
 )]
+/// OpenAPI metadata for the shared `/healthz` implementation in service-http.
+#[allow(dead_code)]
 async fn healthz() -> &'static str {
     "ok"
 }
@@ -500,6 +555,7 @@ async fn healthz() -> &'static str {
     get,
     path = "/version",
     tag = "Admin",
+    security(()),
     responses((status = 200, description = "Build provenance: version, git sha, build time", body = serde_json::Value))
 )]
 /// Build provenance. `version` is the crate version; `git_sha` and `built_at`
@@ -516,11 +572,14 @@ async fn version() -> Json<serde_json::Value> {
     get,
     path = "/readyz",
     tag = "Admin",
+    security(()),
     responses(
         (status = 200, description = "Engine ready"),
         (status = 503, description = "Not ready")
     )
 )]
+/// OpenAPI metadata for the shared `/readyz` implementation in service-http.
+#[allow(dead_code)]
 async fn readyz(State(state): State<AppState>) -> (StatusCode, &'static str) {
     if state.engine.is_draining() {
         (StatusCode::SERVICE_UNAVAILABLE, "draining")
@@ -726,9 +785,9 @@ async fn search(
 ) -> Result<Json<SearchResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Read)?;
     let _consistency = read_consistency_from(&headers);
-    // Standalone and explicit-broker builds satisfy this locally. Primary-
+    // Standalone and legacy external-log builds satisfy this locally. Primary-
     // replica mode will enforce leader/bounded/any against the live cluster
-    // state once the raftcore-backed surface is wired.
+    // state once the raft_core-backed surface is wired.
     Ok(Json(
         state
             .search_backend
@@ -935,10 +994,12 @@ async fn reindex_stream(
         .status(StatusCode::OK)
         .header("content-type", "application/x-ndjson")
         .body(Body::from_stream(stream))
-        .map_err(|e| ApiErr {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            kind: "stream_init",
-            message: e.to_string(),
+        .map_err(|e| {
+            ApiErr::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "stream_init",
+                e.to_string(),
+            )
         })?;
     Ok(resp)
 }
@@ -1023,23 +1084,13 @@ async fn backup_to_local(
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure("*", Role::Admin)?;
     let snap = state.engine.snapshot().map_err(ApiErr::from)?;
-    let payload = serde_json::to_vec(&snap).map_err(|e| ApiErr {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        kind: "encode",
-        message: e.to_string(),
-    })?;
-    let sink = LocalFsSink::new(&req.path, &req.prefix).map_err(|e| ApiErr {
-        status: StatusCode::BAD_REQUEST,
-        kind: "bad_sink",
-        message: e.to_string(),
-    })?;
+    let payload = serde_json::to_vec(&snap)
+        .map_err(|e| ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "encode", e.to_string()))?;
+    let sink = LocalFsSink::new(&req.path, &req.prefix)
+        .map_err(|e| ApiErr::new(StatusCode::BAD_REQUEST, "bad_sink", e.to_string()))?;
     let key = sink
         .put(std::time::SystemTime::now(), &payload)
-        .map_err(|e| ApiErr {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            kind: "sink_put",
-            message: e.to_string(),
-        })?;
+        .map_err(|e| ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "sink_put", e.to_string()))?;
     tracing::info!(
         target: "lumen.audit",
         event = "backup_local",
@@ -1083,60 +1134,28 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     doc
 }
 
-async fn openapi_spec() -> Json<utoipa::openapi::OpenApi> {
-    Json(openapi())
-}
-
-/// Interactive Swagger UI at `/docs` (FastAPI convention). The page
-/// pulls the live spec from `/openapi.json`, so its "Try it out"
-/// buttons fire real requests against this pod — handy for exploring
-/// `match` / `term` / `range` / `knn` queries from a browser.
-async fn docs_swagger() -> Html<&'static str> {
-    Html(
-        r##"<!doctype html>
-<html>
-  <head>
-    <title>lumen API</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
-    <style>body { margin: 0; }</style>
-  </head>
-  <body>
-    <div id="swagger-ui"></div>
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-    <script>
-      window.ui = SwaggerUIBundle({
-        url: "/openapi.json",
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-      });
-    </script>
-  </body>
-</html>"##,
-    )
-}
-
 // ---------------------------------------------------------------------------
 // Error mapping
 // ---------------------------------------------------------------------------
 
 /// HTTP-friendly wrapper that classifies storage errors to status codes.
+/// A newtype over the shared `service_http::ApiErr` (status + kind +
+/// message, `IntoResponse` renders `service_http::ErrorEnvelope` JSON) —
+/// this file keeps only the `StorageError` / `AuthErr` → (status, kind)
+/// classification arms. (`crate::types::ApiError` stays a distinct local
+/// struct of the same `{error, message}` shape purely for OpenAPI schema
+/// identity — see its doc comment.)
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub struct ApiErr {
-    status: StatusCode,
-    kind: &'static str,
-    message: String,
-}
+pub struct ApiErr(service_http::ApiErr);
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl ApiErr {
+    fn new(status: StatusCode, kind: &'static str, message: impl Into<String>) -> Self {
+        Self(service_http::ApiErr::new(status, kind, message))
+    }
+
     fn not_found(msg: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            kind: "not_found",
-            message: msg.into(),
-        }
+        Self::new(StatusCode::NOT_FOUND, "not_found", msg)
     }
 }
 
@@ -1145,72 +1164,47 @@ impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
         if let Some(se) = e.downcast_ref::<StorageError>() {
             return match se {
-                StorageError::CollectionNotFound(_) => Self {
-                    status: StatusCode::NOT_FOUND,
-                    kind: "not_found",
-                    message: e.to_string(),
-                },
-                StorageError::UnknownField { .. } => Self {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    kind: "unknown_field",
-                    message: e.to_string(),
-                },
-                StorageError::TypeMismatch { .. } => Self {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    kind: "type_mismatch",
-                    message: e.to_string(),
-                },
-                StorageError::DuplicatesOnText(_) => Self {
-                    status: StatusCode::BAD_REQUEST,
-                    kind: "bad_request",
-                    message: e.to_string(),
-                },
-                StorageError::InvalidNumber(_) => Self {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    kind: "invalid_number",
-                    message: e.to_string(),
-                },
-                StorageError::BulkLimit { .. } => Self {
-                    status: StatusCode::PAYLOAD_TOO_LARGE,
-                    kind: "bulk_limit",
-                    message: e.to_string(),
-                },
-                StorageError::QueryTooComplex(_) => Self {
-                    status: StatusCode::BAD_REQUEST,
-                    kind: "query_too_complex",
-                    message: e.to_string(),
-                },
-                StorageError::Gone(_) => Self {
-                    status: StatusCode::GONE,
-                    kind: "gone",
-                    message: e.to_string(),
-                },
-                StorageError::UnsupportedSort(_) => Self {
-                    status: StatusCode::BAD_REQUEST,
-                    kind: "unsupported_sort",
-                    message: e.to_string(),
-                },
+                StorageError::CollectionNotFound(_) => {
+                    Self::new(StatusCode::NOT_FOUND, "not_found", e.to_string())
+                }
+                StorageError::UnknownField { .. } => Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "unknown_field",
+                    e.to_string(),
+                ),
+                StorageError::TypeMismatch { .. } => Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "type_mismatch",
+                    e.to_string(),
+                ),
+                StorageError::DuplicatesOnText(_) => {
+                    Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
+                }
+                StorageError::InvalidNumber(_) => Self::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_number",
+                    e.to_string(),
+                ),
+                StorageError::BulkLimit { .. } => {
+                    Self::new(StatusCode::PAYLOAD_TOO_LARGE, "bulk_limit", e.to_string())
+                }
+                StorageError::QueryTooComplex(_) => {
+                    Self::new(StatusCode::BAD_REQUEST, "query_too_complex", e.to_string())
+                }
+                StorageError::Gone(_) => Self::new(StatusCode::GONE, "gone", e.to_string()),
+                StorageError::UnsupportedSort(_) => {
+                    Self::new(StatusCode::BAD_REQUEST, "unsupported_sort", e.to_string())
+                }
             };
         }
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            kind: "bad_request",
-            message: e.to_string(),
-        }
+        Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
     }
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl IntoResponse for ApiErr {
     fn into_response(self) -> axum::response::Response {
-        (
-            self.status,
-            Json(ApiError {
-                error: self.kind.to_string(),
-                message: self.message,
-            }),
-        )
-            .into_response()
+        self.0.into_response()
     }
 }
 
@@ -1218,27 +1212,21 @@ impl IntoResponse for ApiErr {
 impl From<crate::auth::AuthErr> for ApiErr {
     fn from(e: crate::auth::AuthErr) -> Self {
         match e {
-            crate::auth::AuthErr::Unauthenticated => Self {
-                status: StatusCode::UNAUTHORIZED,
-                kind: "unauthenticated",
-                message: "valid bearer token required".into(),
-            },
             crate::auth::AuthErr::Forbidden {
                 subject,
                 needed,
                 collection_id,
-            } => Self {
-                status: StatusCode::FORBIDDEN,
-                kind: "forbidden",
-                message: format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
-            },
+            } => Self::new(
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
+            ),
         }
     }
 }
 // CODEGEN-END
 
 ````
-
 ## Changes
 <!-- type: changes lang: yaml -->
 

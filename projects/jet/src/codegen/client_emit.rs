@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
-// HANDWRITE-BEGIN
+// <HANDWRITE gap="standardize:projects-jet-src-codegen-client-emit-rs" tracker="standardize-gap-projects-jet-src-codegen-client-emit-rs" reason="Existing hand-written code in projects/jet/src/codegen/client_emit.rs requires tracked generator coverage.">
 //! Emits `runtime.ts` (the fetch or axios base) and `client.ts` (a `createClient`
 //! factory with one typed function per operation, taking a grouped `data` arg).
 
@@ -236,7 +236,7 @@ mod tests {
     use super::*;
     use crate::codegen::openapi::Spec;
     use crate::codegen::plan;
-    use crate::codegen::{build_type_map, GenOptions};
+    use crate::codegen::{build_type_map, GenOptions, HookRuntime};
     use std::path::PathBuf;
 
     fn opts() -> GenOptions {
@@ -248,6 +248,7 @@ mod tests {
             emit_types: true,
             emit_client: true,
             emit_hooks: true,
+            hooks_runtime: HookRuntime::ReactQuery,
         }
     }
 
@@ -308,4 +309,4 @@ mod tests {
         assert!(axios.contains("return response.data;"));
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

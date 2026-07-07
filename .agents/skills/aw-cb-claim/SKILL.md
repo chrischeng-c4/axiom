@@ -16,14 +16,17 @@ This is the canonical Phase 2 recovery verb for adopting existing source.
 ## Invocation
 
 ```bash
-aw td code-claim <code-path> [--init] [--issue-stub] [--group <name>]
+aw td code-claim <code-path> [--init] [--no-issue] [--group <name>] [--project <name>] [--non-interactive] [--json]
 ```
 
 | Flag | Effect |
 |------|--------|
 | `--init` | Create `.aw/` workspace when absent (otherwise exits 1). |
-| `--issue-stub` | Create a minimal issue stub at `.aw/issues/open/<derived-slug>.md`. |
+| `--no-issue` | Opt out of the default-on tracker-issue creation (issue #925). By default `code-claim` files or reuses a real `aw wi create` work-item for traceability; pass this for offline/sandboxed runs with no issue backend configured. The claim itself (spec write + commit) still completes either way. |
 | `--group <name>` | Override the tech-design group dir. Inferred from the code path otherwise. |
+| `--project <name>` | Project name for project-scoped TD utility routing. |
+| `--non-interactive` | Suppress interactive clarification prompts (auto-enabled when stdin is not a terminal). |
+| `--json` | Reserved; the result envelope is already JSON by default. |
 
 ## Flow
 
@@ -34,19 +37,19 @@ flowchart TB
     Init -- yes --> CreateAw[Create .aw/]
     Init -- no --> Err1([exit 1: .aw/ missing])
     AW -- yes --> Fill
-    CreateAW --> Fill[Run fillback pipeline]
+    CreateAw --> Fill[Run fillback pipeline]
     Fill --> Spec[Write spec to projects/agentic-workflow/tech-design/]
-    Spec --> Stub{--issue-stub?}
-    Stub -- yes --> Issue[Create stub in .aw/issues/open/]
-    Stub -- no --> Trail
-    Issue --> Trail[Commit Lifecycle-Stage: Cb-Claim]
+    Spec --> Issue{--no-issue?}
+    Issue -- no default --> CreateIssue[aw wi create tracker issue]
+    Issue -- yes --> Trail
+    CreateIssue --> Trail[Commit Lifecycle-Stage: Cb-Claim]
     Trail --> Done([emit done envelope])
 ```
 
 ## Result envelope
 
 ```json
-{ "action": "done", "slug": "<derived>", "message": "..." }
+{ "action": "done", "slug": "<derived>", "claim_issue": "<tracker-ref-or-null>", "message": "..." }
 ```
 
 Errors emit `{ "action": "error", "message": "..." }` with exit code 1

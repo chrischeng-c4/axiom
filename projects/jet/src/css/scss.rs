@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-src-css-scss-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! SCSS / Sass compilation.
 //!
 //! Compiles `.scss` (SCSS syntax) and `.sass` (indented syntax) sources to
@@ -70,10 +71,17 @@ pub fn compile_sass_source(source: &str, load_path: &Path, indented: bool) -> Re
 /// from the file extension and using the file's parent directory as the
 /// load path for partial resolution.
 pub fn compile_sass_file(path: &Path) -> Result<String> {
-    let source = std::fs::read_to_string(path)
-        .with_context(|| format!("reading Sass file {}", path.display()))?;
     let load_path = path.parent().unwrap_or_else(|| Path::new("."));
-    compile_sass_source(&source, load_path, is_sass_path(path))
+    let syntax = if is_sass_path(path) {
+        grass::InputSyntax::Sass
+    } else {
+        grass::InputSyntax::Scss
+    };
+    let options = grass::Options::default()
+        .input_syntax(syntax)
+        .load_path(load_path);
+    grass::from_path(path, &options)
+        .map_err(|e| anyhow::anyhow!("Sass compile error: {e}"))
         .with_context(|| format!("compiling Sass file {}", path.display()))
 }
 
@@ -119,6 +127,30 @@ mod tests {
     }
 
     #[test]
+    fn file_compile_resolves_parent_directory_use() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = dir.path().join("shared");
+        let entry_dir = dir.path().join("components/card");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(&entry_dir).unwrap();
+        std::fs::write(
+            shared.join("tokens.scss"),
+            "@mixin rounded($name) { .#{$name} { border-radius: 4px; } }\n",
+        )
+        .unwrap();
+        let entry = entry_dir.join("card.scss");
+        std::fs::write(
+            &entry,
+            "@use '../../shared/tokens.scss' as *;\n@include rounded(card);\n",
+        )
+        .unwrap();
+
+        let css = compile_sass_file(&entry).unwrap();
+        assert!(css.contains(".card"), "got: {css}");
+        assert!(css.contains("border-radius"), "got: {css}");
+    }
+
+    #[test]
     fn compiles_indented_sass_syntax() {
         let sass = ".box\n  color: blue";
         let css = compile_sass_source(sass, Path::new("."), true).unwrap();
@@ -136,3 +168,5 @@ mod tests {
         );
     }
 }
+
+// </HANDWRITE>

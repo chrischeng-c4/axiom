@@ -200,6 +200,7 @@ changes:
     purpose: "Integration coverage S_t1..S_t6."
   - path: .aw/tech-design/crates/jet/logic/storage-state.md
     action: create
+    section: doc
     impl_mode: hand-written
     purpose: "This spec."
 ```

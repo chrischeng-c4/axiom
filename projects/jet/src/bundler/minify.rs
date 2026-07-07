@@ -1020,6 +1020,7 @@ pub fn remove_dead_exports_aliases(source: &str) -> String {
 /// directive in statement position (preceded by `{`, `}`, `;`, or start)
 /// and followed by `;`/`}`/end is removed, so a `'use client'` substring
 /// inside a larger expression or string is never touched.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn strip_use_client_directives(source: &str) -> String {
     if !source.contains("use client") {
         return source.to_string();
@@ -1104,6 +1105,7 @@ mod use_client_tests {
     }
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn replace_bool_literals(source: &str) -> String {
     let b = source.as_bytes();
     let len = b.len();
@@ -1175,6 +1177,7 @@ pub fn replace_bool_literals(source: &str) -> String {
 /// This is deliberately best-effort: parser errors, OXC-internal failures, or
 /// non-shrinking output all fall back to Jet's existing output. The caller still
 /// owns any project-specific parse/runtime guard before shipping the result.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn oxc_minify_js_candidate(source: &str) -> Option<String> {
     let allocator = oxc_allocator::Allocator::default();
     let source_type = oxc_span::SourceType::mjs();
@@ -1945,6 +1948,7 @@ var x = 1;"#;
 }
 // CODEGEN-END
 
+// <HANDWRITE gap="standardize:projects-jet-src-bundler-minify-rs-residual-space-squeeze" tracker="standardize-gap-projects-jet-src-bundler-minify-rs" reason="Existing hand-written residual whitespace squeeze helper lives outside generated block; generator primitive does not yet cover final JS token-space collapse.">
 /// Final whitespace squeeze: drop any remaining space where at least one
 /// side is a non-identifier character and no token could merge.
 ///
@@ -1953,6 +1957,7 @@ var x = 1;"#;
 /// `case"x"` are valid JS — ~1.6KB of residual spaces on the
 /// react-bench bundle. Dangerous pairs (`+ +`, `- -`, anything
 /// involving `/`) are preserved.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn squeeze_residual_spaces(source: &str) -> String {
     use crate::bundler::fold::{is_id, is_regex_ctx, push_regex, push_string};
     let b = source.as_bytes();
@@ -1990,10 +1995,10 @@ pub fn squeeze_residual_spaces(source: &str) -> String {
     }
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
-
 /// Convert bracket property access/assignment with identifier-safe string
 /// keys to dot form: `x["default"]` -> `x.default`, `exports["name"] =` ->
 /// `exports.name =`. Reserved-word keys are fine as properties in ES5.1+.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn bracket_to_dot_properties(source: &str) -> String {
     use crate::bundler::fold::{is_id, is_regex_ctx, push_regex, push_string};
     let b = source.as_bytes();
@@ -2044,3 +2049,4 @@ pub fn bracket_to_dot_properties(source: &str) -> String {
     }
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
+// </HANDWRITE>

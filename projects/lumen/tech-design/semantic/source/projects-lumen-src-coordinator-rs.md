@@ -22,11 +22,11 @@ Public API manifest for `projects/lumen/src/coordinator.rs` generated from AST d
 |------|--------|------|------------|------|-----------|
 | `SharedAof` | projects/lumen/src/coordinator.rs | type | pub | 65 |  |
 | `WriteCoordinator` | projects/lumen/src/coordinator.rs | struct | pub | 68 |  |
-| `applied_seq` | projects/lumen/src/coordinator.rs | function | pub | 305 | applied_seq(&self) -> u64 |
+| `applied_seq` | projects/lumen/src/coordinator.rs | function | pub | 298 | applied_seq(&self) -> u64 |
 | `start` | projects/lumen/src/coordinator.rs | function | pub | 78 | start(wal: SharedWal, engine: Arc<Engine>) -> Arc<Self> |
 | `start_from` | projects/lumen/src/coordinator.rs | function | pub | 85 | start_from(wal: SharedWal, engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
 | `start_from_with_aof` | projects/lumen/src/coordinator.rs | function | pub | 95 | start_from_with_aof(         wal: SharedWal,         engine: Arc<Engine>,         from_seq: u64,         aof: SharedAof,     ) -> Arc<Self> |
-| `submit` | projects/lumen/src/coordinator.rs | function | pub | 297 | submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> |
+| `submit` | projects/lumen/src/coordinator.rs | function | pub | 290 | submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -56,12 +56,12 @@ Public API manifest for `projects/lumen/src/coordinator.rs` generated from AST d
 //! back as the original `anyhow::Error` — carrying the `StorageError` —
 //! so the handler still maps them to the right HTTP status.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use futures::{FutureExt, StreamExt};
+use raft_host::OutcomeWindow;
 use rustc_hash::FxHashMap;
 use tokio::sync::oneshot;
 
@@ -69,10 +69,10 @@ use crate::log_entry::RaftLogEntry;
 use crate::storage::{ApplyOutcome, Engine};
 use crate::wal::{SharedWal, WalRecord};
 
-/// How many recent outcomes to retain. A publisher reads its outcome
-/// within microseconds of the apply loop reaching its sequence, far
-/// inside this window; outcomes for sequences no local handler is
-/// waiting on (writes that originated on other nodes) age out.
+/// How many recent outcomes to retain, via [`OutcomeWindow`]. A publisher
+/// reads its outcome within microseconds of the apply loop reaching its
+/// sequence, far inside this window; outcomes for sequences no local
+/// handler is waiting on (writes that originated on other nodes) age out.
 const OUTCOME_WINDOW: u64 = 8192;
 const APPLY_LOOP_BATCH: usize = 128;
 
@@ -83,7 +83,7 @@ struct PendingApply {
 }
 
 struct CompletionState {
-    outcomes: BTreeMap<u64, Result<ApplyOutcome>>,
+    outcomes: OutcomeWindow<Result<ApplyOutcome>>,
     waiters: FxHashMap<u64, oneshot::Sender<Result<ApplyOutcome>>>,
 }
 
@@ -147,7 +147,7 @@ impl WriteCoordinator {
             wal: wal.clone(),
             applied: AtomicU64::new(from_seq),
             completions: Mutex::new(CompletionState {
-                outcomes: BTreeMap::new(),
+                outcomes: OutcomeWindow::new(OUTCOME_WINDOW),
                 waiters: FxHashMap::default(),
             }),
         });
@@ -155,7 +155,7 @@ impl WriteCoordinator {
         tokio::spawn(async move {
             let mut backoff = std::time::Duration::from_millis(100);
             // Outer loop: re-subscribe from the last-applied sequence whenever
-            // the stream ends or the subscribe fails. A broker restart can tear
+            // the stream ends or the subscribe fails. An external-log restart can tear
             // down our ephemeral subscription, so the apply loop MUST recreate
             // it and resume tailing — otherwise writes silently stop applying
             // after a broker blip. Resuming from `applied` is safe:
@@ -275,7 +275,7 @@ impl WriteCoordinator {
                         break;
                     }
                 }
-                // Stream ended (e.g. broker restart killed the ephemeral
+                // Stream ended (e.g. external-log restart killed the ephemeral
                 // consumer). Re-subscribe from the applied head after a short
                 // pause so we don't tight-spin if the broker is flapping.
                 tracing::warn!("apply loop: stream ended; re-subscribing from applied seq");
@@ -295,14 +295,7 @@ impl WriteCoordinator {
                 m.outcomes.insert(seq, outcome);
             }
             // Prune everything older than the retention window.
-            let cutoff = seq.saturating_sub(OUTCOME_WINDOW);
-            while let Some((&k, _)) = m.outcomes.iter().next() {
-                if k < cutoff {
-                    m.outcomes.remove(&k);
-                } else {
-                    break;
-                }
-            }
+            m.outcomes.advance(seq);
         }
         // Publish the new applied head AFTER the outcome is stored, so checkpoint
         // readers never see a seq before its engine mutation has been applied.
@@ -314,7 +307,7 @@ impl WriteCoordinator {
 
     fn register_waiter(&self, seq: u64) -> Result<oneshot::Receiver<Result<ApplyOutcome>>> {
         let mut m = self.completions.lock().expect("completions poisoned");
-        if let Some(result) = m.outcomes.remove(&seq) {
+        if let Some(result) = m.outcomes.claim(seq) {
             let (tx, rx) = oneshot::channel();
             let _ = tx.send(result);
             return Ok(rx);
@@ -337,6 +330,27 @@ impl WriteCoordinator {
     /// Highest sequence this node has applied.
     pub fn applied_seq(&self) -> u64 {
         self.applied.load(Ordering::Acquire)
+    }
+}
+
+/// The write seam the API binds to: submit a log entry, get its applied outcome,
+/// and report the applied head. Implemented by [`WriteCoordinator`] (the WAL-seam
+/// path for embedded/nats) and by `RaftWriteSink` (the raft-host path).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
+#[async_trait::async_trait]
+pub trait WriteSink: Send + Sync {
+    async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome>;
+    fn applied_seq(&self) -> u64;
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
+#[async_trait::async_trait]
+impl WriteSink for WriteCoordinator {
+    async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
+        WriteCoordinator::submit(self, entry).await
+    }
+    fn applied_seq(&self) -> u64 {
+        WriteCoordinator::applied_seq(self)
     }
 }
 
@@ -395,6 +409,7 @@ mod tests {
                         external_id: "u1".into(),
                         field: "email".into(),
                         value: FieldValue::String("a@x.com".into()),
+                        version: None,
                     }],
                     request_id: None,
                 },
@@ -427,6 +442,7 @@ mod tests {
                         external_id: "x".into(),
                         field: "email".into(),
                         value: FieldValue::String("a@x.com".into()),
+                        version: None,
                     }],
                     request_id: None,
                 },

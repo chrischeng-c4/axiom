@@ -272,7 +272,7 @@ fn nf1_search_types_accessible() {
 #[test]
 fn nf1_storage_accessible() {
     // storage module: resolve_lens_storage
-    let tmp = std::env::temp_dir();
+    let tmp = std::env::temp_dir().join("aw").join("test").join("lens");
     let _ = agentic_workflow::storage::resolve_lens_storage(&tmp);
 }
 
@@ -528,7 +528,11 @@ fn run_agent_check(dir: &Path) -> String {
 /// Validates R1-R9: symbols, imports, issues, impact, stats in agent JSON.
 #[test]
 fn test_cli_check_format_agent_python() {
-    let tmp = std::env::temp_dir().join("cclab_test_agent_python");
+    let tmp = std::env::temp_dir()
+        .join("aw")
+        .join("test")
+        .join("lens")
+        .join("agent-python");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     create_python_fixtures(&tmp);
@@ -557,7 +561,11 @@ fn test_cli_check_format_agent_python() {
 /// S2: Clean project with no issues — issues key should be absent (R9).
 #[test]
 fn test_cli_check_format_agent_clean() {
-    let tmp = std::env::temp_dir().join("cclab_test_agent_clean");
+    let tmp = std::env::temp_dir()
+        .join("aw")
+        .join("test")
+        .join("lens")
+        .join("agent-clean");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     create_clean_fixtures(&tmp);
@@ -591,7 +599,11 @@ fn test_cli_check_format_agent_clean() {
 /// S4: Mixed Python + TypeScript — single unified agent JSON.
 #[test]
 fn test_cli_check_format_agent_polyglot() {
-    let tmp = std::env::temp_dir().join("cclab_test_agent_polyglot");
+    let tmp = std::env::temp_dir()
+        .join("aw")
+        .join("test")
+        .join("lens")
+        .join("agent-polyglot");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     create_polyglot_fixtures(&tmp);
@@ -633,7 +645,11 @@ fn test_cli_check_format_agent_polyglot() {
 /// NF5/S5: Agent format should be significantly smaller than standard JSON output.
 #[test]
 fn test_agent_output_smaller_than_json() {
-    let tmp = std::env::temp_dir().join("cclab_test_agent_size");
+    let tmp = std::env::temp_dir()
+        .join("aw")
+        .join("test")
+        .join("lens")
+        .join("agent-size");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     create_python_fixtures(&tmp);

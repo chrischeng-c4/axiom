@@ -1,0 +1,25 @@
+[package]
+name = "service-backup"
+version = "0.1.0"
+edition = "2021"
+description = "Shared backup contract for axiom services: destination/policy schema, sink trait, local sink, and runner primitive. Services produce consistent snapshots; backup runners upload them."
+
+[lib]
+name = "service_backup"
+path = "src/lib.rs"
+
+[features]
+default = []
+s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:tokio"]
+
+[dependencies]
+anyhow = { workspace = true }
+aws-config = { version = "1", optional = true }
+aws-sdk-s3 = { version = "1", optional = true }
+cli-std = { path = "../cli-std", default-features = false }
+serde = { workspace = true }
+schemars = "0.8"
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -114,7 +114,7 @@ tests:
           "test_cmd must not contain absolute filesystem path; got: {cmd}"
       );
 
-      // R7: must use project-relative path (projects/conductor, not /tmp/xyz/projects/conductor)
+      // R7: must use project-relative path (projects/conductor, not /tmp/aw/test/xyz/projects/conductor)
       assert!(
           cmd.starts_with("cd projects/conductor"),
           "test_cmd must use project-relative path 'projects/conductor'; got: {cmd}"

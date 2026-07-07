@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:source:61602ce5" tracker="pending-tracker" reason="Shared helper: multiplex a tonic gRPC service and an axum REST router on one TcpListener, routing by the application/grpc content-type, served via hyper-util auto Builder (h1 + h2)."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-grpc_mux-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Serve a tonic gRPC service and an axum REST router on ONE port.
 //!
 //! The REST router owns its `/v1` / `/v2` routes; the tonic service is mounted
@@ -21,6 +22,7 @@ use axum::Router;
 /// Any tonic server qualifies: it is a `Service<Request, Error = Infallible>`
 /// whose response body is a tonic `BoxBody` (which axum renders via
 /// `IntoResponse`).
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-grpc_mux-rs.md#source
 pub async fn serve<S>(host_port: &str, rest: Router, grpc: S) -> Result<()>
 where
     S: tonic::codegen::Service<axum::extract::Request, Error = std::convert::Infallible>
@@ -40,4 +42,4 @@ where
         .context("serve grpc+rest emulator")?;
     Ok(())
 }
-// HANDWRITE-END
+// CODEGEN-END

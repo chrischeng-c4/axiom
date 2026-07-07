@@ -36,7 +36,8 @@ fn legacy_top_level_commands_are_removed() {
     for name in [
         "status",
         "list",
-        "view",
+        // "view" was re-added by the repo-view desktop app capability
+        // (Commands::View in src/cli/commands.rs) — no longer removed.
         "changes",
         "fillback",
         "sdd",
@@ -56,6 +57,9 @@ fn legacy_top_level_commands_are_removed() {
         "daemon",
         "serve",
         "context",
+        // #918: `aw run` fully removed from the clap tree (superseded by
+        // `aw wi run` / `aw capability run`, #917).
+        "run",
         "run-change",
         "workflow",
         "revise-artifact",
@@ -72,6 +76,8 @@ fn legacy_top_level_commands_are_removed() {
         "project",
         "caps",
         "cb",
+        "init",
+        "sync",
     ] {
         assert!(
             cmd.find_subcommand(name).is_none(),
@@ -84,14 +90,13 @@ fn legacy_top_level_commands_are_removed() {
 fn workflow_protocol_commands_remain_registered() {
     let cmd = Cli::command();
     for name in [
-        "init",
         "health",
         "capability",
         "wi",
         "td",
         "standardize",
         "generator",
-        "sync",
+        "conf",
         "chat",
     ] {
         assert!(
@@ -121,6 +126,9 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
     };
 
     for command in [
+        // #918: `aw run` fully removed from the clap tree (superseded by
+        // `aw wi run` / `aw capability run`, #917).
+        "run",
         "run-change",
         "workflow",
         "revise-artifact",
@@ -137,6 +145,8 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
         "project",
         "caps",
         "cb",
+        "init",
+        "sync",
     ] {
         let out = Command::new(&aw)
             .arg(command)
@@ -167,13 +177,25 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
     collect_markdown_files(&repo_root.join(".agents/skills"), &mut docs);
 
     let deleted = [
+        // #918: `aw run` fully removed from the clap tree (superseded by
+        // `aw wi run` / `aw capability run`, #917). NOT added here: this
+        // scan still walks `templates/cli/mainthread/skills/aw-wi/SKILL.md`,
+        // which is a pre-existing dirty file outside this change's scope
+        // (still carries `aw run` from an in-flight, unrelated edit) —
+        // adding the literal here would turn this assertion red for a file
+        // this change must not touch. See #918 report / #857 remnant.
         "aw run-change",
         "aw workflow",
         "aw revise-artifact",
         "aw artifact",
         "aw validate-spec-structure",
         "aw check-alignment",
-        "aw iss",
+        // Trailing space (like `standardize.rs`'s `DELETED_COMMAND_PATHS`
+        // `"aw cb "` entry): the deleted legacy abbreviation was `aw iss
+        // <...>`, not a prefix match — a bare substring would also flag the
+        // current, active `aw issue` verb (issue #985's CLI table renders
+        // `` `aw issue` `` verbatim).
+        "aw iss ",
         "aw issues",
         "aw chat agents",
         "aw handoff",
@@ -184,6 +206,14 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw project health",
         "aw caps",
         "aw cb",
+        "aw init",
+        "aw sync",
+        // #920 (epic #914 slice F): `aw standardize` is retired down to
+        // `audit` only; the `managed`/`semantic`/`traceability` layer
+        // `report`/`next`/`run` drivers are gone.
+        "aw standardize managed",
+        "aw standardize semantic",
+        "aw standardize traceability",
     ];
     for doc in docs {
         let Ok(content) = std::fs::read_to_string(&doc) else {
@@ -206,6 +236,31 @@ fn deprecated_td_aliases_are_removed() {
     assert!(td.find_subcommand("gen-code").is_none());
     assert!(td.find_subcommand("audit").is_none());
     assert!(td.find_subcommand("arbitrate").is_none());
+}
+
+// Moved from td_no_merge_test.rs (issue #856f): consolidates the removed
+// `td merge` clap-parsing assertions onto this file's shared `Cli` harness
+// instead of a second, identical `#[derive(Parser)] struct Cli` copy.
+#[test]
+fn test_td_merge_subcommand_is_removed() {
+    let cmd = Cli::command();
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    assert!(
+        td.find_subcommand("merge").is_none(),
+        "removed TD merge command must not be registered"
+    );
+}
+
+#[test]
+fn test_td_merge_parse_fails() {
+    let err = match Cli::try_parse_from(["aw", "td", "merge", "4124"]) {
+        Ok(_) => panic!("removed TD merge command unexpectedly parsed"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string().contains("unrecognized subcommand 'merge'"),
+        "unexpected parse error: {err}"
+    );
 }
 
 #[test]
@@ -235,7 +290,10 @@ fn public_aggregation_points_remain_registered() {
     let standardize = cmd
         .find_subcommand("standardize")
         .expect("standardize namespace registered");
-    assert!(standardize.find_subcommand("semantic").is_some());
+    // #920 (epic #914 slice F): `aw standardize` is retired down to `audit`
+    // only; `managed`/`semantic`/`traceability` layer drivers are gone.
+    assert!(standardize.find_subcommand("audit").is_some());
+    assert!(standardize.find_subcommand("semantic").is_none());
 
     let generator = cmd
         .find_subcommand("generator")

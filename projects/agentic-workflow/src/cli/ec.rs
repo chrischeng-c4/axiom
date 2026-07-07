@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 const EC_MANIFEST_VERSION: u8 = 1;
 const EC_DOC_REL: &str = "docs/aw-ec-manual.md";
 const EC_SOURCE_REL: &str = "external-contracts";
+const EC_LOCK_FILE: &str = "ec.lock";
 const PROJECT_AW_REL: &str = "aw.toml";
 const LEGACY_EC_MANIFEST_FILE: &str = "aw-ec.toml";
 const EC_AW_BEGIN_MARKER: &str = "AW-EC-BEGIN";
@@ -55,6 +56,12 @@ pub enum EcCommand {
     Gen(EcGenArgs),
     /// Check aw.toml EC inventory/list drift and generated test-file presence.
     Check(EcCheckArgs),
+    /// Write or verify the canonical EC IR lock.
+    Lock(EcLockArgs),
+    /// Review whether each capability's EC covers every dimension its type requires (#188 E6).
+    Review(EcReviewArgs),
+    /// Record a verifier (EC) result onto a LOCAL lifecycle work-item's loop-state block (#188 E1/E4).
+    Record(EcRecordArgs),
     /// Run generated external-contract verification commands.
     Verify(EcVerifyArgs),
     /// Generate, check, or preview EC-derived product documentation.
@@ -104,8 +111,10 @@ pub struct EcFillArgs {
     #[arg(long)]
     pub section: String,
     /// Markdown fragment containing the complete replacement section.
+    /// Defaults to
+    /// `/tmp/aw/workspaces/<workspace>/payloads/ec/<draft-id>/<section>.json`.
     #[arg(long)]
-    pub body_file: PathBuf,
+    pub body_file: Option<PathBuf>,
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
@@ -128,6 +137,48 @@ pub struct EcGenArgs {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args)]
 pub struct EcCheckArgs {
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcLockArgs {
+    /// Check the lock without rewriting it. Exits non-zero when missing or stale.
+    #[arg(long)]
+    pub check: bool,
+    /// Show current lock status without rewriting it.
+    #[arg(long)]
+    pub show: bool,
+    /// Emit JSON status.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcReviewArgs {
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcRecordArgs {
+    /// Local lifecycle work-item slug to record the verification onto.
+    #[arg(long)]
+    pub wi: String,
+    /// Verifier result: green | red | blocked.
+    #[arg(long)]
+    pub result: String,
+    /// For a red result, the failing dimension (default: behavior).
+    #[arg(long)]
+    pub dimension: Option<String>,
+    /// Optional human summary of this verification round.
+    #[arg(long)]
+    pub summary: Option<String>,
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
@@ -294,6 +345,102 @@ pub struct EcCheckSummary {
     pub orphan_test_paths: Vec<String>,
     pub missing_tool_manifest_paths: Vec<String>,
     pub findings: Vec<String>,
+    /// #921 tier 1b: warn-only findings for `ec.*` cross-CLI bindings (e.g. a
+    /// vat.toml runner's `cmd[0]` binary is not built yet). Never affects
+    /// `clean` — only a missing/misconfigured runner id in `findings` does.
+    #[serde(default)]
+    pub ec_binding_warnings: Vec<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EcLockStatus {
+    pub project: String,
+    pub ir_kind: String,
+    pub ec_path: String,
+    pub inventory_path: String,
+    pub lock_path: String,
+    pub status: EcLockState,
+    pub clean: bool,
+    pub ir_digest: String,
+    pub locked_ir_digest: Option<String>,
+    pub source_digest: String,
+    pub locked_source_digest: Option<String>,
+    pub source_count: usize,
+    pub case_count: usize,
+    pub tool_contract_count: usize,
+    pub changed: Vec<String>,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub message: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EcLockState {
+    Locked,
+    Missing,
+    Stale,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EcLockFile {
+    version: u8,
+    project: String,
+    ir_kind: String,
+    ec_path: String,
+    inventory_path: String,
+    generated_at: String,
+    ir_digest: String,
+    source_digest: String,
+    sources: Vec<EcLockSource>,
+    cases: Vec<EcLockCase>,
+    tool_contracts: Vec<EcLockToolContract>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcLockSource {
+    path: String,
+    digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcLockCase {
+    id: String,
+    capability_id: String,
+    claim_id: String,
+    contract_id: String,
+    dimension: String,
+    source_ref: String,
+    test_path: String,
+    command: String,
+    required_for_production: bool,
+    assertions: Vec<String>,
+    evidence_digest: String,
+    evaluator_digest: String,
+    digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcLockToolContract {
+    id: String,
+    tool: String,
+    dimension: String,
+    source_ref: String,
+    manifest_path: String,
+    command: String,
+    content_digest: String,
+    digest: String,
+}
+
+#[derive(Debug, Clone)]
+struct EcIrSnapshot {
+    ir_digest: String,
+    source_digest: String,
+    sources: Vec<EcLockSource>,
+    cases: Vec<EcLockCase>,
+    tool_contracts: Vec<EcLockToolContract>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -358,6 +505,10 @@ pub struct EcProjectContext {
     pub doc_path: PathBuf,
     pub target: String,
     pub package_name: String,
+    /// #921 tier 1b: this project's `ec.<category>` cross-CLI bindings
+    /// (`.aw/config.toml`), for static validation against the vat.toml
+    /// runner registries they target.
+    pub ec_bindings: BTreeMap<String, crate::models::project::EcBinding>,
 }
 
 #[derive(Debug, Serialize)]
@@ -526,6 +677,9 @@ pub fn run(args: EcArgs) -> Result<()> {
         EcCommand::Fill(args) => run_fill(&project, args),
         EcCommand::Gen(args) => run_gen(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
+        EcCommand::Lock(args) => run_lock(&project, args),
+        EcCommand::Review(args) => run_review(&project, args),
+        EcCommand::Record(args) => run_record(args),
         EcCommand::Verify(args) => run_verify(&project, args),
         EcCommand::Doc(args) => run_doc(&project, args),
     }
@@ -536,6 +690,13 @@ pub fn project_ec_check_summary(project: &str) -> Result<EcCheckSummary> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     check_ec_context(&ctx)
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub fn project_ec_lock_status(project: &str) -> Result<EcLockStatus> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    check_ec_lock_context(&ctx)
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -562,10 +723,21 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
     }
     let title = args.title.clone().unwrap_or_else(|| title_case(&id));
     let content = render_ec_draft(&ctx, &id, &category, &title, &args);
+    let fill_sections = ec_draft_fill_sections(&args);
+    let payload_paths = fill_sections
+        .iter()
+        .map(|section| ec_payload_path(&ctx.project_root, &id, section))
+        .collect::<Vec<_>>();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
+    for (section, payload_path) in fill_sections.iter().zip(payload_paths.iter()) {
+        initialize_ec_payload_file(
+            payload_path,
+            &ec_section_payload_template(&ctx, &id, &category, &title, &args, section)?,
+        )?;
+    }
     let rel = relative_to(&ctx.project_root, &path);
     if args.json {
         println!(
@@ -575,14 +747,35 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
                 "path": rel,
                 "id": id,
                 "category": category,
+                "payload_paths": payload_paths,
+                "next": payload_paths.first().map(|payload| serde_json::json!({
+                    "kind": "dispatch",
+                    "command": format!(
+                        "aw ec fill --project {} {} --section {}",
+                        ctx.project,
+                        rel,
+                        fill_sections.first().cloned().unwrap_or_default()
+                    ),
+                    "payload_path": payload,
+                    "reason": "fill the initialized EC section payload and apply it",
+                    "requires_hitl": false,
+                })),
             }))?
         );
     } else {
         println!("ec draft {}: wrote {}", ctx.project, rel);
-        println!(
-            "next: aw ec fill --project {} {} --section e2e-test --body-file <file>",
-            ctx.project, rel
-        );
+        for (section, payload) in fill_sections.iter().zip(payload_paths.iter()) {
+            println!("payload {section}: {payload}");
+        }
+        if let Some(section) = fill_sections.first() {
+            println!(
+                "next: fill {} then run `aw ec fill --project {} {} --section {}`",
+                payload_paths.first().cloned().unwrap_or_default(),
+                ctx.project,
+                rel,
+                section
+            );
+        }
         println!("then: aw ec gen --project {} --verify", ctx.project);
     }
     Ok(())
@@ -604,8 +797,64 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
         );
     }
     let existing = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let payload = fs::read_to_string(&args.body_file)
-        .with_context(|| format!("read {}", args.body_file.display()))?;
+    let body_file = match args.body_file.as_ref() {
+        Some(path) => path.clone(),
+        None => {
+            let id = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(slugify)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("cannot derive EC draft id from {}", path.display())
+                })?;
+            PathBuf::from(ec_payload_path(&ctx.project_root, &id, &args.section))
+        }
+    };
+    if !body_file.exists() && args.body_file.is_none() {
+        let id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(slugify)
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| "draft".to_string());
+        let category = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("behavior");
+        let title = title_case(&id);
+        let default_args = EcDraftArgs {
+            id: id.clone(),
+            category: category.to_string(),
+            title: Some(title.clone()),
+            capability_id: None,
+            claim_id: None,
+            contract_id: None,
+            command: None,
+            tool: Vec::new(),
+            force: false,
+            json: false,
+        };
+        initialize_ec_payload_file(
+            &ec_payload_path(&ctx.project_root, &id, &args.section),
+            &ec_section_payload_template(
+                &ctx,
+                &id,
+                category,
+                &title,
+                &default_args,
+                &args.section,
+            )?,
+        )?;
+        bail!(
+            "EC payload was missing; initialized {}. Fill that file, then rerun this command.",
+            relative_to(&ctx.project_root, &body_file)
+        );
+    }
+    let payload_raw =
+        fs::read_to_string(&body_file).with_context(|| format!("read {}", body_file.display()))?;
+    let payload = render_ec_json_section_payload(&args.section, &payload_raw)?;
     let merged = merge_ec_section(&existing, &args.section, &payload)?;
     fs::write(&path, merged).with_context(|| format!("write {}", path.display()))?;
     let rel = relative_to(&ctx.project_root, &path);
@@ -616,6 +865,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
                 "project": ctx.project,
                 "path": rel,
                 "section": args.section,
+                "payload_path": relative_to(&ctx.project_root, &body_file),
                 "action": "filled",
             }))?
         );
@@ -629,6 +879,75 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
     Ok(())
 }
 
+fn ec_draft_fill_sections(args: &EcDraftArgs) -> Vec<String> {
+    let mut sections = vec!["e2e-test".to_string()];
+    if !args.tool.is_empty() {
+        sections.push("tool-contract".to_string());
+    }
+    sections
+}
+
+fn ec_payload_path(project_root: &Path, id: &str, section: &str) -> String {
+    crate::shared::workspace::payloads_path(project_root)
+        .join("ec")
+        .join(id)
+        .join(format!("{section}.json"))
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn initialize_ec_payload_file(payload_path: &str, content: &str) -> Result<bool> {
+    let abs = Path::new(payload_path);
+    if abs.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = abs.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create EC payload directory {}", parent.display())
+        })?;
+    }
+    fs::write(abs, content)
+        .with_context(|| format!("failed to write EC payload {}", abs.display()))?;
+    Ok(true)
+}
+
+fn ec_section_payload_template(
+    ctx: &EcProjectContext,
+    id: &str,
+    category: &str,
+    title: &str,
+    args: &EcDraftArgs,
+    section: &str,
+) -> Result<String> {
+    let body = match section {
+        "e2e-test" => render_ec_e2e_section(id, category, title, args),
+        "tool-contract" => render_ec_tool_contract_section(ctx, id, category, args),
+        _ => bail!("EC section '{section}' is not supported for payload initialization"),
+    };
+    Ok(serde_json::to_string_pretty(&EcBodySectionPayload {
+        body,
+    })?)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct EcBodySectionPayload {
+    body: String,
+}
+
+fn render_ec_json_section_payload(section: &str, raw_json: &str) -> Result<String> {
+    let payload: EcBodySectionPayload = serde_json::from_str(raw_json).map_err(|e| {
+        anyhow::anyhow!(
+            "EC section '{section}' payload must be JSON matching the schema (parse error: {e}). Expected shape: {{\"body\":\"<complete EC section markdown>\"}}"
+        )
+    })?;
+    if payload.body.trim().is_empty() {
+        anyhow::bail!(
+            "EC section '{section}' payload JSON field `body` must not be empty. Expected shape: {{\"body\":\"<complete EC section markdown>\"}}"
+        );
+    }
+    Ok(payload.body)
+}
+
 fn render_ec_draft(
     ctx: &EcProjectContext,
     id: &str,
@@ -636,14 +955,7 @@ fn render_ec_draft(
     title: &str,
     args: &EcDraftArgs,
 ) -> String {
-    let capability_id = args.capability_id.as_deref().unwrap_or("unmapped");
-    let claim_id = args.claim_id.as_deref().unwrap_or(id);
-    let contract_id = args.contract_id.as_deref().unwrap_or(id);
-    let command = args.command.as_deref().unwrap_or("");
-    let mut fill_sections = vec!["e2e-test"];
-    if !args.tool.is_empty() {
-        fill_sections.push("tool-contract");
-    }
+    let fill_sections = ec_draft_fill_sections(args);
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str(&format!("id: {id}\n"));
@@ -651,6 +963,20 @@ fn render_ec_draft(
     out.push_str(&format!("fill_sections: [{}]\n", fill_sections.join(", ")));
     out.push_str("---\n\n");
     out.push_str(&format!("# EC: {title}\n\n"));
+    out.push_str(&render_ec_e2e_section(id, category, title, args));
+    if !args.tool.is_empty() {
+        out.push('\n');
+        out.push_str(&render_ec_tool_contract_section(ctx, id, category, args));
+    }
+    out
+}
+
+fn render_ec_e2e_section(id: &str, category: &str, title: &str, args: &EcDraftArgs) -> String {
+    let capability_id = args.capability_id.as_deref().unwrap_or("unmapped");
+    let claim_id = args.claim_id.as_deref().unwrap_or(id);
+    let contract_id = args.contract_id.as_deref().unwrap_or(id);
+    let command = args.command.as_deref().unwrap_or("");
+    let mut out = String::new();
     out.push_str("## External Contract\n");
     out.push_str("<!-- type: e2e-test lang: yaml -->\n\n");
     out.push_str("```yaml\n");
@@ -664,34 +990,49 @@ fn render_ec_draft(
         out.push_str(&format!("    command: {command:?}\n"));
     }
     out.push_str("    assertions:\n");
-    out.push_str("      - \"Describe the externally observable guarantee.\"\n");
+    out.push_str(&format!(
+        "      - \"Describe the externally observable guarantee for {title}.\"\n"
+    ));
     out.push_str("```\n");
-    if !args.tool.is_empty() {
-        out.push_str("\n## Tool Contracts\n");
-        out.push_str("<!-- type: tool-contract lang: yaml -->\n\n");
-        out.push_str("```yaml\n");
-        out.push_str("tool_contracts:\n");
-        for tool in &args.tool {
-            let tool = slugify(tool);
-            if tool.is_empty() {
-                continue;
-            }
-            let manifest = default_tool_contract_manifest_rel(&tool);
-            out.push_str(&format!("  - id: {id}-{tool}\n"));
-            out.push_str(&format!("    tool: {tool}\n"));
-            out.push_str(&format!("    manifest: {manifest}\n"));
-            out.push_str(&format!("    category: {category}\n"));
-            out.push_str(&format!(
-                "    command: {}\n",
-                default_tool_command(ctx, &tool, &ctx.project_root.join(&manifest), id)
-            ));
-            out.push_str("    native:\n");
-            out.push_str("      version: 1\n");
-            out.push_str(&format!("      id: {id:?}\n"));
-            out.push_str(&format!("      project: {:?}\n", ctx.project));
+    out
+}
+
+fn render_ec_tool_contract_section(
+    ctx: &EcProjectContext,
+    id: &str,
+    category: &str,
+    args: &EcDraftArgs,
+) -> String {
+    let tools = if args.tool.is_empty() {
+        vec!["tool".to_string()]
+    } else {
+        args.tool.clone()
+    };
+    let mut out = String::new();
+    out.push_str("## Tool Contracts\n");
+    out.push_str("<!-- type: tool-contract lang: yaml -->\n\n");
+    out.push_str("```yaml\n");
+    out.push_str("tool_contracts:\n");
+    for tool in tools {
+        let tool = slugify(&tool);
+        if tool.is_empty() {
+            continue;
         }
-        out.push_str("```\n");
+        let manifest = default_tool_contract_manifest_rel(&tool);
+        out.push_str(&format!("  - id: {id}-{tool}\n"));
+        out.push_str(&format!("    tool: {tool}\n"));
+        out.push_str(&format!("    manifest: {manifest}\n"));
+        out.push_str(&format!("    category: {category}\n"));
+        out.push_str(&format!(
+            "    command: {}\n",
+            default_tool_command(ctx, &tool, &ctx.project_root.join(&manifest), id)
+        ));
+        out.push_str("    native:\n");
+        out.push_str("      version: 1\n");
+        out.push_str(&format!("      id: {id:?}\n"));
+        out.push_str(&format!("      project: {:?}\n", ctx.project));
     }
+    out.push_str("```\n");
     out
 }
 
@@ -814,6 +1155,7 @@ fn parse_ec_annotation(line: &str) -> Option<EcSectionAnnotation> {
 fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    ensure_ec_lock_clean_for_gen(&ctx)?;
     let manifest = build_expected_manifest(&ctx)?;
     let generated_files = generated_ec_test_files(&ctx, &manifest);
 
@@ -906,23 +1248,184 @@ fn run_check(project: &str, args: EcCheckArgs) -> Result<()> {
     let summary = check_ec_context(&ctx)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
-    } else if summary.clean {
-        if summary.configured {
-            println!(
-                "ec check {}: clean ({} case(s))",
-                summary.project, summary.case_count
-            );
-        } else {
-            println!(
-                "ec check {}: clean, no TD e2e-test or tool-contract sections found",
-                summary.project
-            );
-        }
     } else {
-        print_ec_findings(&summary);
+        if summary.clean {
+            if summary.configured {
+                println!(
+                    "ec check {}: clean ({} case(s))",
+                    summary.project, summary.case_count
+                );
+            } else {
+                println!(
+                    "ec check {}: clean, no TD e2e-test or tool-contract sections found",
+                    summary.project
+                );
+            }
+        } else {
+            print_ec_findings(&summary);
+        }
+        // #921 tier 1b: a vat.toml runner whose cmd[0] binary is not built
+        // yet is warn-only — surfaced regardless of `clean` so it's visible
+        // without failing the gate.
+        for warning in &summary.ec_binding_warnings {
+            eprintln!("warning: {warning}");
+        }
     }
     if !summary.clean {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn ensure_ec_lock_clean_for_gen(ctx: &EcProjectContext) -> Result<()> {
+    let status = check_ec_lock_context(ctx)?;
+    if status.clean {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "ec gen requires a clean EC IR lock before generation: {}",
+        status.message
+    )
+}
+
+fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    if args.check || args.show {
+        let status = check_ec_lock_context(&ctx)?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        } else {
+            print_ec_lock_status(&status);
+        }
+        if args.check && !status.clean {
+            bail!("{}", status.message);
+        }
+        return Ok(());
+    }
+
+    let (status, wrote) = write_ec_lock_context(&ctx)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+    } else {
+        println!(
+            "ec lock {}: {} {} ({} source(s), {} case(s), {} tool contract(s), {})",
+            status.project,
+            if wrote { "wrote" } else { "already clean" },
+            status.lock_path,
+            status.source_count,
+            status.case_count,
+            status.tool_contract_count,
+            status.ir_digest
+        );
+    }
+    Ok(())
+}
+
+fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    let cases = load_ec_manifest(&ctx)?
+        .map(|(_, manifest)| manifest.cases)
+        .unwrap_or_default();
+    let findings = ec_review_findings(&ctx, &cases);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project": project,
+                "clean": findings.is_empty(),
+                "findings": findings,
+            }))?
+        );
+    } else if findings.is_empty() {
+        println!(
+            "ec review {project}: clean — every typed capability's EC covers its required dimensions"
+        );
+    } else {
+        println!("ec review {project}: {} finding(s)", findings.len());
+        for finding in &findings {
+            println!("  - {finding}");
+        }
+    }
+    if !findings.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Map a `--result` string to the loop's verifier verdict.
+fn parse_loop_result(
+    result: &str,
+    dimension: Option<&str>,
+    detail: Option<&str>,
+) -> Result<crate::cli::loop_state::LastResult> {
+    use crate::cli::loop_state::LastResult;
+    Ok(match result {
+        "green" | "pass" => LastResult::Green,
+        "red" | "fail" => LastResult::Red {
+            dimension: dimension.unwrap_or("behavior").to_string(),
+            why: detail.unwrap_or("verifier failed").to_string(),
+        },
+        "blocked" => LastResult::Blocked {
+            reason: detail.unwrap_or("blocked").to_string(),
+        },
+        other => anyhow::bail!("unknown --result `{other}` (expected green | red | blocked)"),
+    })
+}
+
+/// #188 E1/E4: the loop's "write verify result into wi" connector. Record an EC
+/// verifier verdict onto a LOCAL lifecycle work-item's `<!-- aw:loop-state -->`
+/// block (`apply_verification` -> the local backend's file). LOCAL-only by
+/// design: a remote tracker write is an outward step left out of this verb. The
+/// recorded `next_action` is then what the `aw wi run` / `aw capability run`
+/// loop engine dispatches.
+fn run_record(args: EcRecordArgs) -> Result<()> {
+    use crate::issues::IssueBackend;
+    let project_root = crate::find_project_root()?;
+    let backend = crate::issues::local_backend(&project_root);
+    let result = parse_loop_result(
+        &args.result,
+        args.dimension.as_deref(),
+        args.summary.as_deref(),
+    )?;
+    let updated = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let Some(mut issue) = backend.get(&args.wi).await? else {
+                anyhow::bail!(
+                    "local lifecycle work item `{}` not found — this records onto LOCAL \
+                     lifecycle WIs only; persisting to a remote tracker is a separate, \
+                     outward step",
+                    args.wi
+                );
+            };
+            issue.body = crate::cli::loop_state::apply_verification(
+                &issue.body,
+                &args.wi,
+                result,
+                args.summary.clone(),
+            )?;
+            backend.write(&issue).await?;
+            Ok::<_, anyhow::Error>(issue)
+        })
+    })?;
+    let state = crate::cli::loop_state::parse_loop_state(&updated.body);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "wi": args.wi,
+                "loop_state": state,
+            }))?
+        );
+    } else if let Some(state) = state {
+        println!(
+            "ec record {}: status={:?}, next_action={:?} ({} iteration(s))",
+            args.wi,
+            state.status,
+            state.next_action,
+            state.iterations.len()
+        );
     }
     Ok(())
 }
@@ -1102,6 +1605,303 @@ fn print_ec_doc_findings(summary: &EcDocCheckSummary) {
     }
 }
 
+fn check_ec_lock_context(ctx: &EcProjectContext) -> Result<EcLockStatus> {
+    let lock_path = ec_lock_path(ctx);
+    let snapshot = snapshot_ec_ir(ctx)?;
+    if !lock_path.is_file() {
+        return Ok(ec_lock_status_from_parts(
+            ctx,
+            EcLockState::Missing,
+            false,
+            &snapshot,
+            None,
+            None,
+            Vec::new(),
+            snapshot_entry_keys(&snapshot),
+            Vec::new(),
+            format!(
+                "ec lock missing; run `aw ec lock --project {}`",
+                ctx.project
+            ),
+        ));
+    }
+
+    let lock_content =
+        fs::read_to_string(&lock_path).with_context(|| format!("read {}", lock_path.display()))?;
+    let lock: EcLockFile =
+        toml::from_str(&lock_content).with_context(|| format!("parse {}", lock_path.display()))?;
+    let metadata_changed = lock.version != EC_MANIFEST_VERSION
+        || lock.project != ctx.project
+        || lock.ir_kind != "ec"
+        || lock.ec_path != relative_to(&ctx.project_root, &ctx.ec_root)
+        || lock.inventory_path != relative_to(&ctx.project_root, &ctx.inventory_path);
+    let locked_entries = lock_entries(&lock);
+    let current_entries = snapshot_entries(&snapshot);
+    let (changed, added, removed) = diff_lock_entries(&locked_entries, &current_entries);
+    let clean = !metadata_changed
+        && changed.is_empty()
+        && added.is_empty()
+        && removed.is_empty()
+        && lock.ir_digest == snapshot.ir_digest
+        && lock.source_digest == snapshot.source_digest;
+    if clean {
+        return Ok(ec_lock_status_from_parts(
+            ctx,
+            EcLockState::Locked,
+            true,
+            &snapshot,
+            Some(lock.ir_digest),
+            Some(lock.source_digest),
+            changed,
+            added,
+            removed,
+            "ec lock clean".to_string(),
+        ));
+    }
+
+    let message = ec_lock_stale_message(&ctx.project, metadata_changed, &changed, &added, &removed);
+    Ok(ec_lock_status_from_parts(
+        ctx,
+        EcLockState::Stale,
+        false,
+        &snapshot,
+        Some(lock.ir_digest),
+        Some(lock.source_digest),
+        changed,
+        added,
+        removed,
+        message,
+    ))
+}
+
+fn write_ec_lock_context(ctx: &EcProjectContext) -> Result<(EcLockStatus, bool)> {
+    let lock_path = ec_lock_path(ctx);
+    if lock_path.is_file() {
+        let status = check_ec_lock_context(ctx)?;
+        if status.clean {
+            return Ok((status, false));
+        }
+    }
+    let snapshot = snapshot_ec_ir(ctx)?;
+    let lock = EcLockFile {
+        version: EC_MANIFEST_VERSION,
+        project: ctx.project.clone(),
+        ir_kind: "ec".to_string(),
+        ec_path: relative_to(&ctx.project_root, &ctx.ec_root),
+        inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        ir_digest: snapshot.ir_digest.clone(),
+        source_digest: snapshot.source_digest.clone(),
+        sources: snapshot.sources.clone(),
+        cases: snapshot.cases.clone(),
+        tool_contracts: snapshot.tool_contracts.clone(),
+    };
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let encoded = toml::to_string_pretty(&lock).context("serialize ec lock")?;
+    fs::write(&lock_path, encoded).with_context(|| format!("write {}", lock_path.display()))?;
+    Ok((
+        ec_lock_status_from_parts(
+            ctx,
+            EcLockState::Locked,
+            true,
+            &snapshot,
+            Some(snapshot.ir_digest.clone()),
+            Some(snapshot.source_digest.clone()),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            "ec lock clean".to_string(),
+        ),
+        true,
+    ))
+}
+
+fn snapshot_ec_ir(ctx: &EcProjectContext) -> Result<EcIrSnapshot> {
+    let manifest = build_expected_manifest(ctx)?;
+    let mut cases = manifest
+        .cases
+        .iter()
+        .map(ec_lock_case_from_manifest)
+        .collect::<Vec<_>>();
+    cases.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut tool_contracts = manifest
+        .tool_manifests
+        .iter()
+        .map(ec_lock_tool_from_manifest)
+        .collect::<Vec<_>>();
+    tool_contracts.sort_by(|left, right| left.id.cmp(&right.id));
+    let sources = collect_ec_ir_sources(ctx, &manifest)?;
+    let source_digest = digest_sources(&sources);
+    let ir_digest = digest_ec_lock_ir(&cases, &tool_contracts);
+    Ok(EcIrSnapshot {
+        ir_digest,
+        source_digest,
+        sources,
+        cases,
+        tool_contracts,
+    })
+}
+
+fn collect_ec_ir_sources(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+) -> Result<Vec<EcLockSource>> {
+    let mut paths = BTreeSet::new();
+    if ctx.ec_root.is_dir() {
+        for entry in WalkDir::new(&ctx.ec_root)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_file())
+        {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+                paths.insert(relative_to(&ctx.project_root, path));
+            }
+        }
+    }
+    for source_ref in manifest
+        .cases
+        .iter()
+        .map(|case| case.td_ref.as_str())
+        .chain(
+            manifest
+                .tool_manifests
+                .iter()
+                .map(|tool| tool.td_ref.as_str()),
+        )
+    {
+        if let Some((path, _anchor)) = source_ref.split_once('#') {
+            paths.insert(path.to_string());
+        }
+    }
+
+    let mut sources = Vec::new();
+    for path in paths {
+        let abs = ctx.project_root.join(&path);
+        let bytes = fs::read(&abs).with_context(|| format!("read EC source {}", abs.display()))?;
+        sources.push(EcLockSource {
+            path,
+            digest: digest_bytes(&bytes),
+        });
+    }
+    Ok(sources)
+}
+
+fn ec_lock_case_from_manifest(case: &EcManifestCase) -> EcLockCase {
+    let evidence_digest = digest_evidence_artifacts(&case.evidence);
+    let evaluator_digest = digest_evaluators(&case.evaluators);
+    let mut lock_case = EcLockCase {
+        id: case.id.clone(),
+        capability_id: case.capability_id.clone(),
+        claim_id: case.claim_id.clone(),
+        contract_id: case.contract_id.clone(),
+        dimension: case.category.clone(),
+        source_ref: case.td_ref.clone(),
+        test_path: case.test_path.clone(),
+        command: case.command.clone(),
+        required_for_production: case.required_for_production,
+        assertions: case.assertions.clone(),
+        evidence_digest,
+        evaluator_digest,
+        digest: String::new(),
+    };
+    lock_case.digest = digest_ec_lock_case(&lock_case);
+    lock_case
+}
+
+fn ec_lock_tool_from_manifest(manifest: &EcToolManifest) -> EcLockToolContract {
+    let mut lock_tool = EcLockToolContract {
+        id: manifest.id.clone(),
+        tool: manifest.tool.clone(),
+        dimension: manifest.category.clone(),
+        source_ref: manifest.td_ref.clone(),
+        manifest_path: manifest.path.clone(),
+        command: manifest.command.clone(),
+        content_digest: manifest.content_digest.clone(),
+        digest: String::new(),
+    };
+    lock_tool.digest = digest_ec_lock_tool(&lock_tool);
+    lock_tool
+}
+
+fn ec_lock_path(ctx: &EcProjectContext) -> PathBuf {
+    ctx.ec_root.join(EC_LOCK_FILE)
+}
+
+fn ec_lock_status_from_parts(
+    ctx: &EcProjectContext,
+    status: EcLockState,
+    clean: bool,
+    snapshot: &EcIrSnapshot,
+    locked_ir_digest: Option<String>,
+    locked_source_digest: Option<String>,
+    changed: Vec<String>,
+    added: Vec<String>,
+    removed: Vec<String>,
+    message: String,
+) -> EcLockStatus {
+    EcLockStatus {
+        project: ctx.project.clone(),
+        ir_kind: "ec".to_string(),
+        ec_path: relative_to(&ctx.project_root, &ctx.ec_root),
+        inventory_path: relative_to(&ctx.project_root, &ctx.inventory_path),
+        lock_path: relative_to(&ctx.project_root, &ec_lock_path(ctx)),
+        status,
+        clean,
+        ir_digest: snapshot.ir_digest.clone(),
+        locked_ir_digest,
+        source_digest: snapshot.source_digest.clone(),
+        locked_source_digest,
+        source_count: snapshot.sources.len(),
+        case_count: snapshot.cases.len(),
+        tool_contract_count: snapshot.tool_contracts.len(),
+        changed,
+        added,
+        removed,
+        message,
+    }
+}
+
+fn print_ec_lock_status(status: &EcLockStatus) {
+    println!("ec lock {}: {:?}", status.project, status.status);
+    println!("ec_path: {}", status.ec_path);
+    println!("inventory_path: {}", status.inventory_path);
+    println!("lock_path: {}", status.lock_path);
+    println!("ir_digest: {}", status.ir_digest);
+    if let Some(locked_ir_digest) = &status.locked_ir_digest {
+        println!("locked_ir_digest: {locked_ir_digest}");
+    }
+    println!("source_digest: {}", status.source_digest);
+    if let Some(locked_source_digest) = &status.locked_source_digest {
+        println!("locked_source_digest: {locked_source_digest}");
+    }
+    println!(
+        "sources: {}, cases: {}, tool_contracts: {}",
+        status.source_count, status.case_count, status.tool_contract_count
+    );
+    if !status.changed.is_empty() {
+        println!("changed:");
+        for item in &status.changed {
+            println!("  {item}");
+        }
+    }
+    if !status.added.is_empty() {
+        println!("added:");
+        for item in &status.added {
+            println!("  {item}");
+        }
+    }
+    if !status.removed.is_empty() {
+        println!("removed:");
+        for item in &status.removed {
+            println!("  {item}");
+        }
+    }
+    println!("{}", status.message);
+}
+
 fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<EcProjectContext> {
     let row =
         crate::services::project_registry::resolve_project_config_row(project_root, requested)
@@ -1128,6 +1928,10 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         .map(|workspace| language_target_name(workspace.target).to_string())
         .unwrap_or_else(|| "rust".to_string());
     let package_name = package_name_for(&source_root).unwrap_or_else(|| row.name.clone());
+    let ec_bindings = project_model
+        .as_ref()
+        .map(|project| project.ec.clone())
+        .unwrap_or_default();
 
     Ok(EcProjectContext {
         project_root: project_root.to_path_buf(),
@@ -1142,6 +1946,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         doc_path,
         target,
         package_name,
+        ec_bindings,
     })
 }
 
@@ -1171,8 +1976,8 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
         cases = extract_td_e2e_cases(ctx)?;
         tool_manifests = extract_td_tool_manifests(ctx)?;
     }
+    cases = canonicalize_ec_cases(cases);
     derive_required_for_production(ctx, &mut cases)?;
-    cases.sort_by(|left, right| left.id.cmp(&right.id));
     tool_manifests.sort_by(|left, right| left.id.cmp(&right.id));
     let digest = digest_manifest_inputs(&cases, &tool_manifests);
     Ok(EcManifest {
@@ -1182,6 +1987,21 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
         cases,
         tool_manifests,
     })
+}
+
+fn canonicalize_ec_cases(mut cases: Vec<EcManifestCase>) -> Vec<EcManifestCase> {
+    cases.sort_by(|left, right| {
+        left.id
+            .cmp(&right.id)
+            .then_with(|| left.td_ref.cmp(&right.td_ref))
+            .then_with(|| left.test_path.cmp(&right.test_path))
+            .then_with(|| left.command.cmp(&right.command))
+    });
+    let mut by_id = BTreeMap::new();
+    for case in cases {
+        by_id.insert(case.id.clone(), case);
+    }
+    by_id.into_values().collect()
 }
 
 /// Derive each declared case's `required_for_production` from its capability
@@ -1303,9 +2123,14 @@ fn extract_e2e_cases_from_markdown(
     let lines: Vec<&str> = content.lines().collect();
     let mut out = Vec::new();
     let mut idx = 0usize;
+    let mut fence = MarkdownFenceState::default();
     while idx < lines.len() {
         let line = lines[idx];
-        if is_section_annotation(line, "e2e-test") {
+        if fence.observe(line) {
+            idx += 1;
+            continue;
+        }
+        if !fence.in_fence() && is_section_annotation(line, "e2e-test") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1350,6 +2175,7 @@ fn extract_e2e_cases_from_markdown(
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| default_ec_command(ctx, &ctx.project_root.join(&test_path)));
+                let command = normalize_ec_command(command);
                 let assertions = raw
                     .assertions
                     .or(raw.asserts)
@@ -1416,9 +2242,14 @@ fn extract_tool_manifests_from_markdown(
     let lines: Vec<&str> = content.lines().collect();
     let mut out = Vec::new();
     let mut idx = 0usize;
+    let mut fence = MarkdownFenceState::default();
     while idx < lines.len() {
         let line = lines[idx];
-        if is_section_annotation(line, "tool-contract") {
+        if fence.observe(line) {
+            idx += 1;
+            continue;
+        }
+        if !fence.in_fence() && is_section_annotation(line, "tool-contract") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1479,6 +2310,45 @@ fn extract_tool_manifests_from_markdown(
         idx += 1;
     }
     Ok(out)
+}
+
+#[derive(Default)]
+struct MarkdownFenceState {
+    marker: Option<(char, usize)>,
+}
+
+impl MarkdownFenceState {
+    fn in_fence(&self) -> bool {
+        self.marker.is_some()
+    }
+
+    fn observe(&mut self, line: &str) -> bool {
+        let Some((marker, len, rest)) = markdown_fence_marker(line) else {
+            return false;
+        };
+        if let Some((open_marker, open_len)) = self.marker {
+            if marker == open_marker && len >= open_len && rest.trim().is_empty() {
+                self.marker = None;
+                return true;
+            }
+            return false;
+        }
+        self.marker = Some((marker, len));
+        true
+    }
+}
+
+fn markdown_fence_marker(line: &str) -> Option<(char, usize, &str)> {
+    let trimmed = line.trim_start();
+    let marker = trimmed.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = trimmed.chars().take_while(|ch| *ch == marker).count();
+    if len < 3 {
+        return None;
+    }
+    Some((marker, len, &trimmed[len..]))
 }
 
 fn is_section_annotation(line: &str, section_type: &str) -> bool {
@@ -1550,10 +2420,12 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
     let rel = relative_to(&ctx.project_root, path);
     match tool {
         "arena" => format!("arena run --spec {rel}"),
-        "rig" => path
-            .parent()
-            .map(|parent| format!("rig run --dir {}", relative_to(&ctx.project_root, parent)))
-            .unwrap_or_else(|| format!("rig run --dir {rel}")),
+        // #67/#62: rig's EC gate runs via `rig test`, which resolves cases from
+        // rig.toml `testpaths`. Target this claim's case by id — the EC category
+        // (behavior/efficiency/security/stability) is NOT a rig dimension, so it
+        // is not a `rig test <dimension>` positional. Red until the case TOML is
+        // authored (skeleton gen is aw-1, out of scope here).
+        "rig" => format!("rig test --case {id}"),
         "meter" => format!("meter run --target {rel}"),
         "guard" => format!(
             "guard scan {} --compact --no-persist",
@@ -1562,6 +2434,57 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
         "vat" => format!("vat run {id}"),
         _ => format!("sh {rel}"),
     }
+}
+
+/// #188 E6: the EC review's "no missing dimension" check. EC is the one artifact
+/// trusted blindly — a defect in it yields a false green no downstream step can
+/// catch — so reviewing whether it faithfully captures the capability (with no
+/// missing dimension) is the judgment that deserves review/revise. Given the
+/// capability type and the dimensions (categories) the EC's cases actually
+/// cover, return the required dimensions NOT covered (empty = complete).
+fn ec_review_missing_dimensions(
+    capability_type: &crate::cli::capability_type::CapabilityType,
+    covered_categories: &[String],
+) -> Vec<&'static str> {
+    crate::cli::capability_type::required_ec_dimensions(capability_type)
+        .iter()
+        .copied()
+        .filter(|req| !covered_categories.iter().any(|c| c == req))
+        .collect()
+}
+
+/// #188 E6: the EC review findings for a project — for each capability whose
+/// type is known (from the capability-types config), the required dimensions
+/// its EC cases do not cover. Empty = every typed capability's EC faithfully
+/// covers the dimensions its type demands. Shared by `aw ec check` and the
+/// dedicated `aw ec review` verb.
+fn ec_review_findings(ctx: &EcProjectContext, cases: &[EcManifestCase]) -> Vec<String> {
+    let mut findings = Vec::new();
+    if cases.is_empty() {
+        return findings;
+    }
+    let Ok(types) = crate::cli::capability_type::load_capability_types(&ctx.project_root) else {
+        return findings;
+    };
+    let mut covered: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for case in cases {
+        covered
+            .entry(case.capability_id.clone())
+            .or_default()
+            .push(case.category.clone());
+    }
+    for (cap_id, cats) in &covered {
+        if let Some(cap_type) = types.get(cap_id) {
+            for missing in ec_review_missing_dimensions(cap_type, cats) {
+                findings.push(format!(
+                    "capability `{cap_id}` ({}) EC is missing the required `{missing}` dimension",
+                    cap_type.as_str()
+                ));
+            }
+        }
+    }
+    findings
 }
 
 /// Which executable artifact `aw ec gen` should skeleton for a claim, dispatched
@@ -1576,7 +2499,11 @@ enum CaseGenMode {
 
 fn case_gen_mode(case: &EcManifestCase) -> CaseGenMode {
     let cmd = case.command.trim_start();
-    if cmd.starts_with("rig run") || cmd.starts_with("target/debug/rig run") {
+    if cmd.starts_with("rig run")
+        || cmd.starts_with("target/debug/rig run")
+        || cmd.starts_with("rig test")
+        || cmd.starts_with("target/debug/rig test")
+    {
         CaseGenMode::Rig
     } else if cmd.starts_with("cargo test") {
         CaseGenMode::NativeRust
@@ -1609,9 +2536,11 @@ fn sanitize_ident(s: &str) -> String {
         .collect()
 }
 
-/// Mode-1: a rig scenario skeleton from a rig-integrated claim. The default
-/// step is intentionally red until an author replaces it with real exercise
-/// evidence, while still matching the current rig `[record]` schema.
+/// Mode-1: a rig lifecycle-case skeleton from a rig-integrated claim, in the
+/// `[case]/[prepare]/[exercise]/[clean]` DSL (rig-1). The placeholder
+/// `[exercise]` request is intentionally red until an author fills the real
+/// externally-observable op; `source_contract` back-links the case to the EC
+/// contract that generated it (#71/#62).
 fn render_case_toml_skeleton(
     case: &EcManifestCase,
     suite: &str,
@@ -1624,21 +2553,28 @@ fn render_case_toml_skeleton(
         .map(|s| s.as_str())
         .unwrap_or("fill: the behavior under test");
     format!(
-        "# SPEC-MANAGED: generated by `aw ec gen` from EC claim `{contract}` - fill [[steps]].\n\
-[record]\n\
+        "# SPEC-MANAGED: generated by `aw ec gen` from EC claim `{contract}` — fill [exercise].\n\
+[case]\n\
+id = \"{stem}\"\n\
 suite = \"{suite}\"\n\
 dimension = \"{dimension}\"\n\
-case = \"{stem}\"\n\
 subject = \"{subject}\"\n\
-kind = \"e2e\"\n\
 expected = \"pass\"\n\
 required = {required}\n\
+source_contract = \"{contract}\"\n\
 \n\
-[[steps]]\n\
-type = \"exec\"\n\
-name = \"fill_contract_{stem}\"\n\
-cmd = [\"false\"]\n\
-timeout_secs = 1\n",
+[prepare]\n\
+\n\
+# fill: the measured op — exactly one engine (request XOR query); red until authored.\n\
+[exercise]\n\
+[exercise.request]\n\
+method = \"GET\"\n\
+url = \"http://{{{{upstream}}}}/\"\n\
+[exercise.request.expect]\n\
+status = 200\n\
+\n\
+[clean]\n\
+delegate = \"vat-cow\"\n",
         contract = case.contract_id,
         stem = stem,
         suite = suite,
@@ -1680,15 +2616,26 @@ fn generate_case_skeletons(ctx: &EcProjectContext, manifest: &EcManifest) -> Res
     for case in &manifest.cases {
         match case_gen_mode(case) {
             CaseGenMode::Rig => {
-                let Some(dir) = rig_dir_from_command(&case.command) else {
-                    continue;
-                };
-                let dimension = Path::new(dir)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("behavior");
                 let stem = sanitize_ident(&case.contract_id);
-                let path = ctx.project_root.join(dir).join(format!("{stem}.toml"));
+                // New model (`rig test --case <id>`, #67) carries no `--dir`, so
+                // the case dir is derived from the EC dimension (category) under
+                // the project's rig cases root; legacy `rig run --dir <dir>`
+                // commands still place the case in the named dir (back-compat).
+                let path = match rig_dir_from_command(&case.command) {
+                    Some(dir) => ctx.project_root.join(dir).join(format!("{stem}.toml")),
+                    None => ctx
+                        .tests_root
+                        .join("rig/cases")
+                        .join(&case.category)
+                        .join(format!("{stem}.toml")),
+                };
+                // rig's path==record lint: `[case].dimension` MUST equal the
+                // parent directory name.
+                let dimension = path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(case.category.as_str());
                 let body = render_case_toml_skeleton(case, &ctx.project, dimension, &stem);
                 write_skeleton_if_absent(&path, &body)?;
             }
@@ -2082,6 +3029,207 @@ fn hash_field(hasher: &mut Sha256, value: &str) {
     hasher.update([0]);
 }
 
+fn digest_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_sources(sources: &[EcLockSource]) -> String {
+    let mut sorted = sources.to_vec();
+    sorted.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut hasher = Sha256::new();
+    for source in sorted {
+        hash_field(&mut hasher, &source.path);
+        hash_field(&mut hasher, &source.digest);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_ec_lock_ir(cases: &[EcLockCase], tool_contracts: &[EcLockToolContract]) -> String {
+    let mut hasher = Sha256::new();
+    let mut sorted_cases = cases.to_vec();
+    sorted_cases.sort_by(|left, right| left.id.cmp(&right.id));
+    for case in sorted_cases {
+        hash_field(&mut hasher, "case");
+        hash_field(&mut hasher, &case.id);
+        hash_field(&mut hasher, &case.digest);
+    }
+    let mut sorted_tools = tool_contracts.to_vec();
+    sorted_tools.sort_by(|left, right| left.id.cmp(&right.id));
+    for tool in sorted_tools {
+        hash_field(&mut hasher, "tool");
+        hash_field(&mut hasher, &tool.id);
+        hash_field(&mut hasher, &tool.digest);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_ec_lock_case(case: &EcLockCase) -> String {
+    let mut hasher = Sha256::new();
+    hash_field(&mut hasher, &case.id);
+    hash_field(&mut hasher, &case.capability_id);
+    hash_field(&mut hasher, &case.claim_id);
+    hash_field(&mut hasher, &case.contract_id);
+    hash_field(&mut hasher, &case.dimension);
+    hash_field(&mut hasher, &case.source_ref);
+    hash_field(&mut hasher, &case.test_path);
+    hash_field(&mut hasher, &case.command);
+    hash_field(
+        &mut hasher,
+        if case.required_for_production {
+            "true"
+        } else {
+            "false"
+        },
+    );
+    for assertion in &case.assertions {
+        hash_field(&mut hasher, assertion);
+    }
+    hash_field(&mut hasher, &case.evidence_digest);
+    hash_field(&mut hasher, &case.evaluator_digest);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_ec_lock_tool(tool: &EcLockToolContract) -> String {
+    let mut hasher = Sha256::new();
+    hash_field(&mut hasher, &tool.id);
+    hash_field(&mut hasher, &tool.tool);
+    hash_field(&mut hasher, &tool.dimension);
+    hash_field(&mut hasher, &tool.source_ref);
+    hash_field(&mut hasher, &tool.manifest_path);
+    hash_field(&mut hasher, &tool.command);
+    hash_field(&mut hasher, &tool.content_digest);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_evidence_artifacts(artifacts: &[EcEvidenceArtifact]) -> String {
+    let mut hasher = Sha256::new();
+    for artifact in artifacts {
+        hash_field(&mut hasher, &artifact.kind);
+        hash_field(&mut hasher, &artifact.path);
+        hash_field(&mut hasher, &artifact.label);
+        hash_field(&mut hasher, &artifact.locator);
+        hash_field(&mut hasher, &artifact.format);
+        hash_field(&mut hasher, &artifact.command);
+        for screenshot in &artifact.screenshots {
+            hash_field(&mut hasher, screenshot);
+        }
+        for highlight in &artifact.highlights {
+            hash_field(&mut hasher, highlight);
+        }
+        for step in &artifact.steps {
+            hash_field(&mut hasher, step);
+        }
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn digest_evaluators(evaluators: &[EcEvaluator]) -> String {
+    let mut hasher = Sha256::new();
+    for evaluator in evaluators {
+        hash_field(&mut hasher, &evaluator.id);
+        hash_field(&mut hasher, &evaluator.tool);
+        hash_field(&mut hasher, &evaluator.command);
+        hash_field(&mut hasher, &evaluator.report_path);
+        hash_field(&mut hasher, &evaluator.prompt);
+        for rubric in &evaluator.rubric {
+            hash_field(&mut hasher, rubric);
+        }
+        for criterion in &evaluator.pass_criteria {
+            hash_field(&mut hasher, criterion);
+        }
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn lock_entries(lock: &EcLockFile) -> BTreeMap<String, String> {
+    let mut entries = BTreeMap::new();
+    for source in &lock.sources {
+        entries.insert(format!("source:{}", source.path), source.digest.clone());
+    }
+    for case in &lock.cases {
+        entries.insert(format!("case:{}", case.id), case.digest.clone());
+    }
+    for tool in &lock.tool_contracts {
+        entries.insert(format!("tool:{}", tool.id), tool.digest.clone());
+    }
+    entries
+}
+
+fn snapshot_entries(snapshot: &EcIrSnapshot) -> BTreeMap<String, String> {
+    let mut entries = BTreeMap::new();
+    for source in &snapshot.sources {
+        entries.insert(format!("source:{}", source.path), source.digest.clone());
+    }
+    for case in &snapshot.cases {
+        entries.insert(format!("case:{}", case.id), case.digest.clone());
+    }
+    for tool in &snapshot.tool_contracts {
+        entries.insert(format!("tool:{}", tool.id), tool.digest.clone());
+    }
+    entries
+}
+
+fn snapshot_entry_keys(snapshot: &EcIrSnapshot) -> Vec<String> {
+    snapshot_entries(snapshot).into_keys().collect()
+}
+
+fn diff_lock_entries(
+    locked: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let changed = current
+        .iter()
+        .filter_map(|(key, digest)| {
+            locked
+                .get(key)
+                .filter(|locked_digest| *locked_digest != digest)
+                .map(|_| key.clone())
+        })
+        .collect();
+    let added = current
+        .keys()
+        .filter(|key| !locked.contains_key(*key))
+        .cloned()
+        .collect();
+    let removed = locked
+        .keys()
+        .filter(|key| !current.contains_key(*key))
+        .cloned()
+        .collect();
+    (changed, added, removed)
+}
+
+fn ec_lock_stale_message(
+    project: &str,
+    metadata_changed: bool,
+    changed: &[String],
+    added: &[String],
+    removed: &[String],
+) -> String {
+    let mut parts = Vec::new();
+    if metadata_changed {
+        parts.push("metadata changed".to_string());
+    }
+    if !changed.is_empty() {
+        parts.push(format!("{} changed", changed.len()));
+    }
+    if !added.is_empty() {
+        parts.push(format!("{} added", added.len()));
+    }
+    if !removed.is_empty() {
+        parts.push(format!("{} removed", removed.len()));
+    }
+    if parts.is_empty() {
+        parts.push("digest changed".to_string());
+    }
+    format!(
+        "ec lock stale ({}); review EC IR changes, then run `aw ec lock --project {project}`",
+        parts.join(", ")
+    )
+}
+
 fn ensure_trailing_newline(value: &str) -> String {
     if value.ends_with('\n') {
         value.to_string()
@@ -2145,6 +3293,10 @@ fn check_manifest_against_expected(
     let actual_cases = actual
         .map(|manifest| manifest.cases.clone())
         .unwrap_or_default();
+
+    // #188 E6: review whether each capability's EC covers every dimension its
+    // type requires (the "no missing dimension" judgment).
+    findings.extend(ec_review_findings(ctx, &actual_cases));
 
     if let Some(manifest) = actual {
         if manifest.version != EC_MANIFEST_VERSION {
@@ -2411,6 +3563,23 @@ fn check_manifest_against_expected(
         }
     }
 
+    // #921 tier 1b: validate each `ec.*` cross-CLI binding's resolved command
+    // against the vat.toml runner registry it targets. A missing/misspelled
+    // runner id is a blocker (folded into `findings`, so it blocks `clean`
+    // like every other finding here); a runner whose `cmd[0]` binary isn't
+    // built yet is warn-only and travels separately in
+    // `ec_binding_warnings`.
+    let mut ec_binding_warnings = Vec::new();
+    for (category, binding) in &ctx.ec_bindings {
+        let Ok(command) = binding.command() else {
+            continue;
+        };
+        let (binding_blockers, binding_warnings) =
+            super::chain::check_ec_vat_runner_binding(&ctx.project_root, category, &command);
+        findings.extend(binding_blockers);
+        ec_binding_warnings.extend(binding_warnings);
+    }
+
     findings.sort();
     findings.dedup();
     missing_test_paths.sort();
@@ -2419,6 +3588,8 @@ fn check_manifest_against_expected(
     orphan_test_paths.dedup();
     missing_tool_manifest_paths.sort();
     missing_tool_manifest_paths.dedup();
+    ec_binding_warnings.sort();
+    ec_binding_warnings.dedup();
     let stale = actual
         .map(|manifest| manifest.generated_from_td_digest != expected.generated_from_td_digest)
         .unwrap_or(!expected.cases.is_empty() || !expected.tool_manifests.is_empty());
@@ -2439,6 +3610,7 @@ fn check_manifest_against_expected(
         orphan_test_paths,
         missing_tool_manifest_paths,
         findings,
+        ec_binding_warnings,
     })
 }
 
@@ -2596,21 +3768,33 @@ fn run_ec_verify_command(
         .current_dir(project_root)
         .output();
     match output {
-        Ok(output) => EcVerifyCommandResult {
-            case_id,
-            capability_id,
-            claim_id,
-            category,
-            command,
-            status: if output.status.success() {
+        Ok(output) => {
+            let false_green = ec_false_green_reason(&command, &output.stdout, &output.stderr);
+            let status = if output.status.success() && false_green.is_none() {
                 "passed".to_string()
             } else {
                 "failed".to_string()
-            },
-            exit_code: output.status.code(),
-            stdout_tail: tail_lossy(&output.stdout, 4000),
-            stderr_tail: tail_lossy(&output.stderr, 4000),
-        },
+            };
+            let mut stderr_tail = tail_lossy(&output.stderr, 4000);
+            if let Some(reason) = false_green {
+                if stderr_tail.trim().is_empty() {
+                    stderr_tail = reason;
+                } else {
+                    stderr_tail = format!("{reason}\n{stderr_tail}");
+                }
+            }
+            EcVerifyCommandResult {
+                case_id,
+                capability_id,
+                claim_id,
+                category,
+                command,
+                status,
+                exit_code: output.status.code(),
+                stdout_tail: tail_lossy(&output.stdout, 4000),
+                stderr_tail,
+            }
+        }
         Err(err) => EcVerifyCommandResult {
             case_id,
             capability_id,
@@ -2623,6 +3807,98 @@ fn run_ec_verify_command(
             stderr_tail: err.to_string(),
         },
     }
+}
+
+fn normalize_ec_command(command: String) -> String {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() < 4 || tokens.first() != Some(&"cargo") || tokens.get(1) != Some(&"test") {
+        return command;
+    }
+    let cargo_args_end = tokens
+        .iter()
+        .position(|token| *token == "--")
+        .unwrap_or(tokens.len());
+    if tokens[..cargo_args_end].iter().any(|token| {
+        matches!(
+            *token,
+            "--lib"
+                | "--bin"
+                | "--bins"
+                | "--example"
+                | "--examples"
+                | "--test"
+                | "--tests"
+                | "--bench"
+                | "--benches"
+                | "--all-targets"
+                | "--doc"
+        )
+    }) {
+        return command;
+    }
+
+    let mut idx = 2usize;
+    let mut filter_idx = None;
+    while idx < cargo_args_end {
+        match tokens[idx] {
+            "-p" | "--package" => idx += 2,
+            "--manifest-path" | "--target" | "--features" => idx += 2,
+            "--workspace" | "--all" | "--locked" | "--offline" | "--quiet" | "-q" => idx += 1,
+            token if token.starts_with('-') => idx += 1,
+            _ => {
+                filter_idx = Some(idx);
+                break;
+            }
+        }
+    }
+    let Some(filter_idx) = filter_idx else {
+        return command;
+    };
+
+    let mut normalized = Vec::with_capacity(tokens.len() + 1);
+    normalized.extend_from_slice(&tokens[..filter_idx]);
+    normalized.push("--lib");
+    normalized.extend_from_slice(&tokens[filter_idx..]);
+    normalized.join(" ")
+}
+
+fn ec_false_green_reason(command: &str, stdout: &[u8], stderr: &[u8]) -> Option<String> {
+    if !looks_like_cargo_test_command(command) {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(stdout);
+    let stderr = String::from_utf8_lossy(stderr);
+    match cargo_test_executed_count(&stdout, &stderr) {
+        Some(0) => Some(format!(
+            "cargo test command passed but executed 0 tests; refusing EC false green: {command}"
+        )),
+        _ => None,
+    }
+}
+
+fn looks_like_cargo_test_command(command: &str) -> bool {
+    command.contains("cargo test")
+}
+
+fn cargo_test_executed_count(stdout: &str, stderr: &str) -> Option<usize> {
+    let mut total = 0usize;
+    let mut saw_count = false;
+    for line in stdout.lines().chain(stderr.lines()) {
+        let Some(count) = parse_cargo_running_test_count(line) else {
+            continue;
+        };
+        total = total.saturating_add(count);
+        saw_count = true;
+    }
+    saw_count.then_some(total)
+}
+
+fn parse_cargo_running_test_count(line: &str) -> Option<usize> {
+    let rest = line.trim().strip_prefix("running ")?;
+    let number = rest
+        .strip_suffix(" tests")
+        .or_else(|| rest.strip_suffix(" test"))?;
+    number.trim().parse().ok()
 }
 
 fn compare_case_field(
@@ -3011,17 +4287,48 @@ fn __FN__() {
             env!("CARGO_MANIFEST_DIR")
         );
     }
-    let status = std::process::Command::new("sh")
+    let output = std::process::Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(&root)
-        .status()
+        .output()
         .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success()
+        && aw_ec_cargo_test_executed_count(command, &stdout, &stderr) == Some(0)
+    {
+        panic!("AW EC {id} FAILED: cargo test command passed but executed 0 tests: {command}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+    }
     assert!(
-        status.success(),
-        "AW EC {id} FAILED (exit {:?}): {command}",
-        status.code()
+        output.status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status.code()
     );
+}
+
+fn aw_ec_cargo_test_executed_count(command: &str, stdout: &str, stderr: &str) -> Option<usize> {
+    if !command.contains("cargo test") {
+        return None;
+    }
+    let mut total = 0usize;
+    let mut saw_count = false;
+    for line in stdout.lines().chain(stderr.lines()) {
+        let Some(count) = aw_ec_parse_cargo_running_test_count(line) else {
+            continue;
+        };
+        total = total.saturating_add(count);
+        saw_count = true;
+    }
+    saw_count.then_some(total)
+}
+
+fn aw_ec_parse_cargo_running_test_count(line: &str) -> Option<usize> {
+    let rest = line.trim().strip_prefix("running ")?;
+    let number = rest
+        .strip_suffix(" tests")
+        .or_else(|| rest.strip_suffix(" test"))?;
+    number.trim().parse().ok()
 }
 "#;
 
@@ -3322,6 +4629,7 @@ e2e_tests:
             doc_path: project_root.join("projects/demo/docs/aw-ec-manual.md"),
             target: "rust".to_string(),
             package_name: "demo-crate".to_string(),
+            ec_bindings: BTreeMap::new(),
         }
     }
 
@@ -3344,9 +4652,26 @@ e2e_tests:
     }
 
     #[test]
+    fn canonicalize_ec_cases_keeps_newest_duplicate_td_ref() {
+        let mut earlier = case("library-dom-wasm-parity", "unmapped", "behavior");
+        earlier.td_ref =
+            ".aw/tech-design/projects/jet/specs/4041.md#library-dom-wasm-parity".into();
+        earlier.assertions = vec!["old assertion".into()];
+
+        let mut later = case("library-dom-wasm-parity", "unmapped", "behavior");
+        later.td_ref = ".aw/tech-design/projects/jet/specs/4072.md#library-dom-wasm-parity".into();
+        later.assertions = vec!["new assertion".into()];
+
+        let cases = canonicalize_ec_cases(vec![later.clone(), earlier]);
+        assert_eq!(cases, vec![later]);
+    }
+
+    #[test]
     fn case_gen_mode_dispatches_on_command() {
         let mut c = case("x", "search", "stability");
         c.command = "rig run --dir cases/resilience".into();
+        assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
+        c.command = "rig test --case x".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
         c.command = "cargo test -p lumen --test api_e2e".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::NativeRust);
@@ -3355,7 +4680,56 @@ e2e_tests:
     }
 
     #[test]
-    fn rig_skeleton_has_record_and_red_placeholder_step() {
+    fn default_tool_command_rig_arm_targets_rig_test_case() {
+        // #67: the rig EC gate command repoints from `rig run --dir` to
+        // `rig test --case <claim-id>` (the new lifecycle-case launcher).
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_root(tmp.path());
+        let manifest = tmp.path().join("rig.toml");
+        let cmd = default_tool_command(&ctx, "rig", &manifest, "search-stability-fault-resilience");
+        assert_eq!(cmd, "rig test --case search-stability-fault-resilience");
+    }
+
+    #[test]
+    fn ec_review_flags_missing_required_dimensions_for_the_capability_type() {
+        use crate::cli::capability_type::CapabilityType;
+        // A Service capability requires behavior + efficiency + security + stability.
+        let covered = vec!["behavior".to_string(), "security".to_string()];
+        assert_eq!(
+            ec_review_missing_dimensions(&CapabilityType::Service, &covered),
+            vec!["efficiency", "stability"],
+        );
+        // AgentFirst requires only behavior -> fully covered -> no review finding.
+        assert!(ec_review_missing_dimensions(
+            &CapabilityType::AgentFirst,
+            &["behavior".to_string()]
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn parse_loop_result_maps_verdict_strings() {
+        use crate::cli::loop_state::LastResult;
+        assert_eq!(
+            parse_loop_result("green", None, None).unwrap(),
+            LastResult::Green
+        );
+        assert_eq!(
+            parse_loop_result("red", Some("security"), Some("leak")).unwrap(),
+            LastResult::Red {
+                dimension: "security".into(),
+                why: "leak".into()
+            }
+        );
+        assert!(matches!(
+            parse_loop_result("blocked", None, Some("ec undefined")).unwrap(),
+            LastResult::Blocked { .. }
+        ));
+        assert!(parse_loop_result("nonsense", None, None).is_err());
+    }
+
+    #[test]
+    fn rig_skeleton_emits_lifecycle_case_dsl_with_source_contract() {
         let mut c = case("search-stability-fault-resilience", "search", "stability");
         c.assertions = vec!["search p99 stays bounded".into()];
         let s = render_case_toml_skeleton(
@@ -3364,12 +4738,30 @@ e2e_tests:
             "resilience",
             "search_stability_fault_resilience",
         );
-        assert!(s.contains("[record]"));
-        assert!(s.contains("case = \"search_stability_fault_resilience\""));
-        assert!(s.contains("kind = \"e2e\""));
-        assert!(s.contains("cmd = [\"false\"]"));
+        // New `[case]/[prepare]/[exercise]/[clean]` lifecycle DSL (#71/#62),
+        // not the legacy `[record]` + exec-step schema.
+        assert!(s.contains("[case]"));
+        assert!(!s.contains("[record]"));
+        assert!(s.contains("id = \"search_stability_fault_resilience\""));
         assert!(s.contains("dimension = \"resilience\""));
         assert!(s.contains("subject = \"search p99 stays bounded\""));
+        // R3: back-link to the EC contract that generated this case.
+        assert!(s.contains("source_contract = \"search-stability-fault-resilience\""));
+        // Placeholder exercise carries exactly one engine (http request).
+        assert!(s.contains("[exercise]"));
+        assert!(s.contains("[exercise.request]"));
+        assert!(s.contains("[clean]"));
+        // Valid TOML parsable into rig's CaseRecord/Exercise shape.
+        let v: toml::Value = toml::from_str(&s).expect("skeleton must be valid TOML");
+        assert_eq!(
+            v["case"]["dimension"].as_str(),
+            Some("resilience"),
+            "[case].dimension must round-trip"
+        );
+        assert!(
+            v.get("exercise").and_then(|e| e.get("request")).is_some(),
+            "[exercise] needs exactly one engine"
+        );
     }
 
     #[test]
@@ -3390,6 +4782,22 @@ e2e_tests:
         assert_eq!(
             cargo_test_target("cargo test -p lumen --test api_e2e -- --ignored"),
             Some("api_e2e")
+        );
+    }
+
+    #[test]
+    fn ec_command_normalization_targets_lib_for_cargo_test_filter() {
+        assert_eq!(
+            normalize_ec_command(
+                "cargo test -p agentic-workflow artifact_quality -- --nocapture".to_string()
+            ),
+            "cargo test -p agentic-workflow --lib artifact_quality -- --nocapture"
+        );
+        assert_eq!(
+            normalize_ec_command(
+                "cargo test -p agentic-workflow --test behavior_aw_view -- --ignored".to_string()
+            ),
+            "cargo test -p agentic-workflow --test behavior_aw_view -- --ignored"
         );
     }
 
@@ -3511,7 +4919,7 @@ edition = "2021"
         assert_eq!(case.category, "behavior");
         assert_eq!(
             case.command,
-            "cargo test -p demo-crate demo_happy_path -- --nocapture"
+            "cargo test -p demo-crate --lib demo_happy_path -- --nocapture"
         );
         assert_eq!(case.assertions.len(), 2);
         assert_eq!(case.evidence.len(), 3);
@@ -3547,6 +4955,46 @@ edition = "2021"
             "projects/demo/tests/behavior_demo_happy_path.rs"
         );
         assert!(manifest.generated_from_td_digest.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn ignores_e2e_markers_inside_source_code_fences() {
+        let (tmp, ctx) = write_demo_repo();
+        let source_dir = ctx.td_root.join("surface/interfaces/src");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(
+            source_dir.join("standardize.md"),
+            r##"
+## Source
+<!-- type: source lang: rust -->
+
+````rust
+fn writes_fixture() {
+    let body = r#"
+## Fixture Contract
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: fixture-contract
+    command: cargo test -p demo fixture_contract
+```
+"#;
+    assert!(body.contains("fixture-contract"));
+}
+````
+"##,
+        )
+        .unwrap();
+
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        assert_eq!(manifest.cases.len(), 1);
+        assert!(manifest
+            .cases
+            .iter()
+            .all(|case| case.id != "fixture-contract"));
+        assert!(tmp.path().exists());
     }
 
     #[test]
@@ -3697,6 +5145,103 @@ tool_contracts:
     }
 
     #[test]
+    fn ec_payload_helpers_scaffold_initialized_sections() {
+        let (_tmp, ctx) = write_demo_repo();
+        let args = EcDraftArgs {
+            id: "search-indexing".to_string(),
+            category: "efficiency".to_string(),
+            title: Some("Search Indexing".to_string()),
+            capability_id: Some("search-indexing".to_string()),
+            claim_id: Some("indexing-speed".to_string()),
+            contract_id: Some("indexing-contract".to_string()),
+            command: Some("cargo test -p demo-crate indexing_speed".to_string()),
+            tool: vec!["meter".to_string()],
+            force: false,
+            json: false,
+        };
+
+        assert_eq!(
+            ec_draft_fill_sections(&args),
+            vec!["e2e-test".to_string(), "tool-contract".to_string()]
+        );
+        let expected_payload_path = crate::shared::workspace::payloads_path(&ctx.project_root)
+            .join("ec")
+            .join("search-indexing")
+            .join("e2e-test.json")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            ec_payload_path(&ctx.project_root, "search-indexing", "e2e-test"),
+            expected_payload_path
+        );
+
+        let e2e = ec_section_payload_template(
+            &ctx,
+            "search-indexing",
+            "efficiency",
+            "Search Indexing",
+            &args,
+            "e2e-test",
+        )
+        .unwrap();
+        let e2e: EcBodySectionPayload =
+            serde_json::from_str(&e2e).expect("e2e payload template must be JSON");
+        assert!(e2e.body.contains("## External Contract"));
+        assert!(e2e.body.contains("<!-- type: e2e-test lang: yaml -->"));
+        assert!(e2e.body.contains("capability_id: search-indexing"));
+        assert!(e2e.body.contains("claim_id: indexing-speed"));
+        assert!(e2e.body.contains("contract_id: indexing-contract"));
+        assert!(e2e
+            .body
+            .contains("command: \"cargo test -p demo-crate indexing_speed\""));
+
+        let tool = ec_section_payload_template(
+            &ctx,
+            "search-indexing",
+            "efficiency",
+            "Search Indexing",
+            &args,
+            "tool-contract",
+        )
+        .unwrap();
+        let tool: EcBodySectionPayload =
+            serde_json::from_str(&tool).expect("tool-contract payload template must be JSON");
+        assert!(tool.body.contains("## Tool Contracts"));
+        assert!(tool.body.contains("tool_contracts:"));
+        assert!(tool.body.contains("tool: meter"));
+        assert!(tool.body.contains("manifest: meter.toml"));
+
+        let err = ec_section_payload_template(
+            &ctx,
+            "search-indexing",
+            "efficiency",
+            "Search Indexing",
+            &args,
+            "changes",
+        )
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("EC section 'changes' is not supported"));
+    }
+
+    #[test]
+    fn initialize_ec_payload_file_preserves_existing_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let payload_path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("ec")
+            .join("search-indexing")
+            .join("e2e-test.json");
+        let payload_path_s = payload_path.to_string_lossy().into_owned();
+
+        assert!(initialize_ec_payload_file(&payload_path_s, "first\n").unwrap());
+        assert_eq!(fs::read_to_string(&payload_path).unwrap(), "first\n");
+
+        assert!(!initialize_ec_payload_file(&payload_path_s, "second\n").unwrap());
+        assert_eq!(fs::read_to_string(&payload_path).unwrap(), "first\n");
+    }
+
+    #[test]
     fn ec_generated_manual_artifact_preserves_metadata() {
         let (_tmp, ctx) = write_demo_repo();
         let manifest = build_expected_manifest(&ctx).unwrap();
@@ -3839,6 +5384,62 @@ e2e_tests:
         assert_eq!(summary.command_count, 1);
         assert_eq!(summary.passed_count, 1);
         assert_eq!(summary.results[0].claim_id, "demo-smoke");
+    }
+
+    #[test]
+    fn ec_verify_rejects_zero_test_false_green() {
+        use std::os::unix::fs::PermissionsExt;
+
+        assert_eq!(
+            normalize_ec_command(
+                "cargo test -p agentic-workflow artifact_quality -- --nocapture".to_string()
+            ),
+            "cargo test -p agentic-workflow --lib artifact_quality -- --nocapture"
+        );
+
+        let (tmp, ctx) = write_demo_repo();
+        let fake_bin = tmp.path().join("bin");
+        fs::create_dir_all(&fake_bin).unwrap();
+        let fake_cargo = fake_bin.join("cargo");
+        fs::write(
+            &fake_cargo,
+            "#!/bin/sh\nprintf 'running 0 tests\\n\\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s\\n'\nexit 0\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&fake_cargo).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_cargo, perms).unwrap();
+
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/behavior/zero.md"),
+            format!(
+                r#"
+## Zero
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: zero false green
+    capability_id: demo
+    claim_id: demo-zero
+    command: "PATH={}:$PATH cargo test -p demo missing_filter"
+```
+"#,
+                fake_bin.display()
+            ),
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(!summary.clean, "{:?}", summary.results);
+        assert_eq!(summary.command_count, 1);
+        assert_eq!(summary.failed_count, 1);
+        assert!(summary.results[0].stderr_tail.contains("executed 0 tests"));
     }
 
     #[test]
@@ -4001,6 +5602,85 @@ tool_contracts:
         assert!(summary.configured);
         assert_eq!(summary.case_count, 1);
         assert!(!summary.stale);
+    }
+
+    #[test]
+    fn ec_lock_writes_canonical_ir_and_checks_clean() {
+        let (_tmp, ctx) = write_demo_repo();
+
+        let (status, wrote) = write_ec_lock_context(&ctx).unwrap();
+
+        assert!(wrote);
+        assert!(status.clean, "{status:?}");
+        assert_eq!(status.status, EcLockState::Locked);
+        assert_eq!(status.case_count, 1);
+        assert_eq!(status.tool_contract_count, 0);
+        assert_eq!(status.source_count, 1);
+        assert_eq!(status.lock_path, "projects/demo/external-contracts/ec.lock");
+        assert!(status.ir_digest.starts_with("sha256:"));
+        assert!(ctx.ec_root.join("ec.lock").is_file());
+
+        let content = fs::read_to_string(ctx.ec_root.join("ec.lock")).unwrap();
+        assert!(content.contains("ir_kind = \"ec\""));
+        assert!(content.contains("id = \"demo-happy-path\""));
+        assert!(content.contains("path = \".aw/tech-design/projects/demo/specs/contract.md\""));
+
+        let checked = check_ec_lock_context(&ctx).unwrap();
+        assert!(checked.clean, "{checked:?}");
+    }
+
+    #[test]
+    fn ec_gen_preflight_requires_clean_lock() {
+        let (_tmp, ctx) = write_demo_repo();
+
+        let missing = ensure_ec_lock_clean_for_gen(&ctx).unwrap_err();
+        assert!(format!("{missing:#}").contains("ec gen requires a clean EC IR lock"));
+
+        write_ec_lock_context(&ctx).unwrap();
+        ensure_ec_lock_clean_for_gen(&ctx).unwrap();
+    }
+
+    #[test]
+    fn ec_lock_detects_raw_source_drift_even_when_ir_is_stable() {
+        let (tmp, ctx) = write_demo_repo();
+        write_ec_lock_context(&ctx).unwrap();
+        let source = tmp
+            .path()
+            .join(".aw/tech-design/projects/demo/specs/contract.md");
+        let mut content = fs::read_to_string(&source).unwrap();
+        content.push_str("\nPlain prose outside the EC YAML.\n");
+        fs::write(&source, content).unwrap();
+
+        let status = check_ec_lock_context(&ctx).unwrap();
+
+        assert_eq!(status.status, EcLockState::Stale);
+        assert!(!status.clean);
+        assert_eq!(status.ir_digest, status.locked_ir_digest.unwrap());
+        assert_ne!(status.source_digest, status.locked_source_digest.unwrap());
+        assert!(status
+            .changed
+            .contains(&"source:.aw/tech-design/projects/demo/specs/contract.md".to_string()));
+    }
+
+    #[test]
+    fn ec_lock_detects_ec_ir_case_drift() {
+        let (tmp, ctx) = write_demo_repo();
+        write_ec_lock_context(&ctx).unwrap();
+        let source = tmp
+            .path()
+            .join(".aw/tech-design/projects/demo/specs/contract.md");
+        let content = fs::read_to_string(&source).unwrap().replace(
+            "cargo test -p demo-crate demo_happy_path",
+            "cargo test -p demo-crate demo_changed_path",
+        );
+        fs::write(&source, content).unwrap();
+
+        let status = check_ec_lock_context(&ctx).unwrap();
+
+        assert_eq!(status.status, EcLockState::Stale);
+        assert!(!status.clean);
+        assert_ne!(status.ir_digest, status.locked_ir_digest.unwrap());
+        assert!(status.changed.contains(&"case:demo-happy-path".to_string()));
     }
 
     #[test]

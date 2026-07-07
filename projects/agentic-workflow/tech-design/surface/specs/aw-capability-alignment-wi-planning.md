@@ -58,7 +58,7 @@ capability_refs:
     coverage: full
     rationale: "This spec defines atomization and bounded WI planning flow."
 command_refs:
-  - command: aw run
+  - command: aw wi run
   - command: aw capability
   - command: aw capability apply-draft
   - command: aw capability check
@@ -100,7 +100,7 @@ scenarios:
     when: ["agent routes through /aw:wi planning"]
     then:
       - "non-epic implementation WI is rejected as too-large"
-      - "aw wi atomize produces local candidates under /tmp/aw/{project}/atomize"
+      - "aw wi atomize produces local candidates under /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize"
 
   - id: S3
     title: "prioritize classifies readiness and dependency lanes"
@@ -113,7 +113,7 @@ scenarios:
   - id: S4
     title: "project run consumes readiness instead of sprint batches"
     given: ["project capability graph and issue backend contain open work"]
-    when: ["aw run --project P runs"]
+    when: ["aw capability run --project P runs"]
     then:
       - "the project root consumes the prioritize readiness lanes and selects the next ready_now WI"
       - "if no ready_now work exists, the project root dispatches atomize or blocks with a prioritize readiness artifact"
@@ -121,7 +121,7 @@ scenarios:
 
   - id: S5
     title: "Claude-facing skills stay aligned"
-    given: ["aw init installs Claude Code skills from embedded templates"]
+    given: ["managed asset producers install Claude Code skills from embedded templates"]
     when: ["the capability alignment workflow is installed or refreshed"]
     then:
       - "aw-capability is installed as a Claude Code skill"
@@ -185,7 +185,7 @@ scenarios:
       - "aw wi plan adds tracker lookup evidence for README WI refs that are missing from the open issue inventory, without creating replacement WI candidates automatically"
   - id: S8
     title: "root runner rolls child completion upward"
-    given: ["agent invokes aw run with a project, capability, epic, or change root"]
+    given: ["agent invokes aw wi run or aw capability run with a project, capability, epic, or change root"]
     when: ["the current layer is complete or blocked"]
     then:
       - "JSON output includes next.kind, invoke.command, agent_prompt, and completion"
@@ -195,10 +195,10 @@ scenarios:
       - "completed capabilities ask the agent to inspect the project root"
   - id: S9
     title: "root runner does not duplicate pending planning artifacts"
-    given: ["aw wi epicize has produced a local /tmp/aw/{project}/epics artifact with agent_review_required=true and review_status=pending"]
-    when: ["aw run --project executes before the artifact is reviewed"]
+    given: ["aw wi epicize has produced a local /tmp/aw/workspaces/<workspace>/workitems/{project}/epics artifact with agent_review_required=true and review_status=pending"]
+    when: ["aw capability run --project executes before the artifact is reviewed"]
     then:
-      - "aw run emits action=blocked instead of invoking epicize again"
+      - "aw capability run emits action=blocked instead of invoking epicize again"
       - "next.kind is review_planning_artifact and next.payload_path points at the pending artifact"
       - "hitl_question.tool_hint is ask_user_question so the decision is captured before tracker mutation"
 ```
@@ -215,7 +215,7 @@ stateDiagram-v2
     [*] --> capability_candidate : /aw:capability infer
     capability_candidate --> capability_confirmed : human confirms
     capability_candidate --> capability_candidate : human revises
-    capability_confirmed --> root_running : aw run --project
+    capability_confirmed --> root_running : aw capability run --project
     root_running --> epicized : aw wi epicize
     epicized --> epic_review : agent/HITL review
     epic_review --> atomized : aw wi atomize
@@ -240,7 +240,7 @@ nodes:
   human_confirm: { kind: decision, label: "human confirms cap_path update?" }
   write_cap_path: { kind: process, label: "write confirmed Markdown capability sections and contract/work-root tables to cap_path" }
   capability_command: { kind: process, label: "aw capability report/next/run/check evaluates capability/gap/claim graph" }
-  root_run: { kind: process, label: "aw run selects project/capability/wi root and emits invoke.command" }
+  root_run: { kind: process, label: "aw wi run / aw capability run selects project/capability/wi root and emits invoke.command" }
   wi_planning: { kind: process, label: "aw:wi routes gaps and required claims through planning operators" }
   epicize: { kind: process, label: "epicize roadmap-sized direction" }
   epic_review: { kind: decision, label: "pending epic artifact reviewed?" }
@@ -272,7 +272,7 @@ flowchart TD
     human_confirm -- revise --> infer_capability
     human_confirm -- confirm --> write_cap_path[write Markdown capability tables]
     write_cap_path --> capability_command[aw capability report/next/run/check]
-    capability_command --> root_run[aw run root envelope]
+    capability_command --> root_run[aw wi run / aw capability run root envelope]
     root_run --> wi_planning[aw wi planning]
     wi_planning --> epicize[epicize]
     epicize --> epic_review{pending artifact reviewed?}
@@ -286,13 +286,13 @@ flowchart TD
 
 `Capability` is a human-confirmed anchor. The model may infer and propose, but
 must not publish `cap_path` without confirmation. `aw capability` owns the
-read-only graph view and one-tick capability checks. `aw run` owns root
-selection and emits `invoke.command`/`agent_prompt` so agents can roll completed
-child work back up to the parent root. Its `completion` object is the
+read-only graph view and one-tick capability checks. `aw wi run`/`aw capability
+run` own root selection and emit `invoke.command`/`agent_prompt` so agents can
+roll completed child work back up to the parent root. Its `completion` object is the
 authoritative stop condition: `action=done` only means the current root is done,
 while `completion.workflow_complete=true` means the root workflow has reached
 project-level 100%. Planning artifacts stay local under
-`/tmp/aw/{project}/...`; tracker mutation remains in the CRRR lane.
+`/tmp/aw/workspaces/<workspace>/workitems/{project}/...`; tracker mutation remains in the CRRR lane.
 The canonical README capability map is Markdown-first and optimized for agents
 that need to understand the project before touching code:
 
@@ -429,17 +429,17 @@ commands:
     mutates_tracker: false
   - path: [wi, plan]
     behavior: "read cap_path or project README Markdown capability tables, then write a local capability-to-WI planning draft; YAML/legacy tables require migration"
-    persistence: "/tmp/aw/{project}/capability-plan"
+    persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan"
     mutates_tracker: false
   - path: [wi, epicize]
     behavior: "group roadmap direction into epic or phase candidates"
   - path: [wi, atomize]
     behavior: "split epic or roadmap-sized work into atomic WI candidates"
-    persistence: "/tmp/aw/{project}/atomize"
+    persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/atomize"
     mutates_tracker: false
   - path: [wi, prioritize]
     behavior: "classify open work into ready_now, blocked_by_dependency, needs_atomize, needs_triage, and deferred lanes"
-    persistence: "/tmp/aw/{project}/priorities"
+    persistence: "/tmp/aw/workspaces/<workspace>/workitems/{project}/priorities"
     mutates_tracker: false
 validation:
   non_epic_requires:
@@ -521,7 +521,7 @@ requirements:
     verifymethod: review
   claude_skill_sync:
     id: AW-CAP-WI-7
-    text: "aw init installs aw-capability, aw-wi planning, and aw-standardize human skill names"
+    text: "managed asset producers install aw-capability, aw-wi planning, and aw-standardize human skill names"
     risk: high
     verifymethod: test
   capability_h2_schema:
@@ -711,7 +711,7 @@ requirementDiagram
     }
     requirement claude_skill_sync {
         id: AW-CAP-WI-7
-        text: "aw init installs aw-capability, aw-wi planning, and aw-standardize"
+        text: "managed asset producers install aw-capability, aw-wi planning, and aw-standardize"
         risk: high
         verifymethod: test
     }
@@ -986,11 +986,11 @@ changes:
     section: cli
     impl_mode: hand-written
     description: Remove old Claude layer-specific human skill in favor of aw:standardize.
-  - path: projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md
+  - path: projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md.tmpl
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Update the aw init CLAUDE.md template with atomize, prioritize readiness, and bounded-WI guidance.
+    description: Update the managed CLAUDE.md template with atomize, prioritize readiness, and bounded-WI guidance.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-capability/SKILL.md
     action: modify
     section: cli
@@ -1020,7 +1020,7 @@ changes:
     action: modify
     impl_mode: codegen
     section: source
-    description: Include aw-capability and aw-standardize in aw init skill installation and tests, and prune old standardize-run/loop skills.
+    description: Include aw-capability and aw-standardize in managed skill installation and tests, and prune old standardize-run/loop skills.
   - path: projects/agentic-workflow/src/cli/issues.rs
     action: modify
     impl_mode: codegen

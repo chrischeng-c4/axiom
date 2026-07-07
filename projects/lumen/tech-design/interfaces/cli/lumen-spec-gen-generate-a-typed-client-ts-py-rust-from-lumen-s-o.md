@@ -47,6 +47,23 @@ flowchart TD
     gen --> write[create out; write files]
     write --> done([client written])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Dispatch lumen spec gen, select the requested language emitter, and write generated client files under --out."
+  - path: projects/lumen/tests/spec_gen_e2e.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Exercise TypeScript, Python, and Rust generated-client output from lumen's own OpenAPI document."
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
@@ -110,4 +127,21 @@ requirementDiagram
       type: "rs/#[test]"
     }
     test_gen_py_writes_client - verifies -> R1
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Wire `lumen spec gen` language selection and offline typed-client generation dispatch."
+  - path: projects/lumen/tests/spec_gen_e2e.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Exercise Python, TypeScript, Rust emitter selection and plain `lumen spec` output."
 ```

@@ -12,6 +12,24 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 
+pub mod api;
+pub mod ipc;
+pub mod manager;
+pub mod render;
+
+use manager::ViewerManager;
+
+/// Result returned when the review viewer exits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewResult {
+    /// User approved the proposal.
+    Approved,
+    /// User requested changes with comments.
+    ChangesRequested,
+    /// User closed the viewer without taking a review action.
+    Cancelled,
+}
+
 /// Application state shared across handlers
 struct AppState {
     manager: ViewerManager,
@@ -389,7 +407,7 @@ async fn api_close_window(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::render::slugify;
 
     #[test]
     fn test_slugify_exported() {

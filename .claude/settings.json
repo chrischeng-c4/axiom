@@ -169,27 +169,24 @@
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": []
-      }
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": []
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aw guard pretool --agent claude --project jet",
+            "timeout": 30,
+            "statusMessage": "Checking AW guard"
+          }
+        ]
       },
       {
         "matcher": "Write|Edit|MultiEdit|Bash",
-        "hooks": [
-        ]
+        "hooks": []
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-        ]
+        "hooks": []
       }
     ]
   }

@@ -1,5 +1,5 @@
 # Agentic Workflow Configuration
-# This file lives at .aw/config.toml and is created by `aw init`.
+# This file lives at .aw/config.toml and is produced by Agentic Workflow config commands.
 
 # SDD schema version (bumped on breaking changes).
 version = "0.3.13"

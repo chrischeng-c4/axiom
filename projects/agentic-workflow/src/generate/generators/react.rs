@@ -503,7 +503,7 @@ mod tests {
     fn test_generate_produces_three_files() {
         let spec = card_spec();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_react_gen"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/react-gen"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();
@@ -539,7 +539,7 @@ mod tests {
     fn test_component_tsx_content() {
         let spec = card_spec();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_react_content"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/react-content"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();

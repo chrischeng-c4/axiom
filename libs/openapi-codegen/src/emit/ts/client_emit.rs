@@ -23,6 +23,96 @@ const FETCH_RUNTIME: &str = r##"export interface ClientConfig {
   baseUrl: string;
   fetch?: typeof fetch;
   headers?: Record<string, string>;
+  transport?: TransportPolicy;
+}
+
+export interface TransportPolicy {
+  targetConcurrency?: number;
+  maxConnections?: number;
+  maxInFlightPerOrigin?: number;
+  maxKeepaliveConnections?: number;
+  keepaliveExpiryMs?: number;
+  poolTimeoutMs?: number;
+}
+
+const DEFAULT_MAX_CONNECTIONS = 128;
+const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;
+const DEFAULT_KEEPALIVE_EXPIRY_MS = 5000;
+const DEFAULT_POOL_TIMEOUT_MS = 5000;
+
+export function recommendedH2Connections(concurrency: number, parallelism = 1): number {
+  const cap = Math.max(1, parallelism);
+  if (concurrency <= 2) return 1;
+  return Math.max(1, Math.min(cap, Math.ceil(Math.log(concurrency))));
+}
+
+class Admission {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+  constructor(private readonly maxInFlight: number) {}
+
+  async acquire(timeoutMs: number): Promise<() => void> {
+    if (this.active < this.maxInFlight) {
+      this.active += 1;
+      return () => this.release();
+    }
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const wake = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.active += 1;
+        resolve(() => this.release());
+      };
+      timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        const index = this.waiters.indexOf(wake);
+        if (index >= 0) this.waiters.splice(index, 1);
+        reject(new Error(`pool timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.waiters.push(wake);
+    });
+  }
+
+  private release(): void {
+    this.active = Math.max(0, this.active - 1);
+    const wake = this.waiters.shift();
+    if (wake) wake();
+  }
+}
+
+const admissions = new WeakMap<ClientConfig, Map<string, Admission>>();
+
+function policy(config: ClientConfig): Required<TransportPolicy> {
+  const p = config.transport ?? {};
+  const maxConnections = Math.max(1, p.maxConnections ?? DEFAULT_MAX_CONNECTIONS);
+  return {
+    targetConcurrency: Math.max(1, p.targetConcurrency ?? maxConnections),
+    maxConnections,
+    maxInFlightPerOrigin: Math.max(1, p.maxInFlightPerOrigin ?? p.targetConcurrency ?? maxConnections),
+    maxKeepaliveConnections: Math.max(0, p.maxKeepaliveConnections ?? DEFAULT_MAX_KEEPALIVE_CONNECTIONS),
+    keepaliveExpiryMs: Math.max(0, p.keepaliveExpiryMs ?? DEFAULT_KEEPALIVE_EXPIRY_MS),
+    poolTimeoutMs: Math.max(0, p.poolTimeoutMs ?? DEFAULT_POOL_TIMEOUT_MS),
+  };
+}
+
+async function acquireAdmission(config: ClientConfig, url: URL): Promise<() => void> {
+  const p = policy(config);
+  let byOrigin = admissions.get(config);
+  if (!byOrigin) {
+    byOrigin = new Map();
+    admissions.set(config, byOrigin);
+  }
+  const key = url.origin;
+  let admission = byOrigin.get(key);
+  if (!admission) {
+    admission = new Admission(p.maxInFlightPerOrigin);
+    byOrigin.set(key, admission);
+  }
+  return admission.acquire(p.poolTimeoutMs);
 }
 
 export interface RequestArgs {
@@ -31,6 +121,7 @@ export interface RequestArgs {
   query?: Record<string, unknown>;
   body?: unknown;
   headers?: Record<string, string>;
+  expectBody?: boolean;
 }
 
 export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
@@ -43,18 +134,23 @@ export async function request<T>(config: ClientConfig, args: RequestArgs): Promi
       }
     }
   }
-  const response = await doFetch(url.toString(), {
-    method: args.method,
-    headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
-    body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+  const release = await acquireAdmission(config, url);
+  try {
+    const response = await doFetch(url.toString(), {
+      method: args.method,
+      headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
+      body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    if (args.expectBody === false || response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
+  } finally {
+    release();
   }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
 }
 "##;
 
@@ -65,6 +161,96 @@ export interface ClientConfig {
   baseUrl: string;
   axios?: AxiosInstance;
   headers?: Record<string, string>;
+  transport?: TransportPolicy;
+}
+
+export interface TransportPolicy {
+  targetConcurrency?: number;
+  maxConnections?: number;
+  maxInFlightPerOrigin?: number;
+  maxKeepaliveConnections?: number;
+  keepaliveExpiryMs?: number;
+  poolTimeoutMs?: number;
+}
+
+const DEFAULT_MAX_CONNECTIONS = 128;
+const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;
+const DEFAULT_KEEPALIVE_EXPIRY_MS = 5000;
+const DEFAULT_POOL_TIMEOUT_MS = 5000;
+
+export function recommendedH2Connections(concurrency: number, parallelism = 1): number {
+  const cap = Math.max(1, parallelism);
+  if (concurrency <= 2) return 1;
+  return Math.max(1, Math.min(cap, Math.ceil(Math.log(concurrency))));
+}
+
+class Admission {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+  constructor(private readonly maxInFlight: number) {}
+
+  async acquire(timeoutMs: number): Promise<() => void> {
+    if (this.active < this.maxInFlight) {
+      this.active += 1;
+      return () => this.release();
+    }
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const wake = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.active += 1;
+        resolve(() => this.release());
+      };
+      timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        const index = this.waiters.indexOf(wake);
+        if (index >= 0) this.waiters.splice(index, 1);
+        reject(new Error(`pool timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.waiters.push(wake);
+    });
+  }
+
+  private release(): void {
+    this.active = Math.max(0, this.active - 1);
+    const wake = this.waiters.shift();
+    if (wake) wake();
+  }
+}
+
+const admissions = new WeakMap<ClientConfig, Map<string, Admission>>();
+
+function policy(config: ClientConfig): Required<TransportPolicy> {
+  const p = config.transport ?? {};
+  const maxConnections = Math.max(1, p.maxConnections ?? DEFAULT_MAX_CONNECTIONS);
+  return {
+    targetConcurrency: Math.max(1, p.targetConcurrency ?? maxConnections),
+    maxConnections,
+    maxInFlightPerOrigin: Math.max(1, p.maxInFlightPerOrigin ?? p.targetConcurrency ?? maxConnections),
+    maxKeepaliveConnections: Math.max(0, p.maxKeepaliveConnections ?? DEFAULT_MAX_KEEPALIVE_CONNECTIONS),
+    keepaliveExpiryMs: Math.max(0, p.keepaliveExpiryMs ?? DEFAULT_KEEPALIVE_EXPIRY_MS),
+    poolTimeoutMs: Math.max(0, p.poolTimeoutMs ?? DEFAULT_POOL_TIMEOUT_MS),
+  };
+}
+
+async function acquireAdmission(config: ClientConfig, url: URL): Promise<() => void> {
+  const p = policy(config);
+  let byOrigin = admissions.get(config);
+  if (!byOrigin) {
+    byOrigin = new Map();
+    admissions.set(config, byOrigin);
+  }
+  const key = url.origin;
+  let admission = byOrigin.get(key);
+  if (!admission) {
+    admission = new Admission(p.maxInFlightPerOrigin);
+    byOrigin.set(key, admission);
+  }
+  return admission.acquire(p.poolTimeoutMs);
 }
 
 export interface RequestArgs {
@@ -73,19 +259,29 @@ export interface RequestArgs {
   query?: Record<string, unknown>;
   body?: unknown;
   headers?: Record<string, string>;
+  expectBody?: boolean;
 }
 
 export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
   const instance = config.axios ?? axios.create();
-  const response = await instance.request<T>({
-    method: args.method,
-    baseURL: config.baseUrl,
-    url: args.path,
-    params: args.query,
-    data: args.body,
-    headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
-  });
-  return response.data;
+  const url = new URL(config.baseUrl + args.path);
+  const release = await acquireAdmission(config, url);
+  try {
+    const response = await instance.request<T>({
+      method: args.method,
+      baseURL: config.baseUrl,
+      url: args.path,
+      params: args.query,
+      data: args.body,
+      headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
+    });
+    if (args.expectBody === false) {
+      return undefined as T;
+    }
+    return response.data;
+  } finally {
+    release();
+  }
 }
 "##;
 
@@ -156,6 +352,9 @@ fn emit_method(p: &OperationPlan) -> String {
     }
     if p.body.is_some() {
         args.push("body: data.body".to_string());
+    }
+    if p.response_type == "void" {
+        args.push("expectBody: false".to_string());
     }
 
     let resp = &p.response_type_name;
@@ -295,13 +494,37 @@ mod tests {
     }
 
     #[test]
+    fn void_operation_marks_runtime_to_skip_body_parse() {
+        let out = render(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"description":"ok"}}}}}}"##,
+        );
+        assert!(out.contains("health(): Promise<HealthResponse> {"));
+        assert!(out.contains(
+            "return request<HealthResponse>(config, { method: \"GET\", path: `/health`, expectBody: false });"
+        ));
+    }
+
+    #[test]
     fn runtime_fetch_and_axios() {
         let fetch = emit_runtime(HttpClient::Fetch);
+        assert!(fetch.contains("export interface TransportPolicy"));
+        assert!(fetch.contains("const DEFAULT_MAX_CONNECTIONS = 128;"));
+        assert!(fetch.contains("const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;"));
+        assert!(fetch.contains("export function recommendedH2Connections"));
+        assert!(fetch.contains("async function acquireAdmission"));
         assert!(fetch.contains("const doFetch = config.fetch ?? fetch;"));
+        assert!(fetch.contains("const release = await acquireAdmission(config, url);"));
+        assert!(fetch.contains("args.expectBody === false || response.status === 204"));
         assert!(!fetch.contains("axios"));
         let axios = emit_runtime(HttpClient::Axios);
+        assert!(axios.contains("export interface TransportPolicy"));
+        assert!(axios.contains("const DEFAULT_MAX_CONNECTIONS = 128;"));
+        assert!(axios.contains("const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;"));
+        assert!(axios.contains("async function acquireAdmission"));
         assert!(axios.contains("import axios from \"axios\";"));
         assert!(axios.contains("config.axios ?? axios.create()"));
+        assert!(axios.contains("const release = await acquireAdmission(config, url);"));
+        assert!(axios.contains("if (args.expectBody === false)"));
         assert!(axios.contains("return response.data;"));
     }
 }

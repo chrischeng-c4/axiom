@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:962dae38" tracker="pending-tracker" reason="Tree-sitter walk of a component file: locate the component's props type (interface or type alias referenced by the component's first param) and return an ordered list of (prop name, type text, optional flag)."
+// <HANDWRITE gap="missing-generator:logic:962dae38" tracker="standardize-gap-projects-jet-src-stories-prop-extractor-rs" reason="Tree-sitter walk of a component file: locate the component's props type (interface or type alias referenced by the component's first param) and return an ordered list of (prop name, type text, optional flag).">
 //! Component prop-type extraction for `jet stories` controls (B3).
 //!
 //! Given the source of a component file and the component's name, this module
@@ -68,6 +68,10 @@ pub struct PropDef {
     pub type_text: String,
     /// Whether the prop is optional (declared with `?`).
     pub optional: bool,
+    /// Leading JSDoc description attached to the prop, if present.
+    pub description: String,
+    /// Default value surfaced in docs when statically known.
+    pub default_value: Option<String>,
 }
 
 /// Extract the ordered prop definitions of `component_name` from a component
@@ -651,9 +655,51 @@ fn read_object_type_members_subst(
             name,
             type_text,
             optional,
+            description: leading_jsdoc(source, member.start_byte()).unwrap_or_default(),
+            default_value: None,
         });
     }
     out
+}
+
+pub fn extract_component_description(component_source: &str, component_name: &str) -> String {
+    let Some(tree) = parse_tsx(component_source) else {
+        return String::new();
+    };
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let target = if child.kind() == "export_statement" {
+            named_children(child).into_iter().find(|node| {
+                matches!(
+                    node.kind(),
+                    "function_declaration" | "lexical_declaration" | "variable_declaration"
+                )
+            })
+        } else {
+            Some(child)
+        };
+        let Some(node) = target else {
+            continue;
+        };
+        match node.kind() {
+            "function_declaration" => {
+                if identifier_name(component_source, node).as_deref() == Some(component_name) {
+                    return leading_jsdoc(component_source, child.start_byte()).unwrap_or_default();
+                }
+            }
+            "lexical_declaration" | "variable_declaration" => {
+                for (name, _) in declarators(component_source, node) {
+                    if name == component_name {
+                        return leading_jsdoc(component_source, child.start_byte())
+                            .unwrap_or_default();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    String::new()
 }
 
 /// Substitute each generic `(param, arg)` for whole-word occurrences of `param`
@@ -710,6 +756,47 @@ fn first_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     named_children(node).into_iter().find(|c| c.kind() == kind)
 }
 
+fn declarators<'a>(source: &str, decl: Node<'a>) -> Vec<(String, Node<'a>)> {
+    let mut out = Vec::new();
+    for declarator in named_children(decl) {
+        if declarator.kind() != "variable_declarator" {
+            continue;
+        }
+        let Some(name) = first_child_of_kind(declarator, "identifier") else {
+            continue;
+        };
+        let Some(value) = named_children(declarator)
+            .into_iter()
+            .find(|child| !matches!(child.kind(), "identifier" | "type_annotation"))
+        else {
+            continue;
+        };
+        out.push((node_text(name, source).to_string(), value));
+    }
+    out
+}
+
+fn leading_jsdoc(source: &str, start: usize) -> Option<String> {
+    let before = &source[..start];
+    let trimmed = before.trim_end();
+    let end = trimmed.rfind("*/")?;
+    if end + 2 != trimmed.len() {
+        return None;
+    }
+    let begin = trimmed[..end].rfind("/**")?;
+    let raw = &trimmed[begin + 3..end];
+    let lines: Vec<String> = raw
+        .lines()
+        .map(|line| line.trim().trim_start_matches('*').trim().to_string())
+        .filter(|line| !line.is_empty() && !line.starts_with('@'))
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join(" "))
+    }
+}
+
 fn identifier_name(source: &str, node: Node) -> Option<String> {
     first_child_of_kind(node, "identifier").map(|n| node_text(n, source).to_string())
 }
@@ -748,6 +835,29 @@ export function Button(props: ButtonProps) {
         assert_eq!(props[3].type_text, "number");
         assert!(!props[0].optional);
         assert!(props[3].optional, "count? is optional");
+    }
+
+    #[test]
+    fn extracts_component_and_prop_jsdoc_descriptions() {
+        let source = r#"
+export interface ButtonProps {
+  /** Visible button label. */
+  label: string;
+}
+
+/**
+ * Documented button component.
+ */
+export function Button(props: ButtonProps) {
+  return null;
+}
+"#;
+        assert_eq!(
+            extract_component_description(source, "Button"),
+            "Documented button component."
+        );
+        let props = extract_props(source, "Button");
+        assert_eq!(props[0].description, "Visible button label.");
     }
 
     #[test]
@@ -916,4 +1026,4 @@ export function Widget(props: Props) { return null; }
         assert!(extract_props(source, "Widget").is_empty());
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

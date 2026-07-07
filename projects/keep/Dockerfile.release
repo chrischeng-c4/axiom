@@ -4,8 +4,8 @@
 # surface (no shell/apt/curl in the final image). The sibling `Dockerfile` is
 # the from-source build for dev / CI.
 #
-#   docker build -f projects/keep/Dockerfile.release -t keep:0.4.0 \
-#     --build-arg KEEP_VERSION=keep@0.4.0 .
+#   docker build -f projects/keep/Dockerfile.release -t keep:0.4.3 \
+#     --build-arg KEEP_VERSION=keep@0.4.3 .
 #
 # The image arch (BuildKit TARGETARCH) selects the matching linux tarball:
 #   --platform linux/amd64 → x86_64-unknown-linux-gnu
@@ -13,7 +13,7 @@
 
 # ---- stage 1: fetch + verify the release binary (needs shell + curl) --------
 FROM debian:bookworm-slim AS fetch
-ARG KEEP_VERSION=keep@0.4.0
+ARG KEEP_VERSION=keep@0.4.3
 ARG KEEP_REPO=chrischeng-c4/axiom
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \

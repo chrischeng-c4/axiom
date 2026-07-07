@@ -169,7 +169,7 @@ impl PlatformConfig {
                      type = \"github\"\n\
                      repo = \"owner/repo\"\n\
                      \n\
-                     Or rerun aw init to refresh platform settings"
+                     Or update .aw/config.toml with the platform producer"
                 )
             })
     }

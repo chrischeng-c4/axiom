@@ -101,7 +101,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests"
-      - path: "projects/agentic-workflow/tests/sync_check_test.rs"
+      - path: "projects/agentic-workflow/tests/project_registry_check_test.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -165,6 +165,12 @@ semantic_domain:
           - name: "phase_migration_test"
             kind: "module"
             public: false
+          - name: "root_doc_mirror_test"
+            kind: "module"
+            public: false
+          - name: "root_trait_coverage_test"
+            kind: "module"
+            public: false
           - name: "project_health_test"
             kind: "module"
             public: false
@@ -186,7 +192,7 @@ semantic_domain:
           - name: "td_dispatch_chain_test"
             kind: "module"
             public: false
-          - name: "td_merge_atomic_test"
+          - name: "td_no_merge_test"
             kind: "module"
             public: false
         source_evidence_node:
@@ -665,7 +671,7 @@ tests:
       - path: "projects/agentic-workflow/tests/issues_remote_round_trip.rs"
       - path: "projects/agentic-workflow/tests/execution_modes_test.rs"
       - path: "projects/agentic-workflow/tests/validate_all_snapshot.rs"
-      - path: "projects/agentic-workflow/tests/sync_check_test.rs"
+      - path: "projects/agentic-workflow/tests/project_registry_check_test.rs"
       - path: "projects/agentic-workflow/tests/cli_tests.rs"
       - path: "projects/agentic-workflow/tests/codegen_full_test.rs"
       - path: "projects/agentic-workflow/tests/project_discovery_test.rs"
@@ -707,7 +713,7 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/agentic-workflow/tests/sync_check_test.rs"
+  - path: "projects/agentic-workflow/tests/project_registry_check_test.rs"
     action: modify
     section: schema
     description: |
@@ -718,6 +724,24 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli_tests.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #984 init-projector coverage was removed with the retired
+      top-level init command; root-doc and trait mirror contracts now live in
+      focused read-only tests.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli_tests.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1077 (traits slice 1/3): registers the new
+      `root_trait_coverage_test` module (bidirectional coverage between
+      `doc_mirror::TRAITS` and CONTRIBUTING.md's "Service archetype"
+      section), alphabetically between `root_doc_mirror_test` and
+      `standardize_test`.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/codegen_full_test.rs"
     action: modify

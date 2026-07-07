@@ -492,7 +492,7 @@ changes:
     impl_mode: hand-written
     description: >
       Activate the #[ignore]'d B2 regression test test_td_claim_e2e_phase_advance.
-      Populate it with a tmpdir-based aw init + write stub issue file + write
+      Populate it with a tmpdir-based AW config + write stub issue file + write
       a minimal spec file on disk + run `aw td claim --from-path <spec>` subprocess.
       Assert:
         - frontmatter phase == td_reviewed in the worktree issue file

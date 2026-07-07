@@ -218,6 +218,7 @@ struct RepaintCtx {
     status: js_sys::Object,
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-react.md#schema
 impl RepaintCtx {
     fn repaint_now(&self, reason: &str) {
         set_status_str(&self.status, "lastRepaintReason", reason);

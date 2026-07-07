@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-tests.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_cluster-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Integration coverage for kind-like local Kubernetes clusters.
 //!
@@ -115,7 +115,10 @@ cmd = ["sh", "-c", "true"]
 
 #[test]
 fn llm_guide_mentions_cluster() {
-    let output = Command::new(vat_bin()).arg("llm").output().unwrap();
+    let output = Command::new(vat_bin())
+        .args(["llm", "--topic", "guide"])
+        .output()
+        .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     for needle in ["vat cluster", "cluster = \"auto\"", "KUBECONFIG"] {

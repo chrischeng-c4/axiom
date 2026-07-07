@@ -22,13 +22,14 @@ Public API manifest for `projects/agentic-workflow/src/cli/cb_fill.rs` generated
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `HandwriteMarkerEntry` | projects/agentic-workflow/src/cli/cb_fill.rs | struct | pub | 33 |  |
-| `branch_changed_files` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 891 | branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<String> |
-| `count_worktree_handwrite_markers` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 133 | count_worktree_handwrite_markers(worktree: &Path) -> usize |
-| `enumerate_worktree_markers` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 54 | enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> |
-| `extract_change_paths_from_spec` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 494 | extract_change_paths_from_spec(spec_content: &str) -> Vec<String> |
-| `filter_markers_to_change_paths` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 554 | filter_markers_to_change_paths(     markers: &[HandwriteMarkerEntry],     change_paths: &[String], ) -> Vec<HandwriteMarkerEntry> |
-| `run` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 335 | run(args: CbFillArgs) -> Result<()> |
-| `scope_markers_for_change_paths` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 596 | scope_markers_for_change_paths(     markers: &[HandwriteMarkerEntry],     change_paths: Option<&[String]>, ) -> Vec<HandwriteMarkerEntry> |
+| `branch_changed_files` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 1023 | branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<String> |
+| `count_worktree_handwrite_markers` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 229 | count_worktree_handwrite_markers(worktree: &Path) -> usize |
+| `enumerate_markers_for_scope` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 164 | enumerate_markers_for_scope(     worktree: &Path,     scope_paths: &[String], ) -> Vec<HandwriteMarkerEntry> |
+| `enumerate_worktree_markers` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 119 | enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> |
+| `extract_change_paths_from_spec` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 586 | extract_change_paths_from_spec(spec_content: &str) -> Vec<String> |
+| `filter_markers_to_change_paths` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 646 | filter_markers_to_change_paths(     markers: &[HandwriteMarkerEntry],     change_paths: &[String], ) -> Vec<HandwriteMarkerEntry> |
+| `run` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 427 | run(args: CbFillArgs) -> Result<()> |
+| `scope_markers_for_change_paths` | projects/agentic-workflow/src/cli/cb_fill.rs | function | pub | 688 | scope_markers_for_change_paths(     markers: &[HandwriteMarkerEntry],     change_paths: Option<&[String]>, ) -> Vec<HandwriteMarkerEntry> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -42,7 +43,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/cb_fill.rs` generated
 //! Two modes:
 //! - **Brief** (no `--apply`): walk the current checkout source tree and emit a
 //!   marker-list dispatch envelope for mainthread,
-//!   or fast-path-dispatch directly to `aw td merge` when zero markers
+//!   or fast-path-dispatch directly to `aw td code-check` when zero markers
 //!   are present (R11).
 //! - **Apply** (`--apply --marker <id>`): merge the expected marker payload
 //!   into the HANDWRITE block matching `<id>`, commit that marker with WI
@@ -85,6 +86,71 @@ pub struct HandwriteMarkerEntry {
     pub spec_ref: Option<String>,
 }
 
+// Extract every unfilled HANDWRITE marker from a single file's content,
+// pushing repo-root-relative entries onto `out`. Shared by
+// `enumerate_worktree_markers` (whole-worktree walk) and
+// `enumerate_markers_for_scope` (issue #859 part a — walk only the
+// caller's scope paths) so both enumerate identically per file.
+fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<HandwriteMarkerEntry>) {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !matches!(
+        ext,
+        "rs" | "py" | "ts" | "tsx" | "md" | "toml" | "json" | "yaml" | "yml"
+    ) && file_name != "Dockerfile"
+    {
+        return;
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+
+    // Form 1: <HANDWRITE>...</HANDWRITE> (canonical, parsed by
+    // crate::generate::audit::parse_handwrite_markers).
+    let path_str = path.to_string_lossy().to_string();
+    if let Ok(markers) = parse_handwrite_markers(&content, &path_str) {
+        for m in markers {
+            if !marker_body_is_unfilled(&content, m.line_start, m.line_end) {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(worktree)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string();
+            out.push(HandwriteMarkerEntry {
+                id: m.gap.clone(),
+                source_path: rel,
+                start_line: m.line_start,
+                end_line: m.line_end,
+                reason: m.reason,
+                spec_ref: None,
+            });
+        }
+    }
+
+    // Form 2: comment-style begin/end markers emitted by
+    // `crate::generate::apply::scaffold_handwrite_file`.
+    for m in parse_handwrite_begin_end(&content) {
+        if !marker_body_is_unfilled(&content, m.start_line, m.end_line) {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(worktree)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+        out.push(HandwriteMarkerEntry {
+            id: m.id,
+            source_path: rel,
+            start_line: m.start_line,
+            end_line: m.end_line,
+            reason: m.reason,
+            spec_ref: m.spec_ref,
+        });
+    }
+}
+
 // Walk the worktree source tree (under `crates/`, `projects/`, `src/`,
 // `tests/`) and return every open HANDWRITE block.
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
@@ -111,67 +177,68 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
             if !entry.file_type().is_file() {
                 continue;
             }
-            let path = entry.path();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !matches!(
-                ext,
-                "rs" | "py" | "ts" | "tsx" | "md" | "toml" | "json" | "yaml" | "yml"
-            ) && file_name != "Dockerfile"
-            {
-                continue;
-            }
-            let Ok(content) = std::fs::read_to_string(path) else {
-                continue;
-            };
-
-            // Form 1: <HANDWRITE>...</HANDWRITE> (canonical, parsed by
-            // crate::generate::audit::parse_handwrite_markers).
-            let path_str = path.to_string_lossy().to_string();
-            if let Ok(markers) = parse_handwrite_markers(&content, &path_str) {
-                for m in markers {
-                    if !marker_body_is_unfilled(&content, m.line_start, m.line_end) {
-                        continue;
-                    }
-                    let rel = path
-                        .strip_prefix(worktree)
-                        .unwrap_or(path)
-                        .to_string_lossy()
-                        .to_string();
-                    out.push(HandwriteMarkerEntry {
-                        id: m.gap.clone(),
-                        source_path: rel,
-                        start_line: m.line_start,
-                        end_line: m.line_end,
-                        reason: m.reason,
-                        spec_ref: None,
-                    });
-                }
-            }
-
-            // Form 2: comment-style begin/end markers emitted by
-            // `crate::generate::apply::scaffold_handwrite_file`.
-            for m in parse_handwrite_begin_end(&content) {
-                if !marker_body_is_unfilled(&content, m.start_line, m.end_line) {
-                    continue;
-                }
-                let rel = path
-                    .strip_prefix(worktree)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .to_string();
-                out.push(HandwriteMarkerEntry {
-                    id: m.id,
-                    source_path: rel,
-                    start_line: m.start_line,
-                    end_line: m.end_line,
-                    reason: m.reason,
-                    spec_ref: m.spec_ref,
-                });
-            }
+            collect_markers_from_file(worktree, entry.path(), &mut out);
         }
     }
 
+    out
+}
+
+// Enumerate HANDWRITE markers restricted to `scope_paths` (issue #859 part
+// a): each entry may name a single file (only that file is read) or a
+// directory (only that subtree is walked), repo-root-relative to
+// `worktree`. Falls back to the whole-worktree walk
+// (`enumerate_worktree_markers`) when any scope entry is a glob pattern
+// (`*`, `?`, `[`) — bounding a directory walk to an arbitrary glob isn't a
+// well-defined subset, and glob scope entries are rare in practice (a
+// branch diff's file list and a TD's literal `## Changes` paths are both
+// ordinarily plain paths).
+///
+// This replaces the ~53k-file monorepo-wide walk `run_cb_check_gate_scoped`
+// used to perform (over `crates/`, `projects/`, `src/`, `tests/`) before
+// intersecting the result with the branch diff / WI scope — the walk itself
+// is now bounded to exactly the caller's scope paths, not just the result.
+// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
+pub fn enumerate_markers_for_scope(
+    worktree: &Path,
+    scope_paths: &[String],
+) -> Vec<HandwriteMarkerEntry> {
+    if scope_paths
+        .iter()
+        .any(|p| p.contains('*') || p.contains('?') || p.contains('['))
+    {
+        return enumerate_worktree_markers(worktree);
+    }
+
+    let mut out: Vec<HandwriteMarkerEntry> = Vec::new();
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    for raw in scope_paths {
+        let normalized = normalize_rel_path(raw);
+        if normalized.is_empty() {
+            continue;
+        }
+        let abs = worktree.join(&normalized);
+        if abs.is_file() {
+            if visited.insert(abs.clone()) {
+                collect_markers_from_file(worktree, &abs, &mut out);
+            }
+        } else if abs.is_dir() {
+            for entry in walkdir::WalkDir::new(&abs)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let path = entry.path().to_path_buf();
+                if visited.insert(path.clone()) {
+                    collect_markers_from_file(worktree, &path, &mut out);
+                }
+            }
+        }
+        // Else: scope entry doesn't exist in this worktree (deleted file,
+        // stale scope entry, ...) — nothing to scan for it.
+    }
     out
 }
 
@@ -201,20 +268,18 @@ pub fn count_worktree_handwrite_markers(worktree: &Path) -> usize {
     enumerate_worktree_markers(worktree).len()
 }
 
-fn cb_marker_payload_rel(slug: &str, marker_id: &str) -> String {
-    format!(".aw/payloads/{}/{}.md", slug, marker_id)
+fn cb_marker_payload_path(project_root: &Path, slug: &str, marker_id: &str) -> PathBuf {
+    crate::shared::workspace::payloads_path(project_root)
+        .join(slug)
+        .join(format!("{marker_id}.md"))
 }
 
 fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
     format!("aw td fill {} --apply --marker {}", slug, marker_id)
 }
 
-fn td_merge_command(slug: &str, spec_path: &str) -> String {
-    if spec_path.is_empty() {
-        format!("aw td merge {}", slug)
-    } else {
-        format!("aw td merge {} --spec-path {}", slug, spec_path)
-    }
+fn td_code_check_command(slug: &str) -> String {
+    format!("aw td code-check {slug}")
 }
 
 fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
@@ -225,14 +290,13 @@ fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
 }
 
 fn initialize_marker_payload(
-    worktree: &Path,
+    project_root: &Path,
     slug: &str,
     marker: &HandwriteMarkerEntry,
 ) -> Result<(String, bool)> {
-    let rel = cb_marker_payload_rel(slug, &marker.id);
-    let abs = worktree.join(&rel);
+    let abs = cb_marker_payload_path(project_root, slug, &marker.id);
     if abs.exists() {
-        return Ok((rel, false));
+        return Ok((abs.to_string_lossy().into_owned(), false));
     }
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)
@@ -240,7 +304,7 @@ fn initialize_marker_payload(
     }
     std::fs::write(&abs, marker_payload_template(marker))
         .with_context(|| format!("failed to write payload {}", abs.display()))?;
-    Ok((rel, true))
+    Ok((abs.to_string_lossy().into_owned(), true))
 }
 
 fn next_for_marker(
@@ -257,11 +321,11 @@ fn next_for_marker(
     })
 }
 
-fn next_for_td_merge(slug: &str, spec_path: &str) -> serde_json::Value {
+fn next_for_td_code_check(slug: &str) -> serde_json::Value {
     serde_json::json!({
         "kind": "dispatch",
-        "command": td_merge_command(slug, spec_path),
-        "reason": "all HANDWRITE markers are filled",
+        "command": td_code_check_command(slug),
+        "reason": "all HANDWRITE markers are filled; run the terminal code-check action",
         "requires_hitl": false,
         "payload_path": null,
     })
@@ -411,12 +475,7 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 async fn run_brief(args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = args.slug.clone();
-    let payload_prefix = format!(".aw/payloads/{}/", slug);
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
-        &project_root,
-        &slug,
-        &[payload_prefix.as_str()],
-    )?;
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
@@ -455,20 +514,15 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
     let spec_path = spec_path.unwrap_or_default();
 
     if markers.is_empty() {
-        // 0-marker fast-path (R11): dispatch directly to td merge.
-        let merge_args = if spec_path.is_empty() {
-            serde_json::json!({ "slug": slug })
-        } else {
-            serde_json::json!({ "slug": slug, "spec_path": spec_path })
-        };
+        // 0-marker fast-path: dispatch directly to terminal code-check.
         let env = serde_json::json!({
             "action": "dispatch",
             "agent": serde_json::Value::Null,
             "slug": slug,
-            "next": next_for_td_merge(&slug, &spec_path),
+            "next": next_for_td_code_check(&slug),
             "invoke": {
-                "command": "aw td merge",
-                "args": merge_args,
+                "command": "aw td code-check",
+                "args": { "target": slug },
             },
         });
         print_compact_json(&env)?;
@@ -696,13 +750,8 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             std::process::exit(2);
         }
     };
-    let payload_rel = format!(".aw/payloads/{}/{}.md", slug, marker_id);
     let project_root = crate::find_project_root()?;
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
-        &project_root,
-        &slug,
-        &[payload_rel.as_str()],
-    )?;
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
 
     if !worktree_abs.exists() {
@@ -750,7 +799,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     };
 
     // Read the payload.
-    let payload_abs = worktree_abs.join(&payload_rel);
+    let payload_abs = cb_marker_payload_path(&project_root, &slug, &marker_id);
     let payload_body = match std::fs::read_to_string(&payload_abs) {
         Ok(s) => s,
         Err(e) => {
@@ -844,15 +893,15 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         return Ok(());
     }
 
-    // All markers applied — run the code check gate.
-    let check_ok = run_cb_check_gate(&worktree_abs).await;
-    if !check_ok.is_ok() {
-        let msg = check_ok
-            .err()
-            .unwrap_or_else(|| "td code-check failed".to_string());
-        emit_error(&slug, &format!("td code-check gate failed: {}", msg))?;
-        std::process::exit(1);
-    }
+    // All markers applied — `remaining` above (line ~741) already
+    // re-enumerated the whole worktree after this apply and found zero
+    // unfilled markers, so calling `run_cb_check_gate` here would only
+    // re-confirm that same emptiness via a second full walk: any
+    // scope-filtered subset of an already-empty global marker set is itself
+    // empty. Issue #859 part a: this was the second of three redundant
+    // full-tree marker walks in one fill->close chain (the third being
+    // terminal `aw td code-check`'s own gate at `cb_filled`, skipped below
+    // in `run_check_lifecycle_terminal` for exactly this reason).
 
     // Commit Cb-Fill trailer + advance phase.
     let backend = LocalBackend::from_project_root(&worktree_abs);
@@ -876,16 +925,16 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     }
     crate::cli::workflow_guard::complete_issue_lock(&worktree_abs, &slug, "td").await?;
 
-    // Dispatch to merge after the local code gate. Capability/EC/health gates
-    // decide whether the TD and implementation need another iteration.
+    // Dispatch to terminal code-check after the local code gate.
+    // Capability/EC/health gates decide whether another iteration is needed.
     let env = serde_json::json!({
         "action": "dispatch",
         "agent": serde_json::Value::Null,
         "slug": slug,
-        "next": next_for_td_merge(&slug, ""),
+        "next": next_for_td_code_check(&slug),
         "invoke": {
-            "command": "aw td merge",
-            "args": { "slug": slug },
+            "command": "aw td code-check",
+            "args": { "target": slug },
         },
     });
     print_compact_json(&env)?;
@@ -1021,6 +1070,31 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
         .collect()
 }
 
+// Resolve the WI's touched file set: the union of the branch diff against
+// base (`branch_changed_files`) and `extra_scope` (typically a WI's own TD
+// `## Changes` paths), sorted and deduplicated. Repo-root-relative,
+// matching both `HandwriteMarkerEntry.source_path` and the paths a
+// managed-inventory scan reports.
+///
+// Issue #932 (touched-scope standardization gate): extracted from
+// `run_cb_check_gate_scoped` so a second caller (the terminal
+// standardization check in `cb.rs`) can consume the same touched-file set
+// the marker gate computes, without re-deriving the branch-diff ∪
+// Changes-paths union itself. `run_cb_check_gate_scoped` below now calls
+// this instead of inlining the union.
+///
+// @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
+pub(crate) fn resolve_touched_scope(worktree_abs: &Path, extra_scope: &[String]) -> Vec<String> {
+    let base = resolve_base_branch();
+    let changed = branch_changed_files(worktree_abs, &base);
+
+    let mut scope: Vec<String> = changed.into_iter().collect();
+    scope.extend(extra_scope.iter().cloned());
+    scope.sort();
+    scope.dedup();
+    scope
+}
+
 // Run code-check semantics against the worktree as a gate. Returns Ok(())
 // when no slug-introduced markers remain, Err(msg) on findings or
 // invocation error.
@@ -1031,35 +1105,57 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
 // this gate even though they remain in the worktree. Greenfield
 // worktrees with no diff against base trivially pass (R5).
 ///
+// Callers always go through this scoped entry point (with an empty
+// `extra_scope` when no additional WI-scope paths apply) — issue #859
+// removed the last caller of an unscoped `run_cb_check_gate` wrapper, since
+// a wrapper that hard-codes `extra_scope: &[]` added no behavior
+// `run_cb_check_gate_scoped(w, &[])` doesn't already provide directly.
+///
+// The gate's scope is the union of the branch diff (`changed`) and
+// `extra_scope`. When that union is empty — no branch diff AND no WI Changes
+// entries to check against — the gate passes vacuously: a docs-only WI (or
+// one whose branch diff is unresolvable) must not be blocked by markers
+// inherited from unrelated, unmerged work elsewhere in the tree.
+///
+// Issue #859 part a: the scope union is computed *before* any marker
+// enumeration, and when it's empty the gate returns without walking the
+// worktree at all. When non-empty, only `enumerate_markers_for_scope` (a
+// walk bounded to the scope paths themselves) runs — not the whole-tree
+// `enumerate_worktree_markers` walk this function used to unconditionally
+// perform up front, which then discarded everything outside `scope` anyway.
+///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
-async fn run_cb_check_gate(worktree_abs: &Path) -> std::result::Result<(), String> {
-    let remaining = enumerate_worktree_markers(worktree_abs);
+pub(crate) async fn run_cb_check_gate_scoped(
+    worktree_abs: &Path,
+    extra_scope: &[String],
+) -> std::result::Result<(), String> {
+    let scope = resolve_touched_scope(worktree_abs, extra_scope);
+
+    if scope.is_empty() {
+        // No branch diff against base and no WI-scope file list to check
+        // against — nothing identifies this worktree's own markers, so
+        // markers inherited from other unmerged work must not block
+        // (issue #854). Nothing to enumerate either (issue #859 part a).
+        return Ok(());
+    }
+
+    let remaining = enumerate_markers_for_scope(worktree_abs, &scope);
     if remaining.is_empty() {
         return Ok(());
     }
 
-    let base = resolve_base_branch();
-    let changed = branch_changed_files(worktree_abs, &base);
-    if changed.is_empty() {
-        // Could not compute a branch diff (detached HEAD, missing base,
-        // or git error). Fall through to the legacy global check rather
-        // than silently passing on a worktree that may have real issues.
-        return Err(format!(
-            "{} HANDWRITE marker(s) still present after fill",
-            remaining.len()
-        ));
-    }
-
-    let slug_markers: Vec<&HandwriteMarkerEntry> = remaining
-        .iter()
-        .filter(|m| changed.contains(m.source_path.as_str()))
-        .collect();
+    let slug_markers = filter_markers_to_change_paths(&remaining, &scope);
     if !slug_markers.is_empty() {
+        let names: Vec<&str> = slug_markers
+            .iter()
+            .map(|m| m.source_path.as_str())
+            .collect();
         return Err(format!(
             "{} HANDWRITE marker(s) introduced by this branch still present after fill (\
-             {} inherited markers ignored)",
+             {} inherited markers ignored): {}",
             slug_markers.len(),
-            remaining.len() - slug_markers.len()
+            remaining.len() - slug_markers.len(),
+            names.join(", "),
         ));
     }
     Ok(())
@@ -1344,7 +1440,7 @@ mod tests {
         let next = next_for_marker(
             "4124",
             &marker,
-            ".aw/payloads/4124/missing-generator-cli.md",
+            "/tmp/aw/workspaces/example/payloads/4124/missing-generator-cli.md",
         );
 
         assert_eq!(
@@ -1354,7 +1450,7 @@ mod tests {
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(
             next["payload_path"],
-            ".aw/payloads/4124/missing-generator-cli.md"
+            "/tmp/aw/workspaces/example/payloads/4124/missing-generator-cli.md"
         );
     }
 
@@ -1363,27 +1459,26 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let marker = marker("missing-generator-cli");
 
-        let (rel, created) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
-        assert_eq!(rel, ".aw/payloads/4124/missing-generator-cli.md");
+        let (abs_s, created) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
+        let expected_abs = crate::shared::workspace::payloads_path(tmp.path())
+            .join("4124")
+            .join("missing-generator-cli.md");
+        assert_eq!(abs_s, expected_abs.to_string_lossy());
         assert!(created);
-        let abs = tmp.path().join(&rel);
-        let content = std::fs::read_to_string(&abs).unwrap();
+        let content = std::fs::read_to_string(&expected_abs).unwrap();
         assert!(content.contains("(fill)"));
         assert!(content.contains("missing deterministic generator"));
 
-        std::fs::write(&abs, "custom\n").unwrap();
+        std::fs::write(&expected_abs, "custom\n").unwrap();
         let (_, created_again) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
         assert!(!created_again);
-        assert_eq!(std::fs::read_to_string(&abs).unwrap(), "custom\n");
+        assert_eq!(std::fs::read_to_string(&expected_abs).unwrap(), "custom\n");
     }
 
     #[test]
-    fn td_merge_next_command_uses_positional_slug() {
-        assert_eq!(
-            td_merge_command("4124", ".aw/tech-design/demo.md"),
-            "aw td merge 4124 --spec-path .aw/tech-design/demo.md"
-        );
-        assert!(!td_merge_command("4124", "").contains("--json"));
+    fn td_code_check_next_command_uses_positional_slug() {
+        assert_eq!(td_code_check_command("4124"), "aw td code-check 4124");
+        assert!(!td_code_check_command("4124").contains("--json"));
     }
 
     #[test]

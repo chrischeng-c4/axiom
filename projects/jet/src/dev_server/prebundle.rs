@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::pkg_manager::workspace::strip_aw_claim_wrapper_lines;
+
 use super::importmap;
 use super::polyfills;
 
@@ -65,6 +67,20 @@ pub(crate) fn read_cached_importmap_or_warn(jet_dir: &Path) -> Option<String> {
     }
 }
 
+/// Read a `package.json` file while tolerating AW source-ownership wrappers.
+///
+/// Standardized fixtures may wrap JSON bodies in exact `// <HANDWRITE ...>` /
+/// `// </HANDWRITE>` ownership markers. Package-manager install already strips
+/// those markers; prebundle must do the same or `jet install` succeeds and then
+/// fails during the post-install prebundle step on the same project.
+pub(crate) fn read_package_json_value(path: &Path) -> Result<serde_json::Value> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read package.json at {}", path.display()))?;
+    let content = strip_aw_claim_wrapper_lines(&content);
+    serde_json::from_str(content.as_ref())
+        .with_context(|| format!("Failed to parse package.json at {}", path.display()))
+}
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-dev-server.md#schema
 impl PreBundler {
     pub fn new(root_dir: PathBuf) -> Self {
@@ -99,9 +115,7 @@ impl PreBundler {
 
         // Read package.json
         let pkg_json_path = self.root_dir.join("package.json");
-        let pkg_content =
-            std::fs::read_to_string(&pkg_json_path).context("Failed to read package.json")?;
-        let pkg_json: serde_json::Value = serde_json::from_str(&pkg_content)?;
+        let pkg_json = read_package_json_value(&pkg_json_path)?;
 
         // Collect all dependencies (root + workspace transitive)
         let mut deps = self.collect_dependencies(&pkg_json);
@@ -300,7 +314,8 @@ impl PreBundler {
                     continue;
                 }
             };
-            let ws_pkg: serde_json::Value = match serde_json::from_str(&content) {
+            let content = strip_aw_claim_wrapper_lines(&content);
+            let ws_pkg: serde_json::Value = match serde_json::from_str(content.as_ref()) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!(
@@ -342,8 +357,7 @@ impl PreBundler {
             return Ok(false);
         }
 
-        let content = std::fs::read_to_string(&pkg_json_path)?;
-        let pkg: serde_json::Value = serde_json::from_str(&content)?;
+        let pkg = read_package_json_value(&pkg_json_path)?;
 
         // Has "module" field → ESM
         if pkg.get("module").and_then(|v| v.as_str()).is_some() {
@@ -536,7 +550,8 @@ impl PreBundler {
                     continue;
                 }
             };
-            let pkg_json: serde_json::Value = match serde_json::from_str(&content) {
+            let content = strip_aw_claim_wrapper_lines(&content);
+            let pkg_json: serde_json::Value = match serde_json::from_str(content.as_ref()) {
                 Ok(v) => v,
                 Err(err) => {
                     tracing::warn!(
@@ -734,7 +749,8 @@ impl PreBundler {
                 return None;
             }
         };
-        let pkg: serde_json::Value = match serde_json::from_str(&content) {
+        let content = strip_aw_claim_wrapper_lines(&content);
+        let pkg: serde_json::Value = match serde_json::from_str(content.as_ref()) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(
@@ -760,8 +776,7 @@ impl PreBundler {
     /// Resolve the main entry point of a package.
     fn resolve_package_main(&self, pkg_dir: &Path) -> Result<PathBuf> {
         let pkg_json_path = pkg_dir.join("package.json");
-        let content = std::fs::read_to_string(&pkg_json_path)?;
-        let pkg: serde_json::Value = serde_json::from_str(&content)?;
+        let pkg = read_package_json_value(&pkg_json_path)?;
 
         // Priority: exports.import > exports.require > exports.default > module > main > index.js
         if let Some(exports) = pkg.get("exports") {
@@ -1024,7 +1039,8 @@ impl PreBundler {
                     continue;
                 }
             };
-            let pkg: serde_json::Value = match serde_json::from_str(&content) {
+            let content = strip_aw_claim_wrapper_lines(&content);
+            let pkg: serde_json::Value = match serde_json::from_str(content.as_ref()) {
                 Ok(v) => v,
                 Err(err) => {
                     tracing::warn!(
@@ -1780,8 +1796,7 @@ fn package_versions_match(left: &Path, right: &Path) -> bool {
 }
 
 fn package_version(pkg_dir: &Path) -> Option<String> {
-    let content = fs::read_to_string(pkg_dir.join("package.json")).ok()?;
-    let parsed = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let parsed = read_package_json_value(&pkg_dir.join("package.json")).ok()?;
     parsed
         .get("version")
         .and_then(|value| value.as_str())

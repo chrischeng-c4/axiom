@@ -5,36 +5,22 @@ use clap::Subcommand;
 
 use crate::cli::capability;
 use crate::cli::chat;
+use crate::cli::conf;
 use crate::cli::ec;
 use crate::cli::generator;
+use crate::cli::guard;
 use crate::cli::init;
 use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::project;
-use crate::cli::run as run_root;
+use crate::cli::standard_cli;
 use crate::cli::standardize;
-use crate::cli::sync;
+use crate::cli::view;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub enum Commands {
-    // =====================================================================
-    // Project initialization
-    // =====================================================================
-
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R1
-    /// Bootstrap .aw/ config and installed workflow skills/settings
-    Init {
-        /// Project name (deprecated, ignored)
-        #[arg(short, long)]
-        name: Option<String>,
-
-        /// Override version downgrade protection and force-replace all assets
-        #[arg(short, long)]
-        force: bool,
-    },
-
     /// Create a greenfield project directory and bootstrap Agentic Workflow.
     // @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
     New(init::NewArgs),
@@ -49,11 +35,14 @@ pub enum Commands {
     /// Generator gap request surface after takeover readiness.
     Generator(generator::GeneratorArgs),
 
-    /// Root-driven workflow runner for project, capability, epic, or change scopes.
-    Run(run_root::RunArgs),
+    /// Agent-runtime direct edit/create guard for Codex and Claude Code.
+    Guard(guard::GuardArgs),
 
-    /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
-    Sync(sync::SyncArgs),
+    /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
+    View(view::ViewArgs),
+
+    /// Manage `.aw/config.toml` and Agentic Workflow configuration producers.
+    Conf(conf::ConfArgs),
 
     /// Manage work-items — list/show/create/validate across local + GitHub backends.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
@@ -65,6 +54,16 @@ pub enum Commands {
 
     /// Offline agent orientation: outline + capability/td/ec pillars + loop.
     Llm(llm::LlmArgs),
+
+    /// Self-update this binary from a published GitHub release.
+    Upgrade(standard_cli::UpgradeArgs),
+
+    /// Search, view, or create Agentic Workflow issues.
+    Issue(standard_cli::IssueArgs),
+
+    /// File a diagnostics-rich GitHub issue for aw.
+    #[command(name = "report-issue")]
+    ReportIssue(standard_cli::ReportIssueArgs),
 
     /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
@@ -80,13 +79,6 @@ pub enum Commands {
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
 pub async fn run_command(cmd: Commands) -> Result<()> {
     match cmd {
-        // =================================================================
-        // Project initialization
-        // =================================================================
-        // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R2
-        Commands::Init { name, force } => {
-            init::run(name.as_deref(), force, None).await?;
-        }
         Commands::New(args) => {
             init::run_new(args).await?;
         }
@@ -100,11 +92,14 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Generator(args) => {
             generator::run(args).await?;
         }
-        Commands::Run(args) => {
-            run_root::run(args).await?;
+        Commands::Guard(args) => {
+            guard::run(args)?;
         }
-        Commands::Sync(args) => {
-            sync::run(args)?;
+        Commands::View(args) => {
+            view::run(args).await?;
+        }
+        Commands::Conf(args) => {
+            conf::run(args)?;
         }
         Commands::Issues(args) => {
             issues::run(args).await?;
@@ -114,6 +109,15 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Llm(args) => {
             llm::run(args)?;
+        }
+        Commands::Upgrade(args) => {
+            standard_cli::run_upgrade(args).await?;
+        }
+        Commands::Issue(args) => {
+            standard_cli::run_issue(args).await?;
+        }
+        Commands::ReportIssue(args) => {
+            standard_cli::run_report_issue(args).await?;
         }
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;

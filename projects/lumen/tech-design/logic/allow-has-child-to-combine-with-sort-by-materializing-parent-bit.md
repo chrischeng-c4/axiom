@@ -114,6 +114,23 @@ requirementDiagram
     test_has_child_sort_orders_parents - verifies -> R1
 ```
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Materialize parent bitmaps so has_child filters can participate in sorted parent queries."
+  - path: projects/lumen/tests/collapse_nested.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Verify has_child queries combined with parent sorting and nested result accounting."
+```
+
 # Reviews
 
 ### Review 1
@@ -129,3 +146,20 @@ requirementDiagram
 
 - [logic] Correct contract matching the implementation.
 - [unit-test] Requirements bound to concrete tests.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Route sorted has_child queries through the materialized parent sort path while preserving incompatible sort rejections."
+  - path: projects/lumen/src/storage.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Cover has_child sort ordering, filter composition, and knn/sort rejection regressions."
+```

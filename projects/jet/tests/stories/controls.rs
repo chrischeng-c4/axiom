@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:16a93e6f" tracker="pending-tracker" reason="Tests: prop-type extraction for a typed component; control inference for bool/string/number/string-literal-union; meta.argTypes override wins; the Controls panel HTML seeds current arg values; editing posts new args."
+// <HANDWRITE gap="missing-generator:unit-test:16a93e6f" tracker="standardize-gap-projects-jet-tests-stories-controls-rs" reason="Tests: prop-type extraction for a typed component; control inference for bool/string/number/string-literal-union; meta.argTypes override wins; the Controls panel HTML seeds current arg values; editing posts new args.">
 //! Integration tests for B3: the `jet stories` Controls panel.
 //!
 //! Covers the full B3 surface:
@@ -87,6 +87,8 @@ fn arg_type_select_override_wins_over_inference() {
         name: "size".into(),
         type_text: "string".into(),
         optional: false,
+        description: String::new(),
+        default_value: None,
     }];
 
     let mut control_obj = BTreeMap::new();
@@ -148,10 +150,40 @@ export const Primary: Story = {
 };
 "#;
 
+const SWITCH_BUTTON_STORIES: &str = r#"
+import { Button } from './Button';
+import type { Meta, StoryObj } from '@storybook/react';
+
+const meta = {
+  title: 'Components/Button',
+  component: Button,
+  args: { label: 'Default', size: 'sm' },
+} satisfies Meta<typeof Button>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Primary: Story = {
+  args: { primary: true, label: 'Click me', size: 'lg' },
+};
+
+export const Disabled: Story = {
+  args: { primary: false, label: 'Disabled', size: 'sm' },
+};
+"#;
+
 fn write_fixtures() -> TempDir {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();
     write(root.join("src/Button.stories.tsx"), BUTTON_STORIES);
+    write(root.join("src/Button.tsx"), BUTTON_COMPONENT);
+    dir
+}
+
+fn write_switch_fixtures() -> TempDir {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+    write(root.join("src/Button.stories.tsx"), SWITCH_BUTTON_STORIES);
     write(root.join("src/Button.tsx"), BUTTON_COMPONENT);
     dir
 }
@@ -265,6 +297,85 @@ async fn editing_a_control_targets_the_preview_render_hook() {
     assert!(
         preview_html.contains("liveArgs = data.args"),
         "preview swaps live args on update"
+    );
+}
+
+#[tokio::test]
+async fn preview_route_imports_project_preview_runtime_when_present() {
+    let dir = write_fixtures();
+    write(
+        dir.path().join(".storybook/preview.tsx"),
+        r#"
+export const globalTypes = { theme: { defaultValue: 'dark' } };
+export const parameters = { layout: 'centered' };
+export const loaders = [async () => ({ ready: true })];
+export const decorators = [(Story) => Story()];
+"#,
+    );
+    let index = discover(dir.path());
+    let router = server::build_router(index, dir.path().to_path_buf());
+
+    let (status, html) = get(&router, "/__jet_stories_preview/components-button--primary").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains(r#"import * as ProjectPreview from "/.storybook/preview.tsx";"#),
+        "dev preview imports project preview runtime: {html}"
+    );
+    assert!(
+        html.contains("ProjectPreview.decorators")
+            && html.contains("ProjectPreview.globalTypes")
+            && html.contains("ProjectPreview.loaders")
+            && html.contains("applyLayout(parameters.layout)"),
+        "dev preview runtime applies CSF render-path core"
+    );
+}
+
+/// #987 regression: the manager fetches per-story Controls payloads, so
+/// switching stories re-seeds controls from the selected story instead of
+/// carrying stale args from the previously-selected story.
+#[tokio::test]
+async fn controls_endpoint_re_resolves_args_per_story() {
+    let dir = write_switch_fixtures();
+    let index = discover(dir.path());
+    let router = server::build_router(index, dir.path().to_path_buf());
+
+    let (status, primary) = get(
+        &router,
+        "/__jet_stories_controls/components-button--primary",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        primary.contains("data-control=\\\"primary\\\"")
+            || primary.contains("data-control=\"primary\""),
+        "primary control present: {primary}"
+    );
+    assert!(
+        primary.contains("checked"),
+        "Primary story seeds primary=true: {primary}"
+    );
+    assert!(
+        primary.contains("\"label\":\"Click me\""),
+        "Primary payload carries its own label args: {primary}"
+    );
+
+    let (status, disabled) = get(
+        &router,
+        "/__jet_stories_controls/components-button--disabled",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        disabled.contains("\"label\":\"Disabled\""),
+        "Disabled payload carries its own label args: {disabled}"
+    );
+    assert!(
+        disabled.contains("\"primary\":false"),
+        "Disabled payload carries primary=false: {disabled}"
+    );
+    assert!(
+        !disabled.contains("checked"),
+        "Disabled story must not inherit Primary's checked toggle: {disabled}"
     );
 }
 
@@ -456,4 +567,4 @@ export const Basic = { args: { primary: true, label: 'Hello' } };
 // Silence unused-path lint on the helper module path constant if added later.
 #[allow(dead_code)]
 fn _unused(_: &Path) {}
-// HANDWRITE-END
+// </HANDWRITE>

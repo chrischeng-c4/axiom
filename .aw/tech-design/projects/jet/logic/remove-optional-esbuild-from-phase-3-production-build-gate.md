@@ -8,6 +8,12 @@ capability_refs:
     claim: full-toolchain-dogfood-flow
     coverage: partial
     rationale: "WI #4161: Jet production build must stop delegating minification to optional esbuild before phase-3 corpus parity can be evaluated."
+  - id: bundler-production-build
+    role: primary
+    gap: bundler-production-readiness
+    claim: bundler-production-readiness
+    coverage: full
+    rationale: "The phase-3 build gate is the production evidence for the Bundler production readiness claim."
 ---
 
 # Remove Optional Esbuild From Phase 3 Production Build Gate
@@ -121,6 +127,8 @@ requirement R2 {
 ```yaml
 e2e_tests:
   - id: phase_3_build_gate
+    capability_id: bundler-production-build
+    claim_id: bundler-production-readiness
     name: Phase-3 DOM production build gate reaches corpus comparison
     command: "projects/jet/scripts/verify-basic-dom-gates.sh --phase build"
     verifies:
@@ -147,5 +155,26 @@ changes:
     description: |
       Keep the phase-3 guard that rejects optional esbuild executor usage and
       then runs the DOM production corpus comparator.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/verify-basic-dom-gates.sh"
+    action: verify
+    section: scenarios
+    description: |
+      Verify the build-gate scenarios for rejecting optional esbuild executor
+      usage, using Jet internal minification, and reaching corpus comparison.
+    impl_mode: hand-written
+  - path: "projects/jet/scripts/verify-basic-dom-gates.sh"
+    action: verify
+    section: cli
+    description: |
+      Own the phase-3 CLI gate command and esbuild guard scan command used by
+      the production build readiness check.
+    impl_mode: hand-written
+  - path: "projects/jet/src/cli.rs"
+    action: verify
+    section: unit-test
+    description: |
+      Own the unit-test requirement that Jet build avoids optional esbuild
+      executor paths while preserving internal minification.
     impl_mode: hand-written
 ```

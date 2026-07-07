@@ -59,7 +59,7 @@ pub struct TdParseError {
     pub source: Option<String>,
 }
 
-/// Discriminated body of a parsed TD section. Nine typed variants cover known section families (R3); the opaque `Unsupported` variant carries sections whose parser is not yet implemented (R9).
+/// Discriminated body of a parsed TD section. Eleven typed variants cover known section families (R3); the opaque `Unsupported` variant carries sections whose parser is not yet implemented (R9).
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/td_ast/types.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -80,6 +80,13 @@ pub enum TypedBody {
     CliManifest(super::payloads::CliManifestPayload),
     /// Config manifest YAML (config). Typed in Stage 1B.
     ConfigManifest(super::payloads::ConfigManifestPayload),
+    /// Lossless Rust source-unit item tree parsed from a
+    /// `rust-source-unit` fenced block. This is the typed TD bridge for #591:
+    /// a Rust source section is no longer an opaque unsupported body before
+    /// `from_td_ast` dispatch sees it.
+    ///
+    /// @spec projects/agentic-workflow/tech-design/logic/aw-td-ast-parse-rust-source-unit-sections-as-typed-td-bodies.md#logic
+    RustSourceUnit(crate::generate::rust_source_unit::RustSourceUnit),
     /// Plain markdown body (doc, overview, changes-as-prose).
     Markdown(String),
     /// Section listed in `fill_sections` but not yet authored.
@@ -150,6 +157,8 @@ pub enum SectionKind {
     ConfigFamily,
     /// Changes manifest family — changes (YAML schema).
     ChangesFamily,
+    /// Rust source-unit family — lossless CST item-tree payload.
+    RustSourceUnitFamily,
     /// Section types without a typed parser at this implementation time (R9).
     Unsupported,
 }
@@ -189,7 +198,8 @@ impl SectionKind {
             SectionType::Config => SectionKind::ConfigFamily,
             SectionType::Changes => SectionKind::ChangesFamily,
             SectionType::Doc | SectionType::Overview => SectionKind::MarkdownFamily,
-            SectionType::RustSourceUnit | SectionType::TextSourceUnit => SectionKind::Unsupported,
+            SectionType::RustSourceUnit => SectionKind::RustSourceUnitFamily,
+            SectionType::TextSourceUnit => SectionKind::Unsupported,
         }
     }
 }

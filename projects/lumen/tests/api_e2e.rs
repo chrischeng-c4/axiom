@@ -24,11 +24,28 @@ fn server() -> TestServer {
     TestServer::new(app).expect("test server")
 }
 
+fn server_with_engine() -> (TestServer, Arc<lumen::storage::Engine>) {
+    let engine = Arc::new(lumen::storage::Engine::new());
+    let app = lumen::api::router(lumen::api::AppState::open(engine.clone()));
+    (TestServer::new(app).expect("test server"), engine)
+}
+
 #[tokio::test]
 async fn health_and_ready() {
     let s = server();
     s.get("/healthz").await.assert_status_ok();
-    s.get("/readyz").await.assert_status_ok();
+    let ready = s.get("/readyz").await;
+    ready.assert_status_ok();
+    assert_eq!(ready.text(), "ok");
+}
+
+#[tokio::test]
+async fn readyz_reports_draining() {
+    let (s, engine) = server_with_engine();
+    engine.start_drain();
+    let ready = s.get("/readyz").await;
+    ready.assert_status(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(ready.text(), "draining");
 }
 
 #[tokio::test]
@@ -643,6 +660,9 @@ async fn openapi_spec_served() {
     let body: Value = resp.json();
     assert_eq!(body["info"]["title"], "lumen");
     // Has the new collections-based paths.
+    assert!(body["paths"]["/healthz"].is_object());
+    assert!(body["paths"]["/readyz"].is_object());
+    assert!(body["paths"]["/metrics"].is_object());
     assert!(body["paths"]["/collections/{collection_id}/index"].is_object());
     assert!(body["paths"]["/collections/{collection_id}/search"].is_object());
     assert!(body["paths"]["/collections/{collection_id}/duplicates"].is_object());

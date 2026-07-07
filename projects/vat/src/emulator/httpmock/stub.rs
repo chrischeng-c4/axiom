@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-stub-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Stub registry + matcher for the HTTP mock proxy.
 //!
@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-stub-rs.md#source
 pub struct Matcher {
     #[serde(default)]
     pub method: Option<String>,
@@ -26,6 +27,7 @@ pub struct Matcher {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-stub-rs.md#source
 pub struct StubResponse {
     #[serde(default = "default_status")]
     pub status: u16,
@@ -40,12 +42,14 @@ fn default_status() -> u16 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-stub-rs.md#source
 pub struct Stub {
     #[serde(default)]
     pub r#match: Matcher,
     pub response: StubResponse,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-stub-rs.md#source
 impl Stub {
     /// Whether this stub matches the request. `path` excludes the query string.
     pub fn matches(&self, method: &str, host: &str, path: &str) -> bool {
@@ -65,10 +69,12 @@ impl Stub {
 
 /// Thread-safe registry of stubs (first match wins).
 #[derive(Default)]
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-stub-rs.md#source
 pub struct Registry {
     stubs: Mutex<Vec<Stub>>,
 }
 
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-httpmock-stub-rs.md#source
 impl Registry {
     pub fn add(&self, stub: Stub) {
         self.stubs.lock().unwrap().push(stub);

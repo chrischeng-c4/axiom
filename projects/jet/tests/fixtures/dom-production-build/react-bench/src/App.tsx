@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-react-bench-src-app-tsx" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import { useState } from "react";
 import { Counter } from "./components/Counter";
 import { TodoList } from "./components/TodoList";
@@ -27,3 +28,5 @@ export function App() {
     </div>
   );
 }
+
+// </HANDWRITE>

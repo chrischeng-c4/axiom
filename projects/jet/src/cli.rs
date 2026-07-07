@@ -20,7 +20,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Build the jet CLI command tree
 /// @spec .aw/tech-design/projects/jet/semantic/jet-src.md#schema
@@ -72,10 +72,25 @@ pub fn command() -> Command {
                         ),
                 )
                 .arg(
+                    Arg::new("prebundle")
+                        .long("prebundle")
+                        .conflicts_with("no-prebundle")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Run dev-server dependency prebundle after installing \
+                             dependencies. Default install is fast and defers \
+                             prebundle to the first `jet dev`.",
+                        ),
+                )
+                .arg(
                     Arg::new("no-prebundle")
                         .long("no-prebundle")
+                        .conflicts_with("prebundle")
                         .action(ArgAction::SetTrue)
-                        .help("Skip dev-server prebundle after dependency installation"),
+                        .help(
+                            "Compatibility no-op: install skips dev-server \
+                             prebundle by default.",
+                        ),
                 )
                 .arg(
                     Arg::new("nx")
@@ -169,6 +184,12 @@ pub fn command() -> Command {
                         .long("build")
                         .action(clap::ArgAction::SetTrue)
                         .help("Run `jet build --lib` before publishing (build-before-publish)"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .action(clap::ArgAction::SetTrue)
+                        .help("Preview publish metadata and tarball contents without uploading"),
                 ),
         )
         .subcommand(
@@ -454,14 +475,14 @@ pub fn command() -> Command {
                     // jet build --lib --preserve-modules — emit one output
                     // file per source module (mirroring the source tree)
                     // instead of bundling each entry into a single file.
-                    // ESM only. Overrides [lib].preserve_modules of jet.toml.
+                    // Supports ESM/CJS. Overrides [lib].preserve_modules of jet.toml.
                     Arg::new("preserve-modules")
                         .long("preserve-modules")
                         .action(ArgAction::SetTrue)
                         .help(
                             "Emit one output file per source module (mirroring \
                              the source tree) instead of bundling each entry. \
-                             ESM only. Overrides [lib].preserve_modules.",
+                             Supports ESM/CJS. Overrides [lib].preserve_modules.",
                         ),
                 )
                 .arg(
@@ -608,8 +629,30 @@ pub fn command() -> Command {
                             Arg::new("no-hooks")
                                 .long("no-hooks")
                                 .action(ArgAction::SetTrue)
-                                .conflicts_with("types-only")
-                                .help("Skip React Query hooks (still emit types + client)."),
+                                .conflicts_with_all(["types-only", "hooks"])
+                                .help("Skip data-fetching hooks (still emit types + client)."),
+                        )
+                        .arg(
+                            Arg::new("stack")
+                                .long("stack")
+                                .value_parser(["auto", "react", "typescript"])
+                                .help(
+                                    "Frontend stack for generated output. \
+                                     Default: [codegen.openapi].stack or \
+                                     package.json auto-detection.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("hooks")
+                                .long("hooks")
+                                .value_parser(["auto", "react-query", "swr", "none"])
+                                .help(
+                                    "Hook runtime to emit: react-query \
+                                     (@tanstack/react-query), swr (swr + \
+                                     swr/mutation), or none. Default: \
+                                     [codegen.openapi].hooks or auto-detect \
+                                     from package.json.",
+                                ),
                         )
                         .arg(
                             Arg::new("client-name")
@@ -621,11 +664,12 @@ pub fn command() -> Command {
                             Arg::new("http")
                                 .long("http")
                                 .value_parser(["fetch", "axios"])
-                                .default_value("fetch")
                                 .help(
                                     "HTTP runtime for the generated client: \
-                                     native `fetch` (default) or `axios` (peer \
-                                     dependency of the generated output).",
+                                     native `fetch` or `axios` (peer dependency \
+                                     of the generated output). Default: \
+                                     [codegen.openapi].http or package.json \
+                                     auto-detection.",
                                 ),
                         ),
                 ),
@@ -828,6 +872,14 @@ pub fn command() -> Command {
                              single worker so actions are visible. Combine \
                              with `page.pause()` in a spec to pause at a \
                              breakpoint (MVP: 30-minute hold).",
+                        ),
+                )
+                .arg(
+                    Arg::new("stories")
+                        .long("stories")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Run the stories smoke runner: discover stories, build the self-contained story workbench, and report each story.",
                         ),
                 )
                 .arg(
@@ -1405,12 +1457,18 @@ pub fn command() -> Command {
         .subcommand(browser_bridge_command())
         .subcommand(crate::standard_cli::llm_command())
         .subcommand(crate::standard_cli::upgrade_command())
-        .subcommand(crate::standard_cli::report_issue_command())
+        .subcommand(crate::standard_cli::issue_command())
 }
 
 fn serve_command() -> Command {
     Command::new("serve")
-        .about("Start an agent-first detached Jet server session")
+        .about("Serve the production frontend (static dist/) as an agent-first detached session")
+        .long_about(
+            "Serve the production frontend as a detached, agent-first Jet server session.\n\n\
+             `jet serve` is the production static-serving surface: it serves the prebuilt \
+             `./dist` artifacts (run `jet build` first). Use `jet dev` for the development \
+             server (HMR, proxy rules, browser log intake).",
+        )
         .arg(
             Arg::new("port")
                 .short('p')
@@ -1424,22 +1482,12 @@ fn serve_command() -> Command {
                 .help("Host to bind to"),
         )
         .arg(
-            Arg::new("prod")
-                .long("prod")
-                .action(ArgAction::SetTrue)
-                .help("Serve production dist artifacts from ./dist"),
-        )
-        .arg(
             Arg::new("wasm")
                 .long("wasm")
                 .action(ArgAction::SetTrue)
-                .help("Serve the FE-on-WASM target through the detached serve session"),
-        )
-        .arg(
-            Arg::new("debug")
-                .long("debug")
-                .action(ArgAction::SetTrue)
-                .help("Build the WASM app with debug info and runtime inspection hooks"),
+                .help(
+                    "Serve the prebuilt FE-on-WASM production target through the detached session",
+                ),
         )
         .subcommand(
             Command::new("shutdown")
@@ -1866,18 +1914,28 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     root_dir.join(out_arg)
                 };
                 let types_only = om.get_flag("types-only");
-                let http_client = match om.get_one::<String>("http").map(String::as_str) {
-                    Some("axios") => crate::codegen::HttpClient::Axios,
-                    _ => crate::codegen::HttpClient::Fetch,
+                let jet_config = crate::task_runner::config::JetConfig::load(&root_dir)?;
+                let cli_hooks = if om.get_flag("no-hooks") {
+                    Some("none")
+                } else {
+                    om.get_one::<String>("hooks").map(String::as_str)
                 };
+                let resolved_stack = crate::codegen::resolve_openapi_stack(
+                    &root_dir,
+                    &jet_config,
+                    om.get_one::<String>("stack").map(String::as_str),
+                    om.get_one::<String>("http").map(String::as_str),
+                    cli_hooks,
+                )?;
                 let opts = crate::codegen::GenOptions {
                     spec_path,
                     out_dir,
                     client_name: om.get_one::<String>("client-name").cloned().unwrap(),
-                    http_client,
+                    http_client: resolved_stack.http_client,
                     emit_types: true,
                     emit_client: !types_only,
-                    emit_hooks: !types_only && !om.get_flag("no-hooks"),
+                    emit_hooks: !types_only && resolved_stack.emit_hooks,
+                    hooks_runtime: resolved_stack.hooks_runtime,
                 };
                 let exit = crate::codegen::run(&opts);
                 std::process::exit(exit);
@@ -1892,7 +1950,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             let auto_ci_frozen = !m.get_flag("no-frozen-lockfile");
             let no_cache = m.get_flag("no-cache");
             let no_install = m.get_flag("no-install");
-            let prebundle = !m.get_flag("no-prebundle");
+            let prebundle = install_should_prebundle(m);
             let force_nx = m.get_flag("nx");
 
             // Detect workspace mode (Nx > Jet > Single).
@@ -2012,9 +2070,16 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             let access = m.get_one::<String>("access").map(|s| s.as_str());
             // #172 — `--build` runs `jet build --lib` before packing.
             let build_first = m.get_flag("build");
+            let dry_run = m.get_flag("dry-run");
             let publisher =
                 crate::pkg_manager::publish::Publisher::new(root_dir).with_build(build_first);
-            publisher.publish(tag, access).await
+            if dry_run {
+                let preview = publisher.dry_run(tag, access)?;
+                println!("{}", preview.report());
+                Ok(())
+            } else {
+                publisher.publish(tag, access).await
+            }
         }
 
         Some(("pack", m)) => {
@@ -2841,6 +2906,11 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 std::process::exit(exit_code);
             }
 
+            if m.get_flag("stories") {
+                let exit_code = run_stories_smoke_tests(&root_dir).await?;
+                std::process::exit(exit_code);
+            }
+
             let mut cfg = crate::test_runner::RunnerConfig::default_for_root(&root_dir)
                 .context("Failed to build test runner config")?;
 
@@ -3500,11 +3570,172 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
         Some(("llm", m)) => crate::standard_cli::run_llm(m),
         Some(("upgrade", m)) => crate::standard_cli::run_upgrade(m).await,
-        Some(("report-issue", m)) => crate::standard_cli::run_report_issue(m).await,
+        Some(("issue", m)) => crate::standard_cli::run_issue(m).await,
 
         _ => {
             anyhow::bail!("Unknown jet subcommand. Run 'jet --help' for usage.")
         }
+    }
+}
+
+async fn run_stories_smoke_tests(root_dir: &Path) -> anyhow::Result<i32> {
+    let index = crate::stories::discover(root_dir);
+    if index.stories.is_empty() {
+        println!("jet test --stories: no stories discovered");
+        return Ok(if index.diagnostics.is_empty() { 0 } else { 1 });
+    }
+    let out = tempfile::tempdir().context("creating temporary stories test output")?;
+    let result = crate::stories::build_stories_static(root_dir, out.path())
+        .context("building static stories workbench for test")?;
+    let mut failed = false;
+    for diag in &result.diagnostics {
+        failed = true;
+        eprintln!("FAIL diagnostic: {diag}");
+    }
+
+    let browser = crate::browser::Browser::launch(crate::browser::LaunchOptions {
+        headless: true,
+        args: vec!["--allow-file-access-from-files".to_string()],
+        ..Default::default()
+    })
+    .await
+    .context(
+        "launching headless Chromium for story tests; run `jet browser install` if Chrome is not installed",
+    )?;
+
+    for story in &index.stories {
+        let preview = out
+            .path()
+            .join("preview")
+            .join(format!("{}.html", story.id));
+        if !preview.is_file() {
+            failed = true;
+            eprintln!("FAIL {} — missing preview {}", story.id, preview.display());
+            continue;
+        }
+        let page = browser
+            .new_page()
+            .await
+            .with_context(|| format!("opening browser page for story {}", story.id))?;
+        let url = path_to_file_url(&preview);
+        let story_result = async {
+            page.goto(&url)
+                .await
+                .with_context(|| format!("navigating story {} to {}", story.id, url))?;
+            wait_for_story_test_status(&page, Duration::from_secs(15)).await
+        }
+        .await;
+        let _ = page.close().await;
+        match story_result {
+            Ok(status) if story_status_passed(&status) => {
+                println!(
+                    "PASS {} — {} (render={}, play={})",
+                    story.id,
+                    story.name,
+                    status["render"].as_str().unwrap_or("unknown"),
+                    status["play"].as_str().unwrap_or("unknown")
+                );
+            }
+            Ok(status) => {
+                failed = true;
+                eprintln!(
+                    "FAIL {} — {} ({})",
+                    story.id,
+                    story.name,
+                    format_story_status(&status)
+                );
+            }
+            Err(err) => {
+                failed = true;
+                eprintln!("FAIL {} — {} ({err:#})", story.id, story.name);
+            }
+        }
+    }
+    browser.close().await.ok();
+    println!(
+        "jet test --stories: {} story{}, {}",
+        index.stories.len(),
+        if index.stories.len() == 1 { "" } else { "s" },
+        if failed { "failed" } else { "passed" }
+    );
+    Ok(if failed { 1 } else { 0 })
+}
+
+async fn wait_for_story_test_status(
+    page: &crate::browser::Page,
+    timeout: Duration,
+) -> anyhow::Result<serde_json::Value> {
+    let start = Instant::now();
+    let expression = r#"(() => {
+      const status = window.__jetStoryTestStatus;
+      if (!status) return null;
+      return JSON.parse(JSON.stringify(status));
+    })()"#;
+    loop {
+        let status = page.evaluate(expression).await?;
+        if story_status_terminal(&status) {
+            return Ok(status);
+        }
+        if start.elapsed() > timeout {
+            anyhow::bail!("timed out waiting for story runtime status");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn story_status_terminal(status: &serde_json::Value) -> bool {
+    let Some(render) = status.get("render").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    let play = status
+        .get("play")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pending");
+    render == "fail" || play == "fail" || (render == "pass" && matches!(play, "pass" | "skipped"))
+}
+
+fn story_status_passed(status: &serde_json::Value) -> bool {
+    status.get("render").and_then(|v| v.as_str()) == Some("pass")
+        && matches!(
+            status.get("play").and_then(|v| v.as_str()),
+            Some("pass" | "skipped")
+        )
+}
+
+fn format_story_status(status: &serde_json::Value) -> String {
+    let render = status
+        .get("render")
+        .and_then(|v| v.as_str())
+        .unwrap_or("missing");
+    let play = status
+        .get("play")
+        .and_then(|v| v.as_str())
+        .unwrap_or("missing");
+    let errors = status
+        .get("errors")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .unwrap_or_default();
+    if errors.is_empty() {
+        format!("render={render}, play={play}")
+    } else {
+        format!("render={render}, play={play}, errors={errors}")
+    }
+}
+
+fn path_to_file_url(path: &Path) -> String {
+    let display = path.display().to_string();
+    let escaped = display.replace(' ', "%20");
+    if cfg!(windows) {
+        format!("file:///{}", escaped.replace('\\', "/"))
+    } else {
+        format!("file://{}", escaped)
     }
 }
 
@@ -3755,6 +3986,9 @@ fn run_library_build(
         lib_config.and_then(|c| c.dts).unwrap_or(true)
     };
 
+    let sourcemap =
+        coerce_sourcemap_mode_or_warn(m.get_one::<String>("sourcemap").map(String::as_str));
+
     let options = crate::bundler::LibBuildOptions {
         project_root: root_dir.to_path_buf(),
         out_dir,
@@ -3781,6 +4015,7 @@ fn run_library_build(
                     .collect()
             })
             .unwrap_or_default(),
+        sourcemap,
     };
 
     let start = std::time::Instant::now();
@@ -4046,24 +4281,22 @@ async fn handle_serve_command(root_dir: &PathBuf, m: &ArgMatches) -> Result<()> 
         .get_one::<String>("host")
         .cloned()
         .unwrap_or_else(|| "127.0.0.1".to_string());
-    let prod = m.get_flag("prod");
     let wasm = m.get_flag("wasm");
+    // `jet serve` is production-only: it serves the prebuilt static `./dist`.
+    // The detached child re-invocation is signaled by JET_SERVE_CHILD.
     if std::env::var_os("JET_SERVE_CHILD").is_some() {
-        if !prod {
-            anyhow::bail!("JET_SERVE_CHILD is only valid for `jet serve --prod`");
-        }
         return crate::dev_server::prod_static::serve(
             root_dir,
             crate::dev_server::prod_static::ProdOptions {
                 host,
                 port,
-                target: crate::dev_server::serve_process::serve_session_target(prod, wasm),
+                target: crate::dev_server::serve_process::serve_session_target(true, wasm),
             },
         )
         .await;
     }
 
-    launch_detached_serve(root_dir, &host, port, prod, wasm, m.get_flag("debug")).await
+    launch_detached_serve(root_dir, &host, port, true, wasm, false).await
 }
 
 async fn launch_detached_serve(
@@ -4710,6 +4943,10 @@ async fn prebundle_after_install(root_dir: PathBuf) -> Result<()> {
         .map(|_| ())
 }
 
+fn install_should_prebundle(m: &ArgMatches) -> bool {
+    m.get_flag("prebundle")
+}
+
 #[cfg(test)]
 mod build_index_html_tests {
     use super::*;
@@ -4975,11 +5212,107 @@ mod e2e_command_contract_tests {
     }
 
     #[test]
+    fn install_help_marks_prebundle_as_opt_in_and_no_prebundle_as_compat() {
+        let help = help_text(&["jet", "install", "--help"]);
+        assert!(
+            help.contains("--prebundle"),
+            "install help must expose opt-in prebundle flag: {help}"
+        );
+        assert!(
+            help.contains("Default install is fast")
+                && help.contains("first `jet dev`")
+                && help.contains("Compatibility no-op"),
+            "install help must document fast default + no-prebundle compatibility: {help}"
+        );
+        assert!(
+            !help.contains("Skip dev-server prebundle after dependency installation"),
+            "install help must not describe prebundle as default-on anymore: {help}"
+        );
+    }
+
+    #[test]
+    fn install_prebundle_flag_is_opt_in_and_no_prebundle_is_noop_alias() {
+        let default_matches = command()
+            .try_get_matches_from(["jet", "install"])
+            .expect("default install parses");
+        let (_, default_install) = default_matches.subcommand().unwrap();
+        assert!(
+            !install_should_prebundle(default_install),
+            "plain `jet install` must use the fast no-prebundle default"
+        );
+
+        let opt_in_matches = command()
+            .try_get_matches_from(["jet", "install", "--prebundle"])
+            .expect("--prebundle parses");
+        let (_, opt_in_install) = opt_in_matches.subcommand().unwrap();
+        assert!(
+            install_should_prebundle(opt_in_install),
+            "`jet install --prebundle` must run post-install prebundle"
+        );
+
+        let compat_matches = command()
+            .try_get_matches_from(["jet", "install", "--no-prebundle"])
+            .expect("--no-prebundle compatibility alias parses");
+        let (_, compat_install) = compat_matches.subcommand().unwrap();
+        assert!(
+            !install_should_prebundle(compat_install),
+            "`--no-prebundle` remains accepted but is a no-op under the new default"
+        );
+
+        let err = command()
+            .try_get_matches_from(["jet", "install", "--prebundle", "--no-prebundle"])
+            .expect_err("prebundle and no-prebundle are mutually exclusive");
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn publish_dry_run_parser_accepts_existing_publish_options() {
+        let matches = command()
+            .try_get_matches_from([
+                "jet",
+                "publish",
+                "--dry-run",
+                "--tag",
+                "beta",
+                "--access",
+                "restricted",
+                "--build",
+            ])
+            .expect("publish --dry-run parses");
+        let (name, publish) = matches.subcommand().expect("top-level subcommand");
+        assert_eq!(name, "publish");
+        assert!(
+            publish.get_flag("dry-run"),
+            "publish --dry-run must set the dry-run flag"
+        );
+        assert!(
+            publish.get_flag("build"),
+            "publish --dry-run must compose with --build"
+        );
+        assert_eq!(
+            publish.get_one::<String>("tag").map(String::as_str),
+            Some("beta")
+        );
+        assert_eq!(
+            publish.get_one::<String>("access").map(String::as_str),
+            Some("restricted")
+        );
+    }
+
+    #[test]
     fn serve_command_exposes_agent_first_session_surface() {
         let help = help_text(&["jet", "serve", "--help"]);
         assert!(
-            help.contains("detached") && help.contains("--wasm") && help.contains("--prod"),
-            "serve help must expose detached agent mode plus wasm/prod target flags: {help}"
+            help.contains("detached") && help.contains("--wasm"),
+            "serve help must expose detached agent mode plus the wasm target flag: {help}"
+        );
+        assert!(
+            help.to_lowercase().contains("production"),
+            "serve help must name itself as the production serving surface: {help}"
+        );
+        assert!(
+            !help.contains("--prod"),
+            "`jet serve` is production by default; `--prod` must no longer be a flag: {help}"
         );
         assert!(
             help.contains("shutdown"),

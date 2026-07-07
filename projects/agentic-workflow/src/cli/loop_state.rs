@@ -11,6 +11,7 @@
 //!
 //! @spec projects/agentic-workflow/tech-design/logic/workitem-loop-state-model-additive-foundation.md
 
+use crate::issues::types::td_phase;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -132,15 +133,64 @@ pub fn upsert_loop_state(body: &str, state: &LoopState) -> Result<String> {
     Ok(out)
 }
 
+/// Apply an EC verifier result to the loop-state block in a WI body — the
+/// producer side of the loop: parse the existing block (or start a fresh one),
+/// `record_verification` (append the iteration + decide `next_action` from the
+/// verifier), and re-emit the block in place. Pure; the caller persists the
+/// returned body. This is what the EC verify step calls so the `aw wi run` /
+/// `aw capability run` loop engine has an up-to-date block to read (#188 E1/E4).
+pub fn apply_verification(
+    body: &str,
+    wi: &str,
+    result: LastResult,
+    summary: Option<String>,
+) -> Result<String> {
+    let mut state = parse_loop_state(body).unwrap_or_default();
+    if state.version == 0 {
+        state.version = 1;
+    }
+    // #844: the block's `issue_id` is what `decide_next_action` uses to
+    // carry the slug into the emitted `next_action` command (e.g. `aw td
+    // code-check <slug>`). A fresh block has no `issue_id` yet — seed it from
+    // the caller's WI id rather than leaving it empty, or the converged arm
+    // would emit a slug-less command a chain-policy check must reject.
+    if state.issue_id.is_empty() {
+        state.issue_id = wi.to_string();
+    }
+    state.record_verification(result, summary);
+    upsert_loop_state(body, &state)
+}
+
 /// The loop's decision, given the latest verification (EC) result: the status
-/// the loop is now in, and the next command to run. Green = converged (merge);
-/// Red = keep iterating (adapt and re-gen); Blocked = HITL (no auto next).
-/// This is the loop-engineering "decide" step — it reads the verifier, not a
-/// reviewer.
-pub fn decide_next_action(last: &LastResult) -> (LoopStatus, Option<&'static str>) {
+/// the loop is now in, and the next command to run. Green = converged
+/// (terminal code-check, carrying `issue_id` as the target — #844: a
+/// slug-less `aw td code-check` is chain-invalid, see
+/// `chain::CHAIN_REQUIRED_POSITIONALS`); Red = keep iterating (adapt and
+/// re-gen); Blocked = HITL (no auto next). This is the loop-engineering
+/// "decide" step — it reads the verifier, not a reviewer.
+pub fn decide_next_action(last: &LastResult, issue_id: &str) -> (LoopStatus, Option<String>) {
     match last {
-        LastResult::Green => (LoopStatus::Converged, Some("aw td merge")),
-        LastResult::Red { .. } => (LoopStatus::Iterating, Some("aw td gen")),
+        LastResult::Green => {
+            // issues #916 / #850: derive the base command from the single
+            // td_phase transition table rather than a hardcoded literal, so
+            // this producer stays in sync with the terminal code-check
+            // guard it feeds.
+            let base =
+                td_phase::next_phase_command(td_phase::CB_FILLED).unwrap_or("aw td code-check");
+            let command = if issue_id.is_empty() {
+                // Defensive fallback only: `apply_verification` always seeds
+                // `issue_id`, so this arm should not be reachable from the
+                // real `aw ec record` producer path.
+                base.to_string()
+            } else {
+                format!("{base} {issue_id}")
+            };
+            (LoopStatus::Converged, Some(command))
+        }
+        LastResult::Red { .. } => {
+            let base = td_phase::next_phase_command(td_phase::TD_CREATED).unwrap_or("aw td gen");
+            (LoopStatus::Iterating, Some(base.to_string()))
+        }
         LastResult::Blocked { .. } => (LoopStatus::Blocked, None),
         LastResult::None => (LoopStatus::Iterating, None),
     }
@@ -165,9 +215,9 @@ impl LoopState {
             outcome,
             summary,
         });
-        let (status, next) = decide_next_action(&result);
+        let (status, next) = decide_next_action(&result, &self.issue_id);
         self.status = status;
-        self.next_action = next.map(str::to_string);
+        self.next_action = next;
         self.last_result = result;
     }
 }
@@ -178,10 +228,24 @@ mod tests {
 
     // @spec epic #188 E4: ec verifier drives the loop decision.
     #[test]
-    fn decide_green_converges_to_merge() {
+    fn decide_green_converges_to_code_check() {
         assert_eq!(
-            decide_next_action(&LastResult::Green),
-            (LoopStatus::Converged, Some("aw td merge"))
+            decide_next_action(&LastResult::Green, "42"),
+            (
+                LoopStatus::Converged,
+                Some("aw td code-check 42".to_string())
+            )
+        );
+    }
+
+    // #844: an empty issue_id must not silently produce the bare, chain-invalid
+    // `aw td code-check` (see chain::CHAIN_REQUIRED_POSITIONALS); this only
+    // happens if a caller bypasses `apply_verification`'s seeding.
+    #[test]
+    fn decide_green_with_no_issue_id_falls_back_to_bare_command() {
+        assert_eq!(
+            decide_next_action(&LastResult::Green, ""),
+            (LoopStatus::Converged, Some("aw td code-check".to_string()))
         );
     }
 
@@ -192,8 +256,8 @@ mod tests {
             why: "t failed".into(),
         };
         assert_eq!(
-            decide_next_action(&red),
-            (LoopStatus::Iterating, Some("aw td gen"))
+            decide_next_action(&red, "42"),
+            (LoopStatus::Iterating, Some("aw td gen".to_string()))
         );
     }
 
@@ -202,7 +266,10 @@ mod tests {
         let blocked = LastResult::Blocked {
             reason: "ec undefined".into(),
         };
-        assert_eq!(decide_next_action(&blocked), (LoopStatus::Blocked, None));
+        assert_eq!(
+            decide_next_action(&blocked, "42"),
+            (LoopStatus::Blocked, None)
+        );
     }
 
     #[test]
@@ -227,7 +294,7 @@ mod tests {
         s.record_verification(LastResult::Green, None);
         assert_eq!(s.iterations.len(), 2);
         assert_eq!(s.status, LoopStatus::Converged);
-        assert_eq!(s.next_action.as_deref(), Some("aw td merge"));
+        assert_eq!(s.next_action.as_deref(), Some("aw td code-check 1"));
         assert_eq!(s.last_result, LastResult::Green);
     }
 
@@ -324,6 +391,41 @@ mod tests {
             parse_loop_state(&after2).unwrap().status,
             LoopStatus::Converged
         );
+    }
+
+    #[test]
+    fn apply_verification_starts_then_advances_the_block_in_a_body() {
+        // Fresh body (no block) + a Red verdict -> a block appears, iterating,
+        // and the original body text is preserved.
+        let body = "# WI 188\n\nsome description\n";
+        let out = apply_verification(
+            body,
+            "188",
+            LastResult::Red {
+                dimension: "behavior".into(),
+                why: "t failed".into(),
+            },
+            Some("round 1".into()),
+        )
+        .unwrap();
+        assert!(out.contains(LOOP_START));
+        assert!(out.contains("some description"));
+        let s = parse_loop_state(&out).unwrap();
+        assert_eq!(s.version, 1);
+        assert_eq!(s.issue_id, "188");
+        assert_eq!(s.iterations.len(), 1);
+        assert_eq!(s.status, LoopStatus::Iterating);
+        assert_eq!(s.next_action.as_deref(), Some("aw td gen"));
+
+        // Re-apply a Green verdict on the same body -> converged, 2nd iteration,
+        // block replaced in place (not duplicated). `issue_id` is already
+        // seeded from the first call, so it carries through unchanged.
+        let out2 = apply_verification(&out, "188", LastResult::Green, None).unwrap();
+        let s2 = parse_loop_state(&out2).unwrap();
+        assert_eq!(s2.iterations.len(), 2);
+        assert_eq!(s2.status, LoopStatus::Converged);
+        assert_eq!(s2.next_action.as_deref(), Some("aw td code-check 188"));
+        assert_eq!(out2.matches(LOOP_START).count(), 1);
     }
 }
 // HANDWRITE-END aw-workitem-loop-state

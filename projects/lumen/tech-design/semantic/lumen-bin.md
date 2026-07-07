@@ -2,12 +2,12 @@
 id: semantic-lumen-bin
 summary: Semantic coverage for "projects/lumen/src/bin"
 capability_refs:
-  - id: "competitor-feature-parity"
+  - id: "cli-interface"
     role: primary
-    claim: "query-planner-boolean-eval-roaring-postings"
+    claim: "service-process-interface"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/src/bin`."
-fill_sections: [schema, unit-test, changes]
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: lumen/bin
@@ -22,24 +22,202 @@ semantic_domain:
   coverage_kind: semantic
   evidence:
     source_units:
-```
-
-## Unit Test
-<!-- type: unit-test lang: mermaid -->
-
-```mermaid
----
-id: unit-test
-coverage_kind: semantic
-strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-evidence:
-  source_tests: []
----
-requirementDiagram
-
-element UT_SOURCE_TESTS {
-  type: "TestEvidence"
-}
+      - path: "projects/lumen/src/bin/lumen.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "Cli"
+            kind: "struct"
+            public: false
+          - name: "Command"
+            kind: "enum"
+            public: false
+          - name: "DockerfileArgs"
+            kind: "struct"
+            public: false
+          - name: "DockerfileCmd"
+            kind: "enum"
+            public: false
+          - name: "DockerfileRenderArgs"
+            kind: "struct"
+            public: false
+          - name: "DockerfileVariant"
+            kind: "enum"
+            public: false
+          - name: "K8sArgs"
+            kind: "struct"
+            public: false
+          - name: "K8sCmd"
+            kind: "enum"
+            public: false
+          - name: "K8sCrdArgs"
+            kind: "struct"
+            public: false
+          - name: "K8sCrdCmd"
+            kind: "enum"
+            public: false
+          - name: "K8sOperatorArgs"
+            kind: "struct"
+            public: false
+          - name: "K8sOperatorCmd"
+            kind: "enum"
+            public: false
+          - name: "K8sOperatorRenderArgs"
+            kind: "struct"
+            public: false
+          - name: "K8sOperatorResizeStorageArgs"
+            kind: "struct"
+            public: false
+          - name: "K8sInstanceArgs"
+            kind: "struct"
+            public: false
+          - name: "K8sInstanceCmd"
+            kind: "enum"
+            public: false
+          - name: "K8sInstanceRenderArgs"
+            kind: "struct"
+            public: false
+          - name: "K8sInstanceProfile"
+            kind: "enum"
+            public: false
+          - name: "K8sFileOutputArgs"
+            kind: "struct"
+            public: false
+          - name: "UpgradeArgs"
+            kind: "struct"
+            public: false
+          - name: "IssueArgs"
+            kind: "struct"
+            public: false
+          - name: "IssueCommand"
+            kind: "enum"
+            public: false
+          - name: "IssueSearchArgs"
+            kind: "struct"
+            public: false
+          - name: "IssueViewArgs"
+            kind: "struct"
+            public: false
+          - name: "IssueCreateArgs"
+            kind: "struct"
+            public: false
+          - name: "BackupArgs"
+            kind: "struct"
+            public: false
+          - name: "LlmTopic"
+            kind: "enum"
+            public: false
+          - name: "LlmFormat"
+            kind: "enum"
+            public: false
+          - name: "LlmArgs"
+            kind: "struct"
+            public: false
+          - name: "WalBackend"
+            kind: "enum"
+            public: false
+          - name: "resolve_wal_backend"
+            kind: "function"
+            public: false
+          - name: "LogFormat"
+            kind: "enum"
+            public: false
+          - name: "Persistence"
+            kind: "enum"
+            public: false
+          - name: "SpecFormat"
+            kind: "enum"
+            public: false
+          - name: "SpecArgs"
+            kind: "struct"
+            public: false
+          - name: "SpecSub"
+            kind: "enum"
+            public: false
+          - name: "GenArgs"
+            kind: "struct"
+            public: false
+          - name: "GenLang"
+            kind: "enum"
+            public: false
+          - name: "GenHttp"
+            kind: "enum"
+            public: false
+          - name: "ServeArgs"
+            kind: "struct"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen/src/bin"
+      - path: "projects/lumen/src/bin/lumen-bench.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "DEFAULT_DOCUMENTS"
+            kind: "constant"
+            public: false
+          - name: "DEFAULT_PAGE_SIZE"
+            kind: "constant"
+            public: false
+          - name: "DEFAULT_QUERIES"
+            kind: "constant"
+            public: false
+          - name: "SORTED_PAGE_BUDGET_US"
+            kind: "constant"
+            public: false
+          - name: "Cli"
+            kind: "struct"
+            public: false
+          - name: "Command"
+            kind: "enum"
+            public: false
+          - name: "RunArgs"
+            kind: "struct"
+            public: false
+          - name: "BenchReport"
+            kind: "struct"
+            public: false
+          - name: "main"
+            kind: "function"
+            public: false
+          - name: "run"
+            kind: "function"
+            public: false
+          - name: "parse_types"
+            kind: "function"
+            public: false
+          - name: "print_report"
+            kind: "function"
+            public: false
+          - name: "run_sorted_page_deep"
+            kind: "function"
+            public: false
+          - name: "run_bool_filter"
+            kind: "function"
+            public: false
+          - name: "summarize"
+            kind: "function"
+            public: false
+          - name: "sorted_page_request"
+            kind: "function"
+            public: false
+          - name: "build_corpus"
+            kind: "function"
+            public: false
+          - name: "spec"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen/src/bin"
 ```
 
 ## Changes
@@ -48,12 +226,16 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
-  - action: annotate
+  - path: "projects/lumen/src/bin/lumen.rs"
+    action: modify
     section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    description: "Traceability metadata edge for the schema section."
-  - action: annotate
-    section: unit-test
+  - path: "projects/lumen/src/bin/lumen-bench.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    description: "Traceability metadata edge for the unit-test section."
 ```

@@ -118,6 +118,7 @@ changes:
       and restart.
   - path: .aw/tech-design/crates/jet/logic/watch-mode.md
     action: create
+    section: doc
     impl_mode: hand-written
     purpose: "This spec."
 ```

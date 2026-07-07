@@ -3,20 +3,21 @@
 #
 # Measures lumen's DISK engine (segment-backed via flush_to_segments) across a
 # row ladder. NO Postgres, NO OpenSearch — this is lumen's own scale story.
-# The standard local benchmark cap is 1M docs. For each N it reports per-cell
+# The standard local benchmark cap is 100k docs. For each N it reports per-cell
 # latency + the qps ladder PLUS per-N on-disk index MiB, bytes/doc, peak RSS,
 # and the RSS/on-disk ratio.
 #
 # Usage:
-#   ./scripts/lumen_scale.sh                       # default ladder 1000,1000000
-#   ./scripts/lumen_scale.sh 1000,1000000          # explicit (same as default)
-#   LUMEN_GATE_WINDOW_S=0.2 LUMEN_SCALE_CHUNK_ROWS=500000 ./scripts/lumen_scale.sh 1000000
+#   ./scripts/lumen_scale.sh                       # default ladder 1000,10000,100000
+#   ./scripts/lumen_scale.sh 1000,10000,100000     # explicit (same as default)
+#   LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1 LUMEN_GATE_WINDOW_S=0.2 LUMEN_SCALE_CHUNK_ROWS=100000 ./scripts/lumen_scale.sh 1000000
 #       # reopened-shard HTTP qps smoke: 2 sealed chunks behind the test router
 #
 # NOTE: the bench stream-generates docs (no full corpus Vec), but Engine indexing
 # still holds the mutable index until `flush_to_segments` on the single-segment
-# path. 1M is now the standard evidence target; above-1M rows are intentionally
-# blocked unless an explicit research run sets LUMEN_SCALE_ALLOW_ABOVE_1M=1.
+# path. 100k is now the local readiness target; 1M+ rows are intentionally
+# blocked unless an explicit release-soak/research run sets
+# LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1.
 # This is a MEASUREMENT/REPORT (no WIN assertions); read stdout.
 
 set -euo pipefail
@@ -25,17 +26,18 @@ set -euo pipefail
 export PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH"
 
 # Optional first arg overrides the row ladder; default stays in the safe local tier.
-ROWS="${1:-1000,1000000}"
+ROWS="${1:-1000,10000,100000}"
 export LUMEN_SCALE_ROWS="$ROWS"
-export LUMEN_SCALE_MAX_ROWS="${LUMEN_SCALE_MAX_ROWS:-1000000}"
+export LUMEN_SCALE_MAX_ROWS="${LUMEN_SCALE_MAX_ROWS:-100000}"
 
-if [[ "${LUMEN_SCALE_ALLOW_ABOVE_1M:-0}" != "1" && "${LUMEN_SCALE_ALLOW_ABOVE_1M:-}" != "true" && "${LUMEN_SCALE_ALLOW_ABOVE_1M:-}" != "yes" ]]; then
+_allow_above_standard="${LUMEN_SCALE_ALLOW_ABOVE_STANDARD:-${LUMEN_SCALE_ALLOW_ABOVE_1M:-0}}"
+if [[ "$_allow_above_standard" != "1" && "$_allow_above_standard" != "true" && "$_allow_above_standard" != "yes" ]]; then
     IFS=',' read -r -a _lumen_scale_rows <<< "$ROWS"
     for _row in "${_lumen_scale_rows[@]}"; do
         _row="${_row//[[:space:]]/}"
         if [[ -n "$_row" && "$_row" =~ ^[0-9]+$ && "$_row" -gt "$LUMEN_SCALE_MAX_ROWS" ]]; then
             echo "error: LUMEN_SCALE_ROWS contains $_row, above the standard local cap $LUMEN_SCALE_MAX_ROWS" >&2
-            echo "       1M docs is the official local benchmark target; do not run larger rows unless explicitly researching with LUMEN_SCALE_ALLOW_ABOVE_1M=1." >&2
+            echo "       100k docs is the local readiness target; larger rows require LUMEN_SCALE_ALLOW_ABOVE_STANDARD=1." >&2
             exit 2
         fi
     done

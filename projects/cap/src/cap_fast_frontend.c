@@ -1,5 +1,4 @@
-// SPEC-MANAGED: projects/cap/tech-design/semantic/cap-src.md#schema
-// CODEGEN-BEGIN
+// HANDWRITE-BEGIN gap="missing-generator:c-fast-frontend" tracker="117" reason="C same-name fast frontend has no deterministic generator; #117 updates workload-sensitive native gates."
 // Low-overhead public cap front-end.
 //
 // This C front-end is intentionally narrow: it handles same-name command
@@ -18,6 +17,17 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+#define CAP_LS_MIN_ENTRIES 1024
+#define CAP_FIND_MIN_ENTRIES 512
+#define CAP_SED_MIN_BYTES (1024 * 1024)
+#define CAP_SED_MIN_SPAN_LINES 1024
+#define CAP_GREP_MIN_FILES 64
+#define CAP_GREP_MIN_BYTES (1024 * 1024)
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#define CAP_WC_MIN_FILES 64
+#define CAP_WC_MIN_BYTES (1024 * 1024)
 
 static const char *cap_base(const char *s) {
   const char *p = strrchr(s, '/');
@@ -106,11 +116,116 @@ static void write_u64(unsigned long long value) {
   while (len > 0) write_bytes(&buf[--len], 1);
 }
 
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+static void write_padded_u64(unsigned long long value) {
+  unsigned long long tmp = value;
+  int digits = 1;
+  while (tmp >= 10) {
+    tmp /= 10;
+    digits++;
+  }
+  for (int idx = digits; idx < 8; idx++) write_bytes(" ", 1);
+  write_u64(value);
+}
+
 static int stdout_is_dev_null(void) {
   struct stat out_st;
   struct stat null_st;
   return fstat(1, &out_st) == 0 && stat("/dev/null", &null_st) == 0 &&
          out_st.st_dev == null_st.st_dev && out_st.st_ino == null_st.st_ino;
+}
+
+// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+static int dir_entries_at_least(const char *path, size_t min, int include_hidden) {
+  DIR *dir = opendir(path);
+  if (!dir) return 0;
+  size_t count = 0;
+  struct dirent *entry = NULL;
+  while ((entry = readdir(dir))) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+    if (!include_hidden && entry->d_name[0] == '.') continue;
+    if (++count >= min) {
+      closedir(dir);
+      return 1;
+    }
+  }
+  closedir(dir);
+  return 0;
+}
+
+// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+static int tree_entries_walk(char *path, size_t cap, size_t *count, size_t min) {
+  struct stat st;
+  if (lstat(path, &st) != 0) return 0;
+  if (++(*count) >= min) return 1;
+  if (!S_ISDIR(st.st_mode)) return 0;
+
+  DIR *dir = opendir(path);
+  if (!dir) return 0;
+  size_t len = strlen(path);
+  struct dirent *entry = NULL;
+  while ((entry = readdir(dir))) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+    size_t entry_len = strlen(entry->d_name);
+    if (len + 1 + entry_len + 1 > cap) continue;
+    path[len] = '/';
+    memcpy(path + len + 1, entry->d_name, entry_len + 1);
+    if (tree_entries_walk(path, cap, count, min)) {
+      path[len] = 0;
+      closedir(dir);
+      return 1;
+    }
+    path[len] = 0;
+  }
+  closedir(dir);
+  return 0;
+}
+
+static int tree_entries_at_least(const char *root, size_t min) {
+  char path[PATH_MAX];
+  size_t count = 0;
+  if (!copy_cstr(path, sizeof(path), root)) return 0;
+  return tree_entries_walk(path, sizeof(path), &count, min);
+}
+
+// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+static int grep_workload_walk(char *path, size_t cap, size_t *files, unsigned long long *bytes) {
+  struct stat st;
+  if (lstat(path, &st) != 0) return 0;
+  if (S_ISREG(st.st_mode)) {
+    *files += 1;
+    if (st.st_size > 0) *bytes += (unsigned long long)st.st_size;
+    return *files >= CAP_GREP_MIN_FILES || *bytes >= CAP_GREP_MIN_BYTES;
+  }
+  if (!S_ISDIR(st.st_mode)) return 0;
+
+  DIR *dir = opendir(path);
+  if (!dir) return 0;
+  size_t len = strlen(path);
+  struct dirent *entry = NULL;
+  while ((entry = readdir(dir))) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+    size_t entry_len = strlen(entry->d_name);
+    if (len + 1 + entry_len + 1 > cap) continue;
+    path[len] = '/';
+    memcpy(path + len + 1, entry->d_name, entry_len + 1);
+    if (grep_workload_walk(path, cap, files, bytes)) {
+      path[len] = 0;
+      closedir(dir);
+      return 1;
+    }
+    path[len] = 0;
+  }
+  closedir(dir);
+  return 0;
+}
+
+static int grep_workload_at_least(const char *root) {
+  char path[PATH_MAX];
+  size_t files = 0;
+  unsigned long long bytes = 0;
+  if (!copy_cstr(path, sizeof(path), root)) return 0;
+  return grep_workload_walk(path, sizeof(path), &files, &bytes);
 }
 
 static int cap_cat(int argc, char **argv) {
@@ -228,10 +343,8 @@ static int cap_ls(int argc, char **argv) {
     write_err_path("ls", path, errno);
     return 1;
   }
-  if (!S_ISDIR(st.st_mode)) {
-    write_line(path);
-    return 0;
-  }
+  if (!S_ISDIR(st.st_mode)) return unsupported();
+  if (!dir_entries_at_least(path, CAP_LS_MIN_ENTRIES, all)) return unsupported();
 
   DIR *dir = opendir(path);
   if (!dir) {
@@ -403,6 +516,18 @@ static int cap_sed(int argc, char **argv) {
     write_err_path("sed", argv[4], errno);
     return 1;
   }
+  struct stat st;
+  if (fstat(fd, &st) != 0) {
+    write_err_path("sed", argv[4], errno);
+    close(fd);
+    return 1;
+  }
+  if (!S_ISREG(st.st_mode) ||
+      (st.st_size < CAP_SED_MIN_BYTES &&
+       (unsigned long)(end_line - start_line + 1) < CAP_SED_MIN_SPAN_LINES)) {
+    close(fd);
+    return unsupported();
+  }
   for (;;) {
     ssize_t read_len = read(fd, buf, sizeof(buf));
     if (read_len == 0) break;
@@ -522,6 +647,7 @@ static int cap_grep(int argc, char **argv) {
   int matched = 0;
   if (argc != 5 || strcmp(argv[2], "-R") != 0) return unsupported();
   if (!copy_cstr(path, sizeof(path), argv[4])) return unsupported();
+  if (!grep_workload_at_least(path)) return unsupported();
   int rc = grep_walk(path, sizeof(path), argv[3], strlen(argv[3]), &matched);
   return matched ? 0 : (rc ? 2 : 1);
 }
@@ -579,6 +705,7 @@ static int cap_find(int argc, char **argv) {
     return unsupported();
   }
   if (!copy_cstr(path, sizeof(path), argv[2])) return unsupported();
+  if (!tree_entries_at_least(path, CAP_FIND_MIN_ENTRIES)) return unsupported();
   return find_walk_path(path, sizeof(path));
 }
 
@@ -638,6 +765,66 @@ static int cap_du(int argc, char **argv) {
   return err ? 1 : 0;
 }
 
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+static int cap_wc(int argc, char **argv) {
+  char buf[8192];
+  int file_count = argc - 3;
+  unsigned long long total_bytes = 0;
+  unsigned long long total_lines = 0;
+  int exit_code = 0;
+  int discard = output_discarded();
+
+  if (argc < 4 || strcmp(argv[2], "-l")) return unsupported();
+  for (int idx = 3; idx < argc; idx++) {
+    if (argv[idx][0] == '-') return unsupported();
+    struct stat st;
+    if (stat(argv[idx], &st) != 0 || !S_ISREG(st.st_mode)) return unsupported();
+    if (st.st_size > 0) total_bytes += (unsigned long long)st.st_size;
+  }
+  if (file_count < CAP_WC_MIN_FILES && total_bytes < CAP_WC_MIN_BYTES) {
+    return unsupported();
+  }
+
+  for (int idx = 3; idx < argc; idx++) {
+    int fd = open(argv[idx], O_RDONLY);
+    if (fd < 0) {
+      write_err_path("wc", argv[idx], errno);
+      exit_code = 1;
+      continue;
+    }
+    if (discard) {
+      close(fd);
+      continue;
+    }
+
+    unsigned long long lines = 0;
+    for (;;) {
+      ssize_t read_len = read(fd, buf, sizeof(buf));
+      if (read_len == 0) break;
+      if (read_len < 0) {
+        write_err_path("wc", argv[idx], errno);
+        exit_code = 1;
+        break;
+      }
+      for (ssize_t pos = 0; pos < read_len; pos++) {
+        if (buf[pos] == '\n') lines++;
+      }
+    }
+    close(fd);
+    total_lines += lines;
+    write_padded_u64(lines);
+    write_bytes(" ", 1);
+    write_cstr(argv[idx]);
+    write_bytes("\n", 1);
+  }
+
+  if (!discard && file_count > 1) {
+    write_padded_u64(total_lines);
+    write_bytes(" total\n", 7);
+  }
+  return exit_code;
+}
+
 static int dispatch_frontend(int argc, char **argv);
 
 static int is_var_assignment(const char *word) {
@@ -674,7 +861,8 @@ static int is_fast_command(const char *word) {
   return !strcmp(cmd, "ls") || !strcmp(cmd, "cat") ||
          !strcmp(cmd, "uniq") || !strcmp(cmd, "sort") ||
          !strcmp(cmd, "sed") || !strcmp(cmd, "grep") ||
-         !strcmp(cmd, "find") || !strcmp(cmd, "du");
+         !strcmp(cmd, "find") || !strcmp(cmd, "du") ||
+         !strcmp(cmd, "wc");
 }
 
 static int has_shell_control_syntax(const char *command) {
@@ -868,6 +1056,7 @@ static int dispatch_frontend(int argc, char **argv) {
   if (!strcmp(cmd, "grep")) return cap_grep(argc, argv);
   if (!strcmp(cmd, "find")) return cap_find(argc, argv);
   if (!strcmp(cmd, "du")) return cap_du(argc, argv);
+  if (!strcmp(cmd, "wc")) return cap_wc(argc, argv);
   return unsupported();
 }
 
@@ -899,8 +1088,11 @@ static int exec_full(int argc, char **argv) {
     }
   }
 
+  const char *public_arg0 = getenv("CAP_PUBLIC_EXE");
+  if (!public_arg0 || !*public_arg0) public_arg0 = full;
+
   char *full_argv[argc + 1];
-  full_argv[0] = full;
+  full_argv[0] = (char *)public_arg0;
   for (int idx = 1; idx < argc; idx++) full_argv[idx] = argv[idx];
   full_argv[argc] = NULL;
 
@@ -920,4 +1112,4 @@ int main(int argc, char **argv) {
   }
   return exec_full(argc, argv);
 }
-// CODEGEN-END
+// HANDWRITE-END

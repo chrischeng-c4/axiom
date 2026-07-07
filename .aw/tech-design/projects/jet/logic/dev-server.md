@@ -405,21 +405,25 @@ cargo test -p jet dev_server::importmap::tests
 files:
   - path: .aw/tech-design/crates/jet/logic/dev-server.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Replace loose architecture prose with a checker-compliant current-state contract.
 
   - path: crates/jet/src/dev_server/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns lifecycle, routes, CSS handling, HMR websocket, and fallback serving.
 
   - path: crates/jet/src/dev_server/hmr.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns HMR message schemas and boundary result bridge.
 
   - path: crates/jet/src/dev_server/prebundle.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns startup dependency pre-bundling and importmap cache generation.
 ```

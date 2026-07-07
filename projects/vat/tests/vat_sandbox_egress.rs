@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:43194fd2" tracker="pending-tracker" reason="Profile-string assertions + a sandbox-exec localhost-only smoke test that skips when unavailable."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_sandbox_egress-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Network sandbox v3: seatbelt egress policy.
 //!
 //! Exercises the policy through the public sandbox API (`sandbox::pick` →
@@ -116,4 +117,4 @@ fn localhost_only_allows_loopback_denies_external() {
         "external connect was allowed under localhost-only (egress not confined)"
     );
 }
-// HANDWRITE-END
+// CODEGEN-END

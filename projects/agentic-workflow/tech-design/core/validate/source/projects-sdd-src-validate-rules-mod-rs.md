@@ -21,7 +21,7 @@ Public API manifest for `projects/agentic-workflow/src/validate/rules/mod.rs` ge
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `all_rules` | projects/agentic-workflow/src/validate/rules/mod.rs | function | pub | 48 | all_rules() -> Vec<Box<dyn Rule>> |
+| `all_rules` | projects/agentic-workflow/src/validate/rules/mod.rs | function | pub | 50 | all_rules() -> Vec<Box<dyn Rule>> |
 | `r3a_double_option` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 9 |  |
 | `r3b_nullable_required` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 10 |  |
 | `r3c_orphan_binding` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 11 |  |
@@ -37,7 +37,8 @@ Public API manifest for `projects/agentic-workflow/src/validate/rules/mod.rs` ge
 | `r7d_orphan_requirement` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 21 |  |
 | `r7e_schema_conflict` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 22 |  |
 | `r7f_field_near_match` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 23 |  |
-| `section_format` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 24 |  |
+| `r7g_dangling_capability_ref` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 24 |  |
+| `section_format` | projects/agentic-workflow/src/validate/rules/mod.rs | module | pub | 25 |  |
 ## Source
 <!-- type: source lang: rust -->
 
@@ -63,6 +64,7 @@ pub mod r7c_duplicate_section;
 pub mod r7d_orphan_requirement;
 pub mod r7e_schema_conflict;
 pub mod r7f_field_near_match;
+pub mod r7g_dangling_capability_ref;
 pub mod section_format;
 
 pub use r3a_double_option::DoubleOptionRule;
@@ -80,12 +82,14 @@ pub use r7c_duplicate_section::DuplicateSectionRule;
 pub use r7d_orphan_requirement::OrphanRequirementRule;
 pub use r7e_schema_conflict::SchemaConflictRule;
 pub use r7f_field_near_match::FieldNearMatchRule;
+pub use r7g_dangling_capability_ref::DanglingCapabilityRefRule;
 pub use section_format::SectionFormatRule;
 
 use crate::validate::Rule;
 
 /// Full rule registry. Returns the default set (all implemented rules).
 /// Callers run this list against every spec in scope.
+/// @spec projects/agentic-workflow/tech-design/core/validate/source/projects-sdd-src-validate-rules-mod-rs.md#source
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(DoubleOptionRule {}),
@@ -104,6 +108,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(OrphanRequirementRule::default()),
         Box::new(SchemaConflictRule::default()),
         Box::new(FieldNearMatchRule::default()),
+        Box::new(DanglingCapabilityRefRule::default()),
     ]
 }
 ````

@@ -2559,19 +2559,15 @@ x-trait-impls:
     #[test]
     fn test_clap_arg_attr() {
         let yaml_str = r#"
-title: SyncArgs
+title: ConfSyncArgs
 type: object
-description: "Arguments for `aw sync`."
-required: [dry_run, check]
+description: "Arguments for `aw conf sync`."
+required: [dry_run]
 properties:
   dry_run:
     type: boolean
     x-clap-arg: "long"
-    description: "Print unified diff of what would change without writing the file."
-  check:
-    type: boolean
-    x-clap-arg: "long"
-    description: "Like --dry-run but exits with code 1 when the diff is non-empty."
+    description: "Print the registry diff without writing `.aw/config.toml`."
 x-rust-struct:
   derive: [Debug, "clap::Args"]
 "#;
@@ -3086,4 +3082,3 @@ changes:
 ```
 
 # Reviews
-

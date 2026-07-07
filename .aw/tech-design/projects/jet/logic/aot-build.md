@@ -366,10 +366,12 @@ scenarios:
 files:
   - path: .aw/tech-design/crates/jet/logic/aot-build.md
     action: MODIFY
+    section: doc
     impl_mode: hand-written
     desc: Move the AOT build TD under logic and normalize checker-readable sections.
   - path: crates/jet/src/bundler/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing production build orchestration remains the source contract.
 ```

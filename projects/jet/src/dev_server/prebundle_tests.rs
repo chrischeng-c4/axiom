@@ -81,6 +81,63 @@ fn test_type_module_detected_as_esm() {
     assert!(!result, "package with type:module must be ESM");
 }
 
+#[tokio::test]
+async fn prebundle_accepts_aw_wrapped_root_package_json() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    fs::write(
+        root.join("package.json"),
+        r#"// <HANDWRITE gap="standardize:claim-code" tracker="fixture-package-json" reason="fixture ownership">
+{
+  "name": "wrapped-root",
+  "private": true,
+  "dependencies": {}
+}
+// </HANDWRITE>
+"#,
+    )
+    .unwrap();
+
+    let result = PreBundler::new(root.to_path_buf())
+        .prebundle_deps()
+        .await
+        .unwrap();
+
+    assert!(
+        !result.cache_hit,
+        "fresh wrapper-backed fixture should prebundle rather than fail parsing"
+    );
+    assert!(
+        root.join("node_modules/.jet/_cache_marker").exists(),
+        "successful prebundle must write the cache marker"
+    );
+}
+
+#[test]
+fn cjs_detection_accepts_aw_wrapped_package_json() {
+    let dir = tempdir().unwrap();
+    let pkg_dir = dir.path().join("node_modules/demo-cjs");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        pkg_dir.join("package.json"),
+        r#"// <HANDWRITE gap="standardize:claim-code" tracker="demo-package-json" reason="fixture ownership">
+{
+  "name": "demo-cjs",
+  "version": "1.0.0",
+  "main": "index.js"
+}
+// </HANDWRITE>
+"#,
+    )
+    .unwrap();
+
+    let prebundler = PreBundler::new(dir.path().to_path_buf());
+    assert!(
+        prebundler.is_cjs_package(&pkg_dir).unwrap(),
+        "AW wrapper lines around package.json must not make CJS detection fail"
+    );
+}
+
 /// T5: Scoped Package Pre-Bundled — dep_filename handles scoped names
 #[test]
 fn t05_scoped_package_filename() {

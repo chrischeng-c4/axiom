@@ -10,9 +10,15 @@
 //!
 //! pod ordinal → (shard_index, replica_index) is pure integer math, so
 //! peers can be found via headless DNS with no extra discovery service.
+//!
+//! The env keys and the ordinal/shard/replica/voter derivation are the same
+//! StatefulSet downward-API math every raft_core service needs, and live in
+//! `libs/raft-host::cluster::ClusterDims` (#1002); this module is a thin
+//! adapter that keeps lumen's own `ClusterConfig` type (compiled unconditionally,
+//! unlike the raft-wal-only peer/DNS wiring in `raft.rs`) while delegating the
+//! actual math so it can't drift from `raft_host::cluster::ClusterTopology`.
 
-use anyhow::{Context, Result};
-use std::env;
+use anyhow::Result;
 
 #[derive(Debug, Clone)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
@@ -24,44 +30,50 @@ pub struct ClusterConfig {
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
-impl ClusterConfig {
-    pub fn from_env() -> Result<Self> {
-        Ok(Self {
-            shard_count: parse_env("SHARD_COUNT")?,
-            replicas_per_shard: parse_env("REPLICAS_PER_SHARD")?,
-            voter_count: parse_env("VOTER_COUNT")?,
-            pod_name: env::var("POD_NAME").context("POD_NAME not set")?,
-        })
-    }
-
-    pub fn pod_ordinal(&self) -> Result<u32> {
-        let (_, suffix) = self
-            .pod_name
-            .rsplit_once('-')
-            .context("POD_NAME has no '-<ordinal>' suffix")?;
-        suffix
-            .parse()
-            .with_context(|| format!("POD_NAME ordinal '{suffix}' is not a u32"))
-    }
-
-    pub fn shard_index(&self) -> Result<u32> {
-        Ok(self.pod_ordinal()? % self.shard_count)
-    }
-
-    pub fn replica_index(&self) -> Result<u32> {
-        Ok(self.pod_ordinal()? / self.shard_count)
-    }
-
-    pub fn is_voter(&self) -> Result<bool> {
-        Ok(self.replica_index()? < self.voter_count)
+impl From<raft_host::cluster::ClusterDims> for ClusterConfig {
+    fn from(d: raft_host::cluster::ClusterDims) -> Self {
+        Self {
+            shard_count: d.shard_count,
+            replicas_per_shard: d.replicas_per_shard,
+            voter_count: d.voter_count,
+            pod_name: d.pod_name,
+        }
     }
 }
 
-fn parse_env(key: &str) -> Result<u32> {
-    env::var(key)
-        .with_context(|| format!("{key} not set"))?
-        .parse()
-        .with_context(|| format!("{key} must be a u32"))
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+impl From<ClusterConfig> for raft_host::cluster::ClusterDims {
+    fn from(c: ClusterConfig) -> Self {
+        Self {
+            shard_count: c.shard_count,
+            replicas_per_shard: c.replicas_per_shard,
+            voter_count: c.voter_count,
+            pod_name: c.pod_name,
+        }
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
+impl ClusterConfig {
+    pub fn from_env() -> Result<Self> {
+        Ok(raft_host::cluster::ClusterDims::from_env()?.into())
+    }
+
+    pub fn pod_ordinal(&self) -> Result<u32> {
+        raft_host::cluster::ClusterDims::from(self.clone()).pod_ordinal()
+    }
+
+    pub fn shard_index(&self) -> Result<u32> {
+        raft_host::cluster::ClusterDims::from(self.clone()).shard_index()
+    }
+
+    pub fn replica_index(&self) -> Result<u32> {
+        raft_host::cluster::ClusterDims::from(self.clone()).replica_index()
+    }
+
+    pub fn is_voter(&self) -> Result<bool> {
+        raft_host::cluster::ClusterDims::from(self.clone()).is_voter()
+    }
 }
 
 #[cfg(test)]

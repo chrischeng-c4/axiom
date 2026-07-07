@@ -5,6 +5,12 @@ capability_refs:
   - id: component-workbench
     role: primary
     gap: component-workbench-readiness
+    claim: component-workbench-readiness
+    coverage: partial
+    rationale: "The manager UI and isolated preview are the primary runnable surface for the component workbench readiness claim."
+  - id: component-workbench
+    role: primary
+    gap: component-workbench-readiness
     claim: stories-dev-manager
     coverage: partial
     rationale: "jet stories serves a native manager UI (sidebar/toolbar/preview) and renders each story in isolation on the dev server — the workbench surface of component-workbench."
@@ -58,6 +64,25 @@ flowchart TD
     build_entry --> served([served, isolated])
     manager --> served
     module --> served
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: component_workbench_readiness
+    capability_id: component-workbench
+    claim_id: component-workbench-readiness
+    name: "Component workbench readiness"
+    command: "cargo test -p jet --test stories_build -- --nocapture"
+    proves: "The component workbench can be exported with manager, previews, transformed modules, and relative URLs."
+  - id: stories_dev_manager
+    capability_id: component-workbench
+    claim_id: stories-dev-manager
+    name: "Stories dev manager"
+    command: "cargo test -p jet --test manager -- --nocapture"
+    proves: "The manager UI routes, story listing, isolated preview, and dev server surface work."
 ```
 
 ## Changes

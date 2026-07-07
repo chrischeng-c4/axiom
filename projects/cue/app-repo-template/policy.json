@@ -1,9 +1,0 @@
-{
-  "schema_version": "cue.policy.v0",
-  "risk_tier": "tier_1",
-  "required_checks": ["schema", "permission", "workflow", "policy"],
-  "production_approval": {
-    "required": true,
-    "approvers": ["app_owner"]
-  }
-}

@@ -1,0 +1,70 @@
+// SPEC-MANAGED: projects/lumen/external-contracts/topology/behavior/shard-topology.md#lumen-topology-existing-raft-replica-sync
+// CODEGEN-BEGIN
+// AW-EC-BEGIN
+// @ec lumen-topology-existing-raft-replica-sync
+// @capability replica-sync-bootstrap
+// @claim raft-log-replica-sync-existing-pvc
+// @contract topology-existing-raft-replica-sync
+// @category stability
+// @required_for_production true
+// @command cargo test -p lumen --test wal_nats_e2e -- --nocapture
+// AW-EC-END
+
+// Contract: The existing compatibility log convergence gate remains the executable proof for late/second node replay; shard-group topology is now dogfooded by the operator kind profiles.
+#[test]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
+fn lumen_topology_existing_raft_replica_sync() {
+    let command = "cargo test -p lumen --test wal_nats_e2e -- --nocapture";
+    let id = "lumen-topology-existing-raft-replica-sync";
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .output()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success()
+        && aw_ec_cargo_test_executed_count(command, &stdout, &stderr) == Some(0)
+    {
+        panic!("AW EC {id} FAILED: cargo test command passed but executed 0 tests: {command}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+    }
+    assert!(
+        output.status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status.code()
+    );
+}
+
+fn aw_ec_cargo_test_executed_count(command: &str, stdout: &str, stderr: &str) -> Option<usize> {
+    if !command.contains("cargo test") {
+        return None;
+    }
+    let mut total = 0usize;
+    let mut saw_count = false;
+    for line in stdout.lines().chain(stderr.lines()) {
+        let Some(count) = aw_ec_parse_cargo_running_test_count(line) else {
+            continue;
+        };
+        total = total.saturating_add(count);
+        saw_count = true;
+    }
+    saw_count.then_some(total)
+}
+
+fn aw_ec_parse_cargo_running_test_count(line: &str) -> Option<usize> {
+    let rest = line.trim().strip_prefix("running ")?;
+    let number = rest
+        .strip_suffix(" tests")
+        .or_else(|| rest.strip_suffix(" test"))?;
+    number.trim().parse().ok()
+}
+// CODEGEN-END

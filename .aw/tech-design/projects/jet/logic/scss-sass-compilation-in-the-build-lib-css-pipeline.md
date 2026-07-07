@@ -1,6 +1,6 @@
 ---
 id: projects-jet-logic-scss-sass-compilation-in-the-build-lib-css-pipeline-md
-fill_sections: [logic, changes]
+fill_sections: [logic, changes, e2e-test]
 capability_refs:
   - id: library-build-publishing
     role: primary
@@ -8,6 +8,12 @@ capability_refs:
     claim: library-build-mode
     coverage: partial
     rationale: "jet SCSS/Sass compilation in build + lib CSS pipeline"
+  - id: bundler-production-build
+    role: primary
+    gap: bundler-production-readiness
+    claim: scss-sass-compilation
+    coverage: full
+    rationale: "SCSS/Sass compilation is a production-build claim backed by the focused css::scss gate."
 ---
 
 # jet SCSS/Sass compilation in build + lib CSS pipeline
@@ -43,6 +49,19 @@ flowchart TD
     pipe --> done([CSS in output])
 ```
 
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: scss_sass_compilation
+    capability_id: bundler-production-build
+    claim_id: scss-sass-compilation
+    name: "SCSS and Sass compilation"
+    command: "cargo test -p jet --lib css::scss"
+    proves: "SCSS/Sass compilation is covered by the focused css::scss gate."
+```
+
 ## Changes
 <!-- type: changes lang: yaml -->
 
@@ -74,4 +93,3 @@ changes:
       Tests: a .scss with nesting + a variable compiles, resolved rules appear in build CSS; lib emits compiled SCSS into style.css; plain .css still works.
     impl_mode: hand-written
 ```
-

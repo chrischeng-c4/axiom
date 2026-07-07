@@ -149,10 +149,14 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: wi-remove-agent-estimate-build
+    capability_id: work-item-planning
+    claim_id: capability-to-epic-planning
     command: cargo build -p agentic-workflow --bin aw
     assertions:
       - "the aw binary builds after removing estimate helpers"
   - id: wi-remove-agent-estimate-spec-check
+    capability_id: work-item-planning
+    claim_id: capability-to-epic-planning
     command: ./target/debug/aw td check projects/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md
     assertions:
       - "the canonical contract remains parseable by td check"
@@ -188,16 +192,16 @@ changes:
     section: cli
     impl_mode: hand-written
     description: Update human-facing aw:wi bounded gate instructions.
-  - path: projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md
+  - path: projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md.tmpl
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Update aw init CLAUDE template guidance.
+    description: Update managed CLAUDE template guidance.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-wi/SKILL.md
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Update aw init aw-wi skill template guidance.
+    description: Update managed aw-wi skill template guidance.
   - path: projects/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
     action: modify
     section: scenarios

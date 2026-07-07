@@ -1,6 +1,6 @@
 ---
 id: remove-td-cb-crrr-collapse-to-linear-lifecycle
-summary: Remove the TD/CB CRRR (review/revise/arbitrate) steps and collapse the lifecycle to a linear td_inited -> create -> td_created -> gen -> cb_genned -> fill -> cb_filled -> merge. Centralize the linear hop in a pure next_phase_command(phase) function and trim is_mergeable to cb_genned|cb_filled.
+summary: Remove the TD/CB CRRR (review/revise/arbitrate) steps and collapse the lifecycle to a linear td_inited -> create -> td_created -> gen -> cb_genned -> fill -> cb_filled -> code-check. Centralize the linear hop in a pure next_phase_command(phase) function and trim terminal code-check eligibility to cb_genned|cb_filled.
 fill_sections: [logic, unit-test]
 capability_refs:
   - id: td-cb-lifecycle-automation
@@ -8,7 +8,7 @@ capability_refs:
     gap: crrr-removal-linear-lifecycle
     claim: crrr-removal-linear-lifecycle
     coverage: partial
-    rationale: "The TD/CB lifecycle drops the review/revise/arbitrate ceremony and becomes a linear create -> gen -> fill -> merge progression."
+    rationale: "The TD/CB lifecycle drops the review/revise/arbitrate ceremony and becomes a linear create -> gen -> fill -> code-check progression."
 ---
 
 # TD: remove TD/CB CRRR, collapse to linear lifecycle
@@ -23,11 +23,11 @@ entry: inited
 nodes:
   inited: { kind: start, label: "td_inited: handle_create_milestone" }
   created: { kind: process, label: "td_created: next_phase_command -> aw td gen (was: aw td review)" }
-  genned: { kind: process, label: "cb_genned: next_phase_command -> aw cb fill" }
-  filled: { kind: process, label: "cb_filled: next_phase_command -> aw td merge (no review)" }
+  genned: { kind: process, label: "cb_genned: next_phase_command -> aw td fill" }
+  filled: { kind: process, label: "cb_filled: next_phase_command -> aw td code-check (no review)" }
   gengate: { kind: decision, label: "run_gen_code: phase == td_created?" }
-  mergegate: { kind: decision, label: "is_mergeable: cb_genned | cb_filled?" }
-  merged: { kind: terminal, label: "td_merged: post-merge lifecycle" }
+  mergegate: { kind: decision, label: "is_terminal_code_checkable: cb_genned | cb_filled?" }
+  merged: { kind: terminal, label: "td_merged: terminal code-check lifecycle" }
   reject: { kind: terminal, label: "error: unexpected phase" }
 edges:
   - { from: inited, to: created }
@@ -45,7 +45,7 @@ flowchart TD
   gengate -->|yes| genned[cb_genned]
   gengate -->|no| reject([error])
   genned --> filled[cb_filled]
-  filled --> mergegate{is_mergeable?}
+  filled --> mergegate{is_terminal_code_checkable?}
   mergegate -->|cb_genned/cb_filled| merged([td_merged])
   mergegate -->|other| reject
 ```
@@ -62,15 +62,15 @@ requirements:
     kind: functional
     risk: high
     verify: test
-  mergeable_linear:
+  terminal_code_checkable_linear:
     id: R2
-    text: "is_mergeable accepts only cb_genned and cb_filled; non-code phases (td_inited/td_created) are not mergeable."
+    text: "is_terminal_code_checkable accepts only cb_genned and cb_filled; non-code phases (td_inited/td_created) are not terminal-code-checkable."
     kind: functional
     risk: high
     verify: test
   linear_chain:
     id: R3
-    text: "next_phase_command encodes the linear chain: cb_genned -> aw cb fill, cb_filled -> aw td merge."
+    text: "next_phase_command encodes the linear chain: cb_genned -> aw td fill, cb_filled -> aw td code-check."
     kind: functional
     risk: medium
     verify: test
@@ -78,7 +78,7 @@ elements:
   td_created_dispatches_to_gen:
     kind: test
     type: "rs/#[test]"
-  is_mergeable_linear_only_genned_filled:
+  is_terminal_code_checkable_linear_only_genned_filled:
     kind: test
     type: "rs/#[test]"
   next_phase_command_is_linear:
@@ -86,7 +86,7 @@ elements:
     type: "rs/#[test]"
 relations:
   - { from: td_created_dispatches_to_gen, verifies: create_to_gen }
-  - { from: is_mergeable_linear_only_genned_filled, verifies: mergeable_linear }
+  - { from: is_terminal_code_checkable_linear_only_genned_filled, verifies: terminal_code_checkable_linear }
   - { from: next_phase_command_is_linear, verifies: linear_chain }
 ---
 requirementDiagram
@@ -98,7 +98,7 @@ requirementDiagram
     }
     requirement R2 {
       id: R2
-      text: "is_mergeable accepts only cb_genned|cb_filled"
+      text: "is_terminal_code_checkable accepts only cb_genned|cb_filled"
       risk: high
       verifymethod: test
     }
@@ -111,7 +111,7 @@ requirementDiagram
     element td_created_dispatches_to_gen {
       type: "rs/#[test]"
     }
-    element is_mergeable_linear_only_genned_filled {
+    element is_terminal_code_checkable_linear_only_genned_filled {
       type: "rs/#[test]"
     }
     element next_phase_command_is_linear {
@@ -124,5 +124,5 @@ requirementDiagram
 ### Review 1
 **Verdict:** approved
 
-- [logic] Contract is stable: a pure next_phase_command(phase) encodes td_created->gen, cb_genned->fill, cb_filled->merge; is_mergeable trimmed to cb_genned|cb_filled; review/revise/arbitrate removed. Implementable as the surgical change-list.
-- [unit-test] R1-R3 map to pure-function tests (td_created_dispatches_to_gen, is_mergeable_linear_only_genned_filled, next_phase_command_is_linear); bulk deletion guarded by build + full suite.
+- [logic] Contract is stable: a pure next_phase_command(phase) encodes td_created->gen, cb_genned->fill, cb_filled->code-check; terminal-code-check eligibility is cb_genned|cb_filled; review/revise/arbitrate removed. Implementable as the surgical change-list.
+- [unit-test] R1-R3 map to pure-function tests (td_created_dispatches_to_gen, is_terminal_code_checkable_linear_only_genned_filled, next_phase_command_is_linear); bulk deletion guarded by build + full suite.

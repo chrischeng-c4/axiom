@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:8c2e58b8" tracker="pending-tracker" reason="Static exporter: build_stories_static(root, out_dir) -> discover StoryIndex, clean out_dir, write manager index.html (reuse manager::render_manager_html), and per story write preview/{id}.html (render_preview_html) + transform and emit each imported module to out_dir with relative URLs; copy referenced assets. Output is servable by any static host with no jet process."
+// <HANDWRITE gap="missing-generator:logic:8c2e58b8" tracker="standardize-gap-projects-jet-src-stories-build-rs" reason="Static exporter: build_stories_static(root, out_dir) -> discover StoryIndex, clean out_dir, write manager index.html (reuse manager::render_manager_html), and per story write preview/{id}.html (render_preview_html) + transform and emit each imported module to out_dir with relative URLs; copy referenced assets. Output is servable by any static host with no jet process.">
 //! Static export of the `jet stories` workbench (B4 / #190).
 //!
 //! [`build_stories_static`] turns a project's discovered stories into a static,
@@ -31,13 +31,15 @@
 //!   preview/<story_id>.html            # one isolated preview per story
 //!   modules/<rel-path-with-.js>        # transformed JS for every project module
 //!   deps/<node_modules-rel-with-.js>   # transformed JS for every resolved dep
+//!   modules/<rel-path-with-.css>       # compiled CSS/SCSS/Sass side-effect imports
 //! ```
 //! A preview at `preview/<id>.html` imports its module as
 //! `../modules/<rel>.js`; inside a module, a relative import `./Button` is
 //! rewritten to `./Button.js` (extension normalized to the emitted `.js`), and a
 //! resolvable bare import `clsx` is rewritten to e.g.
 //! `../../../deps/clsx/dist/clsx.js`, so the emitted tree is internally
-//! consistent and resolves on any static host.
+//! consistent and resolves on any static host. Relative `.css`/`.scss`/`.sass`
+//! imports are compiled to real `.css` assets and linked from static previews.
 //!
 //! ## Deferred (#197)
 //! Advanced conditional-`exports` edge cases and CommonJS interop are out of
@@ -106,29 +108,58 @@ pub fn build_stories_static(root: &Path, out_dir: &Path) -> Result<BuildStaticRe
     result.diagnostics.extend(index.diagnostics.clone());
 
     // 1. Manager shell → index.html (relative links).
-    let manager_html = manager_relative_html(&index);
+    let manager_html = manager_relative_html(root, &index);
     write_emitted(out_dir, Path::new("index.html"), &manager_html, &mut result)?;
+    let index_json = super::server::story_index_json(root, &index);
+    write_emitted(out_dir, Path::new("index.json"), &index_json, &mut result)?;
 
-    // 2. Per story: a relative preview + its transitively-imported modules.
-    //    A module is emitted at most once across all stories (modules dedupe by
-    //    their root-relative URL).
+    // 2. Per story: emit transitively-imported modules first, collecting any
+    //    CSS assets they reference. Previews are written after the graph walk so
+    //    every static preview can link the final stylesheet set.
     let mut emitted_modules: BTreeSet<String> = BTreeSet::new();
+    let mut emitted_styles: BTreeSet<String> = BTreeSet::new();
+    let project_preview_url = project_preview_module_url(root);
+    let mut previews: Vec<(PathBuf, StoryEntry, String)> = Vec::new();
     for story in &index.stories {
         let module_url = story_module_root_url(root, &story.file);
-        let preview_html = preview_relative_html(story, &module_url);
         let preview_rel = PathBuf::from("preview").join(format!("{}.html", story.id));
-        write_emitted(out_dir, &preview_rel, &preview_html, &mut result)?;
-        result.story_count += 1;
+        previews.push((preview_rel, story.clone(), module_url.clone()));
 
         // Emit the story module + everything it transitively imports (local
-        // relative modules only; bare specifiers stay for the importmap/browser).
+        // relative modules, style assets, and locally-resolved deps).
         emit_module_graph(
             root,
             &module_url,
             out_dir,
             &mut emitted_modules,
+            &mut emitted_styles,
             &mut result,
         );
+    }
+    if let Some(url) = &project_preview_url {
+        emit_module_graph(
+            root,
+            url,
+            out_dir,
+            &mut emitted_modules,
+            &mut emitted_styles,
+            &mut result,
+        );
+    }
+
+    let stylesheet_paths: Vec<String> = emitted_styles.into_iter().collect();
+    let project_preview_import_url = project_preview_url
+        .as_deref()
+        .map(preview_module_import_url);
+    for (preview_rel, story, module_url) in previews {
+        let preview_html = preview_relative_html_with_styles(
+            &story,
+            &module_url,
+            &stylesheet_paths,
+            project_preview_import_url.as_deref(),
+        );
+        write_emitted(out_dir, &preview_rel, &preview_html, &mut result)?;
+        result.story_count += 1;
     }
 
     result.emitted.sort();
@@ -138,13 +169,19 @@ pub fn build_stories_static(root: &Path, out_dir: &Path) -> Result<BuildStaticRe
 
 /// Render the manager shell HTML with **relative** URLs (B4), seeding the
 /// initially-selected story's controls exactly like the dev manager does.
-pub fn manager_relative_html(index: &StoryIndex) -> String {
+pub fn manager_relative_html(root: &Path, index: &StoryIndex) -> String {
     // B3 controls panel is dev-server state we cannot recompute without the
     // component-source resolution the server owns; the static manager renders
     // the panel placeholder (no live controls — the preview still honors the
     // story's authored args). Keeping it empty avoids shipping a non-functional
     // postMessage bridge to a frame that has no server behind it.
-    manager::render_manager_html_with_mode(index, None, &[], UrlMode::Static)
+    manager::render_manager_html_with_mode_and_docs(
+        index,
+        None,
+        &[],
+        UrlMode::Static,
+        &super::server::docs_pages_for_index(root, index),
+    )
 }
 
 /// Render one story's isolated preview HTML with a **relative** module URL (B4).
@@ -153,8 +190,48 @@ pub fn manager_relative_html(index: &StoryIndex) -> String {
 /// preview lives at `preview/<id>.html`, so it imports the emitted module as
 /// `../modules/src/x.js`.
 pub fn preview_relative_html(story: &StoryEntry, module_root_url: &str) -> String {
+    preview_relative_html_with_styles(story, module_root_url, &[], None)
+}
+
+fn preview_relative_html_with_styles(
+    story: &StoryEntry,
+    module_root_url: &str,
+    stylesheet_paths: &[String],
+    project_preview_url: Option<&str>,
+) -> String {
     let import_url = preview_module_import_url(module_root_url);
-    manager::render_preview_html_with_mode(story, &import_url, UrlMode::Static)
+    let html = manager::render_preview_html_with_project_preview(
+        story,
+        &import_url,
+        UrlMode::Static,
+        project_preview_url,
+    );
+    inject_static_stylesheet_links(&html, stylesheet_paths)
+}
+
+fn inject_static_stylesheet_links(html: &str, stylesheet_paths: &[String]) -> String {
+    if stylesheet_paths.is_empty() {
+        return html.to_string();
+    }
+    let links = stylesheet_paths
+        .iter()
+        .map(|path| format!(r#"    <link rel="stylesheet" href="../{path}" />"#))
+        .collect::<Vec<_>>()
+        .join("\n");
+    inject_before_head_end(html, &format!("{links}\n"))
+}
+
+fn inject_before_head_end(html: &str, snippet: &str) -> String {
+    let lower = html.to_lowercase();
+    if let Some(pos) = lower.find("</head>") {
+        let mut out = String::with_capacity(html.len() + snippet.len());
+        out.push_str(&html[..pos]);
+        out.push_str(snippet);
+        out.push_str(&html[pos..]);
+        out
+    } else {
+        format!("{snippet}{html}")
+    }
 }
 
 /// The `../modules/...js` URL a preview document uses to import a module given
@@ -162,6 +239,22 @@ pub fn preview_relative_html(story: &StoryEntry, module_root_url: &str) -> Strin
 fn preview_module_import_url(module_root_url: &str) -> String {
     let rel = module_root_url.trim_start_matches('/');
     format!("../modules/{}", to_js_path(rel))
+}
+
+fn project_preview_module_url(root: &Path) -> Option<String> {
+    for ext in ["ts", "tsx", "js", "jsx"] {
+        let file = root.join(".storybook").join(format!("preview.{ext}"));
+        if file.is_file() {
+            let rel = file.strip_prefix(root).unwrap_or(&file);
+            return Some(format!(
+                "/{}",
+                rel.to_string_lossy()
+                    .replace('\\', "/")
+                    .trim_start_matches('/')
+            ));
+        }
+    }
+    None
 }
 
 /// A unit of work in the transitive emit walk: a project module (under
@@ -174,6 +267,18 @@ enum EmitItem {
     /// A resolved dep, identified by its on-disk file under `node_modules`.
     /// Emitted at `deps/<node_modules-relative-with-.js>`.
     Dep(PathBuf),
+}
+
+#[derive(Clone)]
+struct StyleAsset {
+    source_file: PathBuf,
+    emitted_path: String,
+}
+
+#[derive(Clone)]
+struct RawAsset {
+    source_file: PathBuf,
+    emitted_path: String,
 }
 
 impl EmitItem {
@@ -202,6 +307,7 @@ fn emit_module_graph(
     module_url: &str,
     out_dir: &Path,
     emitted: &mut BTreeSet<String>,
+    emitted_styles: &mut BTreeSet<String>,
     result: &mut BuildStaticResult,
 ) {
     let mut queue: Vec<EmitItem> = vec![EmitItem::Module(module_url.to_string())];
@@ -215,10 +321,29 @@ fn emit_module_graph(
         match emit_item(root, &item, out_dir) {
             Ok(emit) => {
                 result.emitted.push(emit.rel_path);
+                for style in emit.styles {
+                    if !emitted_styles.insert(style.emitted_path.clone()) {
+                        continue;
+                    }
+                    match emit_style_asset(root, &style, out_dir) {
+                        Ok(rel_path) => result.emitted.push(rel_path),
+                        Err(err) => {
+                            result.diagnostics.push(format!("style {err:#}"));
+                        }
+                    }
+                }
+                for asset in emit.assets {
+                    match emit_raw_asset(root, &asset, out_dir) {
+                        Ok(rel_path) => result.emitted.push(rel_path),
+                        Err(err) => {
+                            result.diagnostics.push(format!("asset {err:#}"));
+                        }
+                    }
+                }
                 queue.extend(emit.imports);
             }
             Err(err) => {
-                result.diagnostics.push(format!("module {err}"));
+                result.diagnostics.push(format!("module {err:#}"));
             }
         }
     }
@@ -230,6 +355,10 @@ struct EmittedItem {
     rel_path: PathBuf,
     /// Further items to walk (resolved relative modules + resolved deps).
     imports: Vec<EmitItem>,
+    /// CSS/SCSS/Sass assets referenced by this module.
+    styles: Vec<StyleAsset>,
+    /// Raw URL assets referenced by this module.
+    assets: Vec<RawAsset>,
 }
 
 /// Transform one emit item to browser JS, rewrite its relative + resolvable bare
@@ -255,7 +384,7 @@ fn emit_item(root: &Path, item: &EmitItem, out_dir: &Path) -> Result<EmittedItem
     let code = transform_source(&source, &source_file)
         .with_context(|| format!("transforming {}", source_file.display()))?;
 
-    let (rewritten, imports) = rewrite_imports(&code, &source_file, &self_emitted, root);
+    let rewrite = rewrite_imports(&code, &source_file, &self_emitted, root);
 
     let out_rel = PathBuf::from(&self_emitted);
     let out_path = out_dir.join(&out_rel);
@@ -263,13 +392,63 @@ fn emit_item(root: &Path, item: &EmitItem, out_dir: &Path) -> Result<EmittedItem
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating dir {}", parent.display()))?;
     }
-    std::fs::write(&out_path, rewritten)
+    std::fs::write(&out_path, rewrite.code)
         .with_context(|| format!("writing {}", out_path.display()))?;
 
     Ok(EmittedItem {
         rel_path: out_rel,
-        imports,
+        imports: rewrite.imports,
+        styles: rewrite.styles,
+        assets: rewrite.assets,
     })
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md#logic
+fn emit_style_asset(root: &Path, style: &StyleAsset, out_dir: &Path) -> Result<PathBuf> {
+    // Stories static export reuses the normal CSS pipeline so Sass, @import,
+    // Tailwind directives, and lightningcss transforms behave like `jet build`.
+    // A malformed Tailwind config should not prevent plain SCSS from compiling
+    // in stories output; this matches the main build's fallback behavior.
+    let config = crate::css::TailwindConfig::load(root).unwrap_or_default();
+    let pipeline = crate::css::CssPipeline::new(root.to_path_buf(), config, false);
+    let output = pipeline
+        .process(&style.source_file)
+        .with_context(|| format!("processing {}", style.source_file.display()))?;
+
+    let out_rel = PathBuf::from(&style.emitted_path);
+    let out_path = out_dir.join(&out_rel);
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating dir {}", parent.display()))?;
+    }
+    std::fs::write(&out_path, output.css)
+        .with_context(|| format!("writing {}", out_path.display()))?;
+    Ok(out_rel)
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-stories-build-scss-is-never-compiled-scss-files-copied-verba.md#logic
+fn emit_raw_asset(_root: &Path, asset: &RawAsset, out_dir: &Path) -> Result<PathBuf> {
+    let out_rel = PathBuf::from(&asset.emitted_path);
+    let out_path = out_dir.join(&out_rel);
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating dir {}", parent.display()))?;
+    }
+    std::fs::copy(&asset.source_file, &out_path).with_context(|| {
+        format!(
+            "copying raw asset {} to {}",
+            asset.source_file.display(),
+            out_path.display()
+        )
+    })?;
+    Ok(out_rel)
+}
+
+struct RewriteResult {
+    code: String,
+    imports: Vec<EmitItem>,
+    styles: Vec<StyleAsset>,
+    assets: Vec<RawAsset>,
 }
 
 /// Rewrite the import specifiers in transformed JS so they resolve to the
@@ -287,8 +466,12 @@ fn rewrite_imports(
     importer_file: &Path,
     importer_emitted: &str,
     root: &Path,
-) -> (String, Vec<EmitItem>) {
+) -> RewriteResult {
     let mut imports: Vec<EmitItem> = Vec::new();
+    let mut styles: Vec<StyleAsset> = Vec::new();
+    let mut assets: Vec<RawAsset> = Vec::new();
+    let mut style_specs: Vec<String> = Vec::new();
+    let mut asset_rewrites: BTreeMap<String, String> = BTreeMap::new();
     let mut rewrites: BTreeMap<String, String> = BTreeMap::new();
 
     for spec in super::deps::extract_all_import_specifiers(code) {
@@ -297,6 +480,18 @@ fn rewrite_imports(
             let Some(target_file) = resolve_relative_file(importer_file, &spec) else {
                 continue; // unresolvable — leave the original specifier in place
             };
+            if is_style_path(&target_file) {
+                styles.push(style_asset_for_file(root, &target_file));
+                style_specs.push(spec.clone());
+                continue;
+            }
+            if is_raw_asset_path(&target_file) {
+                let asset = raw_asset_for_file(root, &target_file);
+                let new_spec = relative_emitted_specifier(importer_emitted, &asset.emitted_path);
+                asset_rewrites.insert(spec.clone(), new_spec);
+                assets.push(asset);
+                continue;
+            }
             // A relative import inside a dep file resolves to another file in the
             // SAME node_modules package → keep it a dep; a relative import inside
             // a project module resolves to another project module.
@@ -313,6 +508,13 @@ fn rewrite_imports(
             else {
                 continue; // not installed locally — leave for the importmap
             };
+            if is_raw_asset_path(&dep_file) {
+                let asset = raw_asset_for_file(root, &dep_file);
+                let new_spec = relative_emitted_specifier(importer_emitted, &asset.emitted_path);
+                asset_rewrites.insert(spec.clone(), new_spec);
+                assets.push(asset);
+                continue;
+            }
             let item = EmitItem::Dep(dep_file);
             let emitted = item.emitted_path(root);
             (item, emitted)
@@ -323,9 +525,16 @@ fn rewrite_imports(
         imports.push(item);
     }
 
+    let mut out = code.to_string();
+    for spec in &style_specs {
+        out = remove_static_import_for_spec(&out, spec);
+    }
+    for (spec, new_spec) in &asset_rewrites {
+        out = rewrite_asset_import_for_spec(&out, spec, new_spec);
+    }
+
     // Apply the rewrites textually. Only quoted forms are rewritten so we never
     // touch an identifier that merely shares the specifier's spelling.
-    let mut out = code.to_string();
     for (old, new) in &rewrites {
         if old == new {
             continue;
@@ -334,7 +543,175 @@ fn rewrite_imports(
             .replace(&format!("\"{old}\""), &format!("\"{new}\""))
             .replace(&format!("'{old}'"), &format!("'{new}'"));
     }
-    (out, imports)
+    RewriteResult {
+        code: out,
+        imports,
+        styles,
+        assets,
+    }
+}
+
+fn style_asset_for_file(root: &Path, file: &Path) -> StyleAsset {
+    let emitted_path = if path_has_node_modules(file) {
+        format!("deps/{}", to_css_path(&super::deps::dep_key(file)))
+    } else {
+        let url = file_to_root_url(root, file);
+        format!("modules/{}", to_css_path(url.trim_start_matches('/')))
+    };
+    StyleAsset {
+        source_file: file.to_path_buf(),
+        emitted_path,
+    }
+}
+
+fn raw_asset_for_file(root: &Path, file: &Path) -> RawAsset {
+    let emitted_path = if path_has_node_modules(file) {
+        format!("deps/{}", super::deps::dep_key(file))
+    } else {
+        let url = file_to_root_url(root, file);
+        format!("modules/{}", url.trim_start_matches('/'))
+    };
+    RawAsset {
+        source_file: file.to_path_buf(),
+        emitted_path,
+    }
+}
+
+fn is_style_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("css")
+                || ext.eq_ignore_ascii_case("scss")
+                || ext.eq_ignore_ascii_case("sass")
+    )
+}
+
+fn is_raw_asset_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("svg")
+                || ext.eq_ignore_ascii_case("png")
+                || ext.eq_ignore_ascii_case("jpg")
+                || ext.eq_ignore_ascii_case("jpeg")
+                || ext.eq_ignore_ascii_case("gif")
+                || ext.eq_ignore_ascii_case("webp")
+                || ext.eq_ignore_ascii_case("avif")
+    )
+}
+
+fn remove_static_import_for_spec(code: &str, spec: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    for line in code.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if is_static_import_for_spec(trimmed, spec) {
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+fn is_static_import_for_spec(trimmed_line: &str, spec: &str) -> bool {
+    (trimmed_line.starts_with("import ")
+        || trimmed_line.starts_with("import\"")
+        || trimmed_line.starts_with("import'"))
+        && (trimmed_line.contains(&format!("\"{spec}\""))
+            || trimmed_line.contains(&format!("'{spec}'")))
+}
+
+fn rewrite_asset_import_for_spec(code: &str, spec: &str, new_spec: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    for line in code.split_inclusive('\n') {
+        let newline = if line.ends_with('\n') { "\n" } else { "" };
+        let body = line.trim_end_matches('\n');
+
+        let mut rewritten_body = String::with_capacity(body.len());
+        for segment in body.split_inclusive(';') {
+            let leading_len = segment.len() - segment.trim_start().len();
+            let leading = &segment[..leading_len];
+            let trimmed = segment.trim_start();
+            if let Some(replacement) = asset_import_replacement(trimmed, spec, new_spec) {
+                rewritten_body.push_str(leading);
+                rewritten_body.push_str(&replacement);
+            } else {
+                rewritten_body.push_str(segment);
+            }
+        }
+        if !body.ends_with(';') {
+            let trailing = body.rsplit_once(';').map(|(_, tail)| tail).unwrap_or(body);
+            if !trailing.is_empty() && !rewritten_body.ends_with(trailing) {
+                let leading_len = trailing.len() - trailing.trim_start().len();
+                let leading = &trailing[..leading_len];
+                let trimmed = trailing.trim_start();
+                if let Some(replacement) = asset_import_replacement(trimmed, spec, new_spec) {
+                    rewritten_body.push_str(leading);
+                    rewritten_body.push_str(&replacement);
+                }
+            }
+        }
+        out.push_str(&rewritten_body);
+        out.push_str(newline);
+    }
+    out
+}
+
+fn asset_import_replacement(trimmed_line: &str, spec: &str, new_spec: &str) -> Option<String> {
+    if !(trimmed_line.contains(&format!("\"{spec}\""))
+        || trimmed_line.contains(&format!("'{spec}'")))
+    {
+        return None;
+    }
+
+    if trimmed_line.starts_with("import ") {
+        let before_from = trimmed_line.split(" from ").next()?.trim();
+        let binding = before_from.trim_start_matches("import").trim();
+        if binding.is_empty() || binding.starts_with('{') || binding.starts_with('*') {
+            return Some(String::new());
+        }
+        let default_binding = binding.split(',').next()?.trim();
+        if !is_js_identifier(default_binding) {
+            return None;
+        }
+        return Some(format!("const {default_binding} = {new_spec:?};"));
+    }
+
+    if trimmed_line.starts_with("export ") && trimmed_line.contains(" from ") {
+        let clause = trimmed_line
+            .trim_start_matches("export")
+            .split(" from ")
+            .next()?
+            .trim();
+        if clause == "{ default }" {
+            return Some(
+                "const __jet_asset_default = ".to_string()
+                    + &format!("{new_spec:?}; export default __jet_asset_default;"),
+            );
+        }
+        if let Some(alias) = clause
+            .strip_prefix("{ default as ")
+            .and_then(|s| s.strip_suffix(" }"))
+        {
+            let alias = alias.trim();
+            if is_js_identifier(alias) {
+                return Some(format!(
+                    "const {alias} = {new_spec:?}; export {{ {alias} }};"
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+fn is_js_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
 }
 
 /// Resolve a relative specifier (`./Button`, `../lib/x.tsx`) against the
@@ -344,13 +721,17 @@ fn rewrite_imports(
 /// no `.`/`..` segments leak into the emitted path / dedup key.
 fn resolve_relative_file(importer_file: &Path, spec: &str) -> Option<PathBuf> {
     let base_dir = importer_file.parent().unwrap_or(Path::new("."));
-    let joined = lexically_normalize(&base_dir.join(spec));
+    let spec_path = spec.split(['?', '#']).next().unwrap_or(spec);
+    let joined = lexically_normalize(&base_dir.join(spec_path));
     if joined.is_file() {
         return Some(joined);
     }
-    const EXTS: &[&str] = &["tsx", "ts", "jsx", "js", "mjs", "cjs", "json"];
+    const EXTS: &[&str] = &[
+        "tsx", "ts", "jsx", "js", "mjs", "cjs", "json", "css", "scss", "sass", "svg", "png", "jpg",
+        "jpeg", "gif", "webp", "avif",
+    ];
     for ext in EXTS {
-        let candidate = joined.with_extension(ext);
+        let candidate = probe_with_extension(&joined, ext);
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -434,8 +815,27 @@ fn relative_emitted_specifier(importer_emitted: &str, target_emitted: &str) -> S
 /// Transform a source file to browser JS using the same per-extension
 /// entrypoints the dev server's module route uses.
 fn transform_source(source: &str, file: &Path) -> Result<String> {
+    let dep_key = super::deps::dep_key(file);
+    match dep_key.as_str() {
+        "react-is/index.js" => return Ok(react_is_esm_shim().to_string()),
+        "classnames/index.js" => return Ok(classnames_esm_shim().to_string()),
+        "json2mq/index.js" => return Ok(json2mq_esm_shim().to_string()),
+        "toggle-selection/index.js" => return Ok(toggle_selection_esm_shim().to_string()),
+        "copy-to-clipboard/index.js" => return Ok(copy_to_clipboard_esm_shim().to_string()),
+        _ => {}
+    }
+    if dep_key == "dayjs/dayjs.min.js"
+        || (dep_key.starts_with("dayjs/plugin/") && dep_key.ends_with(".js"))
+    {
+        return Ok(cjs_default_esm_wrapper(source));
+    }
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let options = crate::transform::TransformOptions::default();
+    let options = crate::transform::TransformOptions {
+        // Static exports are served by plain file/static hosts and do not expose
+        // the dev-server-only /@react-refresh endpoint.
+        dev_mode: false,
+        ..crate::transform::TransformOptions::default()
+    };
     let result = match ext {
         "tsx" => crate::transform::transform_tsx::transform_tsx(source, &options),
         "ts" => crate::transform::typescript::transform_typescript(source, &options),
@@ -445,7 +845,352 @@ fn transform_source(source: &str, file: &Path) -> Result<String> {
             source_map: None,
         }),
     };
-    result.map(|r| r.code).map_err(|e| anyhow::anyhow!("{e}"))
+    result
+        .map(|r| {
+            crate::bundler::define::replace_defines(
+                &r.code,
+                &crate::bundler::define::production_defines(),
+            )
+        })
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+fn cjs_default_esm_wrapper(source: &str) -> String {
+    format!(
+        "const module = {{ exports: {{}} }};\nconst exports = module.exports;\n{source}\nexport default module.exports;\n"
+    )
+}
+
+fn classnames_esm_shim() -> &'static str {
+    r#"const hasOwn = {}.hasOwnProperty;
+
+function appendClass(value, newClass) {
+  if (!newClass) return value;
+  return value ? value + " " + newClass : newClass;
+}
+
+function parseValue(arg) {
+  if (typeof arg === "string" || typeof arg === "number") return arg;
+  if (typeof arg !== "object" || arg === null) return "";
+  if (Array.isArray(arg)) return classNames.apply(null, arg);
+  if (arg.toString !== Object.prototype.toString && !arg.toString.toString().includes("[native code]")) {
+    return arg.toString();
+  }
+  let classes = "";
+  for (const key in arg) {
+    if (hasOwn.call(arg, key) && arg[key]) classes = appendClass(classes, key);
+  }
+  return classes;
+}
+
+function classNames(...args) {
+  let classes = "";
+  for (const arg of args) {
+    if (arg) classes = appendClass(classes, parseValue(arg));
+  }
+  return classes;
+}
+
+classNames.default = classNames;
+export default classNames;
+"#
+}
+
+fn json2mq_esm_shim() -> &'static str {
+    r#"function camel2hyphen(str) {
+  return String(str).replace(/[A-Z]/g, (match) => "-" + match.toLowerCase());
+}
+
+function isDimension(feature) {
+  return /[height|width]$/.test(feature);
+}
+
+function obj2mq(obj) {
+  let mq = "";
+  const features = Object.keys(obj);
+  features.forEach((feature, index) => {
+    let value = obj[feature];
+    feature = camel2hyphen(feature);
+    if (isDimension(feature) && typeof value === "number") value = value + "px";
+    if (value === true) {
+      mq += feature;
+    } else if (value === false) {
+      mq += "not " + feature;
+    } else {
+      mq += "(" + feature + ": " + value + ")";
+    }
+    if (index < features.length - 1) mq += " and ";
+  });
+  return mq;
+}
+
+function json2mq(query) {
+  let mq = "";
+  if (typeof query === "string") return query;
+  if (Array.isArray(query)) {
+    query.forEach((q, index) => {
+      mq += obj2mq(q);
+      if (index < query.length - 1) mq += ", ";
+    });
+    return mq;
+  }
+  return obj2mq(query);
+}
+
+export default json2mq;
+"#
+}
+
+fn toggle_selection_esm_shim() -> &'static str {
+    r#"function toggleSelection() {
+  const selection = document.getSelection();
+  if (!selection || !selection.rangeCount) {
+    return function noop() {};
+  }
+  let active = document.activeElement;
+  const ranges = [];
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    ranges.push(selection.getRangeAt(index));
+  }
+  switch (active && active.tagName ? active.tagName.toUpperCase() : "") {
+    case "INPUT":
+    case "TEXTAREA":
+      active.blur();
+      break;
+    default:
+      active = null;
+      break;
+  }
+  selection.removeAllRanges();
+  return function restoreSelection() {
+    if (selection.type === "Caret") {
+      selection.removeAllRanges();
+    }
+    if (!selection.rangeCount) {
+      ranges.forEach((range) => selection.addRange(range));
+    }
+    if (active) {
+      active.focus();
+    }
+  };
+}
+
+export default toggleSelection;
+"#
+}
+
+fn copy_to_clipboard_esm_shim() -> &'static str {
+    r#"import deselectCurrent from "../toggle-selection/index.js";
+
+const clipboardToIE11Formatting = {
+  "text/plain": "Text",
+  "text/html": "Url",
+  "default": "Text",
+};
+
+const defaultMessage = "Copy to clipboard: #{key}, Enter";
+
+function format(message) {
+  const copyKey = (/mac os x/i.test(navigator.userAgent) ? "\u2318" : "Ctrl") + "+C";
+  return message.replace(/#{\s*key\s*}/g, copyKey);
+}
+
+function copy(text, options) {
+  let debug;
+  let message;
+  let reselectPrevious = function noop() {};
+  let range;
+  let selection;
+  let mark;
+  let success = false;
+  if (!options) {
+    options = {};
+  }
+  debug = options.debug || false;
+  try {
+    reselectPrevious = deselectCurrent();
+    range = document.createRange();
+    selection = document.getSelection();
+    mark = document.createElement("span");
+    mark.textContent = text;
+    mark.ariaHidden = "true";
+    mark.style.all = "unset";
+    mark.style.position = "fixed";
+    mark.style.top = 0;
+    mark.style.clip = "rect(0, 0, 0, 0)";
+    mark.style.whiteSpace = "pre";
+    mark.style.webkitUserSelect = "text";
+    mark.style.MozUserSelect = "text";
+    mark.style.msUserSelect = "text";
+    mark.style.userSelect = "text";
+    mark.addEventListener("copy", (event) => {
+      event.stopPropagation();
+      if (options.format) {
+        event.preventDefault();
+        if (typeof event.clipboardData === "undefined") {
+          debug && console.warn("unable to use e.clipboardData");
+          debug && console.warn("trying IE specific stuff");
+          window.clipboardData.clearData();
+          const ieFormat = clipboardToIE11Formatting[options.format] || clipboardToIE11Formatting.default;
+          window.clipboardData.setData(ieFormat, text);
+        } else {
+          event.clipboardData.clearData();
+          event.clipboardData.setData(options.format, text);
+        }
+      }
+      if (options.onCopy) {
+        event.preventDefault();
+        options.onCopy(event.clipboardData);
+      }
+    });
+    document.body.appendChild(mark);
+    range.selectNodeContents(mark);
+    selection.addRange(range);
+    if (!document.execCommand("copy")) {
+      throw new Error("copy command was unsuccessful");
+    }
+    success = true;
+  } catch (err) {
+    debug && console.error("unable to copy using execCommand: ", err);
+    debug && console.warn("trying IE specific stuff");
+    try {
+      window.clipboardData.setData(options.format || "text", text);
+      options.onCopy && options.onCopy(window.clipboardData);
+      success = true;
+    } catch (clipboardErr) {
+      debug && console.error("unable to copy using clipboardData: ", clipboardErr);
+      debug && console.error("falling back to prompt");
+      message = format("message" in options ? options.message : defaultMessage);
+      window.prompt(message, text);
+    }
+  } finally {
+    if (selection) {
+      if (typeof selection.removeRange === "function") {
+        selection.removeRange(range);
+      } else {
+        selection.removeAllRanges();
+      }
+    }
+    if (mark) {
+      document.body.removeChild(mark);
+    }
+    reselectPrevious();
+  }
+  return success;
+}
+
+export default copy;
+"#
+}
+
+fn react_is_esm_shim() -> &'static str {
+    r#"const hasSymbol = typeof Symbol === "function" && Symbol.for;
+const Element = hasSymbol ? Symbol.for("react.element") : 0xeac7;
+const Portal = hasSymbol ? Symbol.for("react.portal") : 0xeaca;
+const Fragment = hasSymbol ? Symbol.for("react.fragment") : 0xeacb;
+const StrictMode = hasSymbol ? Symbol.for("react.strict_mode") : 0xeacc;
+const Profiler = hasSymbol ? Symbol.for("react.profiler") : 0xead2;
+const ContextProvider = hasSymbol ? Symbol.for("react.provider") : 0xeacd;
+const ContextConsumer = hasSymbol ? Symbol.for("react.context") : 0xeace;
+const AsyncMode = hasSymbol ? Symbol.for("react.async_mode") : 0xeacf;
+const ConcurrentMode = hasSymbol ? Symbol.for("react.concurrent_mode") : 0xeacf;
+const ForwardRef = hasSymbol ? Symbol.for("react.forward_ref") : 0xead0;
+const Suspense = hasSymbol ? Symbol.for("react.suspense") : 0xead1;
+const Memo = hasSymbol ? Symbol.for("react.memo") : 0xead3;
+const Lazy = hasSymbol ? Symbol.for("react.lazy") : 0xead4;
+
+function typeOf(object) {
+  if (typeof object === "object" && object !== null) {
+    const $$typeof = object.$$typeof;
+    if ($$typeof === Element) {
+      const type = object.type;
+      if (
+        type === AsyncMode ||
+        type === ConcurrentMode ||
+        type === Fragment ||
+        type === Profiler ||
+        type === StrictMode ||
+        type === Suspense
+      ) {
+        return type;
+      }
+      const $$typeofType = type && type.$$typeof;
+      if (
+        $$typeofType === ContextConsumer ||
+        $$typeofType === ContextProvider ||
+        $$typeofType === ForwardRef ||
+        $$typeofType === Lazy ||
+        $$typeofType === Memo
+      ) {
+        return $$typeofType;
+      }
+      return $$typeof;
+    }
+    if ($$typeof === Portal) return $$typeof;
+  }
+  return undefined;
+}
+
+function isAsyncMode(object) { return isConcurrentMode(object) || typeOf(object) === AsyncMode; }
+function isConcurrentMode(object) { return typeOf(object) === ConcurrentMode; }
+function isContextConsumer(object) { return typeOf(object) === ContextConsumer; }
+function isContextProvider(object) { return typeOf(object) === ContextProvider; }
+function isElement(object) { return typeof object === "object" && object !== null && object.$$typeof === Element; }
+function isForwardRef(object) { return typeOf(object) === ForwardRef; }
+function isFragment(object) { return typeOf(object) === Fragment; }
+function isLazy(object) { return typeOf(object) === Lazy; }
+function isMemo(object) { return typeOf(object) === Memo; }
+function isPortal(object) { return typeOf(object) === Portal; }
+function isProfiler(object) { return typeOf(object) === Profiler; }
+function isStrictMode(object) { return typeOf(object) === StrictMode; }
+function isSuspense(object) { return typeOf(object) === Suspense; }
+function isValidElementType(type) {
+  return typeof type === "string" ||
+    typeof type === "function" ||
+    type === Fragment ||
+    type === ConcurrentMode ||
+    type === Profiler ||
+    type === StrictMode ||
+    type === Suspense ||
+    (typeof type === "object" && type !== null &&
+      (type.$$typeof === Lazy ||
+        type.$$typeof === Memo ||
+        type.$$typeof === ContextProvider ||
+        type.$$typeof === ContextConsumer ||
+        type.$$typeof === ForwardRef));
+}
+
+export {
+  AsyncMode,
+  ConcurrentMode,
+  ContextConsumer,
+  ContextProvider,
+  Element,
+  ForwardRef,
+  Fragment,
+  Lazy,
+  Memo,
+  Portal,
+  Profiler,
+  StrictMode,
+  Suspense,
+  isAsyncMode,
+  isConcurrentMode,
+  isContextConsumer,
+  isContextProvider,
+  isElement,
+  isForwardRef,
+  isFragment,
+  isLazy,
+  isMemo,
+  isPortal,
+  isProfiler,
+  isStrictMode,
+  isSuspense,
+  isValidElementType,
+  typeOf
+};
+"#
 }
 
 /// Resolve a root-relative path string to an existing file under `root`, probing
@@ -458,7 +1203,7 @@ fn resolve_url_to_file(root: &Path, rel: &str) -> Option<PathBuf> {
     }
     const EXTS: &[&str] = &["tsx", "ts", "jsx", "js"];
     for ext in EXTS {
-        let candidate = joined.with_extension(ext);
+        let candidate = probe_with_extension(&joined, ext);
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -470,6 +1215,16 @@ fn resolve_url_to_file(root: &Path, rel: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn probe_with_extension(path: &Path, ext: &str) -> PathBuf {
+    if path.extension().is_some() {
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            return path.with_extension(ext);
+        };
+        return path.with_file_name(format!("{file_name}.{ext}"));
+    }
+    path.with_extension(ext)
 }
 
 /// The root-relative URL of a file on disk (`/src/components/Button.tsx`).
@@ -501,6 +1256,16 @@ fn to_js_path(path: &str) -> String {
         }
     }
     format!("{path}.js")
+}
+
+fn to_css_path(path: &str) -> String {
+    const STYLE_EXTS: &[&str] = &[".css", ".scss", ".sass"];
+    for ext in STYLE_EXTS {
+        if let Some(stem) = path.strip_suffix(ext) {
+            return format!("{stem}.css");
+        }
+    }
+    format!("{path}.css")
 }
 
 /// Write `contents` to `out_dir/rel`, creating parents, and record the relative
@@ -579,6 +1344,18 @@ mod tests {
     }
 
     #[test]
+    fn extension_probe_appends_when_specifier_has_suffix() {
+        assert_eq!(
+            probe_with_extension(Path::new("src/form-wrapper.stories"), "tsx"),
+            PathBuf::from("src/form-wrapper.stories.tsx")
+        );
+        assert_eq!(
+            probe_with_extension(Path::new("src/Button"), "tsx"),
+            PathBuf::from("src/Button.tsx")
+        );
+    }
+
+    #[test]
     fn bare_dep_specifier_crosses_into_deps_tree() {
         // A project module importing a resolved dep rewrites across the
         // modules/ ↔ deps/ boundary (#197).
@@ -590,9 +1367,31 @@ mod tests {
     }
 
     #[test]
+    fn asset_import_rewrite_handles_coalesced_import_statements() {
+        let code = "import { jsx } from 'react/jsx-runtime';import ListImage from '@tw-tech/shared-assets/icons/list.svg';\nexport const icon = ListImage;\n";
+        let rewritten = rewrite_asset_import_for_spec(
+            code,
+            "@tw-tech/shared-assets/icons/list.svg",
+            "../../../../assets/src/lib/icons/list.svg",
+        );
+        assert!(
+            rewritten.contains("import { jsx } from 'react/jsx-runtime';"),
+            "non-asset import should survive: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("const ListImage = \"../../../../assets/src/lib/icons/list.svg\";"),
+            "default asset import should become a const binding: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("@tw-tech/shared-assets/icons/list.svg"),
+            "bare asset import should be removed: {rewritten}"
+        );
+    }
+
+    #[test]
     fn clean_refuses_dangerous_targets() {
         assert!(clean_out_dir(Path::new("")).is_err());
         assert!(clean_out_dir(Path::new("/")).is_err());
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

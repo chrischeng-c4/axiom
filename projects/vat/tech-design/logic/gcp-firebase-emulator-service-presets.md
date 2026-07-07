@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: gcp-firebase-emulator-service-presets
+    claim: gcp-firebase-emulator-service-presets
     coverage: partial
     rationale: "Extends the local agent test runner protocol's preset model with GCP and Firebase emulators so cloud-targeting agents can declare local emulators as run-scoped services."
 ---
@@ -215,36 +215,40 @@ e2e_tests:
   - id: vat-emulator-unavailable-smoke
     name: "emulator preset reports structured unavailable error"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat gcloud_emulator_unavailable_reports_jsonl_error -- --nocapture"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture"
     assertions:
       - "a firestore preset with an empty PATH (no gcloud, no docker) emits a structured service_runtime_unavailable JSONL error and a non-zero exit."
       - "vat never panics on the unavailable path."
   - id: vat-firestore-native-smoke
     name: "native Firestore emulator exports FIRESTORE_EMULATOR_HOST"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat firestore_emulator_exports_host -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
     assertions:
       - "with gcloud + Java + the firestore component, vat starts the emulator, the runner sees FIRESTORE_EMULATOR_HOST, and vat state shows the service ready with the var in exported_env."
       - "the test skips gracefully when the native firestore emulator is unavailable."
   - id: vat-pubsub-docker-smoke
     name: "Pub/Sub emulator falls back to docker"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat pubsub_emulator_docker_fallback -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
     assertions:
       - "without the pubsub gcloud component, runtime=auto resolves to docker, exports PUBSUB_EMULATOR_HOST, and removes the container at teardown."
       - "the test skips gracefully when docker is unavailable."
   - id: vat-firebase-bundle-smoke
     name: "Firebase bundle exports configured emulator hosts"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: gcp-firebase-emulator-service-presets
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat firebase_bundle_exports_hosts -- --nocapture --ignored"
+    command: "cargo test -p vat --test vat_emulators -- --nocapture --include-ignored"
     assertions:
       - "a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars."
       - "the test skips gracefully when firebase-tools and docker are both unavailable."

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:3833b5e5" tracker="pending-tracker" reason="New library-build orchestrator implementing the contract flow: resolve entries + externals (dependencies + peerDependencies) from package.json, build/tree-shake per entry, emit ESM (bare `import` for externals) and optional CJS (`require()` for externals), write one output per (entry x format) under out_dir, return LibBuildResult."
+// <HANDWRITE gap="missing-generator:logic:3833b5e5" tracker="standardize-gap-projects-jet-src-bundler-lib-build-rs" reason="New library-build orchestrator implementing the contract flow: resolve entries + externals (dependencies + peerDependencies) from package.json, build/tree-shake per entry, emit ESM (bare `import` for externals) and optional CJS (`require()` for externals), write one output per (entry x format) under out_dir, return LibBuildResult.">
 //! Library-build orchestrator for `jet build --lib`.
 //!
 //! Unlike the app bundle path (`Bundler::bundle`), which inlines every
@@ -17,12 +17,19 @@
 //!   5. return a [`LibBuildResult`].
 //!
 //! @issue #170
+//! @issue #722
+//! @issue #757
+//! @issue #784
+//! @issue #795
+//! @issue #797
+//! @issue #798
+//! @issue #936
 
 use anyhow::{Context, Result};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use super::types::OutputFormat;
+use super::types::{OutputFormat, SourceMapOption};
 use crate::resolver::package::{external_package_names, library_entries, LibraryEntry};
 
 /// Options driving a single library build.
@@ -42,7 +49,7 @@ pub struct LibBuildOptions {
     /// When set, one output file is emitted per source module (mirroring the
     /// source tree under `out_dir`); internal relative imports are rewritten
     /// to the emitted siblings and external imports stay as bare specifiers.
-    /// Supported for ESM output; CJS + `preserve_modules` is a deferred TODO.
+    /// Supports ESM and CJS output. IIFE remains single-file only.
     pub preserve_modules: bool,
     /// Emit a `<entry>.d.ts` type declaration file next to each entry's JS
     /// output (isolatedDeclarations-style). Defaults to `true` for library
@@ -79,6 +86,9 @@ pub struct LibBuildOptions {
     /// subpaths so consumers can deep-import `@pkg/assets/icons/x.svg`. When
     /// empty, no copy runs. Replaces the bespoke `copyRawAssets` plugin.
     pub raw_copy: Vec<RawCopyDir>,
+
+    /// Source map policy for emitted JS library outputs.
+    pub sourcemap: SourceMapOption,
 }
 
 /// One raw-asset directory copy: the source dir (relative to `project_root`)
@@ -108,6 +118,7 @@ impl Default for LibBuildOptions {
             entry: Vec::new(),
             css_merge: Vec::new(),
             raw_copy: Vec::new(),
+            sourcemap: SourceMapOption::None,
         }
     }
 }
@@ -135,10 +146,12 @@ pub struct EntryOutput {
 pub struct LibBuildResult {
     /// All emitted outputs.
     pub entries: Vec<EntryOutput>,
-    /// Emitted `.d.ts` declaration files, keyed by the entry's public
-    /// subpath (`.`, `./client`). One per library entry when `declaration`
-    /// is on. Empty when declaration emission is disabled.
+    /// Emitted `.d.ts` declaration files. Single-file library builds record
+    /// one per public entry (`.`, `./client`); preserve-modules builds record
+    /// one per emitted source module. Empty when declaration emission is
+    /// disabled.
     /// @issue #171
+    /// @issue #798
     pub types: Vec<TypesOutput>,
 
     /// Post-emit asset side-effects: the merged `out_dir/style.css` (when
@@ -181,7 +194,7 @@ pub struct TypesOutput {
 /// Three emission shapes are supported:
 ///   * bundled single-file ESM/CJS (default),
 ///   * `preserve_modules` — one output file per source module mirroring the
-///     source tree (ESM only; CJS + preserve is a deferred TODO),
+///     source tree (ESM and CJS),
 ///   * [`OutputFormat::Iife`] — the bundled entry wrapped as a global-var IIFE.
 /// Resolve the SOURCE entries to build. Explicit `[lib].entry`
 /// (`options.entry`) wins. Otherwise entries are discovered from package.json
@@ -217,10 +230,10 @@ fn resolve_lib_entries(
     let mut entries = library_entries(pkg_path, conditions)
         .with_context(|| format!("resolving library entries from {}", pkg_path.display()))?;
 
-    let any_missing = entries
-        .iter()
-        .any(|e| resolve_entry_path(&options.project_root, &e.source).is_err());
-    if entries.is_empty() || any_missing {
+    // @spec .aw/tech-design/projects/jet/config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md#logic
+    entries.retain(|entry| !asset_export_entry(entry));
+
+    if entries.is_empty() {
         if let Some(conv) = [
             "src/index.tsx",
             "src/index.ts",
@@ -236,7 +249,103 @@ fn resolve_lib_entries(
             }];
         }
     }
+
+    for entry in &mut entries {
+        if let Some(source) = source_entry_fallback(&options.project_root, entry) {
+            entry.source = source;
+        }
+    }
+
     Ok(entries)
+}
+
+fn asset_export_entry(entry: &LibraryEntry) -> bool {
+    let source = normalize_export_path(&entry.source);
+    !source.as_os_str().is_empty() && !is_library_source_path(&source)
+}
+
+fn normalize_export_path(path: &str) -> PathBuf {
+    let trimmed = path
+        .trim_start_matches("./")
+        .trim_matches('/')
+        .replace('\\', "/");
+    if trimmed.is_empty() || trimmed == "." {
+        PathBuf::new()
+    } else {
+        PathBuf::from(trimmed)
+    }
+}
+
+fn source_entry_fallback(root: &Path, entry: &LibraryEntry) -> Option<String> {
+    let source = entry.source.trim_start_matches("./");
+    let source_path = Path::new(source);
+    let is_default_dist_output = source_path
+        .components()
+        .next()
+        .and_then(|component| match component {
+            std::path::Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .map(|name| name == "dist")
+        .unwrap_or(false);
+
+    if !is_default_dist_output && resolve_entry_path(root, &entry.source).is_ok() {
+        return None;
+    }
+
+    for stem in source_entry_fallback_stems(entry, source_path) {
+        if let Some(candidate) = source_candidate(root, &stem) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn source_entry_fallback_stems(entry: &LibraryEntry, source_path: &Path) -> Vec<PathBuf> {
+    let mut stems = Vec::new();
+
+    if let Ok(without_dist) = source_path.strip_prefix("dist") {
+        let mut stem = without_dist.to_path_buf();
+        stem.set_extension("");
+        if !stem.as_os_str().is_empty() {
+            stems.push(stem);
+        }
+    }
+
+    if entry.subpath == "." {
+        stems.push(PathBuf::from("index"));
+    } else {
+        let mut stem = PathBuf::from(entry.subpath.trim_start_matches("./"));
+        stem.set_extension("");
+        if !stem.as_os_str().is_empty() {
+            stems.push(stem);
+        }
+    }
+
+    stems
+}
+
+fn source_candidate(root: &Path, stem: &Path) -> Option<String> {
+    for ext in ["tsx", "ts", "jsx", "js"] {
+        let candidate = Path::new("src").join(stem).with_extension(ext);
+        if root.join(&candidate).is_file() {
+            return Some(path_to_slash(&candidate));
+        }
+    }
+    for ext in ["tsx", "ts", "jsx", "js"] {
+        let candidate = Path::new("src").join(stem).join(format!("index.{ext}"));
+        if root.join(&candidate).is_file() {
+            return Some(path_to_slash(&candidate));
+        }
+    }
+    None
+}
+
+fn path_to_slash(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
@@ -267,7 +376,7 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         .with_context(|| format!("creating out_dir {}", options.out_dir.display()))?;
 
     // preserve_modules: emit one file per source module + an entry re-export,
-    // mirroring the source tree under out_dir. ESM only; CJS is a TODO.
+    // mirroring the source tree under out_dir.
     if options.preserve_modules {
         return build_library_preserve_modules(&options, &entries, &externals);
     }
@@ -278,26 +387,18 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
     for entry in &entries {
         let entry_path = resolve_entry_path(&options.project_root, &entry.source)
             .with_context(|| format!("resolving entry source {}", entry.source))?;
+        ensure_library_source_path(&entry_path, &entry.source, "entry source")?;
 
         // Inline internal relative modules; hoist external imports verbatim.
         let esm = bundle_library_entry(&entry_path, &externals)?;
 
         // Emit `<entry>.d.ts` once per entry (not per format) when declaration
-        // emission is on. The isolatedDeclarations emitter reads the entry
-        // source directly so type aliases / interfaces survive the JS inline.
+        // emission is on. Local barrel re-export targets also get sibling
+        // declarations so preserved `export * from "./x"` statements do not
+        // dangle in a published package.
         let dts_path = if options.declaration {
-            let entry_source = std::fs::read_to_string(&entry_path)
-                .with_context(|| format!("reading {} for .d.ts", entry_path.display()))?;
-            let dts = super::dts::emit_declarations(&entry_source)
+            let dts_out = emit_declaration_tree(&options, entry, &entry_path, &externals)
                 .with_context(|| format!("emitting .d.ts for entry {}", entry.subpath))?;
-            let dts_name = dts_file_name(&entry.subpath);
-            let dts_out = options.out_dir.join(&dts_name);
-            if let Some(parent) = dts_out.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating {}", parent.display()))?;
-            }
-            std::fs::write(&dts_out, &dts)
-                .with_context(|| format!("writing {}", dts_out.display()))?;
             types_outputs.push(TypesOutput {
                 subpath: entry.subpath.clone(),
                 path: dts_out.clone(),
@@ -316,6 +417,8 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
 
             let file_name = output_file_name(&entry.subpath, format);
             let out_path = options.out_dir.join(&file_name);
+            let code = apply_library_sourcemap(&options, &entry_path, &file_name, code)
+                .with_context(|| format!("emitting source map for {}", out_path.display()))?;
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
@@ -335,13 +438,176 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
 
     // Post-emit asset steps: CSS cascade-merge + raw-asset copy. No-ops (and
     // thus byte-identical to today) when neither is configured.
-    let assets = run_post_emit_assets(&options)?;
+    let mut assets = run_post_emit_assets(&options)?;
+    assets.extend(copy_wildcard_export_assets(
+        &options,
+        &pkg_path,
+        &conditions,
+    )?);
 
     Ok(LibBuildResult {
         entries: outputs,
         types: types_outputs,
         assets,
     })
+}
+
+/// Emit declarations for one public entry and every internal module reachable
+/// through local `export ... from "./x"` barrel re-exports.
+///
+/// `LibBuildResult::types` still reports only public entry declarations. The
+/// additional files are filesystem side effects needed by the preserved
+/// re-export statements inside `index.d.ts`.
+fn emit_declaration_tree(
+    options: &LibBuildOptions,
+    entry: &LibraryEntry,
+    entry_path: &Path,
+    externals: &HashSet<String>,
+) -> Result<PathBuf> {
+    let mut visited = HashSet::new();
+    let mut modules = Vec::new();
+    collect_reexport_declaration_modules(entry_path, externals, &mut visited, &mut modules)?;
+
+    let source_root = common_source_root(&modules);
+    let entry_canonical = entry_path
+        .canonicalize()
+        .unwrap_or_else(|_| entry_path.to_path_buf());
+    let mut entry_dts = None;
+    let mut pending_outputs = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for module in modules {
+        let source = std::fs::read_to_string(&module)
+            .with_context(|| format!("reading {} for .d.ts", module.display()))?;
+        let emit = super::dts::emit_declarations_with_diagnostics(&source)
+            .with_context(|| format!("emitting .d.ts for {}", module.display()))?;
+        let module_canonical = module.canonicalize().unwrap_or_else(|_| module.clone());
+        let dts_out = if module_canonical == entry_canonical {
+            options.out_dir.join(dts_file_name(&entry.subpath))
+        } else {
+            declaration_module_output_path(&options.out_dir, &source_root, &module)
+        };
+        if module_canonical == entry_canonical {
+            entry_dts = Some(dts_out.clone());
+        }
+        for diagnostic in emit.diagnostics {
+            diagnostics.push(format!(
+                "{}:{}:{}: {}",
+                module.display(),
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.message
+            ));
+        }
+        pending_outputs.push((dts_out, emit.text));
+    }
+
+    if !diagnostics.is_empty() {
+        anyhow::bail!(
+            "dts: isolatedDeclarations found {} error(s):\n  - {}",
+            diagnostics.len(),
+            diagnostics.join("\n  - ")
+        );
+    }
+
+    for (dts_out, dts) in pending_outputs {
+        if let Some(parent) = dts_out.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&dts_out, &dts).with_context(|| format!("writing {}", dts_out.display()))?;
+    }
+
+    entry_dts.ok_or_else(|| anyhow::anyhow!("entry declaration was not emitted"))
+}
+
+fn collect_reexport_declaration_modules(
+    path: &Path,
+    externals: &HashSet<String>,
+    visited: &mut HashSet<PathBuf>,
+    order: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canonical.clone()) {
+        return Ok(());
+    }
+    order.push(canonical.clone());
+
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    for spec in reexport_specifiers(&source, path)? {
+        if is_external_specifier(&spec, externals) {
+            continue;
+        }
+        // @spec .aw/tech-design/projects/jet/logic/jet-build-lib-dts-svgr-style-asset-re-exports-build-correctly-bu.md#logic
+        if !should_chase_declaration_reexport_target(&spec) {
+            continue;
+        }
+        if let Some(target) = resolve_relative(path, &spec)? {
+            collect_reexport_declaration_modules(&target, externals, visited, order)?;
+        }
+    }
+    Ok(())
+}
+
+fn should_chase_declaration_reexport_target(spec: &str) -> bool {
+    let path = Path::new(specifier_path_part(spec));
+    match path.extension().and_then(|ext| ext.to_str()) {
+        None => true,
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs") => true,
+        Some(_) => false,
+    }
+}
+
+fn reexport_specifiers(source: &str, path: &Path) -> Result<Vec<String>> {
+    let mut parser = tree_sitter::Parser::new();
+    let ext = path.extension().and_then(|e| e.to_str());
+    let is_ts = matches!(ext, Some("ts") | Some("tsx"));
+    let language: tree_sitter::Language = if is_ts {
+        tree_sitter_typescript::LANGUAGE_TSX.into()
+    } else {
+        tree_sitter_javascript::LANGUAGE.into()
+    };
+    parser
+        .set_language(&language)
+        .context("setting tree-sitter language")?;
+    let tree = parser
+        .parse(source, None)
+        .context("parsing module source")?;
+    let root = tree.root_node();
+
+    let mut specs = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() != "export_statement" {
+            continue;
+        }
+        if let Some(spec) = statement_specifier(source, &child) {
+            specs.push(spec);
+        }
+    }
+    Ok(specs)
+}
+
+fn declaration_module_output_path(out_dir: &Path, source_root: &Path, module: &Path) -> PathBuf {
+    let rel = module.strip_prefix(source_root).ok().and_then(|p| {
+        if p.as_os_str().is_empty() {
+            None
+        } else {
+            Some(p)
+        }
+    });
+    match rel {
+        Some(path) => out_dir.join(path).with_extension("d.ts"),
+        None => out_dir
+            .join(
+                module
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("module.ts")),
+            )
+            .with_extension("d.ts"),
+    }
 }
 
 /// Run the post-emit asset side-effects for a library build:
@@ -380,7 +646,7 @@ fn merge_css(options: &LibBuildOptions) -> Result<Option<AssetOutput>> {
     // Preserve any style.css the normal emit already produced as the base of
     // the cascade, then append the declared dependents after it.
     let out_css = options.out_dir.join("style.css");
-    if out_css.is_file() {
+    if out_css.is_file() && !css_merge_includes_output(options, &out_css) {
         let existing = std::fs::read_to_string(&out_css)
             .with_context(|| format!("reading existing {}", out_css.display()))?;
         merged.push_str(&existing);
@@ -415,6 +681,20 @@ fn merge_css(options: &LibBuildOptions) -> Result<Option<AssetOutput>> {
         path: out_css,
         kind: AssetKind::MergedCss,
     }))
+}
+
+fn css_merge_includes_output(options: &LibBuildOptions, out_css: &Path) -> bool {
+    options.css_merge.iter().any(|rel| {
+        let src = options.project_root.join(rel);
+        same_existing_path(&src, out_css)
+    })
+}
+
+fn same_existing_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// Copy each `raw_copy` directory tree verbatim into `out_dir`, preserving
@@ -466,6 +746,242 @@ fn copy_raw_assets(options: &LibBuildOptions) -> Result<Vec<AssetOutput>> {
     }
 
     Ok(copied)
+}
+
+/// Copy non-code files that are exposed through package.json wildcard export
+/// patterns such as `"./icons/*": "./dist/icons/*"`.
+///
+/// Library entry discovery intentionally skips wildcard exports because code
+/// wildcard entries need a real graph expansion step. Raw assets are simpler:
+/// when the public wildcard prefix has a matching `src/<prefix>` directory and
+/// the target points under `out_dir`, copy every non-JS/TS file verbatim.
+fn copy_wildcard_export_assets(
+    options: &LibBuildOptions,
+    pkg_path: &Path,
+    conditions: &[&str],
+) -> Result<Vec<AssetOutput>> {
+    let package_json = std::fs::read_to_string(pkg_path)
+        .with_context(|| format!("reading {}", pkg_path.display()))?;
+    let package: serde_json::Value = serde_json::from_str(&package_json)
+        .with_context(|| format!("parsing {}", pkg_path.display()))?;
+    let Some(exports) = package.get("exports").and_then(|v| v.as_object()) else {
+        return Ok(Vec::new());
+    };
+
+    let mut copied = Vec::new();
+    for (public_pattern, value) in exports {
+        if !public_pattern.contains('*') {
+            continue;
+        }
+        let Some(target_pattern) = wildcard_export_target(value, conditions) else {
+            continue;
+        };
+        let Some((source_dir, dest_dir)) =
+            wildcard_asset_dirs(options, public_pattern, &target_pattern)?
+        else {
+            continue;
+        };
+        if !source_dir.is_dir() {
+            continue;
+        }
+
+        for entry in walkdir::WalkDir::new(&source_dir).follow_links(false) {
+            let entry = entry.with_context(|| {
+                format!(
+                    "jet build --lib wildcard export: walking {}",
+                    source_dir.display()
+                )
+            })?;
+            if !entry.file_type().is_file() || is_library_source_path(entry.path()) {
+                continue;
+            }
+            let rel = entry.path().strip_prefix(&source_dir).with_context(|| {
+                format!(
+                    "computing relative path of {} under {}",
+                    entry.path().display(),
+                    source_dir.display()
+                )
+            })?;
+            let dest = dest_dir.join(rel);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::copy(entry.path(), &dest).with_context(|| {
+                format!("copying {} → {}", entry.path().display(), dest.display())
+            })?;
+            copied.push(AssetOutput {
+                path: dest,
+                kind: AssetKind::RawAsset,
+            });
+        }
+    }
+
+    Ok(copied)
+}
+
+fn wildcard_export_target(value: &serde_json::Value, conditions: &[&str]) -> Option<String> {
+    match value {
+        serde_json::Value::String(path) => Some(path.clone()),
+        serde_json::Value::Object(map) => {
+            for (key, nested) in map {
+                if conditions.contains(&key.as_str()) {
+                    if let Some(path) = wildcard_export_target(nested, conditions) {
+                        return Some(path);
+                    }
+                }
+            }
+            map.get("default")
+                .and_then(|nested| wildcard_export_target(nested, conditions))
+        }
+        _ => None,
+    }
+}
+
+fn wildcard_asset_dirs(
+    options: &LibBuildOptions,
+    public_pattern: &str,
+    target_pattern: &str,
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    let Some(public_prefix) = public_pattern.split('*').next() else {
+        return Ok(None);
+    };
+    let Some(target_prefix) = target_pattern.split('*').next() else {
+        return Ok(None);
+    };
+    let public_prefix = public_prefix.trim_start_matches("./").trim_matches('/');
+    if public_prefix.is_empty() {
+        return Ok(None);
+    }
+
+    let out_dir_name = options
+        .out_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("dist");
+    let target_prefix = target_prefix.trim_start_matches("./");
+    let Some(dest_rel) = target_prefix.strip_prefix(&format!("{out_dir_name}/")) else {
+        return Ok(None);
+    };
+
+    let source_dir = options.project_root.join("src").join(public_prefix);
+    let dest_dir = options.out_dir.join(dest_rel.trim_matches('/'));
+    Ok(Some((source_dir, dest_dir)))
+}
+
+fn apply_library_sourcemap(
+    options: &LibBuildOptions,
+    entry_path: &Path,
+    file_name: &str,
+    code: String,
+) -> Result<String> {
+    match options.sourcemap {
+        SourceMapOption::None => Ok(code),
+        SourceMapOption::External | SourceMapOption::Hidden | SourceMapOption::Inline => {
+            let source = std::fs::read_to_string(entry_path)
+                .with_context(|| format!("reading source map input {}", entry_path.display()))?;
+            let source_name = entry_path
+                .strip_prefix(&options.project_root)
+                .unwrap_or(entry_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let map =
+                super::sourcemap::generate_source_map(file_name, &[(source_name, source)], &code);
+            match options.sourcemap {
+                SourceMapOption::External => {
+                    let map_filename = format!("{file_name}.map");
+                    super::sourcemap::write_external_map(
+                        &options.out_dir,
+                        &map_filename,
+                        &map.json,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "writing source map {}",
+                            options.out_dir.join(&map_filename).display()
+                        )
+                    })?;
+                    Ok(super::sourcemap::append_source_map_url(
+                        &code,
+                        &map_filename,
+                    ))
+                }
+                SourceMapOption::Hidden => {
+                    let map_filename = format!("{file_name}.map");
+                    super::sourcemap::write_external_map(
+                        &options.out_dir,
+                        &map_filename,
+                        &map.json,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "writing source map {}",
+                            options.out_dir.join(&map_filename).display()
+                        )
+                    })?;
+                    Ok(code)
+                }
+                SourceMapOption::Inline => {
+                    Ok(super::sourcemap::inline_source_map(&code, &map.json))
+                }
+                SourceMapOption::None => unreachable!(),
+            }
+        }
+    }
+}
+
+fn transpile_library_esm(source: &str) -> Result<String> {
+    let options = crate::transform::TransformOptions {
+        jsx_pragma: None,
+        jsx_fragment: None,
+        jsx_automatic: true,
+        ts_target: crate::transform::TypeScriptTarget::ES2020,
+        source_maps: false,
+        minify: false,
+        dev_mode: false,
+    };
+    crate::transform::transform_tsx::transform_tsx(source, &options).map(|result| result.code)
+}
+
+fn ensure_library_source_path(path: &Path, spec: &str, role: &str) -> Result<()> {
+    if is_library_source_path(path) {
+        return Ok(());
+    }
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("<none>");
+    anyhow::bail!(
+        "jet build --lib: unsupported local {role} extension '.{ext}' for {spec} at {}; \
+         library mode only inlines JS/TS source modules. Configure css_merge/raw_copy \
+         or add a loader before importing this asset.",
+        path.display()
+    )
+}
+
+fn is_library_source_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")
+    )
+}
+
+fn is_library_asset_path(path: &Path) -> bool {
+    path.is_file() && !is_library_source_path(path)
+}
+
+fn is_library_style_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("css")
+                || ext.eq_ignore_ascii_case("scss")
+                || ext.eq_ignore_ascii_case("sass")
+    )
+}
+
+fn specifier_path_part(spec: &str) -> &str {
+    spec.split(['?', '#']).next().unwrap_or(spec)
 }
 
 /// Read the `name` field from a `package.json`, falling back to `"lib"` when
@@ -757,25 +1273,20 @@ fn declared_name(decl: &str) -> Option<String> {
 /// from the entries, mirroring the source tree under `out_dir`.
 ///
 /// Internal relative imports are rewritten to point at the emitted siblings
-/// (always `./relative.js`); external imports stay bare. The entry file keeps
-/// its original `export … from "./x"` / re-export structure so a consumer can
-/// `import` the entry *or* deep-import any emitted module.
-///
-/// ESM only. CJS + `preserve_modules` is deferred — see the bail below.
+/// (`./relative.js` or `./relative.cjs`); external imports stay bare. The
+/// entry file keeps its original `export … from "./x"` / re-export structure
+/// so a consumer can `import` the entry *or* deep-import any emitted module.
 fn build_library_preserve_modules(
     options: &LibBuildOptions,
     entries: &[crate::resolver::package::LibraryEntry],
     externals: &HashSet<String>,
 ) -> Result<LibBuildResult> {
     for format in &options.formats {
-        if !matches!(format, OutputFormat::Esm) {
-            // TODO(#170 follow-up): preserve_modules currently emits ESM only.
-            // A CJS (and IIFE) per-module flavour needs per-module require()
-            // rewriting + an interop entry; deferred.
+        if matches!(format, OutputFormat::Iife) {
             anyhow::bail!(
-                "jet build --lib --preserve-modules: only esm output is supported \
-                 (TODO #170 follow-up); got {:?}",
-                format
+                "jet build --lib --preserve-modules: iife output is not supported; \
+                 use esm or cjs preserve-modules output, or drop --preserve-modules \
+                 for single-file iife output"
             );
         }
     }
@@ -798,32 +1309,48 @@ fn build_library_preserve_modules(
     // else the deepest common ancestor of all modules. The emitted tree
     // mirrors each module's path relative to this root.
     let src_root = common_source_root(&module_paths);
+    let (dts_by_module, types_outputs) = if options.declaration {
+        emit_preserve_module_declarations(options, &module_paths, &src_root)?
+    } else {
+        (HashMap::new(), Vec::new())
+    };
 
     let mut outputs = Vec::new();
 
     for module in &module_paths {
+        let module_key = module.canonicalize().unwrap_or_else(|_| module.clone());
+        let dts_path = dts_by_module.get(&module_key).cloned();
         let rel = module
             .strip_prefix(&src_root)
             .unwrap_or(module)
             .to_path_buf();
-        let out_rel = with_js_extension(&rel);
-        let out_path = options.out_dir.join(&out_rel);
-        if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
+        for format in &options.formats {
+            let out_rel = preserve_module_output_rel(&rel, format)?;
+            let out_path = options.out_dir.join(&out_rel);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+
+            let esm = rewrite_module_for_preserve(module, externals, format)?;
+            let code = transpile_library_esm(&esm)
+                .with_context(|| format!("transpiling {}", module.display()))?;
+            let code = match format {
+                OutputFormat::Esm => code,
+                OutputFormat::Cjs => esm_to_cjs(&code),
+                OutputFormat::Iife => unreachable!("validated above"),
+            };
+            std::fs::write(&out_path, &code)
+                .with_context(|| format!("writing {}", out_path.display()))?;
+
+            outputs.push(EntryOutput {
+                subpath: format!("./{}", out_rel.to_string_lossy().replace('\\', "/")),
+                format: format.clone(),
+                path: out_path,
+                code,
+                dts: dts_path.clone(),
+            });
         }
-
-        let code = rewrite_module_for_preserve(module, externals)?;
-        std::fs::write(&out_path, &code)
-            .with_context(|| format!("writing {}", out_path.display()))?;
-
-        outputs.push(EntryOutput {
-            subpath: format!("./{}", out_rel.to_string_lossy().replace('\\', "/")),
-            format: OutputFormat::Esm,
-            path: out_path,
-            code,
-            dts: None,
-        });
     }
 
     // Post-emit asset steps run for preserve_modules builds too.
@@ -831,9 +1358,69 @@ fn build_library_preserve_modules(
 
     Ok(LibBuildResult {
         entries: outputs,
-        types: Vec::new(),
+        types: types_outputs,
         assets,
     })
+}
+
+// @spec .aw/tech-design/projects/jet/logic/jet-build-lib-dts-preserve-modules-dts-silently-emits-no-d-ts-fi.md#logic
+fn emit_preserve_module_declarations(
+    options: &LibBuildOptions,
+    modules: &[PathBuf],
+    source_root: &Path,
+) -> Result<(HashMap<PathBuf, PathBuf>, Vec<TypesOutput>)> {
+    let mut by_module = HashMap::new();
+    let mut types_outputs = Vec::new();
+    let mut pending_outputs = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for module in modules {
+        let source = std::fs::read_to_string(module)
+            .with_context(|| format!("reading {} for .d.ts", module.display()))?;
+        let emit = super::dts::emit_declarations_with_diagnostics(&source)
+            .with_context(|| format!("emitting .d.ts for {}", module.display()))?;
+        let dts_out = declaration_module_output_path(&options.out_dir, source_root, module);
+        let module_key = module.canonicalize().unwrap_or_else(|_| module.clone());
+
+        by_module.insert(module_key, dts_out.clone());
+        types_outputs.push(TypesOutput {
+            subpath: preserve_type_subpath(&options.out_dir, &dts_out),
+            path: dts_out.clone(),
+        });
+        for diagnostic in emit.diagnostics {
+            diagnostics.push(format!(
+                "{}:{}:{}: {}",
+                module.display(),
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.message
+            ));
+        }
+        pending_outputs.push((dts_out, emit.text));
+    }
+
+    if !diagnostics.is_empty() {
+        anyhow::bail!(
+            "dts: isolatedDeclarations found {} error(s):\n  - {}",
+            diagnostics.len(),
+            diagnostics.join("\n  - ")
+        );
+    }
+
+    for (dts_out, dts) in pending_outputs {
+        if let Some(parent) = dts_out.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&dts_out, &dts).with_context(|| format!("writing {}", dts_out.display()))?;
+    }
+
+    Ok((by_module, types_outputs))
+}
+
+fn preserve_type_subpath(out_dir: &Path, dts_out: &Path) -> String {
+    let rel = dts_out.strip_prefix(out_dir).unwrap_or(dts_out);
+    format!("./{}", rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// Recursively collect all internal relative modules reachable from `path`.
@@ -855,7 +1442,7 @@ fn collect_modules(
         if is_external_specifier(&spec, externals) {
             continue;
         }
-        if let Some(target) = resolve_relative(path, &spec) {
+        if let Some(target) = resolve_relative(path, &spec)? {
             collect_modules(&target, externals, visited, order)?;
         }
     }
@@ -924,11 +1511,33 @@ fn with_js_extension(rel: &Path) -> PathBuf {
     rel.with_extension("js")
 }
 
+/// Rewrite a relative path's extension for preserve-modules output.
+fn preserve_module_output_rel(rel: &Path, format: &OutputFormat) -> Result<PathBuf> {
+    match format {
+        OutputFormat::Esm => Ok(with_js_extension(rel)),
+        OutputFormat::Cjs => Ok(rel.with_extension("cjs")),
+        OutputFormat::Iife => {
+            anyhow::bail!("jet build --lib --preserve-modules: iife output is not supported")
+        }
+    }
+}
+
+fn preserve_module_specifier_extension(format: &OutputFormat) -> &'static str {
+    match format {
+        OutputFormat::Cjs => "cjs",
+        OutputFormat::Esm | OutputFormat::Iife => "js",
+    }
+}
+
 /// Rewrite one module's source for `preserve_modules` emission:
-///   * internal relative imports point at the emitted `.js` sibling,
+///   * internal relative imports point at the emitted same-format sibling,
 ///   * external imports are kept bare,
 ///   * everything else is verbatim.
-fn rewrite_module_for_preserve(path: &Path, externals: &HashSet<String>) -> Result<String> {
+fn rewrite_module_for_preserve(
+    path: &Path,
+    externals: &HashSet<String>,
+    format: &OutputFormat,
+) -> Result<String> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
@@ -970,7 +1579,10 @@ fn rewrite_module_for_preserve(path: &Path, externals: &HashSet<String>) -> Resu
 
         // Emit text up to the string literal, then the rewritten specifier.
         out.push_str(&source[last_end..str_start]);
-        let rewritten = rewrite_relative_specifier(&spec);
+        let rewritten = rewrite_relative_specifier_with_extension(
+            &spec,
+            preserve_module_specifier_extension(format),
+        );
         out.push_str(&format!("\"{rewritten}\""));
         last_end = str_end;
     }
@@ -994,7 +1606,12 @@ fn first_string_range(node: &tree_sitter::Node) -> Option<(usize, usize)> {
 /// `./` / `../` prefix. `./util.ts` → `./util.js`, `./util` → `./util.js`,
 /// `./sub/mod` → `./sub/mod.js`.
 fn rewrite_relative_specifier(spec: &str) -> String {
-    // Strip a known source extension, then append `.js`.
+    rewrite_relative_specifier_with_extension(spec, "js")
+}
+
+fn rewrite_relative_specifier_with_extension(spec: &str, extension: &str) -> String {
+    // Strip a known source extension, then append the requested emitted
+    // extension.
     let stripped = spec
         .strip_suffix(".ts")
         .or_else(|| spec.strip_suffix(".tsx"))
@@ -1003,7 +1620,7 @@ fn rewrite_relative_specifier(spec: &str) -> String {
         .or_else(|| spec.strip_suffix(".cjs"))
         .or_else(|| spec.strip_suffix(".js"))
         .unwrap_or(spec);
-    format!("{stripped}.js")
+    format!("{stripped}.{extension}")
 }
 
 /// Rewrite the relative specifier inside an `export … from "./m"` re-export
@@ -1138,7 +1755,7 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
         out.push('\n');
     }
     out.push_str(&body);
-    Ok(out)
+    transpile_library_esm(&out)
 }
 
 /// Recursively inline one module's body.
@@ -1241,7 +1858,16 @@ fn inline_module(
             // Recursion + the shared `inlined_files` visited-set make this
             // transitive (a re-export of a re-export is followed) and cycle-
             // safe (a module is inlined at most once).
-            if let Some(target) = resolve_relative(path, &spec) {
+            if let Some(svg_reexport) =
+                inline_svg_named_reexport(path, &spec, stmt_text, external_imports, seen_external)?
+            {
+                out.push_str(&svg_reexport);
+            } else if resolve_relative_asset(path, &spec)
+                .filter(|p| is_library_asset_path(p))
+                .is_some()
+            {
+                out.push_str(stmt_text);
+            } else if let Some(target) = resolve_relative(path, &spec)? {
                 if is_star_reexport(stmt_text) {
                     // `export * from "./m"` — inline keeping export keywords so
                     // the target's exports become the bundle's exports.
@@ -1282,7 +1908,18 @@ fn inline_module(
             // place so the bundled entry stays self-contained. The target's
             // own `export` keywords are kept (verbatim inline), matching the
             // pre-existing single-file behaviour.
-            if let Some(target) = resolve_relative(path, &spec) {
+            if let Some(asset_path) =
+                resolve_relative_asset(path, &spec).filter(|p| is_library_asset_path(p))
+            {
+                if is_library_style_path(&asset_path) {
+                    // Style side-effect imports are not JS modules. Library
+                    // asset emission is handled by `[lib].css_merge` or the
+                    // package's own published CSS exports, so do not inline or
+                    // preserve a browser-unresolvable SCSS import here.
+                } else {
+                    out.push_str(stmt_text);
+                }
+            } else if let Some(target) = resolve_relative(path, &spec)? {
                 let inlined = inline_module(
                     &target,
                     externals,
@@ -1311,6 +1948,111 @@ fn inline_module(
         out = strip_top_level_exports(&out);
     }
     Ok(out)
+}
+
+fn inline_svg_named_reexport(
+    from: &Path,
+    spec: &str,
+    stmt_text: &str,
+    external_imports: &mut Vec<String>,
+    seen_external: &mut HashSet<String>,
+) -> Result<Option<String>> {
+    if !crate::bundler::imports::is_svg_specifier(spec) {
+        return Ok(None);
+    }
+    let Some(asset_path) = resolve_relative_asset(from, spec) else {
+        return Ok(None);
+    };
+    let aliases = svgr_reexport_public_aliases(stmt_text);
+    if aliases.is_empty() {
+        return Ok(None);
+    }
+
+    let react_import = "import * as React from \"react\";".to_string();
+    if seen_external.insert(react_import.clone()) {
+        external_imports.push(react_import);
+    }
+
+    let svg_src = std::fs::read_to_string(&asset_path)
+        .with_context(|| format!("reading SVG re-export {}", asset_path.display()))?;
+    let mut module =
+        crate::asset::transform_svg_to_component(&svg_src, crate::asset::SvgrExportType::Named)
+            .with_context(|| format!("transforming SVG re-export {}", asset_path.display()))?;
+
+    let local_name = svg_component_local_name(&aliases[0], &asset_path);
+    module = module.replace("import * as React from \"react\";\n\n", "");
+    module = module.replace("const ReactComponent =", &format!("const {local_name} ="));
+    module = module.replace("export { ReactComponent };\n", "");
+
+    let reexports = aliases
+        .iter()
+        .map(|alias| format!("{local_name} as {alias}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(Some(format!("{module}export {{ {reexports} }};\n")))
+}
+
+fn resolve_relative_asset(from: &Path, spec: &str) -> Option<PathBuf> {
+    let parent = from.parent()?;
+    let base = parent.join(specifier_path_part(spec).trim_start_matches("./"));
+    base.is_file().then_some(base)
+}
+
+fn svgr_reexport_public_aliases(stmt_text: &str) -> Vec<String> {
+    let Some(clause) = export_named_clause(stmt_text) else {
+        return Vec::new();
+    };
+    clause
+        .split(',')
+        .filter_map(|binding| svgr_reexport_public_alias(binding.trim()))
+        .collect()
+}
+
+fn svgr_reexport_public_alias(binding: &str) -> Option<String> {
+    let mut parts = binding.split_whitespace();
+    let first = parts.next()?;
+    if first != "ReactComponent" {
+        return None;
+    }
+    match (parts.next(), parts.next(), parts.next()) {
+        (None, None, None) => Some(first.to_string()),
+        (Some("as"), Some(alias), None) => Some(alias.to_string()),
+        _ => None,
+    }
+}
+
+fn svg_component_local_name(public_alias: &str, asset_path: &Path) -> String {
+    let seed = if public_alias == "ReactComponent" {
+        asset_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Icon")
+    } else {
+        public_alias
+    };
+    format!("Svg{}", sanitize_identifier_part(seed))
+}
+
+fn sanitize_identifier_part(seed: &str) -> String {
+    let mut out = String::new();
+    let mut uppercase_next = true;
+    for ch in seed.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if uppercase_next {
+                out.push(ch.to_ascii_uppercase());
+                uppercase_next = false;
+            } else {
+                out.push(ch);
+            }
+        } else {
+            uppercase_next = true;
+        }
+    }
+    if out.is_empty() {
+        "Icon".to_string()
+    } else {
+        out
+    }
 }
 
 /// Strip top-level `export ` / `export default ` keywords from a concatenated
@@ -1416,25 +2158,31 @@ fn is_external_specifier(spec: &str, externals: &HashSet<String>) -> bool {
 }
 
 /// Resolve a relative specifier against the importing file.
-fn resolve_relative(from: &Path, spec: &str) -> Option<PathBuf> {
-    let base = from.parent()?.join(spec.trim_start_matches("./"));
+fn resolve_relative(from: &Path, spec: &str) -> Result<Option<PathBuf>> {
+    let Some(parent) = from.parent() else {
+        return Ok(None);
+    };
+    let base = parent.join(spec.trim_start_matches("./"));
     if base.is_file() {
-        return Some(base);
+        ensure_library_source_path(&base, spec, "import")?;
+        return Ok(Some(base));
     }
     let exts = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
     for ext in exts {
         let candidate = base.with_extension(ext);
         if candidate.is_file() {
-            return Some(candidate);
+            ensure_library_source_path(&candidate, spec, "import")?;
+            return Ok(Some(candidate));
         }
     }
     for ext in exts {
         let candidate = base.join(format!("index.{ext}"));
         if candidate.is_file() {
-            return Some(candidate);
+            ensure_library_source_path(&candidate, spec, "import")?;
+            return Ok(Some(candidate));
         }
     }
-    None
+    Ok(None)
 }
 
 /// Best-effort ESM → CJS rewrite for library output.
@@ -1461,16 +2209,68 @@ fn resolve_relative(from: &Path, spec: &str) -> Option<PathBuf> {
 /// is correct for the eagerly-evaluated modules a published library entry uses.
 fn esm_to_cjs(esm: &str) -> String {
     let mut out = String::new();
+    let mut export_assignments = Vec::new();
     for line in esm.lines() {
         let trimmed = line.trim();
-        if let Some(rewritten) = rewrite_cjs_line(trimmed) {
+        if let Some((rewritten, assignment)) = rewrite_cjs_export_declaration(trimmed, line) {
+            out.push_str(&rewritten);
+            export_assignments.push(assignment);
+        } else if let Some(rewritten) = rewrite_cjs_line(trimmed) {
             out.push_str(&rewritten);
         } else {
             out.push_str(line);
         }
         out.push('\n');
     }
+    if !export_assignments.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        for assignment in export_assignments {
+            out.push_str(&assignment);
+            out.push('\n');
+        }
+    }
     out
+}
+
+fn rewrite_cjs_export_declaration(trimmed: &str, original: &str) -> Option<(String, String)> {
+    for kw in ["const", "let", "var"] {
+        if let Some(rest) = trimmed.strip_prefix(&format!("export {kw} ")) {
+            let name = rest.split(['=', ' ', ':']).next()?.trim();
+            if name.is_empty() || name.starts_with('{') || name.starts_with('[') {
+                return None;
+            }
+            return Some((
+                strip_export_keyword_preserving_indent(original),
+                format!("exports.{name} = {name};"),
+            ));
+        }
+    }
+    for kw in ["function", "class"] {
+        if let Some(rest) = trimmed.strip_prefix(&format!("export {kw} ")) {
+            let name = rest.split(['(', ' ', '{', '<']).next().unwrap_or("").trim();
+            if name.is_empty() {
+                return None;
+            }
+            return Some((
+                strip_export_keyword_preserving_indent(original),
+                format!("exports.{name} = {name};"),
+            ));
+        }
+    }
+    None
+}
+
+fn strip_export_keyword_preserving_indent(line: &str) -> String {
+    if let Some(idx) = line.find("export ") {
+        let mut out = String::with_capacity(line.len().saturating_sub("export ".len()));
+        out.push_str(&line[..idx]);
+        out.push_str(&line[idx + "export ".len()..]);
+        out
+    } else {
+        line.to_string()
+    }
 }
 
 fn rewrite_cjs_line(line: &str) -> Option<String> {
@@ -1536,22 +2336,6 @@ fn rewrite_cjs_line(line: &str) -> Option<String> {
                     return Some(buf.trim_end().to_string());
                 }
                 return Some(String::new());
-            }
-        }
-    }
-    // export const|let|var NAME = ...
-    for kw in ["const", "let", "var"] {
-        if let Some(rest) = line.strip_prefix(&format!("export {kw} ")) {
-            let name = rest.split(['=', ' ', ':']).next()?.trim();
-            return Some(format!("{kw} {rest}\nexports.{name} = {name};"));
-        }
-    }
-    // export function NAME / export class NAME
-    for kw in ["function", "class"] {
-        if let Some(rest) = line.strip_prefix(&format!("export {kw} ")) {
-            let name = rest.split(['(', ' ', '{', '<']).next().unwrap_or("").trim();
-            if !name.is_empty() {
-                return Some(format!("{kw} {rest}\nexports.{name} = {name};"));
             }
         }
     }
@@ -1829,4 +2613,4 @@ mod tests {
         );
     }
 }
-// HANDWRITE-END
+// </HANDWRITE>

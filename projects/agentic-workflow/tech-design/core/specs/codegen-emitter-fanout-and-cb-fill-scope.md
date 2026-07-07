@@ -133,7 +133,7 @@ nodes:
     label: "R3: open target mod.rs (create if missing); find SPEC-MANAGED CODEGEN block matching spec_managed_ref or insert new; merge entries (union with existing, alpha sort); write only if changed (idempotent); leave HANDWRITE regions untouched"
   r4_cb_fill_scope:
     kind: process
-    label: "R4: in run_apply, after writing payload, parse spec_path ## Changes paths; narrow remaining via scope_markers_for_change_paths; terminate loop when narrowed list empty; run cb check + commit + dispatch td merge"
+    label: "R4: in run_apply, after writing payload, parse spec_path ## Changes paths; narrow remaining via scope_markers_for_change_paths; terminate loop when narrowed list empty; run cb check + commit + dispatch td code-check"
   write_codegen_block:
     kind: process
     label: "Wrap emitted body in CODEGEN-BEGIN/END with SPEC-REF directive"

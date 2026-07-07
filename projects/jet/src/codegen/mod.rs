@@ -1,5 +1,5 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-// HANDWRITE-BEGIN
+// <HANDWRITE gap="standardize:projects-jet-src-codegen-mod-rs" tracker="standardize-gap-projects-jet-src-codegen-mod-rs" reason="Existing hand-written code in projects/jet/src/codegen/mod.rs requires tracked generator coverage.">
 //! `jet codegen` — generate frontend code from API specs.
 //!
 //! Currently supports `jet codegen openapi`: read an OpenAPI 3.0/3.1 document
@@ -8,7 +8,8 @@
 //! `types.ts` / `runtime.ts` / `client.ts` / `hooks.ts` / `index.ts`.
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 pub mod client_emit;
 pub mod hooks_emit;
@@ -21,6 +22,10 @@ pub mod types_emit;
 use openapi::Spec;
 use tsmap::TypeMap;
 
+use crate::task_runner::config::{
+    JetConfig, OpenApiCodegenHooks, OpenApiCodegenHttpClient, OpenApiCodegenStack,
+};
+
 /// HTTP runtime backend for the generated client.
 ///
 /// @spec .aw/tech-design/projects/jet/interfaces/cli/select-http-client-backend-fetch-axios-for-openapi-codegen.md#logic
@@ -31,6 +36,39 @@ pub enum HttpClient {
     Fetch,
     /// `axios` (peer dependency of the generated output).
     Axios,
+}
+
+/// Frontend stack resolved from CLI flags, `jet.toml`, and `package.json`.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrontendStack {
+    React,
+    TypeScript,
+}
+
+/// Data-fetching hook runtime that `hooks.ts` targets.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HookRuntime {
+    /// TanStack Query (`@tanstack/react-query`).
+    #[default]
+    ReactQuery,
+    /// SWR (`swr` for queries, `swr/mutation` for mutations).
+    Swr,
+}
+
+/// Resolved OpenAPI generator behavior for stack-specific output.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedOpenApiStack {
+    pub stack: FrontendStack,
+    pub http_client: HttpClient,
+    pub emit_hooks: bool,
+    /// Which hook runtime to emit when `emit_hooks` is true.
+    pub hooks_runtime: HookRuntime,
 }
 
 /// What the generator emits, selected by CLI flags.
@@ -45,6 +83,8 @@ pub struct GenOptions {
     pub emit_types: bool,
     pub emit_client: bool,
     pub emit_hooks: bool,
+    /// Which hook runtime `hooks.ts` targets (only used when `emit_hooks`).
+    pub hooks_runtime: HookRuntime,
 }
 
 /// A single generated file, relative to the output directory.
@@ -88,7 +128,10 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_hooks {
         files.push(GeneratedFile {
             rel_path: "hooks.ts".to_string(),
-            contents: hooks_emit::emit(&plans),
+            contents: match opts.hooks_runtime {
+                HookRuntime::ReactQuery => hooks_emit::emit(&plans),
+                HookRuntime::Swr => hooks_emit::emit_swr(&plans),
+            },
         });
     }
     files.push(GeneratedFile {
@@ -96,6 +139,170 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
         contents: emit_index(opts),
     });
     Ok(GeneratedOutput { files })
+}
+
+/// Resolve stack-specific OpenAPI codegen behavior.
+///
+/// Priority is CLI flag, then `[codegen.openapi]` in `jet.toml`, then
+/// `package.json` dependencies, then a framework-neutral TypeScript fallback.
+/// This keeps generated output aligned with the actual frontend stack while
+/// preserving deterministic overrides for CI.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+pub fn resolve_openapi_stack(
+    project_root: &Path,
+    config: &JetConfig,
+    cli_stack: Option<&str>,
+    cli_http: Option<&str>,
+    cli_hooks: Option<&str>,
+) -> Result<ResolvedOpenApiStack> {
+    let manifest = PackageManifest::load(project_root)?;
+    let openapi_cfg = &config.codegen.openapi;
+
+    let stack = match parse_cli_stack(cli_stack)? {
+        Some(FrontendStackConfig::Explicit(stack)) => stack,
+        Some(FrontendStackConfig::Auto) => infer_stack(&manifest),
+        None => match openapi_cfg.stack {
+            Some(OpenApiCodegenStack::React) => FrontendStack::React,
+            Some(OpenApiCodegenStack::Typescript) => FrontendStack::TypeScript,
+            Some(OpenApiCodegenStack::Auto) | None => infer_stack(&manifest),
+        },
+    };
+
+    let http_client = match parse_cli_http(cli_http)? {
+        Some(http_client) => http_client,
+        None => match openapi_cfg.http {
+            Some(OpenApiCodegenHttpClient::Axios) => HttpClient::Axios,
+            Some(OpenApiCodegenHttpClient::Fetch) => HttpClient::Fetch,
+            None if manifest.has_dependency("axios") => HttpClient::Axios,
+            None => HttpClient::Fetch,
+        },
+    };
+
+    let hooks = match parse_cli_hooks(cli_hooks)? {
+        Some(hooks) => hooks,
+        None => match openapi_cfg.hooks {
+            Some(OpenApiCodegenHooks::ReactQuery) => HookSelection::ReactQuery,
+            Some(OpenApiCodegenHooks::Swr) => HookSelection::Swr,
+            Some(OpenApiCodegenHooks::None) => HookSelection::None,
+            Some(OpenApiCodegenHooks::Auto) | None => HookSelection::Auto,
+        },
+    };
+    // `Auto` prefers React Query when declared, then SWR, on a React stack.
+    let (emit_hooks, hooks_runtime) = match hooks {
+        HookSelection::ReactQuery => (true, HookRuntime::ReactQuery),
+        HookSelection::Swr => (true, HookRuntime::Swr),
+        HookSelection::None => (false, HookRuntime::ReactQuery),
+        HookSelection::Auto => {
+            if stack == FrontendStack::React {
+                if manifest.has_dependency("@tanstack/react-query") {
+                    (true, HookRuntime::ReactQuery)
+                } else if manifest.has_dependency("swr") {
+                    (true, HookRuntime::Swr)
+                } else {
+                    (false, HookRuntime::ReactQuery)
+                }
+            } else {
+                (false, HookRuntime::ReactQuery)
+            }
+        }
+    };
+
+    Ok(ResolvedOpenApiStack {
+        stack,
+        http_client,
+        emit_hooks,
+        hooks_runtime,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrontendStackConfig {
+    Auto,
+    Explicit(FrontendStack),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HookSelection {
+    Auto,
+    ReactQuery,
+    Swr,
+    None,
+}
+
+#[derive(Debug, Default)]
+struct PackageManifest {
+    dependencies: BTreeSet<String>,
+}
+
+impl PackageManifest {
+    fn load(project_root: &Path) -> Result<Self> {
+        let path = project_root.join("package.json");
+        if !path.is_file() {
+            return Ok(Self::default());
+        }
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let value: serde_json::Value = serde_json::from_str(&body)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        let mut dependencies = BTreeSet::new();
+        for section in [
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        ] {
+            if let Some(object) = value.get(section).and_then(|v| v.as_object()) {
+                dependencies.extend(object.keys().cloned());
+            }
+        }
+        Ok(Self { dependencies })
+    }
+
+    fn has_dependency(&self, name: &str) -> bool {
+        self.dependencies.contains(name)
+    }
+}
+
+fn infer_stack(manifest: &PackageManifest) -> FrontendStack {
+    if manifest.has_dependency("react") || manifest.has_dependency("@tanstack/react-query") {
+        FrontendStack::React
+    } else {
+        FrontendStack::TypeScript
+    }
+}
+
+fn parse_cli_stack(value: Option<&str>) -> Result<Option<FrontendStackConfig>> {
+    value
+        .map(|value| match value {
+            "auto" => Ok(FrontendStackConfig::Auto),
+            "react" => Ok(FrontendStackConfig::Explicit(FrontendStack::React)),
+            "typescript" => Ok(FrontendStackConfig::Explicit(FrontendStack::TypeScript)),
+            other => anyhow::bail!("unsupported OpenAPI codegen stack `{other}`"),
+        })
+        .transpose()
+}
+
+fn parse_cli_http(value: Option<&str>) -> Result<Option<HttpClient>> {
+    value
+        .map(|value| match value {
+            "fetch" => Ok(HttpClient::Fetch),
+            "axios" => Ok(HttpClient::Axios),
+            other => anyhow::bail!("unsupported OpenAPI HTTP client `{other}`"),
+        })
+        .transpose()
+}
+
+fn parse_cli_hooks(value: Option<&str>) -> Result<Option<HookSelection>> {
+    value
+        .map(|value| match value {
+            "auto" => Ok(HookSelection::Auto),
+            "react-query" => Ok(HookSelection::ReactQuery),
+            "swr" => Ok(HookSelection::Swr),
+            "none" => Ok(HookSelection::None),
+            other => anyhow::bail!("unsupported OpenAPI hook runtime `{other}`"),
+        })
+        .transpose()
 }
 
 /// CLI entry: read spec, generate, write files. Returns a process exit code
@@ -172,6 +379,7 @@ mod tests {
             emit_types: true,
             emit_client: true,
             emit_hooks: true,
+            hooks_runtime: HookRuntime::ReactQuery,
         }
     }
 
@@ -283,5 +491,133 @@ mod tests {
         assert!(axios_rt.contains("axios?: AxiosInstance;"));
         assert!(axios_rt.contains("config.axios ?? axios.create()"));
     }
+
+    #[test]
+    fn openapi_stack_auto_detects_react_query_hooks_from_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"react":"^18.0.0","@tanstack/react-query":"^5.0.0"}}"#,
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, None).unwrap();
+
+        assert_eq!(resolved.stack, FrontendStack::React);
+        assert_eq!(resolved.http_client, HttpClient::Fetch);
+        assert!(resolved.emit_hooks);
+    }
+
+    #[test]
+    fn openapi_stack_auto_detects_axios_and_skips_hooks_for_typescript_stack() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"axios":"^1.6.0"}}"#,
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, None).unwrap();
+
+        assert_eq!(resolved.stack, FrontendStack::TypeScript);
+        assert_eq!(resolved.http_client, HttpClient::Axios);
+        assert!(!resolved.emit_hooks);
+    }
+
+    #[test]
+    fn openapi_stack_jet_toml_overrides_package_auto_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"react":"^18.0.0","@tanstack/react-query":"^5.0.0","axios":"^1.6.0"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("jet.toml"),
+            r#"
+[codegen.openapi]
+stack = "typescript"
+http = "fetch"
+hooks = "none"
+"#,
+        )
+        .unwrap();
+        let config = JetConfig::load(dir.path()).unwrap();
+
+        let resolved = resolve_openapi_stack(dir.path(), &config, None, None, None).unwrap();
+
+        assert_eq!(resolved.stack, FrontendStack::TypeScript);
+        assert_eq!(resolved.http_client, HttpClient::Fetch);
+        assert!(!resolved.emit_hooks);
+    }
+
+    #[test]
+    fn openapi_stack_cli_flags_override_project_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"axios":"^1.6.0"}}"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_openapi_stack(
+            dir.path(),
+            &JetConfig::default(),
+            Some("react"),
+            Some("fetch"),
+            Some("react-query"),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.stack, FrontendStack::React);
+        assert_eq!(resolved.http_client, HttpClient::Fetch);
+        assert!(resolved.emit_hooks);
+    }
+
+    #[test]
+    fn openapi_hooks_cli_flag_selects_swr_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, Some("swr"))
+                .unwrap();
+
+        assert!(resolved.emit_hooks);
+        assert_eq!(resolved.hooks_runtime, HookRuntime::Swr);
+    }
+
+    #[test]
+    fn openapi_stack_auto_detects_swr_hooks_from_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"react":"^18.0.0","swr":"^2.2.5"}}"#,
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, None).unwrap();
+
+        assert_eq!(resolved.stack, FrontendStack::React);
+        assert!(resolved.emit_hooks);
+        assert_eq!(resolved.hooks_runtime, HookRuntime::Swr);
+    }
+
+    #[test]
+    fn openapi_hooks_react_query_wins_over_swr_when_both_declared() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"react":"^18.0.0","@tanstack/react-query":"^5.0.0","swr":"^2.2.5"}}"#,
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_openapi_stack(dir.path(), &JetConfig::default(), None, None, None).unwrap();
+
+        assert!(resolved.emit_hooks);
+        assert_eq!(resolved.hooks_runtime, HookRuntime::ReactQuery);
+    }
 }
-// HANDWRITE-END
+// </HANDWRITE>

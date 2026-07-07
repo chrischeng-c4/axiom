@@ -1,8 +1,9 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-codegen-openapi-golden-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Golden-snapshot and type-check gates for `jet codegen openapi`.
 //!
 //! @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#unit-test
 
-use jet::codegen::{generate, GenOptions, GeneratedOutput, HttpClient};
+use jet::codegen::{generate, GenOptions, GeneratedOutput, HookRuntime, HttpClient};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -15,6 +16,7 @@ fn full_opts() -> GenOptions {
         emit_types: true,
         emit_client: true,
         emit_hooks: true,
+        hooks_runtime: HookRuntime::ReactQuery,
     }
 }
 
@@ -24,6 +26,19 @@ fn file<'a>(out: &'a GeneratedOutput, name: &str) -> &'a str {
         .find(|f| f.rel_path == name)
         .map(|f| f.contents.as_str())
         .unwrap_or_else(|| panic!("missing generated file {name}"))
+}
+
+fn snapshot_body(snapshot: &str) -> String {
+    if !snapshot.starts_with("// <HANDWRITE ") {
+        return snapshot.to_string();
+    }
+    let Some(body_start) = snapshot.find('\n').map(|idx| idx + 1) else {
+        return snapshot.to_string();
+    };
+    let body = &snapshot[body_start..];
+    body.strip_suffix("\n// </HANDWRITE>\n")
+        .unwrap_or(body)
+        .to_string()
 }
 
 /// Byte-for-byte golden comparison for the minimal fixture. Regenerate with:
@@ -37,23 +52,23 @@ fn minimal_matches_golden_snapshots() {
 
     assert_eq!(
         file(&out, "types.ts"),
-        include_str!("../__snapshots__/codegen/minimal__types.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__types.ts"))
     );
     assert_eq!(
         file(&out, "runtime.ts"),
-        include_str!("../__snapshots__/codegen/minimal__runtime.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__runtime.ts"))
     );
     assert_eq!(
         file(&out, "client.ts"),
-        include_str!("../__snapshots__/codegen/minimal__client.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__client.ts"))
     );
     assert_eq!(
         file(&out, "hooks.ts"),
-        include_str!("../__snapshots__/codegen/minimal__hooks.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__hooks.ts"))
     );
     assert_eq!(
         file(&out, "index.ts"),
-        include_str!("../__snapshots__/codegen/minimal__index.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__index.ts"))
     );
 }
 
@@ -68,25 +83,63 @@ fn axios_backend_matches_golden_and_is_surface_invariant() {
 
     assert_eq!(
         file(&out, "runtime.ts"),
-        include_str!("../__snapshots__/codegen/minimal__runtime.axios.ts")
+        snapshot_body(include_str!(
+            "../__snapshots__/codegen/minimal__runtime.axios.ts"
+        ))
     );
     // types/client/hooks/index are backend-invariant: same as the fetch goldens.
     assert_eq!(
         file(&out, "types.ts"),
-        include_str!("../__snapshots__/codegen/minimal__types.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__types.ts"))
     );
     assert_eq!(
         file(&out, "client.ts"),
-        include_str!("../__snapshots__/codegen/minimal__client.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__client.ts"))
     );
     assert_eq!(
         file(&out, "hooks.ts"),
-        include_str!("../__snapshots__/codegen/minimal__hooks.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__hooks.ts"))
     );
     assert_eq!(
         file(&out, "index.ts"),
-        include_str!("../__snapshots__/codegen/minimal__index.ts")
+        snapshot_body(include_str!("../__snapshots__/codegen/minimal__index.ts"))
     );
+}
+
+/// `--hooks swr` swaps only `hooks.ts` for the SWR variant (`useSWR` queries +
+/// `useSWRMutation` mutations); every other file is byte-identical to the
+/// react-query goldens. Regenerate with:
+/// `jet codegen openapi projects/jet/tests/fixtures/codegen/minimal.json
+///  --out <dir> --hooks swr` (then copy `hooks.ts` to `minimal__hooks.swr.ts`).
+#[test]
+fn swr_hooks_match_golden_and_are_surface_invariant() {
+    let spec = include_str!("../fixtures/codegen/minimal.json");
+    let mut opts = full_opts();
+    opts.hooks_runtime = HookRuntime::Swr;
+    let out = generate(spec, &opts).expect("generate minimal (swr)");
+
+    assert_eq!(
+        file(&out, "hooks.ts"),
+        snapshot_body(include_str!(
+            "../__snapshots__/codegen/minimal__hooks.swr.ts"
+        ))
+    );
+    // types/runtime/client/index are hook-runtime-invariant.
+    for name in ["types.ts", "runtime.ts", "client.ts", "index.ts"] {
+        let golden = format!("minimal__{}", name);
+        let expected = match name {
+            "types.ts" => snapshot_body(include_str!("../__snapshots__/codegen/minimal__types.ts")),
+            "runtime.ts" => {
+                snapshot_body(include_str!("../__snapshots__/codegen/minimal__runtime.ts"))
+            }
+            "client.ts" => {
+                snapshot_body(include_str!("../__snapshots__/codegen/minimal__client.ts"))
+            }
+            "index.ts" => snapshot_body(include_str!("../__snapshots__/codegen/minimal__index.ts")),
+            _ => unreachable!(),
+        };
+        assert_eq!(file(&out, name), expected, "{golden} differs for swr hooks");
+    }
 }
 
 #[test]
@@ -232,3 +285,5 @@ fn tool_available(tool: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+
+// </HANDWRITE>

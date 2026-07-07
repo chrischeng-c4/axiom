@@ -681,17 +681,17 @@ mod tests {
     fn attr_style_wireframe_within_budget_passes() {
         let config = r#"
 [[projects]]
-name = "cue"
+name = "jet"
 
 [[projects.workspaces]]
-name = "cue-artifact-studio"
+name = "jet-artifact-studio"
 ui_profile = "owner-frontoffice"
 
 [ui_profiles.owner-frontoffice.task_budgets]
 intake = 8
 "#;
         let spec = r#"## Wireframe
-<!-- score-section type="wireframe" lang="yaml" workspace="cue-artifact-studio" surface="studio" role="owner" -->
+<!-- score-section type="wireframe" lang="yaml" workspace="jet-artifact-studio" surface="studio" role="owner" -->
 
 ```yaml
 tasks:
@@ -709,17 +709,17 @@ tasks:
     fn attr_style_wireframe_over_budget_fails() {
         let config = r#"
 [[projects]]
-name = "cue"
+name = "jet"
 
 [[projects.workspaces]]
-name = "cue-artifact-studio"
+name = "jet-artifact-studio"
 ui_profile = "owner-frontoffice"
 
 [ui_profiles.owner-frontoffice.task_budgets]
 intake = 4
 "#;
         let spec = r#"## Wireframe
-<!-- score-section type="wireframe" lang="yaml" workspace="cue-artifact-studio" -->
+<!-- score-section type="wireframe" lang="yaml" workspace="jet-artifact-studio" -->
 
 ```yaml
 tasks:
@@ -741,7 +741,7 @@ tasks:
     fn attr_style_unknown_workspace_fails_when_tasks_present() {
         let config = r#"
 [[projects]]
-name = "cue"
+name = "jet"
 
 [[projects.workspaces]]
 name = "other"
@@ -751,7 +751,7 @@ ui_profile = "owner-frontoffice"
 intake = 8
 "#;
         let spec = r#"## Wireframe
-<!-- score-section type="wireframe" lang="yaml" workspace="cue-artifact-studio" -->
+<!-- score-section type="wireframe" lang="yaml" workspace="jet-artifact-studio" -->
 
 ```yaml
 tasks:

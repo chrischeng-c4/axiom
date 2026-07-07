@@ -1,37 +1,64 @@
 ---
 name: aw:build:release
-description: Bump a project's patch version, build release, install, commit, and tag. Project resolved from .aw/config.toml [[projects]]; infer from project-<name> branch when no arg.
+description: Prepare and publish only an Agentic Workflow aw release: build release, commit version files, land via git:land, tag/push, then monitor the GitHub release workflow until the GitHub release is visible.
 user-invocable: true
 ---
 
 # /aw:build:release
 
-Cuts a release for the requested project: bumps the patch version (base-64:
-minor/patch 0-63 with carry), builds, installs the binary, commits the version
-files, and creates a git tag — all via that project's own `build.sh release`.
+Cuts and monitors an Agentic Workflow (`aw`) release. The AW `build.sh` does
+release-prep only: check `aw@<version>` tag collisions, advance the version
+with the base-64 patch/minor carry convention when needed, build with the
+release profile, install locally, and commit version files. The skill then
+lands that commit, tags the landed `HEAD`, pushes the tag, and monitors GitHub
+Actions plus the GitHub Release before declaring completion.
 
 ## Instructions
 
-Run the dispatcher with the project name or alias as configured in
-`.aw/config.toml` `[[projects]]`. Omit the argument on a `project-<name>` branch
-to infer the project from the current branch.
+### Step 1 — release-prep
+
+Run the dispatcher without arguments. The optional argument is accepted only for
+old muscle-memory invocations and must be `aw` or `agentic-workflow`.
 
 ```bash
-.claude/skills/aw-build-release/scripts/release.sh [<project>]
+.agents/skills/aw-build-release/scripts/release.sh
 ```
 
 Examples:
 
-- `/aw:build:release aw` — release `projects/agentic-workflow`.
-- `/aw:build:release` on branch `project-aw` — infers `aw`.
+- `/aw:build:release` - releases `projects/agentic-workflow`.
+- `/aw:build:release aw` - accepted compatibility form; still releases AW.
+- `/aw:build:release mamba` - rejected; this skill does not release other projects.
 
-The dispatcher reads `.aw/config.toml`, resolves the project's `path`, and
-execs `<path>/build.sh release`. The per-project `build.sh` owns the version
-bump, build, install, commit, and tag.
+The dispatcher execs `projects/agentic-workflow/build.sh release`. Capture
+`RELEASE_TAG=aw@<version>` from stdout.
+
+### Step 2 — land
+
+Run the `git:land` flow as-is to land the release-prep commit to `main`. Stop if
+required checks fail.
+
+### Step 3 — tag + push
+
+After `git:land` completes and the working branch is synced to `origin/main`,
+tag the landed commit and push the tag:
+
+```bash
+git tag -a aw@<version> -m "Release aw@<version>"
+git push origin aw@<version>
+```
+
+### Step 4 — monitor GitHub release
+
+Monitor the project release workflow and verify the GitHub Release exists:
+
+```bash
+scripts/project-build-monitor-release.sh aw aw@<version>
+```
+
+Report the version, merged PR, pushed tag, GitHub Actions run URL, and GitHub
+Release URL.
 
 Exit codes from the dispatcher:
-- `2` no arg and current branch is not `project-<name>`
-- `3` project not declared in `.aw/config.toml`
-- `4` resolved project has no executable `build.sh`
-
-Report the result to the user.
+- `2` unsupported argument or too many arguments
+- `4` `projects/agentic-workflow/build.sh` is missing or not executable
