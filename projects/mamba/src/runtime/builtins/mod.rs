@@ -13,6 +13,7 @@ mod boxing;
 mod breakpoint;
 mod char_radix;
 mod eval_exec;
+mod input;
 mod map_filter;
 mod range_slice;
 mod set_constructors;
@@ -37,6 +38,7 @@ pub use eval_exec::{
     mb_eval_with_namespaces, mb_exec, mb_exec_function_call, mb_exec_function_is_async,
     mb_exec_with_globals, mb_exec_with_globals_locals, mb_globals, mb_locals,
 };
+pub use input::mb_input;
 use map_filter::call_named_callable;
 pub use map_filter::{
     call_any_callable, call_named_callable_pub, callable_as_type_name, mb_filter, mb_map,
@@ -7332,32 +7334,6 @@ pub fn mb_id(val: MbValue) -> MbValue {
     } else {
         // For primitives, use the raw bits truncated
         MbValue::from_int((val.to_bits() >> 17) as i64)
-    }
-}
-
-/// input(prompt) — read a line from stdin.
-pub fn mb_input(prompt: MbValue) -> MbValue {
-    // Print prompt without newline
-    if let Some(ptr) = prompt.as_ptr() {
-        unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                eprint!("{s}");
-            }
-        }
-    }
-    let mut line = String::new();
-    match std::io::stdin().read_line(&mut line) {
-        Ok(_) => {
-            // Strip trailing newline
-            if line.ends_with('\n') {
-                line.pop();
-            }
-            if line.ends_with('\r') {
-                line.pop();
-            }
-            MbValue::from_ptr(MbObject::new_str(line))
-        }
-        Err(_) => MbValue::from_ptr(MbObject::new_str(String::new())),
     }
 }
 
