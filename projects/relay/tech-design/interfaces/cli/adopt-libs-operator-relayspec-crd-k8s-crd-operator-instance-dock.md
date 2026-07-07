@@ -205,7 +205,6 @@ flowchart TD
     r6[R6 smoke script single bin] --> tests_deploy_cli_rs_smoke_script_is_single_bin_auto_mode[tests/deploy_cli.rs::smoke_script_is_single_bin_auto_mode]
     r7[R7 llm operations topic deploy verbs] --> tests_deploy_cli_rs_llm_operations_topic_names_deploy_verbs[tests/deploy_cli.rs::llm_operations_topic_names_deploy_verbs]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
