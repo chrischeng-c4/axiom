@@ -986,7 +986,7 @@ changes:
     section: cli
     impl_mode: hand-written
     description: Remove old Claude layer-specific human skill in favor of aw:standardize.
-  - path: projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md
+  - path: projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md.tmpl
     action: modify
     section: cli
     impl_mode: hand-written

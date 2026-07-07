@@ -54,7 +54,7 @@ pub const CODEX_TRANSLATE_ANCHOR: &str = "### Workflow CLI";
 ///
 /// Panics if `block` does not contain [`CODEX_TRANSLATE_ANCHOR`] — the
 /// `aw:start` block content is compiled from
-/// `templates/cli/mainthread/CLAUDE.md`, so a missing anchor is a template
+/// `templates/cli/mainthread/CLAUDE.md.tmpl`, so a missing anchor is a template
 /// authoring defect, not a runtime input failure.
 pub fn agents_block_from_claude_block(block: &str) -> String {
     let anchor_at = block

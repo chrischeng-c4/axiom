@@ -96,7 +96,7 @@ const SCRIPT_MAMBA_TEST_COVERAGE: &str = include_str!(
 const SETTINGS_JSON_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/settings.json");
 
 // CLAUDE.md Template for target projects
-const CLAUDE_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/CLAUDE.md");
+const CLAUDE_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/CLAUDE.md.tmpl");
 
 /// Arguments for `aw new`.
 ///
@@ -1025,7 +1025,7 @@ fn print_init_success() {
     println!("      {}", "/aw:td:create my-feature".cyan());
 }
 
-// Score section markers (must match templates/mainthread/CLAUDE.md)
+// Score section markers (must match templates/mainthread/CLAUDE.md.tmpl)
 const GENESIS_START_MARKER: &str = "<!-- aw:start -->";
 const GENESIS_END_MARKER: &str = "<!-- aw:end -->";
 
