@@ -2,15 +2,21 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T14:27:44.191589+00:00"
-digest = "sha256:ac51156d8e513b1e746ba88e2cbffe20d0055a01622ceac917db869859eeaf01"
-source_digest = "sha256:ac51156d8e513b1e746ba88e2cbffe20d0055a01622ceac917db869859eeaf01"
-ir_digest = "sha256:8ad5db19a6acc75e8e136d6f0f5fdc627486807aa6ee34abedd8f3f33410768b"
+generated_at = "2026-07-07T15:07:51.254057+00:00"
+digest = "sha256:15b72ff5c2d96191d2482099d65bc485fea691be2e4e718d01f35255c1d8f594"
+source_digest = "sha256:15b72ff5c2d96191d2482099d65bc485fea691be2e4e718d01f35255c1d8f594"
+ir_digest = "sha256:cea6be84e5cf1c355ae74b805a29d38123a2b507006f846bf4af952ec06dfd27"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
 digest = "sha256:9b2d5e440f6aee26b537d76c22d3cb52e49b3494d86c311f75d571d4633cc52a"
 ir_digest = "sha256:74f58cf04201b1903f2b84421456f14ce5375afc71a7b011e4b42558149d3dff"
+section_count = 3
+
+[[files]]
+path = "interfaces/cli/adopt-service-backup-service-tls-peer-mtls-relay-spec-spec-gen.md"
+digest = "sha256:3598b214b344248febaa1e4f952d99cabb2604ee704c67cd05b17e90dc3a57fe"
+ir_digest = "sha256:f914f869cee7b23372e4b474bfeab89bdc39ec63e09570507ee5387ec364dc57"
 section_count = 3
 
 [[files]]
