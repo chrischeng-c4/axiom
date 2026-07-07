@@ -438,7 +438,10 @@ fn render_operator_yaml(namespace: &str) -> String {
 fn replace_operator_namespace(input: &str, namespace: &str) -> String {
     input
         .replace("name: relay-system", &format!("name: {namespace}"))
-        .replace("namespace: relay-system", &format!("namespace: {namespace}"))
+        .replace(
+            "namespace: relay-system",
+            &format!("namespace: {namespace}"),
+        )
 }
 
 /// Render a `kind: Relay` custom resource for the selected profile.

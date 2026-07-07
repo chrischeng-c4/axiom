@@ -84,10 +84,8 @@ fn render_verbs_emit_parseable_yaml_offline() {
     }
     // The prod profile is the HA shape (the topology that used to live as
     // hand-maintained YAML in k8s/) and dogfoods the auth wiring.
-    let prod: serde_yaml::Value = serde_yaml::from_str(&stdout(&[
-        "k8s", "instance", "render", "--profile", "prod",
-    ]))
-    .unwrap();
+    let prod: serde_yaml::Value =
+        serde_yaml::from_str(&stdout(&["k8s", "instance", "render", "--profile", "prod"])).unwrap();
     assert_eq!(prod["spec"]["replicasPerShard"], serde_yaml::Value::from(3));
     assert_eq!(prod["spec"]["voterCount"], serde_yaml::Value::from(3));
     assert_eq!(prod["spec"]["auth"], "required");
@@ -114,16 +112,21 @@ fn render_verbs_emit_parseable_yaml_offline() {
     stdout(&["dockerfile", "render", "--variant", "source"]);
     stdout(&["dockerfile", "render", "--variant", "release"]);
 
-    // operator run without the feature: nonzero exit + rebuild hint.
-    let out = run(&["k8s", "operator", "run"]);
-    assert!(
-        !out.status.success(),
-        "operator run must fail without --features operator"
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("--features operator"),
-        "rebuild hint names the feature"
-    );
+    // operator run without the feature: nonzero exit + rebuild hint. (In an
+    // `--features operator` build the verb runs the real controller — never
+    // invoke it from a test, it would watch whatever cluster kubeconfig names.)
+    #[cfg(not(feature = "operator"))]
+    {
+        let out = run(&["k8s", "operator", "run"]);
+        assert!(
+            !out.status.success(),
+            "operator run must fail without --features operator"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("--features operator"),
+            "rebuild hint names the feature"
+        );
+    }
 }
 
 /// R4 / AC2: `--variant source` reproduces the committed `Dockerfile`
@@ -157,7 +160,10 @@ fn dockerfile_render_reproduces_committed_fixtures() {
         pinned.contains("ARG RELAY_VERSION=relay@9.9.9"),
         "pinned ARG: {pinned}"
     );
-    assert!(pinned.contains("-t relay:9.9.9"), "pinned image tag: {pinned}");
+    assert!(
+        pinned.contains("-t relay:9.9.9"),
+        "pinned image tag: {pinned}"
+    );
 }
 
 /// R3 / AC4: the rendered CRD (the committed fixture in this default build) is
@@ -165,9 +171,18 @@ fn dockerfile_render_reproduces_committed_fixtures() {
 #[test]
 fn crd_render_is_structural_schema_safe() {
     let yaml = stdout(&["k8s", "crd", "render"]);
-    assert!(!yaml.contains("uint32"), "CRD must not carry format: uint32");
-    assert!(!yaml.contains("uint64"), "CRD must not carry format: uint64");
-    assert!(yaml.contains("minimum"), "normalized uints keep a minimum floor");
+    assert!(
+        !yaml.contains("uint32"),
+        "CRD must not carry format: uint32"
+    );
+    assert!(
+        !yaml.contains("uint64"),
+        "CRD must not carry format: uint64"
+    );
+    assert!(
+        yaml.contains("minimum"),
+        "normalized uints keep a minimum floor"
+    );
 
     let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
     assert_eq!(doc["kind"], "CustomResourceDefinition");
@@ -188,7 +203,10 @@ fn smoke_script_is_single_bin_auto_mode() {
     );
 
     // bash -n: syntax-only check of the script.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/kind-failover-smoke.sh");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/scripts/kind-failover-smoke.sh"
+    );
     let out = Command::new("bash")
         .args(["-n", path])
         .output()
@@ -253,7 +271,10 @@ fn llm_operations_topic_names_deploy_verbs() {
         "k8s instance render",
         "dockerfile render",
     ] {
-        assert!(topic.contains(needle), "operations topic missing `{needle}`");
+        assert!(
+            topic.contains(needle),
+            "operations topic missing `{needle}`"
+        );
     }
 }
 // HANDWRITE-END

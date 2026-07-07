@@ -145,7 +145,8 @@ fn statefulset(relay: &Relay, cx: &RenderCtx, headless: &str) -> Value {
     }
     if token_registry_secret(relay).is_some() {
         extra_env.push(json!({ "name": "RELAY_AUTH", "value": "required" }));
-        extra_env.push(json!({ "name": "RELAY_TOKEN_REGISTRY_FILE", "value": TOKEN_REGISTRY_FILE }));
+        extra_env
+            .push(json!({ "name": "RELAY_TOKEN_REGISTRY_FILE", "value": TOKEN_REGISTRY_FILE }));
     }
 
     let mut sts = render::sharded_statefulset(ShardedStatefulSet {

@@ -81,13 +81,29 @@ fn crd_flattens_cluster_spec() {
         "ClusterSpec must be flattened, not nested under `cluster`"
     );
     // relay's own knobs are present too.
-    for field in ["storage", "storageClass", "graceSecs", "logLevel", "auth", "tokensSecret"] {
+    for field in [
+        "storage",
+        "storageClass",
+        "graceSecs",
+        "logLevel",
+        "auth",
+        "tokensSecret",
+    ] {
         assert!(props.get(field).is_some(), "missing relay knob `{field}`");
     }
     // R3 — Kubernetes structural-schema compatible.
-    assert!(!yaml.contains("uint32"), "CRD must not carry format: uint32");
-    assert!(!yaml.contains("uint64"), "CRD must not carry format: uint64");
-    assert!(yaml.contains("minimum"), "normalized uints keep a minimum floor");
+    assert!(
+        !yaml.contains("uint32"),
+        "CRD must not carry format: uint32"
+    );
+    assert!(
+        !yaml.contains("uint64"),
+        "CRD must not carry format: uint64"
+    );
+    assert!(
+        yaml.contains("minimum"),
+        "normalized uints keep a minimum floor"
+    );
 }
 
 /// R2 / AC3 — the rendered StatefulSet carries exactly the downward-API env
@@ -149,7 +165,10 @@ fn render_emits_downward_api_statefulset() {
     assert_eq!(container["volumeMounts"][0]["mountPath"], "/data");
 
     // The rest of the child set is present.
-    assert_eq!(of_kind(&objs, "ServiceAccount")["metadata"]["name"], "relay");
+    assert_eq!(
+        of_kind(&objs, "ServiceAccount")["metadata"]["name"],
+        "relay"
+    );
     let headless = objs
         .iter()
         .find(|o| o["kind"] == "Service" && o["spec"]["clusterIP"] == "None")
@@ -178,7 +197,9 @@ fn auth_secret_wiring_is_opt_in() {
     let keys: Vec<&str> = env_of(sts).iter().map(|(k, _)| *k).collect();
     assert!(!keys.contains(&"RELAY_AUTH"), "auth env must be opt-in");
     assert!(!keys.contains(&"RELAY_TOKEN_REGISTRY_FILE"));
-    let vols = sts["spec"]["template"]["spec"]["volumes"].as_array().unwrap();
+    let vols = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap();
     assert!(
         vols.iter().all(|v| v["name"] != "relay-token-registry"),
         "no token-registry volume without tokensSecret"
@@ -209,7 +230,9 @@ fn auth_secret_wiring_is_opt_in() {
         get("RELAY_TOKEN_REGISTRY_FILE")["value"],
         "/var/run/secrets/relay/token-registry.json"
     );
-    let vols = sts["spec"]["template"]["spec"]["volumes"].as_array().unwrap();
+    let vols = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap();
     let vol = vols
         .iter()
         .find(|v| v["name"] == "relay-token-registry")
