@@ -4,7 +4,7 @@
 //!
 //! v1 ships the configuration surface — paths to cert / key / CA bundle
 //! and an `is_required` flag — so deployments can declare their TLS
-//! posture today. The rustls binding is wired in alongside the raftcore-backed
+//! posture today. The rustls binding is wired in alongside the raft_core-backed
 //! peer transport.
 //!
 //! ## Env contract
@@ -16,12 +16,21 @@
 //!
 //! The presence of all three paths + `LUMEN_PEER_MTLS=on` enables mTLS;
 //! any other combination falls back to plain HTTP/2 (with a warning).
+//!
+//! The PEM loading, rustls server/client config builders, and the
+//! Once-guarded crypto-provider install are generic across every service
+//! with a peer/replication port and live in `libs/service-tls` (#971); this
+//! module is a thin adapter over it that keeps lumen's `LUMEN_PEER_TLS_*`/
+//! `LUMEN_PEER_MTLS` env names and pub API unchanged.
 
-use std::io::BufReader;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Once};
+use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
+
+/// The prefix passed to `service_tls::PeerTlsConfig::from_env`: derives
+/// `LUMEN_PEER_TLS_CERT` / `LUMEN_PEER_TLS_KEY` / `LUMEN_PEER_TLS_CA` /
+/// `LUMEN_PEER_MTLS`, preserving lumen's env contract byte-for-byte.
+const ENV_PREFIX: &str = "LUMEN_PEER";
 
 #[derive(Debug, Clone)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
@@ -32,122 +41,52 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
+impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
+    fn from(cfg: service_tls::PeerTlsConfig) -> Self {
+        Self {
+            cert: cfg.cert,
+            key: cfg.key,
+            ca: cfg.ca,
+            required: cfg.required,
+        }
+    }
+}
+
+impl From<PeerTlsConfig> for service_tls::PeerTlsConfig {
+    fn from(cfg: PeerTlsConfig) -> Self {
+        Self {
+            cert: cfg.cert,
+            key: cfg.key,
+            ca: cfg.ca,
+            required: cfg.required,
+        }
+    }
+}
+
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
 impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
     pub fn from_env() -> Result<Option<Self>> {
-        let cert = std::env::var("LUMEN_PEER_TLS_CERT").ok().map(PathBuf::from);
-        let key = std::env::var("LUMEN_PEER_TLS_KEY").ok().map(PathBuf::from);
-        let ca = std::env::var("LUMEN_PEER_TLS_CA").ok().map(PathBuf::from);
-        let required = std::env::var("LUMEN_PEER_MTLS")
-            .map(|v| v.eq_ignore_ascii_case("on"))
-            .unwrap_or(false);
-        match (cert, key, ca) {
-            (Some(cert), Some(key), Some(ca)) => {
-                let cfg = Self {
-                    cert,
-                    key,
-                    ca,
-                    required,
-                };
-                cfg.verify_paths()?;
-                Ok(Some(cfg))
-            }
-            (None, None, None) if !required => Ok(None),
-            (None, None, None) => Err(anyhow!(
-                "LUMEN_PEER_MTLS=on but no cert/key/ca paths set"
-            )),
-            _ => Err(anyhow!(
-                "LUMEN_PEER_TLS_CERT / LUMEN_PEER_TLS_KEY / LUMEN_PEER_TLS_CA must all be set together"
-            )),
-        }
-    }
-
-    fn verify_paths(&self) -> Result<()> {
-        for (name, p) in [("cert", &self.cert), ("key", &self.key), ("ca", &self.ca)] {
-            if !p.exists() {
-                return Err(anyhow!("TLS {name} not found at {}", p.display()));
-            }
-            std::fs::metadata(p).with_context(|| format!("stat {name} {}", p.display()))?;
-        }
-        Ok(())
+        Ok(service_tls::PeerTlsConfig::from_env(ENV_PREFIX)?.map(Self::from))
     }
 
     /// Build a rustls server config for the peer transport.
     pub fn rustls_server_config(&self) -> Result<rustls::ServerConfig> {
-        install_default_crypto_provider();
-        let cert_chain = load_cert_chain(&self.cert)?;
-        let key = load_private_key(&self.key)?;
-        let builder = rustls::ServerConfig::builder();
-        let server = if self.required {
-            let client_roots = load_root_store(&self.ca)?;
-            let verifier =
-                rustls::server::WebPkiClientVerifier::builder(Arc::new(client_roots)).build()?;
-            builder.with_client_cert_verifier(verifier)
-        } else {
-            builder.with_no_client_auth()
-        };
-        server
-            .with_single_cert(cert_chain, key)
-            .context("build peer rustls server config")
+        service_tls::PeerTlsConfig::from(self.clone()).rustls_server_config()
     }
 
     /// Build a rustls client config for dialing peer transports.
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
-        install_default_crypto_provider();
-        let roots = load_root_store(&self.ca)?;
-        let cert_chain = load_cert_chain(&self.cert)?;
-        let key = load_private_key(&self.key)?;
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_client_auth_cert(cert_chain, key)
-            .context("build peer rustls client config")
+        service_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
     }
 }
 
-fn install_default_crypto_provider() {
-    static INSTALL: Once = Once::new();
-    INSTALL.call_once(|| {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    });
-}
-
-fn load_cert_chain(path: &Path) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
-    let file =
-        std::fs::File::open(path).with_context(|| format!("open cert {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .with_context(|| format!("parse cert {}", path.display()))?;
-    if certs.is_empty() {
-        return Err(anyhow!("no certificates found at {}", path.display()));
-    }
-    Ok(certs)
-}
-
-fn load_private_key(path: &Path) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let file = std::fs::File::open(path).with_context(|| format!("open key {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    rustls_pemfile::private_key(&mut reader)
-        .with_context(|| format!("parse key {}", path.display()))?
-        .ok_or_else(|| anyhow!("no private key found at {}", path.display()))
-}
-
-fn load_root_store(path: &Path) -> Result<rustls::RootCertStore> {
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in load_cert_chain(path)? {
-        roots
-            .add(cert)
-            .with_context(|| format!("add CA cert from {}", path.display()))?;
-    }
-    Ok(roots)
-}
+pub use service_tls::install_default_crypto_provider;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     const TEST_CERT: &str = r#"-----BEGIN CERTIFICATE-----
 MIIC5zCCAc+gAwIBAgIJAPl6HZTX5LElMA0GCSqGSIb3DQEBCwUAMBUxEzARBgNV
@@ -244,6 +183,7 @@ LkjT2UdpFBDZGWHwqDRhXX8k
         let dir = std::env::temp_dir().join(format!("lumen-tls-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for name in ["cert.pem", "key.pem", "ca.pem"] {
+            use std::io::Write;
             let mut f = std::fs::File::create(dir.join(name)).unwrap();
             f.write_all(b"DUMMY").unwrap();
         }

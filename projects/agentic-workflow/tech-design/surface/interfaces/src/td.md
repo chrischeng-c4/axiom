@@ -20,7 +20,8 @@ command_refs:
   - command: aw td check
   - command: aw td claim
   - command: aw td create
-  - command: aw td merge
+  - command: aw td code-check
+  - command: aw td promote
   - command: aw td review
   - command: aw td revise
   - command: aw td validate
@@ -43,7 +44,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/td.rs` generated from
 | `CheckArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 220 |  |
 | `CreateArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 92 |  |
 | `GenCodeArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 202 |  |
-| `MergeArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 237 |  |
+| `CodeCheckArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 237 |  |
 | `ReviewArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 146 |  |
 | `ReviseArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 171 |  |
 | `TdArgs` | projects/agentic-workflow/src/cli/td.rs | struct | pub | 23 |  |
@@ -102,12 +103,6 @@ pub enum TdCommand {
     Create(CreateArgs),
     /// Validate legacy slug lifecycle state or run the read-only TD checker.
     Validate(ValidateArgs),
-    /// Review a tech-design spec (brief or apply mode).
-    Review(ReviewArgs),
-    /// Revise flagged sections of a tech-design spec.
-    Revise(ReviseArgs),
-    /// Merge an approved tech-design spec back to main.
-    Merge(MergeArgs),
     /// Read-only rule-registry check against `.aw/tech-design/` files.
     /// Accepts a slug (resolved in the current checkout), a single file path, or
     /// a directory. Runs the unified rule registry; no commit, no phase
@@ -134,6 +129,11 @@ pub enum TdCommand {
     CodeClaim(super::cb::CbClaimArgs),
     /// Fill HANDWRITE marker blocks in generated code.
     Fill(super::cb::CbFillArgs),
+    /// Promote a HANDWRITE marker block to CODEGEN once its gap-blocker has
+    /// closed (byte-equivalence-checked). This is the `promote_handwrite`
+    /// standardization action, homed as a first-class td verb (#919).
+    /// @spec projects/agentic-workflow/tech-design/surface/specs/score-standardization.md#the-6-standardization-actions
+    Promote(PromoteArgs),
 }
 
 /// Args for `aw td claim <slug>`.
@@ -151,6 +151,27 @@ pub struct TdClaimArgs {
     #[arg(long)]
     pub force_rebase: bool,
     /// Emit the dispatch envelope as pretty-printed JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Args for `aw td promote <target>`.
+#[derive(Debug, Args)]
+/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
+pub struct PromoteArgs {
+    /// Repo-relative source path, or a HANDWRITE marker `tracker=` id, to
+    /// promote from HANDWRITE to CODEGEN. Every HANDWRITE block in the
+    /// resolved file must already carry a complete `gap` and a durable
+    /// `tracker` attribute (the health-routed `issue_marker_gap` remediation
+    /// attaches those) before it can be promoted.
+    pub target: String,
+    /// Fallback `<mirror>.md#anchor` spec reference written above a
+    /// promoted block that has no preceding `SPEC-MANAGED:` line. Defaults
+    /// to a semantic-spec path derived from the resolved file's configured
+    /// project workspace (the standardization loop's historical default).
+    #[arg(long = "spec-ref")]
+    pub spec_ref: Option<String>,
+    /// Emit the result envelope as pretty-printed JSON.
     #[arg(long)]
     pub json: bool,
 }
@@ -184,9 +205,12 @@ pub struct CreateArgs {
     pub phase: Option<String>,
     /// Per-section apply: merge ONLY the section of the given `type:`
     /// annotation from the payload file at
-    /// `.aw/payloads/<slug>/<section>.md` into the spec. Other
-    /// sections in the spec are untouched. Required for loop-fill flow
-    /// where the subagent applies one section at a time.
+    /// `/tmp/aw/workspaces/<workspace>/payloads/td/<slug>/<phase>/<section>.json`
+    /// into the spec. Other sections in the spec are untouched. Required
+    /// for loop-fill flow where the subagent applies one section at a time.
+    /// Payloads are JSON. Generic sections use `{"body":"<section markdown>"}`;
+    /// structured sections such as `unit-test` use their section-specific
+    /// schema and are rendered by this command.
     #[arg(long)]
     pub section: Option<String>,
     /// DEPRECATED compatibility no-op. TD lifecycle envelopes are JSON by default.
@@ -223,62 +247,6 @@ pub struct ValidateArgs {
 
 #[derive(Debug, Args)]
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-pub struct ReviewArgs {
-    /// Issue slug.
-    pub slug: String,
-    /// Apply mode: validate the review and emit dispatch envelope.
-    #[arg(long)]
-    pub apply: bool,
-    /// Path to the spec file (relative to the current checkout root). Required.
-    #[arg(long)]
-    pub spec_path: Option<String>,
-    /// Review pass: applicability or contract.
-    #[arg(long)]
-    pub phase: Option<String>,
-    /// DEPRECATED compatibility no-op. TD lifecycle envelopes are JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human review brief.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON envelope.
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args)]
-/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-pub struct ReviseArgs {
-    /// Issue slug.
-    pub slug: String,
-    /// Apply mode: validate the revision and emit dispatch envelope.
-    #[arg(long)]
-    pub apply: bool,
-    /// Path to the spec file (relative to the current checkout root). Required.
-    #[arg(long)]
-    pub spec_path: Option<String>,
-    /// Per-section apply: merge ONLY the section of the given `type:`
-    /// annotation from the payload file at
-    /// `.aw/payloads/<slug>/<section>.md` into the spec BEFORE
-    /// validation. Mirrors section-queue `aw td create --apply`. Required
-    /// for the reviser loop where the subagent rewrites one flagged
-    /// section at a time and the validator must see the post-merge
-    /// result, not the pre-merge spec at HEAD.
-    #[arg(long)]
-    pub section: Option<String>,
-    /// DEPRECATED compatibility no-op. TD lifecycle envelopes are JSON by default.
-    #[arg(long, hide = true)]
-    pub json: bool,
-    /// Emit the legacy human revise brief.
-    #[arg(long)]
-    pub human: bool,
-    /// Pretty-print the JSON envelope.
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args)]
-/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct GenCodeArgs {
     /// Issue slug.
     pub slug: String,
@@ -310,27 +278,6 @@ pub struct CheckArgs {
     /// `.aw/tech-design/projects/score/specs/score-section-type-registry.md`.
     #[arg(long)]
     pub section_type_conformance: bool,
-}
-
-#[derive(Debug, Args)]
-/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-pub struct MergeArgs {
-    /// Issue slug.
-    pub slug: String,
-    /// Path to the spec file (relative to the current checkout root).
-    #[arg(long)]
-    pub spec_path: Option<String>,
-    /// Target branch to merge into. When omitted, the current branch is detected
-    /// via `git rev-parse --abbrev-ref HEAD`; detached HEAD falls back to
-    /// `[sdd.repo_platform].default_branch` in `.score/config.toml`.
-    #[arg(long)]
-    pub target_branch: Option<String>,
-    /// Allow merging a TD whose Changes section lists files that don't exist
-    /// on disk yet (Bug 2 escape hatch). The default refuses, since a 0-of-N
-    /// implementation rate signals codegen skipped emission. Pass this flag
-    /// only for legitimate spec-only / docs-only merges.
-    #[arg(long)]
-    pub allow_empty_impl: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -551,16 +498,20 @@ pub(crate) fn td_activate_inplace_allowing_dirty_lifecycle_paths(
 }
 
 /// @spec .aw/tech-design/projects/score/specs/aw-td-extend-dirty-allow-issue-file.md#logic
+///
+/// Payload round-trip files no longer need a dirty-path exception here:
+/// they live under `/tmp/aw/workspaces/<workspace>/payloads` (see
+/// [`crate::shared::workspace::payloads_path`]), which is outside the
+/// project's git status entirely.
 pub(crate) fn td_activate_inplace_allowing_dirty_spec_path(
     project_root: &std::path::Path,
     slug: &str,
     spec_path: &str,
 ) -> Result<()> {
     let issue_path = canonical_issue_path_for_slug(project_root, slug);
-    let payload_prefix = format!(".aw/payloads/{slug}/");
     let allowed: Vec<&str> = match issue_path.as_deref() {
-        Some(p) => vec![spec_path, p, payload_prefix.as_str()],
-        None => vec![spec_path, payload_prefix.as_str()],
+        Some(p) => vec![spec_path, p],
+        None => vec![spec_path],
     };
     ensure_clean_or_only_dirty_paths(project_root, &allowed).map_err(|e| {
         anyhow::anyhow!(
@@ -883,6 +834,18 @@ pub(crate) fn discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<S
 
 // ── Lifecycle commit ─────────────────────────────────────────────────
 
+/// Which `--allow-empty` semantics a lifecycle commit invocation should use.
+/// Issue #856b.
+pub(crate) enum LifecycleCommitEmpty {
+    /// Only when nothing is staged — the ordinary lifecycle-commit case.
+    IfNothingStaged,
+    /// Unconditionally — a trailer-only terminal commit (issue #846) has
+    /// nothing new to stage in the common case (the phase advance already
+    /// landed via a separate `backend.update` write), so gating on
+    /// [`has_staged_changes`] would fail the commit outright.
+    Always,
+}
+
 fn commit_lifecycle(
     worktree_path: &std::path::Path,
     slug: &str,
@@ -890,25 +853,50 @@ fn commit_lifecycle(
     stage: &str,
     paths: &[&str],
 ) -> Result<()> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-
-    stage_lifecycle_paths(worktree_path, &git_bin, paths)?;
-
     let msg = format!(
         "td({slug}) \u{2014} {detail}\n\n\
          Lifecycle-Slug: {slug}\n\
          Work-Item: {slug}\n\
          Lifecycle-Stage: {stage}",
     );
+    commit_lifecycle_message(
+        worktree_path,
+        paths,
+        &msg,
+        LifecycleCommitEmpty::IfNothingStaged,
+    )
+}
+
+/// Shared lifecycle-commit core (issue #856b): stage `paths` via
+/// [`stage_lifecycle_paths`] (skipping the retired `.aw/issues` tree — see
+/// [`should_stage_lifecycle_path`]), then commit the caller-built `message`
+/// (already containing the full `Lifecycle-Slug` / `Work-Item` /
+/// `Lifecycle-Stage` trailer schema) with the requested `--allow-empty`
+/// semantics. [`commit_lifecycle`] above and `cb::commit_cb_code_check_
+/// terminal` (the `aw td code-check` terminal commit) both delegate here
+/// instead of each re-implementing the staging + git-commit invocation.
+pub(crate) fn commit_lifecycle_message(
+    worktree_path: &std::path::Path,
+    paths: &[&str],
+    message: &str,
+    allow_empty: LifecycleCommitEmpty,
+) -> Result<()> {
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+
+    stage_lifecycle_paths(worktree_path, &git_bin, paths)?;
 
     let mut command = std::process::Command::new(&git_bin);
     command.arg("-C").arg(worktree_path).arg("commit");
-    if !has_staged_changes(worktree_path, &git_bin)? {
+    let allow_empty = match allow_empty {
+        LifecycleCommitEmpty::Always => true,
+        LifecycleCommitEmpty::IfNothingStaged => !has_staged_changes(worktree_path, &git_bin)?,
+    };
+    if allow_empty {
         command.arg("--allow-empty");
     }
     let commit = command
-        .args(["-m", &msg])
+        .args(["-m", message])
         .output()
         .context("git commit failed")?;
     if !commit.status.success() {
@@ -920,7 +908,7 @@ fn commit_lifecycle(
     Ok(())
 }
 
-fn stage_lifecycle_paths(
+pub(crate) fn stage_lifecycle_paths(
     worktree_path: &std::path::Path,
     git_bin: &std::path::Path,
     paths: &[&str],
@@ -1252,6 +1240,7 @@ fn validate_spec_for_section_apply(spec_content: &str, current_section: &str) ->
     )
 }
 
+#[cfg(test)]
 fn validate_td_content_file(
     spec_path: &std::path::Path,
     scope: TdContentValidationScope<'_>,
@@ -1968,7 +1957,11 @@ fn derive_td_concern(labels: &[String], title: Option<&str>) -> &'static str {
                 return match raw.trim() {
                     "config" | "configuration" | "settings" => "config",
                     "interface" | "interfaces" | "api" | "cli" | "schema" | "protocol" => {
-                        "interfaces"
+                        interface_protocol_subdir(&format!(
+                            "{} {}",
+                            raw.trim(),
+                            title.unwrap_or("")
+                        ))
                     }
                     "test" | "tests" | "validate" | "validation" | "verification" => "validate",
                     "semantic" | "traceability" | "capability" => "semantic",
@@ -1998,7 +1991,7 @@ fn derive_td_concern(labels: &[String], title: Option<&str>) -> &'static str {
             "rpc",
         ],
     ) {
-        return "interfaces";
+        return interface_protocol_subdir(&haystack);
     }
     if contains_any(
         &haystack,
@@ -2022,6 +2015,26 @@ fn derive_td_concern(labels: &[String], title: Option<&str>) -> &'static str {
         return "semantic";
     }
     "logic"
+}
+
+/// Files placed directly under `interfaces/` are rejected by R6a
+/// (`structure:loose-root-file`); an interface TD must live in a protocol
+/// subdir. Pick the subdir from the strongest protocol signal in the issue's
+/// concern label / title, defaulting to `rest`, so the dispatcher never derives
+/// a spec path that fails its own `aw td create --apply` validation (#460).
+fn interface_protocol_subdir(haystack: &str) -> &'static str {
+    let h = haystack.to_ascii_lowercase();
+    if h.contains("mcp") {
+        "interfaces/mcp"
+    } else if h.contains("grpc") {
+        "interfaces/grpc"
+    } else if h.contains("openrpc") || h.contains("jsonrpc") || h.contains("rpc") {
+        "interfaces/rpc"
+    } else if h.contains("cli") || h.contains("command") {
+        "interfaces/cli"
+    } else {
+        "interfaces/rest"
+    }
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
@@ -2093,7 +2106,14 @@ fn default_spec_path_for_issue(issue: &Issue, fallback_slug: &str, target_dir: &
     format!(".aw/tech-design/{}{}.md", target_dir, filename)
 }
 
-fn default_spec_path_for_issue_in_project(
+// Deterministic default spec path for `issue` — the same derivation `aw td
+// create` uses when no explicit `--spec-path` is given. Exposed at
+// `pub(crate)` (issue #854) as a last-resort fallback for the terminal
+// `aw td code-check` gate's own-spec resolution
+// (`resolve_slug_spec_paths` in cb.rs), used only when neither
+// `Issue.implements` nor a branch-diff-discovered spec
+// (`discover_worktree_spec`) can identify the completing slug's spec.
+pub(crate) fn default_spec_path_for_issue_in_project(
     project_root: &std::path::Path,
     issue: &Issue,
     fallback_slug: &str,
@@ -2175,20 +2195,23 @@ fn slugify_spec_filename(title: &str) -> String {
     trimmed[..cut].trim_end_matches('-').to_string()
 }
 
-fn section_payload_rel(slug: &str, pass: &str, section: &str) -> String {
-    format!(".aw/payloads/{}/{}/{}.md", slug, pass, section)
-}
-
-fn review_payload_rel(slug: &str, pass: &str) -> String {
-    format!(".aw/payloads/{}/{}/review.md", slug, pass)
-}
-
-fn initialize_td_payload_file(
+fn section_payload_path(
     project_root: &std::path::Path,
-    rel_path: &str,
-    content: &str,
-) -> Result<bool> {
-    let abs = project_root.join(rel_path);
+    slug: &str,
+    pass: &str,
+    section: &str,
+) -> String {
+    crate::shared::workspace::payloads_path(project_root)
+        .join("td")
+        .join(slug)
+        .join(pass)
+        .join(format!("{section}.json"))
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn initialize_td_payload_file(payload_path: &str, content: &str) -> Result<bool> {
+    let abs = std::path::Path::new(payload_path);
     if abs.exists() {
         return Ok(false);
     }
@@ -2196,7 +2219,7 @@ fn initialize_td_payload_file(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create payload directory {}", parent.display()))?;
     }
-    std::fs::write(&abs, content)
+    std::fs::write(abs, content)
         .with_context(|| format!("failed to write payload {}", abs.display()))?;
     Ok(true)
 }
@@ -2212,13 +2235,14 @@ fn td_section_payload_template(section: &str) -> Result<String> {
         "markdown" => "(fill)\n".to_string(),
         other => format!("```{}\n(fill)\n```\n", other),
     };
-    Ok(format!(
+    let section_body = format!(
         "## {}\n<!-- type: {} lang: {} -->\n\n{}",
         td_section_title(st.as_str()),
         st.as_str(),
         lang,
         body
-    ))
+    );
+    td_json_payload_template(section, section_body)
 }
 
 fn td_section_title(section: &str) -> String {
@@ -2247,11 +2271,265 @@ fn td_section_title(section: &str) -> String {
         .join(" ")
 }
 
-fn td_review_payload_template(round: u8) -> String {
+// ── JSON section payloads (Mermaid Plus contract/unit-test class, #1097) ──
+//
+// Hand-authoring a structured Mermaid Plus section duplicates facts: the
+// YAML frontmatter and the diagram body both encode the same
+// requirement -> verification-target relation. For the `unit-test` section
+// the agent now writes ONLY that requirements data as JSON; `aw td create
+// --apply` renders the YAML frontmatter presentation and a deterministic
+// `flowchart TD` diagram derived from each requirement's `verify` field.
+// Generic sections use a JSON `body` wrapper; structured section kinds can
+// define richer JSON schemas and renderers.
+
+/// Generic TD section payload. The JSON transport is uniform for all TD
+/// section files; section-specific structured payloads can still opt into a
+/// richer schema and renderer.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TdBodySectionPayload {
+    pub body: String,
+}
+
+/// Compact JSON schema example embedded directly in fill-loop dispatch text
+/// for JSON-payload sections — agents need the shape inline, not a pointer.
+fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
+    match section {
+        "unit-test" => Some(concat!(
+            r#"{"id":"<spec-id>-verification","requirements":{"#,
+            r#""<requirement_key>":{"id":"R1","text":"<requirement text>","#,
+            r#""kind":"functional|regression|...","risk":"low|medium|high","#,
+            r#""verify":"<concrete verification target, e.g. a test name>"}}}"#,
+            " — write ONLY this JSON. Never hand-write mermaid or YAML frontmatter ",
+            "for this section; the CLI renders the YAML frontmatter and a ",
+            "`flowchart TD` grouping requirements by their `verify` target."
+        )),
+        _ => None,
+    }
+}
+
+/// Reason text for the fill-loop dispatch envelope: for JSON-payload
+/// sections this embeds the compact inline schema (issue #1097 — agents
+/// need the shape inline, not a pointer); other sections keep the existing
+/// generic reason.
+fn td_section_fill_reason(section: &str) -> String {
+    match td_json_payload_schema_hint(section) {
+        Some(hint) => format!("fill the next TD section payload as JSON and apply it. {hint}"),
+        None => "fill the next TD section payload JSON and apply it. Expected shape: {\"body\":\"<complete section markdown>\"}".to_string(),
+    }
+}
+
+/// Attach an inline `payload_schema` hint to a dispatch envelope's `args`
+/// object when `section` is a JSON-payload section (issue #1097). No-op for
+/// every other section kind and for non-object `args` values.
+fn attach_json_payload_schema_hint(
+    mut args: serde_json::Value,
+    section: &str,
+) -> serde_json::Value {
+    if let Some(obj) = args.as_object_mut() {
+        let hint = td_json_payload_schema_hint(section)
+            .unwrap_or(r#"{"body":"<complete section markdown>"}"#);
+        obj.insert(
+            "payload_schema".to_string(),
+            serde_json::Value::String(hint.to_string()),
+        );
+    }
+    args
+}
+
+/// One requirement row of a `unit-test` JSON payload (#1097).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct UnitTestRequirement {
+    pub id: String,
+    pub text: String,
+    pub kind: String,
+    pub risk: String,
+    /// Concrete verification target (e.g. a test name). The rendered
+    /// diagram's requirement -> target edge is derived mechanically from
+    /// this field — it is never written separately.
+    pub verify: String,
+}
+
+/// `unit-test` section JSON payload: the data half of a Mermaid Plus
+/// contract/unit-test section. `aw td create --apply` renders this into the
+/// YAML-frontmatter + `flowchart TD` artifact form (#1097). `BTreeMap` keeps
+/// key order deterministic so `render_unit_test_section` is byte-stable.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct UnitTestSectionPayload {
+    pub id: String,
+    pub requirements: std::collections::BTreeMap<String, UnitTestRequirement>,
+}
+
+/// Placeholder JSON payload written when a JSON-payload section file does
+/// not exist yet (mirrors `td_section_payload_template`'s md/mermaid
+/// placeholder convention for the other section kinds).
+fn td_json_payload_template(section: &str, section_body: String) -> Result<String> {
+    match section {
+        "unit-test" => {
+            let mut requirements = std::collections::BTreeMap::new();
+            requirements.insert(
+                "example_requirement".to_string(),
+                UnitTestRequirement {
+                    id: "R1".to_string(),
+                    text: "(fill: requirement text)".to_string(),
+                    kind: "functional".to_string(),
+                    risk: "medium".to_string(),
+                    verify: "(fill: concrete verification target, e.g. a test name)".to_string(),
+                },
+            );
+            let payload = UnitTestSectionPayload {
+                id: "(fill: spec-id)-verification".to_string(),
+                requirements,
+            };
+            Ok(serde_json::to_string_pretty(&payload)?)
+        }
+        _ => Ok(serde_json::to_string_pretty(&TdBodySectionPayload {
+            body: section_body,
+        })?),
+    }
+}
+
+/// Sanitize a `verify` target string into a stable mermaid node identifier:
+/// lowercase, non-alphanumeric runs collapsed to a single `_`, trimmed of
+/// leading/trailing `_`, and `t_`-prefixed if empty or digit-led (mermaid
+/// node ids must not start with a digit).
+fn mermaid_node_id(raw: &str) -> String {
+    let mut id = String::new();
+    let mut last_was_sep = false;
+    for ch in raw.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            id.push(ch);
+            last_was_sep = false;
+        } else if !last_was_sep {
+            id.push('_');
+            last_was_sep = true;
+        }
+    }
+    let id = id.trim_matches('_').to_string();
+    if id.is_empty() || id.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        format!("t_{id}")
+    } else {
+        id
+    }
+}
+
+/// Ascending sort key for a requirement id such as `R1`/`R12`: the trailing
+/// numeric run parsed as `u64` (non-numeric ids sort last, deterministically,
+/// via `u64::MAX`).
+fn requirement_id_sort_key(id: &str) -> u64 {
+    let digits: String = id.chars().skip_while(|c| !c.is_ascii_digit()).collect();
+    digits.parse::<u64>().unwrap_or(u64::MAX)
+}
+
+/// Render a map key such as `help_surface` into a human-readable diagram
+/// label fragment (`help surface`).
+fn humanize_payload_key(key: &str) -> String {
+    key.replace(['_', '-'], " ")
+}
+
+/// Quote a YAML scalar the same way the motivating precedent does: always
+/// double-quoted so frontmatter text containing `:` or backticks parses
+/// unambiguously, with embedded `"` and `\` escaped.
+fn yaml_quoted_scalar(raw: &str) -> String {
+    let escaped = raw.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+/// Render a `unit-test` JSON payload into the full `## Heading` + Mermaid
+/// Plus section text: YAML frontmatter (deterministic `BTreeMap` key order)
+/// followed by a generated `flowchart TD` grouping requirements by their
+/// `verify` target — the CLI-rendered projection issue #1097 asks for,
+/// replacing hand-authored diagram syntax. Byte-deterministic for a given
+/// payload (AC2): requirements are visited in ascending numeric-id order,
+/// then grouped by `verify` target in order of first appearance so shared
+/// targets are listed together, matching the motivating hand-authored
+/// precedent's grouping exactly.
+fn render_unit_test_section(payload: &UnitTestSectionPayload) -> String {
+    let mut frontmatter = String::new();
+    frontmatter.push_str("---\n");
+    frontmatter.push_str(&format!("id: {}\n", payload.id));
+    frontmatter.push_str("requirements:\n");
+    for (key, req) in &payload.requirements {
+        frontmatter.push_str(&format!("  {key}:\n"));
+        frontmatter.push_str(&format!("    id: {}\n", req.id));
+        frontmatter.push_str(&format!("    text: {}\n", yaml_quoted_scalar(&req.text)));
+        frontmatter.push_str(&format!("    kind: {}\n", req.kind));
+        frontmatter.push_str(&format!("    risk: {}\n", req.risk));
+        frontmatter.push_str(&format!("    verify: {}\n", req.verify));
+    }
+    frontmatter.push_str("---\n");
+
+    let mut ordered: Vec<(&String, &UnitTestRequirement)> = payload.requirements.iter().collect();
+    ordered.sort_by_key(|(_, req)| (requirement_id_sort_key(&req.id), req.id.clone()));
+
+    let mut groups: Vec<(String, Vec<(&String, &UnitTestRequirement)>)> = Vec::new();
+    for (key, req) in ordered {
+        match groups.iter_mut().find(|(target, _)| *target == req.verify) {
+            Some((_, members)) => members.push((key, req)),
+            None => groups.push((req.verify.clone(), vec![(key, req)])),
+        }
+    }
+
+    let mut diagram = String::new();
+    diagram.push_str("flowchart TD\n");
+    for (target, members) in &groups {
+        let target_id = mermaid_node_id(target);
+        for (idx, (key, req)) in members.iter().enumerate() {
+            let req_id = mermaid_node_id(&req.id);
+            let req_label = format!("{} {}", req.id, humanize_payload_key(key));
+            if idx == 0 {
+                diagram.push_str(&format!(
+                    "    {req_id}[{req_label}] --> {target_id}[{target}]\n"
+                ));
+            } else {
+                diagram.push_str(&format!("    {req_id}[{req_label}] --> {target_id}\n"));
+            }
+        }
+    }
+
     format!(
-        "# Reviews\n\n### Review {}\n**Verdict:** <verdict>\n\n- [<section-type>] (fill)\n",
-        round
+        "## {}\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n{}{}```\n",
+        td_section_title("unit-test"),
+        frontmatter,
+        diagram,
     )
+}
+
+/// Render a JSON-payload section from its raw JSON text, or fail with a
+/// message that names the schema violation and points at the inline schema
+/// (AC1: hand-written mermaid/md payloads fail JSON parsing and are
+/// rejected this way rather than silently accepted).
+fn render_td_json_section_payload(section: &str, raw_json: &str) -> Result<String> {
+    match section {
+        "unit-test" => {
+            let payload: UnitTestSectionPayload =
+                serde_json::from_str(raw_json).map_err(|e| {
+                    anyhow::anyhow!(
+                        "'{section}' section payload must be JSON matching the schema (parse error: {e}). Expected shape: {}",
+                        td_json_payload_schema_hint(section).unwrap_or_default()
+                    )
+                })?;
+            if payload.requirements.is_empty() {
+                anyhow::bail!(
+                    "'{section}' section payload JSON is missing at least one `requirements` entry. Expected shape: {}",
+                    td_json_payload_schema_hint(section).unwrap_or_default()
+                );
+            }
+            Ok(render_unit_test_section(&payload))
+        }
+        _ => {
+            let payload: TdBodySectionPayload = serde_json::from_str(raw_json).map_err(|e| {
+                anyhow::anyhow!(
+                    "'{section}' section payload must be JSON matching the schema (parse error: {e}). Expected shape: {{\"body\":\"<complete section markdown>\"}}"
+                )
+            })?;
+            if payload.body.trim().is_empty() {
+                anyhow::bail!(
+                    "'{section}' section payload JSON field `body` must not be empty. Expected shape: {{\"body\":\"<complete section markdown>\"}}"
+                );
+            }
+            Ok(payload.body)
+        }
+    }
 }
 
 fn remaining_after_section(pass: &str, section: &str) -> Vec<String> {
@@ -2290,16 +2568,6 @@ fn remaining_after_section_in_queue(queue: Vec<String>, section: &str) -> Vec<St
 
 fn lifecycle_pass_phase(pass: &str) -> String {
     format!("td_{}_in_progress", pass.replace('-', "_"))
-}
-
-fn td_review_pass(raw: Option<&str>, issue_phase: &str) -> String {
-    match raw {
-        Some("applicability") => "applicability".to_string(),
-        Some("contract") => "contract".to_string(),
-        Some(other) if !other.trim().is_empty() => other.to_string(),
-        _ if issue_phase == "td_applicability_created" => "applicability".to_string(),
-        _ => "contract".to_string(),
-    }
 }
 
 /// Resolve the checkout-relative destination path for a `td claim`
@@ -2342,7 +2610,22 @@ fn preserve_or_derive_dest_rel(
 pub async fn run(args: TdArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
-        TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) | TdCommand::CodeCheck(_) => {}
+        TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) => {}
+        TdCommand::CodeCheck(a) => {
+            // Issue #856d: shared slug-vs-path classifier with cb.rs's
+            // `run_check` instead of a third copy of the same check (issue
+            // #860 removed the dead top-level `CbCommand::Check` arm this
+            // comment used to reference).
+            if let Some(target) = a.target.as_deref() {
+                if super::cb::code_check_target_is_slug(&project_root, target) {
+                    super::workflow_guard::guard_issue_mutation(
+                        &project_root,
+                        Some(("td", target)),
+                    )
+                    .await?;
+                }
+            }
+        }
         TdCommand::Validate(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
@@ -2364,32 +2647,20 @@ pub async fn run(args: TdArgs) -> Result<()> {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::Review(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
-        TdCommand::Revise(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
-        TdCommand::Merge(a) => {
-            super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
-                .await?;
-        }
         TdCommand::Fill(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) | TdCommand::CodeClaim(_) => {
+        TdCommand::MigrateMermaid(_)
+        | TdCommand::Claim(_)
+        | TdCommand::CodeClaim(_)
+        | TdCommand::Promote(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
     }
     match args.command {
         TdCommand::Create(a) => run_create(a).await,
         TdCommand::Validate(a) => run_validate(a).await,
-        TdCommand::Review(a) => run_review(a).await,
-        TdCommand::Revise(a) => run_revise(a).await,
-        TdCommand::Merge(a) => run_merge(a).await,
         TdCommand::Check(a) => run_check(a),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
@@ -2397,9 +2668,10 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Claim(a) => run_claim(a).await,
         TdCommand::Gen(a) => super::cb::run_gen(a).await,
         TdCommand::GenSource(a) => super::cb::run_gen_source(a),
-        TdCommand::CodeCheck(a) => super::cb::run_check(a),
+        TdCommand::CodeCheck(a) => super::cb::run_check(a).await,
         TdCommand::CodeClaim(a) => super::cb::run_claim(a).await,
         TdCommand::Fill(a) => super::cb_fill::run(a).await,
+        TdCommand::Promote(a) => run_promote(a),
     }
 }
 
@@ -2519,12 +2791,24 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         .spec_path
         .clone()
         .unwrap_or_else(|| default_spec_path_for_issue_in_project(&project_root, &issue, &slug));
+
+    // Issue #939: record the spec `aw td create` just provisioned/located
+    // for this issue in `Issue.implements`, so `cb.rs`'s tier-1
+    // `Issue.implements` scope resolution (#854, `resolve_slug_spec_paths`)
+    // has real data instead of always falling through to the tier-3
+    // derived-path guess. Idempotent by path so repeat brief calls (status
+    // checks between section fills) never duplicate the entry.
+    if !issue.implements.iter().any(|p| p == &spec_path) {
+        let mut issue_with_implements = issue.clone();
+        issue_with_implements.implements.push(spec_path.clone());
+        backend.write(&issue_with_implements).await?;
+    }
+
     let queue = td_section_queue(pass);
     let mut first_payload_created = None;
     if let Some(first_section) = queue.first() {
-        let expected_payload = section_payload_rel(&slug, pass, first_section);
+        let expected_payload = section_payload_path(&project_root, &slug, pass, first_section);
         first_payload_created = Some(initialize_td_payload_file(
-            &project_root,
             &expected_payload,
             &td_section_payload_template(first_section)?,
         )?);
@@ -2569,7 +2853,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         let first_section = queue.first().cloned();
         let payload_path = first_section
             .as_ref()
-            .map(|section| section_payload_rel(&slug, pass, section));
+            .map(|section| section_payload_path(&project_root, &slug, pass, section));
         let next = if let (Some(section), Some(payload)) =
             (first_section.as_ref(), payload_path.as_ref())
         {
@@ -2578,7 +2862,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
                     "aw td create {} --apply --phase {} --section {} --spec-path {}",
                     slug, pass, section, spec_path
                 ),
-                "fill the next TD section payload and apply it",
+                &td_section_fill_reason(section),
                 Some(payload),
             )
         } else {
@@ -2625,7 +2909,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!("## Target");
     println!();
     println!("Write the TD skeleton to `{}`.", spec_path);
-    println!("Then write exactly one section payload at a time as directed below.");
+    println!("Then fill exactly one initialized section payload at a time as directed below.");
     println!();
     println!("## Spec format");
     println!();
@@ -2704,6 +2988,21 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!();
     println!("Read `.aw/tech-design/AUTHORING.md` § Mermaid Plus Content Model for full examples.");
     println!();
+    println!("## Unit Test (JSON payload — CLI renders frontmatter + diagram)");
+    println!();
+    println!(
+        "Section type `unit-test` takes a JSON payload, not mermaid or YAML. Write ONLY the requirements data:"
+    );
+    println!();
+    println!(
+        "{}",
+        td_json_payload_schema_hint("unit-test").unwrap_or_default()
+    );
+    println!();
+    println!(
+        "`aw td create --apply` renders the YAML frontmatter and a `flowchart TD` diagram from this data — the diagram's requirement -> `verify` edges are derived mechanically, never hand-drawn. A hand-written mermaid/YAML payload for this section fails JSON parsing and is rejected with a pointer back to this schema."
+    );
+    println!();
     println!("## Rules");
     println!();
     println!("- Section type MUST match content (state-machine → stateDiagram-v2, not flowchart)");
@@ -2723,7 +3022,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     if let Some(first_section) = queue.first() {
         println!();
         println!("Next section payload:");
-        println!("  {}", section_payload_rel(&slug, pass, first_section));
+        println!(
+            "  {}",
+            section_payload_path(&project_root, &slug, pass, first_section)
+        );
         println!(
             "Payload: {}",
             if first_payload_created.unwrap_or(false) {
@@ -2747,10 +3049,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
 /// Apply mode: validate spec in-place, emit dispatch envelope for validate.
 ///
 /// When `--section X` is supplied, reads
-/// `.aw/payloads/<slug>/<section>.md` and merges ONLY that section
-/// into the spec file before validating (loop-fill path). When omitted,
-/// the caller is expected to have written the full spec directly — we
-/// just validate in-place.
+/// `/tmp/aw/workspaces/<workspace>/payloads/td/<slug>/<phase>/<section>.json` and
+/// merges ONLY that section into the spec file before validating
+/// (loop-fill path). When omitted, the caller is expected to have written
+/// the full spec directly — we just validate in-place.
 async fn run_create_apply(args: &CreateArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = &args.slug;
@@ -2771,23 +3073,28 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
     // Per-section merge path: read payload, merge into base spec, write back.
     if let Some(section) = args.section.as_deref() {
         let pass = td_authoring_pass(args.phase.as_deref());
-        let preferred_payload_rel = section_payload_rel(slug, pass, section);
-        let legacy_payload_rel = format!(".aw/payloads/{}/{}.md", slug, section);
-        let payload_rel = if worktree_abs.join(&preferred_payload_rel).exists() {
-            preferred_payload_rel
-        } else {
-            legacy_payload_rel
-        };
-        let payload_abs = worktree_abs.join(&payload_rel);
-        if !payload_abs.exists() {
+        let payload_path = section_payload_path(&project_root, slug, pass, section);
+        if !std::path::Path::new(&payload_path).exists() {
+            initialize_td_payload_file(&payload_path, &td_section_payload_template(section)?)?;
             let msg = format!(
-                "section payload not found: {} (write the per-section spec fragment there first)",
-                payload_abs.display()
+                "section payload was missing; initialized {}. Fill that file, then rerun this command.",
+                payload_path
             );
             return td_error(slug, msg);
         }
-        let payload_body =
-            std::fs::read_to_string(&payload_abs).context("failed to read section payload")?;
+        let payload_abs = std::path::Path::new(&payload_path);
+        let payload_body_raw =
+            std::fs::read_to_string(payload_abs).context("failed to read section payload")?;
+        // TD section payloads are always JSON. Generic sections carry a
+        // `body` field containing the complete section markdown; structured
+        // sections such as `unit-test` use a section-specific schema and are
+        // rendered here before the unchanged `merge_spec_section` splice.
+        let payload_body = match render_td_json_section_payload(section, &payload_body_raw) {
+            Ok(rendered) => rendered,
+            Err(e) => {
+                return td_error(slug, e.to_string());
+            }
+        };
         let base_body = if spec_abs.exists() {
             std::fs::read_to_string(&spec_abs).context("failed to read base spec")?
         } else {
@@ -2920,7 +3227,11 @@ async fn complete_section_apply(
                 },
             )
             .await?;
-        let expected_payload = section_payload_rel(slug, pass, next_section);
+        let expected_payload = section_payload_path(project_root, slug, pass, next_section);
+        initialize_td_payload_file(
+            &expected_payload,
+            &td_section_payload_template(next_section)?,
+        )?;
         let expected_command = format!(
             "aw td create {} --apply --phase {} --section {} --spec-path {}",
             slug, pass, next_section, spec_path
@@ -2928,7 +3239,7 @@ async fn complete_section_apply(
         super::workflow_guard::create_issue_lock(
             &worktree_abs,
             &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
-                .with_expected_payload(expected_payload)
+                .with_expected_payload(expected_payload.clone())
                 .with_active_phase(active_phase.clone())
                 .with_active_branch(active_branch)
                 .with_current_section(next_section.clone())
@@ -2940,13 +3251,17 @@ async fn complete_section_apply(
             "Td-Section",
             active_phase,
             "aw td create",
-            serde_json::json!({
-                "slug": slug,
-                "apply": true,
-                "phase": pass,
-                "section": next_section,
-                "spec_path": spec_path,
-            }),
+            attach_json_payload_schema_hint(
+                serde_json::json!({
+                    "slug": slug,
+                    "apply": true,
+                    "phase": pass,
+                    "section": next_section,
+                    "spec_path": spec_path,
+                    "payload_path": expected_payload,
+                }),
+                next_section,
+            ),
         ))
     } else if pass == "applicability" {
         let active_phase = "td_applicability_created".to_string();
@@ -2961,16 +3276,42 @@ async fn complete_section_apply(
             .await?;
         super::workflow_guard::complete_issue_lock(&worktree_abs, slug, "td").await?;
         maybe_push_remote(&worktree_abs, &issue_path, slug).await?;
-        Some((
-            "Td-Applicability-Complete",
-            active_phase,
-            "aw td review",
-            serde_json::json!({
-                "slug": slug,
-                "phase": "applicability",
-                "spec_path": spec_path,
-            }),
-        ))
+        // Linear lifecycle (no review): start the contract pass at its first
+        // section, or go straight to gen when there are no contract sections.
+        match td_section_queue_for_spec(&worktree_abs, spec_path, "contract")
+            .into_iter()
+            .next()
+        {
+            Some(first) => {
+                let expected_payload = section_payload_path(project_root, slug, "contract", &first);
+                initialize_td_payload_file(
+                    &expected_payload,
+                    &td_section_payload_template(&first)?,
+                )?;
+                Some((
+                    "Td-Applicability-Complete",
+                    active_phase,
+                    "aw td create",
+                    attach_json_payload_schema_hint(
+                        serde_json::json!({
+                            "slug": slug,
+                            "apply": true,
+                            "phase": "contract",
+                            "section": first,
+                            "spec_path": spec_path,
+                            "payload_path": expected_payload,
+                        }),
+                        &first,
+                    ),
+                ))
+            }
+            None => Some((
+                "Td-Applicability-Complete",
+                active_phase,
+                "aw td gen",
+                serde_json::json!({ "slug": slug, "spec_path": spec_path }),
+            )),
+        }
     } else {
         super::workflow_guard::complete_issue_lock(&worktree_abs, slug, "td").await?;
         backend
@@ -2983,13 +3324,13 @@ async fn complete_section_apply(
             )
             .await?;
         maybe_push_remote(&worktree_abs, &issue_path, slug).await?;
+        // Linear lifecycle: contract sections complete -> straight to gen.
         Some((
             "Td-Contract-Complete",
             "td_created".to_string(),
-            "aw td review",
+            "aw td gen",
             serde_json::json!({
                 "slug": slug,
-                "phase": "contract",
                 "spec_path": spec_path,
             }),
         ))
@@ -3071,11 +3412,7 @@ async fn run_validate(args: ValidateArgs) -> Result<()> {
 
     let result = match phase {
         "td_inited" => handle_create_milestone(&args, &backend, &worktree_abs, &issue).await,
-        "td_created" | "td_revised" => {
-            handle_review_milestone(&args, &backend, &worktree_abs, &issue).await
-        }
-        "td_reviewed" => handle_revise_milestone(&args, &backend, &worktree_abs, &issue).await,
-        "td_merged" => handle_post_merge_lifecycle(&backend, &worktree_abs, &issue, slug).await,
+        "td_merged" => handle_terminal_lifecycle(&backend, &worktree_abs, &issue, slug).await,
         other => {
             let msg = format!("unexpected phase '{}' for td validate", other);
             print_envelope(&TdEnvelope::Error {
@@ -3091,13 +3428,12 @@ async fn run_validate(args: ValidateArgs) -> Result<()> {
     result
 }
 
-/// Post-merge lifecycle handler — invoked when `aw td validate` sees
-/// an issue already at phase `td_merged`. Implements R8 (backfill
-/// ship_commit from git log) and R4 placeholder (loop-close
-/// verification — deferred to follow-up issue F1 which extracts
-/// gen_code_capture).
+/// Terminal lifecycle handler — invoked when `aw td validate` sees an issue
+/// already at phase `td_merged`. Implements R8 (backfill ship_commit from git
+/// log) and R4 placeholder (loop-close verification — deferred to follow-up
+/// issue F1 which extracts gen_code_capture).
 /// @spec aw-td-validate-lifecycle-extension.md#logic
-async fn handle_post_merge_lifecycle(
+async fn handle_terminal_lifecycle(
     backend: &LocalBackend,
     worktree_abs: &std::path::Path,
     issue: &crate::issues::Issue,
@@ -3124,7 +3460,7 @@ async fn handle_post_merge_lifecycle(
             print_envelope(&TdEnvelope::Done {
                 slug,
                 message: &format!(
-                    "backfilled ship_commit={} (from Lifecycle-Stage: Td-Merge git log)",
+                    "backfilled ship_commit={} (from terminal lifecycle git log)",
                     &commit[..8.min(commit.len())]
                 ),
             })?;
@@ -3153,7 +3489,7 @@ async fn handle_post_merge_lifecycle(
     print_envelope(&TdEnvelope::Done {
         slug,
         message: &format!(
-            "tech-design merged; ship_status={}, ship_commit={}; \
+            "terminal code-check complete; ship_status={}, ship_commit={}; \
              loop-close verification (R4) deferred to follow-up F1",
             status, commit_short
         ),
@@ -3161,18 +3497,36 @@ async fn handle_post_merge_lifecycle(
     Ok(())
 }
 
-/// Walk `git log` in the worktree for the most recent commit whose
-/// message contains `Lifecycle-Stage: Td-Merge` for this slug, and
-/// return its hash. Used by R8 backfill.
+/// Walk `git log` in the worktree for the most recent terminal lifecycle commit
+/// for this slug, and return its hash. Used by R8 backfill. New commits use
+/// `Cb-CodeCheck`; commits from the removed `aw td merge` verb carry the
+/// legacy `Td-Merged` trailer, which [`lifecycle_trailer::normalize`]
+/// accepts as an alias — see [`lifecycle_trailer::body_has_stage_trailer`]
+/// (issue #853).
+///
+/// The `--grep` argument below is only a coarse, best-effort pre-filter to
+/// keep `git log` from scanning unrelated commits; git's grep is a
+/// substring/regex match, so it can over-include commits for a
+/// prefix-colliding slug (e.g. slug `41`'s pre-filter also matches slug
+/// `412`'s commits). Correctness comes from the per-commit exact-line check
+/// via [`lifecycle_trailer::body_has_slug_trailer`], not from `--grep`.
 /// @spec aw-td-validate-lifecycle-extension.md#logic
 fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Result<Option<String>> {
+    use crate::issues::types::lifecycle_trailer;
+
     let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git not found"))?;
-    let needle = format!("Lifecycle-Stage: Td-Merge");
     let slug_needle = format!("Lifecycle-Slug: {}", slug);
     let output = std::process::Command::new(&git_bin)
         .arg("-C")
         .arg(worktree_abs)
-        .args(["log", "--format=%H%x00%B%x1e", "--all", "--grep", &needle])
+        .args([
+            "log",
+            "--format=%H%x00%B%x1e",
+            "--all",
+            "--fixed-strings",
+            "--grep",
+            &slug_needle,
+        ])
         .output()
         .context("git log failed")?;
     if !output.status.success() {
@@ -3187,7 +3541,9 @@ fn find_ship_commit_from_log(worktree_abs: &std::path::Path, slug: &str) -> Resu
         let mut parts = entry.splitn(2, '\x00');
         let hash = parts.next().unwrap_or("").trim();
         let body = parts.next().unwrap_or("");
-        if body.contains(&slug_needle) {
+        if lifecycle_trailer::body_has_slug_trailer(body, slug)
+            && lifecycle_trailer::body_has_stage_trailer(body, lifecycle_trailer::CB_CODE_CHECK)
+        {
             return Ok(Some(hash.to_string()));
         }
     }
@@ -3343,223 +3699,12 @@ async fn handle_create_milestone(
         &[spec_path, issue_path_s.as_str()],
     )?;
 
-    // Dispatch reviewer
+    // Linear lifecycle: after create, go straight to gen (no review).
     print_envelope(&TdEnvelope::Dispatch {
         agent: None,
         slug,
         invoke: Invoke {
-            command: "aw td review",
-            args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-        },
-    })?;
-
-    Ok(())
-}
-
-/// td_created/td_revised → td_reviewed: read review, dispatch by verdict.
-async fn handle_review_milestone(
-    args: &ValidateArgs,
-    backend: &LocalBackend,
-    worktree_path: &std::path::Path,
-    issue: &crate::issues::Issue,
-) -> Result<()> {
-    let slug = &args.slug;
-    let spec_path = args
-        .spec_path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--spec-path required"))?;
-
-    let issue_path_s = issue_path_arg(backend, issue);
-    let issue_path = std::path::PathBuf::from(&issue_path_s);
-
-    // Guard: must have uncommitted changes (reviewer wrote something)
-    if !worktree_has_uncommitted_change(worktree_path, spec_path)? {
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: "no review detected — spec unchanged since last commit; \
-                      reviewer may have crashed. Re-dispatch aw-td-reviewer.",
-        })?;
-        return Ok(());
-    }
-
-    // Read spec and look for # Reviews section with verdict
-    let content = std::fs::read_to_string(worktree_path.join(spec_path))?;
-    let verdict = parse_td_review_verdict(&content);
-
-    let prior_count = issue.review_count.unwrap_or(0);
-    let new_count = prior_count.saturating_add(1);
-
-    let patch = IssuePatch {
-        phase: Some("td_reviewed".to_string()),
-        review_count: Some(new_count),
-        validation_errors: Some(vec![]),
-        ..Default::default()
-    };
-    backend.update(slug, &patch).await?;
-
-    let detail = match &verdict {
-        ReviewVerdict::Approved => format!("approved (review #{})", new_count),
-        ReviewVerdict::NeedsRevision => format!("needs-revision (review #{})", new_count),
-    };
-    maybe_push_remote(worktree_path, &issue_path, slug).await?;
-    commit_lifecycle(
-        worktree_path,
-        slug,
-        &detail,
-        "Td-Review",
-        &[spec_path, issue_path_s.as_str()],
-    )?;
-
-    match verdict {
-        ReviewVerdict::Approved => {
-            // Safety net: verify spec is codegen-ready before merging
-            let cg_errors = check_codegen_ready(&content);
-            if !cg_errors.is_empty() {
-                eprintln!("Codegen-ready check failed (safety net at review approval):");
-                for e in &cg_errors {
-                    eprintln!("  - {}", e);
-                }
-                let msg = format!(
-                    "approved but not codegen-ready ({} errors): {}. \
-                     Re-dispatch author to fix Mermaid Plus frontmatter.",
-                    cg_errors.len(),
-                    cg_errors.join("; ")
-                );
-                print_envelope(&TdEnvelope::Error {
-                    slug,
-                    message: &msg,
-                })?;
-                return Ok(());
-            }
-
-            print_envelope(&TdEnvelope::Dispatch {
-                agent: None,
-                slug,
-                invoke: Invoke {
-                    command: "aw td gen",
-                    args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-                },
-            })?;
-        }
-        ReviewVerdict::NeedsRevision if new_count == 1 => {
-            print_envelope(&TdEnvelope::Dispatch {
-                agent: None,
-                slug,
-                invoke: Invoke {
-                    command: "aw td revise",
-                    args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-                },
-            })?;
-        }
-        ReviewVerdict::NeedsRevision if new_count == 2 => {
-            print_envelope(&TdEnvelope::Dispatch {
-                agent: None,
-                slug,
-                invoke: Invoke {
-                    command: "aw td revise",
-                    args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-                },
-            })?;
-        }
-        ReviewVerdict::NeedsRevision => {
-            print_envelope(&TdEnvelope::Error {
-                slug,
-                message: &format!(
-                    "invariant violation: review_count={} exceeds ceiling",
-                    new_count
-                ),
-            })?;
-        }
-    }
-
-    Ok(())
-}
-
-/// td_reviewed → td_revised: verify revision (uncommitted OR mainthread takeover
-/// commit), validate, advance phase, commit (when subagent path), dispatch
-/// reviewer for round 2.
-///
-/// @spec .aw/tech-design/projects/score/specs/aw-td-revise-payload-merge-and-takeover.md#logic-revise-milestone-takeover-guard
-async fn handle_revise_milestone(
-    args: &ValidateArgs,
-    backend: &LocalBackend,
-    worktree_path: &std::path::Path,
-    _issue: &crate::issues::Issue,
-) -> Result<()> {
-    let slug = &args.slug;
-    let spec_path = args
-        .spec_path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--spec-path required"))?;
-
-    let issue_path_s = issue_path_arg(backend, _issue);
-    let issue_path = std::path::PathBuf::from(&issue_path_s);
-
-    // Guard: revision must exist somewhere — either uncommitted (subagent
-    // wrote the spec, validate is the sole commit point) OR already committed
-    // by mainthread takeover (subagent failed; mainthread did the work and
-    // committed with the proper Lifecycle-Stage trailer per CLAUDE.md
-    // [retry=2 takeover] pattern). Accepting the takeover commit makes
-    // validate idempotent w.r.t. recovery — re-running it after a successful
-    // takeover dispatches the next phase instead of erroring.
-    let has_uncommitted = worktree_has_uncommitted_change(worktree_path, spec_path)?;
-    let already_committed_takeover =
-        !has_uncommitted && head_is_takeover_revise(worktree_path, spec_path)?;
-    if !has_uncommitted && !already_committed_takeover {
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: "no revision detected — spec unchanged since last commit and HEAD \
-                      is not a takeover revise commit. Re-dispatch aw-td-reviser, or \
-                      mainthread-takeover by editing the spec and committing with trailer \
-                      'Lifecycle-Stage: Td-Revise'.",
-        })?;
-        return Ok(());
-    }
-
-    let spec_abs = worktree_path.join(spec_path);
-    let report = validate_td_content_file(&spec_abs, TdContentValidationScope::Complete)?;
-    if report.has_errors() {
-        let errors = td_content_error_messages(&report);
-        if has_uncommitted {
-            rollback_worktree_file(worktree_path, spec_path)?;
-        }
-        print_td_content_errors("Revised TD content validation errors", &report);
-        let msg = format!("revision validation failed: {}", errors.join("; "));
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    let patch = IssuePatch {
-        phase: Some("td_revised".to_string()),
-        flagged_sections: Some(vec![]),
-        validation_errors: Some(vec![]),
-        ..Default::default()
-    };
-    backend.update(slug, &patch).await?;
-
-    if already_committed_takeover {
-        // Mainthread already committed the revise; advance phase + dispatch
-        // reviewer without making another commit. Idempotent.
-    } else {
-        maybe_push_remote(worktree_path, &issue_path, slug).await?;
-        commit_lifecycle(
-            worktree_path,
-            slug,
-            "revised",
-            "Td-Revise",
-            &[spec_path, issue_path_s.as_str()],
-        )?;
-    }
-
-    // Dispatch reviewer (round 2)
-    print_envelope(&TdEnvelope::Dispatch {
-        agent: None,
-        slug,
-        invoke: Invoke {
-            command: "aw td review",
+            command: "aw td gen",
             args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
         },
     })?;
@@ -3568,27 +3713,6 @@ async fn handle_revise_milestone(
 }
 
 // ── Review verdict parsing ───────────────────────────────────────────
-
-enum ReviewVerdict {
-    Approved,
-    NeedsRevision,
-}
-
-/// Parse review verdict from spec content. Looks for `# Reviews` section
-/// with `**Verdict:** approved` or `**Verdict:** needs-revision`.
-fn parse_td_review_verdict(content: &str) -> ReviewVerdict {
-    let reviews_start = content.find("# Reviews");
-    if let Some(start) = reviews_start {
-        let reviews_section = &content[start..];
-        if reviews_section.contains("**Verdict:** approved")
-            || reviews_section.contains("**Verdict**: approved")
-            || reviews_section.contains("Verdict: approved")
-        {
-            return ReviewVerdict::Approved;
-        }
-    }
-    ReviewVerdict::NeedsRevision
-}
 
 // ── Git helpers ──────────────────────────────────────────────────────
 
@@ -3603,984 +3727,9 @@ fn rollback_worktree_file(worktree_path: &std::path::Path, rel_path: &str) -> Re
     Ok(())
 }
 
-fn worktree_has_uncommitted_change(
-    worktree_path: &std::path::Path,
-    rel_path: &str,
-) -> Result<bool> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    let output = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["diff", "--name-only", "HEAD", "--", rel_path])
-        .output()
-        .context("git diff failed")?;
-    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
-}
-
-/// Detect whether HEAD is a mainthread-takeover revise commit. Returns true
-/// when (i) HEAD's commit message body contains `Lifecycle-Stage: Td-Revise`
-/// AND (ii) `rel_path` was modified between HEAD~1 and HEAD. This lets
-/// `handle_revise_milestone` accept a takeover commit as a valid revision
-/// without forcing the strict "validate is sole commit point" invariant
-/// to break the documented [retry=2 takeover] recovery path.
-///
-/// /// @spec .aw/tech-design/projects/score/specs/aw-td-revise-payload-merge-and-takeover.md#logic-revise-milestone-takeover-guard
-fn head_is_takeover_revise(worktree_path: &std::path::Path, rel_path: &str) -> Result<bool> {
-    let git_bin = crate::git::find_git_bin()
-        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-
-    // (i) HEAD message contains the revise trailer.
-    let log = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["log", "-1", "--format=%B"])
-        .output()
-        .context("git log -1 failed")?;
-    if !log.status.success() {
-        return Ok(false);
-    }
-    let body = String::from_utf8_lossy(&log.stdout);
-    if !body.contains("Lifecycle-Stage: Td-Revise") {
-        return Ok(false);
-    }
-
-    // (ii) rel_path was modified in HEAD vs HEAD~1.
-    let diff = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree_path)
-        .args(["diff", "--name-only", "HEAD~1", "HEAD", "--", rel_path])
-        .output()
-        .context("git diff HEAD~1 HEAD failed")?;
-    if !diff.status.success() {
-        return Ok(false);
-    }
-    Ok(!String::from_utf8_lossy(&diff.stdout).trim().is_empty())
-}
-
-/// Extract flagged section types from review findings.
-/// Looks for patterns like `- [overview]`, `- [logic]`, etc.
-fn extract_flagged_sections(reviews_text: &str) -> Vec<String> {
-    let mut flagged = Vec::new();
-    for line in reviews_text.lines() {
-        let trimmed = line.trim();
-        let rest = if let Some(r) = trimmed.strip_prefix("- [") {
-            r
-        } else if let Some(r) = trimmed.strip_prefix("* [") {
-            r
-        } else {
-            continue;
-        };
-        if let Some(close) = rest.find(']') {
-            let section = rest[..close].trim().to_lowercase();
-            if !section.is_empty() && !flagged.contains(&section) {
-                flagged.push(section);
-            }
-        }
-    }
-    flagged
-}
-
 // ── td review ───────────────────────────────────────────────────────
 
-async fn run_review(args: ReviewArgs) -> Result<()> {
-    if args.apply {
-        run_review_apply(&args).await
-    } else {
-        run_review_brief(&args).await
-    }
-}
-
-/// Brief mode: print spec content + review guidelines for the reviewer agent.
-async fn run_review_brief(args: &ReviewArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = &args.slug;
-    let spec_path = args
-        .spec_path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--spec-path is required"))?;
-
-    td_activate_inplace_allowing_dirty_spec_path(&project_root, slug, spec_path)?;
-    let worktree_abs = td_workspace_path(&project_root, slug);
-    if !worktree_abs.exists() {
-        anyhow::bail!("workspace not found: {}", worktree_abs.display());
-    }
-
-    let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found", slug))?;
-
-    let phase = issue.phase.as_deref().unwrap_or("");
-    let pass = td_review_pass(args.phase.as_deref(), phase);
-    let expected_phases: &[&str] = if pass == "applicability" {
-        &["td_applicability_created"]
-    } else {
-        &["td_created", "td_revised"]
-    };
-    if !expected_phases.contains(&phase) {
-        anyhow::bail!(
-            "issue '{}' has phase '{}', expected {} for {} review",
-            slug,
-            phase,
-            expected_phases.join(" or "),
-            pass
-        );
-    }
-
-    let spec_abs = worktree_abs.join(spec_path);
-    if !spec_abs.exists() {
-        anyhow::bail!("spec file not found: {}", spec_abs.display());
-    }
-
-    let spec_content = std::fs::read_to_string(&spec_abs)?;
-    let round = issue.review_count.unwrap_or(0) + 1;
-    let active_branch = crate::branch_switch::current_branch(&worktree_abs).unwrap_or_default();
-    let already_locked = super::workflow_guard::parse_projection(&issue.body)
-        .map(|projection| projection.locked)
-        .unwrap_or(false);
-    let review_payload = review_payload_rel(slug, &pass);
-    let review_payload_created = initialize_td_payload_file(
-        &worktree_abs,
-        &review_payload,
-        &td_review_payload_template(round),
-    )?;
-    if !already_locked {
-        let expected_command = format!(
-            "aw td review {} --apply --phase {} --spec-path {}",
-            slug, pass, spec_path
-        );
-        super::workflow_guard::create_issue_lock(
-            &worktree_abs,
-            &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
-                .with_expected_payload(review_payload.clone())
-                .with_active_phase(phase)
-                .with_active_branch(active_branch)
-                .with_current_section(format!("{pass}-review"))
-                .with_dirty_paths([spec_path.to_string()]),
-        )
-        .await?;
-        let issue_path_s = issue_path_arg(&backend, &issue);
-        commit_lifecycle_with_extra(
-            &worktree_abs,
-            slug,
-            &format!("{pass} review queued"),
-            "Td-Review-Queue",
-            &[issue_path_s.as_str()],
-            &[
-                ("Lifecycle-Phase", phase),
-                ("Lifecycle-Pass", &pass),
-                ("TD-Section", "review"),
-                ("Next-Command", "see WI workflow projection"),
-            ],
-        )?;
-    }
-
-    if !args.human {
-        let command = format!(
-            "aw td review {} --apply --phase {} --spec-path {}",
-            slug, pass, spec_path
-        );
-        let env = serde_json::json!({
-            "action": "dispatch",
-            "agent": null,
-            "slug": slug,
-            "next": next_dispatch(
-                command.clone(),
-                "complete the TD review payload and apply it",
-                Some(&review_payload),
-            ),
-            "payload_initialized": review_payload_created,
-            "target": {
-                "spec_path": spec_path,
-                "pass": pass,
-                "round": round,
-                "issue_file": backend.issue_path(&issue).to_string_lossy(),
-            },
-            "invoke": {
-                "command": "aw td review",
-                "args": {
-                    "slug": slug,
-                    "phase": pass,
-                    "spec_path": spec_path,
-                    "round": round,
-                    "payload_path": review_payload,
-                },
-            },
-        });
-        print_json_value(&env, args.pretty)?;
-        let _ = args.json;
-        return Ok(());
-    }
-
-    println!("# aw-td-reviewer brief");
-    println!();
-    println!("Issue:      {} ({})", slug, issue.title);
-    println!("Checkout:   {}", worktree_abs.display());
-    println!("Spec file:  {}", spec_path);
-    println!("Pass:       {}", pass);
-    println!("Round:      {}", round);
-    println!();
-    println!("## Task");
-    println!();
-    println!("Review the tech-design spec below. Evaluate each section for:");
-    println!("- Correctness: does the section accurately describe the design?");
-    println!("- Completeness: are all necessary details included?");
-    println!("- Consistency: do sections reference each other correctly?");
-    println!("- Clarity: is the spec machine-readable and unambiguous?");
-    println!();
-    if round > 1 {
-        println!(
-            "This is round {}. Focus on whether the reviser addressed prior findings.",
-            round
-        );
-        println!("Read the previous review in the `# Reviews` section below.");
-        println!();
-    }
-    println!("## Output");
-    println!();
-    println!("Write the review payload to `{}`.", review_payload);
-    println!(
-        "Payload: {}.",
-        if review_payload_created {
-            "initialized"
-        } else {
-            "existing"
-        }
-    );
-    println!("The CLI will append it to the spec when the expected command runs.");
-    println!();
-    println!("```markdown");
-    println!("# Reviews");
-    println!();
-    println!("### Review {}", round);
-    println!("**Verdict:** approved|needs-revision");
-    println!();
-    println!("- [<section-type>] <finding \u{2014} concrete suggestion>");
-    println!("- [<section-type>] <finding \u{2014} concrete suggestion>");
-    println!("```");
-    println!();
-    println!("Where `<section-type>` matches the spec's fill_sections (e.g., logic,");
-    println!("cli, unit-test, e2e-test, changes).");
-    println!("For `needs-revision`, include at least one `[section-type]` finding.");
-    println!();
-    println!("### Verdict calibration");
-    println!();
-    println!("- `approved` if spec is clear, correct, and complete enough to implement from.");
-    println!("- `needs-revision` if any section has errors, omissions, or inconsistencies");
-    println!("  that would cause ambiguity during implementation.");
-    println!("- Stylistic nits alone do not warrant `needs-revision`.");
-    println!();
-    println!("## When done");
-    println!();
-    println!(
-        "Run: aw td review {} --apply --phase {} --spec-path {}",
-        slug, pass, spec_path
-    );
-    println!();
-    println!("## Spec content");
-    println!();
-    println!("{}", spec_content);
-
-    if !issue.body.is_empty() {
-        println!();
-        println!("## Issue context");
-        println!();
-        println!("{}", issue.body);
-    }
-
-    Ok(())
-}
-
-/// Apply mode: validate review format, emit dispatch → validate.
-async fn run_review_apply(args: &ReviewArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = &args.slug;
-    let spec_path = args
-        .spec_path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--spec-path is required with --apply"))?;
-
-    td_activate_inplace_allowing_dirty_spec_path(&project_root, slug, spec_path)?;
-    let worktree_abs = td_workspace_path(&project_root, slug);
-    if !worktree_abs.exists() {
-        anyhow::bail!("workspace not found: {}", worktree_abs.display());
-    }
-
-    let spec_abs = worktree_abs.join(spec_path);
-    let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found", slug))?;
-    let issue_phase = issue.phase.as_deref().unwrap_or("");
-    let pass = td_review_pass(args.phase.as_deref(), issue_phase);
-    let mut content = std::fs::read_to_string(&spec_abs).context("failed to read spec file")?;
-
-    if args.phase.is_some() {
-        let payload_rel = review_payload_rel(slug, &pass);
-        let payload_abs = worktree_abs.join(&payload_rel);
-        if !payload_abs.exists() {
-            let msg = format!(
-                "review payload not found: {} (write the review there first)",
-                payload_abs.display()
-            );
-            print_envelope(&TdEnvelope::Error {
-                slug,
-                message: &msg,
-            })?;
-            return Ok(());
-        }
-        let payload = std::fs::read_to_string(&payload_abs)
-            .with_context(|| format!("failed to read review payload {}", payload_abs.display()))?;
-        if !content.ends_with('\n') {
-            content.push('\n');
-        }
-        if !content.contains("# Reviews") && !payload.contains("# Reviews") {
-            content.push_str("\n# Reviews\n\n");
-        } else {
-            content.push('\n');
-        }
-        content.push_str(payload.trim());
-        content.push('\n');
-        std::fs::write(&spec_abs, &content).context("failed to append review payload")?;
-        let _ = std::fs::remove_file(&payload_abs);
-    }
-
-    // Validate review section exists
-    if content.find("# Reviews").is_none() {
-        let msg =
-            "spec has no '# Reviews' section \u{2014} append your review before running --apply";
-        print_envelope(&TdEnvelope::Error { slug, message: msg })?;
-        return Ok(());
-    }
-
-    // Validate verdict line exists
-    let has_verdict = content.contains("**Verdict:** approved")
-        || content.contains("**Verdict:** needs-revision")
-        || content.contains("**Verdict**: approved")
-        || content.contains("**Verdict**: needs-revision");
-
-    if !has_verdict {
-        let msg = "review missing verdict line \u{2014} add '**Verdict:** approved' or '**Verdict:** needs-revision'";
-        print_envelope(&TdEnvelope::Error { slug, message: msg })?;
-        return Ok(());
-    }
-
-    // For needs-revision, require at least one [section-type] finding
-    let verdict = parse_td_review_verdict(&content);
-    if matches!(verdict, ReviewVerdict::NeedsRevision) {
-        let reviews_start = content.find("# Reviews").unwrap_or(0);
-        let flagged = extract_flagged_sections(&content[reviews_start..]);
-        if flagged.is_empty() {
-            let msg = "needs-revision verdict requires at least one [section-type] finding";
-            print_envelope(&TdEnvelope::Error { slug, message: msg })?;
-            return Ok(());
-        }
-    }
-
-    if args.phase.is_some() {
-        complete_phase_review_apply(&worktree_abs, slug, spec_path, &issue, &pass, &content)
-            .await?;
-        return Ok(());
-    }
-
-    super::workflow_guard::create_issue_lock(
-        &worktree_abs,
-        &super::workflow_guard::TransitionLock::new(
-            slug,
-            "td",
-            format!("aw td validate {} --spec-path {}", slug, spec_path),
-        )
-        .with_phase_from("td_created")
-        .with_dirty_paths([spec_path.to_string()]),
-    )
-    .await?;
-
-    // Emit dispatch → validate
-    print_envelope(&TdEnvelope::Dispatch {
-        agent: None,
-        slug,
-        invoke: Invoke {
-            command: "aw td validate",
-            args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-        },
-    })?;
-
-    Ok(())
-}
-
-async fn complete_phase_review_apply(
-    worktree_abs: &std::path::Path,
-    slug: &str,
-    spec_path: &str,
-    issue: &crate::issues::Issue,
-    pass: &str,
-    content: &str,
-) -> Result<()> {
-    let backend = LocalBackend::from_project_root(worktree_abs);
-    let verdict = parse_td_review_verdict(content);
-    let issue_path = backend.issue_path(issue);
-    let issue_path_s = issue_path.to_string_lossy().into_owned();
-    let active_branch = crate::branch_switch::current_branch(worktree_abs).unwrap_or_default();
-
-    match (pass, verdict) {
-        ("applicability", ReviewVerdict::Approved) => {
-            let contract = "contract";
-            let contract_queue = td_section_queue_for_spec(worktree_abs, spec_path, contract);
-            let next_section = contract_queue
-                .first()
-                .ok_or_else(|| anyhow::anyhow!("contract section queue is empty"))?;
-            let active_phase = lifecycle_pass_phase(contract);
-            backend
-                .update(
-                    slug,
-                    &IssuePatch {
-                        phase: Some(active_phase.clone()),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            let expected_payload = section_payload_rel(slug, contract, next_section);
-            let expected_command = format!(
-                "aw td create {} --apply --phase {} --section {} --spec-path {}",
-                slug, contract, next_section, spec_path
-            );
-            super::workflow_guard::create_issue_lock(
-                worktree_abs,
-                &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
-                    .with_expected_payload(expected_payload)
-                    .with_active_phase(active_phase.clone())
-                    .with_active_branch(active_branch)
-                    .with_current_section(next_section.clone())
-                    .with_remaining_sections(contract_queue.iter().skip(1).cloned())
-                    .with_dirty_paths([spec_path.to_string()]),
-            )
-            .await?;
-            maybe_push_remote(worktree_abs, &issue_path, slug).await?;
-            commit_lifecycle_with_extra(
-                worktree_abs,
-                slug,
-                "applicability review approved",
-                "Td-Applicability-Review",
-                &[spec_path, issue_path_s.as_str()],
-                &[
-                    ("Lifecycle-Phase", active_phase.as_str()),
-                    ("Lifecycle-Pass", "applicability"),
-                    ("TD-Section", "review"),
-                    ("Previous-Phase", issue.phase.as_deref().unwrap_or("")),
-                    ("Next-Phase", active_phase.as_str()),
-                    ("Next-Command", "aw td create"),
-                ],
-            )?;
-            print_envelope(&TdEnvelope::Dispatch {
-                agent: None,
-                slug,
-                invoke: Invoke {
-                    command: "aw td create",
-                    args: serde_json::json!({
-                        "slug": slug,
-                        "apply": true,
-                        "phase": contract,
-                        "section": next_section,
-                        "spec_path": spec_path,
-                    }),
-                },
-            })?;
-        }
-        ("applicability", ReviewVerdict::NeedsRevision) => {
-            let next_section = first_flagged_or_first_section(content, "applicability")
-                .ok_or_else(|| anyhow::anyhow!("applicability section queue is empty"))?;
-            create_section_revision_lock(
-                worktree_abs,
-                slug,
-                spec_path,
-                "applicability",
-                &next_section,
-                &active_branch,
-            )
-            .await?;
-            let active_phase = lifecycle_pass_phase("applicability");
-            backend
-                .update(
-                    slug,
-                    &IssuePatch {
-                        phase: Some(active_phase.clone()),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            maybe_push_remote(worktree_abs, &issue_path, slug).await?;
-            commit_lifecycle_with_extra(
-                worktree_abs,
-                slug,
-                "applicability review needs revision",
-                "Td-Applicability-Review",
-                &[spec_path, issue_path_s.as_str()],
-                &[
-                    ("Lifecycle-Phase", active_phase.as_str()),
-                    ("Lifecycle-Pass", "applicability"),
-                    ("TD-Section", "review"),
-                    ("Previous-Phase", issue.phase.as_deref().unwrap_or("")),
-                    ("Next-Phase", active_phase.as_str()),
-                    ("Next-Command", "aw td create"),
-                ],
-            )?;
-            print_envelope(&TdEnvelope::Dispatch {
-                agent: None,
-                slug,
-                invoke: Invoke {
-                    command: "aw td create",
-                    args: serde_json::json!({
-                        "slug": slug,
-                        "apply": true,
-                        "phase": "applicability",
-                        "section": next_section,
-                        "spec_path": spec_path,
-                    }),
-                },
-            })?;
-        }
-        (_, ReviewVerdict::Approved) => {
-            let cg_errors = check_codegen_ready(content);
-            if !cg_errors.is_empty() {
-                let msg = format!(
-                    "approved but not codegen-ready ({} errors): {}",
-                    cg_errors.len(),
-                    cg_errors.join("; ")
-                );
-                print_envelope(&TdEnvelope::Error {
-                    slug,
-                    message: &msg,
-                })?;
-                return Ok(());
-            }
-            let prior_count = issue.review_count.unwrap_or(0);
-            let new_count = prior_count.saturating_add(1);
-            backend
-                .update(
-                    slug,
-                    &IssuePatch {
-                        phase: Some("td_reviewed".to_string()),
-                        review_count: Some(new_count),
-                        validation_errors: Some(vec![]),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            super::workflow_guard::complete_issue_lock(worktree_abs, slug, "td").await?;
-            maybe_push_remote(worktree_abs, &issue_path, slug).await?;
-            commit_lifecycle_with_extra(
-                worktree_abs,
-                slug,
-                &format!("contract review approved (review #{new_count})"),
-                "Td-Review",
-                &[spec_path, issue_path_s.as_str()],
-                &[
-                    ("Lifecycle-Phase", "td_reviewed"),
-                    ("Lifecycle-Pass", "contract"),
-                    ("TD-Section", "review"),
-                    ("Previous-Phase", issue.phase.as_deref().unwrap_or("")),
-                    ("Next-Phase", "td_reviewed"),
-                    ("Next-Command", "aw td gen"),
-                ],
-            )?;
-            print_envelope(&TdEnvelope::Dispatch {
-                agent: None,
-                slug,
-                invoke: Invoke {
-                    command: "aw td gen",
-                    args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-                },
-            })?;
-        }
-        (_, ReviewVerdict::NeedsRevision) => {
-            let prior_count = issue.review_count.unwrap_or(0);
-            let new_count = prior_count.saturating_add(1);
-            if new_count >= 2 {
-                backend
-                    .update(
-                        slug,
-                        &IssuePatch {
-                            phase: Some("td_reviewed".to_string()),
-                            review_count: Some(new_count),
-                            ..Default::default()
-                        },
-                    )
-                    .await?;
-                super::workflow_guard::complete_issue_lock(worktree_abs, slug, "td").await?;
-                maybe_push_remote(worktree_abs, &issue_path, slug).await?;
-                commit_lifecycle_with_extra(
-                    worktree_abs,
-                    slug,
-                    &format!("contract review needs arbitration (review #{new_count})"),
-                    "Td-Review",
-                    &[spec_path, issue_path_s.as_str()],
-                    &[
-                        ("Lifecycle-Phase", "td_reviewed"),
-                        ("Lifecycle-Pass", "contract"),
-                        ("TD-Section", "review"),
-                        ("Previous-Phase", issue.phase.as_deref().unwrap_or("")),
-                        ("Next-Phase", "td_reviewed"),
-                        ("Next-Command", "aw td revise"),
-                    ],
-                )?;
-                print_envelope(&TdEnvelope::Dispatch {
-                    agent: None,
-                    slug,
-                    invoke: Invoke {
-                        command: "aw td revise",
-                        args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-                    },
-                })?;
-                return Ok(());
-            }
-
-            let next_section = first_flagged_or_first_section(content, "contract")
-                .ok_or_else(|| anyhow::anyhow!("contract section queue is empty"))?;
-            let active_phase = lifecycle_pass_phase("contract");
-            backend
-                .update(
-                    slug,
-                    &IssuePatch {
-                        phase: Some(active_phase.clone()),
-                        review_count: Some(new_count),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            create_section_revision_lock(
-                worktree_abs,
-                slug,
-                spec_path,
-                "contract",
-                &next_section,
-                &active_branch,
-            )
-            .await?;
-            maybe_push_remote(worktree_abs, &issue_path, slug).await?;
-            commit_lifecycle_with_extra(
-                worktree_abs,
-                slug,
-                &format!("contract review needs revision (review #{new_count})"),
-                "Td-Review",
-                &[spec_path, issue_path_s.as_str()],
-                &[
-                    ("Lifecycle-Phase", active_phase.as_str()),
-                    ("Lifecycle-Pass", "contract"),
-                    ("TD-Section", "review"),
-                    ("Previous-Phase", issue.phase.as_deref().unwrap_or("")),
-                    ("Next-Phase", active_phase.as_str()),
-                    ("Next-Command", "aw td create"),
-                ],
-            )?;
-            print_envelope(&TdEnvelope::Dispatch {
-                agent: None,
-                slug,
-                invoke: Invoke {
-                    command: "aw td create",
-                    args: serde_json::json!({
-                        "slug": slug,
-                        "apply": true,
-                        "phase": "contract",
-                        "section": next_section,
-                        "spec_path": spec_path,
-                    }),
-                },
-            })?;
-        }
-    }
-    Ok(())
-}
-
-fn first_flagged_or_first_section(content: &str, pass: &str) -> Option<String> {
-    let queue = td_section_queue_for_content(content, pass);
-    let reviews_start = content.find("# Reviews").unwrap_or(0);
-    let flagged = extract_flagged_sections(&content[reviews_start..]);
-    flagged
-        .into_iter()
-        .find(|section| queue.iter().any(|candidate| candidate == section))
-        .or_else(|| queue.first().cloned())
-}
-
-async fn create_section_revision_lock(
-    worktree_abs: &std::path::Path,
-    slug: &str,
-    spec_path: &str,
-    pass: &str,
-    section: &str,
-    active_branch: &str,
-) -> Result<()> {
-    let active_phase = lifecycle_pass_phase(pass);
-    let expected_payload = section_payload_rel(slug, pass, section);
-    let expected_command = format!(
-        "aw td create {} --apply --phase {} --section {} --spec-path {}",
-        slug, pass, section, spec_path
-    );
-    let remaining = remaining_after_section_in_spec(worktree_abs, spec_path, pass, section);
-    super::workflow_guard::create_issue_lock(
-        worktree_abs,
-        &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
-            .with_expected_payload(expected_payload)
-            .with_active_phase(active_phase)
-            .with_active_branch(active_branch.to_string())
-            .with_current_section(section.to_string())
-            .with_remaining_sections(remaining)
-            .with_dirty_paths([spec_path.to_string()]),
-    )
-    .await
-}
-
 // ── td revise ───────────────────────────────────────────────────────
-
-async fn run_revise(args: ReviseArgs) -> Result<()> {
-    if args.apply {
-        run_revise_apply(&args).await
-    } else {
-        run_revise_brief(&args).await
-    }
-}
-
-/// Brief mode: print spec + review findings + flagged sections for the reviser.
-async fn run_revise_brief(args: &ReviseArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = &args.slug;
-    let spec_path = args
-        .spec_path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--spec-path is required"))?;
-
-    td_activate_inplace_if_present(&project_root, slug)?;
-    let worktree_abs = td_workspace_path(&project_root, slug);
-    if !worktree_abs.exists() {
-        anyhow::bail!("workspace not found: {}", worktree_abs.display());
-    }
-
-    let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found", slug))?;
-
-    let phase = issue.phase.as_deref().unwrap_or("");
-    if phase != "td_reviewed" {
-        anyhow::bail!(
-            "issue '{}' has phase '{}', expected 'td_reviewed'",
-            slug,
-            phase
-        );
-    }
-
-    let spec_abs = worktree_abs.join(spec_path);
-    if !spec_abs.exists() {
-        anyhow::bail!("spec file not found: {}", spec_abs.display());
-    }
-
-    let spec_content = std::fs::read_to_string(&spec_abs)?;
-
-    // Extract flagged sections from the spec's # Reviews
-    let flagged = if let Some(start) = spec_content.find("# Reviews") {
-        extract_flagged_sections(&spec_content[start..])
-    } else {
-        vec![]
-    };
-
-    let next_section = first_flagged_or_first_section(&spec_content, "contract");
-    let mut payload_path = None;
-    let mut payload_initialized = false;
-    if let Some(section) = next_section.as_deref() {
-        let rel = format!(".aw/payloads/{}/{}.md", slug, section);
-        payload_initialized = initialize_td_payload_file(
-            &worktree_abs,
-            &rel,
-            &td_section_payload_template(section)?,
-        )?;
-        payload_path = Some(rel);
-    }
-
-    if !args.human {
-        let next = if let (Some(section), Some(payload)) =
-            (next_section.as_ref(), payload_path.as_ref())
-        {
-            next_dispatch(
-                format!(
-                    "aw td revise {} --apply --section {} --spec-path {}",
-                    slug, section, spec_path
-                ),
-                "fill the next flagged TD section payload and apply it",
-                Some(payload),
-            )
-        } else {
-            next_none("TD revise found no flagged or fallback section")
-        };
-        let env = serde_json::json!({
-            "action": "dispatch",
-            "agent": null,
-            "slug": slug,
-            "next": next,
-            "payload_initialized": payload_initialized,
-            "target": {
-                "spec_path": spec_path,
-                "flagged_sections": flagged,
-                "issue_file": backend.issue_path(&issue).to_string_lossy(),
-            },
-            "invoke": {
-                "command": "aw td revise",
-                "args": {
-                    "slug": slug,
-                    "section": next_section,
-                    "spec_path": spec_path,
-                    "payload_path": payload_path,
-                },
-            },
-        });
-        print_json_value(&env, args.pretty)?;
-        let _ = args.json;
-        return Ok(());
-    }
-
-    println!("# aw-td-reviser brief");
-    println!();
-    println!("Issue:      {} ({})", slug, issue.title);
-    println!("Checkout:   {}", worktree_abs.display());
-    println!("Spec file:  {}", spec_path);
-    if !flagged.is_empty() {
-        println!("Flagged:    {}", flagged.join(", "));
-    }
-    println!();
-    println!("## Task");
-    println!();
-    println!("Read the latest review findings in the `# Reviews` section of the spec.");
-    println!("Fix ONLY the flagged sections listed above. Do not modify unflagged sections.");
-    println!();
-    println!("For each flagged section:");
-    println!("- Read the reviewer's specific finding for that section type");
-    println!("- Rewrite the section content to address the finding");
-    println!("- Keep the annotation (`<!-- type: X lang: Y -->`) unchanged");
-    println!("- Ensure the revised content still passes validation rules");
-    println!();
-    println!("## When done");
-    println!();
-    println!(
-        "Run: aw td revise {} --apply --spec-path {}",
-        slug, spec_path
-    );
-    println!();
-    println!("## Spec content");
-    println!();
-    println!("{}", spec_content);
-
-    Ok(())
-}
-
-/// Apply mode: validate revised spec, emit dispatch → validate.
-/// `aw td revise --apply [--section X]` — merge per-section payload (when
-/// `--section` set) into the spec, validate the post-merge content, emit
-/// dispatch envelope for `aw td validate`. Mirrors `run_create_apply`.
-///
-/// @spec .aw/tech-design/projects/score/specs/aw-td-revise-payload-merge-and-takeover.md#logic-revise-apply-section-merge
-async fn run_revise_apply(args: &ReviseArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = &args.slug;
-    let spec_path = args
-        .spec_path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--spec-path is required with --apply"))?;
-
-    td_activate_inplace_allowing_dirty_spec_path(&project_root, slug, spec_path)?;
-    let worktree_abs = td_workspace_path(&project_root, slug);
-    if !worktree_abs.exists() {
-        anyhow::bail!("workspace not found: {}", worktree_abs.display());
-    }
-
-    let spec_abs = worktree_abs.join(spec_path);
-
-    // Per-section merge path: read payload, merge into base spec, write back
-    // BEFORE validation. Mirrors `run_create_apply` so the validator sees the
-    // post-merge result instead of the spec at HEAD (which may still carry
-    // content the reviser is trying to remove — e.g. a deprecated section).
-    if let Some(section) = args.section.as_deref() {
-        let payload_rel = format!(".aw/payloads/{}/{}.md", slug, section);
-        let payload_abs = worktree_abs.join(&payload_rel);
-        if !payload_abs.exists() {
-            let msg = format!(
-                "section payload not found: {} (write the per-section revision fragment there first)",
-                payload_abs.display()
-            );
-            print_envelope(&TdEnvelope::Error {
-                slug,
-                message: &msg,
-            })?;
-            return Ok(());
-        }
-        let payload_body =
-            std::fs::read_to_string(&payload_abs).context("failed to read section payload")?;
-        let base_body =
-            std::fs::read_to_string(&spec_abs).context("failed to read base spec for revise")?;
-
-        let merged = match merge_spec_section(&base_body, section, &payload_body) {
-            Ok(m) => m,
-            Err(e) => {
-                print_envelope(&TdEnvelope::Error {
-                    slug,
-                    message: &format!("revise section merge failed: {}", e),
-                })?;
-                return Ok(());
-            }
-        };
-        std::fs::write(&spec_abs, merged).context("failed to write merged spec")?;
-
-        // Best-effort cleanup: remove the per-section payload after merge
-        // so repeated runs don't accidentally re-merge stale content.
-        let _ = std::fs::remove_file(&payload_abs);
-    }
-
-    let validation_scope = args
-        .section
-        .as_deref()
-        .map(TdContentValidationScope::RequireThrough)
-        .unwrap_or(TdContentValidationScope::Complete);
-    let report = validate_td_content_file(&spec_abs, validation_scope)?;
-    if report.has_errors() {
-        let errors = td_content_error_messages(&report);
-        print_td_content_errors("Revised TD content validation errors", &report);
-        let msg = format!(
-            "revision validation failed ({} errors): {}",
-            errors.len(),
-            errors.join("; ")
-        );
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    super::workflow_guard::create_issue_lock(
-        &worktree_abs,
-        &super::workflow_guard::TransitionLock::new(
-            slug,
-            "td",
-            format!("aw td validate {} --spec-path {}", slug, spec_path),
-        )
-        .with_phase_from("td_reviewed")
-        .with_dirty_paths([spec_path.to_string()]),
-    )
-    .await?;
-
-    // Emit dispatch → validate
-    print_envelope(&TdEnvelope::Dispatch {
-        agent: None,
-        slug,
-        invoke: Invoke {
-            command: "aw td validate",
-            args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
-        },
-    })?;
-
-    Ok(())
-}
 
 // ── td gen ─────────────────────────────────────────────────────────
 
@@ -4614,9 +3763,9 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("issue '{}' not found", slug))?;
 
     let phase = issue.phase.as_deref().unwrap_or("");
-    if phase != "td_reviewed" {
+    if phase != "td_created" {
         let msg = format!(
-            "cannot gen-code: phase is '{}', expected 'td_reviewed'",
+            "cannot gen-code: phase is '{}', expected 'td_created'",
             phase
         );
         print_envelope(&TdEnvelope::Error {
@@ -4642,6 +3791,29 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     let spec_abs = worktree_abs.join(spec_path);
     if !spec_abs.exists() {
         let msg = format!("spec file not found: {}", spec_abs.display());
+        print_envelope(&TdEnvelope::Error {
+            slug,
+            message: &msg,
+        })?;
+        return Ok(());
+    }
+    let td_lock =
+        match super::td_lock::check_project_td_lock_for_spec_at_root(&worktree_abs, &spec_abs) {
+            Ok(status) => status,
+            Err(err) => {
+                let msg = format!("cannot check TD IR lock for {}: {}", spec_path, err);
+                print_envelope(&TdEnvelope::Error {
+                    slug,
+                    message: &msg,
+                })?;
+                return Ok(());
+            }
+        };
+    if !td_lock.clean {
+        let msg = format!(
+            "td gen requires a clean TD IR lock before generation: {}",
+            td_lock.message
+        );
         print_envelope(&TdEnvelope::Error {
             slug,
             message: &msg,
@@ -4704,8 +3876,8 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
 
     // Phase 3 (R8): post-codegen dispatch decision.
     // Count emitted HANDWRITE markers in the worktree source tree. If any
-    // remain, dispatch to `aw td fill`. Otherwise (0-marker fast-path,
-    // R11) retain the historical `aw td merge` dispatch.
+    // remain, dispatch to `aw td fill`. Otherwise (0-marker fast-path)
+    // dispatch to terminal `aw td code-check`.
     // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic
     let marker_count = super::cb_fill::count_worktree_handwrite_markers(&worktree_abs);
     if marker_count > 0 {
@@ -4722,8 +3894,8 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw td merge",
-                args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
+                command: "aw td code-check",
+                args: serde_json::json!({ "target": slug }),
             },
         })?;
     }
@@ -4731,288 +3903,31 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     Ok(())
 }
 
-// ── td merge ────────────────────────────────────────────────────────
-
-async fn run_merge(args: MergeArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = &args.slug;
-    let starting_branch = crate::branch_switch::current_branch(&project_root)?;
-    let dedicated_branch_mode = should_use_td_branch(&starting_branch);
-
-    td_activate_inplace_if_present(&project_root, slug)?;
-    let branch = td_branch_name(slug);
-    let branch_present =
-        crate::branch_switch::branch_exists_local(&project_root, &branch).unwrap_or(false);
-    if dedicated_branch_mode && !branch_present {
-        let msg = format!("workspace not found: branch '{}' does not exist", branch);
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    let backend = LocalBackend::from_project_root(&project_root);
-    let issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found", slug))?;
-
-    let phase = issue.phase.as_deref().unwrap_or("");
-    // Accept cb_genned (canonical Phase 1+), cb_filled (Phase 3 post-fill),
-    // cb_reviewed (legacy post-review phase kept mergeable for existing worktrees),
-    // td_gen_coded (legacy reader alias for one release), td_reviewed
-    // (no-codegen path), or td_merged (retry).
-    // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic (R10)
-    // @spec .aw/tech-design/projects/score/specs/aw-td-merge-accepts-cb-reviewed.md#schema (R1, R3)
-    if !crate::issues::types::td_phase::is_mergeable(phase)
-        && phase != crate::issues::types::td_phase::TD_REVIEWED
-        && phase != crate::issues::types::td_phase::TD_MERGED
-    {
-        let msg = format!(
-            "cannot merge: phase is '{}', expected a mergeable TD/CB phase",
-            phase
-        );
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    // Bug 2 fix: refuse to merge a spec whose every `action: create | modify`
-    // entry points at a non-existent file. That signature means gen-code
-    // skipped emission (e.g. a hand-written batch with no scaffold) and the
-    // implementation step never happened. Allow `--allow-empty-impl` for the
-    // legitimate "spec-only" case.
-    if !args.allow_empty_impl && phase != "td_merged" {
-        let mut missing_total: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
-        let mut entries_total = 0usize;
-        let td_root = crate::shared::workspace::tech_design_path(&project_root);
-        if td_root.exists() {
-            for entry in walkdir::WalkDir::new(&td_root)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                if entry.path().extension().and_then(|e| e.to_str()) != Some("md") {
-                    continue;
-                }
-                let Ok(content) = std::fs::read_to_string(entry.path()) else {
-                    continue;
-                };
-                let total = crate::generate::apply::extract_change_entries_count(&content);
-                entries_total += total;
-                let missing =
-                    crate::generate::apply::missing_implementation_paths(&content, &project_root);
-                if !missing.is_empty() {
-                    missing_total.push((entry.path().to_path_buf(), missing));
-                }
-            }
-        }
-        if entries_total > 0 && !missing_total.is_empty() {
-            let total_missing: usize = missing_total.iter().map(|(_, m)| m.len()).sum();
-            // Block when the entire implementation is missing — that's the
-            // gen-code-skipped signature. Warn-only when partially missing.
-            let block = total_missing == entries_total;
-            let mut preview: Vec<String> = Vec::new();
-            for (spec, m) in missing_total.iter().take(3) {
-                let spec_rel = spec
-                    .strip_prefix(&project_root)
-                    .unwrap_or(spec)
-                    .display()
-                    .to_string();
-                for p in m.iter().take(3) {
-                    preview.push(format!("    {} \u{2192} missing {}", spec_rel, p));
-                }
-            }
-            if block {
-                let msg = format!(
-                    "refusing to merge: spec lists {} file(s) but {} are missing on disk \
-                     (codegen likely skipped; run `aw td gen {}` then implement, \
-                     or pass --allow-empty-impl for spec-only merges).\n{}",
-                    entries_total,
-                    total_missing,
-                    slug,
-                    preview.join("\n"),
-                );
-                print_envelope(&TdEnvelope::Error {
-                    slug,
-                    message: &msg,
-                })?;
-                return Ok(());
-            } else {
-                eprintln!(
-                    "[td merge] WARNING: {} of {} spec-listed files missing on disk:",
-                    total_missing, entries_total,
-                );
-                for line in &preview {
-                    eprintln!("{}", line);
-                }
-            }
-        }
-    }
-
-    // Atomic close: advance phase to td_merged AND state to closed, which
-    // moves the issue file open/<slug>.md → closed/<slug>.md via
-    // LocalBackend::write. Stage both paths and commit a single Td-Merged
-    // trailer so the rename + frontmatter advance land together when the
-    // worktree branch merges into main. Idempotent: skip if already at
-    // td_merged (retry after partial failure).
-    // @spec .aw/tech-design/projects/score/bugs/aw-td-merge-atomic-lifecycle.md
-    if phase != "td_merged" {
-        let patch = IssuePatch {
-            state: Some(crate::issues::IssueState::Closed),
-            phase: Some("td_merged".to_string()),
-            ship_status: Some(crate::issues::ShipStatus::Step1Shipped),
-            add_labels: vec!["phase:td_merged".to_string()],
-            remove_labels: td_merge_labels_to_remove(),
-            flagged_sections: Some(vec![]),
-            validation_errors: Some(vec![]),
-            ..Default::default()
-        };
-        backend.update(slug, &patch).await?;
-
-        // Push the now-closed temp lifecycle issue file through the remote
-        // backend so GitHub/GitLab is closed in lock-step with the local state.
-        let closed_issue = backend
-            .get(slug)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("closed issue '{}' was not readable", slug))?;
-        let closed_path = backend.issue_path(&closed_issue);
-        maybe_push_remote(&project_root, &closed_path, slug).await?;
-
-        let git_bin = crate::git::find_git_bin()
-            .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-        let commit_msg = format!(
-            "td({slug}) \u{2014} merged + closed\n\n\
-             Lifecycle-Slug: {slug}\n\
-             Work-Item: {slug}\n\
-             Lifecycle-Stage: Td-Merged",
-        );
-        let commit = std::process::Command::new(&git_bin)
-            .arg("-C")
-            .arg(&project_root)
-            .args(["commit", "--allow-empty", "-m", &commit_msg])
-            .output()
-            .context("git commit failed")?;
-        if !commit.status.success() {
-            anyhow::bail!(
-                "git commit failed: {}",
-                String::from_utf8_lossy(&commit.stderr).trim()
-            );
-        }
-    }
-
-    if !dedicated_branch_mode {
-        let msg = format!(
-            "tech-design merged for '{}' on current branch '{}'",
-            slug, starting_branch
-        );
-        print_envelope(&TdEnvelope::Done {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    let git_bin = crate::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git not found"))?;
-
-    // Resolve effective target branch: CLI override → issue.target_branch → current branch → config fallback.
-    let issue_target_branch = if dedicated_branch_mode && issue.target_branch.is_none() {
-        Some(starting_branch.clone())
-    } else {
-        issue.target_branch.clone()
-    };
-    let target_branch = super::merge_target::resolve_merge_target(
-        args.target_branch.clone(),
-        issue_target_branch,
-        &project_root,
-    )
-    .map_err(|e| {
-        let _ = print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &e.to_string(),
-        });
-        e
-    })?;
-
-    // Ensure the main repo is on the intended target branch before merging.
-    let checkout_out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(&project_root)
-        .args(["checkout", &target_branch])
-        .output()
-        .context("git checkout failed")?;
-    if !checkout_out.status.success() {
-        let err = String::from_utf8_lossy(&checkout_out.stderr);
-        let msg = format!("git checkout {} failed: {}", target_branch, err.trim());
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    let merge_out = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(&project_root)
-        .args([
-            "merge",
-            "--no-ff",
-            &branch,
-            "-m",
-            &format!("Merge tech-design td-{}", slug),
-        ])
-        .output()
-        .context("git merge failed")?;
-
-    if !merge_out.status.success() {
-        let err = String::from_utf8_lossy(&merge_out.stderr);
-        let msg = format!(
-            "git merge {} into {} failed: {}. Resolve conflicts manually.",
-            branch,
-            target_branch,
-            err.trim()
-        );
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    // Clean up branch. Phase C: in-place only — no worktree dir to remove.
-    // The host repo is the workspace; we already switched it to
-    // `target_branch` above. Just delete the local `td-<slug>` branch since
-    // the merge subsumed its history.
-    let _ = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(&project_root)
-        .args(["branch", "-d", &branch])
-        .output();
-
-    let msg = format!("tech-design merged for '{}'", slug);
-    print_envelope(&TdEnvelope::Done {
-        slug,
-        message: &msg,
-    })?;
-
-    Ok(())
-}
-
-fn td_merge_labels_to_remove() -> Vec<String> {
+/// Labels stripped when a WI reaches terminal `aw td code-check` closure
+/// (issue #856a). The workflow-lock labels, plus every phase label that
+/// must not survive on a closed issue: the active pre-terminal phases
+/// (`cb_genned` / `cb_filled`), the legacy `td_gen_coded` alias, and the
+/// retired CRRR phases `td_reviewed` / `cb_reviewed` that #850's
+/// `td_phase::normalize` now migrates through the linear lifecycle rather
+/// than dead-ending — so a legacy-labeled issue closing here is correct to
+/// drop those labels too, not just the live ones.
+///
+/// The sole production caller is `run_check_lifecycle_terminal` (cb.rs).
+/// This was previously `#[cfg(test)]`-only while production carried its own
+/// narrower, drifted inline copy (missing `td_reviewed` / `cb_reviewed`,
+/// hardcoding the `td_gen_coded` string literal instead of
+/// [`td_phase::LEGACY_TD_GEN_CODED`]) — see #856.
+pub(crate) fn terminal_code_check_labels_to_remove() -> Vec<String> {
+    use crate::issues::types::td_phase;
     vec![
         super::workflow_guard::LOCK_LABEL.to_string(),
         super::workflow_guard::TD_LOCK_LABEL.to_string(),
         super::workflow_guard::CB_LOCK_LABEL.to_string(),
-        "phase:td_reviewed".to_string(),
-        "phase:td_gen_coded".to_string(),
-        "phase:cb_genned".to_string(),
-        "phase:cb_filled".to_string(),
-        "phase:cb_reviewed".to_string(),
+        format!("phase:{}", td_phase::TD_REVIEWED),
+        format!("phase:{}", td_phase::LEGACY_TD_GEN_CODED),
+        format!("phase:{}", td_phase::CB_GENNED),
+        format!("phase:{}", td_phase::CB_FILLED),
+        format!("phase:{}", td_phase::CB_REVIEWED),
     ]
 }
 
@@ -5862,39 +4777,102 @@ label = "project:agentic-workflow"
         assert!(log.contains("Lifecycle-Phase: td_created"));
     }
 
+    // issue #853 AC1: legacy `Td-Merged` terminal commits (written by the
+    // removed `aw td merge` verb) must still resolve a ship_commit backfill.
     #[test]
-    fn dirty_payload_prefix_is_allowed_for_td_revise_apply() {
+    fn find_ship_commit_from_log_accepts_legacy_td_merged_trailer() {
         if !git_available() {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         init_git_repo(root);
-        let payload = root.join(".aw/payloads/1/changes.md");
-        std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
-        std::fs::write(&payload, "## Changes\n").unwrap();
+        commit_lifecycle_with_extra(root, "722", "merged + closed", "Td-Merged", &[], &[]).unwrap();
 
-        ensure_clean_or_only_dirty_paths(root, &["tech-design/spec.md", ".aw/payloads/1/"])
-            .expect("td revise apply should allow matching payload fragments");
+        let found = find_ship_commit_from_log(root, "722").unwrap();
+        assert!(
+            found.is_some(),
+            "legacy Td-Merged trailer should backfill ship_commit"
+        );
     }
 
+    // issue #853 AC2: slug `41` must never adopt slug `412`'s commit.
     #[test]
-    fn dirty_marker_payload_file_is_allowed_for_cb_fill_apply() {
+    fn find_ship_commit_from_log_does_not_adopt_prefix_colliding_slug() {
+        use crate::issues::types::lifecycle_trailer;
+
         if !git_available() {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         init_git_repo(root);
-        let payload = root.join(".aw/payloads/1/missing-generator:component:e4ee6075.md");
-        std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
-        std::fs::write(&payload, "fill\n").unwrap();
-
-        ensure_clean_or_only_dirty_paths(
+        // Only slug 412 has a terminal commit; slug 41 has none.
+        commit_lifecycle_with_extra(
             root,
-            &[".aw/payloads/1/missing-generator:component:e4ee6075.md"],
+            "412",
+            "terminal",
+            lifecycle_trailer::CB_CODE_CHECK,
+            &[],
+            &[],
         )
-        .expect("cb fill apply should allow the expected marker payload");
+        .unwrap();
+
+        let found = find_ship_commit_from_log(root, "41").unwrap();
+        assert!(
+            found.is_none(),
+            "slug 41 must not adopt slug 412's ship_commit"
+        );
+
+        // Sanity: the exact-matching slug still resolves.
+        let found_exact = find_ship_commit_from_log(root, "412").unwrap();
+        assert!(found_exact.is_some());
+    }
+
+    // issue #935 AC1: same defect class as #853 — a naive substring check on
+    // `Lifecycle-Stage: Td-Claim` also matches a prefix-colliding trailer
+    // value like `Td-Claim-Rebase`. branch_has_trailer must be line-exact.
+    #[test]
+    fn branch_has_trailer_rejects_prefix_colliding_stage_value() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_lifecycle_with_extra(root, "41", "prefix collision", "Td-Claim-Rebase", &[], &[])
+            .unwrap();
+
+        let branch = git_stdout(root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let found = branch_has_trailer(root, &branch, "Td-Claim");
+        assert_eq!(
+            found,
+            Some(false),
+            "Td-Claim-Rebase must not falsely match Td-Claim"
+        );
+    }
+
+    // issue #935 AC2: legacy trailer names are accepted through
+    // lifecycle_trailer::normalize(), not a second hardcoded needle.
+    #[test]
+    fn branch_has_trailer_accepts_legacy_trailer_via_normalize() {
+        use crate::issues::types::lifecycle_trailer;
+
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_lifecycle_with_extra(root, "722", "merged + closed", "Td-Merged", &[], &[]).unwrap();
+
+        let branch = git_stdout(root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let found = branch_has_trailer(root, &branch, lifecycle_trailer::CB_CODE_CHECK);
+        assert_eq!(
+            found,
+            Some(true),
+            "legacy Td-Merged trailer should be recognized as Cb-CodeCheck"
+        );
     }
 
     #[test]
@@ -6096,7 +5074,7 @@ label = "project:agentic-workflow"
         // Source already under .aw/tech-design/<sub>/ — must mirror the
         // exact relative path, ignoring labels. Without the fix this would
         // flatten to the label-derived dir and ship a duplicate spec on
-        // td merge.
+        // terminal code-check.
         let tmp = tempfile::tempdir().unwrap();
         let project_root = tmp.path();
         let src_rel =
@@ -6139,8 +5117,8 @@ label = "project:agentic-workflow"
 
     #[test]
     fn derive_spec_dir_uses_project_label_name() {
-        let labels = vec!["type:enhancement".to_string(), "project:cue".to_string()];
-        assert_eq!(derive_spec_dir(&labels), "projects/cue/logic/");
+        let labels = vec!["type:enhancement".to_string(), "project:jet".to_string()];
+        assert_eq!(derive_spec_dir(&labels), "projects/jet/logic/");
     }
 
     #[test]
@@ -6154,11 +5132,35 @@ label = "project:agentic-workflow"
         let issue = issue_with_title("enhancement(jet): browser cli protocol schema");
         assert_eq!(
             derive_spec_dir_for_issue(&issue),
-            "projects/jet/interfaces/"
+            "projects/jet/interfaces/cli/"
         );
 
         let issue = issue_with_title("test(jet): parity fixture conformance gate");
         assert_eq!(derive_spec_dir_for_issue(&issue), "projects/jet/validate/");
+    }
+
+    #[test]
+    fn interface_concern_never_derives_a_loose_interfaces_path() {
+        // #460: a loose `interfaces/<slug>.md` fails R6a (structure:loose-root-file),
+        // so `aw td create --apply` deadlocked on its own derived path. The derived
+        // dir must always carry a protocol subdir under interfaces/.
+        for (title, want_subdir) in [
+            ("browser cli protocol schema", "interfaces/cli"),
+            ("widget service api contract", "interfaces/rest"),
+            ("wire protocol for rpc bundles", "interfaces/rpc"),
+        ] {
+            let dir = derive_spec_dir_for_issue(&issue_with_title(title));
+            assert_eq!(
+                dir,
+                format!("projects/jet/{want_subdir}/"),
+                "interface concern for `{title}` must land under a protocol subdir"
+            );
+            assert_ne!(
+                dir.trim_end_matches('/').rsplit('/').next(),
+                Some("interfaces"),
+                "loose interfaces dir (no protocol subdir) for `{title}`: `{dir}`"
+            );
+        }
     }
 
     #[test]
@@ -6262,14 +5264,27 @@ label = "project:agentic-workflow"
         ));
     }
 
+    // issue #856a: this is now the sole label list — `run_check_lifecycle_
+    // terminal` (cb.rs) calls this function directly instead of carrying
+    // its own inline copy, so this test asserts the function production
+    // actually calls. The reconciled set is the superset of the two lists
+    // that had diverged: the live pre-terminal phases (`cb_genned`,
+    // `cb_filled`), the legacy `td_gen_coded` alias, and the retired CRRR
+    // phases (`td_reviewed`, `cb_reviewed`) that #850 now normalizes
+    // through the linear lifecycle rather than dead-ending.
     #[test]
-    fn td_merge_label_cleanup_removes_stale_phase_and_lock_labels() {
-        let labels = td_merge_labels_to_remove();
+    fn terminal_code_check_label_cleanup_removes_stale_phase_and_lock_labels() {
+        let labels = terminal_code_check_labels_to_remove();
 
         assert!(labels.contains(&crate::cli::workflow_guard::LOCK_LABEL.to_string()));
         assert!(labels.contains(&crate::cli::workflow_guard::TD_LOCK_LABEL.to_string()));
+        assert!(labels.contains(&crate::cli::workflow_guard::CB_LOCK_LABEL.to_string()));
+        assert!(labels.contains(&"phase:td_reviewed".to_string()));
+        assert!(labels.contains(&"phase:td_gen_coded".to_string()));
         assert!(labels.contains(&"phase:cb_genned".to_string()));
+        assert!(labels.contains(&"phase:cb_filled".to_string()));
         assert!(labels.contains(&"phase:cb_reviewed".to_string()));
+        assert_eq!(labels.len(), 8, "no unexpected extra labels");
     }
 
     #[test]
@@ -6297,10 +5312,12 @@ label = "project:agentic-workflow"
     #[test]
     fn td_section_payload_template_scaffolds_typed_section() {
         let template = td_section_payload_template("logic").unwrap();
-        assert!(template.contains("## Logic"));
-        assert!(template.contains("<!-- type: logic lang: mermaid -->"));
-        assert!(template.contains("```mermaid"));
-        assert!(template.contains("(fill)"));
+        let value: TdBodySectionPayload =
+            serde_json::from_str(&template).expect("logic payload template must be JSON");
+        assert!(value.body.contains("## Logic"));
+        assert!(value.body.contains("<!-- type: logic lang: mermaid -->"));
+        assert!(value.body.contains("```mermaid"));
+        assert!(value.body.contains("(fill)"));
     }
 
     #[test]
@@ -6309,6 +5326,190 @@ label = "project:agentic-workflow"
         assert!(err
             .to_string()
             .contains("section 'scenarios' is not supported for new TD payloads"));
+    }
+
+    // ── #1097: JSON section payloads (Mermaid Plus contract/unit-test) ──
+
+    fn unit_test_precedent_payload() -> UnitTestSectionPayload {
+        // Reconstructs the motivating lumen #1095 "Unit Test" section: five
+        // requirements, two verification targets, with a concrete `verify`
+        // target string so the diagram edges are mechanically derivable.
+        let mut requirements = std::collections::BTreeMap::new();
+        requirements.insert(
+            "help_surface".to_string(),
+            UnitTestRequirement {
+                id: "R1".to_string(),
+                text: "`lumen --help` lists dump/export/load/import with wording that distinguishes ad hoc SnapshotV1 movement from `backup` sink transport.".to_string(),
+                kind: "functional".to_string(),
+                risk: "medium".to_string(),
+                verify: "cargo test -p lumen --test cli_convention".to_string(),
+            },
+        );
+        requirements.insert(
+            "export_file".to_string(),
+            UnitTestRequirement {
+                id: "R2".to_string(),
+                text: "Export helper writes the exact `/admin/backup` response bytes to `--out` and the parsed JSON has `version: 1` plus collections.".to_string(),
+                kind: "functional".to_string(),
+                risk: "high".to_string(),
+                verify: "cargo test -p lumen --test backup_restore_e2e".to_string(),
+            },
+        );
+        requirements.insert(
+            "import_file".to_string(),
+            UnitTestRequirement {
+                id: "R3".to_string(),
+                text: "Import helper reads SnapshotV1 JSON from a file and restores it into a fresh server through `/admin/restore`.".to_string(),
+                kind: "functional".to_string(),
+                risk: "high".to_string(),
+                verify: "cargo test -p lumen --test backup_restore_e2e".to_string(),
+            },
+        );
+        requirements.insert(
+            "aliases".to_string(),
+            UnitTestRequirement {
+                id: "R4".to_string(),
+                text: "`dump` behaves as an export alias and `load` behaves as an import alias through shared dispatch.".to_string(),
+                kind: "regression".to_string(),
+                risk: "medium".to_string(),
+                verify: "cargo test -p lumen --test backup_restore_e2e".to_string(),
+            },
+        );
+        requirements.insert(
+            "token_fallback".to_string(),
+            UnitTestRequirement {
+                id: "R5".to_string(),
+                text: "The new verbs expose `--token` with `LUMEN_BACKUP_TOKEN` fallback like `backup`.".to_string(),
+                kind: "functional".to_string(),
+                risk: "medium".to_string(),
+                verify: "cargo test -p lumen --test cli_convention".to_string(),
+            },
+        );
+        UnitTestSectionPayload {
+            id: "lumen-cli-snapshot-data-movement-verification".to_string(),
+            requirements,
+        }
+    }
+
+    #[test]
+    fn section_payload_path_unit_test_uses_json_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = section_payload_path(tmp.path(), "123", "contract", "unit-test");
+        assert!(path.ends_with("unit-test.json"), "got: {path}");
+        let logic_path = section_payload_path(tmp.path(), "123", "contract", "logic");
+        assert!(logic_path.ends_with("logic.json"), "got: {logic_path}");
+    }
+
+    #[test]
+    fn td_section_payload_template_unit_test_is_json_placeholder() {
+        let template = td_section_payload_template("unit-test").unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&template).expect("unit-test payload template must be valid JSON");
+        assert!(value.get("requirements").is_some());
+        assert!(
+            !template.contains("```"),
+            "JSON template must not be mermaid-wrapped"
+        );
+    }
+
+    #[test]
+    fn render_unit_test_section_is_byte_deterministic() {
+        let payload = unit_test_precedent_payload();
+        let first = render_unit_test_section(&payload);
+        let second = render_unit_test_section(&payload);
+        assert_eq!(
+            first, second,
+            "AC2: same JSON must render byte-identical output"
+        );
+    }
+
+    #[test]
+    fn render_unit_test_section_round_trips_through_the_generic_frontmatter_parser() {
+        // AC3: parse(render(data)) == data, driven through the SAME
+        // extractor `merge_spec_section`'s callers rely on for Mermaid Plus
+        // blocks (`extract_mermaid_plus_blocks`), not a bespoke parser.
+        let payload = unit_test_precedent_payload();
+        let rendered = render_unit_test_section(&payload);
+
+        let full_spec = format!(
+            "---\nid: x\nfill_sections: [unit-test]\n---\n\n{}",
+            rendered
+        );
+        let blocks = crate::generate::frontmatter::extract_mermaid_plus_blocks(&full_spec);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].section_type.as_deref(), Some("unit-test"));
+
+        let parsed: UnitTestSectionPayload = serde_yaml::from_value(blocks[0].frontmatter.clone())
+            .expect("rendered frontmatter must deserialize back into UnitTestSectionPayload");
+        assert_eq!(parsed, payload);
+    }
+
+    #[test]
+    fn render_unit_test_section_matches_precedent_grouping_and_edges() {
+        let payload = unit_test_precedent_payload();
+        let rendered = render_unit_test_section(&payload);
+
+        assert!(rendered
+            .starts_with("## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n"));
+        assert!(rendered.trim_end().ends_with("```"));
+        assert!(rendered.contains("flowchart TD\n"));
+
+        // Requirements sharing a `verify` target are grouped together, in
+        // order of first appearance while scanning ascending requirement
+        // id — exactly the motivating hand-authored precedent's order.
+        let diagram_start = rendered.find("flowchart TD\n").unwrap();
+        let diagram = &rendered[diagram_start..];
+        let expected = concat!(
+            "flowchart TD\n",
+            "    r1[R1 help surface] --> cargo_test_p_lumen_test_cli_convention[cargo test -p lumen --test cli_convention]\n",
+            "    r5[R5 token fallback] --> cargo_test_p_lumen_test_cli_convention\n",
+            "    r2[R2 export file] --> cargo_test_p_lumen_test_backup_restore_e2e[cargo test -p lumen --test backup_restore_e2e]\n",
+            "    r3[R3 import file] --> cargo_test_p_lumen_test_backup_restore_e2e\n",
+            "    r4[R4 aliases] --> cargo_test_p_lumen_test_backup_restore_e2e\n",
+            "```\n",
+        );
+        assert_eq!(diagram, expected, "diagram body:\n{diagram}");
+    }
+
+    #[test]
+    fn mermaid_node_id_sanitizes_and_prefixes_digit_led_ids() {
+        assert_eq!(mermaid_node_id("cargo test -p lumen"), "cargo_test_p_lumen");
+        assert_eq!(mermaid_node_id("  Weird!!Chars??  "), "weird_chars");
+        assert_eq!(mermaid_node_id("123-start"), "t_123_start");
+        assert_eq!(mermaid_node_id(""), "t_");
+    }
+
+    #[test]
+    fn render_td_json_section_payload_rejects_hand_written_mermaid_text() {
+        // AC1: a hand-written mermaid/YAML payload for a JSON-payload
+        // section is rejected with a pointer to the JSON schema, not
+        // silently spliced into the spec.
+        let raw = "---\nid: x\nrequirements: {}\n---\nflowchart TD\n    a --> b\n";
+        let err = render_td_json_section_payload("unit-test", raw).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must be JSON matching the schema"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("requirements"), "got: {msg}");
+    }
+
+    #[test]
+    fn render_td_json_section_payload_rejects_empty_requirements() {
+        let err = render_td_json_section_payload(
+            "unit-test",
+            r#"{"id":"x-verification","requirements":{}}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("missing at least one"));
+    }
+
+    #[test]
+    fn render_td_json_section_payload_accepts_valid_json_and_matches_direct_render() {
+        let payload = unit_test_precedent_payload();
+        let raw_json = serde_json::to_string(&payload).unwrap();
+        let rendered = render_td_json_section_payload("unit-test", &raw_json).unwrap();
+        assert_eq!(rendered, render_unit_test_section(&payload));
     }
 
     #[test]
@@ -6339,32 +5540,20 @@ label = "project:agentic-workflow"
     }
 
     #[test]
-    fn td_review_payload_template_requires_agent_edit() {
-        let template = td_review_payload_template(2);
-        assert!(template.contains("# Reviews"));
-        assert!(template.contains("### Review 2"));
-        assert!(template.contains("**Verdict:** <verdict>"));
-        assert!(template.contains("(fill)"));
-        assert!(!template.contains("**Verdict:** approved"));
-        assert!(!template.contains("**Verdict:** needs-revision"));
-    }
-
-    #[test]
     fn initialize_td_payload_file_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
-        let rel = ".aw/payloads/123/applicability/logic.md";
+        let payload_path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("td")
+            .join("123")
+            .join("applicability")
+            .join("logic.json");
+        let payload_path_s = payload_path.to_string_lossy().into_owned();
 
-        assert!(initialize_td_payload_file(tmp.path(), rel, "first\n").unwrap());
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join(rel)).unwrap(),
-            "first\n"
-        );
+        assert!(initialize_td_payload_file(&payload_path_s, "first\n").unwrap());
+        assert_eq!(std::fs::read_to_string(&payload_path).unwrap(), "first\n");
 
-        assert!(!initialize_td_payload_file(tmp.path(), rel, "second\n").unwrap());
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join(rel)).unwrap(),
-            "first\n"
-        );
+        assert!(!initialize_td_payload_file(&payload_path_s, "second\n").unwrap());
+        assert_eq!(std::fs::read_to_string(&payload_path).unwrap(), "first\n");
     }
 
     #[test]
@@ -6704,10 +5893,13 @@ fill_sections: [schema]
 ///
 /// Adopt an on-disk TD spec into the score lifecycle. Switches to or creates
 /// the `td-<slug>` branch only when launched from `main`; otherwise it stays
-/// on the current branch. It sets `phase: td_reviewed`, commits the
-/// `Lifecycle-Stage: Td-Claim` trailer with a `Claim-Source:` sub-trailer, and
-/// emits a dispatch envelope to `aw td gen`. Idempotent on re-run when the
-/// active branch already carries the trailer (use `--force-rebase` to re-run).
+/// on the current branch. It sets `phase: td_created` (claim adopts an
+/// already-authored spec, which is semantically the post-create state; the
+/// linear lifecycle has no outgoing transition from `td_reviewed`), commits
+/// the `Lifecycle-Stage: Td-Claim` trailer with a `Claim-Source:`
+/// sub-trailer, and emits a dispatch envelope to `aw td gen` (whose guard
+/// requires exactly `td_created`). Idempotent on re-run when the active
+/// branch already carries the trailer (use `--force-rebase` to re-run).
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
@@ -6817,7 +6009,7 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
     // Without this, claiming an in-tree spec produced a duplicate at the
     // label-derived location (e.g. `crates/cclab-agent/agent-protocols-spec.md`
     // → `projects/score/specs/agent-protocols-spec.md`) and shipped both
-    // copies on `td merge`.
+    // copies at terminal code-check.
     let mut spec_path_in_worktree: Option<String> = None;
     if let Some(src_path) = args.from_path.as_deref() {
         let src = std::path::Path::new(src_path);
@@ -6844,9 +6036,13 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
         spec_path_in_worktree = Some(dest_rel);
     }
 
-    // 4. R5: Set phase: td_reviewed with disambiguating error context.
+    // 4. R5: Set phase: td_created — claim adopts an already-authored spec
+    // into the worktree, which is semantically the post-create state, and
+    // the dispatch envelope below points at `aw td gen`, whose guard demands
+    // exactly `td_created` (run_gen_code). `td_reviewed` has no outgoing
+    // transition in the linear lifecycle and would permanently deadlock.
     let patch = IssuePatch {
-        phase: Some(crate::issues::types::td_phase::TD_REVIEWED.to_string()),
+        phase: Some(crate::issues::types::td_phase::TD_CREATED.to_string()),
         branch: Some(active_branch),
         ..Default::default()
     };
@@ -6861,10 +6057,20 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
             .clone()
             .unwrap_or_else(|| "<unknown>".to_string())
     });
-    let updated_issue = wt_backend
+    let mut updated_issue = wt_backend
         .get(slug)
         .await?
         .ok_or_else(|| anyhow::anyhow!("issue '{}' not found after claim update", slug))?;
+    // Issue #939: claim copies an already-authored spec into the worktree
+    // (`spec_path_in_worktree` above) — record it in `Issue.implements` the
+    // same way `aw td create` does, so `cb.rs`'s tier-1 scope resolution
+    // (#854) resolves a claimed spec too. Idempotent by path.
+    if let Some(ref sp) = spec_path_in_worktree {
+        if !updated_issue.implements.iter().any(|p| p == sp) {
+            updated_issue.implements.push(sp.clone());
+            wt_backend.write(&updated_issue).await?;
+        }
+    }
     let issue_path = wt_backend.issue_path(&updated_issue);
     let issue_path_s = issue_path.to_string_lossy().into_owned();
     let mut paths: Vec<&str> = vec![issue_path_s.as_str()];
@@ -6900,8 +6106,16 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
 }
 
 /// Check whether the given branch's git history contains a commit with the
-/// given `Lifecycle-Stage:` trailer value.
+/// given `Lifecycle-Stage:` trailer value. Line-exact (via
+/// [`lifecycle_trailer::body_has_stage_trailer`]), not substring — a naive
+/// substring check on `Lifecycle-Stage: Td-Claim` also matches unrelated
+/// lines that merely contain that text elsewhere in the body, and misses
+/// legacy trailer aliases that only [`lifecycle_trailer::normalize`] knows
+/// about. Same defect class as #853's `find_ship_commit_from_log` fix; see
+/// issue #935.
 fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Option<bool> {
+    use crate::issues::types::lifecycle_trailer;
+
     let git_bin = crate::git::find_git_bin()?;
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -6913,8 +6127,11 @@ fn branch_has_trailer(repo: &std::path::Path, branch: &str, stage: &str) -> Opti
         return Some(false);
     }
     let body = String::from_utf8_lossy(&out.stdout);
-    let needle = format!("Lifecycle-Stage: {}", stage);
-    Some(body.contains(&needle))
+    let expect_canonical = lifecycle_trailer::normalize(stage);
+    Some(lifecycle_trailer::body_has_stage_trailer(
+        &body,
+        expect_canonical,
+    ))
 }
 
 /// Like `commit_lifecycle` but appends extra trailers (e.g. `Claim-Source:`,
@@ -6960,6 +6177,265 @@ fn commit_lifecycle_with_extra(
     Ok(())
 }
 
+// ── td promote ────────────────────────────────────────────────────────
+
+/// `aw td promote <path|marker-id>` — HANDWRITE→CODEGEN marker promotion.
+///
+/// Resolves `target` (a repo-relative source path or a HANDWRITE marker
+/// `tracker=` id) to its owning source file, then delegates the actual flip
+/// to [`super::standardize::promote_handwrite_marker_to_codegen`] — the same
+/// core promotion logic `aw standardize managed run`'s `PromoteHandwrite`
+/// action shares via its own soft-mode wrapper, so behavior stays identical
+/// across both call sites and lives in exactly one place. This verb is the
+/// strict, explicitly-targeted form: a marker that isn't closure-ready yet
+/// (missing `gap`, no durable `tracker`, or a flip that would change the
+/// payload outside the marker delimiters) is a hard error here, not a
+/// skipped tick. On a real flip, commits the promoted file via the standard
+/// lifecycle-commit helpers (issue #856 family — [`commit_lifecycle_with_extra`]
+/// above) with a `Promote-Target` trailer.
+///
+/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
+fn run_promote(args: PromoteArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    run_promote_at(&project_root, args)
+}
+
+/// [`run_promote`]'s body, taking an explicit `project_root` instead of
+/// resolving it from cwd — every step downstream of that resolution is
+/// already cwd-independent (matching the rest of this module's and
+/// `standardize.rs`'s design), so this split makes the real promotion
+/// logic directly unit-testable without a process-wide cwd mutation.
+fn run_promote_at(project_root: &std::path::Path, args: PromoteArgs) -> Result<()> {
+    let target = args.target.as_str();
+
+    let rel = match super::standardize::resolve_promote_target(project_root, target) {
+        Ok(rel) => rel,
+        Err(e) => {
+            let msg = e.to_string();
+            print_envelope(&TdEnvelope::Error {
+                slug: target,
+                message: &msg,
+            })?;
+            std::process::exit(1);
+        }
+    };
+
+    let spec_ref = args
+        .spec_ref
+        .clone()
+        .unwrap_or_else(|| super::standardize::default_promote_spec_ref(project_root, &rel));
+
+    let outcome = match super::standardize::promote_handwrite_marker_to_codegen(
+        project_root,
+        &rel,
+        &spec_ref,
+    ) {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            let msg = e.to_string();
+            print_envelope(&TdEnvelope::Error {
+                slug: &rel,
+                message: &msg,
+            })?;
+            std::process::exit(1);
+        }
+    };
+
+    if outcome.changed_paths.is_empty() {
+        print_envelope(&TdEnvelope::Done {
+            slug: &rel,
+            message: &outcome.message,
+        })?;
+        let _ = args.json; // pretty-printed by default
+        return Ok(());
+    }
+
+    let slug = super::standardize::slug_for_path(&rel);
+    let paths: Vec<&str> = vec![rel.as_str()];
+    commit_lifecycle_with_extra(
+        project_root,
+        &slug,
+        &format!("promote {}", rel),
+        "Td-Promote",
+        &paths,
+        &[("Promote-Target", rel.as_str())],
+    )?;
+
+    print_envelope(&TdEnvelope::Done {
+        slug: &slug,
+        message: &outcome.message,
+    })?;
+    let _ = args.json; // pretty-printed by default
+    Ok(())
+}
+
+#[cfg(test)]
+mod promote_tests {
+    use super::*;
+
+    fn init_git_repo(root: &std::path::Path) {
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+            vec!["commit", "--allow-empty", "-m", "init", "-q"],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(root)
+                .output()
+                .expect("git command");
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    fn write(root: &std::path::Path, rel: &str, content: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn write_project_config(root: &std::path::Path) {
+        write(
+            root,
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+    }
+
+    fn git_log_body(root: &std::path::Path) -> String {
+        let out = std::process::Command::new("git")
+            .args(["log", "-1", "--format=%B"])
+            .current_dir(root)
+            .output()
+            .expect("git log");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// End-to-end: a HANDWRITE marker that already carries a complete `gap`
+    /// + durable `tracker` (the state `issue_marker_gap` leaves it in) gets
+    /// flipped to CODEGEN, and the flip commits via the shared
+    /// `commit_lifecycle` family with a `Td-Promote` stage and a
+    /// `Promote-Target` trailer — the same lifecycle-commit machinery every
+    /// other `td` verb uses (issue #856).
+    #[test]
+    fn promote_flips_ready_marker_and_commits_with_trailers() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write_project_config(tmp.path());
+        write(
+            tmp.path(),
+            "projects/tool/src/lib.rs",
+            "// HANDWRITE-BEGIN gap=\"standardize:manual\" tracker=\"issue-42\" reason=\"legacy\"\npub fn answer() -> i32 { 42 }\n// HANDWRITE-END\n",
+        );
+
+        run_promote_at(
+            tmp.path(),
+            PromoteArgs {
+                target: "projects/tool/src/lib.rs".to_string(),
+                spec_ref: Some("tech-design/tool.md#schema".to_string()),
+                json: false,
+            },
+        )
+        .unwrap();
+
+        let source = std::fs::read_to_string(tmp.path().join("projects/tool/src/lib.rs")).unwrap();
+        assert!(source.contains("// CODEGEN-BEGIN"), "source:\n{source}");
+        assert!(source.contains("// CODEGEN-END"), "source:\n{source}");
+        assert!(!source.contains("HANDWRITE"), "source:\n{source}");
+        assert!(source.contains("pub fn answer() -> i32 { 42 }"));
+
+        let body = git_log_body(tmp.path());
+        assert!(
+            body.contains("Lifecycle-Stage: Td-Promote"),
+            "body:\n{body}"
+        );
+        assert!(
+            body.contains("Promote-Target: projects/tool/src/lib.rs"),
+            "body:\n{body}"
+        );
+        assert!(body.contains("Work-Item:"), "body:\n{body}");
+        assert!(body.contains("Lifecycle-Slug:"), "body:\n{body}");
+    }
+
+    /// A marker that hasn't been through `issue_marker_gap` yet (no durable
+    /// tracker) refuses the flip — hard error for this explicitly-targeted
+    /// verb — and leaves the file byte-for-byte unchanged.
+    #[test]
+    fn promote_refuses_marker_missing_tracker() {
+        // Exercises the shared core promotion fn directly (not
+        // `run_promote_at`/`run_promote`): the CLI-dispatch layer prints an
+        // error envelope and `std::process::exit`s on failure — correct for
+        // a real `aw td promote` invocation, but a hard process exit inside
+        // one `#[test]` thread would tear down the whole `cargo test --lib`
+        // binary (all tests share one process). The refusal behavior itself
+        // — no durable tracker, byte-for-byte-unchanged file — lives in
+        // `promote_handwrite_marker_to_codegen` and is fully testable there.
+        let tmp = tempfile::TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write_project_config(tmp.path());
+        let original =
+            "// HANDWRITE-BEGIN gap=\"standardize:manual\" reason=\"legacy\"\npub fn answer() -> i32 { 42 }\n// HANDWRITE-END\n";
+        write(tmp.path(), "projects/tool/src/lib.rs", original);
+
+        let rel = super::super::standardize::resolve_promote_target(
+            tmp.path(),
+            "projects/tool/src/lib.rs",
+        )
+        .unwrap();
+        let result = super::super::standardize::promote_handwrite_marker_to_codegen(
+            tmp.path(),
+            &rel,
+            "tech-design/tool.md#schema",
+        );
+        let err = match result {
+            Ok(_) => panic!("expected promotion to refuse a marker with no durable tracker"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("no durable tracker"),
+            "unexpected error: {err}"
+        );
+
+        let source = std::fs::read_to_string(tmp.path().join("projects/tool/src/lib.rs")).unwrap();
+        assert_eq!(source, original, "refusal must not touch the file");
+    }
+
+    /// `aw td promote <marker-id>` resolves a HANDWRITE marker's `tracker=`
+    /// id to its owning file, matching the `<path|marker-id>` contract in
+    /// the verb's own `--help`.
+    #[test]
+    fn resolve_promote_target_accepts_marker_tracker_id() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        write_project_config(tmp.path());
+        write(
+            tmp.path(),
+            "projects/tool/src/lib.rs",
+            "// HANDWRITE-BEGIN gap=\"standardize:manual\" tracker=\"issue-42\" reason=\"legacy\"\npub fn answer() -> i32 { 42 }\n// HANDWRITE-END\n",
+        );
+
+        let rel = super::super::standardize::resolve_promote_target(tmp.path(), "issue-42")
+            .expect("marker tracker id should resolve to its owning file");
+        assert_eq!(rel, "projects/tool/src/lib.rs");
+    }
+}
+
 // CODEGEN-END
 ````
 
@@ -6976,5 +6452,11 @@ changes:
       Whole-file source template generated from the standardized target body.
       Adds TD `--phase` section-queue apply support, WI projection lock updates,
       hook-compatible expected payload/command state, and deterministic
-      section-level lifecycle trailers.
+      section-level lifecycle trailers. Adds JSON-payload rendering for the
+      Mermaid Plus contract/unit-test section class (#1097): agents write only
+      structured requirements JSON under the fill-loop payload path
+      (`<section>.json`); `aw td create --apply` deterministically renders the
+      YAML frontmatter and a generated `flowchart TD` diagram from that data,
+      and rejects hand-written mermaid/YAML payloads for JSON-payload sections
+      with a schema-pointing error.
 ```

@@ -10,13 +10,17 @@ pub mod capability;
 pub mod capability_type;
 pub mod cb;
 pub mod cb_fill;
+pub(crate) mod chain;
 #[path = "chat.rs"]
 pub mod chat;
 pub mod check_alignment;
 pub mod commands;
+pub mod conf;
+pub mod doc_mirror;
 pub mod ec;
 pub mod fillback;
 pub mod generator;
+pub mod guard;
 pub mod hook;
 pub mod init;
 pub mod issues;
@@ -29,20 +33,22 @@ pub mod remote_push;
 pub mod run;
 pub(crate) mod shell_env;
 pub mod slug_workspace;
+pub mod standard_cli;
 pub mod standardize;
-pub mod sync;
 pub mod td;
 pub mod td_check_section_type;
 pub mod td_lock;
 pub mod td_migrate;
 pub mod update;
 pub mod validate_spec_structure;
+pub mod view;
 pub mod workflow_guard;
 
 // Legacy modules kept for init.rs / update.rs dependencies
 pub(crate) mod migrate;
 
-// Shared merge-target resolution logic for `aw td merge` and `aw wi merge`.
+// Legacy merge-target resolution logic retained for older merge-style recovery
+// surfaces while those APIs age out.
 // Public so integration tests in tests/ can call resolve_merge_target directly.
 pub mod merge_target;
 
@@ -60,7 +66,7 @@ fn legacy_score_workspace_error(root: &std::path::Path) -> anyhow::Error {
 }
 
 // Find the project root by walking up from CWD looking for `.aw/config.toml`.
-// Falls back to CWD if no `.aw/` is found (e.g., during `aw init`).
+// Falls back to CWD if no `.aw/` is found (e.g., during greenfield setup).
 ///
 // This intentionally returns the repo root for the CLI process's current
 // working tree. In a git linked-worktree checkout, do not use shared git
@@ -87,7 +93,7 @@ pub fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
                 if let Some(root) = legacy_root {
                     return Err(legacy_score_workspace_error(&root));
                 }
-                // No .aw/ found — fall back to CWD (for aw init or uninitialized repos)
+                // No .aw/ found — fall back to CWD for uninitialized repos.
                 return Ok(cwd);
             }
         }

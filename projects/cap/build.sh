@@ -7,17 +7,20 @@ usage() {
   cat <<'EOF'
 Usage: projects/cap/build.sh <debug|release>
 
-debug    Build cap and install target/debug/cap to ~/.cargo/bin/cap.
-release  Bump patch version, build/install cap, commit version files, and tag cap@<version>.
+debug    Build cap and install target/debug/{cap,cap-fast,cap-full}.
+release  Build/install cap, create a release commit, and print the tag to push after git:land.
+
+Set CAP_INSTALL to choose the install directory; default is ~/.cargo/bin.
 EOF
 }
 
 fail_hint() {
   local mode="$1"
+  local install_dir="${CAP_INSTALL:-$HOME/.cargo/bin}"
   echo ""
   echo "Build failed."
   echo "Retry with: projects/cap/build.sh ${mode}"
-  echo "Verify with: ~/.cargo/bin/cap --version"
+  echo "Verify with: ${install_dir}/cap --version"
 }
 
 MODE="${1:-}"
@@ -44,6 +47,9 @@ esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+. scripts/project-build-lib.sh
+
+INSTALL_DIR="${CAP_INSTALL:-$HOME/.cargo/bin}"
 
 trap 'fail_hint "$MODE"' ERR
 
@@ -79,52 +85,47 @@ install_cap() {
     "${cflags[@]}" \
     projects/cap/src/cap_fast_frontend.c \
     -o "target/${profile}/cap-fast"
-  install -m 755 "target/${profile}/cap" "$HOME/.cargo/bin/cap"
-  install -m 755 "target/${profile}/cap-fast" "$HOME/.cargo/bin/cap-fast"
-  install -m 755 "target/${profile}/cap-full" "$HOME/.cargo/bin/cap-full"
-  codesign -s - -f --options runtime "$HOME/.cargo/bin/cap" 2>/dev/null || true
-  codesign -s - -f --options runtime "$HOME/.cargo/bin/cap-fast" 2>/dev/null || true
-  codesign -s - -f "$HOME/.cargo/bin/cap-full" 2>/dev/null || true
-  echo "Installed: $("$HOME/.cargo/bin/cap" --version 2>/dev/null || echo 'cap')"
-  echo "Verify with: ~/.cargo/bin/cap --version"
+  mkdir -p "$INSTALL_DIR"
+  install -m 755 "target/${profile}/cap" "$INSTALL_DIR/cap"
+  install -m 755 "target/${profile}/cap-fast" "$INSTALL_DIR/cap-fast"
+  install -m 755 "target/${profile}/cap-full" "$INSTALL_DIR/cap-full"
+  codesign -s - -f --options runtime "$INSTALL_DIR/cap" 2>/dev/null || true
+  codesign -s - -f --options runtime "$INSTALL_DIR/cap-fast" 2>/dev/null || true
+  codesign -s - -f "$INSTALL_DIR/cap-full" 2>/dev/null || true
+  echo "Installed: $("$INSTALL_DIR/cap" --version 2>/dev/null || echo 'cap')"
+  echo "Verify with: ${INSTALL_DIR}/cap --version"
+  local active_cap
+  active_cap="$(command -v cap 2>/dev/null || true)"
+  if [[ -n "$active_cap" && "$active_cap" != "$INSTALL_DIR/cap" ]]; then
+    echo "Note: active cap on PATH is ${active_cap}; it shadows ${INSTALL_DIR}/cap."
+    echo "      Re-run with CAP_INSTALL=$(dirname "$active_cap") to update that entry."
+  fi
 }
 
 if [[ "$MODE" == "debug" ]]; then
+  VERSION_FILES=(projects/cap/Cargo.toml)
+  CURRENT_VERSION="$(project_build_read_version projects/cap/Cargo.toml)"
+  project_build_prepare_debug_version cap "$CURRENT_VERSION" "${VERSION_FILES[@]}"
   cargo build -p cap
   install_cap debug
+  project_build_restore_manifests
   echo ""
-  echo "Build complete."
+  echo "Build complete (debug ${PROJECT_BUILD_DEBUG_VERSION})."
   exit 0
 fi
 
-CURRENT_VERSION="$(grep -m1 '^version = "' projects/cap/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
-IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-NEW_PATCH=$((PATCH + 1))
-NEW_MINOR=$MINOR
-NEW_MAJOR=$MAJOR
-if [[ "$NEW_PATCH" -gt 63 ]]; then
-  NEW_PATCH=0
-  NEW_MINOR=$((MINOR + 1))
-fi
-if [[ "$NEW_MINOR" -gt 63 ]]; then
-  NEW_MINOR=0
-  NEW_MAJOR=$((MAJOR + 1))
-fi
-NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
-
-echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" projects/cap/Cargo.toml
+VERSION_FILES=(projects/cap/Cargo.toml)
+CURRENT_VERSION="$(project_build_read_version projects/cap/Cargo.toml)"
+export PROJECT_BUILD_REQUIRE_REMOTE_TAG_CHECK=1
+project_build_prepare_release_version cap "$CURRENT_VERSION" "${VERSION_FILES[@]}"
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p cap
 install_cap release
 
-TAG="cap@${NEW_VERSION}"
+TAG="${PROJECT_BUILD_RELEASE_TAG}"
 git add Cargo.lock projects/cap
-git commit -m "release(cap): ${TAG}"
-git tag -a "$TAG" -m "Release ${TAG}"
+git commit --allow-empty -m "release(cap): ${TAG}"
 
-echo ""
-echo "Build complete. cap ${TAG} installed and tagged."
+project_build_print_release_next_steps cap "$TAG"
 # CODEGEN-END

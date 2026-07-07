@@ -915,11 +915,15 @@ fn is_whole_file_codegen_content(
     };
     let lines = content.lines().collect::<Vec<_>>();
     let spec_line = block.begin_line.saturating_sub(1);
+    // Tolerate a single leading shebang (`#!`) on line 1: an exec'd shell
+    // script must keep it above the managed markers, yet the file is still
+    // wholly owned by the CODEGEN block (#42).
     let before = lines
         .get(..spec_line)
         .unwrap_or(&[])
         .iter()
-        .all(|line| line.trim().is_empty());
+        .enumerate()
+        .all(|(idx, line)| line.trim().is_empty() || (idx == 0 && line.starts_with("#!")));
     let after = lines
         .get(block.end_line + 1..)
         .unwrap_or(&[])
@@ -1693,9 +1697,11 @@ fn normalize_path_for_spec_ref(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// Count the spec's Changes entries (excluding `action: delete`). Used by
-/// `score td merge` (Bug 2) to gauge how much implementation the spec
-/// promises so it can refuse a merge whose entire promise is unfulfilled.
+/// Count the spec's Changes entries (excluding `action: delete`). Called by
+/// the terminal `aw td code-check` empty-implementation gate
+/// (`run_check_lifecycle_terminal` in `cb.rs`, issue #847) to gauge how much
+/// implementation the spec promises so it can refuse completion whose entire
+/// promise is unfulfilled.
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
 pub fn extract_change_entries_count(spec_content: &str) -> usize {
     extract_change_entries(spec_content)
@@ -1706,9 +1712,11 @@ pub fn extract_change_entries_count(spec_content: &str) -> usize {
 
 /// Walk the spec's Changes section and return the subset of `action: create`
 /// or `action: modify` entries whose `path:` does NOT exist on disk relative
-/// to `root`. Used by `score td merge` (Bug 2) to refuse a merge whose
-/// implementation is empty: a spec listing N files with 0 written is the
-/// signature of a stalled gen-code + missing handwrite step.
+/// to `root`. Called by the terminal `aw td code-check` empty-implementation
+/// gate (`run_check_lifecycle_terminal` in `cb.rs`, issue #847) to refuse
+/// completion whose implementation is empty: a spec listing N files with 0
+/// written is the signature of a stalled gen-code + missing handwrite step.
+/// Overridable via `aw td code-check --allow-empty-impl`.
 ///
 /// `delete` entries are excluded — the missing-file IS the desired outcome.
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
@@ -3154,6 +3162,22 @@ mod tests {
     }
 
     #[test]
+    fn test_runtime_image_supports_dockerfile_variants() {
+        for path in [
+            "projects/lumen/Dockerfile",
+            "projects/lumen/Dockerfile.release",
+            "projects/lumen/Dockerfile.bench",
+            "projects/lumen/service.dockerfile",
+        ] {
+            assert_eq!(
+                target_language(std::path::Path::new(path), Some("runtime-image")),
+                Some(crate::generate::marker::Lang::Toml),
+                "runtime-image target should accept {path}"
+            );
+        }
+    }
+
+    #[test]
     fn test_extract_section_fence_returns_raw_source_payload() {
         let spec = r#"
 ## Source
@@ -3356,6 +3380,32 @@ changes:
         assert_eq!(generated.matches("#!/usr/bin/env bash").count(), 1);
         assert_eq!(generated.matches("# CODEGEN-BEGIN").count(), 1);
         assert!(generated.contains("echo \"build ${1:-debug}\""));
+    }
+
+    #[test]
+    fn whole_file_codegen_detector_tolerates_a_leading_shebang() {
+        // #42: a shell script keeps its `#!` on line 1, above the managed
+        // markers. The whole-file CODEGEN detector must still recognize the
+        // file as wholly owned by the block, so it counts as regenerable
+        // codegen and re-apply is a clean no-op rather than perpetual churn.
+        let with_shebang =
+            "#!/usr/bin/env bash\n# SPEC-MANAGED: x#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(with_shebang);
+        assert!(
+            is_whole_file_codegen_content(with_shebang, &blocks),
+            "a single leading shebang must not disqualify whole-file CODEGEN"
+        );
+
+        // A non-shebang, non-empty line above the marker still disqualifies it.
+        let with_preamble =
+            "echo hi\n# SPEC-MANAGED: x#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(with_preamble);
+        assert!(!is_whole_file_codegen_content(with_preamble, &blocks));
+
+        // Plain whole-file CODEGEN (no shebang) stays recognized.
+        let plain = "// SPEC-MANAGED: x#source\n// CODEGEN-BEGIN\npub fn f() {}\n// CODEGEN-END\n";
+        let blocks = crate::generate::marker::parse_codegen_blocks(plain);
+        assert!(is_whole_file_codegen_content(plain, &blocks));
     }
 
     #[test]
@@ -7814,10 +7864,13 @@ fn is_yaml_source(path: &Path) -> bool {
 }
 
 fn is_docker_artifact(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some("Dockerfile" | ".dockerignore")
-    )
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name == ".dockerignore"
+        || file_name == "Dockerfile"
+        || file_name.starts_with("Dockerfile.")
+        || file_name.ends_with(".dockerfile")
 }
 
 /// Decide whether a target path is writable by a generator, and return the
@@ -8064,6 +8117,7 @@ fn is_python_codegen_section(section: Option<&str>) -> bool {
 }
 
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
+#[cfg(test)]
 pub(crate) fn supports_source_backed_replay(target_rel_path: &str, section: Option<&str>) -> bool {
     supports_source_backed_replay_path(Path::new(target_rel_path), section)
 }

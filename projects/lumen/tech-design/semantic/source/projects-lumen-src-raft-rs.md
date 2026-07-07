@@ -20,32 +20,53 @@ Public API manifest for `projects/lumen/src/raft.rs` generated from AST during S
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ClusterState` | projects/lumen/src/raft.rs | struct | pub | 163 |  |
-| `ClusterStateView` | projects/lumen/src/raft.rs | struct | pub | 214 |  |
-| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub | 83 |  |
-| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub | 76 |  |
-| `RaftRole` | projects/lumen/src/raft.rs | enum | pub | 25 |  |
-| `ReadConsistency` | projects/lumen/src/raft.rs | enum | pub | 37 |  |
-| `from_config` | projects/lumen/src/raft.rs | function | pub | 93 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
-| `from_header` | projects/lumen/src/raft.rs | function | pub | 49 | from_header(raw: Option<&str>) -> Self |
-| `leader` | projects/lumen/src/raft.rs | function | pub | 154 | leader(&self) -> Option<&PeerAddr> |
-| `new` | projects/lumen/src/raft.rs | function | pub | 176 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
-| `snapshot` | projects/lumen/src/raft.rs | function | pub | 198 | snapshot(&self) -> ClusterStateView |
+| `ReadConsistency` | raft_host (re-export) | enum | pub use | 36 |  |
+| `ClusterState` | projects/lumen/src/raft.rs | struct | pub | 162 |  |
+| `ClusterStateView` | projects/lumen/src/raft.rs | struct | pub | 213 |  |
+| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub | 72 |  |
+| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub | 65 |  |
+| `RaftRole` | projects/lumen/src/raft.rs | enum | pub | 41 |  |
+| `from_config` | projects/lumen/src/raft.rs | function | pub | 95 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
+| `leader` | projects/lumen/src/raft.rs | function | pub | 153 | leader(&self) -> Option<&PeerAddr> |
+| `new` | projects/lumen/src/raft.rs | function | pub | 175 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
+| `snapshot` | projects/lumen/src/raft.rs | function | pub | 197 | snapshot(&self) -> ClusterStateView |
+
+`ReadConsistency` (header name + `from_header` parsing) and the
+`RaftRole`/`PeerAddr`/`ClusterStateView` shapes are now canonically defined
+in `libs/raft-host` (`read_consistency.rs` / `view.rs`, #1003); this file
+re-exports `ReadConsistency` directly and keeps `utoipa::ToSchema`-deriving
+wrappers with `From<raft_host::*>` conversions for the other three so
+`/openapi.json` stays byte-identical.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Per-shard replication surface.
 //!
 //! This module currently carries the public cluster-state DTOs — readiness,
 //! peer DNS map, role inspection, read-consistency parsing, and the wire shape
 //! of `/debug/cluster`. The next implementation slice wires this surface to
-//! `libs/raftcore` so multi-pod Lumen owns write ordering and primary/replica
+//! `libs/raft-core` so multi-pod Lumen owns write ordering and primary/replica
 //! synchronization itself.
 //!
-//! The old broker-owned framing is stale: Relay remains an explicit external
-//! broker mode, but Lumen's multi-pod auto path should use Lumen-owned
-//! primary/replica replication.
+//! Lumen's multi-pod auto path uses Lumen-owned primary/replica replication.
+//!
+//! `RaftGroup::from_config`'s peer enumeration (pod-ordinal math + the
+//! `LUMEN_PEERS` override parsing) delegates to `libs/raft-host::cluster`
+//! (#1002) so it can't drift from `raft_host::cluster::ClusterTopology::
+//! from_env`, the implementation the actual raft-wal peer wiring uses.
+//!
+//! The read-consistency header contract and the role/cluster-view model are
+//! the same shape every raft_core service exposes, so their canonical
+//! definitions now live in `libs/raft-host` (#1003). `ReadConsistency` is
+//! re-exported directly (it carries no OpenAPI surface); `RaftRole`,
+//! `PeerAddr`, and `ClusterStateView` keep lumen-side `utoipa::ToSchema`
+//! wrappers here — with `From<>` conversions to the `raft_host` shapes —
+//! since deriving `ToSchema` on the shared types would force every adopter
+//! (keep/relay/loom) to pull in utoipa whether or not it exposes an OpenAPI
+//! doc.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -54,8 +75,12 @@ use utoipa::ToSchema;
 
 use crate::config::ClusterConfig;
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
+pub use raft_host::ReadConsistency;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub enum RaftRole {
     Leader,
     Follower,
@@ -63,39 +88,14 @@ pub enum RaftRole {
     Candidate,
 }
 
-/// Read-consistency requirement set by a client request via the
-/// `X-Read-Consistency` header.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ReadConsistency {
-    /// Default — only the shard leader may answer.
-    Leader,
-    /// A follower may answer if its replication lag is below the bound
-    /// (ms). Carried in `bounded(ms)` form on the wire.
-    Bounded(u64),
-    /// Any replica is allowed (potentially stale).
-    Any,
-}
-
-impl ReadConsistency {
-    pub fn from_header(raw: Option<&str>) -> Self {
-        let Some(v) = raw else {
-            return Self::Leader;
-        };
-        let v = v.trim().to_ascii_lowercase();
-        if v == "leader" {
-            Self::Leader
-        } else if v == "any" {
-            Self::Any
-        } else if let Some(ms) = v
-            .strip_prefix("bounded(")
-            .and_then(|t| t.strip_suffix(')'))
-            .and_then(|n| n.parse::<u64>().ok())
-        {
-            Self::Bounded(ms)
-        } else {
-            // Unknown values fall back to the safest setting.
-            Self::Leader
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
+impl From<raft_host::RaftRole> for RaftRole {
+    fn from(role: raft_host::RaftRole) -> Self {
+        match role {
+            raft_host::RaftRole::Leader => Self::Leader,
+            raft_host::RaftRole::Follower => Self::Follower,
+            raft_host::RaftRole::Learner => Self::Learner,
+            raft_host::RaftRole::Candidate => Self::Candidate,
         }
     }
 }
@@ -104,12 +104,14 @@ impl ReadConsistency {
 /// deployment: `lumen-{ordinal}.{headless_service}:{port}` where the
 /// pod ordinal is `replica * shard_count + shard`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct RaftGroup {
     pub shard_index: u32,
     pub peers: Vec<PeerAddr>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct PeerAddr {
     pub pod_name: String,
     pub host: String,
@@ -118,6 +120,20 @@ pub struct PeerAddr {
     pub role: RaftRole,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
+impl From<raft_host::PeerAddr> for PeerAddr {
+    fn from(p: raft_host::PeerAddr) -> Self {
+        Self {
+            pod_name: p.pod_name,
+            host: p.host,
+            raft_port: p.raft_port,
+            client_port: p.client_port,
+            role: p.role.into(),
+        }
+    }
+}
+
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 impl RaftGroup {
     pub fn from_config(
         cfg: &ClusterConfig,
@@ -129,7 +145,9 @@ impl RaftGroup {
         let shard = cfg.shard_index()?;
         let mut peers = Vec::with_capacity(cfg.replicas_per_shard as usize);
         for replica in 0..cfg.replicas_per_shard {
-            let ordinal = replica * cfg.shard_count + shard;
+            // Pod-ordinal math shared with `raft_host::cluster::ClusterTopology`
+            // (#1002) — no local `%`/`/` peer-DNS arithmetic.
+            let ordinal = raft_host::cluster::peer_ordinal(cfg.shard_count, shard, replica);
             let pod_name = format!("{prefix}-{ordinal}");
             let host = format!("{pod_name}.{headless_service}");
             let role = if replica < cfg.voter_count {
@@ -155,21 +173,16 @@ impl RaftGroup {
         // Local-dev override: `LUMEN_PEERS=host:peer-port,host:peer-port,...`
         // replaces the K8s headless-DNS addresses with explicit
         // host:port pairs. Useful for running a 3-pod cluster on a
-        // single machine; index N maps to replica N in this shard.
-        if let Ok(raw) = std::env::var("LUMEN_PEERS") {
-            let overrides: Vec<&str> = raw
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            for (i, peer) in peers.iter_mut().enumerate() {
-                if let Some(addr) = overrides.get(i) {
-                    if let Some((host, port)) = addr.rsplit_once(':') {
-                        peer.host = host.to_string();
-                        peer.raft_port = port.parse().unwrap_or(peer.raft_port);
-                    } else {
-                        peer.host = (*addr).to_string();
-                    }
+        // single machine; index N maps to replica N in this shard. Parsing
+        // is shared with `ClusterTopology::from_env`'s peer override (#1002).
+        let overrides = raft_host::cluster::parse_peer_overrides("LUMEN_PEERS");
+        for (i, peer) in peers.iter_mut().enumerate() {
+            if let Some(addr) = overrides.get(i) {
+                if let Some((host, port)) = addr.rsplit_once(':') {
+                    peer.host = host.to_string();
+                    peer.raft_port = port.parse().unwrap_or(peer.raft_port);
+                } else {
+                    peer.host = addr.clone();
                 }
             }
         }
@@ -188,6 +201,7 @@ impl RaftGroup {
 /// Live cluster snapshot for `/debug/cluster`. Cheap to clone; updated
 /// in place from background replication tasks.
 #[derive(Debug)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct ClusterState {
     pub pod_name: String,
     pub shard_index: u32,
@@ -199,6 +213,7 @@ pub struct ClusterState {
     pub replication_lag_ms: AtomicU64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 impl ClusterState {
     pub fn new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> {
         let role = if cfg.is_voter()? {
@@ -237,6 +252,7 @@ impl ClusterState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct ClusterStateView {
     pub pod_name: String,
     pub shard_index: u32,
@@ -248,29 +264,65 @@ pub struct ClusterStateView {
     pub replication_lag_ms: u64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
+impl From<raft_host::ClusterStateView> for ClusterStateView {
+    fn from(v: raft_host::ClusterStateView) -> Self {
+        Self {
+            pod_name: v.pod_name,
+            shard_index: v.shard_index,
+            replica_index: v.replica_index,
+            role: v.role.into(),
+            peers: v.peers.into_iter().map(Into::into).collect(),
+            applied_index: v.applied_index,
+            leader_term: v.leader_term,
+            replication_lag_ms: v.replication_lag_ms,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn read_consistency_from_header() {
-        assert_eq!(
-            ReadConsistency::from_header(Some("leader")),
-            ReadConsistency::Leader
-        );
-        assert_eq!(
-            ReadConsistency::from_header(Some("any")),
-            ReadConsistency::Any
-        );
-        assert_eq!(
-            ReadConsistency::from_header(Some("Bounded(250)")),
-            ReadConsistency::Bounded(250)
-        );
-        assert_eq!(
-            ReadConsistency::from_header(Some("gibberish")),
-            ReadConsistency::Leader
-        );
-        assert_eq!(ReadConsistency::from_header(None), ReadConsistency::Leader);
+    fn wrapper_types_convert_from_raft_host_canonical_shape() {
+        // The header contract itself is a pure re-export — no local wrapper —
+        // so its parsing tests moved down to raft-host (#1003).
+        for (host_role, local_role) in [
+            (raft_host::RaftRole::Leader, RaftRole::Leader),
+            (raft_host::RaftRole::Follower, RaftRole::Follower),
+            (raft_host::RaftRole::Learner, RaftRole::Learner),
+            (raft_host::RaftRole::Candidate, RaftRole::Candidate),
+        ] {
+            assert_eq!(RaftRole::from(host_role), local_role);
+        }
+
+        let host_peer = raft_host::PeerAddr {
+            pod_name: "lumen-1".into(),
+            host: "lumen-1.lumen-peer".into(),
+            raft_port: 8082,
+            client_port: 8080,
+            role: raft_host::RaftRole::Follower,
+        };
+        let peer: PeerAddr = host_peer.clone().into();
+        assert_eq!(peer.pod_name, host_peer.pod_name);
+        assert_eq!(peer.role, RaftRole::Follower);
+
+        let host_view = raft_host::ClusterStateView {
+            pod_name: "lumen-1".into(),
+            shard_index: 0,
+            replica_index: 1,
+            role: raft_host::RaftRole::Follower,
+            peers: vec![host_peer],
+            applied_index: 5,
+            leader_term: 2,
+            replication_lag_ms: 10,
+        };
+        let view: ClusterStateView = host_view.into();
+        assert_eq!(view.pod_name, "lumen-1");
+        assert_eq!(view.role, RaftRole::Follower);
+        assert_eq!(view.peers.len(), 1);
+        assert_eq!(view.applied_index, 5);
     }
 
     use crate::config::ClusterConfig;
@@ -387,6 +439,8 @@ mod tests {
         assert_eq!(v.leader_term, 1);
     }
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

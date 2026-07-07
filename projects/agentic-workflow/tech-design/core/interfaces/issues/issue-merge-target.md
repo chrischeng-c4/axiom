@@ -131,34 +131,38 @@ flowchart TD
 ```yaml
 commands:
   - name: aw wi create
-    description: Create a new issue on a dedicated worktree.
-    options:
-      - name: --target-branch
-        type: Option<String>
-        description: |
-          Target branch to merge this issue's worktree into when
-          `aw wi merge` is invoked. When supplied, the value is
-          written to the issue frontmatter as `target_branch`. When
-          omitted, no field is written (absence preserves the default
-          resolution path — current branch → config default_branch →
-          error). Must refer to a branch that exists in the local
-          repository at creation time; absent branches produce a
-          structured error envelope.
-        required: false
-        examples:
-          - --target-branch develop
-          - --target-branch release/2.0
+    description: |
+      Create a new issue on a dedicated worktree. There is no `--target-branch`
+      flag on this command's current args (`CreateArgs` in `src/cli/issues.rs`
+      has no such field) — `target_branch` is populated only
+      programmatically, by whatever writes the issue's frontmatter/
+      `IssuePatch` directly (e.g. a hand-edited frontmatter field, or a
+      future patch-applying verb), never by a CLI flag on `create`. When
+      present in frontmatter, `aw td code-check`'s terminal branch-landing
+      step (`land_td_lifecycle_branch`, issue #842) reads it as the
+      `frontmatter_branch` argument to `resolve_merge_target` and it wins
+      over current-branch/config-default resolution. When absent, resolution
+      falls through unchanged (current branch → config default_branch →
+      error).
 
-  - name: aw wi merge
-    description: Merge the issue worktree branch into the target branch.
+  - name: aw td code-check
+    description: |
+      Terminal code-check step. On completion it lands the issue's
+      `td-<slug>` lifecycle branch (when one exists) into the resolved
+      target with a `--no-ff` merge carrying lifecycle trailers, then
+      deletes the branch — there is no separate `aw wi merge` verb; this
+      landing happens automatically as part of `aw td code-check`.
     options:
       - name: --target-branch
         type: Option<String>
         description: |
-          Explicit target branch override. When supplied, takes
-          precedence over all other resolution steps (issue frontmatter,
-          current branch, config default). Intended for ad-hoc overrides
-          at merge time; prefer setting `target_branch` in frontmatter
+          Reserved override parameter on `merge_target::resolve_merge_target`
+          (the `override_branch` argument), taking precedence over all other
+          resolution steps (issue frontmatter, current branch, config
+          default) when set. No CLI flag currently wires a value into it —
+          `aw td code-check`'s landing step always calls it with `None` and
+          relies on `target_branch` frontmatter (or current-branch/config
+          fallback) instead. Prefer setting `target_branch` in frontmatter
           for repeatable issue-level configuration.
         required: false
         examples:
@@ -352,7 +356,7 @@ changes:
       locally via `git rev-parse <branch>` before writing frontmatter; emit
       `action:error` if it does not exist. Write `target_branch` to the `Issue`
       struct only when the flag is supplied; omit the field when the flag is
-      absent (R4). Update `resolve_merge_target` call in `run_merge` to pass
+      absent (R4). Update `resolve_merge_target` call in `run_code_check` to pass
       `issue.target_branch.clone()` as the frontmatter override before the
       existing `args.target_branch` CLI override (R6 precedence: CLI flag
       beats frontmatter beats current branch beats config).
@@ -418,6 +422,22 @@ changes:
     section: schema
     impl_mode: hand-written
     description: "Traceability metadata edge for the schema section."
+
+  - path: projects/agentic-workflow/src/cli/issues.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: |
+      Issue #848: dropped the false `aw wi create --target-branch` CLI-flag
+      claim from the `## CLI` section above -- `CreateArgs` was never
+      extended with this flag (confirmed: `target_branch` is written as a
+      hardcoded `None` at every `Issue`/`IssuePatch` construction site in
+      `issues.rs`). Reworded the `aw wi create` entry to describe
+      `target_branch` as programmatically-populated frontmatter only,
+      consumed by `aw td code-check`'s terminal landing step (#842) via
+      `merge_target::resolve_merge_target`'s `frontmatter_branch` argument.
+      No code changed; this closes drift between the doc's original R4/t6/t7
+      design intent (a CLI flag, never implemented) and the shipped surface.
 
 ```
 

@@ -102,6 +102,15 @@ pub fn decide_action(current: &Version, selected: &Version, force: bool) -> Acti
     }
 }
 
+#[cfg(any(feature = "online", test))]
+fn check_next_command(tool: &ToolInfo, current: &Version, selected: &Version) -> String {
+    if selected > current {
+        format!("{} upgrade", tool.project)
+    } else {
+        "done".to_string()
+    }
+}
+
 /// Run `<tool> upgrade`. Offline builds (no `online` feature) only support the
 /// install path through a clear error; `--check` still degrades clearly.
 #[cfg(feature = "online")]
@@ -115,20 +124,15 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
 
     let tags = list_release_tags(&client, tool.repo).await?;
     let Some((tag, selected)) = select_version(&tags, &prefix, opts.tag.as_deref()) else {
-        if opts.check {
+        if opts.check && opts.tag.is_none() {
             println!("current: {current}");
-            match opts.tag.as_deref() {
-                Some(t) => println!(
-                    "latest:  unavailable (no {} release matching `{t}`; scanned {} tags)",
-                    tool.project,
-                    tags.len()
-                ),
-                None => println!(
-                    "latest:  unavailable (no stable {} release found; scanned {} tags)",
-                    tool.project,
-                    tags.len()
-                ),
-            }
+            println!("latest:  none");
+            println!(
+                "→ no stable {} release found (scanned {} tags)",
+                tool.project,
+                tags.len()
+            );
+            println!("next: done");
             return Ok(());
         }
         match opts.tag.as_deref() {
@@ -156,11 +160,13 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
                 "→ up to date".to_string()
             }
         );
+        println!("next: {}", check_next_command(tool, &current, &selected));
         return Ok(());
     }
 
     if decide_action(&current, &selected, opts.force) == Action::UpToDate {
         println!("already up to date ({current})");
+        println!("next: done");
         return Ok(());
     }
 
@@ -170,6 +176,7 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
     if !opts.yes && !crate::confirm(&format!("upgrade {} {current} → {selected}?", tool.project))?
     {
         println!("aborted");
+        println!("next: done");
         return Ok(());
     }
 
@@ -187,6 +194,7 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
     let bin = extract_binary(&tar_bytes, &tool.inner_binary_path())?;
     crate::install_over_self(&bin, &format!("{}-upgrade", tool.project))?;
     println!("upgraded {current} → {selected}");
+    println!("next: done");
     Ok(())
 }
 
@@ -195,11 +203,9 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
 pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
     if opts.check {
         println!("current: {}", tool.version);
-        println!("latest:  unavailable (compiled without `cli-std/online`)");
-        println!(
-            "-> rebuild {} with its self-update/release feature to check GitHub releases",
-            tool.project
-        );
+        println!("latest:  unavailable (this build has no `online` feature)");
+        println!("→ rebuild with self-update support to query GitHub releases");
+        println!("next: done");
         return Ok(());
     }
     anyhow::bail!(
@@ -290,6 +296,33 @@ mod tests {
     }
 
     #[test]
+    fn check_next_command_prefers_upgrade_only_when_newer() {
+        let current = Version::new(0, 4, 11);
+        assert_eq!(
+            check_next_command(
+                &ToolInfo {
+                    version: "0.4.11",
+                    ..TOOL
+                },
+                &current,
+                &current
+            ),
+            "done"
+        );
+        assert_eq!(
+            check_next_command(
+                &ToolInfo {
+                    version: "0.4.11",
+                    ..TOOL
+                },
+                &current,
+                &Version::new(0, 4, 12)
+            ),
+            "lumen upgrade"
+        );
+    }
+
+    #[test]
     fn extract_inner() {
         use flate2::{write::GzEncoder, Compression};
         let inner = "lumen-t/lumen";
@@ -308,4 +341,13 @@ mod tests {
         assert_eq!(extract_binary(&gz, inner).unwrap(), payload);
         assert!(extract_binary(&gz, "lumen-t/other").is_err());
     }
+
+    const TOOL: ToolInfo = ToolInfo {
+        project: "lumen",
+        repo: "chrischeng-c4/axiom",
+        target: "aarch64-apple-darwin",
+        version: "0.4.11",
+        git_sha: "abc1234",
+        built_at: "1700000000",
+    };
 }

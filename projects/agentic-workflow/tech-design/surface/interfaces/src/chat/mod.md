@@ -43,7 +43,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/chat/mod.rs` generate
 ```rust
 //! `aw chat` — cross-worktree agent messaging via a shared plain-text channel.
 //!
-//! All communication flows through `/tmp/aw-channel.md` (append-only, ephemeral).
+//! All communication flows through `/tmp/aw/chat/channel.md` (append-only, ephemeral).
 //! Five subcommands: `post`, `list`, `read`, `agents`, `listen`.
 //!
 //! Agent identity is resolved by walking up from CWD for `.aw/config.toml` and
@@ -69,8 +69,8 @@ pub(crate) use helpers::{OutputFormat, detect_output_format};
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) const CHANNEL_PATH: &str = "/tmp/aw-channel.md";
-pub(crate) const AGENTS_PATH: &str = "/tmp/aw-channel-agents.md";
+pub(crate) const CHANNEL_PATH: &str = "/tmp/aw/chat/channel.md";
+pub(crate) const AGENTS_PATH: &str = "/tmp/aw/chat/agents.md";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Schema
@@ -170,10 +170,10 @@ pub struct ReadArgs {
 /// /// @spec projects/agentic-workflow/tech-design/surface/specs/score-chat.md#schema
 #[derive(Debug, Args)]
 pub struct AgentsArgs {
-    /// Write or replace caller's AgentRegistration in `/tmp/aw-channel-agents.md`.
+    /// Write or replace caller's AgentRegistration in `/tmp/aw/chat/agents.md`.
     #[arg(long)]
     pub register: bool,
-    /// Print all registered agents from `/tmp/aw-channel-agents.md`.
+    /// Print all registered agents from `/tmp/aw/chat/agents.md`.
     #[arg(long)]
     pub list: bool,
     /// Force terse output.
@@ -206,7 +206,7 @@ pub struct ListenArgs {
     pub human: bool,
 }
 
-/// One message block inside `/tmp/aw-channel.md`.
+/// One message block inside `/tmp/aw/chat/channel.md`.
 ///
 /// Serialised as a `## msg-NNN` Markdown heading followed by a YAML
 /// frontmatter block (`---`) then the body text.
@@ -225,7 +225,7 @@ pub struct ChannelMessage {
     pub body: String,
 }
 
-/// One entry in `/tmp/aw-channel-agents.md`.
+/// One entry in `/tmp/aw/chat/agents.md`.
 ///
 /// /// @spec projects/agentic-workflow/tech-design/surface/specs/score-chat.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]

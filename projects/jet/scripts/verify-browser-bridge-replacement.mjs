@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-scripts-verify-browser-bridge-replacement-mjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -698,3 +699,5 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+// </HANDWRITE>

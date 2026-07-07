@@ -6,6 +6,8 @@ mod cb_claim_test;
 mod cb_fill_test;
 #[path = "cli/tests/cb_namespace_test.rs"]
 mod cb_namespace_test;
+#[path = "cli/tests/chain_liveness_test.rs"]
+mod chain_liveness_test;
 #[path = "cli/tests/in_place_lifecycle_test.rs"]
 mod in_place_lifecycle_test;
 #[path = "cli/tests/inplace_mode_test.rs"]
@@ -20,6 +22,12 @@ mod phase_migration_test;
 mod project_health_test;
 #[path = "cli/tests/recovery_flow_test.rs"]
 mod recovery_flow_test;
+#[path = "cli/tests/root_doc_allowlist_test.rs"]
+mod root_doc_allowlist_test;
+#[path = "cli/tests/root_doc_mirror_test.rs"]
+mod root_doc_mirror_test;
+#[path = "cli/tests/root_trait_coverage_test.rs"]
+mod root_trait_coverage_test;
 #[path = "cli/tests/standardize_test.rs"]
 mod standardize_test;
 #[path = "cli/tests/td_check_test.rs"]
@@ -28,8 +36,8 @@ mod td_check_test;
 mod td_claim_test;
 #[path = "cli/tests/td_dispatch_chain_test.rs"]
 mod td_dispatch_chain_test;
-#[path = "cli/tests/td_merge_atomic_test.rs"]
-mod td_merge_atomic_test;
+#[path = "cli/tests/td_no_merge_test.rs"]
+mod td_no_merge_test;
 // CODEGEN-END
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/semantic/agentic-workflow-tests.md#schema
 // CODEGEN-BEGIN

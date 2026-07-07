@@ -1,17 +1,17 @@
 ---
 id: vat-source-projects-vat-src-overlay-rs
-summary: Source replay payload for projects/vat/src/overlay.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/overlay.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/overlay.rs
+# Standardized projects/vat/src/overlay.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
@@ -25,14 +25,16 @@ Public API manifest for `projects/vat/src/overlay.rs` generated from AST during 
 | `FileStat` | projects/vat/src/overlay.rs | struct | pub | 28 |  |
 | `Manifest` | projects/vat/src/overlay.rs | type | pub | 36 |  |
 | `clone_tree` | projects/vat/src/overlay.rs | function | pub | 40 | clone_tree(src: &Path, dst: &Path) -> Result<()> |
-| `diff` | projects/vat/src/overlay.rs | function | pub | 159 | diff(base: &Manifest, now: &Manifest) -> ChangeSet |
-| `load_manifest` | projects/vat/src/overlay.rs | function | pub | 186 | load_manifest(path: &Path) -> Result<Manifest> |
-| `manifest_of` | projects/vat/src/overlay.rs | function | pub | 126 | manifest_of(root: &Path) -> Result<Manifest> |
-| `save_manifest` | projects/vat/src/overlay.rs | function | pub | 178 | save_manifest(path: &Path, m: &Manifest) -> Result<()> |
+| `diff` | projects/vat/src/overlay.rs | function | pub | 205 | diff(base: &Manifest, now: &Manifest) -> ChangeSet |
+| `load_manifest` | projects/vat/src/overlay.rs | function | pub | 232 | load_manifest(path: &Path) -> Result<Manifest> |
+| `manifest_of` | projects/vat/src/overlay.rs | function | pub | 172 | manifest_of(root: &Path) -> Result<Manifest> |
+| `save_manifest` | projects/vat/src/overlay.rs | function | pub | 224 | save_manifest(path: &Path, m: &Manifest) -> Result<()> |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Copy-on-write workspace + filesystem diffing.
 //!
 //! A vat's `rootfs` is a copy-on-write clone of its base. On APFS (macOS) this
@@ -80,6 +82,10 @@ pub fn clone_tree(src: &Path, dst: &Path) -> Result<()> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create parent of {}", dst.display()))?;
+    }
+
+    if destination_is_inside_source(src, dst) {
+        return copy_recursive(src, dst);
     }
 
     #[cfg(target_os = "macos")]
@@ -136,12 +142,30 @@ fn clone_tree_portable(src: &Path, dst: &Path) -> Result<()> {
 /// Last-resort recursive copy (used as the universal fallback on every host).
 fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
-    for entry in WalkDir::new(src).min_depth(1) {
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|entry| should_copy_entry(src, dst, entry.path()))
+    {
         let entry = entry?;
         let rel = entry.path().strip_prefix(src)?;
         let target = dst.join(rel);
         if entry.file_type().is_dir() {
             std::fs::create_dir_all(&target)?;
+        } else if entry.file_type().is_symlink() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let link_target = std::fs::read_link(entry.path())
+                .with_context(|| format!("read symlink {}", entry.path().display()))?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&link_target, &target)
+                .with_context(|| format!("copy symlink {}", target.display()))?;
+            #[cfg(not(unix))]
+            bail!(
+                "copy symlink unsupported on this platform: {}",
+                entry.path().display()
+            );
         } else if entry.file_type().is_file() {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -152,13 +176,54 @@ fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+fn destination_is_inside_source(src: &Path, dst: &Path) -> bool {
+    match (
+        std::fs::canonicalize(src),
+        dst.parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok()),
+    ) {
+        (Ok(src), Some(dst_parent)) => dst_parent.starts_with(src),
+        _ => false,
+    }
+}
+
+fn should_copy_entry(src: &Path, dst: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(src) else {
+        return true;
+    };
+    if has_ignored_workspace_component(rel) {
+        return false;
+    }
+    !(path.starts_with(dst) || dst.starts_with(path))
+}
+
+fn has_ignored_workspace_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(".vat" | ".git" | "target")
+        )
+    })
+}
+
 /// Walk `root` and record a stat manifest of every regular file. Symlinks are
 /// not followed (we record the link's own stat); directories are implied by
 /// their files.
 /// @spec projects/vat/tech-design/semantic/source/projects-vat-src-overlay-rs.md#source
 pub fn manifest_of(root: &Path) -> Result<Manifest> {
     let mut m = Manifest::new();
-    for entry in WalkDir::new(root).min_depth(1).follow_links(false) {
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry
+                .path()
+                .strip_prefix(root)
+                .map(|rel| !has_ignored_workspace_component(rel))
+                .unwrap_or(true)
+        })
+    {
         let entry = entry.with_context(|| format!("walk {}", root.display()))?;
         if !entry.file_type().is_file() {
             continue;
@@ -220,21 +285,103 @@ pub fn load_manifest(path: &Path) -> Result<Manifest> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_slice(&bytes).context("parse manifest")
 }
-`````
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_local_vat_store_is_not_cloned_into_rootfs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+        std::fs::write(repo.join("source.txt"), "kept").expect("source file");
+        std::fs::create_dir_all(repo.join(".vat/vats/old/rootfs")).expect("old vat");
+        std::fs::write(repo.join(".vat/vats/old/rootfs/leak.txt"), "skip").expect("vat file");
+
+        let dst = repo.join(".vat/vats/new/rootfs");
+        clone_tree(&repo, &dst).expect("clone tree");
+
+        assert_eq!(
+            std::fs::read_to_string(dst.join("source.txt")).expect("copied file"),
+            "kept"
+        );
+        assert!(
+            !dst.join(".vat").exists(),
+            "repo-local vat state must never be copied into a vat rootfs"
+        );
+        assert!(
+            !dst.join(".git").exists(),
+            "repo-local git metadata must never be copied into a vat rootfs"
+        );
+    }
+
+    #[test]
+    fn workspace_build_cache_is_not_copied_or_manifested() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join("target/debug")).expect("target dir");
+        std::fs::write(repo.join("target/debug/tool"), "binary").expect("target file");
+        std::fs::write(repo.join("source.txt"), "kept").expect("source file");
+
+        let dst = repo.join(".vat/vats/new/rootfs");
+        clone_tree(&repo, &dst).expect("clone tree");
+
+        assert!(dst.join("source.txt").exists());
+        assert!(
+            !dst.join("target").exists(),
+            "Rust build cache must not be recursively copied into vat rootfs"
+        );
+
+        std::fs::create_dir_all(dst.join("target/debug")).expect("rootfs target dir");
+        std::fs::write(dst.join("target/debug/generated"), "cache").expect("rootfs target file");
+        let manifest = manifest_of(&dst).expect("manifest");
+        assert!(manifest.contains_key("source.txt"));
+        assert!(
+            !manifest.keys().any(|path| path.starts_with("target/")),
+            "Rust build cache must not enter vat diff manifests"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_fallback_preserves_symlinks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".venv/bin")).expect("venv dir");
+        std::fs::write(repo.join("python3.12-real"), "python").expect("real file");
+        std::os::unix::fs::symlink("../../python3.12-real", repo.join(".venv/bin/python"))
+            .expect("symlink");
+
+        let dst = repo.join(".vat/vats/new/rootfs");
+        clone_tree(&repo, &dst).expect("clone tree");
+
+        let copied = dst.join(".venv/bin/python");
+        assert!(
+            std::fs::symlink_metadata(&copied)
+                .expect("copied link metadata")
+                .file_type()
+                .is_symlink(),
+            "recursive fallback must preserve symlink entries"
+        );
+        assert_eq!(
+            std::fs::read_link(&copied).expect("copied link target"),
+            Path::new("../../python3.12-real")
+        );
+    }
+}
+// CODEGEN-END
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/overlay.rs"
+  - path: projects/vat/src/overlay.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-overlay-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/overlay.rs` captured during #39 vat standardization.
 ```

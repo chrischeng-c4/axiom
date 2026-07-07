@@ -16,8 +16,8 @@
 //! A write is published to the configured log and folded in by serving nodes.
 //! In primary-replica mode, clients should target the shard leader (or follow
 //! the serving API's leader redirect/retry contract); in standalone mode the
-//! single pod is the leader; in explicit broker mode any broker-connected pod
-//! can accept the write.
+//! single pod is the leader; legacy external-log modes can accept writes on any
+//! connected pod.
 
 use crate::routing::shard_index;
 

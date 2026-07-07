@@ -181,13 +181,13 @@ semantic_domain:
           - name: "count_worktree_handwrite_markers"
             kind: "function"
             public: true
-          - name: "cb_marker_payload_rel"
+          - name: "cb_marker_payload_path"
             kind: "function"
             public: false
           - name: "cb_fill_apply_command"
             kind: "function"
             public: false
-          - name: "td_merge_command"
+          - name: "td_code_check_command"
             kind: "function"
             public: false
           - name: "marker_payload_template"
@@ -199,7 +199,7 @@ semantic_domain:
           - name: "next_for_marker"
             kind: "function"
             public: false
-          - name: "next_for_td_merge"
+          - name: "next_for_td_code_check"
             kind: "function"
             public: false
           - name: "print_compact_json"
@@ -894,12 +894,12 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/agentic-workflow/src/cli"
-      - path: "projects/agentic-workflow/src/cli/sync.rs"
+      - path: "projects/agentic-workflow/src/cli/conf.rs"
         language: "rust"
         ownership_state: "handwrite"
         generator_primitives: ["data_model", "service_method"]
         symbols:
-          - name: "SyncArgs"
+          - name: "ConfArgs"
             kind: "struct"
             public: true
           - name: "run"
@@ -1104,9 +1104,33 @@ semantic_domain:
           - name: "WorkflowGoalEnvelope"
             kind: "struct"
             public: false
+          - name: "RunPrintOptions"
+            kind: "struct"
+            public: true
           - name: "run"
             kind: "function"
             public: true
+          - name: "run_resolved_root"
+            kind: "function"
+            public: false
+          - name: "wi_run_command"
+            kind: "function"
+            public: true
+          - name: "run_wi_root"
+            kind: "function"
+            public: true
+          - name: "capability_run_command"
+            kind: "function"
+            public: true
+          - name: "run_capability_root"
+            kind: "function"
+            public: true
+          - name: "project_capability_rollup_command"
+            kind: "function"
+            public: true
+          - name: "print_run_deprecation_notice"
+            kind: "function"
+            public: false
           - name: "resolve_run_root"
             kind: "function"
             public: false
@@ -1583,7 +1607,10 @@ semantic_domain:
           - name: "CheckArgs"
             kind: "struct"
             public: true
-          - name: "MergeArgs"
+          - name: "CodeCheckArgs"
+            kind: "struct"
+            public: true
+          - name: "PromoteArgs"
             kind: "struct"
             public: true
           - name: "ArbitrateArgs"
@@ -1671,6 +1698,12 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "should_stage_lifecycle_path"
+            kind: "function"
+            public: false
+          - name: "run_promote"
+            kind: "function"
+            public: false
+          - name: "run_promote_at"
             kind: "function"
             public: false
         source_evidence_node:
@@ -1942,68 +1975,6 @@ semantic_domain:
             public: true
           - name: "print_error"
             kind: "function"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/agentic-workflow/src/cli"
-      - path: "projects/agentic-workflow/src/cli/cb_revise.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method"]
-        symbols:
-          - name: "CbReviseArgs"
-            kind: "struct"
-            public: true
-          - name: "run_revise"
-            kind: "function"
-            public: true
-          - name: "worktree_path"
-            kind: "function"
-            public: false
-          - name: "cb_revise_payload_rel"
-            kind: "function"
-            public: false
-          - name: "cb_revise_apply_command"
-            kind: "function"
-            public: false
-          - name: "cb_review_command"
-            kind: "function"
-            public: false
-          - name: "next_for_revise_apply"
-            kind: "function"
-            public: false
-          - name: "next_for_cb_review"
-            kind: "function"
-            public: false
-          - name: "print_json"
-            kind: "function"
-            public: false
-          - name: "emit_error"
-            kind: "function"
-            public: false
-          - name: "cb_revise_payload_template"
-            kind: "function"
-            public: false
-          - name: "initialize_cb_revise_payload"
-            kind: "function"
-            public: false
-          - name: "read_flagged_markers"
-            kind: "function"
-            public: false
-          - name: "run_revise_brief"
-            kind: "function"
-            public: false
-          - name: "extract_revised_markers"
-            kind: "function"
-            public: false
-          - name: "run_revise_apply"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -2309,32 +2280,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/agentic-workflow/src/cli"
-      - path: "projects/agentic-workflow/src/cli/cb_arbitrate.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method"]
-        symbols:
-          - name: "CbArbitrateArgs"
-            kind: "struct"
-            public: true
-          - name: "worktree_path"
-            kind: "function"
-            public: false
-          - name: "emit_error"
-            kind: "function"
-            public: false
-          - name: "run_arbitrate"
-            kind: "function"
-            public: true
-          - name: "stage_and_commit"
-            kind: "function"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/agentic-workflow/src/cli"
       - path: "projects/agentic-workflow/src/cli/standardize.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -2460,6 +2405,21 @@ semantic_domain:
           - name: "DeploymentFacetFinding"
             kind: "struct"
             public: true
+          - name: "PromoteOutcome"
+            kind: "struct"
+            public: false
+          - name: "resolve_promote_target"
+            kind: "function"
+            public: false
+          - name: "promote_handwrite_marker_to_codegen"
+            kind: "function"
+            public: false
+          - name: "gap_issue_title"
+            kind: "function"
+            public: false
+          - name: "gap_issue_create_args"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -2653,125 +2613,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/agentic-workflow/src/cli"
-      - path: "projects/agentic-workflow/src/cli/cb_review.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
-        symbols:
-          - name: "CbReviewArgs"
-            kind: "struct"
-            public: true
-          - name: "run_review"
-            kind: "function"
-            public: true
-          - name: "worktree_path"
-            kind: "function"
-            public: false
-          - name: "cb_review_payload_rel"
-            kind: "function"
-            public: false
-          - name: "cb_review_apply_command"
-            kind: "function"
-            public: false
-          - name: "cb_revise_command"
-            kind: "function"
-            public: false
-          - name: "cb_arbitrate_command"
-            kind: "function"
-            public: false
-          - name: "td_merge_command"
-            kind: "function"
-            public: false
-          - name: "next_for_review_apply"
-            kind: "function"
-            public: false
-          - name: "next_for_td_merge"
-            kind: "function"
-            public: false
-          - name: "next_for_cb_revise"
-            kind: "function"
-            public: false
-          - name: "next_for_cb_arbitrate"
-            kind: "function"
-            public: false
-          - name: "print_json"
-            kind: "function"
-            public: false
-          - name: "emit_error"
-            kind: "function"
-            public: false
-          - name: "cb_review_payload_template"
-            kind: "function"
-            public: false
-          - name: "initialize_cb_review_payload"
-            kind: "function"
-            public: false
-          - name: "run_review_brief"
-            kind: "function"
-            public: false
-          - name: "Verdict"
-            kind: "enum"
-            public: false
-          - name: "parse_verdict"
-            kind: "function"
-            public: false
-          - name: "extract_flagged_markers_from"
-            kind: "function"
-            public: true
-          - name: "extract_flagged_markers"
-            kind: "function"
-            public: false
-          - name: "preflight_validation_findings"
-            kind: "function"
-            public: false
-          - name: "artifact_quality_review_contract"
-            kind: "function"
-            public: false
-          - name: "artifact_quality_review_instructions"
-            kind: "function"
-            public: false
-          - name: "COMPLETENESS_PLACEHOLDER_PATTERNS"
-            kind: "constant"
-            public: false
-          - name: "CompletenessFinding"
-            kind: "struct"
-            public: false
-          - name: "completeness_placeholder_findings"
-            kind: "function"
-            public: false
-          - name: "completeness_finding"
-            kind: "function"
-            public: false
-          - name: "is_completeness_allowed_line"
-            kind: "function"
-            public: false
-          - name: "completeness_allowed_markers"
-            kind: "function"
-            public: false
-          - name: "completeness_review_instructions"
-            kind: "function"
-            public: false
-          - name: "completeness_hard_patterns_json"
-            kind: "function"
-            public: false
-          - name: "stage_and_commit_for_revise"
-            kind: "function"
-            public: true
-          - name: "stage_and_commit"
-            kind: "function"
-            public: false
-          - name: "run_review_apply"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/agentic-workflow/src/cli"
       - path: "projects/agentic-workflow/src/cli/capability.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -2829,6 +2670,9 @@ semantic_domain:
             kind: "struct"
             public: true
           - name: "CapabilitySetEcDimensionArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySetWiRefArgs"
             kind: "struct"
             public: true
           - name: "CapabilityStatus"
@@ -2903,6 +2747,702 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/chain.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "ChainBlockerKind"
+            kind: "enum"
+            public: true
+          - name: "as_str"
+            kind: "function"
+            public: true
+          - name: "ChainBlocker"
+            kind: "struct"
+            public: true
+          - name: "new"
+            kind: "function"
+            public: false
+          - name: "fmt"
+            kind: "function"
+            public: false
+          - name: "ChainRequiredPositional"
+            kind: "struct"
+            public: false
+          - name: "CHAIN_REQUIRED_POSITIONALS"
+            kind: "constant"
+            public: false
+          - name: "validate_aw_command_string"
+            kind: "function"
+            public: true
+          - name: "check_chain_required_positionals"
+            kind: "function"
+            public: false
+          - name: "descend_subcommand"
+            kind: "function"
+            public: false
+          - name: "EmitSite"
+            kind: "struct"
+            public: false
+          - name: "EMIT_REGISTRY"
+            kind: "constant"
+            public: false
+          - name: "LegacyNextActionRule"
+            kind: "struct"
+            public: false
+          - name: "LEGACY_NEXT_ACTION_RULES"
+            kind: "constant"
+            public: false
+          - name: "VatRunnerEntry"
+            kind: "struct"
+            public: false
+          - name: "VatRunnersFile"
+            kind: "struct"
+            public: false
+          - name: "VatRunnerInvocation"
+            kind: "struct"
+            public: false
+          - name: "parse_vat_runner_invocation"
+            kind: "function"
+            public: false
+          - name: "check_ec_vat_runner_binding"
+            kind: "function"
+            public: true
+          - name: "normalize_legacy_aw_run_command"
+            kind: "function"
+            public: false
+          - name: "normalize_legacy_next_action"
+            kind: "function"
+            public: true
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/guard.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "CODEX_HOOKS_REL"
+            kind: "constant"
+            public: false
+          - name: "CLAUDE_SETTINGS_REL"
+            kind: "constant"
+            public: false
+          - name: "CODEX_MATCHER"
+            kind: "constant"
+            public: false
+          - name: "CLAUDE_MATCHER"
+            kind: "constant"
+            public: false
+          - name: "GuardArgs"
+            kind: "struct"
+            public: true
+          - name: "GuardCommand"
+            kind: "enum"
+            public: true
+          - name: "GuardToggleArgs"
+            kind: "struct"
+            public: true
+          - name: "GuardPretoolArgs"
+            kind: "struct"
+            public: true
+          - name: "GuardAgent"
+            kind: "enum"
+            public: true
+          - name: "includes_codex"
+            kind: "function"
+            public: false
+          - name: "includes_claude"
+            kind: "function"
+            public: false
+          - name: "GuardHookChange"
+            kind: "struct"
+            public: false
+          - name: "GuardDecision"
+            kind: "enum"
+            public: false
+          - name: "run"
+            kind: "function"
+            public: true
+          - name: "run_on"
+            kind: "function"
+            public: false
+          - name: "run_off"
+            kind: "function"
+            public: false
+          - name: "run_pretool"
+            kind: "function"
+            public: false
+          - name: "emit_toggle_summary"
+            kind: "function"
+            public: false
+          - name: "install_guard_hooks"
+            kind: "function"
+            public: false
+          - name: "remove_guard_hooks"
+            kind: "function"
+            public: false
+          - name: "guard_command"
+            kind: "function"
+            public: false
+          - name: "upsert_hook_file"
+            kind: "function"
+            public: false
+          - name: "remove_hook_from_file"
+            kind: "function"
+            public: false
+          - name: "command_project"
+            kind: "function"
+            public: false
+          - name: "read_json_or_empty_object"
+            kind: "function"
+            public: false
+          - name: "pretty_json"
+            kind: "function"
+            public: false
+          - name: "write_json_if_changed"
+            kind: "function"
+            public: false
+          - name: "aw_guard_handler"
+            kind: "function"
+            public: false
+          - name: "append_pretool_handler"
+            kind: "function"
+            public: false
+          - name: "ensure_object"
+            kind: "function"
+            public: false
+          - name: "ensure_child_object"
+            kind: "function"
+            public: false
+          - name: "ensure_child_array"
+            kind: "function"
+            public: false
+          - name: "remove_aw_guard_handlers"
+            kind: "function"
+            public: false
+          - name: "is_aw_guard_handler"
+            kind: "function"
+            public: false
+          - name: "decide_pretool_payload"
+            kind: "function"
+            public: false
+          - name: "extract_target_paths"
+            kind: "function"
+            public: false
+          - name: "parse_apply_patch_targets"
+            kind: "function"
+            public: false
+          - name: "GuardScope"
+            kind: "struct"
+            public: false
+          - name: "for_project"
+            kind: "function"
+            public: false
+          - name: "contains"
+            kind: "function"
+            public: false
+          - name: "guard_prefixes_from_row"
+            kind: "function"
+            public: false
+          - name: "target_to_repo_rel"
+            kind: "function"
+            public: false
+          - name: "resolve_existing_prefix"
+            kind: "function"
+            public: false
+          - name: "lexical_normalize"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/llm.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "LlmTopic"
+            kind: "enum"
+            public: true
+          - name: "LlmFormat"
+            kind: "enum"
+            public: true
+          - name: "LlmArgs"
+            kind: "struct"
+            public: true
+          - name: "TOPICS"
+            kind: "constant"
+            public: false
+          - name: "run"
+            kind: "function"
+            public: true
+          - name: "cli_std_format"
+            kind: "function"
+            public: false
+          - name: "topic_name"
+            kind: "function"
+            public: false
+          - name: "registered_verbs"
+            kind: "function"
+            public: false
+          - name: "CAPABILITY_MD"
+            kind: "constant"
+            public: false
+          - name: "TD_MD"
+            kind: "constant"
+            public: false
+          - name: "EC_MD"
+            kind: "constant"
+            public: false
+          - name: "WI_MD"
+            kind: "constant"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/loop_state.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "LOOP_START"
+            kind: "constant"
+            public: false
+          - name: "LOOP_END"
+            kind: "constant"
+            public: false
+          - name: "LastResult"
+            kind: "enum"
+            public: true
+          - name: "LoopStatus"
+            kind: "enum"
+            public: true
+          - name: "Iteration"
+            kind: "struct"
+            public: true
+          - name: "LoopState"
+            kind: "struct"
+            public: true
+          - name: "parse_loop_state"
+            kind: "function"
+            public: true
+          - name: "upsert_loop_state"
+            kind: "function"
+            public: true
+          - name: "apply_verification"
+            kind: "function"
+            public: true
+          - name: "decide_next_action"
+            kind: "function"
+            public: true
+          - name: "record_verification"
+            kind: "function"
+            public: true
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/standard_cli.rs"
+        language: "rust"
+        ownership_state: "unmanaged"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "TOOL"
+            kind: "constant"
+            public: false
+          - name: "ISSUE_TOOL"
+            kind: "constant"
+            public: false
+          - name: "UpgradeArgs"
+            kind: "struct"
+            public: true
+          - name: "ReportIssueArgs"
+            kind: "struct"
+            public: true
+          - name: "IssueArgs"
+            kind: "struct"
+            public: true
+          - name: "IssueCommand"
+            kind: "enum"
+            public: true
+          - name: "IssueSearchArgs"
+            kind: "struct"
+            public: true
+          - name: "IssueViewArgs"
+            kind: "struct"
+            public: true
+          - name: "IssueCreateArgs"
+            kind: "struct"
+            public: true
+          - name: "run_upgrade"
+            kind: "function"
+            public: true
+          - name: "run_report_issue"
+            kind: "function"
+            public: true
+          - name: "run_issue"
+            kind: "function"
+            public: true
+          - name: "report_issue_labels"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/view.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "ViewArgs"
+            kind: "struct"
+            public: true
+          - name: "ViewLayout"
+            kind: "enum"
+            public: true
+          - name: "fmt"
+            kind: "function"
+            public: false
+          - name: "toggled_view_layout"
+            kind: "function"
+            public: true
+          - name: "layout_toggle_button_label"
+            kind: "function"
+            public: true
+          - name: "RepoViewSnapshot"
+            kind: "struct"
+            public: true
+          - name: "RepoViewRepo"
+            kind: "struct"
+            public: true
+          - name: "RepoCatalogItem"
+            kind: "struct"
+            public: true
+          - name: "UserRepoRegistry"
+            kind: "struct"
+            public: false
+          - name: "UserRepoRegistryEntry"
+            kind: "struct"
+            public: false
+          - name: "TerminalSnapshot"
+            kind: "struct"
+            public: true
+          - name: "RepoViewItemSnapshot"
+            kind: "struct"
+            public: true
+          - name: "ProjectViewProject"
+            kind: "struct"
+            public: true
+          - name: "ProjectCatalogItem"
+            kind: "struct"
+            public: true
+          - name: "ReadmeSnapshot"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySnapshot"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySnapshotItem"
+            kind: "struct"
+            public: true
+          - name: "EcSnapshot"
+            kind: "struct"
+            public: true
+          - name: "EcCaseSnapshot"
+            kind: "struct"
+            public: true
+          - name: "TdSnapshot"
+            kind: "struct"
+            public: true
+          - name: "run"
+            kind: "function"
+            public: true
+          - name: "build_repo_view_snapshot"
+            kind: "function"
+            public: true
+          - name: "build_repo_view_snapshot_with_repo_registry_path"
+            kind: "function"
+            public: false
+          - name: "build_repo_view_item_snapshot"
+            kind: "function"
+            public: false
+          - name: "empty_repo_view_item_snapshot"
+            kind: "function"
+            public: false
+          - name: "select_catalog_item"
+            kind: "function"
+            public: false
+          - name: "project_view_project"
+            kind: "function"
+            public: false
+          - name: "project_catalog"
+            kind: "function"
+            public: false
+          - name: "project_kind"
+            kind: "function"
+            public: false
+          - name: "user_repo_registry_path"
+            kind: "function"
+            public: false
+          - name: "load_or_update_repo_catalog"
+            kind: "function"
+            public: false
+          - name: "read_user_repo_registry"
+            kind: "function"
+            public: false
+          - name: "write_user_repo_registry"
+            kind: "function"
+            public: false
+          - name: "upsert_user_repo_entry"
+            kind: "function"
+            public: false
+          - name: "repo_catalog_item_from_entry"
+            kind: "function"
+            public: false
+          - name: "repo_counts_for_path"
+            kind: "function"
+            public: false
+          - name: "canonical_repo_path"
+            kind: "function"
+            public: false
+          - name: "load_ec_snapshot"
+            kind: "function"
+            public: false
+          - name: "empty_ec_snapshot"
+            kind: "function"
+            public: false
+          - name: "td_snapshot"
+            kind: "function"
+            public: false
+          - name: "capability_snapshot"
+            kind: "function"
+            public: false
+          - name: "build_terminal_snapshot"
+            kind: "function"
+            public: false
+          - name: "build_surface_snapshot"
+            kind: "function"
+            public: false
+          - name: "RepoSurfaceProps"
+            kind: "struct"
+            public: false
+          - name: "render_repo_surface"
+            kind: "function"
+            public: false
+          - name: "build_surface_element"
+            kind: "function"
+            public: false
+          - name: "headless_contract_check"
+            kind: "function"
+            public: true
+          - name: "selected_item"
+            kind: "function"
+            public: false
+          - name: "extract_h1"
+            kind: "function"
+            public: false
+          - name: "extract_brief"
+            kind: "function"
+            public: false
+          - name: "relative_to"
+            kind: "function"
+            public: false
+          - name: "APP_SCREENSHOT_WIDTH"
+            kind: "constant"
+            public: true
+          - name: "APP_SCREENSHOT_HEIGHT"
+            kind: "constant"
+            public: true
+          - name: "APP_SCREENSHOT_FONT_CANDIDATES"
+            kind: "constant"
+            public: false
+          - name: "render_app_screenshot_image"
+            kind: "function"
+            public: true
+          - name: "render_app_screenshot_image_at_scale"
+            kind: "function"
+            public: true
+          - name: "render_app_screenshot_image_at_scale_with_options"
+            kind: "function"
+            public: false
+          - name: "AppScreenshotPaintOptions"
+            kind: "struct"
+            public: false
+          - name: "full"
+            kind: "function"
+            public: false
+          - name: "native_backdrop"
+            kind: "function"
+            public: false
+          - name: "normalized_screenshot_scale"
+            kind: "function"
+            public: false
+          - name: "scaled_screenshot_dimension"
+            kind: "function"
+            public: false
+          - name: "load_app_screenshot_font"
+            kind: "function"
+            public: false
+          - name: "ScaledScreenshotPainter"
+            kind: "struct"
+            public: false
+          - name: "new"
+            kind: "function"
+            public: false
+          - name: "px"
+            kind: "function"
+            public: false
+          - name: "fill_rect"
+            kind: "function"
+            public: false
+          - name: "draw_text_line"
+            kind: "function"
+            public: false
+          - name: "measure_text_width"
+            kind: "function"
+            public: false
+          - name: "FontdueScreenshotPainter"
+            kind: "struct"
+            public: false
+          - name: "new"
+            kind: "function"
+            public: false
+          - name: "into_image"
+            kind: "function"
+            public: false
+          - name: "fill_rect"
+            kind: "function"
+            public: false
+          - name: "draw_text_line"
+            kind: "function"
+            public: false
+          - name: "measure_text_width"
+            kind: "function"
+            public: false
+          - name: "macos_screenshot"
+            kind: "module"
+            public: false
+          - name: "render_app_screenshot_png"
+            kind: "function"
+            public: true
+          - name: "render_app_screenshot_png_at_scale"
+            kind: "function"
+            public: true
+          - name: "render_native_app_backdrop_png_at_scale"
+            kind: "function"
+            public: true
+          - name: "render_app_screenshot"
+            kind: "function"
+            public: true
+          - name: "build_desktop_app_bundle"
+            kind: "function"
+            public: true
+          - name: "build_macos_app_bundle"
+            kind: "function"
+            public: false
+          - name: "macos_app_info_plist"
+            kind: "function"
+            public: false
+          - name: "shell_quote"
+            kind: "function"
+            public: false
+          - name: "paint_repo_view_screenshot"
+            kind: "function"
+            public: false
+          - name: "paint_layout_toggle_button"
+            kind: "function"
+            public: false
+          - name: "DetailPaintDensity"
+            kind: "struct"
+            public: false
+          - name: "standard"
+            kind: "function"
+            public: false
+          - name: "compact"
+            kind: "function"
+            public: false
+          - name: "paint_detail_panel"
+            kind: "function"
+            public: false
+          - name: "paint_catalog"
+            kind: "function"
+            public: false
+          - name: "paint_project_selector"
+            kind: "function"
+            public: false
+          - name: "paint_terminal"
+            kind: "function"
+            public: false
+          - name: "paint_detail"
+            kind: "function"
+            public: false
+          - name: "paint_stat_card"
+            kind: "function"
+            public: false
+          - name: "paint_list_panel"
+            kind: "function"
+            public: false
+          - name: "draw_wrapped_text"
+            kind: "function"
+            public: false
+          - name: "truncate_for_width"
+            kind: "function"
+            public: false
+          - name: "estimate_fontdue_text_width"
+            kind: "function"
+            public: false
+          - name: "draw_fontdue_text_line"
+            kind: "function"
+            public: false
+          - name: "fill_rect_pixels"
+            kind: "function"
+            public: false
+          - name: "blend_pixel"
+            kind: "function"
+            public: false
+          - name: "rgba"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
 ```
 
 ## Changes
@@ -2952,6 +3492,19 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      #921 tier 1b (epic #914 slice G): `EcProjectContext` gained an
+      `ec_bindings: BTreeMap<String, EcBinding>` field (populated in
+      `resolve_ec_project_context` from the already-loaded `Project.ec` map,
+      no new project-loading logic), and `EcCheckSummary` gained an
+      `ec_binding_warnings: Vec<String>` field (never affects `clean`).
+      `check_manifest_against_expected` now calls
+      `chain::check_ec_vat_runner_binding` once per `ec.*` binding before its
+      final sort/dedup pass, folding any blocker into the existing
+      `findings` (so a misspelled vat.toml runner id blocks `clean` like any
+      other finding) and collecting warn-only findings (e.g. an
+      as-yet-unbuilt runner binary) into `ec_binding_warnings`.
+      `run_check`'s non-JSON branch prints each warning to stderr regardless
+      of `clean`. See `chain.md#changes` for the validator implementation.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -2989,7 +3542,7 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/agentic-workflow/src/cli/sync.rs"
+  - path: "projects/agentic-workflow/src/cli/conf.rs"
     action: modify
     section: schema
     description: |
@@ -3024,6 +3577,33 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      #860 cleanup (epic #914 dead-code pass, orphans called out in #918/#920
+      follow-up comments): removed the `ResolvedRunRoot::Project` variant and
+      its match arms (the `aw run --project` root-rollup path that
+      `aw capability run --project` now owns via `capability.rs`'s own
+      `run_capability_tick`), and deleted the dead
+      `RunProjectConfig::canonical_project_name` method plus its direct test.
+      Deleted 5 fully-dead functions with zero callers anywhere
+      (`project_envelope`,
+      `project_done_or_dirty_envelope_with_capability_report`,
+      `project_production_blocked_from_health_report`,
+      `project_backlog_envelope`, `completion_missing_from_capability_action`).
+      The remaining lower-level helpers under that superseded tree
+      (`project_completion`, `project_done_envelope`,
+      `persistence_blocked_envelope`, `project_repo_side_dirty_paths_at`,
+      `project_repo_side_scopes`, `commit_project_persistence_if_approved`,
+      `project_persistence_request_path`, `stable_project_root_hash`,
+      `write_project_persistence_request`, `load_run_project_config`,
+      `scope_strings`, `ProjectPersistenceRequest`, `RunProjectConfig`,
+      `RunProjectRow`, `project_ready_wi_envelope`,
+      `project_atomize_backlog_envelope`,
+      `project_prioritize_blocked_envelope`) lost their only production
+      caller but retain direct `#[test]` or test-twin
+      (`project_done_or_dirty_envelope_with_health`/
+      `project_production_blocked_envelope`) coverage, so they are now
+      `#[cfg(test)]`-gated rather than deleted; the `wi_cli`/`Deserialize`/
+      `DefaultHasher`/`Hash`/`Hasher` imports they depend on are
+      `#[cfg(test)]`-gated to match. Zero-warning plain `cargo build`.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/production.rs"
     action: modify
@@ -3156,5 +3736,162 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #819: added `aw capability set-wi-ref --project <p> --capability
+      <cap-id> --claim <claim-id> --wi <n>` (repeatable `--wi`) to the set-*
+      contract-field-setter family (alongside set-type/set-status/
+      set-surface/set-ec-dimension). Claim ids are the README work-root
+      table's row ids (`slugify(work_root)`, the same id space as
+      `CapabilityGap.id`/`CapabilityClaim.id`), so the verb resolves
+      `--claim` against a capability's work-root rows and rewrites that
+      row's `WI` cell -- not a separate claim-level ref surface, since none
+      exists. `--wi` accepts `#<n>` or bare `<n>`, normalized to the table's
+      existing `#<n>` format; multiple `--wi` values join with `, ` for a
+      claim row that tracks more than one reference. Unknown capability/claim
+      ids fail closed via `resolve_capability_and_claim_ids` with the valid id
+      list from a fresh `parse_capability_document` scan; a successful edit is
+      re-parsed and the row's `wi` field reconfirmed before the file is
+      written, so the verb never persists a table it cannot itself read back.
+      `choose_next_action`'s `reconcile_wi_refs` branch
+      (`lifecycle_action_for_work_item`'s unresolved-issue-evidence path) now
+      also names this verb in its `reason` text, so `aw wi plan` is no longer
+      the sole remediation surfaced for a stale Active WI reference (project
+      jet's `wasm-multi-target-readiness` claim, #818).
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1077 (traits slice 1/3): `baseline_caps_for_trait` becomes a
+      thin lookup over the new `crate::cli::doc_mirror::TRAITS` const table
+      (home of the archetype-anchored `TraitDef` registry) for the three
+      traits with a settled CONTRIBUTING.md doc home (`http2_api`,
+      `kubernetes_native`, `primary_replicas`), falling back to the
+      remaining known traits' baseline caps in the new private helper
+      `other_known_trait_baseline_caps` (`cli_facing`,
+      `competitive_replacement`, `long_running`, `network_exposed`,
+      `agent_facing`, `stateful_storage`) -- behavior-preserving, same
+      signature, same call sites. `known_capability_profile_traits()` and
+      `required_baseline_caps_for_traits` are unchanged (kept as the
+      existing static 9-trait list so trait-iteration order used by other
+      tests does not shift); a new unit test
+      `known_traits_include_every_doc_mirror_trait_def` asserts the two
+      registries can never drift apart (every `doc_mirror::TRAITS` entry is
+      in `known_capability_profile_traits()` and its baseline caps match).
+      `cargo test -p agentic-workflow --lib cli::capability::` stays fully
+      green (144 tests) -- AC1.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1078 (traits slice 2/3): deleted the private
+      `other_known_trait_baseline_caps` fallback added by #1077 -- the six
+      general traits it covered (`cli_facing`, `competitive_replacement`,
+      `long_running`, `network_exposed`, `agent_facing`, `stateful_storage`)
+      are now first-class `doc_mirror::TRAITS` entries with
+      `contributing_anchor: None`, so `baseline_caps_for_trait` becomes a
+      pure lookup over that one registry (no fallback branch left).
+      `required_baseline_caps_for_traits` now calls the new
+      `doc_mirror::expand_capability_profile_traits(traits)` first (expanding
+      the `service` umbrella into its members, deduped via `BTreeSet`) before
+      deriving caps, so declaring `service` derives the full baseline set of
+      its members and umbrella+member double-declaration does not duplicate.
+      `known_capability_profile_traits()` grows from 9 to 14 ids (the four
+      new anchored traits `standard_endpoints`/`ec_gated`/`cli_std`/
+      `chainable_output`, plus the `service` umbrella itself, added to the
+      existing 9). `baseline_capability_title` gained match arms for the
+      four new anchored traits' baseline cap ids
+      (`standard-operational-endpoints`, `ec-gates-configured`,
+      `cli-standard-surface`, `chainable-output-conformance`).
+      `render_trait_baseline_caps_cell` gained an umbrella branch: when
+      `trait_id` matches a `doc_mirror::TRAIT_EXPANSIONS` entry, it renders
+      `"expands: {members} -> caps: {derived}"` (derived via a nested call to
+      `required_baseline_caps_for_traits` on the member list) instead of a
+      plain baseline-cap lookup, so the umbrella's expansion is visible in
+      profile/draft rendering, not just in the derived cap list. The
+      drift-guard test `known_traits_include_every_doc_mirror_trait_def`
+      gained a second loop asserting every `TRAIT_EXPANSIONS` id is known and
+      every member id is a real `doc_mirror::TRAITS` id. Two new fixture
+      tests, `project_declaring_service_umbrella_derives_full_deduped_
+      baseline_set` and `project_declaring_service_umbrella_and_a_member_
+      does_not_duplicate`, cover AC1 directly: a project declaring
+      `traits = ["service"]` derives the full deduped 6-member baseline set,
+      and declaring `["service", "http2_api", "primary_replicas"]` alongside
+      it adds only `primary-replicas` on top with no duplicate
+      `http2-api-list` entry.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/cb_revise.rs"
+    action: delete
+    section: schema
+    description: |
+      Issue #848: removed the `source_units` evidence block for this file
+      (with cb_arbitrate.rs and cb_review.rs below) -- all three files were
+      deleted from `src/cli/` by the #860 terminal-lifecycle cleanup and no
+      longer exist on disk, so their evidence entries were stale/false. The
+      prior entries for these three paths (above, kept as history) predate
+      that deletion.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/cb_arbitrate.rs"
+    action: delete
+    section: schema
+    description: |
+      Issue #848: see the cb_revise.rs entry immediately above -- same
+      removal, same reason.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/cb_review.rs"
+    action: delete
+    section: schema
+    description: |
+      Issue #848: see the cb_revise.rs entry above -- same removal, same
+      reason.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/chain.rs"
+    action: add
+    section: schema
+    description: |
+      Issue #848: added the `source_units` evidence block for chain.rs
+      (added by #915's emit-site next-action registry and legacy-command
+      normalization), which had never been captured in this semantic
+      domain's evidence list.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/guard.rs"
+    action: add
+    section: schema
+    description: |
+      Issue #848: added the `source_units` evidence block for guard.rs
+      (the live `aw guard` hook-installation/pre-tool-policy surface),
+      missing from this semantic domain's evidence list.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/llm.rs"
+    action: add
+    section: schema
+    description: |
+      Issue #848: added the `source_units` evidence block for llm.rs (the
+      live `aw llm` offline agent-orientation surface), missing from this
+      semantic domain's evidence list.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/loop_state.rs"
+    action: add
+    section: schema
+    description: |
+      Issue #848: added the `source_units` evidence block for loop_state.rs
+      (the WorkItem loop-state model), missing from this semantic domain's
+      evidence list.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/standard_cli.rs"
+    action: add
+    section: schema
+    description: |
+      Issue #848: added the `source_units` evidence block for
+      standard_cli.rs (the shared `llm`/`upgrade`/`issue` CLI-convention
+      surface), missing from this semantic domain's evidence list.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/view.rs"
+    action: add
+    section: schema
+    description: |
+      Issue #848: added the `source_units` evidence block for view.rs (the
+      read-only repo visual-reader snapshot and desktop app surface),
+      missing from this semantic domain's evidence list.
     impl_mode: hand-written
 ```

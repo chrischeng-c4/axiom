@@ -157,11 +157,11 @@ fn update_binary(version: &str) -> Result<()> {
     println!();
     println!("   Run 'cclab --version' to verify.");
 
-    // If in an sdd project, suggest upgrading configs
+    // If in an AW project, suggest checking routed producer work.
     if std::path::Path::new("cclab").exists() {
         println!();
-        println!("{}", "💡 To upgrade project configs:".yellow());
-        println!("   aw init --force");
+        println!("{}", "💡 To inspect project readiness:".yellow());
+        println!("   aw health --project <project>");
     }
 
     Ok(())

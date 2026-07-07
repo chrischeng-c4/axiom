@@ -24,6 +24,7 @@ use npmrc::NpmrcConfig;
 use registry::RegistryClient;
 use resolver::{DependencyResolver, ResolvedPackage};
 use store::StoreManager;
+use workspace::strip_aw_claim_wrapper_lines;
 
 const MAX_CONCURRENT_DOWNLOADS: usize = 50;
 
@@ -979,7 +980,8 @@ impl PackageManager {
         let path = self.root_dir.join("package.json");
         let content =
             std::fs::read_to_string(&path).with_context(|| format!("Failed to read {:?}", path))?;
-        let package: PackageJson = serde_json::from_str(&content)?;
+        let content = strip_aw_claim_wrapper_lines(&content);
+        let package: PackageJson = serde_json::from_str(content.as_ref())?;
         Ok(package)
     }
 

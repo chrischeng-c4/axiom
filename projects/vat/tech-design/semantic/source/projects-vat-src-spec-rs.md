@@ -1,17 +1,17 @@
 ---
 id: vat-source-projects-vat-src-spec-rs
-summary: Source replay payload for projects/vat/src/spec.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/spec.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/spec.rs
+# Standardized projects/vat/src/spec.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
@@ -22,15 +22,18 @@ Public API manifest for `projects/vat/src/spec.rs` generated from AST during Sco
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Base` | projects/vat/src/spec.rs | enum | pub | 73 |  |
+| `Base` | projects/vat/src/spec.rs | enum | pub | 78 |  |
+| `EgressPolicy` | projects/vat/src/spec.rs | enum | pub | 105 |  |
 | `EnvSpec` | projects/vat/src/spec.rs | struct | pub | 18 |  |
-| `GpuRequest` | projects/vat/src/spec.rs | enum | pub | 100 |  |
-| `Isolation` | projects/vat/src/spec.rs | enum | pub | 84 |  |
-| `Limits` | projects/vat/src/spec.rs | struct | pub | 113 |  |
+| `GpuRequest` | projects/vat/src/spec.rs | enum | pub | 122 |  |
+| `Isolation` | projects/vat/src/spec.rs | enum | pub | 89 |  |
+| `Limits` | projects/vat/src/spec.rs | struct | pub | 135 |  |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Declarative environment spec.
 //!
 //! Not a Dockerfile. A vat's spec is data an agent reads and rewrites: where
@@ -67,6 +70,10 @@ pub struct EnvSpec {
     #[serde(default)]
     pub isolation: Isolation,
 
+    /// Outbound network egress policy (seatbelt-enforced).
+    #[serde(default)]
+    pub egress: EgressPolicy,
+
     /// GPU expectation for this vat.
     #[serde(default)]
     pub gpu: GpuRequest,
@@ -87,6 +94,7 @@ impl Default for EnvSpec {
             env: BTreeMap::new(),
             setup: Vec::new(),
             isolation: Isolation::default(),
+            egress: EgressPolicy::default(),
             gpu: GpuRequest::default(),
             limits: Limits::default(),
         }
@@ -122,6 +130,23 @@ pub enum Isolation {
     Seatbelt,
 }
 
+/// Outbound network egress policy, enforced by the seatbelt backend
+/// (`sandbox-exec`). Only enforceable under `Isolation::Seatbelt`; with
+/// `Isolation::None` it is advisory (vat warns it cannot confine egress).
+/// @spec projects/vat/tech-design/logic/vat-network-sandbox-v3-seatbelt-egress-policy-deny-outbound-exce.md#schema
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EgressPolicy {
+    /// No network restriction (current behaviour).
+    #[default]
+    Open,
+    /// Deny outbound network except localhost (loopback + unix sockets) — the
+    /// hermetic-with-routing mode: vat's local emulators/proxy stay reachable.
+    LocalhostOnly,
+    /// Deny all outbound network, including localhost.
+    Deny,
+}
+
 /// Whether the vat wants the GPU. Vat never *removes* GPU access (it can't —
 /// the process is native); this only drives a pre-flight check and what the
 /// agent is told.
@@ -147,21 +172,18 @@ pub struct Limits {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
 }
-`````
+// CODEGEN-END
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/spec.rs"
+  - path: projects/vat/src/spec.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-spec-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/spec.rs` captured during #39 vat standardization.
 ```

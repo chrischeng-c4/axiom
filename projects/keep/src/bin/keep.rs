@@ -4,23 +4,19 @@
 //! SIGTERM-aware graceful drain so k8s can roll pods without dropping requests.
 //!
 //! Bare `keep` (no subcommand) runs the server with the flags below; the
-//! standard agent-facing commands — `keep llm`, `keep upgrade`, `keep
-//! report-issue` (the CONTRIBUTING.md CLI convention, via the shared `cli-std`
-//! lib) — sit alongside it. Agents start at `keep llm outline`.
+//! standard agent-facing commands — `keep llm`, `keep upgrade`, `keep issue`
+//! (`search`/`view`/`create`) (the CONTRIBUTING.md CLI convention, via the
+//! shared `cli-std` lib) — sit alongside it. Agents start at `keep llm
+//! outline`.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto;
-use hyper_util::server::graceful::GracefulShutdown;
+use clap::{Parser, Subcommand, ValueEnum};
 use tokio::net::TcpListener;
-use tower::ServiceExt;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -54,11 +50,141 @@ enum Command {
     /// verifies its sha256, and atomically replaces the executable. `--check`
     /// reports the available version without changing anything.
     Upgrade(UpgradeArgs),
-    /// File a diagnostics-rich GitHub issue. Bundles the build version, target,
-    /// git sha and OS/arch with your description, then opens an issue via
-    /// `GITHUB_TOKEN` — or prints a pre-filled `issues/new` URL when no token is
-    /// set. `--dry-run` previews without submitting.
-    ReportIssue(ReportIssueArgs),
+    /// Search, view, and file keep issues on the axiom tracker
+    /// (`search`/`view`/`create`). `create` bundles a diagnostics block and
+    /// auto-tags `project:keep`; `search` is filtered to keep's own issues.
+    Issue(IssueArgs),
+    /// Kubernetes artifacts split by layer: the cluster-scoped CRD, the operator
+    /// control plane, and app-namespace Keep instances. Render paths are offline
+    /// (they work from the binary); only `operator run` needs the `operator`
+    /// build feature.
+    K8s(K8sArgs),
+    /// Write a consistent snapshot of keep's on-disk state to a backup
+    /// destination through the shared libs/service-backup runner. Recovers the
+    /// engine from `--data-dir` (latest snapshot + WAL replay), serializes a
+    /// full-state payload, and stores it at `--dest` (`file://` local; `s3://`,
+    /// `gs://` route to the shared placeholder sink until a cloud adapter
+    /// feature is linked), applying optional age retention.
+    Backup(BackupArgs),
+    /// Print keep's machine-readable integration spec — offline, no server. The
+    /// default emits the OpenAPI 3 JSON document (the offline twin of
+    /// `/openapi.json`); `--format openapi-yaml` for LLM-readable YAML,
+    /// `--format json-schema` for the data types, `--shapes` for the request
+    /// cookbook, `--fields` for the value-type catalog. `spec gen --lang
+    /// ts|py|rust --out <dir>` generates a typed client instead.
+    // @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+    Spec(SpecArgs),
+    /// Render keep's runtime image Dockerfiles — offline, no server. Image
+    /// construction is owned here (not by `k8s`) because the same artifact feeds
+    /// compose, kind, and real registries.
+    // @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+    Dockerfile(DockerfileArgs),
+}
+
+/// `keep k8s <crd|operator|instance>` — cluster artifacts split by lifecycle
+/// layer.
+#[derive(clap::Args, Debug)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sCmd {
+    /// Cluster-scoped API layer: render the Keep CRD.
+    Crd(K8sCrdArgs),
+    /// Operator control-plane layer: render assets or run the controller.
+    Operator(K8sOperatorArgs),
+    /// App-namespace declaration: render a Keep custom resource.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    cmd: K8sCrdCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sCrdCmd {
+    /// Render the Keep CustomResourceDefinition YAML.
+    Render(K8sFileOutputArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    cmd: Option<K8sOperatorCmd>,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sOperatorCmd {
+    /// Container entrypoint: run the reconcile controller (needs `--features
+    /// operator`). The default when no subcommand is given.
+    Run,
+    /// Render operator namespace/RBAC/deployment YAML.
+    Render(K8sOperatorRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sOperatorRenderArgs {
+    /// Namespace that owns the operator control plane.
+    #[arg(long, default_value = "keep-system")]
+    namespace: String,
+    /// Write to this path instead of stdout. A directory receives
+    /// `operator.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    cmd: K8sInstanceCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sInstanceCmd {
+    /// Render a namespaced `kind: Keep` custom resource.
+    Render(K8sInstanceRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sInstanceRenderArgs {
+    /// Built-in instance profile.
+    #[arg(long, value_enum, default_value_t = K8sInstanceProfile::Dev)]
+    profile: K8sInstanceProfile,
+    /// Keep CR name.
+    #[arg(long)]
+    name: Option<String>,
+    /// Namespace where the app-facing Keep instance lives.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Store image. Defaults are profile-specific.
+    #[arg(long)]
+    image: Option<String>,
+    /// Write to this path instead of stdout. A directory receives `keep.yaml`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum K8sInstanceProfile {
+    /// Small local/kind CR: one store pod, small disk, verbose logs.
+    Dev,
+    /// Pre-prod CR: prod-shaped single node, json-ish info logs, mid disk.
+    Staging,
+    /// Production-shape CR: sharded raft-HA topology, large disk tier.
+    Prod,
+    /// Fill-in-the-blanks CR skeleton for app teams.
+    Template,
+}
+
+#[derive(clap::Args, Debug)]
+struct K8sFileOutputArgs {
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 /// `keep llm` flags.
@@ -89,30 +215,185 @@ struct UpgradeArgs {
     yes: bool,
 }
 
-/// `keep report-issue` flags.
+/// `keep issue <search|view|create>` — search, read, and file keep issues.
+/// Positional slots are reserved for the verb + its primary object, so the rest
+/// are flags (the CLI convention).
 #[derive(clap::Args, Debug)]
-struct ReportIssueArgs {
-    /// Issue title.
-    #[arg(short = 't', long)]
-    title: String,
-    /// Free-text description of the problem (placed above the diagnostics block).
-    #[arg(short = 'm', long)]
-    message: Option<String>,
-    /// Include a running node's `/version`+`/healthz` (e.g. http://localhost:7117).
+struct IssueArgs {
+    #[command(subcommand)]
+    cmd: IssueCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum IssueCommand {
+    /// Search keep's issues (`project:keep`); omit the query to list recent.
+    Search(IssueSearchArgs),
+    /// Print a single issue by number.
+    View(IssueViewArgs),
+    /// File a structured issue (auto-tagged `project:keep`).
+    Create(IssueCreateArgs),
+}
+
+/// `keep issue search [query] [--state] [--limit]` flags.
+#[derive(clap::Args, Debug)]
+struct IssueSearchArgs {
+    /// Search text (omit to list recent issues).
+    #[arg(num_args = 0..)]
+    query: Vec<String>,
+    /// Issue state filter.
+    #[arg(long, value_parser = ["open", "closed", "all"], default_value = "open")]
+    state: String,
+    /// Max results.
+    #[arg(long, default_value_t = 20)]
+    limit: u32,
+}
+
+/// `keep issue view <number>` flags.
+#[derive(clap::Args, Debug)]
+struct IssueViewArgs {
+    /// Issue number.
+    number: u64,
+}
+
+/// `keep issue create [--title <t>] [message...]` flags.
+#[derive(clap::Args, Debug)]
+struct IssueCreateArgs {
+    /// Issue title (default: derived from the message).
     #[arg(long)]
-    url: Option<String>,
-    /// Target repository (`owner/name`); defaults to keep's release repo.
-    #[arg(long)]
-    repo: Option<String>,
-    /// Add a label (repeatable).
-    #[arg(long)]
-    label: Vec<String>,
-    /// Assemble and print the report without submitting anything.
+    title: Option<String>,
+    /// Print the issue that would be filed (and its URL) without creating it.
     #[arg(long)]
     dry_run: bool,
-    /// Skip the confirmation prompt.
-    #[arg(short = 'y', long)]
-    yes: bool,
+    /// Free-text description of the problem.
+    #[arg(num_args = 0..)]
+    message: Vec<String>,
+}
+
+/// `keep backup --dest <uri>` flags (#776). The destination is the one primary
+/// object; everything else is a flag (the CLI convention).
+#[derive(clap::Args, Debug)]
+struct BackupArgs {
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or
+    /// `gs://bucket/prefix`.
+    #[arg(long)]
+    dest: String,
+    /// Data directory to recover the snapshot from (WAL + snapshots); matches
+    /// the server's `--data-dir`.
+    #[arg(long, env = "KEEP_DATA_DIR", default_value = "./data")]
+    data_dir: PathBuf,
+    /// Engine shard count used to recover the data dir — match the server's
+    /// `--shards`.
+    #[arg(long, env = "KEEP_SHARDS", default_value_t = 256)]
+    shards: usize,
+    /// Drop backup objects older than this many seconds after a successful put
+    /// (omit to keep everything).
+    #[arg(long)]
+    retention_secs: Option<u64>,
+}
+
+/// `keep spec [--format ...] [--shapes] [--fields]` or `keep spec gen ...`.
+/// Positional slots are reserved for the `gen` subcommand; everything else is a
+/// flag (the CLI convention).
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+#[derive(clap::Args, Debug)]
+struct SpecArgs {
+    /// Generate a typed client from the spec instead of printing it.
+    #[command(subcommand)]
+    gen: Option<SpecSub>,
+    /// Schema format to emit when neither `--shapes` nor `--fields` is set.
+    #[arg(long, value_enum, default_value_t = SpecFormat::Openapi)]
+    format: SpecFormat,
+    /// Emit the request-shape cookbook (canonical request bodies) instead.
+    #[arg(long)]
+    shapes: bool,
+    /// Emit the value-type catalog (the KvValue kinds keep stores) instead.
+    #[arg(long)]
+    fields: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum SpecSub {
+    /// Generate a typed API client (TypeScript / Python / Rust) from keep's
+    /// OpenAPI document, written into `--out`.
+    Gen(GenArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct GenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Output directory for the generated files.
+    #[arg(long)]
+    out: PathBuf,
+    /// HTTP backend for the TypeScript client (ignored for py/rust).
+    #[arg(long, value_enum, default_value_t = GenHttp::Fetch)]
+    http: GenHttp,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenLang {
+    /// TypeScript: types + fetch/axios client + TanStack Query hooks.
+    Ts,
+    /// Python: pydantic models + a generated sync/async HTTP/2 runtime.
+    Py,
+    /// Rust: serde models + a reqwest client.
+    Rust,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenHttp {
+    Fetch,
+    Axios,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SpecFormat {
+    /// Full OpenAPI 3 document as JSON (default).
+    Openapi,
+    /// Full OpenAPI 3 document as YAML for LLM/agent reading.
+    #[value(alias = "yaml", alias = "openapi.yaml")]
+    OpenapiYaml,
+    /// Just the component schemas (request/response data types).
+    JsonSchema,
+}
+
+/// `keep dockerfile <render>` — render keep's runtime image Dockerfiles.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+#[derive(clap::Args, Debug)]
+struct DockerfileArgs {
+    #[command(subcommand)]
+    cmd: DockerfileCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum DockerfileCmd {
+    /// Render a Dockerfile to stdout or `--out`.
+    Render(DockerfileRenderArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct DockerfileRenderArgs {
+    /// Which runtime image contract to render.
+    #[arg(long, value_enum, default_value_t = DockerfileVariant::Source)]
+    variant: DockerfileVariant,
+    /// Release tag used by `--variant release`; accepts `0.4.3` or `keep@0.4.3`.
+    #[arg(long)]
+    version: Option<String>,
+    /// Write to this path instead of stdout. A directory receives `Dockerfile`
+    /// or `Dockerfile.release`.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DockerfileVariant {
+    /// Build from the workspace source tree.
+    Source,
+    /// Fetch and verify a published `keep@<version>` release binary.
+    Release,
 }
 
 #[derive(clap::Args, Debug)]
@@ -165,7 +446,7 @@ struct ServeArgs {
 }
 
 /// This binary's identity + build provenance for the standard CLI ops
-/// (`upgrade` / `report-issue`), per the CONTRIBUTING.md CLI convention.
+/// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention.
 const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
     project: "keep",
     repo: "chrischeng-c4/axiom",
@@ -225,6 +506,11 @@ const TOPICS: &[cli_std::llm::Topic] = &[
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the process-level rustls crypto provider before anything parses or
+    // dials TLS (the operator/kube, raft-host peer, and online CLI paths all link
+    // rustls, which panics without a default provider). A no-op in the default,
+    // rustls-free build. See `keep::tls`.
+    keep::tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
         // Default (no subcommand): run the server.
@@ -259,17 +545,371 @@ async fn dispatch(cmd: Command) -> Result<()> {
             )
             .await
         }
-        Command::ReportIssue(args) => {
-            cli_std::report_issue::run(
+        Command::Issue(args) => dispatch_issue(args).await,
+        Command::K8s(args) => k8s(args).await,
+        Command::Backup(args) => dispatch_backup(args),
+        Command::Spec(args) => spec(args),
+        Command::Dockerfile(args) => dockerfile(args),
+    }
+}
+
+/// `keep spec` — offline OpenAPI / JSON-Schema / cookbook, or `spec gen` to
+/// generate a typed client. No engine, no server, no I/O beyond stdout / `--out`.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+fn spec(args: SpecArgs) -> Result<()> {
+    // `spec gen` writes a typed client; everything else prints to stdout.
+    if let Some(SpecSub::Gen(gen)) = args.gen {
+        return spec_gen(gen);
+    }
+    let out = if args.shapes {
+        serde_json::to_string_pretty(&keep::spec::request_shapes())?
+    } else if args.fields {
+        serde_json::to_string_pretty(&keep::spec::value_catalog())?
+    } else {
+        match args.format {
+            SpecFormat::Openapi => keep::spec::openapi_json(),
+            SpecFormat::OpenapiYaml => keep::spec::openapi_yaml(),
+            SpecFormat::JsonSchema => keep::spec::json_schema_json(),
+        }
+    };
+    println!("{out}");
+    Ok(())
+}
+
+/// `keep spec gen` — generate a typed client from keep's own OpenAPI document
+/// (offline; no engine or server) via the shared `libs/openapi-codegen`, written
+/// into `--out`. One codegen path, no external tool.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+fn spec_gen(args: GenArgs) -> Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let opts = GenOptions {
+        lang,
+        spec_path: PathBuf::new(),
+        out_dir: args.out.clone(),
+        client_name: "createClient".to_string(),
+        http_client: match args.http {
+            GenHttp::Fetch => HttpClient::Fetch,
+            GenHttp::Axios => HttpClient::Axios,
+        },
+        emit_types: true,
+        emit_client: true,
+        // TanStack Query hooks are a TypeScript-only concern.
+        emit_hooks: matches!(lang, Lang::Ts),
+    };
+    let output = generate(&keep::spec::openapi_json(), &opts)?;
+    std::fs::create_dir_all(&args.out)?;
+    for file in &output.files {
+        let path = args.out.join(&file.rel_path);
+        std::fs::write(&path, &file.contents)?;
+        println!("generated {}", path.display());
+    }
+    Ok(())
+}
+
+/// `keep dockerfile render` — render keep's runtime image Dockerfiles. The
+/// checked-in Dockerfiles are the fixtures; the CLI is their in-binary form
+/// (marker stripping + `keep@version` substitution), so `render` stays the
+/// source of truth.
+///
+/// @spec projects/keep/tech-design/interfaces/cli/deploy-cli-keep-spec-spec-gen-dockerfile-render.md
+fn dockerfile(args: DockerfileArgs) -> Result<()> {
+    match args.cmd {
+        DockerfileCmd::Render(a) => {
+            let (file_name, body) = match a.variant {
+                DockerfileVariant::Source => ("Dockerfile", render_source_dockerfile()),
+                DockerfileVariant::Release => (
+                    "Dockerfile.release",
+                    render_release_dockerfile(a.version.as_deref()),
+                ),
+            };
+            write_or_print(a.out.as_deref(), file_name, &body)
+        }
+    }
+}
+
+fn render_source_dockerfile() -> String {
+    strip_ownership_markers(include_str!("../../Dockerfile"))
+}
+
+fn render_release_dockerfile(version: Option<&str>) -> String {
+    let tag = normalize_keep_tag(version);
+    let version = tag.trim_start_matches("keep@");
+    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let mut out = String::new();
+    for line in template.lines() {
+        if line.starts_with("#   docker build -f projects/keep/Dockerfile.release -t keep:") {
+            out.push_str(&format!(
+                "#   docker build -f projects/keep/Dockerfile.release -t keep:{version} \\"
+            ));
+        } else if line.starts_with("#     --build-arg KEEP_VERSION=") {
+            out.push_str(&format!("#     --build-arg KEEP_VERSION={tag} ."));
+        } else if line.starts_with("ARG KEEP_VERSION=") {
+            out.push_str(&format!("ARG KEEP_VERSION={tag}"));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Normalize a version input into a `keep@<version>` release tag, defaulting to
+/// the compiled crate version.
+fn normalize_keep_tag(version: Option<&str>) -> String {
+    let raw = version
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .trim();
+    if raw.starts_with("keep@") {
+        raw.to_string()
+    } else {
+        format!("keep@{raw}")
+    }
+}
+
+/// Strip AW source-ownership markers so the rendered Dockerfile is the one users
+/// build (a no-op for keep's marker-free fixtures; kept for parity + future use).
+fn strip_ownership_markers(input: &str) -> String {
+    let mut out = String::new();
+    for line in input.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("# SPEC-MANAGED:")
+            || trimmed == "# CODEGEN-BEGIN"
+            || trimmed == "# CODEGEN-END"
+        {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// `keep backup` — recover a consistent snapshot from the data dir and write it
+/// through the shared libs/service-backup runner (#776). Offline: no server, no
+/// network beyond the sink (local `file://` here).
+///
+/// @spec projects/keep/tech-design/logic/adopt-libs-service-backup-snapshot-sink-keep-backup-verb.md
+fn dispatch_backup(args: BackupArgs) -> Result<()> {
+    let dest = keep::backup::BackupDestination::from_uri(&args.dest)?;
+    let retention = match args.retention_secs {
+        Some(secs) => keep::backup::RetentionPolicy::max_age_seconds(secs),
+        None => keep::backup::RetentionPolicy::default(),
+    };
+    let result = keep::backup::run_backup(&args.data_dir, args.shards, &dest, &retention)?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+/// `keep k8s` — cluster artifacts split by lifecycle layer. Only `operator run`
+/// needs kube-rs at runtime; the render paths are offline and work from the
+/// binary (the generated CRD is embedded, the operator/instance manifests are
+/// string-templated).
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.cmd {
+        K8sCmd::Crd(a) => match a.cmd {
+            K8sCrdCmd::Render(a) => write_or_print(a.out.as_deref(), "crd.yaml", &crd_yaml()),
+        },
+        K8sCmd::Operator(a) => match a.cmd.unwrap_or(K8sOperatorCmd::Run) {
+            K8sOperatorCmd::Run => run_operator().await,
+            K8sOperatorCmd::Render(a) => {
+                let yaml = render_operator_yaml(&a.namespace);
+                write_or_print(a.out.as_deref(), "operator.yaml", &yaml)
+            }
+        },
+        K8sCmd::Instance(a) => match a.cmd {
+            K8sInstanceCmd::Render(a) => {
+                let yaml = render_instance_yaml(&a);
+                write_or_print(a.out.as_deref(), "keep.yaml", &yaml)
+            }
+        },
+    }
+}
+
+#[cfg(feature = "operator")]
+async fn run_operator() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
+    keep::operator::run().await
+}
+
+#[cfg(not(feature = "operator"))]
+async fn run_operator() -> Result<()> {
+    anyhow::bail!(
+        "this keep build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
+}
+
+#[cfg(feature = "operator")]
+fn crd_yaml() -> String {
+    keep::operator::crd_yaml()
+}
+
+#[cfg(not(feature = "operator"))]
+fn crd_yaml() -> String {
+    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+}
+
+/// Render the operator control-plane manifests (RBAC + Deployment) with the
+/// namespace substituted, from the checked-in fixtures.
+fn render_operator_yaml(namespace: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&replace_operator_namespace(
+        include_str!("../../k8s/operator/rbac.yaml"),
+        namespace,
+    ));
+    out.push_str("\n---\n");
+    out.push_str(&replace_operator_namespace(
+        include_str!("../../k8s/operator/deployment.yaml"),
+        namespace,
+    ));
+    ensure_trailing_newline(&out)
+}
+
+fn replace_operator_namespace(input: &str, namespace: &str) -> String {
+    input
+        .replace("name: keep-system", &format!("name: {namespace}"))
+        .replace("namespace: keep-system", &format!("namespace: {namespace}"))
+}
+
+/// Render a `kind: Keep` custom resource for the selected profile.
+fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
+    let default_version = env!("CARGO_PKG_VERSION");
+    let (default_name, default_namespace, default_image, body) = match args.profile {
+        K8sInstanceProfile::Dev => (
+            "keep",
+            "default",
+            "keep:latest".to_string(),
+            InstanceBody::Dev,
+        ),
+        K8sInstanceProfile::Staging => (
+            "keep",
+            "staging",
+            format!("keep:{default_version}"),
+            InstanceBody::Staging,
+        ),
+        K8sInstanceProfile::Prod => (
+            "keep",
+            "production",
+            format!("registry.example.com/keep:{default_version}"),
+            InstanceBody::Prod,
+        ),
+        K8sInstanceProfile::Template => (
+            "REPLACE_ME__KEEP_NAME",
+            "REPLACE_ME__APP_NAMESPACE",
+            "REPLACE_ME__REGISTRY/keep:REPLACE_ME__IMAGE_TAG".to_string(),
+            InstanceBody::Template,
+        ),
+    };
+    let name = args.name.as_deref().unwrap_or(default_name);
+    let namespace = args.namespace.as_deref().unwrap_or(default_namespace);
+    let image = args.image.as_deref().unwrap_or(&default_image);
+
+    let mut yaml = format!(
+        "apiVersion: keep.dev/v1alpha1\nkind: Keep\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n  image: {image}\n"
+    );
+    match body {
+        InstanceBody::Dev => {
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  engineShards: 16\n  storage: 2Gi\n  resources:\n    cpu: \"250m\"\n    memory: 256Mi\n");
+        }
+        InstanceBody::Staging => {
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  engineShards: 128\n  storage: 20Gi\n  resources:\n    cpu: \"2\"\n    memory: 4Gi\n");
+        }
+        InstanceBody::Prod => {
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  engineShards: 512\n  storage: 200Gi\n  graceSecs: 45\n  resources:\n    cpu: \"8\"\n    memory: 16Gi\n");
+        }
+        InstanceBody::Template => {
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  engineShards: 256\n  storage: 10Gi\n  resources:\n    cpu: \"2\"\n    memory: 4Gi\n");
+        }
+    }
+    ensure_trailing_newline(&yaml)
+}
+
+enum InstanceBody {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+/// Write `body` to `out` (a file, or `default_file` inside a directory) or print
+/// it to stdout.
+fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
+    if let Some(path) = out {
+        let target = if path.extension().is_some() {
+            path.to_path_buf()
+        } else {
+            path.join(default_file)
+        };
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, body)?;
+        println!("wrote {}", target.display());
+    } else {
+        print!("{body}");
+    }
+    Ok(())
+}
+
+fn ensure_trailing_newline(input: &str) -> String {
+    if input.ends_with('\n') {
+        input.to_string()
+    } else {
+        format!("{input}\n")
+    }
+}
+
+/// `keep issue <verb>` — dispatch search/view/create to cli-std. `create` always
+/// tags `project:keep`; `search` is filtered to keep's own issues.
+async fn dispatch_issue(args: IssueArgs) -> Result<()> {
+    match args.cmd {
+        IssueCommand::Search(m) => {
+            let joined = m.query.join(" ");
+            let query = (!joined.trim().is_empty()).then_some(joined);
+            cli_std::issue::search(
                 &TOOL,
-                cli_std::report_issue::Options {
-                    title: args.title,
-                    message: args.message,
-                    url: args.url,
-                    repo: args.repo,
-                    label: args.label,
-                    dry_run: args.dry_run,
-                    yes: args.yes,
+                cli_std::issue::SearchOptions {
+                    query,
+                    state: m.state,
+                    limit: m.limit,
+                },
+            )
+            .await
+        }
+        IssueCommand::View(m) => cli_std::issue::view(&TOOL, m.number).await,
+        IssueCommand::Create(m) => {
+            let msg = m.message.join(" ");
+            let title = m.title.unwrap_or_else(|| {
+                if msg.trim().is_empty() {
+                    "keep: issue report".to_string()
+                } else {
+                    let head: String = msg.lines().next().unwrap_or("").chars().take(72).collect();
+                    format!("keep: {head}")
+                }
+            });
+            let message = (!msg.trim().is_empty()).then_some(msg);
+            cli_std::issue::create(
+                &TOOL,
+                cli_std::issue::CreateOptions {
+                    title,
+                    message,
+                    url: None,
+                    repo: None,
+                    label: vec!["project:keep".to_string()],
+                    dry_run: m.dry_run,
+                    yes: true,
                 },
             )
             .await
@@ -333,13 +973,51 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             tracing::info!("claim-check token enforcement ON");
         }
     }
-    let app = keep::router(state.clone());
+    #[cfg_attr(not(feature = "raft"), allow(unused_mut))]
+    let mut app = keep::router(state.clone());
+
+    // Peer raft RPCs (`/shard/{id}/raft/*`, `/shard/{id}/raftz`) share the h2c
+    // serve port. Built only when the raft feature is compiled in and k8s has
+    // scaled the StatefulSet into replica/HA mode (REPLICAS_PER_SHARD > 1);
+    // single-node deployments keep the direct-to-engine write path. The hosts
+    // are held for the server's lifetime (Drop aborts their tick/pump tasks).
+    #[cfg(feature = "raft")]
+    let _shard_hosts = if raft_host::cluster::replica_mode() {
+        let replicas = std::env::var("KEEP_REPLICAS_PER_SHARD")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(1);
+        let hosts = keep::raft::ShardHosts::new(
+            (*state.cluster).clone(),
+            state.engine.clone(),
+            &args.data_dir,
+            replicas,
+        )
+        .await?;
+        info!(
+            shard_hosts = hosts.host_count(),
+            replicas_per_shard = replicas,
+            "raft: per-shard hosts up; peer transport merged onto serve port"
+        );
+        app = app.merge(hosts.router());
+        Some(hosts)
+    } else {
+        None
+    };
 
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening (HTTP/1.1 + HTTP/2 cleartext)");
 
+    // Serve HTTP/1.1 + h2c on one port and drain on SIGTERM through the shared
+    // service shell (#751): `start_drain` flips `/readyz` to 503 for the grace
+    // window before the listener closes.
     let grace = Duration::from_secs(args.grace_secs);
-    serve(listener, app, shutdown_signal(state.clone(), grace)).await;
+    service_http::serve(
+        listener,
+        app,
+        service_http::shutdown_with_drain(move || state.start_drain(), grace),
+    )
+    .await;
 
     // Post-drain: flush WAL/snapshot to disk so the result store is durable.
     if let Some(p) = persistence {
@@ -357,86 +1035,169 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
-/// Accept loop serving HTTP/1.1 and HTTP/2 cleartext (h2c prior-knowledge) on
-/// one socket via hyper-util's auto builder, with connection-level graceful
-/// shutdown. `shutdown` resolves after SIGTERM + the drain window.
-async fn serve(
-    listener: TcpListener,
-    app: axum::Router,
-    shutdown: impl std::future::Future<Output = ()>,
-) {
-    let mut builder = auto::Builder::new(TokioExecutor::new());
-    // Clients open ~CPU-core connections and multiplex thousands of streams
-    // over each (that's the HTTP/2 best practice — see examples/bench_compare).
-    // Lift the concurrent-stream ceiling so a high-concurrency client isn't
-    // throttled/starved per connection (the default ~200 caused stream
-    // starvation + hangs at few-connections/high-concurrency). Flow-control
-    // windows are left at hyper defaults: on a low-RTT link the workload is
-    // CPU-bound (frame + JSON), not window-bound, so enlarging them is a WAN-only
-    // tuning with no local benefit.
-    builder.http2().max_concurrent_streams(4096);
-    let graceful = GracefulShutdown::new();
-    let mut shutdown = std::pin::pin!(shutdown);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
 
-    loop {
-        tokio::select! {
-            accept = listener.accept() => {
-                let (stream, _peer) = match accept {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!(error = %e, "accept failed");
-                        continue;
-                    }
-                };
-                let io = TokioIo::new(stream);
-                let app = app.clone();
-                // axum's Router is Service<Request<Incoming>>; oneshot drives one request.
-                let svc = service_fn(move |req| app.clone().oneshot(req));
-                let conn = builder.serve_connection_with_upgrades(io, svc);
-                let conn = graceful.watch(conn.into_owned());
-                tokio::spawn(async move {
-                    if let Err(e) = conn.await {
-                        tracing::debug!(error = %e, "connection closed with error");
-                    }
-                });
+    /// The clap derive surface is internally consistent (catches conflicting
+    /// args / bad value parsers at test time, not at runtime).
+    #[test]
+    fn clap_command_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    /// `keep issue search/view/create` parse with their convention flags (#540).
+    #[test]
+    fn issue_group_parses_search_view_create() {
+        let cli = Cli::try_parse_from([
+            "keep", "issue", "search", "drain", "--state", "all", "--limit", "5",
+        ])
+        .expect("issue search should parse");
+        match cli.cmd {
+            Some(Command::Issue(IssueArgs {
+                cmd: IssueCommand::Search(a),
+            })) => {
+                assert_eq!(a.query, vec!["drain".to_string()]);
+                assert_eq!(a.state, "all");
+                assert_eq!(a.limit, 5);
             }
-            _ = &mut shutdown => {
-                info!("no longer accepting connections");
-                break;
+            other => panic!("expected issue search, got {other:?}"),
+        }
+
+        let cli =
+            Cli::try_parse_from(["keep", "issue", "view", "540"]).expect("issue view should parse");
+        match cli.cmd {
+            Some(Command::Issue(IssueArgs {
+                cmd: IssueCommand::View(a),
+            })) => assert_eq!(a.number, 540),
+            other => panic!("expected issue view, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "keep",
+            "issue",
+            "create",
+            "--title",
+            "boom",
+            "--dry-run",
+            "it",
+            "broke",
+        ])
+        .expect("issue create should parse");
+        match cli.cmd {
+            Some(Command::Issue(IssueArgs {
+                cmd: IssueCommand::Create(a),
+            })) => {
+                assert_eq!(a.title.as_deref(), Some("boom"));
+                assert!(a.dry_run);
+                assert_eq!(a.message, vec!["it".to_string(), "broke".to_string()]);
             }
+            other => panic!("expected issue create, got {other:?}"),
         }
     }
-    drop(listener);
 
-    // Bound the in-flight wait so a stuck client can't block process exit.
-    tokio::select! {
-        _ = graceful.shutdown() => info!("all connections drained"),
-        _ = tokio::time::sleep(Duration::from_secs(5)) => warn!("drain timeout — forcing shutdown"),
+    /// The migrated-away `keep report-issue` command no longer parses (#540).
+    #[test]
+    fn report_issue_command_is_gone() {
+        assert!(Cli::try_parse_from(["keep", "report-issue", "--title", "x"]).is_err());
     }
-}
 
-/// Resolve when SIGINT or SIGTERM arrives, flip `/readyz` to 503, then hold the
-/// grace window so k8s stops routing before the listener closes.
-async fn shutdown_signal(state: AppState, grace: Duration) {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let sigterm = async {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut s) = signal(SignalKind::terminate()) {
-            s.recv().await;
+    /// `keep k8s crd/operator/instance` verbs parse with their convention flags
+    /// (#775). Positionals name subcommands; profile/namespace/out are flags.
+    #[test]
+    fn k8s_verbs_parse() {
+        Cli::try_parse_from(["keep", "k8s", "crd", "render"]).expect("crd render");
+        Cli::try_parse_from(["keep", "k8s", "operator", "run"]).expect("operator run");
+        Cli::try_parse_from([
+            "keep",
+            "k8s",
+            "operator",
+            "render",
+            "--namespace",
+            "keep-system",
+        ])
+        .expect("operator render");
+
+        let cli = Cli::try_parse_from([
+            "keep",
+            "k8s",
+            "instance",
+            "render",
+            "--profile",
+            "prod",
+            "--namespace",
+            "production",
+        ])
+        .expect("instance render");
+        match cli.cmd {
+            Some(Command::K8s(K8sArgs {
+                cmd:
+                    K8sCmd::Instance(K8sInstanceArgs {
+                        cmd: K8sInstanceCmd::Render(a),
+                    }),
+            })) => {
+                assert!(matches!(a.profile, K8sInstanceProfile::Prod));
+                assert_eq!(a.namespace.as_deref(), Some("production"));
+            }
+            other => panic!("expected k8s instance render, got {other:?}"),
         }
-    };
-    #[cfg(not(unix))]
-    let sigterm = std::future::pending::<()>();
 
-    tokio::select! {
-        _ = ctrl_c => info!("received SIGINT"),
-        _ = sigterm => info!("received SIGTERM"),
+        // `operator` with no subcommand defaults to `run`.
+        let cli = Cli::try_parse_from(["keep", "k8s", "operator"]).expect("operator default");
+        match cli.cmd {
+            Some(Command::K8s(K8sArgs {
+                cmd: K8sCmd::Operator(K8sOperatorArgs { cmd }),
+            })) => assert!(cmd.is_none()),
+            other => panic!("expected k8s operator, got {other:?}"),
+        }
     }
-    state.start_drain();
-    info!(grace_secs = grace.as_secs(), "draining — readyz=503");
-    tokio::time::sleep(grace).await;
-    info!("grace expired");
+
+    /// `keep spec` / `keep spec gen` / `keep dockerfile render` parse with their
+    /// convention flags (#777). Positionals name subcommands; format / lang /
+    /// variant / version / out are flags.
+    #[test]
+    fn spec_and_dockerfile_verbs_parse() {
+        // spec print variants.
+        Cli::try_parse_from(["keep", "spec"]).expect("spec default");
+        Cli::try_parse_from(["keep", "spec", "--format", "openapi-yaml"]).expect("spec yaml");
+        Cli::try_parse_from(["keep", "spec", "--format", "json-schema"]).expect("spec json-schema");
+        Cli::try_parse_from(["keep", "spec", "--shapes"]).expect("spec shapes");
+        Cli::try_parse_from(["keep", "spec", "--fields"]).expect("spec fields");
+
+        // spec gen.
+        let cli = Cli::try_parse_from(["keep", "spec", "gen", "--lang", "ts", "--out", "/tmp/x"])
+            .expect("spec gen should parse");
+        match cli.cmd {
+            Some(Command::Spec(SpecArgs {
+                gen: Some(SpecSub::Gen(a)),
+                ..
+            })) => {
+                assert!(matches!(a.lang, GenLang::Ts));
+                assert_eq!(a.out, PathBuf::from("/tmp/x"));
+            }
+            other => panic!("expected spec gen, got {other:?}"),
+        }
+
+        // dockerfile render.
+        let cli = Cli::try_parse_from([
+            "keep",
+            "dockerfile",
+            "render",
+            "--variant",
+            "release",
+            "--version",
+            "1.2.3",
+        ])
+        .expect("dockerfile render should parse");
+        match cli.cmd {
+            Some(Command::Dockerfile(DockerfileArgs {
+                cmd: DockerfileCmd::Render(a),
+            })) => {
+                assert!(matches!(a.variant, DockerfileVariant::Release));
+                assert_eq!(a.version.as_deref(), Some("1.2.3"));
+            }
+            other => panic!("expected dockerfile render, got {other:?}"),
+        }
+    }
 }

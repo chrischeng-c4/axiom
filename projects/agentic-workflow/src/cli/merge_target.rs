@@ -1,11 +1,19 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/merge_target.md#source
 // CODEGEN-BEGIN
-//! Resolve the target branch for `aw td merge` and `aw wi merge`.
+//! Resolve the target branch to land a lifecycle branch onto.
+//!
+//! Live production caller: `cb.rs`'s `land_td_lifecycle_branch` (issue #842),
+//! the terminal `aw td code-check` step that merges a `td-<slug>` lifecycle
+//! branch and deletes it. That caller always passes `override_branch: None`
+//! (there is no CLI `--target-branch` flag on the current LINEAR surface —
+//! `aw td merge`/`aw wi merge` were removed) and threads `Issue.target_branch`
+//! through as `frontmatter_branch`.
 //!
 //! Resolution order (per the Logic flowchart in the TD spec
 //! `projects/agentic-workflow/tech-design/core/issues/issue-merge-target.md`):
-//!   1. `override_branch` (CLI `--target-branch`) if `Some` → return verbatim
-//!      (no branch-exists check; user is explicit).
+//!   1. `override_branch` if `Some` → return verbatim (no branch-exists
+//!      check; caller is explicit). No production caller currently supplies
+//!      this; covered directly by `test_override_branch_wins`.
 //!   2. `frontmatter_branch` (`issue.target_branch`) if `Some` → return it.
 //!   3. `git -C <project_root> rev-parse --abbrev-ref HEAD` → if output ≠ "HEAD"
 //!      return the detected branch name.

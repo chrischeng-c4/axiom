@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:b3d9a1f2" tracker="pending-tracker" reason="Shared node_modules bare-import resolution for the stories workbench (dev server + static export): resolve a bare specifier to an on-disk node_modules file via the project ModuleResolver, extract every import specifier (incl. bare) from source, and key a dep by its node_modules-relative path so both the dev route and the static layout map a dep consistently."
+// <HANDWRITE gap="missing-generator:logic:b3d9a1f2" tracker="standardize-gap-projects-jet-src-stories-deps-rs" reason="Shared node_modules bare-import resolution for the stories workbench (dev server + static export): resolve a bare specifier to an on-disk node_modules file via the project ModuleResolver, extract every import specifier (incl. bare) from source, and key a dep by its node_modules-relative path so both the dev route and the static layout map a dep consistently.">
 //! Shared `node_modules` bare-import resolution for `jet stories` (#197).
 //!
 //! Both the dev workbench server ([`super::server`]) and the static exporter
@@ -59,6 +59,9 @@ pub fn resolve_bare_specifier(
     if specifier.starts_with('.') || specifier.starts_with('/') {
         return None;
     }
+    if is_preview_importmap_specifier(specifier) {
+        return None;
+    }
 
     let options = ResolveOptions {
         // Anchor the node_modules walk-up at the project root so the resolver
@@ -67,23 +70,188 @@ pub fn resolve_bare_specifier(
         ..ResolveOptions::default()
     };
     let resolver = ModuleResolver::new(options).ok()?;
-    let resolved = resolver.resolve(specifier, importer_file).ok()?;
+    let resolved = match resolver.resolve(specifier, importer_file).ok() {
+        Some(resolved) => resolved,
+        None => return resolve_bare_asset_export(root, specifier),
+    };
 
     // External (or anything not a package resolution) is not something we serve
     // from disk — leave it for the importmap.
     if resolved.is_external || resolved.kind != ResolveKind::Package {
-        return None;
+        return resolve_bare_asset_export(root, specifier);
     }
 
     // Must be a real file genuinely inside node_modules. (`resolve` returns the
     // specifier path verbatim for externals, which would not be a real file.)
     if !resolved.path.is_file() {
-        return None;
+        return resolve_bare_asset_export(root, specifier);
     }
     if !path_has_node_modules(&resolved.path) {
+        return resolve_bare_asset_export(root, specifier);
+    }
+    Some(canonical_node_modules_path(&resolved.path))
+}
+
+fn is_preview_importmap_specifier(specifier: &str) -> bool {
+    matches!(
+        specifier,
+        "react" | "react-dom" | "react-dom/client" | "react/jsx-runtime"
+    )
+}
+
+fn canonical_node_modules_path(path: &Path) -> PathBuf {
+    let Ok(canonical) = path.canonicalize() else {
+        return path.to_path_buf();
+    };
+    if path_has_node_modules(&canonical) {
+        canonical
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn resolve_bare_asset_export(root: &Path, specifier: &str) -> Option<PathBuf> {
+    let (package_name, subpath) = split_package_specifier(specifier)?;
+    if !is_raw_asset_specifier(&subpath) {
         return None;
     }
-    Some(resolved.path)
+    let package_dir = resolve_asset_package_dir(root, &package_name)?;
+    if let Some(direct) = package_asset_file(&package_dir, &subpath) {
+        return Some(direct);
+    }
+
+    let package_json = package_dir.join("package.json");
+    let body = std::fs::read_to_string(package_json).ok()?;
+    let package: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let exports = package.get("exports")?;
+    let target = export_target_for_subpath(exports, specifier_path_without_query(&subpath))?;
+    package_asset_file(&package_dir, &target)
+}
+
+fn resolve_asset_package_dir(root: &Path, package_name: &str) -> Option<PathBuf> {
+    let node_modules = root.join("node_modules").join(package_name);
+    if node_modules.is_dir() {
+        return Some(node_modules);
+    }
+    workspace_package_dir(root, package_name)
+}
+
+fn workspace_package_dir(root: &Path, package_name: &str) -> Option<PathBuf> {
+    for parent in ["packages", "libs"] {
+        let dir = root.join(parent);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let package_dir = entry.path();
+            let package_json = package_dir.join("package.json");
+            let Ok(body) = std::fs::read_to_string(package_json) else {
+                continue;
+            };
+            let Ok(package) = serde_json::from_str::<serde_json::Value>(&body) else {
+                continue;
+            };
+            if package.get("name").and_then(|name| name.as_str()) == Some(package_name) {
+                return Some(package_dir);
+            }
+        }
+    }
+    None
+}
+
+fn package_asset_file(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    let clean = specifier_path_without_query(target)
+        .trim_start_matches("./")
+        .trim_start_matches('/');
+    let direct = package_dir.join(clean);
+    if direct.is_file() {
+        return Some(direct);
+    }
+
+    if let Some(rest) = clean.strip_prefix("dist/") {
+        let source = package_dir.join("src/lib").join(rest);
+        if source.is_file() {
+            return Some(source);
+        }
+    }
+
+    let source = package_dir.join("src/lib").join(clean);
+    if source.is_file() {
+        return Some(source);
+    }
+
+    None
+}
+
+fn specifier_path_without_query(path: &str) -> &str {
+    path.split(['?', '#']).next().unwrap_or(path)
+}
+
+fn split_package_specifier(specifier: &str) -> Option<(String, String)> {
+    if specifier.starts_with('@') {
+        let mut parts = specifier.splitn(4, '/');
+        let scope = parts.next()?;
+        let name = parts.next()?;
+        let package_end = scope.len() + 1 + name.len();
+        let subpath = specifier
+            .get(package_end + 1..)
+            .map(|rest| format!("./{rest}"))
+            .unwrap_or_else(|| ".".to_string());
+        return Some((specifier[..package_end].to_string(), subpath));
+    }
+
+    let (package_name, rest) = specifier.split_once('/').unwrap_or((specifier, ""));
+    let subpath = if rest.is_empty() {
+        ".".to_string()
+    } else {
+        format!("./{rest}")
+    };
+    Some((package_name.to_string(), subpath))
+}
+
+fn export_target_for_subpath(exports: &serde_json::Value, subpath: &str) -> Option<String> {
+    match exports {
+        serde_json::Value::String(path) if subpath == "." => Some(path.clone()),
+        serde_json::Value::Object(map) => {
+            if let Some(value) = map.get(subpath) {
+                return export_target_value(value);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn export_target_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(path) => Some(path.clone()),
+        serde_json::Value::Object(map) => {
+            for key in ["import", "browser", "default"] {
+                if let Some(nested) = map.get(key) {
+                    if let Some(path) = export_target_value(nested) {
+                        return Some(path);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn is_raw_asset_specifier(path: &str) -> bool {
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    matches!(
+        Path::new(path).extension().and_then(|e| e.to_str()),
+        Some(ext)
+            if ext.eq_ignore_ascii_case("svg")
+                || ext.eq_ignore_ascii_case("png")
+                || ext.eq_ignore_ascii_case("jpg")
+                || ext.eq_ignore_ascii_case("jpeg")
+                || ext.eq_ignore_ascii_case("gif")
+                || ext.eq_ignore_ascii_case("webp")
+                || ext.eq_ignore_ascii_case("avif")
+    )
 }
 
 /// The `node_modules`-relative key for a resolved dep file: the path *after* the
@@ -141,21 +309,63 @@ pub fn extract_all_import_specifiers(source: &str) -> Vec<String> {
         }
     };
 
-    for raw in source.lines() {
-        let line = raw.trim_start();
-        let is_import = line.starts_with("import ")
-            || line.starts_with("import\"")
-            || line.starts_with("import'")
-            || line.starts_with("import{")
-            || line == "import";
-        let is_reexport =
-            (line.starts_with("export ") || line.starts_with("export{")) && line.contains(" from ");
-        if !is_import && !is_reexport {
+    let mut idx = 0;
+    while idx < source.len() {
+        if source[idx..].starts_with("//") {
+            idx = source[idx..]
+                .find('\n')
+                .map(|offset| idx + offset + 1)
+                .unwrap_or(source.len());
             continue;
         }
-        if let Some(spec) = specifier_from_statement(line) {
-            push(spec);
+        if source[idx..].starts_with("/*") {
+            idx = source[idx + 2..]
+                .find("*/")
+                .map(|offset| idx + 2 + offset + 2)
+                .unwrap_or(source.len());
+            continue;
         }
+        if let Some((_, end)) = string_literal_at(source, idx) {
+            idx = end;
+            continue;
+        }
+
+        if keyword_at(source, idx, "import") {
+            let after = idx + "import".len();
+            let Some(next) = next_non_ws(source, after) else {
+                break;
+            };
+            if source[next..].starts_with('(') {
+                idx = after;
+                continue;
+            }
+            if let Some((spec, end)) = string_literal_at(source, next) {
+                push(spec);
+                idx = end;
+                continue;
+            }
+            let end = statement_end(source, after);
+            if let Some(spec) = specifier_from_statement(&source[idx..end]) {
+                push(spec);
+            }
+            idx = end;
+            continue;
+        }
+
+        if keyword_at(source, idx, "export") {
+            let end = statement_end(source, idx + "export".len());
+            if let Some(spec) = specifier_from_statement(&source[idx..end]) {
+                push(spec);
+            }
+            idx = end;
+            continue;
+        }
+
+        idx += source[idx..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
     }
 
     specifiers
@@ -166,25 +376,132 @@ pub fn extract_all_import_specifiers(source: &str) -> Vec<String> {
 /// Uses the `from "..."` clause when present (named/default/namespace imports
 /// and re-exports), otherwise the bare side-effect form `import "..."`.
 fn specifier_from_statement(line: &str) -> Option<String> {
-    let after = if let Some(pos) = line.rfind(" from ") {
-        &line[pos + 6..]
-    } else {
-        // Side-effect import: `import "m";` — the quote follows `import`.
-        line.trim_start_matches("import").trim_start()
-    };
-    extract_first_string_literal(after)
+    if keyword_at(line, 0, "import") {
+        let after = next_non_ws(line, "import".len())?;
+        if let Some((spec, _)) = string_literal_at(line, after) {
+            return Some(spec);
+        }
+    }
+    find_from_string_literal(line)
 }
 
-/// Extract the first single- or double-quoted string literal from `s`.
-fn extract_first_string_literal(s: &str) -> Option<String> {
-    let s = s.trim_start();
-    let quote = s.chars().next()?;
-    if quote != '"' && quote != '\'' {
+fn find_from_string_literal(statement: &str) -> Option<String> {
+    let mut idx = 0;
+    while idx < statement.len() {
+        if let Some((_, end)) = string_literal_at(statement, idx) {
+            idx = end;
+            continue;
+        }
+        if keyword_at(statement, idx, "from") {
+            if let Some(start) = next_non_ws(statement, idx + "from".len()) {
+                if let Some((spec, _)) = string_literal_at(statement, start) {
+                    return Some(spec);
+                }
+            }
+        }
+        idx += statement[idx..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
+    }
+    None
+}
+
+fn statement_end(source: &str, start: usize) -> usize {
+    let mut idx = start;
+    let mut depth = 0i32;
+    while idx < source.len() {
+        if source[idx..].starts_with("//") {
+            idx = source[idx..]
+                .find('\n')
+                .map(|offset| idx + offset + 1)
+                .unwrap_or(source.len());
+            continue;
+        }
+        if source[idx..].starts_with("/*") {
+            idx = source[idx + 2..]
+                .find("*/")
+                .map(|offset| idx + 2 + offset + 2)
+                .unwrap_or(source.len());
+            continue;
+        }
+        if let Some((_, end)) = string_literal_at(source, idx) {
+            idx = end;
+            continue;
+        }
+        let Some(ch) = source[idx..].chars().next() else {
+            return source.len();
+        };
+        match ch {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth -= 1,
+            ';' if depth <= 0 => return idx + 1,
+            '\n' if depth <= 0 && find_from_string_literal(&source[start..idx]).is_some() => {
+                return idx + 1;
+            }
+            _ => {}
+        }
+        idx += ch.len_utf8();
+    }
+    source.len()
+}
+
+fn next_non_ws(source: &str, mut idx: usize) -> Option<usize> {
+    while idx < source.len() {
+        let ch = source[idx..].chars().next()?;
+        if !ch.is_whitespace() {
+            return Some(idx);
+        }
+        idx += ch.len_utf8();
+    }
+    None
+}
+
+fn keyword_at(source: &str, idx: usize, keyword: &str) -> bool {
+    source[idx..].starts_with(keyword)
+        && source[..idx]
+            .chars()
+            .next_back()
+            .map(|ch| !is_ident_char(ch))
+            .unwrap_or(true)
+        && source[idx + keyword.len()..]
+            .chars()
+            .next()
+            .map(|ch| !is_ident_char(ch))
+            .unwrap_or(true)
+}
+
+fn is_ident_char(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+}
+
+fn string_literal_at(source: &str, idx: usize) -> Option<(String, usize)> {
+    let quote = source[idx..].chars().next()?;
+    if quote != '"' && quote != '\'' && quote != '`' {
         return None;
     }
-    let rest = &s[1..];
-    let end = rest.find(quote)?;
-    Some(rest[..end].to_string())
+    let mut out = String::new();
+    let mut escaped = false;
+    let mut cursor = idx + quote.len_utf8();
+    while cursor < source.len() {
+        let ch = source[cursor..].chars().next()?;
+        cursor += ch.len_utf8();
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return Some((out, cursor));
+        }
+        out.push(ch);
+    }
+    None
 }
 
 #[cfg(test)]
@@ -223,6 +540,29 @@ const dyn = import("ignored");
         assert!(specs.contains(&"side-effect.css".to_string()));
         assert!(specs.contains(&"../shared/x".to_string()));
         // Dynamic import is not extracted (no static `import ` / `from`).
+        assert!(!specs.contains(&"ignored".to_string()));
+    }
+
+    #[test]
+    fn extract_picks_up_multiline_imports_and_reexports() {
+        let src = r#"
+import {
+  Button,
+  type ButtonProps,
+} from "./Button";
+import type {
+  Meta,
+  StoryObj,
+} from "@storybook/react";
+export {
+  assetUrl
+} from './asset.svg?url';
+const dyn = import("ignored");
+"#;
+        let specs = extract_all_import_specifiers(src);
+        assert!(specs.contains(&"./Button".to_string()), "{specs:?}");
+        assert!(specs.contains(&"@storybook/react".to_string()), "{specs:?}");
+        assert!(specs.contains(&"./asset.svg?url".to_string()), "{specs:?}");
         assert!(!specs.contains(&"ignored".to_string()));
     }
 
@@ -269,6 +609,60 @@ const dyn = import("ignored");
     }
 
     #[test]
+    fn resolve_finds_bare_asset_file_without_exports() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let pkg = root.join("node_modules/@tw-tech/shared-assets");
+        std::fs::create_dir_all(pkg.join("images")).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"@tw-tech/shared-assets","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg.join("images/empty-default.png"), "png").unwrap();
+
+        let importer = root.join("src/AssetBox.tsx");
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        let resolved = resolve_bare_specifier(
+            root,
+            &importer,
+            "@tw-tech/shared-assets/images/empty-default.png?url",
+        )
+        .expect("resolves direct bare asset file");
+        assert_eq!(
+            dep_key(&resolved),
+            "@tw-tech/shared-assets/images/empty-default.png"
+        );
+    }
+
+    #[test]
+    fn resolve_finds_workspace_asset_export_source_fallback() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let pkg = root.join("packages/assets");
+        std::fs::create_dir_all(pkg.join("src/lib/icons")).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{
+  "name": "@tw-tech/shared-assets",
+  "version": "1.0.0",
+  "exports": {
+    "./icons/*": "./dist/icons/*"
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg.join("src/lib/icons/list.svg"), "<svg />").unwrap();
+
+        let importer = root.join("packages/ui-general/src/sp-empty-box.tsx");
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        let resolved =
+            resolve_bare_specifier(root, &importer, "@tw-tech/shared-assets/icons/list.svg")
+                .expect("resolves workspace asset export source file");
+        assert_eq!(resolved, pkg.join("src/lib/icons/list.svg"));
+    }
+
+    #[test]
     fn resolve_returns_none_when_not_installed() {
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path();
@@ -277,5 +671,139 @@ const dyn = import("ignored");
         // `react` is NOT installed locally → falls through to the importmap.
         assert!(resolve_bare_specifier(root, &importer, "react").is_none());
     }
+
+    #[test]
+    fn resolve_keeps_preview_importmap_react_specifiers_external_even_when_installed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let react = root.join("node_modules/react");
+        let react_dom = root.join("node_modules/react-dom");
+        std::fs::create_dir_all(&react).unwrap();
+        std::fs::create_dir_all(&react_dom).unwrap();
+        std::fs::write(
+            react.join("package.json"),
+            r#"{"name":"react","version":"18.3.1","main":"index.js","exports":{"./jsx-runtime":"./jsx-runtime.js",".":"./index.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(react.join("index.js"), "module.exports = {};\n").unwrap();
+        std::fs::write(react.join("jsx-runtime.js"), "module.exports = {};\n").unwrap();
+        std::fs::write(
+            react_dom.join("package.json"),
+            r#"{"name":"react-dom","version":"18.3.1","main":"index.js","exports":{"./client":"./client.js",".":"./index.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(react_dom.join("index.js"), "module.exports = {};\n").unwrap();
+        std::fs::write(react_dom.join("client.js"), "module.exports = {};\n").unwrap();
+
+        let importer = root.join("src/Button.tsx");
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        for specifier in [
+            "react",
+            "react-dom",
+            "react-dom/client",
+            "react/jsx-runtime",
+        ] {
+            assert!(
+                resolve_bare_specifier(root, &importer, specifier).is_none(),
+                "{specifier} should stay on the preview importmap"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_finds_pnpm_nested_dependency_from_dep_importer() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let importer_pkg =
+            root.join("node_modules/.pnpm/rc-tree-select@5.27.0/node_modules/rc-tree-select");
+        let runtime_pkg =
+            root.join("node_modules/.pnpm/rc-tree-select@5.27.0/node_modules/@babel/runtime");
+        std::fs::create_dir_all(importer_pkg.join("es")).unwrap();
+        std::fs::create_dir_all(runtime_pkg.join("helpers/esm")).unwrap();
+        std::fs::write(
+            importer_pkg.join("package.json"),
+            r#"{"name":"rc-tree-select","version":"5.27.0","module":"es/index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(importer_pkg.join("es/TreeSelect.js"), "").unwrap();
+        std::fs::write(
+            runtime_pkg.join("package.json"),
+            r#"{"name":"@babel/runtime","version":"7.29.7","exports":{"./helpers/esm/extends":"./helpers/esm/extends.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            runtime_pkg.join("helpers/esm/extends.js"),
+            "export default function _extends() {}\n",
+        )
+        .unwrap();
+
+        let importer = importer_pkg.join("es/TreeSelect.js");
+        let resolved =
+            resolve_bare_specifier(root, &importer, "@babel/runtime/helpers/esm/extends")
+                .expect("resolves pnpm nested @babel/runtime from dependency importer");
+        assert_eq!(
+            resolved,
+            runtime_pkg
+                .join("helpers/esm/extends.js")
+                .canonicalize()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_canonicalizes_pnpm_symlinked_dep_for_transitive_resolution() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let project_pkg = root.join("packages/ui-form-inputs");
+        let store_pkg =
+            root.join("node_modules/.pnpm/rc-tree-select@5.24.4/node_modules/rc-tree-select");
+        let runtime_pkg =
+            root.join("node_modules/.pnpm/rc-tree-select@5.24.4/node_modules/@babel/runtime");
+        std::fs::create_dir_all(project_pkg.join("src")).unwrap();
+        std::fs::create_dir_all(project_pkg.join("node_modules")).unwrap();
+        std::fs::create_dir_all(store_pkg.join("es")).unwrap();
+        std::fs::create_dir_all(runtime_pkg.join("helpers/esm")).unwrap();
+        symlink(&store_pkg, project_pkg.join("node_modules/rc-tree-select")).unwrap();
+
+        std::fs::write(
+            store_pkg.join("package.json"),
+            r#"{"name":"rc-tree-select","version":"5.24.4","module":"es/index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(store_pkg.join("es/TreeSelect.js"), "").unwrap();
+        std::fs::write(
+            runtime_pkg.join("package.json"),
+            r#"{"name":"@babel/runtime","version":"7.29.7","exports":{"./helpers/esm/extends":"./helpers/esm/extends.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            runtime_pkg.join("helpers/esm/extends.js"),
+            "export default function _extends() {}\n",
+        )
+        .unwrap();
+
+        let project_importer = project_pkg.join("src/form-tree-select.tsx");
+        let dep_entry =
+            resolve_bare_specifier(root, &project_importer, "rc-tree-select/es/TreeSelect")
+                .expect("project import resolves through pnpm symlink");
+        assert_eq!(
+            dep_entry,
+            store_pkg.join("es/TreeSelect.js").canonicalize().unwrap()
+        );
+
+        let transitive =
+            resolve_bare_specifier(root, &dep_entry, "@babel/runtime/helpers/esm/extends")
+                .expect("transitive import resolves from canonical pnpm package path");
+        assert_eq!(
+            transitive,
+            runtime_pkg
+                .join("helpers/esm/extends.js")
+                .canonicalize()
+                .unwrap()
+        );
+    }
 }
-// HANDWRITE-END
+// </HANDWRITE>

@@ -282,7 +282,7 @@ mod tests {
     fn test_generate_produces_one_file() {
         let spec = toggle_spec();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_sm_gen"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/sm-gen"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();

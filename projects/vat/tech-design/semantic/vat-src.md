@@ -1,6 +1,12 @@
 ---
 id: semantic-vat-src
 summary: Semantic coverage for "projects/vat/src"
+capability_refs:
+  - id: "agent-native-gpu-native-dev-containers"
+    role: primary
+    claim: "host-process-execution-and-gpu-visibility"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/vat/src`."
 fill_sections: [schema, changes]
 ---
 
@@ -939,7 +945,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -1379,7 +1385,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -1448,7 +1454,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -1796,7 +1802,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -1852,7 +1858,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -1913,7 +1919,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -2109,7 +2115,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -2321,7 +2327,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -2425,7 +2431,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -2679,7 +2685,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -2817,7 +2823,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -2839,7 +2845,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |

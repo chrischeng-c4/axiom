@@ -13,8 +13,9 @@ set -euo pipefail
 
 HOOK="${HOOK:-$(git rev-parse --show-toplevel)/.claude/hooks/hook1-post-apply-validate.sh}"
 SLUG="test-fixture-slug-r6"
-LOCK="/tmp/aw-apply-lock-${SLUG}"
+LOCK="/tmp/aw/locks/apply-${SLUG}"
 TMP="$(mktemp -d)"
+mkdir -p "$(dirname "$LOCK")"
 trap 'rm -rf "$TMP" "$LOCK"' EXIT
 
 mk_stub() {

@@ -32,18 +32,19 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 | `native_wire` | projects/lumen/src/lib.rs | module | pub | 35 |  |
 | `operator` | projects/lumen/src/lib.rs | module | pub | 40 |  |
 | `raft` | projects/lumen/src/lib.rs | module | pub | 43 |  |
-| `rdb` | projects/lumen/src/lib.rs | module | pub | 44 |  |
-| `routing` | projects/lumen/src/lib.rs | module | pub | 45 |  |
-| `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 57 |  |
-| `spec` | projects/lumen/src/lib.rs | module | pub | 61 |  |
-| `storage` | projects/lumen/src/lib.rs | module | pub | 62 |  |
-| `tls` | projects/lumen/src/lib.rs | module | pub | 63 |  |
-| `tokenize` | projects/lumen/src/lib.rs | module | pub | 64 |  |
-| `types` | projects/lumen/src/lib.rs | module | pub | 65 |  |
-| `vector_index` | projects/lumen/src/lib.rs | module | pub | 66 |  |
-| `wal` | projects/lumen/src/lib.rs | module | pub | 67 |  |
-| `wal_nats` | projects/lumen/src/lib.rs | module | pub | 68 |  |
-| `wal_relay` | projects/lumen/src/lib.rs | module | pub | 70 |  |
+| `raft_sm` | projects/lumen/src/lib.rs | module | pub | 49 |  |
+| `rdb` | projects/lumen/src/lib.rs | module | pub | 50 |  |
+| `routing` | projects/lumen/src/lib.rs | module | pub | 51 |  |
+| `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 63 |  |
+| `spec` | projects/lumen/src/lib.rs | module | pub | 67 |  |
+| `storage` | projects/lumen/src/lib.rs | module | pub | 68 |  |
+| `tls` | projects/lumen/src/lib.rs | module | pub | 69 |  |
+| `tokenize` | projects/lumen/src/lib.rs | module | pub | 70 |  |
+| `types` | projects/lumen/src/lib.rs | module | pub | 71 |  |
+| `vector_index` | projects/lumen/src/lib.rs | module | pub | 72 |  |
+| `wal` | projects/lumen/src/lib.rs | module | pub | 73 |  |
+| `wal_nats` | projects/lumen/src/lib.rs | module | pub | 74 |  |
+| `wal_relay` | projects/lumen/src/lib.rs | module | pub | 76 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -57,9 +58,8 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 //! `Collection / Field` primitive over `external_id` — lumen never owns
 //! the source of truth and has no document concept of its own.
 //!
-//! - Durable via the configured write log; multi-pod Lumen is moving to
-//!   Lumen-owned primary/replica replication, while Relay remains an explicit
-//!   external broker mode. Rebuildable from the caller.
+//! - Durable via the configured write log; multi-pod Lumen uses Lumen-owned
+//!   primary/replica replication. Rebuildable from the caller.
 //! - HTTP/2 transport, client-side collection-shard routing.
 //!
 //! Full surface and v1 scope: `projects/lumen/README.md`.
@@ -73,6 +73,15 @@ Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Sc
 pub mod aof;
 pub mod api;
 pub mod auth;
+/// `lumen backup` (#808): fetches a consistent snapshot from a running
+/// serving fleet's existing `GET /admin/backup` endpoint and hands it to a
+/// `libs/service-backup` destination sink. No new snapshot mechanism — this
+/// is transport/scheduling only, meant to be driven by the operator's
+/// optional backup CronJob (`spec.backup`, see `operator::render`) or ad hoc.
+/// Behind the `backup` feature (pulled in by `operator`) since it needs an
+/// HTTP client; `raft-wal` already links one into every shipped binary.
+#[cfg(feature = "backup")]
+pub mod backup;
 pub mod backup_sink;
 pub mod config;
 pub mod consumer;
@@ -84,13 +93,19 @@ pub mod metrics;
 /// over a lower fixed-cost transport than HTTP/JSON.
 pub mod native_wire;
 /// K8s Operator: the `Lumen` CRD plus the reconcile loop that renders + applies
-/// the serving fleet and Relay broker. Behind the `operator` feature so the
+/// the Lumen serving/data-plane resources. Behind the `operator` feature so the
 /// serving binary never pulls in kube-rs.
 #[cfg(feature = "operator")]
 pub mod operator;
 /// Cluster-state view types backing the read/admin API. This surface is the
 /// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
+/// `EngineSm` — lumen's `Engine` as a shared-`raft_host` state machine: the
+/// convergence onto `libs/raft-host` (#524). The host is the sole applier, so
+/// the per-service driver, durable hard state, and the WAL seam are no longer
+/// lumen's to own — they live in the shared lib.
+#[cfg(feature = "raft-wal")]
+pub mod raft_sm;
 pub mod rdb;
 pub mod routing;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
@@ -116,9 +131,8 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
-#[cfg(feature = "relay-wal")]
-pub mod wal_relay;
 // CODEGEN-END
+
 ````
 
 ## Changes

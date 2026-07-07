@@ -13,12 +13,15 @@
 //!   cap ps                        # alias
 //!   cap config show|init          # `config init` writes ~/.cap/config.toml
 //!   cap ping
+//!   cap llm [--topic <topic>] [--format md|json]
+//!   cap upgrade [--version <tag>] [--check]
+//!   cap issue search|view|create
 //! ```
 
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::client::Client;
 use crate::command_planner::{self, CommandPlan, ExternalPlan};
@@ -26,7 +29,67 @@ use crate::config::Config;
 use crate::daemon;
 use crate::hook_install;
 use crate::protocol::{LeaseState, Request, Response};
+use crate::resident_shell::{ResidentLightShellRun, ResidentLightShellSession};
+use crate::session_queue::{self, QueueDecision};
 use crate::supervisor::SpawnSpec;
+
+const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
+    project: "cap",
+    repo: "chrischeng-c4/axiom",
+    target: env!("CAP_TARGET"),
+    version: env!("CARGO_PKG_VERSION"),
+    git_sha: env!("CAP_GIT_SHA"),
+    built_at: env!("CAP_BUILT_AT"),
+};
+
+const LLM_TOPICS: &[cli_std::llm::Topic] = &[
+    cli_std::llm::Topic {
+        id: "workflow",
+        summary: "agent hook setup and command wrapping mental model",
+        body: "\
+# cap workflow
+
+cap protects the local machine from agent-launched command storms. Start with
+`cap init` to install fail-open Bash hooks for Claude Code and Codex CLI. The
+hooks rewrite agent Bash commands to `cap run '<original command>'`, and cap
+then decides whether to run the command under a daemon lease, a resident native
+fast path, a session queue barrier, or Bash fallback.
+
+Use `cap status`, `cap ps`, and `cap wait` to inspect or wait for host
+capacity. Use `cap explain -- <command>` to see whether a command can use a
+native replacement.",
+    },
+    cli_std::llm::Topic {
+        id: "commands",
+        summary: "task to command cheat sheet",
+        body: "\
+# cap commands
+
+| task | command |
+|---|---|
+| install agent hooks | `cap init` |
+| preview hook snippets | `cap init --print` |
+| wrap one command string | `cap run 'cargo test -p cap'` |
+| wrap argv directly | `cap run -- cargo test -p cap` |
+| inspect replacement decision | `cap explain -- find . -type f` |
+| show leases and pressure | `cap status` |
+| wait for headroom | `cap wait --timeout 30` |
+| search cap issues | `cap issue search queue` |
+| file a diagnostics issue | `cap issue create --title 'cap: ...' ...` |",
+    },
+    cli_std::llm::Topic {
+        id: "boundaries",
+        summary: "what cap does not claim",
+        body: "\
+# cap boundaries
+
+cap is a resource governor and optimizer boundary. It is not a sandbox, chroot,
+container, environment manager, or full replacement shell. Unsupported shell
+syntax must fall back to Bash, and unknown or risky command strings stay on the
+existing synchronous managed-run path unless a profile explicitly enables an
+optimization.",
+    },
+];
 
 #[derive(Parser, Debug)]
 #[command(
@@ -49,6 +112,18 @@ pub struct Cli {
 /// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
+    /// Print offline agent-facing docs for driving cap.
+    Llm(LlmArgs),
+    /// Self-update cap from cap@* GitHub releases.
+    Upgrade(UpgradeArgs),
+    /// Search, view, and file cap issues on the axiom tracker.
+    Issue {
+        #[command(subcommand)]
+        action: IssueCmd,
+    },
+    /// Deprecated alias for `cap issue create`.
+    #[command(name = "report-issue")]
+    ReportIssue(ReportIssueArgs),
     /// Run a command under cap (explicit form).
     Run(RunArgs),
     /// Show how cap would execute a command.
@@ -103,6 +178,88 @@ pub enum Cmd {
         #[command(subcommand)]
         action: HookCmd,
     },
+}
+
+/// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
+#[derive(Parser, Debug)]
+pub struct LlmArgs {
+    /// Topic to print: outline (default), workflow, commands, boundaries.
+    #[arg(long, default_value = "outline")]
+    pub topic: String,
+    /// Output format.
+    #[arg(long, value_parser = ["md", "json"], default_value = "md")]
+    pub format: String,
+}
+
+/// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
+#[derive(Parser, Debug)]
+pub struct UpgradeArgs {
+    /// Install a specific release tag, e.g. cap@0.3.62 or 0.3.62.
+    #[arg(long = "version")]
+    pub tag: Option<String>,
+    /// Only report whether a newer release exists; do not install.
+    #[arg(long)]
+    pub check: bool,
+}
+
+/// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
+#[derive(Subcommand, Debug)]
+pub enum IssueCmd {
+    /// Search cap issues; omit the query to list recent open project:cap issues.
+    Search(IssueSearchArgs),
+    /// Print a single issue by number.
+    View(IssueViewArgs),
+    /// File a structured diagnostics-rich issue.
+    Create(IssueCreateArgs),
+}
+
+/// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
+#[derive(Args, Debug)]
+pub struct IssueSearchArgs {
+    /// Search text.
+    #[arg(num_args = 0..)]
+    pub query: Vec<String>,
+    /// Issue state filter.
+    #[arg(long, default_value = "open", value_parser = ["open", "closed", "all"])]
+    pub state: String,
+    /// Max results.
+    #[arg(long, default_value_t = 20)]
+    pub limit: u32,
+}
+
+/// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
+#[derive(Args, Debug)]
+pub struct IssueViewArgs {
+    /// Issue number.
+    pub number: u64,
+}
+
+/// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
+#[derive(Args, Debug)]
+pub struct IssueCreateArgs {
+    /// Issue title. Defaults to a title derived from the message.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Print the issue without creating it.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Free-text problem description.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub message: Vec<String>,
+}
+
+/// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
+#[derive(Parser, Debug)]
+pub struct ReportIssueArgs {
+    /// Issue title.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Print the issue without creating it.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Free-text problem description.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub message: Vec<String>,
 }
 
 /// @spec projects/cap/tech-design/semantic/cap-src.md#schema
@@ -178,6 +335,10 @@ pub async fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Cmd::Llm(args)) => handle_llm(args),
+        Some(Cmd::Upgrade(args)) => handle_upgrade(args).await,
+        Some(Cmd::Issue { action }) => handle_issue(action).await,
+        Some(Cmd::ReportIssue(args)) => handle_report_issue(args).await,
         Some(Cmd::Daemon { action }) => handle_daemon(action).await,
         Some(Cmd::Status) | Some(Cmd::Ps) => handle_status().await,
         Some(Cmd::Config { action }) => handle_config(action),
@@ -206,6 +367,108 @@ pub async fn run() -> Result<ExitCode> {
             }
         }
     }
+}
+
+fn handle_llm(args: LlmArgs) -> Result<ExitCode> {
+    let out = cli_std::llm::render(
+        TOOL.project,
+        TOOL.version,
+        LLM_TOPICS,
+        &args.topic,
+        cli_std::llm::Format::parse(&args.format),
+    )?;
+    println!("{out}");
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn handle_upgrade(args: UpgradeArgs) -> Result<ExitCode> {
+    cli_std::upgrade::run(
+        &TOOL,
+        cli_std::upgrade::Options {
+            check: args.check,
+            tag: args.tag,
+            force: false,
+            yes: true,
+        },
+    )
+    .await?;
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn handle_issue(action: IssueCmd) -> Result<ExitCode> {
+    match action {
+        IssueCmd::Search(args) => {
+            cli_std::issue::search(
+                &TOOL,
+                cli_std::issue::SearchOptions {
+                    query: join_words(args.query),
+                    state: args.state,
+                    limit: args.limit,
+                },
+            )
+            .await?;
+        }
+        IssueCmd::View(args) => {
+            cli_std::issue::view(&TOOL, args.number).await?;
+        }
+        IssueCmd::Create(args) => {
+            cli_std::issue::create(&TOOL, issue_create_options(args)).await?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn handle_report_issue(args: ReportIssueArgs) -> Result<ExitCode> {
+    cli_std::report_issue::run(&TOOL, report_issue_options(args)).await?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn issue_create_options(args: IssueCreateArgs) -> cli_std::issue::CreateOptions {
+    let message = join_words(args.message);
+    cli_std::issue::CreateOptions {
+        title: issue_title(args.title, message.as_deref()),
+        message,
+        url: None,
+        repo: None,
+        label: vec!["project:cap".to_string()],
+        dry_run: args.dry_run,
+        yes: true,
+    }
+}
+
+fn report_issue_options(args: ReportIssueArgs) -> cli_std::report_issue::Options {
+    let message = join_words(args.message);
+    cli_std::report_issue::Options {
+        title: issue_title(args.title, message.as_deref()),
+        message,
+        url: None,
+        repo: None,
+        label: vec!["project:cap".to_string()],
+        dry_run: args.dry_run,
+        yes: true,
+    }
+}
+
+fn join_words(words: Vec<String>) -> Option<String> {
+    let joined = words.join(" ");
+    (!joined.trim().is_empty()).then_some(joined)
+}
+
+fn issue_title(explicit: Option<String>, message: Option<&str>) -> String {
+    if let Some(title) = explicit.filter(|title| !title.trim().is_empty()) {
+        return title;
+    }
+    let Some(message) = message.map(str::trim).filter(|message| !message.is_empty()) else {
+        return "cap: issue report".to_string();
+    };
+    let head: String = message
+        .lines()
+        .next()
+        .unwrap_or(message)
+        .chars()
+        .take(72)
+        .collect();
+    format!("cap: {head}")
 }
 
 fn handle_explain(args: ExplainArgs) -> Result<ExitCode> {
@@ -425,11 +688,22 @@ async fn handle_run(args: RunArgs) -> Result<ExitCode> {
             "nothing to run; usage: cap run \"<command>\" or cap run -- <command> [args...]"
         );
     }
-    let plan = if args.command.len() == 1 {
-        command_planner::plan_shell(&args.command[0], args.label)
-    } else {
-        command_planner::plan(&args.command, args.label)
-    };
+    if args.command.len() == 1 {
+        match session_queue::handle_command_string(&args.command[0])? {
+            QueueDecision::ContinueSynchronously => {}
+            decision => {
+                if let Some(code) = decision.exit_code() {
+                    return Ok(code);
+                }
+            }
+        }
+        let session = ResidentLightShellSession::capture();
+        return match session.run_command_string(&args.command[0], args.label)? {
+            ResidentLightShellRun::Native(code) => Ok(code),
+            ResidentLightShellRun::BashFallback(external) => handle_external_run(external).await,
+        };
+    }
+    let plan = command_planner::plan(&args.command, args.label);
     match plan {
         CommandPlan::Native(native) => command_planner::run_native(&native),
         CommandPlan::External(external) => handle_external_run(external).await,
@@ -491,6 +765,61 @@ fn exit_code_from(status: std::process::ExitStatus) -> ExitCode {
         Some(0) => ExitCode::SUCCESS,
         Some(c) if (0..=255).contains(&c) => ExitCode::from(c as u8),
         _ => ExitCode::FAILURE,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_std_convention_help_lists_current_commands_and_compat_alias() {
+        let help = Cli::command().render_help().to_string();
+        for verb in ["llm", "upgrade", "issue", "report-issue"] {
+            assert!(help.contains(verb), "missing {verb} in help:\n{help}");
+        }
+    }
+
+    #[test]
+    fn cli_std_convention_llm_uses_shared_renderer() {
+        let out = cli_std::llm::render(
+            TOOL.project,
+            TOOL.version,
+            LLM_TOPICS,
+            "outline",
+            cli_std::llm::Format::Md,
+        )
+        .unwrap();
+        assert!(out.contains("cap issue search"));
+        assert!(out.contains("cap upgrade"));
+        assert!(out.contains("workflow"));
+    }
+
+    #[test]
+    fn cli_std_convention_issue_create_is_project_scoped() {
+        let opts = issue_create_options(IssueCreateArgs {
+            title: None,
+            dry_run: true,
+            message: vec!["queue".into(), "barrier".into()],
+        });
+        assert_eq!(opts.title, "cap: queue barrier");
+        assert_eq!(opts.message.as_deref(), Some("queue barrier"));
+        assert_eq!(opts.label, vec!["project:cap"]);
+        assert!(opts.dry_run);
+    }
+
+    #[test]
+    fn cli_std_convention_report_issue_alias_uses_same_payload_shape() {
+        let opts = report_issue_options(ReportIssueArgs {
+            title: Some("custom".into()),
+            dry_run: true,
+            message: vec!["details".into()],
+        });
+        assert_eq!(opts.title, "custom");
+        assert_eq!(opts.message.as_deref(), Some("details"));
+        assert_eq!(opts.label, vec!["project:cap"]);
+        assert!(opts.dry_run);
     }
 }
 // CODEGEN-END

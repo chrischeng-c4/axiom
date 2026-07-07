@@ -7,9 +7,8 @@
 //! `Collection / Field` primitive over `external_id` — lumen never owns
 //! the source of truth and has no document concept of its own.
 //!
-//! - Durable via the configured write log; multi-pod Lumen is moving to
-//!   Lumen-owned primary/replica replication, while Relay remains an explicit
-//!   external broker mode. Rebuildable from the caller.
+//! - Durable via the configured write log; multi-pod Lumen uses Lumen-owned
+//!   primary/replica replication. Rebuildable from the caller.
 //! - HTTP/2 transport, client-side collection-shard routing.
 //!
 //! Full surface and v1 scope: `projects/lumen/README.md`.
@@ -23,6 +22,15 @@
 pub mod aof;
 pub mod api;
 pub mod auth;
+/// `lumen backup` (#808): fetches a consistent snapshot from a running
+/// serving fleet's existing `GET /admin/backup` endpoint and hands it to a
+/// `libs/service-backup` destination sink. No new snapshot mechanism — this
+/// is transport/scheduling only, meant to be driven by the operator's
+/// optional backup CronJob (`spec.backup`, see `operator::render`) or ad hoc.
+/// Behind the `backup` feature (pulled in by `operator`) since it needs an
+/// HTTP client; `raft-wal` already links one into every shipped binary.
+#[cfg(feature = "backup")]
+pub mod backup;
 pub mod backup_sink;
 pub mod config;
 pub mod consumer;
@@ -34,23 +42,21 @@ pub mod metrics;
 /// over a lower fixed-cost transport than HTTP/JSON.
 pub mod native_wire;
 /// K8s Operator: the `Lumen` CRD plus the reconcile loop that renders + applies
-/// the serving fleet and Relay broker. Behind the `operator` feature so the
+/// the Lumen serving/data-plane resources. Behind the `operator` feature so the
 /// serving binary never pulls in kube-rs.
 #[cfg(feature = "operator")]
 pub mod operator;
 /// Cluster-state view types backing the read/admin API. This surface is the
 /// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
-/// Lumen-owned HA via the shared `raftcore` engine (behind `raft-wal`):
-/// the consensus surface, durable hard state, and the driver that surfaces the
-/// committed log to the WAL seam.
+/// `EngineSm` — lumen's `Engine` as a shared-`raft_host` state machine: the
+/// convergence onto `libs/raft-host` (#524). The host is the sole applier, so
+/// the per-service driver, durable hard state, and the WAL seam are no longer
+/// lumen's to own — they live in the shared lib.
 #[cfg(feature = "raft-wal")]
-pub mod raft_core;
-#[cfg(feature = "raft-wal")]
-pub mod raft_driver;
-#[cfg(feature = "raft-wal")]
-pub mod raft_store;
+pub mod raft_sm;
 pub mod rdb;
+pub mod reshard;
 pub mod routing;
 /// Columnar mmap disk segment (Stage 2 disk-tier): a single Number column
 /// for `n_docs` rows at one `applied_seq`, written page-aligned for zero-copy
@@ -75,9 +81,4 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
-/// `RaftWal` — a `WalLog` backed by lumen-owned raftcore replication.
-#[cfg(feature = "raft-wal")]
-pub mod wal_raft;
-#[cfg(feature = "relay-wal")]
-pub mod wal_relay;
 // CODEGEN-END

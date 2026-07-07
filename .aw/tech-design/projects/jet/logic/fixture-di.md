@@ -318,21 +318,25 @@ cargo test -p jet --test fixture_di_tests
 files:
   - path: .aw/tech-design/crates/jet/logic/fixture-di.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the fixture DI TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/fixture-di.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/runtime/test/index.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing fixture shape detection, dependency resolution, memoization, cycle guard, and cleanup handling.
 
   - path: crates/jet/tests/fixture_di_tests.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing integration tests for advanced fixtures, cycles, missing deps, and flat compatibility.
 ```

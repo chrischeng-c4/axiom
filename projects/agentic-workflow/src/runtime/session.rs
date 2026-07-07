@@ -925,7 +925,7 @@ mod tests {
             id: IssueId::new("alpha"),
             title: "Alpha".into(),
             state: IssueState::Open,
-            labels: vec!["project:cue".into()],
+            labels: vec!["project:jet".into()],
         }]);
         mock_backend.enqueue_read(IssueBody {
             id: IssueId::new("alpha"),

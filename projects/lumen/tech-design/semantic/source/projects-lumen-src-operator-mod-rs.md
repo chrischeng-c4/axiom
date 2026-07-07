@@ -21,10 +21,11 @@ Public API manifest for `projects/lumen/src/operator/mod.rs` generated from AST 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `crd` | projects/lumen/src/operator/mod.rs | module | pub | 15 |  |
-| `crd_yaml` | projects/lumen/src/operator/mod.rs | function | pub | 25 | crd_yaml() -> String |
 | `lease` | projects/lumen/src/operator/mod.rs | module | pub | 16 |  |
 | `reconcile` | projects/lumen/src/operator/mod.rs | module | pub | 17 |  |
 | `render` | projects/lumen/src/operator/mod.rs | module | pub | 18 |  |
+| `resize` | projects/lumen/src/operator/mod.rs | module | pub | 19 |  |
+| `crd_yaml` | projects/lumen/src/operator/mod.rs | function | pub | 25 | crd_yaml() -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -32,14 +33,14 @@ Public API manifest for `projects/lumen/src/operator/mod.rs` generated from AST 
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
-//! loop ([`reconcile`]) that renders ([`render`]) and applies the serving fleet
-//! and Relay broker. Behind the `operator` feature so the serving image never
-//! links kube-rs.
+//! loop ([`reconcile`]) that renders ([`render`]) and applies the serving
+//! data-plane. Behind the `operator` feature so the serving image never links
+//! kube-rs.
 //!
 //! ```text
 //! Lumen (lumen.dev/v1alpha1)  --reconcile-->  ServiceAccount, ConfigMap,
-//!                                             Deployment, Service, HPA, PDB,
-//!                                             [Relay StatefulSet/Services/PDB],
+//!                                             Deployment/StatefulSet, Service,
+//!                                             HPA when applicable, PDB,
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
@@ -47,6 +48,7 @@ pub mod crd;
 pub mod lease;
 pub mod reconcile;
 pub mod render;
+pub mod resize;
 
 pub use crd::{Lumen, LumenSpec, LumenStatus};
 pub use reconcile::run;
@@ -55,7 +57,31 @@ pub use reconcile::run;
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#source
 pub fn crd_yaml() -> String {
     use kube::CustomResourceExt;
-    serde_yaml::to_string(&crd::Lumen::crd()).expect("CRD serializes")
+    let mut crd = serde_json::to_value(crd::Lumen::crd()).expect("CRD serializes to JSON");
+    normalize_kubernetes_schema_formats(&mut crd);
+    serde_yaml::to_string(&crd).expect("CRD serializes")
+}
+
+fn normalize_kubernetes_schema_formats(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if matches!(
+                map.get("format").and_then(|v| v.as_str()),
+                Some("uint32" | "uint64")
+            ) {
+                map.remove("format");
+            }
+            for child in map.values_mut() {
+                normalize_kubernetes_schema_formats(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                normalize_kubernetes_schema_formats(child);
+            }
+        }
+        _ => {}
+    }
 }
 // CODEGEN-END
 
@@ -69,8 +95,8 @@ changes:
   - path: projects/lumen/src/operator/mod.rs
     action: modify
     section: rust-source-unit
-    impl_mode: codegen
+    impl_mode: hand-written
     description: |
-      rust-source-unit (td_ast) source for `projects/lumen/src/operator/mod.rs` captured during lumen
-      standardization onto the per-file codegen ladder.
+      #809: add `pub mod resize;` alongside the existing operator submodules,
+      exposing the new raftStorage PVC resize helper.
 ```

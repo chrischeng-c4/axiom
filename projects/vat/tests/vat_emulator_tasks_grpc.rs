@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:1fc7e986" tracker="pending-tracker" reason="gRPC e2e: generated CloudTasks client → emulator → sink; REST coexists."
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_tasks_grpc-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Integration test for the Cloud Tasks emulator's gRPC front-end. Spawns
 //! `vat emulator cloud-tasks`, drives the GENERATED gRPC client over an insecure
 //! channel to CreateQueue + CreateTask targeting a local sink, and asserts the
@@ -39,6 +40,7 @@ fn wait_for_port(addr: &str) {
 }
 
 struct Killed(Child);
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-tests-vat_emulator_tasks_grpc-rs.md#source
 impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -144,4 +146,4 @@ async fn cloud_tasks_grpc_dispatches_task_and_rest_coexists() {
         "REST should see the gRPC-created queue: {body}"
     );
 }
-// HANDWRITE-END
+// CODEGEN-END

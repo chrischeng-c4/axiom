@@ -2,6 +2,7 @@
 members = [
     "projects/relay",
     "projects/loom",
+    "projects/preview",
     "projects/mamba/mambalibs/mongokit",
     "projects/mamba/mambalibs/mongokit/binding",
     "projects/mamba/mambalibs/pgkit/pg",
@@ -30,11 +31,21 @@ members = [
     "projects/jet/wasm",
     "projects/agentic-workflow",
     "libs/compass",
-    "libs/raftcore",
+    "libs/raft-core",
     "libs/claimtoken",
     "libs/openapi-codegen",
     "libs/h2c",
     "libs/cli-std",
+    "libs/surface",
+    "libs/ui-runtime",
+    "libs/raft-host",
+    "libs/operator",
+    "libs/service-http",
+    "libs/service-auth",
+    "libs/service-backup",
+    "libs/service-tls",
+    "libs/service-metrics",
+    "libs/build-stamp",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
@@ -81,6 +92,7 @@ members = [
     "projects/lumen",
     "projects/keep",
     "projects/queue/queue",
+    "examples/client-transport-policy",
 ]
 resolver = "2"
 

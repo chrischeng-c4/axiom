@@ -28,6 +28,7 @@ fn make_report(name: &str, outcome: Outcome, duration_ms: u64) -> TestReport {
         shard_index: None,
         shard_total: None,
         artifacts: Vec::new(),
+        steps: Vec::new(),
     }
 }
 
@@ -48,6 +49,7 @@ fn make_report_failed(name: &str, stack: &str, diff: Option<&str>) -> TestReport
         shard_index: None,
         shard_total: None,
         artifacts: Vec::new(),
+        steps: Vec::new(),
     }
 }
 

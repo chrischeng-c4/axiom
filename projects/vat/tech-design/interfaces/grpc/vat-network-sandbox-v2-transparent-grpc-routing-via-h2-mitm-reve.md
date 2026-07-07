@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: network-sandbox-v2-transparent-grpc-routing-h2-mitm
+    claim: network-sandbox-v2-transparent-grpc-routing-h2-mitm
     coverage: partial
     rationale: "v1 routes HTTP but the MITM is HTTP/1-only, so a stock gRPC client to a real GCP host escapes; teaching the MITM h2 + a trailer-preserving reverse-proxy to the emulator's h2c port makes gRPC transparently land locally — the second half of the network sandbox's transparent service routing."
 ---
@@ -137,6 +137,7 @@ e2e_tests:
   - id: vat-grpc-mitm-routing-smoke
     name: "gRPC client routed through the MITM reaches the local emulator"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v2-transparent-grpc-routing-h2-mitm
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_grpc_mitm_routing -- --nocapture"
@@ -146,6 +147,7 @@ e2e_tests:
   - id: vat-grpc-mitm-build
     name: "default + lean build compile with hyper http2"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v2-transparent-grpc-routing-h2-mitm
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"
@@ -157,6 +159,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: http-mock emulator command exposes transparent gRPC routing through the MITM proxy."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: enable TLS and h2 dependencies required by the gRPC MITM path."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: route gRPC h2c traffic through the reverse proxy to a local emulator."
+  - path: projects/vat/src/emulator/httpmock/ca.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: generate CA/certificate material consumed by TLS MITM routing."
+  - path: projects/vat/tests/vat_emulator_grpc_mitm_routing.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: generated gRPC client reaches the emulator through the MITM route."
   - path: projects/vat/src/emulator/httpmock/ca.rs
     action: modify
     section: source

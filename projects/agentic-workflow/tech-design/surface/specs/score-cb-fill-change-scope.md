@@ -15,7 +15,7 @@ capability_refs:
 `aw cb fill` brief scopes marker enumeration to the active TD's
 `## Changes` paths. Inherited HANDWRITE markers outside that path set do not
 enter `marker_list`, and a TD whose changed paths contain zero markers
-dispatches directly to `aw td merge`.
+dispatches directly to `aw td code-check`.
 
 ## Logic: cb-fill-brief-scope
 <!-- type: logic lang: mermaid -->
@@ -54,7 +54,7 @@ nodes:
     label: "Scoped marker list empty?"
   emit_merge:
     kind: terminal
-    label: "Emit dispatch aw td merge"
+    label: "Emit dispatch aw td code-check"
   emit_fill:
     kind: terminal
     label: "Emit dispatch aw cb fill with scoped marker_list and spec_path"
@@ -103,7 +103,7 @@ flowchart TD
     read_changes --> filter_markers[Keep markers whose source_path matches Changes paths]
     filter_markers --> scoped_empty{Scoped marker list empty?}
     use_legacy_all --> scoped_empty
-    scoped_empty -->|yes| emit_merge([Emit dispatch aw td merge])
+    scoped_empty -->|yes| emit_merge([Emit dispatch aw td code-check])
     scoped_empty -->|no| emit_fill([Emit dispatch aw cb fill with scoped marker_list and spec_path])
 ```
 
@@ -116,7 +116,7 @@ id: score-cb-fill-change-scope-test-plan
 requirements:
   r1_zero_marker_fast_path:
     id: R1
-    text: "A spec whose Changes paths contain zero HANDWRITE markers yields an empty scoped list and dispatches td merge"
+    text: "A spec whose Changes paths contain zero HANDWRITE markers yields an empty scoped list and dispatches td code-check"
     kind: functional
     risk: high
     verify: test
@@ -164,7 +164,7 @@ relations:
 requirementDiagram
     requirement R1 {
       id: R1
-      text: "spec-only Changes path yields td merge fast-path"
+      text: "spec-only Changes path yields td code-check fast-path"
       risk: high
       verifymethod: test
     }

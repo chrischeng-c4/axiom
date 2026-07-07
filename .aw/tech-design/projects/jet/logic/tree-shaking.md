@@ -482,26 +482,31 @@ cargo test -p jet bundler::tests::test_phase2_pipeline_with_cross_module_dce
 files:
   - path: .aw/tech-design/crates/jet/tree-shaking.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove loose crate-root spec file. Crate root may contain README.md only.
 
   - path: .aw/tech-design/crates/jet/logic/tree-shaking.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home tree-shaking contract under logic/ and replace old placeholder sections with checkable sections.
 
   - path: crates/jet/src/bundler/tree_shake.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns ESM and CJS used-export analysis, side-effect declarations, and module shaking.
 
   - path: crates/jet/src/bundler/dce.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation owns define-driven branch and ternary elimination before tree shaking.
 
   - path: crates/jet/src/bundler/mod.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing implementation invokes apply_tree_shaking before bundle format selection.
 ```

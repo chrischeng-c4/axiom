@@ -174,6 +174,8 @@ definitions:
           description: "Section types whose body is a config manifest YAML document (config)."
         ChangesFamily:
           description: "The changes section type (changes YAML schema)."
+        RustSourceUnitFamily:
+          description: "Section types whose body is a lossless Rust source-unit item tree."
         Unsupported:
           description: "Section types without a typed parser at this implementation time (R9)."
 
@@ -181,7 +183,7 @@ definitions:
     type: object
     $id: TypedBody
     description: >
-      Discriminated body of a parsed TD section. Nine typed variants cover
+      Discriminated body of a parsed TD section. Eleven typed variants cover
       known section families (R3); the opaque `Unsupported` variant carries
       sections whose parser is not yet implemented (R9).
     x-rust-enum:
@@ -200,8 +202,8 @@ definitions:
           kind: tuple
           fields: [{ rust_type: "super::payloads::JsonSchemaPayload" }]
           doc: |
-            JSON Schema document (schema, config, wireframe, component,
-            design-token, manifest, e2e-test). Typed in Stage 1B (sdd-td-ast-payloads).
+            JSON Schema/YAML document (schema, config, wireframe, component,
+            design-token, manifest, tool-contract, e2e-test). Typed in Stage 1B (sdd-td-ast-payloads).
         - name: OpenRpc
           kind: tuple
           fields: [{ rust_type: "super::payloads::OpenRpcPayload" }]
@@ -222,6 +224,16 @@ definitions:
           kind: tuple
           fields: [{ rust_type: "super::payloads::ConfigManifestPayload" }]
           doc: "Config manifest YAML (config). Typed in Stage 1B."
+        - name: RustSourceUnit
+          kind: tuple
+          fields: [{ rust_type: "crate::generate::rust_source_unit::RustSourceUnit" }]
+          doc: |
+            Lossless Rust source-unit item tree parsed from a
+            `rust-source-unit` fenced block. This is the typed TD bridge for #591:
+            a Rust source section is no longer an opaque unsupported body before
+            `from_td_ast` dispatch sees it.
+
+            @spec projects/agentic-workflow/tech-design/logic/aw-td-ast-parse-rust-source-unit-sections-as-typed-td-bodies.md#logic
         - name: Markdown
           kind: tuple
           fields: [{ rust_type: String }]
@@ -543,6 +555,8 @@ changes:
               expression: "cli_entities(p)"
             - pattern: "TypedBody::ConfigManifest(p)"
               expression: "config_entities(p)"
+            - pattern: "TypedBody::RustSourceUnit(_)"
+              expression: "Vec::new()"
             - pattern: "TypedBody::Markdown(_)"
               expression: "Vec::new()"
             - pattern: "TypedBody::Placeholder"

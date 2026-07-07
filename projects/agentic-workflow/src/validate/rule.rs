@@ -78,8 +78,11 @@ impl RuleId {
             | RuleId::DuplicateSection => "format",
             // TD directory shape (R6a, R6b).
             RuleId::LooseRootFile | RuleId::UnexpectedSubdir => "structure",
-            // Cross-section logical consistency (R7d, R7e, R7f).
-            RuleId::OrphanRequirement | RuleId::SchemaConflict | RuleId::FieldNearMatch => "logic",
+            // Cross-section / cross-project logical consistency (R7d, R7e, R7f, R7g).
+            RuleId::OrphanRequirement
+            | RuleId::SchemaConflict
+            | RuleId::FieldNearMatch
+            | RuleId::DanglingCapabilityRef => "logic",
         }
     }
 
@@ -157,6 +160,7 @@ mod tests {
         assert_eq!(RuleId::OrphanRequirement.category(), "logic");
         assert_eq!(RuleId::SchemaConflict.category(), "logic");
         assert_eq!(RuleId::FieldNearMatch.category(), "logic");
+        assert_eq!(RuleId::DanglingCapabilityRef.category(), "logic");
     }
 
     #[test]
@@ -235,6 +239,10 @@ pub enum RuleId {
     /// R7f — reject near-match field names that likely indicate schema typos.
     #[serde(rename = "FieldNearMatch")]
     FieldNearMatch,
+    /// R7g — reject capability_refs entries (capability/gap/claim ids) that
+    /// do not resolve against the owning project's capability contract.
+    #[serde(rename = "DanglingCapabilityRef")]
+    DanglingCapabilityRef,
 }
 
 /// @spec projects/agentic-workflow/tech-design/core/validate/rule.md#schema.impls
@@ -258,6 +266,7 @@ impl RuleId {
             RuleId::OrphanRequirement => "R7d:orphan-requirement",
             RuleId::SchemaConflict => "R7e:schema-conflict",
             RuleId::FieldNearMatch => "R7f:field-near-match",
+            RuleId::DanglingCapabilityRef => "R7g:dangling-capability-ref",
         }
     }
 }

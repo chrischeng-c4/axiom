@@ -374,7 +374,7 @@ mod tests {
     fn test_generate_produces_one_file() {
         let spec = create_artifact_spec();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_seq_gen"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/seq-gen"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();

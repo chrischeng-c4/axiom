@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-commands.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-commands-snapshot-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `vat snapshot <id>` and `vat fork <id>` — branch a running environment.
 //!

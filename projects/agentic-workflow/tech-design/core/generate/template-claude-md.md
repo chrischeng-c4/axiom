@@ -38,7 +38,7 @@ The CLAUDE.md template injects SDD workflow instructions into a project's `CLAUD
 
 The template contains a concise reference for Claude Code: workflow skills (`/cclab:sdd:run-change`), utility skills (`/cclab:sdd:agent`, `/cclab:sdd:fillback-main-specs`), and tool pointers for knowledge and specs.
 
-**Template source**: `crates/cclab-sdd/templates/mainthread/CLAUDE.md`
+**Template source**: `crates/cclab-sdd/templates/mainthread/CLAUDE.md.tmpl`
 
 ## Template
 <!-- type: doc lang: markdown -->

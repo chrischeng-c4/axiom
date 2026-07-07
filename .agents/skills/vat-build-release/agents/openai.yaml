@@ -1,0 +1,4 @@
+interface:
+  display_name: "VAT Build Release"
+  short_description: "Release vat and monitor GitHub publication"
+  default_prompt: "Use $vat-build-release to cut, land, tag, push, and monitor a vat release."

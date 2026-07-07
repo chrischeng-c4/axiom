@@ -501,6 +501,7 @@ mod tests {
                     external_id: eid.into(),
                     field: "email".into(),
                     value: FieldValue::String(val.into()),
+                    version: None,
                 }],
                 request_id: None,
             },
@@ -764,16 +765,19 @@ mod crux_recovery_tests {
                         external_id: eid.into(),
                         field: "num".into(),
                         value: FieldValue::Number(n),
+                        version: None,
                     },
                     IndexItem {
                         external_id: eid.into(),
                         field: "kw".into(),
                         value: FieldValue::String(kw.into()),
+                        version: None,
                     },
                     IndexItem {
                         external_id: eid.into(),
                         field: "tags".into(),
                         value: FieldValue::StringList(vec![tag.into()]),
+                        version: None,
                     },
                     IndexItem {
                         external_id: eid.into(),
@@ -783,16 +787,19 @@ mod crux_recovery_tests {
                         } else {
                             "filler".into()
                         }),
+                        version: None,
                     },
                     IndexItem {
                         external_id: eid.into(),
                         field: "sig".into(),
                         value: FieldValue::String(format!("{sig:016x}")),
+                        version: None,
                     },
                     IndexItem {
                         external_id: eid.into(),
                         field: "emb".into(),
                         value: FieldValue::Vector(emb.to_vec()),
+                        version: None,
                     },
                 ],
                 request_id: None,

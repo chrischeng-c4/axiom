@@ -105,7 +105,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -173,7 +173,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |
@@ -210,7 +210,7 @@ changes:
     section: schema
     description: |
       Generate this vat Rust source unit from the aggregate TD AST source group.
-    impl_mode: codegen
+    impl_mode: hand-written
     replaces:
       - "<whole-file>"
     rust_source: |

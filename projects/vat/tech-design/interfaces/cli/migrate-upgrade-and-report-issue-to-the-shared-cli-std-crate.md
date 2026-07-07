@@ -1,17 +1,17 @@
 ---
 id: migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate
-summary: Replace vat's hand-ported upgrade/report-issue (#491) with the shared libs/cli-std crate — vat depends on cli-std, defines a ToolInfo, and dispatches the two verbs to cli_std::upgrade::run / report_issue::run, matching how loom and lumen consume it. Pure de-duplication, no behaviour change.
+summary: Replace vat's hand-ported CLI-convention verbs with the shared libs/cli-std crate — vat depends on cli-std, defines a ToolInfo, and dispatches `upgrade` plus `issue search/view/create` to cli_std::upgrade / cli_std::issue while `llm` uses cli_std::llm.
 fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: adopt-the-shared-cli-std-crate
+    claim: adopt-the-shared-cli-std-crate
     coverage: partial
-    rationale: "vat is the lone CLI hand-rolling the mandatory upgrade/report-issue verbs; consuming the shared cli-std crate removes ~800 lines of duplication and keeps vat's CLI-convention behaviour in lockstep with the ecosystem."
+    rationale: "vat must keep the mandatory llm/upgrade/issue verbs in lockstep with the ecosystem; consuming the shared cli-std crate prevents drift from the repo-wide CLI convention."
 ---
 
-# Migrate upgrade + report-issue to the shared cli-std crate
+# Migrate standard CLI verbs to the shared cli-std crate
 
 ## Logic
 <!-- type: logic lang: mermaid -->
@@ -21,21 +21,24 @@ capability_refs:
 id: vat-adopt-cli-std-logic
 entry: start
 nodes:
-  start: { kind: start, label: "vat upgrade or vat report-issue invoked" }
-  parse: { kind: process, label: "cli.rs parses the same flags as before" }
+  start: { kind: start, label: "vat llm, vat upgrade, or vat issue invoked" }
+  parse: { kind: process, label: "cli.rs parses the convention's flag shape" }
   tool: { kind: process, label: "build cli_std ToolInfo for vat name vat tag vat@ repo axiom stamps" }
   which: { kind: decision, label: "which verb" }
+  llm: { kind: process, label: "cli_std llm render topic/format" }
   up: { kind: process, label: "cli_std upgrade run Options from flags" }
-  rep: { kind: process, label: "cli_std report_issue run Options from flags" }
-  done: { kind: terminal, label: "identical behaviour backed by shared crate" }
+  iss: { kind: process, label: "cli_std issue search/view/create from subcommand flags" }
+  done: { kind: terminal, label: "standard behaviour backed by shared crate" }
 edges:
   - { from: start, to: parse }
   - { from: parse, to: tool }
   - { from: tool, to: which }
+  - { from: which, to: llm, label: "llm" }
   - { from: which, to: up, label: "upgrade" }
-  - { from: which, to: rep, label: "report-issue" }
+  - { from: which, to: iss, label: "issue" }
+  - { from: llm, to: done }
   - { from: up, to: done }
-  - { from: rep, to: done }
+  - { from: iss, to: done }
 ```
 ## Schema
 <!-- type: schema lang: yaml -->
@@ -53,7 +56,7 @@ properties:
   target: { type: string, description: "env VAT_TARGET (build stamp)" }
   git_sha: { type: string, description: "env VAT_GIT_SHA" }
   built_at: { type: string, description: "env VAT_BUILT_AT" }
-description: "Fields cli-std needs to drive upgrade (release discovery/asset) + report-issue (diagnostics). Exact field names follow cli_std::ToolInfo."
+description: "Fields cli-std needs to drive upgrade release discovery/assets and issue diagnostics. Exact field names follow cli_std::ToolInfo."
 additionalProperties: true
 ```
 ## Config
@@ -72,8 +75,9 @@ properties:
     type: object
     properties:
       self-update: { type: array, items: { type: string }, description: "[cli-std/online]" }
-      report-issue: { type: array, items: { type: string }, description: "[cli-std/online]" }
-    description: "Mirror loom/lumen: the online HTTP path comes from cli-std/online, not vat's own reqwest gate. Drop vat-direct deps (sha2/tar/flate2/semver and the upgrade-only reqwest gating) if cli-std now provides them."
+      issue: { type: array, items: { type: string }, description: "[cli-std/online]" }
+      report-issue: { type: array, items: { type: string }, description: "deprecated alias for issue" }
+    description: "The online HTTP path comes from cli-std/online, not vat's own reqwest gate."
 additionalProperties: true
 ```
 ## CLI
@@ -81,15 +85,18 @@ additionalProperties: true
 
 ```yaml
 commands:
+  - name: vat llm
+    behavior:
+      - "Supports the convention shape `vat llm [--topic <topic>] [--format md|json]`; default topic is outline and `--topic guide` prints vat's detailed agent guide."
   - name: vat upgrade
     behavior:
       - "Same flags (--check/--version/--force/--yes); dispatches to cli_std::upgrade::run with a vat ToolInfo and Options mapped from the flags. Self-updates from the latest vat@* GitHub release exactly as before."
-  - name: vat report-issue
+  - name: vat issue
     behavior:
-      - "Same flags (--title/--message/--repo/--label/--dry-run/--yes/[message...]); dispatches to cli_std::report_issue::run. Same diagnostics (version + target + OS/arch) and gh-API/prefilled-URL fallback."
+      - "`search [query]`, `view <n>`, and `create [--title <t>] [message...]` dispatch to cli_std::issue and are scoped to the project:vat label."
   - name: vat --help
     behavior:
-      - "Still lists llm, upgrade, report-issue (all three mandatory verbs)."
+      - "Lists llm, upgrade, and issue (all three mandatory verbs)."
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -116,18 +123,21 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: vat-cli-std-parity
-    name: "upgrade/report-issue behave identically via cli-std"
+    name: "llm/upgrade/issue behave via cli-std"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: adopt-the-shared-cli-std-crate
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "cargo test -p vat cli_convention -- --nocapture"
+    command: "cargo test -p vat --test vat_cli_convention -- --nocapture"
     assertions:
-      - "vat --help lists llm, upgrade, report-issue."
-      - "vat report-issue --title X --dry-run prints the diagnostics body incl. the vat version and OS."
+      - "vat --help lists llm, upgrade, issue."
+      - "vat llm --topic outline --format json prints the cli-std JSON shape."
+      - "vat issue create --title X --dry-run prints the diagnostics body incl. the vat version and OS."
       - "vat upgrade --check exits cleanly."
   - id: vat-cli-std-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: adopt-the-shared-cli-std-crate
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"
@@ -139,21 +149,46 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: parse llm/upgrade/issue flags and route them through the shared cli-std contract."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: wire cli-std dependency and online features into vat's Cargo configuration."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: build vat ToolInfo and dispatch standard verbs to cli_std::{llm,upgrade,issue}."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: define the vat ToolInfo fields consumed by cli-std."
+  - path: projects/vat/tests/vat_cli_convention.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: CLI convention smoke tests cover ToolInfo and standard verb parsing."
   - path: projects/vat/Cargo.toml
     action: modify
     section: source
     impl_mode: hand-written
-    reason: "Add cli-std path dep; route self-update/report-issue features through cli-std/online; drop the now-unused upgrade-only direct deps if cli-std covers them."
+    reason: "Add cli-std path dep; route self-update/issue features through cli-std/online."
   - path: projects/vat/src/cli.rs
     action: modify
     section: source
     impl_mode: hand-written
-    reason: "Define vat's cli_std::ToolInfo; dispatch Upgrade/ReportIssue to cli_std::{upgrade,report_issue}::run mapping the existing flags onto cli-std Options."
+    reason: "Define vat's cli_std::ToolInfo; dispatch Upgrade/Issue to cli_std::{upgrade,issue} and route llm topic rendering through cli_std::llm."
   - path: projects/vat/src/commands/mod.rs
     action: modify
     section: source
     impl_mode: hand-written
-    reason: "Remove the upgrade / report_issue module declarations."
+    reason: "Remove the old hand-rolled upgrade/report_issue module declarations."
   - path: projects/vat/src/commands/upgrade.rs
     action: delete
     section: source
@@ -163,7 +198,7 @@ changes:
     action: delete
     section: source
     impl_mode: hand-written
-    reason: "Replaced by cli_std::report_issue."
+    reason: "Replaced by cli_std::issue."
   - path: projects/vat/tests/vat_cli_convention.rs
     action: validate
     section: e2e-test

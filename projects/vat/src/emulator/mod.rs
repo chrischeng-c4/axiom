@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! vat's built-in Rust local-test emulators.
 //!
@@ -53,6 +53,7 @@ pub mod googleapis {
 use anyhow::Result;
 
 /// Which built-in emulator to serve.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-mod-rs.md#source
 pub enum Kind {
     Pubsub,
     FirebaseAuth,
@@ -66,6 +67,9 @@ pub enum Kind {
         ca_path: String,
         cassette_dir: String,
         routes: Vec<(String, String)>,
+        /// Forward unmatched requests to the real upstream (default). When false
+        /// (hermetic / `--no-forward`) an unmatched request is blocked.
+        forward: bool,
     },
     /// The OpenAPI mock serves responses from a spec document.
     Openapi {
@@ -75,6 +79,7 @@ pub enum Kind {
 
 /// Serve the selected emulator on `host_port` (e.g. `127.0.0.1:8085`) until the
 /// process is killed.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-mod-rs.md#source
 pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
     match kind {
         Kind::FirebaseAuth => auth::serve(host_port).await,
@@ -87,7 +92,8 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
             ca_path,
             cassette_dir,
             routes,
-        } => httpmock::serve(host_port, &ca_path, &cassette_dir, &routes).await,
+            forward,
+        } => httpmock::serve(host_port, &ca_path, &cassette_dir, &routes, forward).await,
         Kind::Openapi { spec } => openapi::serve(host_port, &spec).await,
     }
 }

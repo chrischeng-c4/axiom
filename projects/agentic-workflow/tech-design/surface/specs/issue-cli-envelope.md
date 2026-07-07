@@ -135,7 +135,7 @@ sequenceDiagram
 |------|--------|---------|
 | `projects/agentic-workflow/src/cli/issues.rs` | modify | `IssueEnvelope` enum, envelope emission in `run_create`, new `FillSection` subcommand + `run_fill_section` (brief + apply) |
 | `CLAUDE.md` | modify | Insert "Score envelope (mainthread protocol)" section |
-| `projects/agentic-workflow/templates/mainthread/CLAUDE.md` | modify | Same as CLAUDE.md (template source of truth) |
+| `projects/agentic-workflow/templates/mainthread/CLAUDE.md.tmpl` | modify | Same as CLAUDE.md (template source of truth) |
 | `projects/agentic-workflow/templates/mainthread/agents/score-issue-author.md` | modify | Rewrite Inputs/Process/Output to consume envelope JSON + write `.aw/payloads/<slug>/body.md`. Add `Write` tool + PreToolUse guard |
 | `projects/agentic-workflow/templates/mainthread/skills/score-issue/SKILL.md` | modify | Slim to intent-router; delegate envelope handling to CLAUDE.md |
 | `projects/agentic-workflow/templates/mainthread/settings.json` | modify | Register `score-issue-author` SubagentStop hook ahead of generic `score-*` validate hook |

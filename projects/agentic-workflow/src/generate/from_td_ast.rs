@@ -195,6 +195,10 @@ fn classify_section(section: &TDSection) -> DispatchOutcome {
             (TypedBody::MermaidPlus(_), SectionType::Logic) => {
                 typed_generator("rust-logic-emitter", DispatchMaturity::SemanticGenerator)
             }
+            (TypedBody::RustSourceUnit(_), SectionType::RustSourceUnit) => structural_scaffold(
+                "rust-source-unit",
+                "typed Rust source-unit item tree ready for lossless source regeneration",
+            ),
             (TypedBody::Placeholder, _) => (
                 "none",
                 DispatchStatus::Skipped,
@@ -464,6 +468,34 @@ mod tests {
         assert_eq!(outcome.strategy, DispatchStrategy::HandwriteGap);
         assert_eq!(outcome.maturity, DispatchMaturity::HandwriteGap);
         assert_eq!(outcome.gap_id.as_deref(), Some("typed-generator:rest-api"));
+    }
+
+    #[test]
+    fn rust_source_unit_dispatch_routes_as_structural_generator() {
+        let td = TDAst {
+            frontmatter: serde_yaml::Value::Null,
+            sections: vec![section(
+                SectionType::RustSourceUnit,
+                TypedBody::RustSourceUnit(
+                    crate::generate::rust_source_unit::parse("pub fn demo() {}")
+                        .expect("rust source parses"),
+                ),
+            )],
+        };
+        let ctx = DispatchCtx {
+            spec_path: std::path::PathBuf::from("demo.md"),
+            spec_ref_prefix: "demo.md".to_string(),
+            target_lang: Some("rs".to_string()),
+        };
+
+        let report = dispatch_from_tdast(&td, &ctx);
+        let outcome = &report.outcomes[0];
+        assert_eq!(outcome.status, DispatchStatus::Emitted);
+        assert_eq!(outcome.generator, "rust-source-unit");
+        assert_eq!(outcome.strategy, DispatchStrategy::StructuralScaffold);
+        assert_eq!(outcome.maturity, DispatchMaturity::StructuralGenerator);
+        assert!(!outcome.source_backed);
+        assert!(outcome.gap_id.is_none());
     }
 }
 // CODEGEN-END

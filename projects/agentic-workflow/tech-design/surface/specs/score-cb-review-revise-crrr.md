@@ -19,7 +19,7 @@ command_refs:
 Closes the CB CRRR parity gap: adds `aw cb review` and `aw cb revise`
 verbs so that HANDWRITE-filled code goes through the same
 Create-Review-Revise-Review cycle as TD specs before merge.
-Rewires `aw cb fill` end-of-flow from `aw td merge` to
+Rewires `aw cb fill` end-of-flow from `aw td code-check` to
 `aw cb review`. Enforces the 2-review ceiling identical to TD CRRR.
 
 ## CLI: score-cb-review-revise-crrr
@@ -41,7 +41,7 @@ commands:
   cb:
     description: >
       Code-artifact verbs. Phase 4 adds `review` and `revise` and rewires
-      `fill` end-of-flow to dispatch `aw cb review` instead of `aw td merge`.
+      `fill` end-of-flow to dispatch `aw cb review` instead of `aw td code-check`.
     subcommands:
       review:
         description: >
@@ -60,7 +60,7 @@ commands:
           `Lifecycle-Stage: Cb-Review` with review_count and verdict embedded,
           advance phase `cb_filled → cb_reviewed`, increment `cb_review_count`
           in issue frontmatter.
-          On approved → emit dispatch envelope to `aw td merge`.
+          On approved → emit dispatch envelope to `aw td code-check`.
           On needs-revision (cb_review_count < 2) → emit dispatch to
           `score-cb-reviser`.
           On needs-revision (cb_review_count >= 2) → emit dispatch to
@@ -154,7 +154,7 @@ commands:
           When the final marker is applied and `aw cb check` passes,
           the default end-of-flow dispatches `aw cb review` (R6).
           Pass `--no-review` to bypass the review step and dispatch
-          `aw td merge` directly instead (R7, backward compat / fast path).
+          `aw td code-check` directly instead (R7, backward compat / fast path).
           All other fill behaviour is unchanged
           (@spec projects/agentic-workflow/tech-design/surface/specs/aw-cb-fill-crrr.md#cli, @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#cli).
         args:
@@ -168,7 +168,7 @@ commands:
             default: false
             description: >
               Skip the CB review/revise loop. After the sole-commit gate passes,
-              dispatch `aw td merge` directly instead of `aw cb review`.
+              dispatch `aw td code-check` directly instead of `aw cb review`.
               Preserves pre-Phase-4 behaviour for backward compatibility (R7).
           - name: apply
             type: boolean
@@ -302,9 +302,9 @@ nodes:
   review_apply_check_ceiling:
     kind: decision
     label: "cb_review_count >= 2?"
-  review_emit_td_merge:
+  review_emit_td_code_check:
     kind: terminal
-    label: "Emit dispatch to aw td merge; exit 0 (R9)"
+    label: "Emit dispatch to aw td code-check; exit 0 (R9)"
   review_emit_reviser:
     kind: terminal
     label: "Emit dispatch to score-cb-reviser (flagged_markers); exit 0 (R3)"
@@ -360,7 +360,7 @@ edges:
   - from: review_apply_commit
     to: review_apply_check_verdict
   - from: review_apply_check_verdict
-    to: review_emit_td_merge
+    to: review_emit_td_code_check
     label: "approved"
   - from: review_apply_check_verdict
     to: review_apply_check_ceiling
@@ -401,7 +401,7 @@ flowchart TD
     review_apply_payload_valid -->|yes| review_apply_commit["Commit Lifecycle-Stage: Cb-Review; advance phase cb_filled → cb_reviewed; increment cb_review_count"]
     review_apply_payload_valid -->|no| review_apply_error_payload(["Error: invalid payload — rollback — exit 1"])
     review_apply_commit --> review_apply_check_verdict{"Verdict?"}
-    review_apply_check_verdict -->|approved| review_emit_td_merge(["Emit dispatch to aw td merge — exit 0"])
+    review_apply_check_verdict -->|approved| review_emit_td_code_check(["Emit dispatch to aw td code-check — exit 0"])
     review_apply_check_verdict -->|needs-revision| review_apply_check_ceiling{"cb_review_count >= 2?"}
     review_apply_check_ceiling -->|"yes (ceiling)"| review_emit_arbitrate(["Emit dispatch to aw cb arbitrate — exit 0"])
     review_apply_check_ceiling -->|"no (round 2 ok)"| review_emit_reviser(["Emit dispatch to score-cb-reviser — exit 0"])
@@ -485,7 +485,7 @@ definitions:
       - TdRevise
       - CbGen
       - TdGenCode
-      - TdMerge
+      - TdCodeCheck
       - TdClaim
       - CbClaim
       - CbFill
@@ -516,8 +516,8 @@ definitions:
         - name: TdGenCode
           rename: "Td-GenCode"
           doc: "Legacy alias for Cb-Gen. Reader-only."
-        - name: TdMerge
-          rename: "Td-Merge"
+        - name: TdCodeCheck
+          rename: "Cb-CodeCheck"
           doc: "Spec merged."
         - name: TdClaim
           rename: "Td-Claim"
@@ -548,7 +548,7 @@ definitions:
       verdict:
         type: string
         enum: [approved, needs-revision]
-        description: "Reviewer verdict. 'approved' routes to aw td merge; 'needs-revision' routes to reviser."
+        description: "Reviewer verdict. 'approved' routes to aw td code-check; 'needs-revision' routes to reviser."
       flagged_markers:
         type: array
         items:
@@ -695,8 +695,8 @@ definitions:
         properties:
           if_verdict_approved:
             type: string
-            const: "aw td merge"
-            description: "Dispatch aw td merge when last verdict was approved (R9)."
+            const: "aw td code-check"
+            description: "Dispatch aw td code-check when last verdict was approved (R9)."
           if_verdict_needs_revision:
             type: string
             const: "aw cb revise"
@@ -749,13 +749,13 @@ requirements:
     verify: test
   r6_fill_end_dispatches_cb_review:
     id: R6
-    text: "aw cb fill end-of-flow (post gate, no --no-review) dispatches aw cb review instead of aw td merge"
+    text: "aw cb fill end-of-flow (post gate, no --no-review) dispatches aw cb review instead of aw td code-check"
     kind: functional
     risk: high
     verify: test
   r7_fill_no_review_flag:
     id: R7
-    text: "aw cb fill --no-review dispatches aw td merge directly, bypassing CB review/revise loop"
+    text: "aw cb fill --no-review dispatches aw td code-check directly, bypassing CB review/revise loop"
     kind: functional
     risk: medium
     verify: test
@@ -767,7 +767,7 @@ requirements:
     verify: test
   r9_route_cb_reviewed_approved:
     id: R9
-    text: "cb_reviewed + approved validation/mainthread continuation dispatches aw td merge"
+    text: "cb_reviewed + approved validation/mainthread continuation dispatches aw td code-check"
     kind: functional
     risk: high
     verify: test
@@ -799,7 +799,7 @@ elements:
   test_cb_review_brief_dispatch_envelope:
     kind: test
     type: "rs/#[test]"
-  test_cb_review_apply_approved_td_merge:
+  test_cb_review_apply_approved_td_code_check:
     kind: test
     type: "rs/#[test]"
   test_cb_review_apply_needs_revision_reviser:
@@ -832,7 +832,7 @@ elements:
   test_lifecycle_trailer_cb_arbitrate_serde:
     kind: test
     type: "rs/#[test]"
-  test_cb_fill_no_review_dispatches_td_merge:
+  test_cb_fill_no_review_dispatches_td_code_check:
     kind: test
     type: "rs/#[test]"
   test_cb_fill_default_dispatches_cb_review:
@@ -856,7 +856,7 @@ elements:
 relations:
   - from: test_cb_review_brief_dispatch_envelope
     verifies: r1_cb_review_brief
-  - from: test_cb_review_apply_approved_td_merge
+  - from: test_cb_review_apply_approved_td_code_check
     verifies: r2_cb_review_apply
   - from: test_cb_review_apply_needs_revision_reviser
     verifies: r2_cb_review_apply
@@ -874,7 +874,7 @@ relations:
     verifies: r5_phase_enum_cb_reviewed_revised
   - from: test_cb_fill_default_dispatches_cb_review
     verifies: r6_fill_end_dispatches_cb_review
-  - from: test_cb_fill_no_review_dispatches_td_merge
+  - from: test_cb_fill_no_review_dispatches_td_code_check
     verifies: r7_fill_no_review_flag
   - from: test_cb_route_cb_filled_dispatch
     verifies: r8_route_cb_filled
@@ -940,7 +940,7 @@ requirementDiagram
     }
     requirement R7 {
       id: R7
-      text: "aw cb fill --no-review dispatches aw td merge directly"
+      text: "aw cb fill --no-review dispatches aw td code-check directly"
       risk: medium
       verifymethod: test
     }
@@ -952,7 +952,7 @@ requirementDiagram
     }
     requirement R9 {
       id: R9
-      text: "cb_reviewed + approved → aw td merge dispatch"
+      text: "cb_reviewed + approved → aw td code-check dispatch"
       risk: high
       verifymethod: test
     }
@@ -983,7 +983,7 @@ requirementDiagram
     element test_cb_review_brief_dispatch_envelope {
       type: "rs/#[test]"
     }
-    element test_cb_review_apply_approved_td_merge {
+    element test_cb_review_apply_approved_td_code_check {
       type: "rs/#[test]"
     }
     element test_cb_review_apply_needs_revision_reviser {
@@ -1016,7 +1016,7 @@ requirementDiagram
     element test_lifecycle_trailer_cb_arbitrate_serde {
       type: "rs/#[test]"
     }
-    element test_cb_fill_no_review_dispatches_td_merge {
+    element test_cb_fill_no_review_dispatches_td_code_check {
       type: "rs/#[test]"
     }
     element test_cb_fill_default_dispatches_cb_review {
@@ -1038,7 +1038,7 @@ requirementDiagram
       type: "rs/integration"
     }
     test_cb_review_brief_dispatch_envelope - verifies -> R1
-    test_cb_review_apply_approved_td_merge - verifies -> R2
+    test_cb_review_apply_approved_td_code_check - verifies -> R2
     test_cb_review_apply_needs_revision_reviser - verifies -> R2
     test_cb_review_apply_ceiling_arbitrate - verifies -> R2
     test_cb_revise_brief_dispatch_envelope - verifies -> R3
@@ -1047,7 +1047,7 @@ requirementDiagram
     test_phase_enum_cb_reviewed_serde - verifies -> R5
     test_phase_enum_cb_revised_serde - verifies -> R5
     test_cb_fill_default_dispatches_cb_review - verifies -> R6
-    test_cb_fill_no_review_dispatches_td_merge - verifies -> R7
+    test_cb_fill_no_review_dispatches_td_code_check - verifies -> R7
     test_cb_route_cb_filled_dispatch - verifies -> R8
     test_cb_route_cb_reviewed_approved - verifies -> R9
     test_cb_route_cb_reviewed_needs_revision - verifies -> R10
@@ -1129,7 +1129,7 @@ changes:
         4. Read cb_review_count from issue frontmatter; increment.
         5. Write updated cb_review_count + phase: cb_reviewed to frontmatter.
         6. Routing:
-             approved → emit dispatch to aw td merge; exit 0.
+             approved → emit dispatch to aw td code-check; exit 0.
              needs-revision, cb_review_count < 2 → emit dispatch to
                score-cb-reviser (CbReviseBriefEnvelope); exit 0.
              needs-revision, cb_review_count >= 2 → emit dispatch to
@@ -1169,8 +1169,8 @@ changes:
       Rewire `commit_cb_fill_and_dispatch` (post-gate commit logic):
         - Default (no --no-review): after committing Lifecycle-Stage: Cb-Fill,
           emit dispatch envelope to `aw cb review` (CbReviewBriefEnvelope)
-          instead of the current `aw td merge` dispatch. (R6)
-        - With --no-review: retain existing dispatch to `aw td merge`. (R7)
+          instead of the current `aw td code-check` dispatch. (R6)
+        - With --no-review: retain existing dispatch to `aw td code-check`. (R7)
       Add `no_review: bool` field to `CbFillArgs` struct (clap flag
       `--no-review`, default false). Wire through run_fill() dispatch path.
 
@@ -1208,7 +1208,7 @@ changes:
     description: >
       New integration test file covering the CB review/revise CRRR loop:
         - test_cb_review_brief_dispatch_envelope (R1)
-        - test_cb_review_apply_approved_td_merge (R2, R9)
+        - test_cb_review_apply_approved_td_code_check (R2, R9)
         - test_cb_review_apply_needs_revision_reviser (R2, R3)
         - test_cb_review_apply_ceiling_arbitrate (R2, R12)
         - test_cb_revise_brief_dispatch_envelope (R3)
@@ -1219,7 +1219,7 @@ changes:
         - test_lifecycle_trailer_cb_review_serde (R13)
         - test_lifecycle_trailer_cb_revise_serde (R13)
         - test_lifecycle_trailer_cb_arbitrate_serde (R13)
-        - test_cb_fill_no_review_dispatches_td_merge (R7)
+        - test_cb_fill_no_review_dispatches_td_code_check (R7)
         - test_cb_fill_default_dispatches_cb_review (R6)
         - test_cb_route_cb_filled_dispatch (R8)
         - test_cb_route_cb_reviewed_approved (R9)

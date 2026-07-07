@@ -514,6 +514,8 @@ definitions:
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/models/change.rs -->
 ```rust
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/core/interfaces/models/change.md#source
+// CODEGEN-BEGIN
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/models/change.md#source
 use super::{Challenge, RequirementDelta, ValidationRules, Verification};
 use std::collections::HashMap;
@@ -1122,8 +1124,8 @@ impl SddConfig {
     /// Load config from .aw/config.toml
     ///
     /// Platform configs (`repo_platform`, `tech_design_platform`) live under the
-    /// `[agentic_workflow.*]` TOML namespace (e.g. `[agentic_workflow.repo_platform]`). After the
-    /// primary deserialization we overlay them from the `[sdd]` table.
+    /// `[agentic_workflow.*]` TOML namespace. After the primary deserialization
+    /// we overlay them from the `[agentic_workflow]` table.
     pub fn load(project_root: &Path) -> anyhow::Result<Self> {
         let config_path = crate::shared::workspace::config_path(project_root);
         if !config_path.exists() {
@@ -1134,22 +1136,22 @@ impl SddConfig {
         let mut config: SddConfig = toml::from_str(&content)?;
 
         // Extract platform configs from [agentic_workflow.*] sections.
-        // These are nested under [sdd] in TOML but stored as flat fields on SddConfig.
+        // These are nested in TOML but stored as flat fields on SddConfig.
         let parsed: toml::Value = toml::from_str(&content)?;
-        if let Some(sdd) = parsed.get("sdd") {
+        if let Some(agentic_workflow) = parsed.get("agentic_workflow") {
             if config.repo_platform.is_none() {
-                if let Some(rp) = sdd.get("repo_platform") {
+                if let Some(rp) = agentic_workflow.get("repo_platform") {
                     config.repo_platform = rp.clone().try_into().ok();
                 }
             }
             if config.tech_design_platform.is_none() {
-                if let Some(sp) = sdd.get("tech_design_platform") {
+                if let Some(sp) = agentic_workflow.get("tech_design_platform") {
                     config.tech_design_platform = sp.clone().try_into().ok();
                 }
             }
             // @spec projects/agentic-workflow/tech-design/core/logic/tdd-gate.md#R2
             if config.test.is_none() {
-                if let Some(test) = sdd.get("test") {
+                if let Some(test) = agentic_workflow.get("test") {
                     config.test = test.clone().try_into().ok();
                 }
             }
@@ -1176,7 +1178,8 @@ impl SddConfig {
     pub fn validate(&self) -> Result<(), String> {
         // Required platform sections
         if self.repo_platform.is_none() {
-            return Err("Missing [agentic_workflow.repo_platform] in .aw/config.toml.\n\
+            return Err(
+                "Missing [agentic_workflow.repo_platform] in .aw/config.toml.\n\
                  Add:\n\n\
                  [agentic_workflow.repo_platform]\n\
                  type = \"github\"\n\
@@ -1184,8 +1187,9 @@ impl SddConfig {
                  default_branch = \"main\"\n\
                  auto_commit = true\n\
                  auto_pr = false\n\n\
-                 Or run: aw platform set"
-                .to_string());
+                 Or update .aw/config.toml with the platform producer"
+                    .to_string(),
+            );
         }
         if self.tech_design_platform.is_none() {
             return Err(
@@ -1194,7 +1198,7 @@ impl SddConfig {
                  [agentic_workflow.tech_design_platform]\n\
                  type = \"local\"\n\
                  path = \".aw/tech-design\"\n\n\
-                 Or run: aw platform set"
+                 Or update .aw/config.toml with the platform producer"
                     .to_string(),
             );
         }
@@ -1410,11 +1414,14 @@ implement = ["mainthread"]
     fn test_specs_config_deserialization() {
         let toml_str = r#"
 [specs.scopes]
-sdd = "crates"
+agentic-workflow = "projects"
 conductor = "projects"
 "#;
         let config: SddConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.specs.scopes.get("sdd"), Some(&"crates".to_string()));
+        assert_eq!(
+            config.specs.scopes.get("agentic-workflow"),
+            Some(&"projects".to_string())
+        );
         assert_eq!(
             config.specs.scopes.get("conductor"),
             Some(&"projects".to_string())
@@ -1446,10 +1453,10 @@ conductor = "projects"
         config
             .specs
             .scopes
-            .insert("sdd".to_string(), "crates".to_string());
+            .insert("agentic-workflow".to_string(), "projects".to_string());
         let toml_str = toml::to_string_pretty(&config).unwrap();
-        assert!(toml_str.contains("sdd"));
-        assert!(toml_str.contains("crates"));
+        assert!(toml_str.contains("agentic-workflow"));
+        assert!(toml_str.contains("projects"));
     }
 
     #[test]
@@ -1458,7 +1465,7 @@ conductor = "projects"
         config
             .specs
             .scopes
-            .insert("sdd".to_string(), "crates".to_string());
+            .insert("agentic-workflow".to_string(), "projects".to_string());
         config
             .specs
             .scopes
@@ -1467,7 +1474,10 @@ conductor = "projects"
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: SddConfig = toml::from_str(&toml_str).unwrap();
 
-        assert_eq!(parsed.specs.scopes.get("sdd"), Some(&"crates".to_string()));
+        assert_eq!(
+            parsed.specs.scopes.get("agentic-workflow"),
+            Some(&"projects".to_string())
+        );
         assert_eq!(
             parsed.specs.scopes.get("conductor"),
             Some(&"projects".to_string())
@@ -1507,7 +1517,7 @@ changes = ["crates/cclab-queue/**"]
 "#;
         // Parse the full table and extract [agentic_workflow.test]
         let parsed: toml::Value = toml::from_str(toml_str).unwrap();
-        let test_val = parsed.get("sdd").unwrap().get("test").unwrap();
+        let test_val = parsed.get("agentic_workflow").unwrap().get("test").unwrap();
         let test_config: TestConfig = test_val.clone().try_into().unwrap();
 
         assert_eq!(test_config.test_cmd, Some("cargo test".to_string()));
@@ -1557,7 +1567,7 @@ changes = ["crates/cclab-queue/**"]
             setup: None,
             teardown: None,
             scope: vec![TestScope {
-                name: "sdd".to_string(),
+                name: "agentic-workflow".to_string(),
                 changes: vec!["projects/agentic-workflow/**".to_string()],
                 test_cmd: None,
                 setup: None,
@@ -1570,10 +1580,16 @@ changes = ["crates/cclab-queue/**"]
 
         assert_eq!(parsed.test_cmd, Some("cargo test".to_string()));
         assert_eq!(parsed.scope.len(), 1);
-        assert_eq!(parsed.scope[0].name, "sdd");
-        assert_eq!(parsed.scope[0].changes, vec!["projects/agentic-workflow/**".to_string()]);
+        assert_eq!(parsed.scope[0].name, "agentic-workflow");
+        assert_eq!(
+            parsed.scope[0].changes,
+            vec!["projects/agentic-workflow/**".to_string()]
+        );
     }
 }
+
+// CODEGEN-END
+
 ```
 
 ## Changes

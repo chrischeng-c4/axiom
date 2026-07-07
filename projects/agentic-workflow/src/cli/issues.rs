@@ -40,6 +40,8 @@ pub enum IssuesCommand {
     List(ListArgs),
     /// Show a single work-item by slug or numeric id.
     Show(ShowArgs),
+    /// Drive one work-item to its next lifecycle command (root-driven runner).
+    Run(WiRunArgs),
     /// Create a new work-item.
     Create(CreateArgs),
     /// Update an existing work-item's metadata or body.
@@ -77,7 +79,7 @@ pub struct DraftArgs {
 #[derive(Debug, Subcommand)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
 pub enum DraftCommand {
-    /// Initialize a local draft work-item under /tmp/aw/{project}/workitems/.
+    /// Initialize a local draft work-item under /tmp/aw/workspaces/<workspace>/workitems/{project}/.
     Init(DraftInitArgs),
     /// Fill sections in a local draft work-item.
     Fill(DraftFillArgs),
@@ -232,6 +234,25 @@ pub struct ShowArgs {
 
     #[arg(long)]
     pub repo: Option<String>,
+}
+
+#[derive(Debug, Args)]
+// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+pub struct WiRunArgs {
+    /// Work-item identifier (slug for local, numeric for github).
+    pub id: String,
+
+    /// Emit human-readable text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
+
+    /// Generate a /goal-ready prompt for this work item instead of the normal run envelope.
+    #[arg(long)]
+    pub goal: bool,
 }
 
 // @spec projects/agentic-workflow/tech-design/core/logic/issues-backend.md#R1
@@ -408,7 +429,8 @@ pub struct PlanArgs {
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/capability-plan/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/capability-plan/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -432,7 +454,8 @@ pub struct EpicizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/epics/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/epics/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/epics/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -456,7 +479,8 @@ pub struct AtomizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/atomize/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/atomize/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -480,7 +504,8 @@ pub struct PrioritizeArgs {
     #[arg(long)]
     pub title: Option<String>,
 
-    /// Write plan to this path instead of /tmp/aw/{project}/priorities/.
+    /// Write plan to this path instead of /tmp/aw/workspaces/<workspace>/workitems/{project}/priorities/.
+    /// Direct /tmp/*.md outputs are rejected; keep tmp artifacts under /tmp/aw/workspaces/<workspace>/workitems/{project}/priorities/.
     #[arg(long)]
     pub output: Option<PathBuf>,
 
@@ -536,9 +561,10 @@ pub struct FillSectionArgs {
     #[arg(long, default_value = "all")]
     pub section: String,
 
-    /// Apply mode: merge .aw/payloads/<slug>/body.md into the checkout issue
-    /// and emit the next validate envelope. Without this flag the CLI prints a
-    /// plain-text brief.
+    /// Apply mode: merge
+    /// `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/body.md` into the
+    /// checkout issue and emit the next validate envelope. Without this
+    /// flag the CLI prints a plain-text brief.
     #[arg(long)]
     pub apply: bool,
 
@@ -579,8 +605,9 @@ pub struct ReviewArgs {
     #[arg(long)]
     pub slug: String,
 
-    /// Apply mode: append .aw/payloads/<slug>/review.md under `# Reviews`
-    /// and emit the next validate envelope.
+    /// Apply mode: append
+    /// `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/review.md` under
+    /// `# Reviews` and emit the next validate envelope.
     #[arg(long)]
     pub apply: bool,
 
@@ -1012,6 +1039,7 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Draft(a) => run_draft(a).await,
         IssuesCommand::List(a) => run_list(a).await,
         IssuesCommand::Show(a) => run_show(a).await,
+        IssuesCommand::Run(a) => run_wi_run(a).await,
         IssuesCommand::Create(a) => run_create(a).await,
         IssuesCommand::Update(a) => run_update(a).await,
         IssuesCommand::Close(a) => run_close(a).await,
@@ -1179,6 +1207,7 @@ pub(crate) fn read_known_project_name_label_pairs(project_root: &Path) -> Vec<(S
 // Same shape and contract as `read_known_project_name_label_pairs`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
+#[cfg(test)]
 pub(crate) fn read_known_agent_name_label_pairs(project_root: &Path) -> Vec<(String, String)> {
     read_name_label_pairs(project_root, "agents")
 }
@@ -1580,6 +1609,21 @@ async fn run_show(args: ShowArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// `aw wi run <id>` -- thin shell over the shared root-driven workflow runner
+// (`crate::cli::run`); consumes/updates the work item's loop-state exactly as
+// the deprecated `aw run --wi <id>` does today.
+async fn run_wi_run(args: WiRunArgs) -> Result<()> {
+    crate::cli::run::run_wi_root(
+        &args.id,
+        crate::cli::run::RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: args.goal,
+        },
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -2153,10 +2197,7 @@ async fn run_draft_init(args: DraftInitArgs) -> Result<()> {
     maybe_switch_wi_branch_for_project(&project_root, &project, &tmp_id)?;
     issue.slug = tmp_id.clone();
 
-    let draft_dir = PathBuf::from("/tmp")
-        .join("aw")
-        .join(&project)
-        .join("workitems");
+    let draft_dir = crate::shared::workspace::workitems_path(&project_root).join(&project);
     std::fs::create_dir_all(&draft_dir)
         .with_context(|| format!("failed to create {}", draft_dir.display()))?;
     let draft_path = draft_dir.join(format!("{}.md", tmp_id));
@@ -2375,7 +2416,7 @@ async fn run_create(args: CreateArgs) -> Result<()> {
         // dispatches the named subagent per CLAUDE.md protocol.
         // CRRR loop-fill dispatch: the create envelope kicks off ONE
         // author invocation that fills the full structured body, including
-        // capability alignment and agent estimate gates. The
+        // capability alignment, scope, and reference context gates. The
         // mainthread runs `--apply --section all`, then runs `validate` once
         // after the full-body merge.
         // @spec projects/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R3
@@ -2406,7 +2447,8 @@ fn looks_like_structured_attempt(body: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Fill-section (envelope loop: subagent round-trip via .aw/payloads/<slug>/body.md)
+// Fill-section (envelope loop: subagent round-trip via
+// /tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/body.md)
 // ---------------------------------------------------------------------------
 
 // Derive the issue workspace path for `<slug>` under the active workspace mode.
@@ -2415,9 +2457,8 @@ fn looks_like_structured_attempt(body: &str) -> bool {
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R5
 fn fill_section_payload_path(project_root: &std::path::Path, slug: &str) -> std::path::PathBuf {
-    project_root
-        .join(".aw")
-        .join("payloads")
+    crate::shared::workspace::payloads_path(project_root)
+        .join("wi")
         .join(slug)
         .join("body.md")
 }
@@ -2883,16 +2924,16 @@ async fn run_fill_section_apply(
 }
 
 // ---------------------------------------------------------------------------
-// Review (envelope loop: reviewer round-trip via .aw/payloads/<slug>/review.md)
+// Review (envelope loop: reviewer round-trip via
+// /tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/review.md)
 // ---------------------------------------------------------------------------
 
 // Payload path where the reviewer writes its single bullet for CLI to merge.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R10
 fn review_payload_path(project_root: &std::path::Path, slug: &str) -> std::path::PathBuf {
-    project_root
-        .join(".aw")
-        .join("payloads")
+    crate::shared::workspace::payloads_path(project_root)
+        .join("wi")
         .join(slug)
         .join("review.md")
 }
@@ -3541,6 +3582,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         &warnings,
     );
     let path = write_planning_artifact(
+        &project_root,
         &project,
         "capability-plan",
         &title,
@@ -3600,7 +3642,14 @@ async fn run_epicize(args: EpicizeArgs) -> Result<()> {
         &issues,
         capability_document.as_ref(),
     );
-    let path = write_planning_artifact(&project, "epics", &title, args.output.as_deref(), &body)?;
+    let path = write_planning_artifact(
+        &project_root,
+        &project,
+        "epics",
+        &title,
+        args.output.as_deref(),
+        &body,
+    )?;
 
     if args.json {
         println!(
@@ -3652,7 +3701,14 @@ async fn run_atomize(args: AtomizeArgs) -> Result<()> {
         .unwrap_or_else(|| format!("{} atomization", project));
     let candidates = atomize_candidates(&issues);
     let body = render_atomize_plan(&project, &title, &backend_name, &issues, &candidates);
-    let path = write_planning_artifact(&project, "atomize", &title, args.output.as_deref(), &body)?;
+    let path = write_planning_artifact(
+        &project_root,
+        &project,
+        "atomize",
+        &title,
+        args.output.as_deref(),
+        &body,
+    )?;
 
     if args.json {
         println!(
@@ -3691,6 +3747,7 @@ async fn run_prioritize(args: PrioritizeArgs) -> Result<()> {
         .unwrap_or_else(|| format!("{} priority review", project));
     let body = render_prioritize_plan(&project, &title, &backend_name, &lanes, &issues);
     let path = write_planning_artifact(
+        &project_root,
         &project,
         "priorities",
         &title,
@@ -5555,6 +5612,7 @@ fn push_prioritize_lane(out: &mut String, title: &str, issues: &[Issue]) {
 }
 
 fn write_planning_artifact(
+    project_root: &Path,
     project: &str,
     bucket: &str,
     title: &str,
@@ -5562,10 +5620,13 @@ fn write_planning_artifact(
     body: &str,
 ) -> Result<PathBuf> {
     let path = if let Some(path) = output {
+        ensure_planning_output_path_is_explicit(project_root, project, bucket, path)?;
         path.to_path_buf()
     } else {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-        let dir = PathBuf::from("/tmp").join("aw").join(project).join(bucket);
+        let dir = crate::shared::workspace::workitems_path(project_root)
+            .join(project)
+            .join(bucket);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
         dir.join(format!("{}-{}.md", stamp, planning_slug(title)))
@@ -5576,6 +5637,40 @@ fn write_planning_artifact(
     }
     write_file_atomically(&path, body)?;
     Ok(path)
+}
+
+fn ensure_planning_output_path_is_explicit(
+    project_root: &Path,
+    project: &str,
+    bucket: &str,
+    path: &Path,
+) -> Result<()> {
+    if !is_tmp_root_file(path) {
+        return Ok(());
+    }
+
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("plan.md");
+    let suggested = crate::shared::workspace::workitems_path(project_root)
+        .join(project)
+        .join(bucket)
+        .join(filename);
+    anyhow::bail!(
+        "ambiguous planning artifact output `{}`; write WI planning artifacts under \
+         /tmp/aw/workspaces/<workspace>/workitems/<project>/<kind>/ so agents can discover and review them. Use `{}`.",
+        path.display(),
+        suggested.display()
+    );
+}
+
+fn is_tmp_root_file(path: &Path) -> bool {
+    matches!(
+        path.parent().and_then(|parent| parent.to_str()),
+        Some("/tmp" | "/private/tmp")
+    )
 }
 
 fn planning_slug(title: &str) -> String {
@@ -6084,7 +6179,9 @@ fn extract_section_tags(body: &str) -> Vec<crate::issues::IssueSection> {
 
 // Arbitrate a stalled CRRR loop. For now only `--send-back` is automated;
 // the bare command emits an error envelope with manual-decision instructions
-// so a human picks one of force-merge / reject-close / send-back.
+// so a human picks one of reject-close (`aw wi close <id>`) or send-back
+// (`--send-back`, one more author pass); there is no force-approve/merge
+// path (the LINEAR lifecycle has no `aw wi merge`).
 ///
 // `--send-back` is bounded once per slug — a second invocation is rejected
 // to avoid infinite loops (R12). On accept it commits
@@ -6102,10 +6199,10 @@ async fn run_arbitrate(args: ArbitrateArgs) -> Result<()> {
             slug: &slug,
             message: &format!(
                 "manual arbitration required for '{}'. Review the temp issue working copy's Reviews section and run one of: \
-                 `aw wi merge --slug {}` (force-merge), \
                  `aw wi close <id>` (reject-close), or \
-                 `aw wi arbitrate --slug {} --send-back` (one more author pass).",
-                slug, slug, slug
+                 `aw wi arbitrate --slug {} --send-back` (one more author pass). \
+                 There is no force-approve command yet; a human must edit the WI's phase/labels directly to force it forward.",
+                slug, slug
             ),
         })?;
         return Ok(());
@@ -6664,12 +6761,14 @@ Generator ownership is complete; package-manager roadmap remains open.
 
     #[test]
     fn capability_wi_plan_command_preserves_cap_path_override() {
-        let command =
-            capability_wi_plan_command("lumen", Some(Path::new("/tmp/aw plan/lumen README.md")));
+        let command = capability_wi_plan_command(
+            "lumen",
+            Some(Path::new("/tmp/aw/test/plan path/lumen README.md")),
+        );
 
         assert_eq!(
             command,
-            "aw wi plan --project lumen --cap-path '/tmp/aw plan/lumen README.md'"
+            "aw wi plan --project lumen --cap-path '/tmp/aw/test/plan path/lumen README.md'"
         );
     }
 
@@ -6791,6 +6890,29 @@ label = "project:score"
     #[test]
     fn planning_slug_is_filesystem_safe() {
         assert_eq!(planning_slug("Score: Next Run!"), "score-next-run");
+        assert_eq!(planning_slug("   "), "plan");
+    }
+
+    #[test]
+    fn planning_artifact_rejects_tmp_root_output() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let err = write_planning_artifact(
+            tmp.path(),
+            "lumen",
+            "capability-plan",
+            "Lumen operator reshard policy",
+            Some(Path::new("/private/tmp/lumen-operator-reshard-policy.md")),
+            "# draft\n",
+        )
+        .unwrap_err();
+        let message = format!("{err:#}");
+
+        assert!(message.contains("ambiguous planning artifact output"));
+        assert!(message.contains("/private/tmp/lumen-operator-reshard-policy.md"));
+        assert!(message.contains("/tmp/aw/workspaces/"));
+        assert!(
+            message.contains("/workitems/lumen/capability-plan/lumen-operator-reshard-policy.md")
+        );
     }
 
     #[test]
@@ -7598,7 +7720,10 @@ labels:\n\
     #[test]
     fn initialize_payload_file_creates_parent_and_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join(".aw/payloads/123/body.md");
+        let path = crate::shared::workspace::payloads_path(tmp.path())
+            .join("wi")
+            .join("123")
+            .join("body.md");
 
         assert!(initialize_payload_file(&path, "first\n").unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\n");

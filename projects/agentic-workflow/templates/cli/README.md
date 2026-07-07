@@ -1,6 +1,7 @@
 # AW Templates
 
-Templates embedded into the `agentic-workflow` crate and installed via `aw init`.
+Templates embedded into the `agentic-workflow` crate and installed by explicit
+Agentic Workflow producer commands.
 
 ## Directory Structure
 
@@ -11,7 +12,7 @@ templates/
 ├── knowledge/
 │   └── index.md             # Knowledge base index template
 ├── mainthread/
-│   ├── CLAUDE.md            # AW section for project CLAUDE.md
+│   ├── CLAUDE.md.tmpl       # AW section for project CLAUDE.md
 │   └── skills/              # Claude Code skills
 │       ├── aw-capability/
 │       ├── aw-wi/
@@ -25,14 +26,14 @@ templates/
     └── ...
 ```
 
-## What `aw init` Installs
+## Project Asset Producers
 
 ### Project Files
 
 | Destination | Source | Mode |
 |-------------|--------|------|
 | `.aw/config.toml` | Generated | Create/Update |
-| `CLAUDE.md` | `mainthread/CLAUDE.md` | Merge AW section |
+| `CLAUDE.md` | `mainthread/CLAUDE.md.tmpl` | Merge AW section |
 
 ### Claude Code Skills
 
@@ -46,11 +47,11 @@ templates/
 ## Usage
 
 ```bash
-# Fresh install
-aw init
+# Create a greenfield project with managed assets
+aw new my-project
 
-# Update (preserves user data)
-aw init
+# Refresh the generated project registry block
+aw conf sync
 ```
 
 ## Skills Usage in Claude Code

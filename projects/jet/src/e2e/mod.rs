@@ -452,7 +452,7 @@ pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
                 },
             )
             .await
-            .context("starting `jet serve --prod` for e2e run")?,
+            .context("starting `jet serve` for e2e run")?,
         ),
     };
     let base_url = launched_serve
@@ -540,7 +540,7 @@ pub async fn run_manual_mode(opts: E2eManualOptions) -> Result<E2eRunResult> {
                 },
             )
             .await
-            .context("starting `jet serve --prod` for e2e manual")?,
+            .context("starting `jet serve` for e2e manual")?,
         ),
     };
     let base_url = launched_serve
@@ -681,7 +681,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
                 },
             )
             .await
-            .context("starting `jet serve --prod` for e2e open")?,
+            .context("starting `jet serve` for e2e open")?,
         ),
     };
     let base_url = launched_serve
@@ -1115,6 +1115,7 @@ fn parse_live_speed_multiplier(payload: &serde_json::Value) -> Option<u64> {
         .filter(|value| matches!(value, 1 | 2 | 4))
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 impl Default for LiveControlState {
     fn default() -> Self {
         Self {
@@ -1883,6 +1884,7 @@ pub fn write_open_review_app(evidence_dir: &Path, bundle: &E2eEvidenceBundle) ->
     write_open_runner_shell(evidence_dir, bundle)
 }
 
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct E2eManualDocs {
     pub markdown_path: PathBuf,

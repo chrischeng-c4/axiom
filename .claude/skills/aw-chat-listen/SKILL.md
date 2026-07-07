@@ -6,7 +6,7 @@ user-invocable: true
 
 # /aw:chat:listen
 
-Set up real-time monitoring of the cross-WT chat channel (`/tmp/aw-channel.md`).
+Set up real-time monitoring of the cross-WT chat channel (`/tmp/aw/chat/channel.jsonl`).
 
 ## Why a skill instead of a cron
 
@@ -61,8 +61,8 @@ When this skill is invoked:
 3. **Start Monitor with `aw chat listen` as the streaming command** (only if step 1 confirmed no existing monitor):
    ```
    Monitor(
-     description: "cross-WT chat channel -- new messages from /tmp/aw-channel.md",
-     command: "cd /Users/chris.cheng/cclab/main && aw chat listen 2>&1",
+     description: "cross-WT chat channel -- new messages from /tmp/aw/chat/channel.jsonl",
+     command: "aw chat listen 2>&1",
      persistent: true,
      timeout_ms: 3600000  // ignored when persistent=true; required by schema
    )
@@ -85,5 +85,5 @@ When this skill is invoked:
 
 - Listener state file: `~/.aw/chat-state.json` -- tracks `last_seen_msg_id` per team. Updated each iteration.
 - If the listener crashes, restart by re-invoking this skill.
-- Channel file: `/tmp/aw-channel.md` -- wiped on macOS reboot. Ephemeral by design.
+- Channel file: `/tmp/aw/chat/channel.jsonl` -- wiped on macOS reboot. Ephemeral by design.
 - For ad-hoc inspection, use `aw chat read` or `aw chat list`. The listener is exclusively for Monitor wrapping; ad-hoc one-shot polling is intentionally not supported (`--once` was removed in G3 — it raced with Monitor over the shared state file).

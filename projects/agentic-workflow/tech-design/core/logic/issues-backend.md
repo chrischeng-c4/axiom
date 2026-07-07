@@ -257,8 +257,8 @@ scenarios:
   S4:
     name: Update body via --body-file
     verifies: [R2]
-    given: A file /tmp/new-body.md with updated content
-    when: "`aw wi update bug-fix-login-bug --body-file /tmp/new-body.md`"
+    given: A file /tmp/aw/test/issues/new-body.md with updated content
+    when: "`aw wi update bug-fix-login-bug --body-file /tmp/aw/test/issues/new-body.md`"
     then: |
       - body fully replaced
       - frontmatter unchanged

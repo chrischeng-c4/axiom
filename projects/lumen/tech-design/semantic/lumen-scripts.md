@@ -4,9 +4,16 @@ summary: Semantic coverage for "projects/lumen/scripts"
 capability_refs:
   - id: "competitor-feature-parity"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/scripts`."
+  - id: "long-running-stability"
+    role: primary
+    gap: "kind-api-recovery-no-relay"
+    claim: "kind-api-recovery-no-relay"
+    coverage: partial
+    rationale: "The kind-e2e script is the live dogfood gate for Lumen-only API recovery after serving pod restart."
 fill_sections: [schema, unit-test, changes]
 ---
 

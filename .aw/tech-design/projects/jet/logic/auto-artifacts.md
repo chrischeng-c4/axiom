@@ -287,36 +287,43 @@ cargo test -p jet --test auto_artifacts_tests
 files:
   - path: .aw/tech-design/crates/jet/logic/auto-artifacts.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the auto artifacts TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/auto-artifacts.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/runtime/test/index.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing active page tracking and failure artifact capture.
 
   - path: crates/jet/runtime/test/page.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing screenshot path write behavior.
 
   - path: crates/jet/src/test_runner/wire.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing TestEnd artifacts field.
 
   - path: crates/jet/src/test_runner/reporter.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing TestReport artifacts field.
 
   - path: crates/jet/tests/auto_artifacts_tests.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing integration tests for failure screenshots and artifact configuration.
 ```

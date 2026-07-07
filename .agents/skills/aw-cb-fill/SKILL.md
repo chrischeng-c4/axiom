@@ -1,6 +1,6 @@
 ---
 name: aw:cb:fill
-description: Fill HANDWRITE markers via mainthread per-marker loop, then td code-check + td merge. Mainthread-only; no subagent dispatch.
+description: Fill HANDWRITE markers via mainthread per-marker loop, then terminal td code-check. Mainthread-only; no subagent dispatch.
 user-invocable: true
 amended_by: aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
 amended_on: "2026-05-03"
@@ -9,8 +9,8 @@ amended_on: "2026-05-03"
 # /aw:cb:fill
 
 Fills HANDWRITE-BEGIN/END marker blocks emitted by `aw td gen` for a
-tech-design slug, then drives the td-fill lifecycle: brief → mainthread
-per-marker fill loop → `aw td code-check` → `aw td merge`.
+tech-design slug, then drives the cb-fill lifecycle: brief → mainthread
+per-marker fill loop → `aw td code-check`.
 
 > **Mainthread-only model (post Phase-2).** The `aw-cb-handwriter`
 > subagent has been removed atomically with this skill rewrite.
@@ -44,7 +44,7 @@ flowchart TD
     F[aw td fill brief] --> L[mainthread: write expected marker payload]
     L -->|"hook/mainthread runs exact expected command"| L
     L -->|"all markers filled"| G[aw td code-check <slug>]
-    G -- pass --> M[aw td merge → done]
+    G -- pass --> M[done]
     G -- fail --> ROLL[mainthread: re-write the offending marker payload + re-apply]
     ROLL --> G
 ```
@@ -61,18 +61,15 @@ For each envelope:
   next marker or, after the last marker, a dispatch to `aw td code-check <slug>`.
 
 - **dispatch with `agent: null` and `command: "aw td code-check"`** — run
-  from mainthread directly. On pass it advances phase to `cb_filled` and emits
-  the next dispatch (`aw td merge`). On fail it emits an `error` envelope;
-  mainthread re-writes the offending marker payload and re-applies.
-  If the dispatch or parent `aw run` envelope includes an `Artifact Quality
-  Gate`, the produced code/test artifacts must satisfy its hard preflight
-  evidence before this lifecycle can be considered complete. Frontend/UI work
-  needs desktop and mobile viewport evidence, interaction smoke proof,
-  accessibility/readability smoke, and placeholder-free primary-state evidence.
-
-- **dispatch with `agent: null` and `command: "aw td merge"`** — run
-  from mainthread; merges the approved branch, closes the issue, and
-  cleans up lifecycle state.
+  from mainthread directly. On pass it commits terminal lifecycle closure. On
+  fail it emits an `error` envelope; mainthread re-writes the offending marker
+  payload and re-applies.
+  If the dispatch or parent runner (`aw wi run` / `aw capability run`)
+  envelope includes an `Artifact Quality Gate`, the produced code/test
+  artifacts must satisfy its hard preflight evidence before this lifecycle can
+  be considered complete. Frontend/UI work needs desktop and mobile viewport
+  evidence, interaction smoke proof, accessibility/readability smoke, and
+  placeholder-free primary-state evidence.
 
 - **dispatch with `agent: ...` non-null** — legacy compatibility. Treat
   as if `agent` were `null` and run `invoke.command` directly. The
@@ -105,24 +102,28 @@ current checkout untouched (no `Lifecycle-Stage: Cb-Fill` commit). Mainthread:
 The two-phase apply ≠ commit pattern guarantees no half-finished
 commits land in the current checkout.
 
-### Inherited-marker bypass (known td-fill gate pollution)
+### Marker gate scope (issue #854)
 
-`aw td code-check` counts ALL HANDWRITE markers in the current checkout,
-including markers inherited from earlier branch state that pre-dates this
-spec. If your TD spec produced 0 codegen blocks (all changes are
-`impl_mode: hand-written`) and `td fill` returns inherited markers
-unrelated to your changes, the gate will not pass cleanly. Bypass:
-mainthread commits `Lifecycle-Stage: Cb-Fill` directly via
-`git commit --allow-empty -m "Lifecycle-Stage: Cb-Fill\n\nNo new HANDWRITE markers introduced by this spec."`,
-manually advances `phase: cb_genned → cb_filled` in the issue
-frontmatter, then runs `aw td merge` to finish.
+`aw td code-check`'s terminal marker gate scopes to this WI's own spec:
+the union of (a) the paths your TD spec's `## Changes` section names and
+(b) files your worktree branch actually changed versus base. An unfilled
+HANDWRITE marker outside that scope — e.g. inherited from other unmerged
+work on the same monorepo checkout — no longer blocks completion; no
+bypass is needed for that case. This depends on the issue recording
+`implements: [<td-spec-path>]` (`aw td create`/`aw td claim` set this), so
+the terminal step can still resolve your spec when the branch diff against
+base is empty (HEAD already on the base branch). If the gate still blocks,
+the offending marker is genuinely inside your WI's own scope (a file your
+spec's Changes section names, or one your branch touched) — fill it the
+normal way via `aw td fill <slug> --apply --marker <id>`; there is no
+separate escape hatch for an in-scope marker.
 
 ### What `aw td fill` does
 
 - **Brief mode** (default): walks the current checkout for HANDWRITE-BEGIN/END
   blocks, builds a fill brief, prints the brief to stdout, and emits
   a dispatch envelope with `agent: null` and a marker list. Zero-marker
-  fast-path emits a direct dispatch to `aw td merge`.
+  fast-path emits a direct dispatch to `aw td code-check <slug>`.
 - **Apply mode** (`--apply --marker <id>`): merges the expected marker payload
   into the matching HANDWRITE block, commits the marker and WI projection, then
   locks the next marker or dispatches `aw td code-check <slug>`.

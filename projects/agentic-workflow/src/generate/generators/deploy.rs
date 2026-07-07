@@ -342,7 +342,7 @@ mod tests {
     fn test_generate_produces_two_files() {
         let spec = simple_spec();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_deploy_gen"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/deploy-gen"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();
@@ -363,7 +363,7 @@ mod tests {
     fn test_deployment_yaml_content() {
         let spec = simple_spec();
         let settings = GeneratorSettings {
-            output_dir: std::path::PathBuf::from("/tmp/test_deploy_gen_content"),
+            output_dir: std::path::PathBuf::from("/tmp/aw/test/deploy-gen-content"),
             ..Default::default()
         };
         let engine = crate::generate::engine::TemplateEngine::empty();

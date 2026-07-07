@@ -195,7 +195,7 @@ fn case_detached_head_no_config_returns_error() {
 // ── TP-E: stub — full CLI end-to-end (follow-up) ──────────────────────────
 
 /// REQ: TP-E
-/// Full `aw td merge` / `aw wi merge` end-to-end tests that spin up
+/// Full `aw td code-check` / `aw wi merge` end-to-end tests that spin up
 /// a complete worktree and invoke the built binary. Skipped here because they
 /// require a built binary and a fully-formed worktree scaffold. Tracked as
 /// follow-up work.

@@ -21,45 +21,47 @@ Public API manifest for `projects/lumen/src/types.rs` generated from AST during 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Analyzer` | projects/lumen/src/types.rs | enum | pub | 147 |  |
-| `ApiError` | projects/lumen/src/types.rs | struct | pub | 554 |  |
-| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 542 |  |
+| `ApiError` | projects/lumen/src/types.rs | struct | pub | 615 |  |
+| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 594 |  |
 | `CreateCollectionRequest` | projects/lumen/src/types.rs | struct | pub | 21 |  |
 | `CreateCollectionResponse` | projects/lumen/src/types.rs | struct | pub | 28 |  |
-| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 477 |  |
-| `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub | 326 |  |
-| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 458 |  |
-| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 484 |  |
-| `ExistsQuery` | projects/lumen/src/types.rs | struct | pub | 318 |  |
+| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 529 |  |
+| `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub | 368 |  |
+| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 510 |  |
+| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 536 |  |
+| `ExistsQuery` | projects/lumen/src/types.rs | struct | pub | 360 |  |
 | `FieldSpec` | projects/lumen/src/types.rs | struct | pub | 41 |  |
-| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 520 |  |
+| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 572 |  |
 | `FieldType` | projects/lumen/src/types.rs | enum | pub | 74 |  |
-| `FieldValue` | projects/lumen/src/types.rs | enum | pub | 185 |  |
-| `HammingQuery` | projects/lumen/src/types.rs | struct | pub | 351 |  |
-| `HasChildQuery` | projects/lumen/src/types.rs | struct | pub | 362 |  |
+| `FieldValue` | projects/lumen/src/types.rs | enum | pub | 193 |  |
+| `HammingQuery` | projects/lumen/src/types.rs | struct | pub | 393 |  |
+| `HasChildQuery` | projects/lumen/src/types.rs | struct | pub | 404 |  |
+| `IdsQuery` | projects/lumen/src/types.rs | struct | pub | 453 |  |
 | `IndexItem` | projects/lumen/src/types.rs | struct | pub | 170 |  |
 | `IndexRequest` | projects/lumen/src/types.rs | struct | pub | 160 |  |
-| `IndexResponse` | projects/lumen/src/types.rs | struct | pub | 194 |  |
-| `KnnQuery` | projects/lumen/src/types.rs | struct | pub | 410 |  |
-| `MatchOp` | projects/lumen/src/types.rs | enum | pub | 382 |  |
-| `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 372 |  |
-| `QueryNode` | projects/lumen/src/types.rs | enum | pub | 270 |  |
-| `RangeQuery` | projects/lumen/src/types.rs | struct | pub | 418 |  |
-| `RrfQuery` | projects/lumen/src/types.rs | struct | pub | 336 |  |
-| `SearchHit` | projects/lumen/src/types.rs | struct | pub | 432 |  |
-| `SearchRequest` | projects/lumen/src/types.rs | struct | pub | 207 |  |
-| `SearchResponse` | projects/lumen/src/types.rs | struct | pub | 439 |  |
-| `SortOrder` | projects/lumen/src/types.rs | enum | pub | 253 |  |
-| `SortSpec` | projects/lumen/src/types.rs | struct | pub | 244 |  |
-| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 503 |  |
-| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 536 |  |
-| `TermQuery` | projects/lumen/src/types.rs | struct | pub | 393 |  |
-| `TermsQuery` | projects/lumen/src/types.rs | struct | pub | 400 |  |
+| `IndexResponse` | projects/lumen/src/types.rs | struct | pub | 202 |  |
+| `KnnQuery` | projects/lumen/src/types.rs | struct | pub | 462 |  |
+| `MatchOp` | projects/lumen/src/types.rs | enum | pub | 424 |  |
+| `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 414 |  |
+| `QueryNode` | projects/lumen/src/types.rs | enum | pub | 310 |  |
+| `RangeQuery` | projects/lumen/src/types.rs | struct | pub | 470 |  |
+| `RrfQuery` | projects/lumen/src/types.rs | struct | pub | 378 |  |
+| `SearchHit` | projects/lumen/src/types.rs | struct | pub | 484 |  |
+| `SearchRequest` | projects/lumen/src/types.rs | struct | pub | 215 |  |
+| `SearchResponse` | projects/lumen/src/types.rs | struct | pub | 491 |  |
+| `SortMissing` | projects/lumen/src/types.rs | enum | pub | 280 |  |
+| `SortOrder` | projects/lumen/src/types.rs | enum | pub | 293 |  |
+| `SortSpec` | projects/lumen/src/types.rs | struct | pub | 263 |  |
+| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 555 |  |
+| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 588 |  |
+| `TermQuery` | projects/lumen/src/types.rs | struct | pub | 435 |  |
+| `TermsQuery` | projects/lumen/src/types.rs | struct | pub | 442 |  |
 | `VectorBackend` | projects/lumen/src/types.rs | enum | pub | 101 |  |
 | `VectorMetric` | projects/lumen/src/types.rs | enum | pub | 90 |  |
 | `VectorQuantize` | projects/lumen/src/types.rs | enum | pub | 127 |  |
 | `VectorSpec` | projects/lumen/src/types.rs | struct | pub | 136 |  |
-| `normalize` | projects/lumen/src/types.rs | function | pub | 568 | normalize(mut self) -> Self |
-| `vector_spec` | projects/lumen/src/types.rs | function | pub | 586 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
+| `normalize` | projects/lumen/src/types.rs | function | pub | 629 | normalize(mut self) -> Self |
+| `vector_spec` | projects/lumen/src/types.rs | function | pub | 647 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -237,6 +239,14 @@ pub struct IndexItem {
     pub external_id: String,
     pub field: String,
     pub value: FieldValue,
+    /// Optional external version for last-write-wins. When set, lumen keeps the
+    /// highest version per `(external_id, field)` and drops strictly-older
+    /// writes (cf. Elasticsearch `version_type=external`), so out-of-order
+    /// delivery cannot clobber a newer value. When absent, the write applies in
+    /// arrival order.
+    /// @spec projects/lumen/tech-design/logic/external-version-lww-optional-version-on-indexitem-drop-stale-pe.md
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
 }
 
 /// Polymorphic field value. Validated against the declared `FieldType`
@@ -278,8 +288,19 @@ pub struct SearchRequest {
     pub cursor: Option<String>,
     /// Sort results by one or more fields instead of by relevance score.
     /// When absent, results are ranked by score (BM25 / constant) then
-    /// external_id. Single number-field sorts use the keyset planner; keyword
-    /// and composite sorts use the materialized fallback.
+    /// external_id. Number and keyword fields are sortable (up to 4 keys);
+    /// single number-field sorts use the keyset planner, keyword and composite
+    /// sorts use the materialized fallback. Rows missing a sort-key value
+    /// follow the per-key `missing` mode: `exclude` (the default) drops them
+    /// from the page and from `total`; `first`/`last` keep them — placed
+    /// before/after all present values and counted in `total`, like SQL
+    /// `NULLS FIRST`/`NULLS LAST`. A query containing `has_child` can be
+    /// sorted by parent fields; it routes through the materialized sort path
+    /// with exact `total`. `sort` remains incompatible with `knn`, `rrf`, and
+    /// `hamming`, and cannot be combined with an offset cursor — those return
+    /// 400. Page a sorted result with the keyset cursor returned in the
+    /// response, or over-fetch and slice.
+    /// @spec projects/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<Vec<SortSpec>>,
     /// Whether to compute the exact total match count. Defaults to `true`
@@ -311,6 +332,27 @@ pub struct SortSpec {
     pub field: String,
     #[serde(default)]
     pub order: SortOrder,
+    /// How to treat rows that have no value for this sort key. Default
+    /// `exclude` keeps today's behavior (such rows are dropped from results and
+    /// from `total`). `first`/`last` keep them, placed before/after the rows
+    /// that do have a value, and count them in `total`.
+    /// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+    #[serde(default)]
+    pub missing: SortMissing,
+}
+
+/// Placement of rows missing a value for a sort key (SQL NULLS FIRST/LAST).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/logic/sort-missing-value-handling-opt-in-missing-first-last-exclude-an.md
+pub enum SortMissing {
+    /// Drop rows that lack a value for this key (default; today's behavior).
+    #[default]
+    Exclude,
+    /// Place rows lacking a value before all rows that have one.
+    First,
+    /// Place rows lacking a value after all rows that have one.
+    Last,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
@@ -337,6 +379,8 @@ pub enum QueryNode {
     Match(MatchQuery),
     Term(TermQuery),
     Terms(TermsQuery),
+    /// Filter to a set of external_ids (#182). Wire: `{"ids": {"values":[...]}}`.
+    Ids(IdsQuery),
     Range(RangeQuery),
     Knn(KnnQuery),
     And(Vec<QueryNode>),
@@ -466,6 +510,16 @@ pub struct TermQuery {
 pub struct TermsQuery {
     pub field: String,
     pub values: Vec<FieldValue>,
+}
+
+/// `ids` query node (#182): filter to a set of external_ids. Each id is resolved
+/// through the collection interner to a docid (unknown ids are skipped). It is
+/// constant-scored and composes under and/or/not like term/terms. Removes the
+/// need to index a redundant row-id keyword field for `row_id_in`.
+/// @spec projects/lumen/tech-design/logic/native-ids-query-node-filter-by-external-id-set.md
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IdsQuery {
+    pub values: Vec<String>,
 }
 
 /// kNN vector search node. Returns the `k` external_ids closest to
@@ -615,6 +669,15 @@ pub struct CacheStats {
 // Errors
 // ---------------------------------------------------------------------------
 
+// The runtime `{error, message}` envelope this shape describes now lives in
+// `service_http::ErrorEnvelope` (`src/api.rs`'s `ApiErr` renders it); this
+// struct stays a distinct local definition purely to keep the OpenAPI schema
+// name (`ApiError`) and its doc-comment-derived `description` byte-identical
+// — `#[derive(ToSchema)]` fixes both at the type's own definition site, so
+// neither a `pub type` alias nor a `#[schema(as = ...)]` override on the
+// shared struct can reproduce lumen's pre-existing name/description without
+// baking lumen's spec-path text into the generic `libs/service-http` crate
+// (see #1005).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source
 pub struct ApiError {
@@ -800,8 +863,8 @@ mod tests {
     }
 }
 // CODEGEN-END
-````
 
+````
 ## Changes
 <!-- type: changes lang: yaml -->
 

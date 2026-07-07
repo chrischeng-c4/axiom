@@ -20,7 +20,8 @@ the **mainthread-only** orchestration spelled out below.
 > `aw-issue-reviewer` / `aw-issue-reviser` subagent to dispatch —
 > those agent definitions were removed atomically with this skill
 > rewrite. Mainthread takes over `--apply` directly: write the section
-> payload to `.aw/payloads/<slug>/<file>.md`, run
+> payload to `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/<file>.md`
+> (path from the envelope), run
 > `aw wi fill-section --apply --section <X>`, then run
 > `aw wi validate <slug>`. Loop on the emitted dispatch envelope.
 
@@ -34,11 +35,11 @@ old references to `aw wi`.
 /aw:wi update <slug>
 /aw:wi list [--state open|closed] [--project <name>]
 /aw:wi show <slug>
-/aw:wi plan --project <name> [--cap-path <path>] [--title "<plan>"]
-/aw:wi epicize --project <name> [--title "<phase>"]
-/aw:wi atomize --project <name> [--title "<plan>"]
-/aw:wi prioritize --project <name> [--title "<plan>"]
-aw run --project <name> --max-ticks 1
+/aw:wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
+/aw:wi epicize --project <name> [--title "<phase>"] [--json]
+/aw:wi atomize --project <name> [--title "<plan>"] [--json]
+/aw:wi prioritize --project <name> [--title "<plan>"] [--json]
+aw capability run --project <name> --non-interactive --max-ticks 1
 ```
 
 `--label` is rejected on create. Labels are derived from typed flags:
@@ -62,8 +63,8 @@ Unknown `--project` / `--agent` names → error envelope on stdout, exit 2.
 3. Read the stdout envelope. The CLI returns a `dispatch`
    envelope with `agent: null` and
    `invoke.args.sections: ["all"]`. Mainthread fills the full structured
-   body directly, including capability alignment, acceptance criteria, and
-   agent estimate gates.
+   body directly, including capability alignment, scope, acceptance
+   criteria, and reference context gates.
 4. **Run the mainthread loop below.** No Agent dispatch is needed; the
    per-envelope handler always writes the payload and runs `--apply`
    itself.
@@ -91,8 +92,9 @@ individually so git history is unchanged.
   Phase-1 deprecated shim and is omitted via `skip_serializing_if`).
   Mainthread runs `invoke.command` directly:
   - if the command is `aw wi fill-section --apply`, write the
-    payload to `.aw/payloads/<slug>/body.md` first (or per-section
-    payload), then run the command from mainthread.
+    payload to `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/body.md`
+    first (or the per-section payload path from the envelope), then run
+    the command from mainthread.
   - if the command is `aw wi validate <slug>`, run it; parse the next envelope; loop.
 - `done` → print summary; end.
 - `error` → see retry-cap rules below.
@@ -110,6 +112,14 @@ When `aw wi validate` rejects mainthread's output, it emits an
   envelope tag.
 - `[retry=N]` (N >= 3) → terminal. Surface the error to the
   user and stop. Don't auto-retry further.
+
+### Manual escalation: review / arbitrate
+
+`aw wi review --slug <slug> [--apply]` and
+`aw wi arbitrate --slug <slug> [--send-back]` still exist as CLI commands,
+but no envelope in the create/validate loop above ever dispatches to them —
+they are manual-only escalation verbs for a human to invoke directly against
+a stalled work-item, not steps the mainthread loop drives on its own.
 
 ## update
 
@@ -132,39 +142,41 @@ raw low-level label filter.
 ## Planning operators
 
 Planning commands read the configured issue backend and write local artifacts
-under `/tmp/aw/<project>/`. They do not publish or mutate tracker issues.
+under `/tmp/aw/workspaces/<workspace>/workitems/<project>/`. They do not publish or mutate tracker issues.
 
 Use this lane after `/aw:capability` confirms a capability or when the user gives a
 roadmap-sized request. Large work must stay as `type=epic` or a local planning
 artifact until atomized into bounded WI candidates.
 
 ```bash
-aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"]
-aw wi epicize --project <name> [--title "<phase>"]
-aw wi atomize --project <name> [--title "<plan>"]
-aw wi prioritize --project <name> [--title "<plan>"]
-aw run --project <name> --max-ticks 1
+aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
+aw wi epicize --project <name> [--title "<phase>"] [--json]
+aw wi atomize --project <name> [--title "<plan>"] [--json]
+aw wi prioritize --project <name> [--title "<plan>"] [--json]
+aw capability run --project <name> --non-interactive --max-ticks 1
 ```
 
 - `plan` reads the confirmed capability table from `--cap-path`, `[[projects]].cap_path`,
   or `[[projects]].path/README.md`, cross-checks it against open work-items,
   and writes a local capability-to-WI planning draft under
-  `/tmp/aw/<project>/capability-plan/`.
+  `/tmp/aw/workspaces/<workspace>/workitems/<project>/capability-plan/`.
 - `epicize` inventories every open issue for the project, groups
   requirements into epic candidates, and writes the local classification
-  draft under `/tmp/aw/<project>/epics/`. The artifact explicitly requires
+  draft under `/tmp/aw/workspaces/<workspace>/workitems/<project>/epics/`. The artifact explicitly requires
   agent review before publishing tracker changes.
 - `atomize` inventories epic/roadmap-sized issues and writes atomic WI
-  candidates under `/tmp/aw/<project>/atomize/`. The artifact requires human
+  candidates under `/tmp/aw/workspaces/<workspace>/workitems/<project>/atomize/`. The artifact requires human
   review before any candidate is published.
 - `prioritize` inventories every open issue for the project and writes a
-  local readiness review draft under `/tmp/aw/<project>/priorities/`,
+  local readiness review draft under `/tmp/aw/workspaces/<workspace>/workitems/<project>/priorities/`,
   covering `ready_now`, `blocked_by_dependency`, `needs_atomize`,
   `needs_triage`, and `deferred` lanes.
   The artifact explicitly requires agent review before publishing priority
   label or ordering changes.
-- `aw run --project` is the run-to-end project root. It consumes capability
-  status and prioritized WI readiness instead of cron sprint batches.
+- `aw capability run --project` is the run-to-end project root. It consumes
+  capability status and prioritized WI readiness instead of relying on
+  cron-style sprint batches. There is no `estimate`/`sprintize` verb — those
+  were removed.
 
 ### Bounded WI gate
 

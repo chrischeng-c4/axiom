@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-jet-tests-fixtures-dom-production-build-dom-production-assets-webpack-config-cjs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 const fs = require("fs");
 const path = require("path");
 
@@ -72,3 +73,5 @@ module.exports = {
   },
   plugins: [new EmitFixtureAssetsPlugin()],
 };
+
+// </HANDWRITE>

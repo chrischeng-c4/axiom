@@ -591,7 +591,14 @@ fn parse_gh_issue(v: &Value) -> Result<Issue> {
         body,
         related: vec![],
         implements: vec![],
-        phase: decoded.phase.clone(),
+        // issue #850: normalize at the on-platform read choke point so a
+        // WI parked at a retired CRRR phase (cb_reviewed/cb_revised/
+        // cb_arbitrated/td_reviewed) self-heals to its live linear
+        // equivalent for every downstream reader, without a backfill pass.
+        phase: decoded
+            .phase
+            .clone()
+            .map(|p| crate::issues::types::td_phase::normalize(&p).to_string()),
         branch: None,
         target_branch: None,
         git_workflow: None,

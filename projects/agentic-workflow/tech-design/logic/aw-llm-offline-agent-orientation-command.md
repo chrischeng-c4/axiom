@@ -27,7 +27,7 @@ nodes:
   capability: { kind: process, label: "capability_md(): capability roots + completion loop + readiness" }
   td: { kind: process, label: "td_md(): spec-is-truth + td->gen + regenerable + CODEGEN/HANDWRITE" }
   ec: { kind: process, label: "ec_md(): external contract 4 dims + generated gates + config opt-in" }
-  looptopic: { kind: process, label: "loop_md(): aw.cli.v1 envelope + wi->td->merge + HITL" }
+  looptopic: { kind: process, label: "loop_md(): aw.cli.v1 envelope + wi->td->code-check + HITL" }
   fmt: { kind: decision, label: "args.format" }
   md: { kind: terminal, label: "print markdown to stdout" }
   json: { kind: terminal, label: "print {topic, markdown} JSON to stdout" }

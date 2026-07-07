@@ -11,8 +11,16 @@
 //!   (e) an untyped export fails the build (isolatedDeclarations).
 //!
 //! @issue #171
+//! @issue #722
+//! @issue #784
+//! @issue #795
+//! @issue #796
+//! @issue #797
+//! @issue #798
+//! @issue #799
 
 use jet::bundler::types::OutputFormat;
+use jet::bundler::types::SourceMapOption;
 use jet::bundler::{build_library, LibBuildOptions};
 use std::collections::HashSet;
 use tempfile::tempdir;
@@ -40,6 +48,7 @@ fn lib_options(root: &std::path::Path) -> LibBuildOptions {
         entry: Vec::new(),
         css_merge: Vec::new(),
         raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
     }
 }
 
@@ -170,6 +179,92 @@ fn build_records_types_path_on_result_and_entry() {
     );
 }
 
+#[test]
+fn plain_object_literal_const_export_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "object-literal-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const UPLOAD_ACCEPT_TYPE = {
+    JPG: "image/jpeg",
+    PNG: "image/png",
+    PDF: "application/pdf",
+};
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("object literal export must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+
+    assert!(
+        dts.contains("export declare const UPLOAD_ACCEPT_TYPE: {"),
+        "plain object literal export must synthesize an object type, got:\n{dts}"
+    );
+    for expected in ["JPG: string;", "PNG: string;", "PDF: string;"] {
+        assert!(
+            dts.contains(expected),
+            "object property {expected:?} should be emitted, got:\n{dts}"
+        );
+    }
+}
+
+#[test]
+fn stale_default_dist_index_does_not_control_dts_emit_with_custom_out_dir() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "stale-dist-lib", "version": "1.0.0", "module": "./dist/index.js" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const SOURCE_VALUE: string = "from-source";
+"#,
+    );
+    write_file(root, "dist/index.js", "not valid js from stale dist\n");
+
+    let mut options = lib_options(root);
+    options.out_dir = root.join("custom-out");
+    let result = build_library(options).expect("stale default dist must not affect dts emit");
+
+    let dts_path = root.join("custom-out/index.d.ts");
+    assert_eq!(result.types[0].path, dts_path);
+    assert!(
+        dts_path.is_file(),
+        "declaration should be written to the explicit output directory"
+    );
+    let dts = std::fs::read_to_string(&dts_path).unwrap();
+    assert!(
+        dts.contains("export declare const SOURCE_VALUE: string;"),
+        "declaration must come from src/index.ts, got:\n{dts}"
+    );
+    assert!(
+        !dts.is_empty() && !root.join("dist/index.d.ts").exists(),
+        "stale default dist must not become declaration input/output"
+    );
+
+    let js = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Esm)
+        .expect("ESM output present");
+    assert!(
+        js.code.contains("SOURCE_VALUE") && !js.code.contains("not valid js"),
+        "runtime output must also be source-derived, got:\n{}",
+        js.code
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (c) Multi-entry lib emits one .d.ts per entry.
 // ──────────────────────────────────────────────────────────────────────────
@@ -234,6 +329,154 @@ fn multi_entry_emits_one_dts_per_entry() {
     );
 }
 
+#[test]
+fn barrel_reexports_emit_sibling_declaration_files() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "barrel-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export * from "./math";
+export * from "./greeter";
+"#,
+    );
+    write_file(
+        root,
+        "src/math.ts",
+        "export function add(a: number, b: number) { return a + b; }\n",
+    );
+    write_file(
+        root,
+        "src/greeter.ts",
+        r#"export class Greeter {
+    greet(name: string) { return `hi ${name}`; }
+}
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+
+    let index_dts = root.join("dist/index.d.ts");
+    let math_dts = root.join("dist/math.d.ts");
+    let greeter_dts = root.join("dist/greeter.d.ts");
+
+    assert_eq!(
+        result.types.len(),
+        1,
+        "public type outputs still track entry declarations"
+    );
+    assert_eq!(result.types[0].path, index_dts);
+    assert!(index_dts.is_file(), "entry declaration must exist");
+    assert!(
+        math_dts.is_file(),
+        "barrel re-export target declaration must exist"
+    );
+    assert!(
+        greeter_dts.is_file(),
+        "barrel re-export target declaration must exist"
+    );
+
+    let index_text = std::fs::read_to_string(index_dts).unwrap();
+    assert!(
+        index_text.contains("export * from \"./math\"")
+            && index_text.contains("export * from \"./greeter\""),
+        "entry declaration must preserve barrel re-exports, got:\n{index_text}"
+    );
+
+    let math_text = std::fs::read_to_string(math_dts).unwrap();
+    assert!(
+        math_text.contains("export declare function add(a: number, b: number): number;"),
+        "sibling declaration must preserve typed function signature, got:\n{math_text}"
+    );
+
+    let greeter_text = std::fs::read_to_string(greeter_dts).unwrap();
+    assert!(
+        greeter_text.contains("export declare class Greeter")
+            && greeter_text.contains("greet(name: string): string;"),
+        "sibling declaration must preserve typed class member, got:\n{greeter_text}"
+    );
+}
+
+#[test]
+fn svgr_asset_reexports_preserve_source_reexport_in_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "svgr-dts-lib",
+            "version": "1.0.0",
+            "module": "./src/index.tsx",
+            "dependencies": { "react": "18.2.0" }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.tsx",
+        r#"export { ReactComponent as ErrorCircleIcon } from "./icons/error.svg";
+export { ReactComponent as SuccessCircleIcon } from "./icons/success.svg";
+"#,
+    );
+    write_file(
+        root,
+        "src/icons/error.svg",
+        r#"<svg viewBox="0 0 24 24"><path d="M1 1h22v22H1z"/></svg>"#,
+    );
+    write_file(
+        root,
+        "src/icons/success.svg",
+        r#"<svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("SVGR asset re-export build must succeed");
+
+    let js = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Esm)
+        .expect("ESM output present");
+    assert!(
+        js.code.contains("SvgErrorCircleIcon as ErrorCircleIcon")
+            && js
+                .code
+                .contains("SvgSuccessCircleIcon as SuccessCircleIcon"),
+        "runtime JS still exports transformed SVG components, got:\n{}",
+        js.code
+    );
+
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("import type { FC, SVGProps } from \"react\";"),
+        "entry declaration should import React component types, got:\n{dts}"
+    );
+    assert!(
+        dts.contains("export declare const ErrorCircleIcon: FC<SVGProps<SVGSVGElement>>;")
+            && dts.contains("export declare const SuccessCircleIcon: FC<SVGProps<SVGSVGElement>>;"),
+        "entry declaration must emit concrete SVG component exports, got:\n{dts}"
+    );
+    assert!(
+        !dts.contains("SvgErrorCircleIcon") && !dts.contains("SvgSuccessCircleIcon"),
+        "declaration must not expose runtime SVG aliases, got:\n{dts}"
+    );
+    assert!(
+        !root.join("dist/icons/error.d.ts").exists()
+            && !root.join("dist/icons/success.d.ts").exists(),
+        "asset re-export targets must not be chased as sibling declarations"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // (d) declaration = false → no .d.ts emitted.
 // ──────────────────────────────────────────────────────────────────────────
@@ -270,8 +513,105 @@ fn declaration_off_emits_no_dts() {
     );
 }
 
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-build-lib-dts-preserve-modules-dts-silently-emits-no-d-ts-fi.md#unit-test
+fn preserve_modules_emits_dts_per_source_module() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "preserve-dts-lib",
+            "version": "1.0.0",
+            "module": "./src/index.ts"
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export { add } from "./math";
+export { Greeter } from "./greeter";
+"#,
+    );
+    write_file(
+        root,
+        "src/math.ts",
+        "export function add(a: number, b: number): number { return a + b; }\n",
+    );
+    write_file(
+        root,
+        "src/greeter.ts",
+        r#"export class Greeter {
+    greet(name: string): string { return `hi ${name}`; }
+}
+"#,
+    );
+
+    let mut options = lib_options(root);
+    options.preserve_modules = true;
+    options.formats = vec![OutputFormat::Esm, OutputFormat::Cjs];
+    let result = build_library(options).expect("preserve_modules dts build must succeed");
+
+    for rel in [
+        "index.js",
+        "index.cjs",
+        "index.d.ts",
+        "math.js",
+        "math.cjs",
+        "math.d.ts",
+        "greeter.js",
+        "greeter.cjs",
+        "greeter.d.ts",
+    ] {
+        assert!(root.join("dist").join(rel).is_file(), "{rel} must exist");
+    }
+
+    let type_subpaths: HashSet<&str> = result
+        .types
+        .iter()
+        .map(|output| output.subpath.as_str())
+        .collect();
+    assert_eq!(
+        type_subpaths,
+        HashSet::from(["./index.d.ts", "./math.d.ts", "./greeter.d.ts"]),
+        "preserve_modules must report every emitted declaration"
+    );
+
+    for entry in &result.entries {
+        let rel = entry.path.strip_prefix(root.join("dist")).unwrap();
+        let expected_dts = root.join("dist").join(rel).with_extension("d.ts");
+        assert_eq!(
+            entry.dts.as_ref(),
+            Some(&expected_dts),
+            "EntryOutput::dts must point at the matching declaration for {:?}",
+            entry.path
+        );
+    }
+
+    let index_dts = std::fs::read_to_string(root.join("dist/index.d.ts")).unwrap();
+    assert!(
+        index_dts.contains("export { add } from \"./math\"")
+            && index_dts.contains("export { Greeter } from \"./greeter\""),
+        "entry declaration must preserve source re-exports, got:\n{index_dts}"
+    );
+    let math_dts = std::fs::read_to_string(root.join("dist/math.d.ts")).unwrap();
+    assert!(
+        math_dts.contains("export declare function add(a: number, b: number): number;"),
+        "math declaration must contain add signature, got:\n{math_dts}"
+    );
+    let greeter_dts = std::fs::read_to_string(root.join("dist/greeter.d.ts")).unwrap();
+    assert!(
+        greeter_dts.contains("export declare class Greeter")
+            && greeter_dts.contains("greet(name: string): string;"),
+        "greeter declaration must contain class signature, got:\n{greeter_dts}"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
-// (e) Untyped exported value fails the build (isolatedDeclarations).
+// (e) Untyped exported values still fail, but locally inferable exported
+//     function/member returns emit tsc-like declarations.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -292,6 +632,206 @@ fn untyped_export_fails_build() {
     assert!(
         msg.contains("isolatedDeclarations"),
         "error must explain the isolatedDeclarations requirement, got: {msg}"
+    );
+}
+
+#[test]
+fn dts_isolated_declarations_errors_are_aggregated() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "aggregate-errors-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const VERSION = "1.0.0";
+
+export function makeThing() {
+    return createThing();
+}
+
+export { Widget } from "./widget";
+"#,
+    );
+    write_file(
+        root,
+        "src/widget.ts",
+        r#"export class Widget {
+    load() {
+        return fetchWidget();
+    }
+
+    count = 1;
+}
+"#,
+    );
+
+    let err = build_library(lib_options(root))
+        .expect_err("all isolatedDeclarations errors should be reported together");
+    let msg = format!("{err:#}");
+
+    for expected in [
+        "src/index.ts",
+        "src/widget.ts",
+        "VERSION",
+        "makeThing",
+        "load",
+        "count",
+    ] {
+        assert!(
+            msg.contains(expected),
+            "aggregated error must include {expected:?}, got:\n{msg}"
+        );
+    }
+    assert!(
+        msg.contains("4 error(s)"),
+        "error count should include every invalid export, got:\n{msg}"
+    );
+    assert!(
+        !root.join("dist/index.d.ts").exists(),
+        "entry declaration must not be written after aggregate failure"
+    );
+    assert!(
+        !root.join("dist/widget.d.ts").exists(),
+        "re-export target declaration must not be written after aggregate failure"
+    );
+}
+
+#[test]
+fn exported_function_infers_number_return_type() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "bad-function-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        "export function add(a: number, b: number) { return a + b; }\n",
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare function add(a: number, b: number): number;"),
+        "inferred numeric return type must be emitted, got:\n{dts}"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#unit-test
+fn arrow_function_const_with_explicit_return_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "arrow-const-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const delay = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("typed arrow const must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare const delay: (ms: number) => Promise<void>;"),
+        "typed arrow const declaration must match TypeScript isolatedDeclarations output, got:\n{dts}"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#unit-test
+fn arrow_function_const_with_default_param_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "arrow-default-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const withDefault = (a: number, b = 6): number => a + b;
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("typed arrow default param must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare const withDefault: (a: number, b?: number) => number;"),
+        "default-valued arrow parameter must match TypeScript isolatedDeclarations output, got:\n{dts}"
+    );
+}
+
+#[test]
+// @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#unit-test
+fn object_literal_function_property_emits_dts() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "object-function-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export const _Table = {
+    rowNo: (idx: number, page: number, pageSize: number): number =>
+        idx + 1 + (page - 1) * pageSize,
+};
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("object function property must build");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("rowNo: (idx: number, page: number, pageSize: number) => number;"),
+        "object literal function property must emit a callable property type, got:\n{dts}"
+    );
+}
+
+#[test]
+fn exported_class_member_infers_string_return_type() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "bad-class-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export class Greeter {
+    greet(name: string) { return `hi ${name}`; }
+}
+"#,
+    );
+
+    let result = build_library(lib_options(root)).expect("library build must succeed");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    assert!(
+        dts.contains("export declare class Greeter")
+            && dts.contains("greet(name: string): string;"),
+        "inferred string member return type must be emitted, got:\n{dts}"
     );
 }
 

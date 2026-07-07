@@ -11,17 +11,14 @@
 //!     coordinator.
 //!
 //! The embedded leg uses the in-process WAL. The sharded leg splits one HTTP
-//! request across multiple local coordinators. The Relay leg uses the current
-//! deployment-default `RelayWal -> WriteCoordinator -> local apply` path against
-//! an in-process relay broker. The NATS legs use real `NatsWal ->
-//! WriteCoordinator -> local apply` paths: `nats` is the historical strict
+//! request across multiple local coordinators. The NATS legs use real `NatsWal
+//! -> WriteCoordinator -> local apply` paths: `nats` is the historical strict
 //! JetStream row, while `natssharded` uses one JetStream stream/subject per
 //! write shard as an exploratory trend row. They skip gracefully when no
 //! JetStream broker is reachable.
 //!
 //! Run:
 //!   cargo test --release -p lumen --test write_qps -- --ignored --nocapture
-//!   LUMEN_WRITE_MODES=embedded,relay LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=1.0 cargo test --release -p lumen --features relay-wal --test write_qps write_qps_bench -- --ignored --nocapture
 //!   LUMEN_WRITE_MODES=embedded,sharded LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=0.3 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
 //!   LUMEN_WRITE_MODES=nats,natssharded LUMEN_WRITE_WARMUP_S=0.1 LUMEN_WRITE_WINDOW_S=1.0 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
 //!   LUMEN_PERF_STRICT=1 cargo test --release -p lumen --test write_qps write_qps_bench -- --ignored --nocapture
@@ -52,8 +49,6 @@ use lumen::types::{
 use lumen::wal::WalRecord;
 use lumen::wal::{MemWal, SharedWal};
 use lumen::wal_nats::{NatsWal, NatsWalConfig};
-#[cfg(feature = "relay-wal")]
-use lumen::wal_relay::RelayWal;
 
 const DEFAULT_WARMUP_S: f64 = 2.0;
 const PUT_WORKERS: &[usize] = &[1, 10];
@@ -106,8 +101,7 @@ fn write_mode_enabled(name: &str) -> bool {
             other => other,
         };
         match normalized {
-            "embedded" | "sharded" | "relay" | "nats" | "natssharded" | "pg" | "os"
-            | "opensearch" => {}
+            "embedded" | "sharded" | "nats" | "natssharded" | "pg" | "os" | "opensearch" => {}
             _ => panic!("unknown LUMEN_WRITE_MODES entry `{mode}`"),
         }
         if normalized == name || (name == "os" && normalized == "opensearch") {
@@ -122,7 +116,7 @@ fn write_modes_label() -> String {
         if write_gate_enabled() {
             "nats,pg,os".into()
         } else {
-            "embedded,sharded,relay,nats,natssharded,pg,os".into()
+            "embedded,sharded,nats,natssharded,pg,os".into()
         }
     })
 }
@@ -262,44 +256,6 @@ async fn serve_sharded_embedded() -> Server {
     serve(state).await
 }
 
-#[cfg(feature = "relay-wal")]
-async fn start_relay_broker() -> (String, tokio::task::JoinHandle<()>) {
-    let state = relay::server::AppState::new(relay::server_config::RelayServerConfig::ephemeral());
-    let app = relay::server::router(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind relay write bench broker");
-    let addr = listener.local_addr().expect("relay local addr");
-    let task = tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
-    });
-    (format!("http://{addr}"), task)
-}
-
-#[cfg(feature = "relay-wal")]
-async fn serve_relay() -> Option<Server> {
-    let (relay_base, relay_task) = start_relay_broker().await;
-    let engine = Arc::new(Engine::new());
-    let wal: SharedWal = Arc::new(
-        RelayWal::new_with_ids(
-            &relay_base,
-            "lumen-write-qps",
-            "write-qps-serving",
-            "write-qps-producer",
-        )
-        .ok()?,
-    );
-    let state = AppState::with_wal(engine, Arc::new(AuthConfig::open()), wal);
-    let mut server = serve(state).await;
-    server.aux_tasks.push(relay_task);
-    Some(server)
-}
-
-#[cfg(not(feature = "relay-wal"))]
-async fn serve_relay() -> Option<Server> {
-    None
-}
-
 async fn serve_nats() -> Option<Server> {
     reset_nats_stream().await?;
     let engine = Arc::new(Engine::new());
@@ -332,7 +288,6 @@ async fn serve_sharded_nats() -> Option<Server> {
 enum Mode {
     Embedded,
     Sharded,
-    Relay,
     Nats,
     NatsSharded,
 }
@@ -343,7 +298,6 @@ impl Mode {
         match self {
             Self::Embedded => "embedded",
             Self::Sharded => "sharded",
-            Self::Relay => "relay",
             Self::Nats => "nats",
             Self::NatsSharded => "natssharded",
         }
@@ -353,7 +307,6 @@ impl Mode {
         match self {
             Self::Embedded => Some(serve_embedded().await),
             Self::Sharded => Some(serve_sharded_embedded().await),
-            Self::Relay => serve_relay().await,
             Self::Nats => serve_nats().await,
             Self::NatsSharded => serve_sharded_nats().await,
         }
@@ -1341,26 +1294,6 @@ async fn write_qps_bench() {
     } else {
         None
     };
-    let relay = if write_mode_enabled("relay") {
-        let result = run_http_write_mode(Mode::Relay).await;
-        if result.is_none() {
-            eprintln!("skipping relay write QPS: build with --features relay-wal");
-        }
-        result
-    } else {
-        None
-    };
-    if let Some(relay100) = relay.as_ref().and_then(|loads| loads.get(&100)) {
-        println!(
-            "relay_write_probe relay_index_100 docs/s={:.0} p50={:.3}ms p95={:.3}ms p99={:.3}ms errors={}",
-            relay100.docs_per_s,
-            relay100.p50_ms,
-            relay100.p95_ms,
-            relay100.p99_ms,
-            relay100.errors.total()
-        );
-    }
-
     let nats = if write_mode_enabled("nats") {
         run_http_write_mode(Mode::Nats).await
     } else {

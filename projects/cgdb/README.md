@@ -55,3 +55,34 @@ Gate Inventory: `cargo test -p cgdb-smoke`; projects/cgdb/tests/smoke.rs; projec
 |---|---|---:|---|---|---|---|
 | Coverage and impact query contract | epic | - | partial | failing | smoke | `cargo test -p cgdb-smoke`; projects/cgdb/crates/cgdb-daemon/src/query.rs |
 | Lens navigation and bounded graph view contract | epic | - | partial | failing | smoke | `cargo test -p cgdb-smoke`; projects/cgdb/crates/cgdb-daemon/src/lens_service.rs; projects/cgdb/crates/cgdb-core/src/lens.rs |
+
+## Design notes (from the v0 kickoff, 2026-06)
+
+Durable decisions folded from the retired session handoff; operational
+content (worktree setup, score-era commands) is dropped as superseded.
+
+Positioning — not a general-purpose graph DB. The workload is code / spec /
+conversation as a semantic graph, with three real constraints: incremental
+indexing (file change → ms-level partial reindex), hybrid retrieval (graph
+traversal + vector similarity + keyword composable in one query), and an
+agent-friendly API that returns structured context, not raw rows.
+
+Committed design decisions:
+
+1. Typed property graph schema (not RDF, not freeform) — agents need
+   predictable structure for prompting.
+2. One HNSW vector index per node type (not one global) — agent queries
+   usually know their type scope ("similar function" vs "similar spec").
+3. GPU (Metal) only for batch vector search (>1000 queries), graph
+   embedding, and bulk reindex — kernel-launch overhead beats small
+   traversals; normal queries stay CPU + SIMD.
+
+Planned stack (post-v0 layers): single-file mmap + WAL storage, hand-written
+CSR adjacency, HNSW vector layer, Metal Performance Shaders via metal-rs,
+rayon + NEON SIMD, PyO3/napi-rs bindings later.
+
+Differentiator — temporal graph: every node/edge carries
+`commit_hash + timestamp`, enabling queries like "who called this fn 3 days
+ago" / "which commit introduced this dependency". JSONL lines carry a
+version tag (`{"v":1,...}`) so temporal columns can arrive as a v2 line
+variant without breaking replay.

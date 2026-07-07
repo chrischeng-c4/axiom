@@ -12,6 +12,7 @@ package_baselines="${JET_BASIC_DOM_PACKAGE_BASELINES:-npm,pnpm}"
 require_package_baselines="${JET_BASIC_DOM_REQUIRE_BASELINES:-1}"
 browser_baselines="${JET_BASIC_DOM_BROWSER_BASELINES:-playwright}"
 require_browser_baselines="${JET_BASIC_DOM_REQUIRE_BROWSER_BASELINES:-1}"
+require_nginx_baseline="${JET_BASIC_DOM_REQUIRE_NGINX_BASELINE:-0}"
 
 usage() {
   cat <<'EOF'
@@ -32,6 +33,7 @@ Environment:
   JET_BASIC_DOM_REQUIRE_BASELINES=1 makes package baselines blocking.
   JET_BASIC_DOM_BROWSER_BASELINES=playwright selects isolated Browser Bridge baselines.
   JET_BASIC_DOM_REQUIRE_BROWSER_BASELINES=1 makes browser baselines blocking.
+  JET_BASIC_DOM_REQUIRE_NGINX_BASELINE=1 makes the prod-static nginx baseline blocking.
   JET_BASIC_DOM_COMMAND_TIMEOUT_MS=120000 sets child command timeout.
 EOF
 }
@@ -145,10 +147,15 @@ if phase_enabled serve; then
   echo "[jet basic dom gate] Serve and HMR"
   cargo test -p jet --lib dev_server -- --nocapture
   ensure_release_jet
-  node projects/jet/scripts/compare-prod-static-serve.mjs \
+  prod_static_args=(
     --jet-bin target/release/jet \
     --out-dir /tmp/jet-basic-dom-gate/prod-static \
     --evidence /tmp/jet-basic-dom-gate/prod-static-serve.json
+  )
+  if [[ "$require_nginx_baseline" != "1" ]]; then
+    prod_static_args+=(--allow-missing-nginx)
+  fi
+  node projects/jet/scripts/compare-prod-static-serve.mjs "${prod_static_args[@]}"
 fi
 
 if phase_enabled workspace; then

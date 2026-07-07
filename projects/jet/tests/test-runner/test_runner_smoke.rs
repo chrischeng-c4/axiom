@@ -261,4 +261,70 @@ test("JS spec can import Jet's virtual test module", () => {
         "expected both virtual-module specs to pass"
     );
 }
+
+#[tokio::test]
+async fn relative_imports_from_specs_resolve_against_original_spec_directory() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("src/sum.ts"),
+        r#"
+export function sum(a: number, b: number): number {
+  return a + b;
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("ext-js.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { sum } from "./src/sum.js";
+
+test("relative .js specifier can target TS source", () => {
+  expect(sum(1, 2)).toBe(3);
+});
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("ext-ts.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { sum } from "./src/sum.ts";
+
+test("relative .ts specifier resolves from the original spec dir", () => {
+  expect(sum(2, 3)).toBe(5);
+});
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("extless.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { sum } from "./src/sum";
+
+test("extensionless relative specifier resolves TS source", () => {
+  expect(sum(4, 5)).toBe(9);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "relative imports should load from the original spec directory; reports = {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 3, "all relative import specs should pass");
+}
 // CODEGEN-END

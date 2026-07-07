@@ -64,6 +64,7 @@ impl SectionEntities for TypedBody {
             TypedBody::AsyncApi(p) => asyncapi_entities(p),
             TypedBody::CliManifest(p) => cli_entities(p),
             TypedBody::ConfigManifest(p) => config_entities(p),
+            TypedBody::RustSourceUnit(_) => Vec::new(),
             TypedBody::Markdown(_) => Vec::new(),
             TypedBody::Placeholder => Vec::new(),
             TypedBody::Unsupported(_) => Vec::new(),

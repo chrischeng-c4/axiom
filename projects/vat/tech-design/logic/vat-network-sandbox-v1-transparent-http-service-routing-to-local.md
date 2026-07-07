@@ -5,8 +5,8 @@ fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
+    gap: network-sandbox-v1-transparent-http-host-routing
+    claim: network-sandbox-v1-transparent-http-host-routing
     coverage: partial
     rationale: "vat can intercept outbound HTTP(S) (http-mock proxy + CA MITM) but cannot route a known host to a local emulator; host-routing makes a run's traffic to real GCP hosts land on the local emulators with zero app config — the foundation of the network sandbox."
 ---
@@ -154,6 +154,7 @@ e2e_tests:
   - id: vat-http-mock-host-routing-smoke
     name: "http-mock routes a known host to a local sink"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v1-transparent-http-host-routing
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat --test vat_emulator_httpmock_routing -- --nocapture"
@@ -163,6 +164,7 @@ e2e_tests:
   - id: vat-http-mock-routing-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: network-sandbox-v1-transparent-http-host-routing
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo build -p vat --no-default-features"
@@ -174,6 +176,31 @@ e2e_tests:
 
 ```yaml
 changes:
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    reason: "CLI section edge: http-mock emulator command exposes transparent host routing controls."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Config section edge: parse transparent route definitions from service configuration."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Logic section edge: route known hosts to local sinks while preserving fallback proxy behavior."
+  - path: projects/vat/src/emulator/httpmock/stub.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Schema section edge: route records describe host-to-local target mapping."
+  - path: projects/vat/tests/vat_emulator_httpmock_routing.rs
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Unit-test section edge: routing tests prove known host redirection and runtime route registration."
   - path: projects/vat/src/emulator/httpmock/mod.rs
     action: modify
     section: source

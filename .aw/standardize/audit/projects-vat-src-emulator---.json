@@ -1,0 +1,44 @@
+{
+  "project": "projects/vat/src/emulator/**",
+  "scope": "projects/vat/src/emulator/**",
+  "surfaces": [
+    {
+      "kind": "route",
+      "name": "routes",
+      "preserve": "preserve externally visible REST and gRPC endpoint paths before quality changes"
+    },
+    {
+      "kind": "command",
+      "name": "commands",
+      "preserve": "preserve emulator command names, arguments, environment variables, and output contracts before quality changes"
+    },
+    {
+      "kind": "generated_source",
+      "name": "source ownership",
+      "preserve": "preserve CODEGEN and HANDWRITE boundaries while retiring semantic TD gaps"
+    },
+    {
+      "kind": "api",
+      "name": "public API",
+      "preserve": "preserve public Rust API and serialized emulator envelope contracts before quality changes"
+    },
+    {
+      "kind": "doc",
+      "name": "documentation",
+      "preserve": "preserve documented capability, CLI, and workflow contracts before quality changes"
+    }
+  ],
+  "quality_debt": [
+    "projects/vat/src/emulator/grpc_mux.rs has no per-source semantic TD coverage"
+  ],
+  "safe_levers": [
+    {
+      "name": "documentation-only semantic TD coverage",
+      "risk": "low"
+    },
+    {
+      "name": "localized source ownership repair",
+      "risk": "medium"
+    }
+  ]
+}

@@ -43,7 +43,7 @@ use crate::types::{
     SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
     VectorSpec,
 };
-use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
+use crate::vector_index::{FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex, open_backend};
 use roaring::RoaringBitmap;
 
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(300);
@@ -8086,7 +8086,7 @@ enum PageCursor {
 }
 
 fn encode_cursor(json: String) -> String {
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
     STANDARD_NO_PAD.encode(json)
 }
 
@@ -8118,7 +8118,7 @@ fn make_score_cursor(score: f32, eid: &str) -> String {
 }
 
 fn parse_page_cursor(s: &str) -> Option<PageCursor> {
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
     let raw = STANDARD_NO_PAD.decode(s).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
     if let Some(offset) = v.get("offset").and_then(|o| o.as_u64()) {
@@ -8171,7 +8171,7 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 const SNAPSHOT_VERSION: u32 = 1;
 
 /// Top-level snapshot document. JSON-serialisable.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct SnapshotV1 {
     /// Format version. Bump when the wire layout changes
@@ -8180,7 +8180,7 @@ pub struct SnapshotV1 {
     pub collections: BTreeMap<String, CollectionSnapshot>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct CollectionSnapshot {
     pub schema: BTreeMap<String, FieldSpec>,
@@ -8189,7 +8189,7 @@ pub struct CollectionSnapshot {
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum FieldIndexSnapshot {
@@ -9802,6 +9802,7 @@ mod segment_predicate_diff_tests {
             query,
             limit: 100_000, // larger than any corpus → page == full match set
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10061,6 +10062,7 @@ mod segment_keyword_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10299,6 +10301,7 @@ mod segment_keyword_inverted_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10644,7 +10647,7 @@ mod segment_keyword_inverted_diff_tests {
             .__seal_keyword_field_to_segment("c", "cat", dir.path())
             .unwrap();
         assert_terms_dropped(&subject); // RAM `terms` gone — drives from mmap
-                                        // Delete AFTER the seal, with NO re-seal → exercises the tombstone path.
+        // Delete AFTER the seal, with NO re-seal → exercises the tombstone path.
         for d in to_delete {
             subject.delete("c", d, None).unwrap();
         }
@@ -10849,6 +10852,7 @@ mod segment_number_range_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10860,6 +10864,7 @@ mod segment_number_range_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: field.into(),
                 order,
@@ -11711,6 +11716,7 @@ mod segment_set_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -11965,6 +11971,7 @@ mod segment_set_inverted_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -12519,6 +12526,7 @@ mod segment_text_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -13203,6 +13211,7 @@ mod segment_hash_diff_tests {
             }),
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -13348,6 +13357,7 @@ mod segment_vector_diff_tests {
             }),
             limit: k,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -13551,6 +13561,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: Some(vec![crate::types::SortSpec {
                         field: "bio".into(),
                         order: SortOrder::Asc,
@@ -13609,6 +13620,7 @@ mod tests {
                 }),
                 limit: 2,
                 cursor: None,
+                routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
                     field: "email".into(),
                     order,
@@ -13663,6 +13675,7 @@ mod tests {
             }),
             limit: 2,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![
                 crate::types::SortSpec {
                     field: "email".into(),
@@ -13742,6 +13755,7 @@ mod tests {
             }),
             limit: 2,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: "email".into(),
                 order: SortOrder::Asc,
@@ -13791,6 +13805,7 @@ mod tests {
                 }),
                 limit: 7,
                 cursor: None,
+                routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
@@ -13850,6 +13865,7 @@ mod tests {
             }),
             limit: 4,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Desc,
@@ -13908,6 +13924,7 @@ mod tests {
             }),
             limit: 6,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -13957,6 +13974,7 @@ mod tests {
             }),
             limit: 10,
             cursor: Some(make_cursor(25)),
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -14022,6 +14040,7 @@ mod tests {
                 }),
                 limit: 5,
                 cursor: None,
+                routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
@@ -14077,6 +14096,7 @@ mod tests {
             }),
             limit: 10,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Asc,
@@ -14273,6 +14293,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14319,6 +14340,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14354,6 +14376,7 @@ mod tests {
             }),
             limit: 10,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -14415,6 +14438,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14432,6 +14456,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14472,6 +14497,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14529,6 +14555,7 @@ mod tests {
                     query: q,
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14603,6 +14630,7 @@ mod tests {
                     query,
                     limit: 100,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14978,6 +15006,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15019,6 +15048,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15036,6 +15066,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15071,6 +15102,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15181,6 +15213,7 @@ mod tests {
                 }),
                 limit: 50,
                 cursor: None,
+                routing_key: None,
                 sort: None,
                 track_total: true,
                 collapse: None,
@@ -15483,6 +15516,7 @@ mod tests {
                     ]),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15533,6 +15567,7 @@ mod tests {
                     ]),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15572,6 +15607,7 @@ mod tests {
                     }))),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15606,6 +15642,7 @@ mod tests {
                     query: q,
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15673,6 +15710,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15735,6 +15773,7 @@ mod tests {
                     query: QueryNode::Range(q),
                     limit: 50,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15871,6 +15910,7 @@ mod triple_path_diff_tests {
             query,
             limit,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -16292,6 +16332,7 @@ mod checkpoint_engine_tests {
             query,
             limit,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -16799,6 +16840,7 @@ mod offset_sort_guard_tests {
             query: cat_x(),
             limit: 2,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -16932,6 +16974,7 @@ mod external_version_lww_tests {
             }),
             limit: 100,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -17063,6 +17106,7 @@ mod sort_missing_tests {
                 }),
                 limit,
                 cursor,
+                routing_key: None,
                 sort: Some(vec![SortSpec {
                     field: "price".into(),
                     order: SortOrder::Asc,
@@ -17246,6 +17290,7 @@ mod has_child_sort_tests {
                 query,
                 limit: 100,
                 cursor: None,
+                routing_key: None,
                 sort,
                 track_total: true,
                 collapse: None,
@@ -17298,6 +17343,7 @@ mod has_child_sort_tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: sort_ts_desc(),
                     track_total: true,
                     collapse: None,
@@ -17388,6 +17434,7 @@ mod ids_query_tests {
                 query,
                 limit: 100,
                 cursor: None,
+                routing_key: None,
                 sort,
                 track_total: true,
                 collapse: None,
@@ -17530,6 +17577,7 @@ mod multikey_sort_cap_tests {
                     query: all(),
                     limit: 100,
                     cursor: None,
+                    routing_key: None,
                     sort: Some(sort_asc(&["a", "b", "c"])),
                     track_total: true,
                     collapse: None,
@@ -17554,6 +17602,7 @@ mod multikey_sort_cap_tests {
                     query: all(),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: Some(sort_asc(&["a", "b", "c", "a", "b"])), // 5 keys
                     track_total: true,
                     collapse: None,

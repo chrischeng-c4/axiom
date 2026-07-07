@@ -21,12 +21,13 @@ Public API manifest for `projects/agentic-workflow/src/cli/init.rs` generated fr
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `WorkspaceType` | projects/agentic-workflow/src/cli/init.rs | enum | pub | 503 |  |
-| `check_and_auto_upgrade` | projects/agentic-workflow/src/cli/init.rs | function | pub | 943 | check_and_auto_upgrade(auto_upgrade: bool) -> bool |
-| `detect_workspace_type` | projects/agentic-workflow/src/cli/init.rs | function | pub | 519 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
-| `get_current_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1049 | get_current_version() -> &'static str |
-| `get_installed_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1011 | get_installed_version() -> Option<String> |
-| `run` | projects/agentic-workflow/src/cli/init.rs | function | pub | 63 | run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> Result<()> |
+| `WorkspaceType` | projects/agentic-workflow/src/cli/init.rs | enum | pub(crate) | 642 |  |
+| `check_and_auto_upgrade` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1455 | check_and_auto_upgrade(auto_upgrade: bool) -> bool |
+| `detect_workspace_type` | projects/agentic-workflow/src/cli/init.rs | function | pub(crate) | 658 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
+| `get_current_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1561 | get_current_version() -> &'static str |
+| `get_installed_version` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1523 | get_installed_version() -> Option<String> |
+| `run` | projects/agentic-workflow/src/cli/init.rs | function | pub | 66 | run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> Result<()> |
+| `run_check` | projects/agentic-workflow/src/cli/init.rs | function | pub | 1352 | run_check() -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -35,6 +36,7 @@ Public API manifest for `projects/agentic-workflow/src/cli/init.rs` generated fr
 ```rust
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
 // CODEGEN-BEGIN
+use crate::cli::doc_mirror;
 use crate::models::{SddConfig, SddInterface};
 use crate::Result;
 use clap::Args;
@@ -55,7 +57,6 @@ const SKILL_GEMINI_EXPLORE_SPECS: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-gemini-explore-specs/SKILL.md");
 const SKILL_GEMINI_EXPLORE_CODEBASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-gemini-explore-codebase/SKILL.md");
-const SKILL_MERGE: &str = include_str!("../../templates/cli/mainthread/skills/aw-merge/SKILL.md");
 const SKILL_CAPABILITY: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-capability/SKILL.md");
 const SKILL_WI: &str = include_str!("../../templates/cli/mainthread/skills/aw-wi/SKILL.md");
@@ -78,6 +79,7 @@ const SKILL_BUILD_RELEASE: &str =
 const SKILL_CHAT_LISTEN: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-chat-listen/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
+const SKILL_GUARD: &str = include_str!("../../templates/cli/mainthread/skills/aw-guard/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/scripts/release.sh");
 // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R15
@@ -94,21 +96,12 @@ const SCRIPT_MAMBA_TEST_COVERAGE: &str = include_str!(
 const SETTINGS_JSON_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/settings.json");
 
 // CLAUDE.md Template for target projects
-const CLAUDE_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/CLAUDE.md");
-
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/init.md#source
-pub async fn run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> Result<()> {
-    // `_agent_mode` is retained in the signature for backward-compat with old
-    // CLI invocations, but is ignored. Agentic Workflow uses a fixed executor mapping
-    // (Claude Code subagent + mainthread hybrid) — there is no mode to select.
-    let project_root = env::current_dir()?;
-    run_at_project_root(name, force, &project_root, true)
-}
+const CLAUDE_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/CLAUDE.md.tmpl");
 
 /// Arguments for `aw new`.
 ///
 /// `aw new` creates the project directory first, then delegates to the same
-/// in-place installer used by `aw init`.
+/// project asset installer used for greenfield bootstrapping.
 // @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
 #[derive(Debug, Args)]
 pub struct NewArgs {
@@ -119,13 +112,13 @@ pub struct NewArgs {
     #[arg(long, value_name = "PATH")]
     pub path: Option<PathBuf>,
 
-    /// Allow reusing an existing non-empty directory and force-refresh init assets.
+    /// Allow reusing an existing non-empty directory and force-refresh managed assets.
     #[arg(short, long)]
     pub force: bool,
 
-    /// Create the target directory without running aw init.
+    /// Create the target directory without installing Agentic Workflow assets.
     #[arg(long)]
-    pub no_init: bool,
+    pub no_assets: bool,
 }
 
 // @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#Logic
@@ -143,8 +136,8 @@ pub async fn run_new(args: NewArgs) -> Result<()> {
     println!();
     println!("{}", "⏭️  Next Steps:".yellow().bold());
     println!("   {}", format!("cd {}", outcome.target.display()).cyan());
-    if !outcome.init_ran {
-        println!("   {}", "aw init".cyan());
+    if !outcome.assets_installed {
+        println!("   {}", "aw health --project <project>".cyan());
     }
 
     Ok(())
@@ -152,22 +145,24 @@ pub async fn run_new(args: NewArgs) -> Result<()> {
 
 struct NewProjectOutcome {
     target: PathBuf,
-    init_ran: bool,
+    assets_installed: bool,
 }
 
 fn run_new_with_current_dir(args: NewArgs, current_dir: &Path) -> Result<NewProjectOutcome> {
     let target = resolve_new_target(current_dir, &args.name, args.path.as_deref())?;
     prepare_new_target(&target, args.force)?;
 
-    if args.no_init {
+    if args.no_assets {
         println!(
             "{}",
             format!("📁 Created project directory {}", target.display()).cyan()
         );
-        println!("   ℹ Skipped aw init because --no-init was supplied");
+        println!(
+            "   ℹ Skipped Agentic Workflow asset installation because --no-assets was supplied"
+        );
         return Ok(NewProjectOutcome {
             target,
-            init_ran: false,
+            assets_installed: false,
         });
     }
 
@@ -175,7 +170,7 @@ fn run_new_with_current_dir(args: NewArgs, current_dir: &Path) -> Result<NewProj
 
     Ok(NewProjectOutcome {
         target,
-        init_ran: true,
+        assets_installed: true,
     })
 }
 
@@ -209,7 +204,7 @@ fn prepare_new_target(target: &Path, force: bool) -> Result<()> {
         }
         if !force && !is_directory_empty(target)? {
             anyhow::bail!(
-                "target directory is not empty: {} (rerun with --force to run aw init there)",
+                "target directory is not empty: {} (rerun aw new with --force to install assets there)",
                 target.display()
             );
         }
@@ -237,7 +232,7 @@ fn run_at_project_root(
 
     if legacy_score_dir.exists() {
         anyhow::bail!(
-            "legacy Agentic Workflow state found at {}; active state now lives under .aw. Move or remove the old directory explicitly, then rerun aw init.",
+            "legacy Agentic Workflow state found at {}; active state now lives under .aw. Move or remove the old directory explicitly, then rerun the relevant producer command.",
             legacy_score_dir.display()
         );
     }
@@ -307,7 +302,14 @@ fn run_at_project_root(
             .bold()
         );
         println!();
-        run_update(name, &project_root, &sdd_dir, &claude_dir, force)?;
+        run_update(
+            name,
+            &project_root,
+            &sdd_dir,
+            &claude_dir,
+            force,
+            print_fresh_success,
+        )?;
     } else {
         // Fresh install - CLI interface, determine platform
         let interface = SddInterface::Cli;
@@ -384,7 +386,7 @@ fn determine_platform_update(
     })
 }
 
-// Interactive platform selection for aw init.
+// Interactive platform selection for project asset installation.
 ///
 // Returns the TOML text for the `[platform]` section, or None if user chose None.
 fn determine_platform(project_root: &Path) -> Result<Option<String>> {
@@ -818,11 +820,20 @@ fn run_fresh_install(
     // Install system files
     install_system_files(project_root, sdd_dir, claude_dir)?;
 
-    // Generate CLAUDE.md with project context
+    // Generate CLAUDE.md and AGENTS.md with project context (issue #984: both
+    // root docs project from the same template + shared whitelist).
     generate_claude_md(project_root, sdd_dir)?;
+    generate_agents_md(project_root)?;
+    // Regenerate the repo-root README's Projects table when opted in
+    // (issue #985; no-op when README.md is absent or has no markers).
+    update_readme_projects_table(project_root)?;
+    // Regenerate the repo-root CONTRIBUTING's trait table when opted in
+    // (issue #1077; no-op when CONTRIBUTING.md is absent or has no markers).
+    update_contributing_trait_table(project_root)?;
 
     if print_success_message {
         print_init_success();
+        print_next_step(sdd_dir);
     }
 
     Ok(())
@@ -835,6 +846,7 @@ fn run_update(
     sdd_dir: &Path,
     claude_dir: &Path,
     force: bool,
+    print_next: bool,
 ) -> Result<()> {
     // name parameter is deprecated and ignored
     let _ = name;
@@ -908,8 +920,16 @@ fn run_update(
     // Install/update system files
     install_system_files(project_root, sdd_dir, claude_dir)?;
 
-    // Regenerate CLAUDE.md with project context
+    // Regenerate CLAUDE.md and AGENTS.md with project context (issue #984:
+    // both root docs project from the same template + shared whitelist).
     generate_claude_md(project_root, sdd_dir)?;
+    generate_agents_md(project_root)?;
+    // Regenerate the repo-root README's Projects table when opted in
+    // (issue #985; no-op when README.md is absent or has no markers).
+    update_readme_projects_table(project_root)?;
+    // Regenerate the repo-root CONTRIBUTING's trait table when opted in
+    // (issue #1077; no-op when CONTRIBUTING.md is absent or has no markers).
+    update_contributing_trait_table(project_root)?;
 
     // Clean up legacy .version file (version now lives in config.toml)
     let legacy_version_file = sdd_dir.join(".version");
@@ -919,18 +939,30 @@ fn run_update(
 
     println!();
     println!("{}", "✅ Update complete!".green().bold());
+    if print_next {
+        print_next_step(sdd_dir);
+    }
 
     Ok(())
 }
 
 // Install/update all system files (skills, retired-agent cleanup, hooks, settings)
-fn install_system_files(_project_root: &Path, _sdd_dir: &Path, claude_dir: &Path) -> Result<()> {
+fn install_system_files(project_root: &Path, _sdd_dir: &Path, claude_dir: &Path) -> Result<()> {
     let skills_dir = claude_dir.join("skills");
     std::fs::create_dir_all(&skills_dir)?;
 
     // Install Claude Code Skills
     println!("{}", "🤖 Updating Claude Code Skills...".cyan());
     install_claude_skills(&skills_dir)?;
+
+    // Install the same aw-* skills into `.agents/skills/` (issue #986:
+    // init-projector slice 3/3 — templates/ is the sole source, projected to
+    // BOTH runtime trees so `.agents` is never a hand-maintained mirror).
+    println!();
+    println!("{}", "🤖 Updating Codex/.agents Skills...".cyan());
+    let agents_skills_dir = project_root.join(".agents").join("skills");
+    std::fs::create_dir_all(&agents_skills_dir)?;
+    install_agents_skills(&agents_skills_dir)?;
 
     // Install Claude Code Agent definitions
     println!();
@@ -972,6 +1004,7 @@ fn print_init_success() {
     println!();
     println!("{}", "🤖 Claude Code assets installed:".cyan());
     println!("   .claude/skills/          - Agentic Workflow skills");
+    println!("   .agents/skills/          - same skills, projected for Codex");
     println!("   .claude/hooks/           - retired hook cleanup area");
     println!("   .claude/settings.json    - permissions + status line settings");
     println!();
@@ -992,18 +1025,50 @@ fn print_init_success() {
     println!("      {}", "/aw:td:create my-feature".cyan());
 }
 
-// Score section markers (must match templates/mainthread/CLAUDE.md)
+// Score section markers (must match templates/mainthread/CLAUDE.md.tmpl)
 const GENESIS_START_MARKER: &str = "<!-- aw:start -->";
 const GENESIS_END_MARKER: &str = "<!-- aw:end -->";
 
-// Extract the SDD section from template (between markers)
-fn get_sdd_section() -> &'static str {
+// Split the raw CLAUDE.md template into (before, `aw:start`..`aw:end`
+// section, after) around the genesis markers, so both the section-only and
+// whole-document projections below slice at exactly the same offsets.
+fn split_claude_template() -> (&'static str, &'static str, &'static str) {
     let start = CLAUDE_TEMPLATE.find(GENESIS_START_MARKER).unwrap_or(0);
     let end = CLAUDE_TEMPLATE
         .find(GENESIS_END_MARKER)
         .map(|i| i + GENESIS_END_MARKER.len())
         .unwrap_or(CLAUDE_TEMPLATE.len());
-    &CLAUDE_TEMPLATE[start..end]
+    (
+        &CLAUDE_TEMPLATE[..start],
+        &CLAUDE_TEMPLATE[start..end],
+        &CLAUDE_TEMPLATE[end..],
+    )
+}
+
+// Extract the SDD section from the template (between markers) and render its
+// fine-grained generated CLI tables (issue #985, init-projector slice 2/3).
+// Rendering happens here, before any of the whole-block diff/upsert/
+// staleness machinery below ever sees the section text, so CLI-table drift
+// is covered by that existing machinery for free.
+fn get_sdd_section() -> String {
+    let (_, section, _) = split_claude_template();
+    doc_mirror::render_cli_tables(section)
+}
+
+// The full CLAUDE.md document with its CLI tables rendered, for the
+// fresh-install path (no CLAUDE.md exists yet). Must stay content-equivalent
+// to what `managed_section_is_stale`/`run_check` recompute afterwards — the
+// raw `CLAUDE_TEMPLATE` constant is NOT a valid substitute once `get_sdd_section`
+// performs real rendering, since the raw template still carries unrendered
+// markers/seed rows (issue #985 fresh-install regression).
+fn rendered_claude_doc() -> String {
+    let (before, section, after) = split_claude_template();
+    format!(
+        "{}{}{}",
+        before,
+        doc_mirror::render_cli_tables(section),
+        after
+    )
 }
 
 // Remove old SDD sections (without markers) from content
@@ -1051,58 +1116,208 @@ fn remove_old_sdd_sections(content: &str) -> String {
     result
 }
 
+// Outcome of upserting a managed `aw:start`/`aw:end` section into a root doc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpsertOutcome {
+    Created,
+    Updated,
+    UpToDate,
+}
+
+// Compute the new full-file content for `existing_content` after upserting
+// `section` between the `aw:start`/`aw:end` markers (or inserting it per the
+// no-markers fallback rules). Shared by the CLAUDE.md and AGENTS.md
+// projections (issue #984) so both root docs upsert identically.
+fn compute_upserted_doc(existing_content: &str, section: &str) -> String {
+    // First, remove old format sections (without markers)
+    let cleaned_content = remove_old_sdd_sections(existing_content);
+
+    if let (Some(start), Some(end)) = (
+        cleaned_content.find(GENESIS_START_MARKER),
+        cleaned_content.find(GENESIS_END_MARKER),
+    ) {
+        // Markers exist - replace content between them
+        let before = &cleaned_content[..start];
+        let after = &cleaned_content[end + GENESIS_END_MARKER.len()..];
+        format!("{}{}{}", before, section, after)
+    } else if let Some(first_newline) = cleaned_content.find('\n') {
+        let first_line = &cleaned_content[..first_newline];
+        if first_line.starts_with('#') {
+            // Insert after the first heading
+            let after_heading = &cleaned_content[first_newline..];
+            format!("{}\n\n{}{}", first_line, section, after_heading)
+        } else {
+            // Prepend at top
+            format!("{}\n\n{}", section, cleaned_content)
+        }
+    } else {
+        format!("{}\n\n{}", section, cleaned_content)
+    }
+}
+
+// Generate-or-update `doc_path` with `section` upserted between the
+// `aw:start`/`aw:end` markers, using `full_doc_if_missing` when the file does
+// not exist yet. Shared by the CLAUDE.md and AGENTS.md projections (issue
+// #984) so the two root docs can never upsert differently.
+fn upsert_managed_section(
+    doc_path: &Path,
+    section: &str,
+    full_doc_if_missing: &str,
+    label: &str,
+) -> Result<UpsertOutcome> {
+    if doc_path.exists() {
+        let existing_content = std::fs::read_to_string(doc_path)?;
+        let new_content = compute_upserted_doc(&existing_content, section);
+
+        if new_content.trim() == existing_content.trim() {
+            println!("   {} {} (up to date)", "✓".green(), label);
+            Ok(UpsertOutcome::UpToDate)
+        } else {
+            std::fs::write(doc_path, new_content)?;
+            println!("   {} {} (updated)", "✓".green(), label);
+            Ok(UpsertOutcome::Updated)
+        }
+    } else {
+        std::fs::write(doc_path, full_doc_if_missing)?;
+        println!("   {} {} (created)", "✓".green(), label);
+        Ok(UpsertOutcome::Created)
+    }
+}
+
 // Generate or update CLAUDE.md with SDD section (upsert mode)
 fn generate_claude_md(project_root: &Path, _sdd_dir: &Path) -> Result<()> {
     let claude_md_path = project_root.join("CLAUDE.md");
-
     let sdd_section = get_sdd_section();
+    let full_doc_if_missing = rendered_claude_doc();
+    upsert_managed_section(
+        &claude_md_path,
+        &sdd_section,
+        &full_doc_if_missing,
+        "CLAUDE.md",
+    )?;
+    Ok(())
+}
 
-    if claude_md_path.exists() {
-        // CLAUDE.md exists - upsert the SDD section
-        let existing_content = std::fs::read_to_string(&claude_md_path)?;
+// AGENTS.md's managed `aw:start` section is CLAUDE.md's section plus the
+// fixed Codex-only slash-command translation paragraph — see
+// `doc_mirror::agents_block_from_claude_block` (issue #984, the one shared
+// whitelist consumed by both this projection and `root_doc_mirror_test`).
+fn get_agents_sdd_section() -> String {
+    doc_mirror::agents_block_from_claude_block(&get_sdd_section())
+}
 
-        // First, remove old format sections (without markers)
-        let cleaned_content = remove_old_sdd_sections(&existing_content);
+// Generate or update AGENTS.md with the same SDD-managed section as
+// CLAUDE.md, plus the Codex-only insertions (issue #984). AGENTS.md's
+// `## Codex Operational Rules` section sits OUTSIDE the `aw:start` block and
+// is hand-authored — when AGENTS.md does not exist yet, seed only the title
+// and the managed section, never inventing that section's content.
+fn generate_agents_md(project_root: &Path) -> Result<()> {
+    let agents_md_path = project_root.join("AGENTS.md");
+    let sdd_section = get_agents_sdd_section();
+    let full_doc_if_missing = format!("{}\n\n{}\n", doc_mirror::AGENTS_TITLE, sdd_section);
+    upsert_managed_section(
+        &agents_md_path,
+        &sdd_section,
+        &full_doc_if_missing,
+        "AGENTS.md",
+    )?;
+    Ok(())
+}
 
-        let new_content = if let (Some(start), Some(end)) = (
-            cleaned_content.find(GENESIS_START_MARKER),
-            cleaned_content.find(GENESIS_END_MARKER),
-        ) {
-            // Markers exist - replace content between them
-            let before = &cleaned_content[..start];
-            let after = &cleaned_content[end + GENESIS_END_MARKER.len()..];
-            format!("{}{}{}", before, sdd_section, after)
-        } else {
-            // No markers - prepend SDD section after first heading or at top
-            if let Some(first_newline) = cleaned_content.find('\n') {
-                let first_line = &cleaned_content[..first_newline];
-                if first_line.starts_with('#') {
-                    // Insert after the first heading
-                    let after_heading = &cleaned_content[first_newline..];
-                    format!("{}\n\n{}{}", first_line, sdd_section, after_heading)
-                } else {
-                    // Prepend at top
-                    format!("{}\n\n{}", sdd_section, cleaned_content)
-                }
-            } else {
-                format!("{}\n\n{}", sdd_section, cleaned_content)
-            }
-        };
-
-        // Check if content changed
-        if new_content.trim() == existing_content.trim() {
-            println!("   {} CLAUDE.md (up to date)", "✓".green());
-        } else {
-            std::fs::write(&claude_md_path, new_content)?;
-            println!("   {} CLAUDE.md (updated)", "✓".green());
-        }
+// Regenerate the repo-root README.md's generated Projects table between
+// `<!-- aw:projects-table:start/end -->` markers from `.aw/config.toml`
+// (issue #985, init-projector slice 2/3). Only touches README.md when it
+// exists AND already carries the markers: the table is opt-in per document
+// (project scaffolds created via `aw new` have no README yet, and existing
+// non-marker READMEs are left alone rather than force-inserting a table
+// nobody asked for).
+fn update_readme_projects_table(project_root: &Path) -> Result<()> {
+    let readme_path = project_root.join("README.md");
+    let Ok(existing) = std::fs::read_to_string(&readme_path) else {
+        return Ok(());
+    };
+    if !existing.contains(doc_mirror::PROJECTS_TABLE_START) {
+        return Ok(());
+    }
+    let updated = doc_mirror::upsert_projects_table(project_root, &existing)?;
+    if updated.trim() == existing.trim() {
+        println!("   {} README.md (Projects table up to date)", "✓".green());
     } else {
-        // CLAUDE.md doesn't exist - create with full template
-        std::fs::write(&claude_md_path, CLAUDE_TEMPLATE)?;
-        println!("   {} CLAUDE.md (created)", "✓".green());
+        std::fs::write(&readme_path, updated)?;
+        println!("   {} README.md (Projects table updated)", "✓".green());
+    }
+    Ok(())
+}
+
+// Regenerate the repo-root CONTRIBUTING.md's generated trait table between
+// `<!-- aw:trait-table:start/end -->` markers from `doc_mirror::TRAITS` (issue
+// #1077, archetype-as-traits slice 1/3). Only touches CONTRIBUTING.md when it
+// exists AND already carries the markers: the table is opt-in per document,
+// mirroring [`update_readme_projects_table`]'s contract exactly.
+fn update_contributing_trait_table(project_root: &Path) -> Result<()> {
+    let contributing_path = project_root.join("CONTRIBUTING.md");
+    let Ok(existing) = std::fs::read_to_string(&contributing_path) else {
+        return Ok(());
+    };
+    if !existing.contains(doc_mirror::TRAIT_TABLE_START) {
+        return Ok(());
+    }
+    let updated = doc_mirror::upsert_trait_table(&existing);
+    if updated.trim() == existing.trim() {
+        println!(
+            "   {} CONTRIBUTING.md (trait table up to date)",
+            "✓".green()
+        );
+    } else {
+        std::fs::write(&contributing_path, updated)?;
+        println!("   {} CONTRIBUTING.md (trait table updated)", "✓".green());
+    }
+    Ok(())
+}
+
+// Best-effort scan of `.aw/config.toml` for a single registered
+// `[[projects]]` entry's `name`. Returns `None` when zero or more than one
+// project is registered so the chainable `next:` hint (issue #984) never
+// emits an ambiguous or unexecutable `aw health --project <name>` command
+// (`--project` is required, not optional).
+fn resolve_single_project_name(sdd_dir: &Path) -> Option<String> {
+    let config_path = sdd_dir.join("config.toml");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+
+    let mut names = Vec::new();
+    let mut in_projects_table = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_projects_table = trimmed.starts_with("[[projects]]");
+            continue;
+        }
+        if in_projects_table && trimmed.starts_with("name") {
+            if let Some(val) = trimmed.strip_prefix("name") {
+                let val = val.trim().trim_start_matches('=').trim();
+                let val = val.trim_matches('"').trim_matches('\'');
+                if !val.is_empty() {
+                    names.push(val.to_string());
+                }
+            }
+        }
     }
 
-    Ok(())
+    if names.len() == 1 {
+        names.into_iter().next()
+    } else {
+        None
+    }
+}
+
+// Chainable next-step line ending project asset installation output (CONTRIBUTING's
+// chainable-output convention, issue #984): a runnable `aw health` when
+// exactly one project resolves unambiguously, else a `done` marker.
+fn print_next_step(sdd_dir: &Path) {
+    match resolve_single_project_name(sdd_dir) {
+        Some(name) => println!("next: aw health --project {}", name),
+        None => println!("next: done"),
+    }
 }
 
 // Check if upgrade is available and optionally auto-upgrade
@@ -1150,7 +1365,7 @@ pub fn check_and_auto_upgrade(auto_upgrade: bool) -> bool {
         let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
         let claude_dir = project_root.join(".claude");
 
-        if let Err(e) = run_update(None, &project_root, &sdd_dir, &claude_dir, false) {
+        if let Err(e) = run_update(None, &project_root, &sdd_dir, &claude_dir, false, false) {
             eprintln!("{}", format!("⚠️  Auto-upgrade failed: {}", e).yellow());
             return false;
         }
@@ -1165,7 +1380,7 @@ pub fn check_and_auto_upgrade(auto_upgrade: bool) -> bool {
                 "💡 SDD update available: {} → {} (run {} to upgrade)",
                 installed_version,
                 SDD_VERSION,
-                "aw init --force".cyan()
+                "aw upgrade".cyan()
             )
             .yellow()
         );
@@ -1239,9 +1454,53 @@ fn update_version_in_content(content: &str, new_version: &str) -> String {
     }
 }
 
-fn install_claude_skills(skills_dir: &Path) -> Result<()> {
-    // Remove deprecated skills
-    let deprecated_skills = vec![
+// Every `aw-*` skill's directory name + templates-sourced `SKILL.md`
+// content (issue #986: the single list consumed by BOTH the `.claude/skills`
+// installer and the `.agents/skills` installer, so the two trees can never
+// list a different skill set than each other or than `templates/`).
+fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("aw-codex-review", SKILL_CODEX_REVIEW),
+        ("aw-gemini-explore-specs", SKILL_GEMINI_EXPLORE_SPECS),
+        ("aw-gemini-explore-codebase", SKILL_GEMINI_EXPLORE_CODEBASE),
+        ("aw-capability", SKILL_CAPABILITY),
+        ("aw-wi", SKILL_WI),
+        ("aw-build-debug", SKILL_BUILD_DEBUG),
+        ("aw-release-patch", SKILL_RELEASE_PATCH),
+        ("aw-mamba-test-coverage", SKILL_MAMBA_TEST_COVERAGE),
+        ("aw-td-create", SKILL_TD_CREATE),
+        ("aw-cb-fill", SKILL_CB_FILL),
+        ("aw-cb-claim", SKILL_CB_CLAIM),
+        ("aw-standardize", SKILL_STANDARDIZE),
+        ("aw-build-release", SKILL_BUILD_RELEASE),
+        ("aw-chat-listen", SKILL_CHAT_LISTEN),
+        ("aw-health", SKILL_HEALTH),
+        ("aw-guard", SKILL_GUARD),
+    ]
+}
+
+// Companion `scripts/<file>` payloads for the subset of `aw-*` skills that
+// ship one (issue #986: shared by both skill-tree installers; scripts need
+// no `.agents` transform — verified zero `.claude`/`CLAUDE` literal
+// references in any of the 4 scripts).
+fn skill_script_entries() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
+        ("aw-build-debug", "build.sh", SCRIPT_BUILD_DEBUG),
+        ("aw-release-patch", "release.sh", SCRIPT_RELEASE_PATCH),
+        (
+            "aw-mamba-test-coverage",
+            "coverage.sh",
+            SCRIPT_MAMBA_TEST_COVERAGE,
+        ),
+        ("aw-build-release", "release.sh", SCRIPT_BUILD_RELEASE),
+    ]
+}
+
+// Legacy/retired skill directory names pruned from a skills tree on every
+// the project asset installer (issue #986: shared by both `.claude/skills` and `.agents/skills`
+// so a deprecated skill can never survive in one tree only).
+fn deprecated_skill_names() -> Vec<&'static str> {
+    vec![
         "genesis-proposal",
         "genesis-challenge",
         "genesis-reproposal",
@@ -1315,66 +1574,45 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         "aw-standardize-run",
         "aw-standardize-managed-loop",
         "aw-standardize-regenerable-loop",
-        // Removed: cron-style issue patrol is superseded by aw run --project.
+        // Removed: cron-style issue patrol is superseded by
+        // `aw capability run --project`.
         "aw-wi-patrol",
         "score-build-release",
         "score-chat-listen",
         "score-fillback-main-specs",
-    ];
+        // Removed: `aw td merge` no longer exists (LINEAR lifecycle;
+        // `aw td code-check` is the terminal step).
+        "aw-merge",
+    ]
+}
 
-    for deprecated in &deprecated_skills {
+// Remove every [`deprecated_skill_names`] directory still present under
+// `skills_dir` (issue #986: shared by both skill-tree installers).
+fn prune_deprecated_skills(skills_dir: &Path) -> Result<()> {
+    for deprecated in deprecated_skill_names() {
         let deprecated_dir = skills_dir.join(deprecated);
         if deprecated_dir.exists() {
             std::fs::remove_dir_all(&deprecated_dir)?;
             println!("   {} {} (removed)", "✗".red(), deprecated);
         }
     }
+    Ok(())
+}
 
-    // Install current skills
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R12
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R13
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R12
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R13
-    let skills = vec![
-        ("aw-codex-review", SKILL_CODEX_REVIEW),
-        ("aw-gemini-explore-specs", SKILL_GEMINI_EXPLORE_SPECS),
-        ("aw-gemini-explore-codebase", SKILL_GEMINI_EXPLORE_CODEBASE),
-        ("aw-merge", SKILL_MERGE),
-        ("aw-capability", SKILL_CAPABILITY),
-        ("aw-wi", SKILL_WI),
-        ("aw-build-debug", SKILL_BUILD_DEBUG),
-        ("aw-release-patch", SKILL_RELEASE_PATCH),
-        ("aw-mamba-test-coverage", SKILL_MAMBA_TEST_COVERAGE),
-        ("aw-td-create", SKILL_TD_CREATE),
-        ("aw-cb-fill", SKILL_CB_FILL),
-        ("aw-cb-claim", SKILL_CB_CLAIM),
-        ("aw-standardize", SKILL_STANDARDIZE),
-        ("aw-build-release", SKILL_BUILD_RELEASE),
-        ("aw-chat-listen", SKILL_CHAT_LISTEN),
-        ("aw-health", SKILL_HEALTH),
-    ];
+// Write one skill's `SKILL.md` under `skills_dir/<name>/`.
+fn write_skill_file(skills_dir: &Path, name: &str, content: &str) -> Result<()> {
+    let skill_dir = skills_dir.join(name);
+    std::fs::create_dir_all(&skill_dir)?;
+    std::fs::write(skill_dir.join("SKILL.md"), content)?;
+    println!("   ✓ {}", name);
+    Ok(())
+}
 
-    for (name, content) in skills {
-        let skill_dir = skills_dir.join(name);
-        std::fs::create_dir_all(&skill_dir)?;
-        std::fs::write(skill_dir.join("SKILL.md"), content)?;
-        println!("   ✓ {}", name);
-    }
-
-    // Install scripts for skills that have them
-    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R16
-    let skill_scripts: &[(&str, &str, &str)] = &[
-        ("aw-build-debug", "build.sh", SCRIPT_BUILD_DEBUG),
-        ("aw-release-patch", "release.sh", SCRIPT_RELEASE_PATCH),
-        (
-            "aw-mamba-test-coverage",
-            "coverage.sh",
-            SCRIPT_MAMBA_TEST_COVERAGE,
-        ),
-        ("aw-build-release", "release.sh", SCRIPT_BUILD_RELEASE),
-    ];
-
-    for (skill_name, script_name, content) in skill_scripts {
+// Install every [`skill_script_entries`] companion script under `skills_dir`
+// with executable permissions (issue #986: shared by both skill-tree
+// installers; scripts are byte-identical in both trees, no transform).
+fn install_skill_scripts(skills_dir: &Path) -> Result<()> {
+    for (skill_name, script_name, content) in skill_script_entries() {
         let scripts_dir = skills_dir.join(skill_name).join("scripts");
         std::fs::create_dir_all(&scripts_dir)?;
         let script_path = scripts_dir.join(script_name);
@@ -1387,7 +1625,36 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
             std::fs::set_permissions(&script_path, perms)?;
         }
     }
+    Ok(())
+}
 
+// Install/refresh every `aw-*` skill under `.claude/skills/` from
+// `templates/cli/mainthread/skills/` verbatim (the `.claude` tree is the
+// untransformed install source; see [`install_agents_skills`] for the
+// sibling `.agents/skills/` projection).
+// @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R12
+// @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R13
+fn install_claude_skills(skills_dir: &Path) -> Result<()> {
+    prune_deprecated_skills(skills_dir)?;
+    for (name, content) in aw_skill_entries() {
+        write_skill_file(skills_dir, name, content)?;
+    }
+    install_skill_scripts(skills_dir)?;
+    Ok(())
+}
+
+// Install/refresh every `aw-*` skill under `.agents/skills/` (issue #986:
+// init-projector slice 3/3). Same skill set and deprecated-prune list as
+// [`install_claude_skills`], with each `SKILL.md` body run through
+// [`doc_mirror::agents_skill_body_from_claude_skill_body`] so the two trees
+// can only ever differ by the declared transform, never by hand-editing.
+fn install_agents_skills(skills_dir: &Path) -> Result<()> {
+    prune_deprecated_skills(skills_dir)?;
+    for (name, content) in aw_skill_entries() {
+        let projected = doc_mirror::agents_skill_body_from_claude_skill_body(content);
+        write_skill_file(skills_dir, name, &projected)?;
+    }
+    install_skill_scripts(skills_dir)?;
     Ok(())
 }
 
@@ -1803,7 +2070,7 @@ mod tests {
         );
     }
 
-    // R13: re-running `aw init` against an existing settings.json that
+    // R13: re-running the project asset installer against an existing settings.json that
     // already has `permissions.deny` rules MUST merge — preserve user
     // additions, add the spec-protection rules without duplicating.
     #[test]
@@ -1862,7 +2129,7 @@ mod tests {
     }
 
     // REQ: R11 — install_settings_json removes existing retired score-* hook
-    // matchers when re-running `aw init`.
+    // matchers when re-running the project asset installer.
     #[test]
     fn test_install_settings_json_removes_existing_score_hook_matcher() {
         let tmp = TempDir::new().unwrap();
@@ -1937,47 +2204,47 @@ mod tests {
         assert!(prepare_new_target(&file_target, true).is_err());
     }
 
-    // REQ: aw-greenfield-project-bootstrap UT3 — --no-init creates only the target directory.
+    // REQ: aw-greenfield-project-bootstrap UT3 — --no-assets creates only the target directory.
     #[test]
-    fn test_new_no_init_creates_target_directory_only() {
+    fn test_new_no_assets_creates_target_directory_only() {
         let tmp = TempDir::new().unwrap();
         let args = NewArgs {
             name: "ai-studio".to_string(),
             path: None,
             force: false,
-            no_init: true,
+            no_assets: true,
         };
 
         let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
 
         assert_eq!(outcome.target, tmp.path().join("ai-studio"));
-        assert!(!outcome.init_ran);
+        assert!(!outcome.assets_installed);
         assert!(outcome.target.is_dir());
         assert!(!outcome.target.join(".aw").exists());
     }
 
-    // REQ: aw-greenfield-project-bootstrap UT5 — aw new delegates to the shared init installer.
+    // REQ: aw-greenfield-project-bootstrap UT5 — aw new delegates to the shared asset installer.
     #[test]
-    fn test_new_runs_shared_init_installer() {
+    fn test_new_runs_shared_asset_installer() {
         let tmp = TempDir::new().unwrap();
         let target = tmp.path().join("ai-studio");
         let args = NewArgs {
             name: "ai-studio".to_string(),
             path: Some(target.clone()),
             force: false,
-            no_init: false,
+            no_assets: false,
         };
 
         let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
 
         assert_eq!(outcome.target, target);
-        assert!(outcome.init_ran);
+        assert!(outcome.assets_installed);
         assert!(target.join(".aw/config.toml").exists());
         assert!(target.join(".aw/tech-design").is_dir());
         assert!(target.join("CLAUDE.md").exists());
         assert!(
             target.join(".claude/skills/aw-health/SKILL.md").exists(),
-            "aw new should install the same current skills as aw init"
+            "aw new should install current projected skills"
         );
     }
 
@@ -2057,13 +2324,13 @@ auth_method = "cli"
             "aw-codex-review",
             "aw-gemini-explore-specs",
             "aw-gemini-explore-codebase",
-            "aw-merge",
             "aw-capability",
             "aw-wi",
             "aw-standardize",
             "aw-health",
             // REQ: R12 — active support skills
             "aw-build-debug",
+            "aw-build-release",
             "aw-release-patch",
             "aw-mamba-test-coverage",
         ];
@@ -2123,6 +2390,26 @@ auth_method = "cli"
         }
     }
 
+    // REQ: R14 — install_claude_skills prunes the removed aw-merge skill
+    // (`aw td merge` no longer exists; the terminal step is code-check).
+    #[test]
+    fn test_install_claude_skills_prunes_aw_merge() {
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let aw_merge_dir = skills_dir.join("aw-merge");
+        fs::create_dir_all(&aw_merge_dir).unwrap();
+        fs::write(aw_merge_dir.join("SKILL.md"), "# aw-merge").unwrap();
+
+        install_claude_skills(&skills_dir).unwrap();
+
+        assert!(
+            !skills_dir.join("aw-merge").exists(),
+            "removed aw-merge skill should be pruned"
+        );
+    }
+
     #[test]
     fn test_install_claude_skills_preserves_unrelated_codex_review_skill() {
         let tmp = TempDir::new().unwrap();
@@ -2151,6 +2438,7 @@ auth_method = "cli"
         // REQ: R15, R17 — three skills have companion script files
         let expected_scripts: &[(&str, &str)] = &[
             ("aw-build-debug", "build.sh"),
+            ("aw-build-release", "release.sh"),
             ("aw-release-patch", "release.sh"),
             ("aw-mamba-test-coverage", "coverage.sh"),
         ];
@@ -2271,6 +2559,7 @@ fn install_shell_completions() -> Result<()> {
 }
 
 // CODEGEN-END
+
 ```
 
 ## Changes
@@ -2284,6 +2573,84 @@ changes:
     section: source
     description: |
       Whole-file source template generated from the standardized target body.
-      Registers workflow guard/apply hooks in settings.json and updates hook
-      installation tests accordingly.
+      Issue #984 (init-projector slice 1/3): the asset installer projected BOTH root
+      docs from the same `aw:start` template section. Refactored
+      `generate_claude_md`'s upsert logic into shared
+      `compute_upserted_doc`/`upsert_managed_section` helpers; added
+      `generate_agents_md`/`get_agents_sdd_section` (AGENTS.md = CLAUDE.md's
+      section plus `doc_mirror::agents_block_from_claude_block`'s Codex-only
+      insertions), wired into both `run_fresh_install` and `run_update`; added
+      the read-only `managed_section_is_stale`/`pub fn run_check()` pair for
+      read-only staleness checks (non-zero exit + named stale files, `cargo fmt
+      --check` semantics, never writes); and added
+      `resolve_single_project_name`/`print_next_step` so asset installation success
+      output ends with a chainable `next: aw health --project <name>` (or
+      `next: done` when zero/multiple projects are registered, since
+      `--project` is required and the hint must always be runnable).
+
+      Issue #985 (init-projector slice 2/3): `get_sdd_section` now returns
+      the template's `aw:start` section run through
+      `doc_mirror::render_cli_tables`, so the pre-existing whole-block
+      diff/upsert/staleness machinery (`managed_section_is_stale`,
+      `run_check`) covers the new fine-grained
+      `<!-- aw:cli-table:{workflow,support}:start/end -->` CLI-table
+      markers for free — no new detection code needed. Added
+      `update_readme_projects_table`/`readme_projects_table_is_stale`
+      (wired into `run_fresh_install`, `run_update`, and `run_check`): the
+      repo-root README's `<!-- aw:projects-table:start/end -->` Projects
+      table (rendered by `doc_mirror::upsert_projects_table` from
+      `.aw/config.toml`) is opt-in per document — managed asset installation only touches
+      README.md when it already exists AND already carries the markers, so
+      a README without them (or no README at all, e.g. a fresh `aw new`
+      scaffold) is left untouched.
+
+      Fresh-install fix (still #985): once `get_sdd_section` performs real
+      rendering, `generate_claude_md` could no longer pass the raw
+      `CLAUDE_TEMPLATE` constant as `upsert_managed_section`'s
+      `full_doc_if_missing` fallback — a brand-new CLAUDE.md would be
+      seeded with the template's unrendered markers/seed rows, which
+      `run_check`'s freshly-rendered comparison then immediately flagged as
+      stale (and which `agents_block_from_claude_block` would also project
+      forward into a fresh AGENTS.md, corrupting it too). Extracted
+      `split_claude_template` (shared before/section/after split at the
+      `aw:start`/`aw:end` marker offsets) and added `rendered_claude_doc`
+      (the same split, with the section rendered) so `generate_claude_md`'s
+      fresh-install fallback is now content-equivalent to what
+      `managed_section_is_stale`/`run_check` recompute afterwards, mirroring
+      how `generate_agents_md` already built its fallback from the rendered
+      `sdd_section` rather than a raw constant.
+
+      Issue #986 (init-projector slice 3/3): `templates/cli/mainthread/
+      skills/` is now the sole source for every `aw-*` skill, installed into
+      BOTH `.claude/skills/` and `.agents/skills/`. Extracted the previously
+      inline skill list/prune/write logic out of `install_claude_skills` into
+      shared `aw_skill_entries`/`skill_script_entries`/
+      `deprecated_skill_names`/`prune_deprecated_skills`/`write_skill_file`/
+      `install_skill_scripts` helpers, added a new `SKILL_GUARD` embed
+      (`aw-guard`, missing from the installed trees before this issue), and
+      added a sibling `install_agents_skills` that projects each skill body
+      through `doc_mirror::agents_skill_body_from_claude_skill_body` before
+      writing it — same prune list, same script installer, only the body
+      differs. `install_system_files` now also creates and populates
+      `.agents/skills/` (needed the previously-unused `project_root` param).
+      `run_check` gained `skill_tree_stale_entries`, walking both installed
+      skill trees (`.claude/skills`, `.agents/skills`) against the same
+      `aw_skill_entries`/`skill_script_entries`/`deprecated_skill_names`
+      source-of-truth so a hand-edited installed skill, a hand-edited
+      companion script, or a lingering deprecated skill directory in EITHER
+      tree is named and flagged without writing — the same `cargo fmt
+      --check` semantics as the existing CLAUDE.md/AGENTS.md staleness
+      check.
+
+      Issue #1077 (archetype-as-traits slice 1/3): added
+      `update_contributing_trait_table`/`contributing_trait_table_is_stale`,
+      wired into `run_fresh_install`, `run_update`, and `run_check`
+      immediately after their `update_readme_projects_table`/
+      `readme_projects_table_is_stale` counterparts. Same opt-in-per-document
+      contract as the README Projects table (issue #985): only touches
+      CONTRIBUTING.md when it exists AND already carries the
+      `<!-- aw:trait-table:start/end -->` markers, rendering the enclosed
+      table from `doc_mirror::upsert_trait_table`/`doc_mirror::TRAITS`.
+      `run_check`'s doc comment and stale-file list now cover CONTRIBUTING.md
+      alongside README.md, never writing.
 ```

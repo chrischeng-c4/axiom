@@ -1,0 +1,9 @@
+[package]
+name = "service-metrics"
+version = "0.1.0"
+edition = "2021"
+description = "Shared lock-free Prometheus metric primitives for the ecosystem's HTTP services: AtomicU64-backed counter/gauge/latency-observation types plus a text/plain version 0.0.4 encoder (# HELP/# TYPE + samples). API dep-free, no macros; lumen's hand-rolled `src/metrics.rs` (#974) is the reference extraction and reimplements its `Metrics` registry on these primitives with byte-identical `render()` output."
+
+[lib]
+name = "service_metrics"
+path = "src/lib.rs"

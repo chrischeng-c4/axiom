@@ -5,10 +5,11 @@
 //! JSON with the expected top-level shape (no server, no I/O).
 
 use lumen::spec::{
-    field_catalog, json_schema_json, llm_integration_md, llm_outline_md, llm_quickstart_md,
-    llm_recipes_md, llm_workflow_md, openapi_json, openapi_yaml, query_shapes,
+    field_catalog, json_schema_json, llm_auth_md, llm_deployment_md, llm_integration_md,
+    llm_outline_md, llm_quickstart_md, llm_recipes_md, llm_storage_md, llm_workflow_md,
+    openapi_json, openapi_yaml, query_shapes,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 
 #[test]
@@ -24,6 +25,20 @@ fn openapi_is_valid_json_with_search_path() {
         paths.keys().any(|p| p.contains("/search")),
         "exposes a search path: {:?}",
         paths.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        v["components"]["securitySchemes"]["bearerAuth"]["scheme"], "bearer",
+        "OpenAPI advertises the Authorization: Bearer token scheme"
+    );
+    assert_eq!(
+        v["security"][0]["bearerAuth"],
+        json!([]),
+        "OpenAPI globally requires bearer auth for data-plane routes"
+    );
+    assert_eq!(
+        v["paths"]["/healthz"]["get"]["security"],
+        json!([{}]),
+        "auth-exempt admin/probe routes override the global bearer requirement"
     );
 }
 
@@ -63,6 +78,45 @@ fn json_schema_emits_component_schemas() {
 }
 
 #[test]
+fn json_schema_emits_token_registry_operational_schema() {
+    let v: Value = serde_json::from_str(&json_schema_json()).expect("json-schema is valid JSON");
+    let schema = &v["operationalSchemas"]["TokenRegistry"];
+    assert_eq!(
+        schema["type"], "object",
+        "TokenRegistry is an object schema"
+    );
+    assert_eq!(
+        schema["additionalProperties"]["properties"]["roles"]["additionalProperties"]["enum"],
+        json!(["read", "write", "admin"]),
+        "TokenRegistry publishes the exact role enum"
+    );
+    assert!(
+        schema["examples"][0]["admin-token"]["roles"]["*"] == "admin",
+        "TokenRegistry example includes wildcard admin role: {schema}"
+    );
+}
+
+#[test]
+// @spec projects/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
+fn search_request_sort_schema_documents_current_sort_behavior() {
+    let v: Value = serde_json::from_str(&json_schema_json()).expect("json-schema is valid JSON");
+    let desc = v["components"]["schemas"]["SearchRequest"]["properties"]["sort"]["description"]
+        .as_str()
+        .expect("SearchRequest.sort has a schema description");
+    for needle in [
+        "up to 4 keys",
+        "`first`/`last` keep",
+        "`has_child`",
+        "exact `total`",
+    ] {
+        assert!(
+            desc.contains(needle),
+            "sort description missing `{needle}`: {desc}"
+        );
+    }
+}
+
+#[test]
 fn query_shapes_cover_core_node_types_and_carry_requests() {
     let v = query_shapes();
     let shapes = v["shapes"].as_array().expect("shapes array");
@@ -72,6 +126,7 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
         "terms",
         "range",
         "match_bm25",
+        "autocomplete_ngram",
         "boolean_and",
         "boolean_not",
         "knn",
@@ -98,6 +153,19 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
             s["name"]
         );
     }
+    let has_child = shapes
+        .iter()
+        .find(|s| s["name"] == "has_child_nested_group")
+        .expect("has_child query shape exists");
+    let desc = has_child["description"].as_str().unwrap();
+    assert!(
+        desc.contains("parent-field sort"),
+        "has_child shape description should mention parent-field sort: {desc}"
+    );
+    assert!(
+        has_child["request"]["sort"].is_array(),
+        "has_child shape should show sort composition: {has_child}"
+    );
 }
 
 #[test]
@@ -148,23 +216,286 @@ fn field_catalog_matches_the_real_enums() {
             "vector metric `{m}` listed: {metrics:?}"
         );
     }
+
+    // #825: the `lumen spec --fields` catalog must document how to declare
+    // and query hash fields, matching the README field-type table.
+    let hash = v["field_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["type"] == "hash")
+        .unwrap();
+    assert_eq!(hash["schema"], json!({ "type": "hash" }));
+    assert!(
+        hash["value"].as_str().unwrap().contains("16-hex"),
+        "hash catalog should document the 64-bit hex value shape: {hash}"
+    );
+    assert!(
+        hash["queries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|q| q == "hamming"),
+        "hash catalog should name hamming query support: {hash}"
+    );
 }
 
 // --- `lumen llm *` agent integration topics (offline) ----------------------
 
+/// #824: the outline must teach the convention-canonical `--topic` form, not
+/// the positional form rejected by clap.
+/// @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#unit-test
 #[test]
 fn llm_outline_maps_agent_topics() {
     let outline = llm_outline_md();
     assert!(!outline.trim().is_empty(), "outline is non-empty");
     for needle in [
-        "lumen llm workflow",
-        "lumen llm integration",
-        "lumen llm quickstart",
-        "lumen llm recipes",
+        "lumen llm --topic workflow",
+        "lumen llm --topic integration",
+        "lumen llm --topic quickstart",
+        "lumen llm --topic auth",
+        "lumen llm --topic deployment",
+        "lumen llm --topic storage",
+        "lumen llm --topic recipes",
         "lumen spec --format openapi-yaml",
         "lumen spec",
     ] {
         assert!(outline.contains(needle), "outline missing `{needle}`");
+    }
+    for rejected in [
+        "`lumen llm workflow`",
+        "`lumen llm integration`",
+        "`lumen llm quickstart`",
+        "`lumen llm auth`",
+        "`lumen llm deployment`",
+        "`lumen llm storage`",
+        "`lumen llm recipes`",
+    ] {
+        assert!(
+            !outline.contains(rejected),
+            "outline advertises rejected positional command `{rejected}`"
+        );
+    }
+}
+
+#[test]
+fn llm_auth_publishes_token_registry_shape() {
+    let auth = llm_auth_md();
+    assert!(!auth.trim().is_empty(), "auth topic is non-empty");
+    for needle in [
+        "LUMEN_AUTH=required",
+        "LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json",
+        "LUMEN_TOKEN=<token>",
+        "Authorization: Bearer <LUMEN_TOKEN>",
+        "\"admin-token\"",
+        "\"roles\"",
+        "\"*\": \"admin\"",
+        "\"products\": \"read\"",
+        "tokensSecret",
+        "Secret Manager",
+        "Client",
+        "auth_token",
+        "default_headers",
+        "Shared auth primitive",
+        "<SVC>_TOKEN_REGISTRY_FILE",
+        "service-auth",
+    ] {
+        assert!(auth.contains(needle), "auth topic missing `{needle}`");
+    }
+}
+
+#[test]
+fn llm_deployment_documents_shard_cluster_topology() {
+    let deployment = llm_deployment_md();
+    assert!(
+        !deployment.trim().is_empty(),
+        "deployment topic is non-empty"
+    );
+    for needle in [
+        "lumen dockerfile render",
+        "lumen k8s crd render",
+        "lumen k8s operator render",
+        "lumen k8s instance render",
+        "spec.shardCount",
+        "spec.replicasPerShard",
+        "totalPods = shardCount * replicasPerShard",
+        "shardIndex = ordinal % shardCount",
+        "replicaIndex = ordinal / shardCount",
+        "replicasPerShard: 1",
+        "primary/follower replication",
+        "replicasPerShard: 2",
+        "replicasPerShard: 3",
+        "voterCount",
+        "HPA is for stateless or near-stateless serving capacity",
+        "HPA-created pods in a single-member topology",
+        "production data fan-out",
+        "Dynamic shard growth",
+        "50% of the configured shard ceiling",
+        "versioned virtual-bucket map",
+        "Search without a routing key scatters/gathers",
+        "LUMEN_BOOTSTRAP_SEED_URI",
+        "Backup is the cold disaster-recovery and seed surface",
+        "Shared raft-host topology primitive",
+        "RaftStateMachine",
+        "REPLICAS_PER_SHARD > 1",
+    ] {
+        assert!(
+            deployment.contains(needle),
+            "deployment topic missing `{needle}`"
+        );
+    }
+}
+
+/// #812: the serving fleet is always a StatefulSet with a durable PVC-backed
+/// WAL, including at `replicasPerShard: 1` — this must be discoverable
+/// offline via `lumen llm --topic storage`, not only in the CRD doc comments.
+/// @spec projects/lumen/tech-design/logic/render-serving-as-a-statefulset-unconditionally-even-at-replicas.md
+#[test]
+fn llm_storage_documents_unconditional_statefulset_pvc() {
+    let storage = llm_storage_md();
+    assert!(!storage.trim().is_empty(), "storage topic is non-empty");
+    for needle in [
+        "StatefulSet",
+        "volumeClaimTemplates",
+        "raft",
+        "/var/lib/lumen",
+        "replicasPerShard: 1",
+        "20Gi",
+        "no raft consensus",
+        "legacy single-shard HPA path",
+        "continuously catch",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+#[test]
+fn llm_storage_documents_shard_replica_and_bootstrap_boundaries() {
+    let storage = llm_storage_md();
+    for needle in [
+        "spec.shardCount",
+        "spec.replicasPerShard",
+        "shardCount * replicasPerShard",
+        "shardIndex = ordinal % shardCount",
+        "replicaIndex = ordinal / shardCount",
+        "HPA does not change storage ownership",
+        "Dynamic shard growth is an operator workflow",
+        "storage pressure",
+        "versioned virtual-bucket map",
+        "bounded snapshot-batch",
+        "Empty-PVC replica bootstrap",
+        "LUMEN_BOOTSTRAP_SEED_URI",
+        "before WAL/raft delta catch-up",
+        "not the normal live replica synchronization mechanism",
+        "Shared backup primitive",
+        "BackupDestination",
+        "fetch_backup_object",
+        "Shared raft-host primitive",
+        "RaftStateMachine",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #834: clusters that reconciled `<=0.4.9` with the Deployment-backed
+/// single-replica topology need an explicit handoff because `>=0.4.10`
+/// renders the same serving fleet name as a StatefulSet and the operator does
+/// not prune the stale different-kind Deployment automatically.
+#[test]
+fn llm_storage_documents_deployment_to_statefulset_upgrade_handoff() {
+    let storage = llm_storage_md();
+    for needle in [
+        "<=0.4.9",
+        ">=0.4.10",
+        "Deployment/<name>",
+        "StatefulSet/<name>",
+        "does not prune a stale child object",
+        "Apply the new CRD first",
+        "GET /admin/backup",
+        "Pause the old `<=0.4.9` operator reconciliation",
+        "kubectl -n <ns> scale deployment/<name> --replicas=0",
+        "kubectl -n <ns> delete deployment/<name> --wait=true",
+        "kubectl -n <ns> rollout status statefulset/<name>",
+        "Do not run both",
+        "independent WAL",
+        "does not copy a Deployment pod's filesystem",
+        "restore an admin backup",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #808 R1: the manual admin backup/restore procedure, the optional
+/// `spec.serving.backup` CRD field, and the `lumen backup` CLI verb must all
+/// be discoverable offline via `lumen llm --topic storage`.
+/// @spec projects/lumen/tech-design/logic/no-snapshot-backup-mechanism-for-lumen-s-wal-any-replicaspershar.md
+#[test]
+fn llm_storage_documents_admin_backup_and_scheduled_cronjob() {
+    let storage = llm_storage_md();
+    for needle in [
+        "GET /admin/backup",
+        "POST /admin/backup/local",
+        "POST /admin/restore",
+        "Role::Admin",
+        "spec.serving.backup",
+        "schedule",
+        "destination",
+        "retentionSecs",
+        "adminTokenSecret",
+        "lumen backup",
+        "LUMEN_BACKUP_TOKEN",
+        "--retention-secs",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #809: a `spec.serving.raftStorage` CR edit does not, by itself, resize
+/// existing per-pod PVCs (StatefulSet `volumeClaimTemplates` are immutable
+/// after creation) — the manual patch procedure, its `StorageClass`
+/// precondition, the shrink limitation, and the `resize-storage` CLI helper
+/// must all be discoverable offline via `lumen llm --topic storage`.
+/// @spec projects/lumen/tech-design/logic/raftstorage-pvc-has-no-auto-expansion-cr-field-change-doesn-t-re.md
+#[test]
+fn llm_storage_documents_resize_gap() {
+    let storage = llm_storage_md();
+    for needle in [
+        "Resizing",
+        "volumeClaimTemplates",
+        "immutable",
+        "kubectl patch pvc",
+        "allowVolumeExpansion: true",
+        "does not support shrinking",
+        "lumen k8s operator resize-storage",
+        "--namespace",
+        "--dry-run",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+/// #810: `serving.raftStorageClass` unset means cluster default, which is
+/// commonly not SSD-backed (e.g. GKE's `standard-rwo`) — a deployer with a
+/// raft/WAL write-latency workload needs this called out explicitly, plus
+/// reference example StorageClass names per common provider, rather than
+/// only in the CRD field doc comment. Documentation-only: no `serving.ssd`
+/// toggle, no new CRD field.
+/// @spec projects/lumen/tech-design/logic/expose-ssd-as-a-simple-toggle-serving-ssd-instead-of-requiring-a.md
+#[test]
+fn llm_storage_documents_ssd_guidance() {
+    let storage = llm_storage_md();
+    for needle in [
+        "raftStorageClass",
+        "cluster default is not SSD-backed",
+        "standard-rwo",
+        "premium-rwo",
+        "pd-ssd",
+        "gp3",
+        "managed-csi-premium",
+        "kubectl get storageclass",
+        "serving.ssd",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
     }
 }
 
@@ -175,15 +506,26 @@ fn llm_workflow_covers_the_integration_model() {
     // Mental model + the 4-step workflow + flavor guide + non-goals must be
     // present so an agent can wire lumen in without a docs site.
     for needle in [
-        "search index",   // mental model: not a database
-        "external_id",    // returns ids, not documents
-        "Declare",        // step 1
-        "Ingest",         // step 2 (caller pub/sub)
-        "Search",         // step 3
-        "Hydrate",        // step 4
-        "Which \"find\"", // flavor decision guide
-        ":7373",          // connection
-        "Do NOT",         // non-goals
+        "search index",         // mental model: not a database
+        "external_id",          // returns ids, not documents
+        "Declare",              // step 1
+        "Ingest",               // step 2 (caller pub/sub)
+        "Search",               // step 3
+        "Hydrate",              // step 4
+        "Which \"find\"",       // flavor decision guide
+        "parent-field `sort`",  // has_child + parent-field sort support
+        "Geo / spatial search", // explicit unsupported/search-boundary list
+        "Phrase / proximity queries",
+        "Fuzzy / typo tolerance",
+        "Synonyms",
+        "Autocomplete / suggest",
+        "Highlighting",
+        "Per-field / per-clause boost",
+        "Document TTL / expiry",
+        ":7373", // connection
+        "Authorization: Bearer",
+        "LUMEN_TOKEN_REGISTRY_FILE",
+        "Do NOT", // non-goals
     ] {
         assert!(g.contains(needle), "workflow missing `{needle}`");
     }
@@ -200,8 +542,19 @@ fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
         "Recommended Postgres / AlloyDB integration",
         "outbox",
         "ACK/retry/DLQ",
-        "Do not publish directly to lumen's broker stream",
+        "Do not publish directly to lumen's internal WAL",
         "Ownership boundary",
+        "Shared generated-client primitive",
+        "spec gen --lang ts|py|rust --out <dir>",
+        "GeneratedOutput",
+        "target_concurrency",
+        "max_in_flight_per_origin",
+        "pool_timeout",
+        "Shared h2c client primitive",
+        "ceil(ln(concurrency))",
+        "max_keepalive_connections",
+        "Server boundary",
+        "inbound traffic",
     ] {
         assert!(
             integration.contains(needle),
@@ -215,6 +568,10 @@ fn llm_quickstart_is_a_copy_paste_end_to_end() {
     let q = llm_quickstart_md();
     assert!(!q.trim().is_empty(), "quickstart is non-empty");
     assert!(q.contains("curl"), "quickstart has runnable curl");
+    assert!(
+        q.contains("LUMEN_TOKEN_REGISTRY_FILE"),
+        "quickstart documents production auth env"
+    );
     for path in ["/collections/products", "/index", "/search"] {
         assert!(q.contains(path), "quickstart exercises `{path}`");
     }

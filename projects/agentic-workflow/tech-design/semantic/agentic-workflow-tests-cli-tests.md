@@ -52,7 +52,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests/cli/tests"
-      - path: "projects/agentic-workflow/tests/cli/tests/td_merge_atomic_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["test_case"]
@@ -201,6 +201,86 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests/cli/tests"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        symbols:
+          - name: "repo_root"
+            kind: "function"
+            public: false
+          - name: "strip_codex_only_blocks"
+            kind: "function"
+            public: false
+          - name: "agents_md_is_claude_md_plus_codex_whitelist"
+            kind: "function"
+            public: false
+      - path: "projects/agentic-workflow/tests/cli/tests/root_trait_coverage_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        symbols:
+          - name: "repo_root"
+            kind: "function"
+            public: false
+          - name: "service_archetype_section_range"
+            kind: "function"
+            public: false
+          - name: "every_trait_contributing_anchor_resolves_to_a_real_heading"
+            kind: "function"
+            public: false
+          - name: "every_service_archetype_h3_is_either_trait_anchored_or_marked_policy_only"
+            kind: "function"
+            public: false
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        symbols:
+          - name: "repo_root"
+            kind: "function"
+            public: false
+          - name: "repo_root_md_files_match_allowlist"
+            kind: "function"
+            public: false
+      - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "skip_unless_binaries"
+            kind: "function"
+            public: false
+          - name: "init_seed_repo"
+            kind: "function"
+            public: false
+          - name: "write_demo_changes_spec"
+            kind: "function"
+            public: false
+          - name: "seed_open_issue_at_phase"
+            kind: "function"
+            public: false
+          - name: "seed_stranded_terminal_issue"
+            kind: "function"
+            public: false
+          - name: "count_cb_code_check_trailer_commits"
+            kind: "function"
+            public: false
+          - name: "chain_liveness_claim_never_lands_on_deadlock_phase"
+            kind: "function"
+            public: false
+          - name: "chain_liveness_code_check_terminates_within_tick_budget"
+            kind: "function"
+            public: false
+          - name: "chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "tests"
+          domain: "projects/agentic-workflow/tests/cli/tests"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -292,6 +372,33 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/agentic-workflow/tests/cli/tests"
+          - name: "run_init"
+            kind: "function"
+            public: false
+          - name: "aw_start_block"
+            kind: "function"
+            public: false
+          - name: "combined_output"
+            kind: "function"
+            public: false
+          - name: "fresh_init_creates_both_root_docs_and_check_is_clean"
+            kind: "function"
+            public: false
+          - name: "fresh_init_agents_md_block_matches_doc_mirror_projection_of_claude_md_block"
+            kind: "function"
+            public: false
+          - name: "init_check_detects_tamper_without_writing_and_init_restores_it"
+            kind: "function"
+            public: false
+          - name: "init_emits_chainable_next_step"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "tests"
+          domain: "projects/agentic-workflow/tests/cli/tests"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -303,7 +410,7 @@ semantic_domain:
           - name: "smoke_lifecycle_trailers_compile"
             kind: "function"
             public: false
-          - name: "smoke_is_mergeable_includes_new_phases"
+          - name: "smoke_is_terminal_code_checkable_includes_new_phases"
             kind: "function"
             public: false
         source_evidence_node:
@@ -680,7 +787,7 @@ semantic_domain:
           - name: "test_lifecycle_trailer_cb_fill_variant"
             kind: "function"
             public: false
-          - name: "test_td_merge_accepts_cb_filled"
+          - name: "test_td_code_check_accepts_cb_filled"
             kind: "function"
             public: false
           - name: "test_brief_mode_envelope_shape"
@@ -787,10 +894,14 @@ tests:
   evidence:
     source_tests:
       - path: "projects/agentic-workflow/tests/cli/tests/td_check_test.rs"
-      - path: "projects/agentic-workflow/tests/cli/tests/td_merge_atomic_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/recovery_flow_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/standardize_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_namespace_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_trait_coverage_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
+      - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/inplace_mode_test.rs"
       - path: "projects/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
@@ -819,7 +930,7 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/agentic-workflow/tests/cli/tests/td_merge_atomic_test.rs"
+  - path: "projects/agentic-workflow/tests/cli/tests/td_no_merge_test.rs"
     action: modify
     section: schema
     description: |
@@ -842,6 +953,71 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/root_doc_mirror_test.rs"
+    action: create
+    section: schema
+    description: |
+      Root doc mirror contract (meta-doc sheet 1): AGENTS.md must equal
+      CLAUDE.md plus the fixed Codex-only whitelist (title swap, Codex
+      Operational Rules section, slash-command translation paragraph);
+      drift outside the whitelist fails the suite.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/root_trait_coverage_test.rs"
+    action: create
+    section: schema
+    description: |
+      Issue #1077 (traits slice 1/3): bidirectional coverage between
+      `doc_mirror::TRAITS` and CONTRIBUTING.md's "## Service archetype..."
+      section. `every_trait_contributing_anchor_resolves_to_a_real_heading`
+      proves every `TraitDef.contributing_anchor` matches a real heading in
+      CONTRIBUTING.md. `every_service_archetype_h3_is_either_trait_anchored_or_marked_policy_only`
+      proves every H3 within the archetype section is either a trait anchor
+      or carries a literal `policy-only` marker line in its own body.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/root_doc_allowlist_test.rs"
+    action: create
+    section: schema
+    description: |
+      Repo-root doc allowlist contract (meta-doc sheet 2, doc consolidation
+      wave 2): the repo root carries exactly README.md, CONTRIBUTING.md,
+      CLAUDE.md, and AGENTS.md; any other visible root-level
+      `.md` file fails the suite naming the unexpected file and pointing at
+      the CONTRIBUTING.md meta-doc content contract. Dotfiles (tool
+      prompt/cache files) are out of scope.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/tests/cli/tests/chain_liveness_test.rs"
+    action: create
+    section: schema
+    description: |
+      #921 tier 2 (epic #914 slice G): a bounded-tick ("livelock = failure")
+      chain-liveness proof for the internal-lifecycle-verb layer (`aw td
+      claim`, `aw td code-check` via `LocalBackend`, matching
+      `td_no_merge_test.rs`'s established pattern), driving the real `aw`
+      binary. Three tests: `chain_liveness_claim_never_lands_on_deadlock_phase`
+      asserts a repeated `aw td claim --from-path` / `--force-rebase` loop
+      never reports the `td_reviewed` phase (#843's fixed claim-deadlock) and
+      converges on `td_created` within budget;
+      `chain_liveness_code_check_terminates_within_tick_budget` asserts a clean
+      `cb_filled` WI reaches `"action":"done"` in a single tick (code-check is
+      the lifecycle's terminal step);
+      `chain_liveness_code_check_retry_recovers_stranded_terminal_within_tick_budget`
+      seeds a WI exactly where #846's partial-terminal-failure left one
+      (phase already `td_merged`, no `Cb-CodeCheck` trailer commit landed yet)
+      and asserts the retry converges within budget, lands exactly one
+      trailer commit, and a second bounded-tick pass is an immediate,
+      idempotent no-op (no duplicate commit). #842 (the `td-<slug>` branch
+      never landing) already has dedicated coverage in
+      `td_no_merge_test.rs::test_code_check_lands_td_slug_branch_onto_main`
+      and is cross-referenced rather than duplicated. AC2's full
+      `completion.workflow_complete=true` proof via `aw wi run` is
+      deliberately out of scope here: that field lives on the root-driven
+      runner envelope (`cli/run.rs`), and `aw wi`'s public verbs require a
+      configured `github`/`gitlab` `issue_platform`/`repo_platform` in
+      `.aw/config.toml` (`issues::resolve_default_backend` rejects `local`
+      there by design), so it cannot be driven offline against a from-scratch
+      sandbox repo — the internal-verb layer proven here is where #842/#843/
+      #846 actually manifested and is where a regression would reappear.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/tests/cli/tests/td_dirty_gate_test.rs"
     action: modify

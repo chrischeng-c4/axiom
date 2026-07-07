@@ -17,6 +17,16 @@ use std::{
 use anyhow::{Context, Result};
 
 const SORT_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+const LS_NATIVE_MIN_ENTRIES: usize = 1024;
+const FIND_NATIVE_MIN_ENTRIES: usize = 512;
+const SED_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const SED_NATIVE_MIN_SPAN_LINES: usize = 1024;
+const GREP_NATIVE_MIN_FILES: usize = 64;
+const GREP_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+const WC_NATIVE_MIN_FILES: usize = 64;
+const WC_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
 
 /// @spec projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +71,7 @@ pub enum NativeCommand {
     Cat(CatPlan),
     Find(FindPlan),
     SedPrint(SedPrintPlan),
+    WcLines(WcLinesPlan),
 }
 
 /// @spec projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
@@ -105,6 +116,12 @@ pub struct SedPrintPlan {
     pub end_line: usize,
 }
 
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WcLinesPlan {
+    pub files: Vec<String>,
+}
+
 /// @spec projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
 impl CommandPlan {
     pub fn explain(&self) -> String {
@@ -132,6 +149,7 @@ impl CommandPlan {
                     NativeCommand::Cat(_) => "cap-native cat",
                     NativeCommand::Find(_) => "cap-native find",
                     NativeCommand::SedPrint(_) => "cap-native sed -n",
+                    NativeCommand::WcLines(_) => "cap-native wc -l",
                 };
                 [
                     format!("original: {}", plan.original),
@@ -187,9 +205,9 @@ fn plan_with_tool_resolver(
     if let Some(plan) = plan_native(command, planned_label.clone(), &original) {
         return CommandPlan::Native(plan);
     }
-    let _ = tool_available;
-    if let Some(plan) = plan_grep_replacement(command, planned_label.clone(), &original, |_| false)
-    {
+    if let Some(plan) = plan_grep_replacement(command, planned_label.clone(), &original, |tool| {
+        tool_available(tool)
+    }) {
         return CommandPlan::External(plan);
     }
 
@@ -212,6 +230,7 @@ fn plan_native(command: &[String], label: Option<String>, original: &str) -> Opt
         "find" => plan_find(&command[1..], label, original),
         "sort" => plan_sort(&command[1..], label, original),
         "sed" => plan_sed(&command[1..], label, original),
+        "wc" => plan_wc(&command[1..], label, original),
         _ => None,
     }
 }
@@ -241,7 +260,11 @@ fn plan_ls(args: &[String], label: Option<String>, original: &str) -> Option<Nat
         return None;
     }
     let path = paths.pop().unwrap_or_else(|| ".".to_string());
-    if !Path::new(&path).exists() {
+    let path_ref = Path::new(&path);
+    if !path_ref.exists() {
+        return None;
+    }
+    if !path_ref.is_dir() || !dir_entries_at_least(path_ref, LS_NATIVE_MIN_ENTRIES, all) {
         return None;
     }
 
@@ -249,7 +272,7 @@ fn plan_ls(args: &[String], label: Option<String>, original: &str) -> Option<Nat
         command: NativeCommand::Ls(LsPlan { path, all }),
         label,
         original: original.to_string(),
-        reason: "simple non-long ls can be listed in-process".to_string(),
+        reason: "large simple non-long ls can be listed in-process".to_string(),
     })
 }
 
@@ -298,7 +321,8 @@ fn plan_find(args: &[String], label: Option<String>, original: &str) -> Option<N
     } else {
         ".".to_string()
     };
-    if !Path::new(&root).exists() {
+    let root_ref = Path::new(&root);
+    if !root_ref.exists() || !tree_entries_at_least(root_ref, FIND_NATIVE_MIN_ENTRIES) {
         return None;
     }
 
@@ -336,7 +360,7 @@ fn plan_find(args: &[String], label: Option<String>, original: &str) -> Option<N
         }),
         label,
         original: original.to_string(),
-        reason: "simple find predicates can be walked in-process".to_string(),
+        reason: "large simple find predicates can be walked in-process".to_string(),
     })
 }
 
@@ -345,7 +369,12 @@ fn plan_sed(args: &[String], label: Option<String>, original: &str) -> Option<Na
         return None;
     }
     let (start_line, end_line) = parse_sed_print_script(&args[1])?;
-    if !Path::new(&args[2]).is_file() {
+    let path = Path::new(&args[2]);
+    let meta = fs::metadata(path).ok()?;
+    if !meta.is_file()
+        || (meta.len() < SED_NATIVE_MIN_BYTES
+            && end_line.saturating_sub(start_line) + 1 < SED_NATIVE_MIN_SPAN_LINES)
+    {
         return None;
     }
 
@@ -357,7 +386,39 @@ fn plan_sed(args: &[String], label: Option<String>, original: &str) -> Option<Na
         }),
         label,
         original: original.to_string(),
-        reason: "sed -n line print can be served as an in-process ranged read".to_string(),
+        reason: "large sed -n line print can be served as an in-process ranged read".to_string(),
+    })
+}
+
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+fn plan_wc(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    if args.len() < 2 || args[0] != "-l" {
+        return None;
+    }
+
+    let files = args[1..].to_vec();
+    if files.iter().any(|path| path.starts_with('-')) {
+        return None;
+    }
+
+    let mut total_bytes = 0u64;
+    for file in &files {
+        let meta = fs::metadata(file).ok()?;
+        if !meta.is_file() {
+            return None;
+        }
+        total_bytes = total_bytes.saturating_add(meta.len());
+    }
+
+    if files.len() < WC_NATIVE_MIN_FILES && total_bytes < WC_NATIVE_MIN_BYTES {
+        return None;
+    }
+
+    Some(NativePlan {
+        command: NativeCommand::WcLines(WcLinesPlan { files }),
+        label,
+        original: original.to_string(),
+        reason: "large wc -l file aggregate can count lines in-process".to_string(),
     })
 }
 
@@ -423,6 +484,16 @@ fn plan_grep_replacement(
     if positional.iter().skip(1).any(|path| path.starts_with('-')) {
         return None;
     }
+    let large_enough = positional.iter().skip(1).any(|path| {
+        grep_workload_at_least(
+            Path::new(path),
+            GREP_NATIVE_MIN_FILES,
+            GREP_NATIVE_MIN_BYTES,
+        )
+    });
+    if !large_enough {
+        return None;
+    }
 
     rg_args.push("--".to_string());
     rg_args.extend(positional);
@@ -442,6 +513,78 @@ fn plan_grep_replacement(
     })
 }
 
+/// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+fn dir_entries_at_least(path: &Path, min: usize, include_hidden: bool) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    let mut count = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !include_hidden && name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        count += 1;
+        if count >= min {
+            return true;
+        }
+    }
+    false
+}
+
+/// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+fn tree_entries_at_least(root: &Path, min: usize) -> bool {
+    let mut count = 0usize;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !path.as_os_str().is_empty() {
+            count += 1;
+            if count >= min {
+                return true;
+            }
+        }
+        if meta.file_type().is_dir() {
+            let Ok(entries) = fs::read_dir(&path) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    false
+}
+
+/// @spec projects/cap/tech-design/logic/add-workload-sensitive-native-command-gates.md#changes
+fn grep_workload_at_least(root: &Path, min_files: usize, min_bytes: u64) -> bool {
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_file() {
+            files += 1;
+            bytes = bytes.saturating_add(meta.len());
+            if files >= min_files || bytes >= min_bytes {
+                return true;
+            }
+        } else if meta.file_type().is_dir() {
+            let Ok(entries) = fs::read_dir(&path) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    false
+}
+
 /// @spec projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
 pub fn run_native(plan: &NativePlan) -> Result<ExitCode> {
     let mut stdout = io::stdout().lock();
@@ -450,13 +593,18 @@ pub fn run_native(plan: &NativePlan) -> Result<ExitCode> {
     Ok(exit_code_from_i32(code))
 }
 
-fn run_native_to(plan: &NativePlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+pub(crate) fn run_native_to(
+    plan: &NativePlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
     match &plan.command {
         NativeCommand::Ls(ls) => run_ls(ls, stdout, stderr),
         NativeCommand::Sort(sort) => run_sort(sort, stdout),
         NativeCommand::Cat(cat) => run_cat(cat, stdout, stderr),
         NativeCommand::Find(find) => run_find(find, stdout, stderr),
         NativeCommand::SedPrint(sed) => run_sed_print(sed, stdout, stderr),
+        NativeCommand::WcLines(wc) => run_wc_lines(wc, stdout, stderr),
     }
 }
 
@@ -639,6 +787,42 @@ fn run_sed_print(
         }
     }
     Ok(0)
+}
+
+// @spec projects/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+fn run_wc_lines(plan: &WcLinesPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let mut total = 0u64;
+    let mut exit = 0;
+    for file in &plan.files {
+        match count_newlines(file) {
+            Ok(lines) => {
+                total = total.saturating_add(lines);
+                writeln!(stdout, "{lines:8} {file}")?;
+            }
+            Err(e) => {
+                writeln!(stderr, "wc: {file}: {e}")?;
+                exit = 1;
+            }
+        }
+    }
+    if plan.files.len() > 1 {
+        writeln!(stdout, "{total:8} total")?;
+    }
+    Ok(exit)
+}
+
+fn count_newlines(file: &str) -> Result<u64> {
+    let mut reader = BufReader::new(fs::File::open(file)?);
+    let mut buf = [0u8; 8192];
+    let mut lines = 0u64;
+    loop {
+        let read = std::io::Read::read(&mut reader, &mut buf)?;
+        if read == 0 {
+            break;
+        }
+        lines += buf[..read].iter().filter(|byte| **byte == b'\n').count() as u64;
+    }
+    Ok(lines)
 }
 
 fn parse_sed_print_script(script: &str) -> Option<(usize, usize)> {
@@ -907,6 +1091,9 @@ mod tests {
     #[test]
     fn shell_string_simple_commands_use_cap_planner() {
         let tmp = tempdir().unwrap();
+        for idx in 0..FIND_NATIVE_MIN_ENTRIES {
+            fs::write(tmp.path().join(format!("file-{idx:04}.txt")), "").unwrap();
+        }
         assert!(matches!(
             plan_shell(&format!("find {} -type f", tmp.path().display()), None),
             CommandPlan::Native(NativePlan {
@@ -931,9 +1118,12 @@ mod tests {
 
     #[test]
     fn grep_falls_back_until_resource_gate_wins() {
-        let CommandPlan::External(no_rg) =
-            plan_with_tool_resolver(&s(&["grep", "-R", "TODO", "."]), None, |tool| tool == "rg")
-        else {
+        let tmp = tempdir().unwrap();
+        let CommandPlan::External(no_rg) = plan_with_tool_resolver(
+            &s(&["grep", "-R", "TODO", tmp.path().to_str().unwrap()]),
+            None,
+            |tool| tool == "rg",
+        ) else {
             panic!("expected original fallback");
         };
         assert_eq!(no_rg.implementation, ExternalImplementation::Original);
@@ -944,15 +1134,35 @@ mod tests {
         let tmp = tempdir().unwrap();
         let file = tmp.path().join("a.txt");
         fs::write(&file, "one\ntwo\nthree\n").unwrap();
+        let list_dir = tmp.path().join("list-large");
+        fs::create_dir(&list_dir).unwrap();
+        for idx in 0..LS_NATIVE_MIN_ENTRIES {
+            fs::write(list_dir.join(format!("entry-{idx:04}")), "").unwrap();
+        }
+        let find_dir = tmp.path().join("find-large");
+        fs::create_dir(&find_dir).unwrap();
+        for idx in 0..FIND_NATIVE_MIN_ENTRIES {
+            fs::write(find_dir.join(format!("file-{idx:04}.txt")), "").unwrap();
+        }
         let sort_file = tmp.path().join("sort-large.txt");
         fs::write(
             &sort_file,
             "z\na\n".repeat((SORT_NATIVE_MIN_BYTES as usize / 4) + 1),
         )
         .unwrap();
+        let sed_file = tmp.path().join("sed-large.txt");
+        fs::write(&sed_file, "line\n".repeat(SED_NATIVE_MIN_SPAN_LINES + 1)).unwrap();
+        let wc_dir = tmp.path().join("wc-large");
+        fs::create_dir(&wc_dir).unwrap();
+        let mut wc_files = Vec::new();
+        for idx in 0..WC_NATIVE_MIN_FILES {
+            let file = wc_dir.join(format!("wc-{idx:04}.txt"));
+            fs::write(&file, "one\ntwo\n").unwrap();
+            wc_files.push(file);
+        }
 
         assert!(matches!(
-            plan_without_tools(&["ls", tmp.path().to_str().unwrap()]),
+            plan_without_tools(&["ls", list_dir.to_str().unwrap()]),
             CommandPlan::Native(NativePlan {
                 command: NativeCommand::Ls(_),
                 ..
@@ -975,16 +1185,34 @@ mod tests {
             })
         ));
         assert!(matches!(
-            plan_without_tools(&["find", tmp.path().to_str().unwrap(), "-type", "f"]),
+            plan_without_tools(&["find", find_dir.to_str().unwrap(), "-type", "f"]),
             CommandPlan::Native(NativePlan {
                 command: NativeCommand::Find(_),
                 ..
             })
         ));
         assert!(matches!(
-            plan_without_tools(&["sed", "-n", "2,3p", file.to_str().unwrap()]),
+            plan_without_tools(&[
+                "sed",
+                "-n",
+                &format!("1,{SED_NATIVE_MIN_SPAN_LINES}p"),
+                sed_file.to_str().unwrap()
+            ]),
             CommandPlan::Native(NativePlan {
                 command: NativeCommand::SedPrint(_),
+                ..
+            })
+        ));
+        let mut wc_args = vec!["wc".to_string(), "-l".to_string()];
+        wc_args.extend(
+            wc_files
+                .iter()
+                .map(|file| file.to_string_lossy().to_string()),
+        );
+        assert!(matches!(
+            plan(&wc_args, None),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::WcLines(_),
                 ..
             })
         ));
@@ -994,6 +1222,48 @@ mod tests {
             panic!("expected original fallback for small sort input");
         };
         assert_eq!(plan.implementation, ExternalImplementation::Original);
+    }
+
+    #[test]
+    fn tiny_workloads_keep_original_path() {
+        let tmp = tempdir().unwrap();
+        let list_dir = tmp.path().join("list-small");
+        fs::create_dir(&list_dir).unwrap();
+        fs::write(list_dir.join("one"), "").unwrap();
+        let sed_file = tmp.path().join("sed-small.txt");
+        fs::write(&sed_file, "one\ntwo\nthree\n").unwrap();
+        let wc_file = tmp.path().join("wc-small.txt");
+        fs::write(&wc_file, "one\ntwo\n").unwrap();
+
+        for args in [
+            vec!["ls", list_dir.to_str().unwrap()],
+            vec!["find", tmp.path().to_str().unwrap(), "-type", "f"],
+            vec!["sed", "-n", "1,2p", sed_file.to_str().unwrap()],
+            vec!["wc", "-l", wc_file.to_str().unwrap()],
+            vec!["wc", "-w", wc_file.to_str().unwrap()],
+        ] {
+            let CommandPlan::External(plan) = plan_without_tools(&args) else {
+                panic!("expected original fallback for {args:?}");
+            };
+            assert_eq!(plan.implementation, ExternalImplementation::Original);
+        }
+    }
+
+    #[test]
+    fn large_recursive_grep_can_use_replacement_when_rg_exists() {
+        let tmp = tempdir().unwrap();
+        for idx in 0..GREP_NATIVE_MIN_FILES {
+            fs::write(tmp.path().join(format!("file-{idx:04}.txt")), "TODO\n").unwrap();
+        }
+
+        let CommandPlan::External(plan) = plan_with_tool_resolver(
+            &s(&["grep", "-R", "TODO", tmp.path().to_str().unwrap()]),
+            None,
+            |tool| tool == "rg",
+        ) else {
+            panic!("expected grep replacement");
+        };
+        assert_eq!(plan.implementation, ExternalImplementation::Replacement);
     }
 }
 // CODEGEN-END

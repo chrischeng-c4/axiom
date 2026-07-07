@@ -1,17 +1,17 @@
 ---
 id: vat-source-projects-vat-src-store-rs
-summary: Source replay payload for projects/vat/src/store.rs
+summary: >
+  rust-source-unit TD AST payload for projects/vat/src/store.rs.
 fill_sections: [overview, source, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
     role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: full
-    rationale: "This source replay TD preserves vat's copy-on-write workspace, agent-legible state, resource isolation, and host GPU behavior."
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "This rust-source-unit TD preserves vat source ownership while migrating #39 off group-level source replay."
 ---
 
-# Source TD: projects/vat/src/store.rs
+# Standardized projects/vat/src/store.rs
 
 ## Overview
 <!-- type: overview lang: markdown -->
@@ -37,9 +37,11 @@ Public API manifest for `projects/vat/src/store.rs` generated from AST during Sc
 | `rootfs` | projects/vat/src/store.rs | function | pub | 35 | rootfs(&self) -> PathBuf |
 | `save` | projects/vat/src/store.rs | function | pub | 51 | save(&mut self) -> Result<()> |
 ## Source
-<!-- type: source lang: rust -->
+<!-- type: rust-source-unit lang: rust -->
 
-`````rust
+````rust
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-store-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The vat store: create, load, list, and remove vats on disk, and project a
 //! [`VatState`] from persisted [`VatMeta`] plus live computation.
 
@@ -243,22 +245,18 @@ pub fn remove(id: &str) -> Result<()> {
     std::fs::remove_dir_all(&dir).with_context(|| format!("remove {}", dir.display()))?;
     Ok(())
 }
-
-`````
+// CODEGEN-END
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: source
 changes:
-  - path: "projects/vat/src/store.rs"
+  - path: projects/vat/src/store.rs
     action: modify
-    section: source
+    section: rust-source-unit
+    impl_mode: codegen
     description: |
-      Historical source replay payload retained as semantic context. Active
-      codegen ownership moved to projects/vat/tech-design/semantic/vat-src.md#schema.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-vat-src-store-rs-source-replay-superseded>"
+      rust-source-unit (td_ast) source for `projects/vat/src/store.rs` captured during #39 vat standardization.
 ```

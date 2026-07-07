@@ -8,6 +8,12 @@ capability_refs:
     claim: stories-dev-manager
     coverage: partial
     rationale: "Resolving node_modules bare imports lets real components with third-party deps render in the workbench (dev + static), completing the manager surface."
+  - id: component-workbench
+    role: primary
+    gap: component-workbench-readiness
+    claim: stories-bare-import-resolution
+    coverage: partial
+    rationale: "This TD verifies node_modules bare-import resolution for the stories dev preview and static build."
 ---
 
 # jet stories: Bare-Import (node_modules) Resolution for Dev Preview + Static Build
@@ -49,6 +55,19 @@ flowchart TD
     relative --> done([import resolves dev + static])
     servedep --> done
     cdn --> done
+```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: stories_bare_import_resolution
+    capability_id: component-workbench
+    claim_id: stories-bare-import-resolution
+    name: "Stories bare-import resolution"
+    command: "cargo test -p jet --test manager -- --nocapture"
+    proves: "node_modules bare imports resolve for stories dev preview and static export."
 ```
 
 ## Changes

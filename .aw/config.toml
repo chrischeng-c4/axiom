@@ -96,7 +96,7 @@ name = "agentic-workflow"
 aliases = ["aw"]
 path = "projects/agentic-workflow"
 td_path = "projects/agentic-workflow/tech-design"
-cap_path = "projects/agentic-workflow/README.md"
+cap_path = "projects/agentic-workflow/CAPABILITIES.md"
 label = "project:agentic-workflow"
 
 [[projects.workspaces]]
@@ -152,6 +152,73 @@ target = "rust"
 test_cmd = "cargo test -p loom"
 verify_cold = true
 codegen.profile = "rust/score-crate"
+
+[[projects]]
+name = "preview"
+path = "projects/preview"
+td_path = "projects/preview/tech-design"
+cap_path = "projects/preview/README.md"
+label = "project:preview"
+
+[[projects.workspaces]]
+name = "preview"
+paths = ["projects/preview/**"]
+target = "rust"
+test_cmd = "cargo test -p preview"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+[[projects]]
+name = "tape"
+path = "projects/tape"
+td_path = "projects/tape/tech-design"
+cap_path = "projects/tape/README.md"
+label = "project:tape"
+
+[[projects.workspaces]]
+name = "tape"
+paths = ["projects/tape/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "defer"
+path = "projects/defer"
+td_path = "projects/defer/tech-design"
+cap_path = "projects/defer/README.md"
+label = "project:defer"
+
+[[projects.workspaces]]
+name = "defer"
+paths = ["projects/defer/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "cube"
+path = "projects/cube"
+td_path = "projects/cube/tech-design"
+cap_path = "projects/cube/README.md"
+label = "project:cube"
+
+[[projects.workspaces]]
+name = "cube"
+paths = ["projects/cube/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "beam"
+path = "projects/beam"
+td_path = "projects/beam/tech-design"
+cap_path = "projects/beam/README.md"
+label = "project:beam"
+
+[[projects.workspaces]]
+name = "beam"
+paths = ["projects/beam/**"]
+target = "schemas"
+test_cmd = "true"
 
 
 [[projects]]
@@ -319,48 +386,15 @@ test_cmd = "cargo test -p agentkit-backend"
 name = "jet"
 path = "projects/jet"
 td_path = ".aw/tech-design/projects/jet"
+cap_path = "projects/jet/README.md"
 label = "project:jet"
 
 [[projects.workspaces]]
 name = "jet"
 paths = ["projects/jet/**"]
 target = "rust"
-test_cmd = "npm --cache /private/tmp/aw-npm-cache/react-bench --prefix examples/react-bench ci --ignore-scripts && cargo test -p jet -p jet-wasm"
-
-
-[[projects]]
-name = "cue"
-path = "projects/cue"
-td_path = ".aw/tech-design/projects/cue"
-label = "project:cue"
-
-[[projects.workspaces]]
-name = "cue-app"
-paths = ["projects/cue/app/**"]
-target = "typescript"
-test_cmd = "npm run typecheck --prefix projects/cue/app"
-
-[[projects.workspaces]]
-name = "cue-fe"
-paths = ["projects/cue/fe/**"]
-target = "typescript"
-test_cmd = "cd projects/cue/fe && jet check"
-
-[[projects.workspaces]]
-name = "cue-be"
-paths = ["projects/cue/be/**"]
-target = "python"
-
-[[projects.workspaces]]
-name = "cue-contracts"
-paths = [
-  "projects/cue/README.md",
-  "projects/cue/schemas/**",
-  "projects/cue/examples/**",
-  "projects/cue/docs/**",
-]
-target = "schemas"
-test_cmd = "true"
+test_cmd = "projects/jet/scripts/verify-basic-dom-gates.sh --all"
+verify_cold = true
 
 
 [[projects]]
@@ -687,21 +721,6 @@ target = "rust"
 test_cmd = "cargo test -p cgdb-smoke"
 
 [[projects]]
-name = "cue"
-path = "projects/cue"
-
-[[projects.workspaces]]
-name = "be"
-paths = ["projects/cue/be/**"]
-target = "schemas"
-test_cmd = "true"
-
-[[projects.workspaces]]
-name = "fe"
-paths = ["projects/cue/fe/**"]
-target = "typescript"
-
-[[projects]]
 name = "guard"
 path = "projects/guard"
 
@@ -718,15 +737,6 @@ path = "projects/httpkit-demo"
 paths = ["projects/httpkit-demo/**"]
 target = "rust"
 test_cmd = "cargo test -p httpkit-demo"
-
-[[projects]]
-name = "jet"
-path = "projects/jet"
-
-[[projects.workspaces]]
-paths = ["projects/jet/**"]
-target = "rust"
-test_cmd = "cargo test -p jet"
 
 [[projects]]
 name = "lumen"

@@ -6,16 +6,58 @@ details.
 
 ## Projects
 
+<!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
-| [agentic-workflow](projects/agentic-workflow/README.md) | Workflow protocol and `aw` CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle, and production-readiness rollup. |
-| [mamba](projects/mamba/README.md) | Force-typed Python compiler — lexes Python, lowers through HIR/MIR, and emits native machine code via Cranelift JIT/AOT. Real binaries, not a transpiler or interpreter. |
-| [jet](projects/jet/README.md) | Rust-native web toolchain — package management, dev server, production builds, test/e2e, and WASM/multi-target execution. Replaces the Vite/pnpm/Playwright stack. |
-| [lumen](projects/lumen/README.md) | K8s-native, log-replicated search specialist — exact, lexical (BM25), semantic (HNSW/GPU kNN), perceptual, and duplicate search in one engine. |
-| [vat](projects/vat/README.md) | Agent-native, GPU-native dev containers — a sandboxed host-process runtime (no VM) where the GPU just works on Apple Silicon, with a single JSON state surface for agents. |
-| [cap](projects/cap/README.md) | Resource-protection wrapper — throttles heavy local commands (and the Bash an agent fires) by watching free memory and pausing/resuming/killing, so nothing OOMs the box. |
-| [meter](projects/meter/README.md) | Local resource measurement for agents — `measure` observes external executables for cpu/wall/RSS and sampled hot spots; `profile` folds embedded/source-aware phase data. |
-| [guard](projects/guard/README.md) | Security posture gate — turns compass static findings plus future vat/rig/meter/arena evidence into one agent-readable security report. |
+| [agentic-workflow](projects/agentic-workflow/README.md) | Workflow protocol and CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle execution, and production-readiness rollup. |
+| [cap](projects/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
+| [vat](projects/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
+| [loom](projects/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
+| [preview](projects/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
+| [tape](projects/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
+| [defer](projects/defer/README.md) | Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack. |
+| [cube](projects/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
+| [beam](projects/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
+| [arena](projects/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
+| [guard](projects/guard/README.md) | Security posture gate for the cclab ecosystem. |
+| [rig](projects/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
+| [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
+| [lumen](projects/lumen/README.md) | A K8s-native, log-replicated search specialist. |
+| [jet](projects/jet/README.md) | Jet is a Rust-native frontend toolchain. |
+| [relay](projects/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
+| [keep](projects/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
+| [cgdb](projects/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
+| [httpkit-demo](projects/httpkit-demo/README.md) | httpkit-demo is a generated demo consumer of the `mambalibs.http` framework. |
+| [meter](projects/meter/README.md) | Local resource measurement for agent-driven Rust development. |
+| [qc](projects/qc/README.md) | Qc is the planned agent-facing quality-control CLI surface for structured reports, security findings, and performance boundary-cost findings. |
+| [queue](projects/queue/README.md) | Queue is the Rust distributed-task-queue library surface for cclab. |
+<!-- aw:projects-table:end -->
+
+## Shared Libraries
+
+Services and tools compose the internal libraries below instead of
+reimplementing transport, auth, metrics, codegen, replication, or operator
+plumbing locally. Libraries have no user-facing CLI or release pipeline; those
+surfaces belong under `projects/`.
+
+| Library | What it is |
+|---------|------------|
+| [build-stamp](libs/build-stamp/Cargo.toml) | Shared `build.rs` stamping for service CLIs: git short SHA, build epoch, and target triple. |
+| [claimtoken](libs/claimtoken/Cargo.toml) | Scoped claim-check access tokens; issuers sign bounded payload/key access and services verify the scope. |
+| [cli-std](libs/cli-std/Cargo.toml) | Shared implementation for the required `llm`, `upgrade`, and `issue` CLI convention. |
+| [compass](libs/compass/README.md) | Code-intelligence engine for navigation, analysis, refactoring, and watch workflows. |
+| [h2c](libs/h2c/Cargo.toml) | Shared HTTP/2 cleartext transport: single client, round-robin pool, frame-level manager, and connection-count heuristic. |
+| [openapi-codegen](libs/openapi-codegen/Cargo.toml) | Typed TypeScript, Python, and Rust API client generation from OpenAPI 3.0/3.1 documents. |
+| [operator](libs/operator/Cargo.toml) | Shared Kubernetes operator scaffold: reconcile controller, leader election, and HA render toolkit. |
+| [raft-core](libs/raft-core/Cargo.toml) | Transport- and storage-agnostic, step-driven Raft consensus core. |
+| [raft-host](libs/raft-host/Cargo.toml) | Shared Raft host driver over h2c peer transport with snapshots, compaction, and read-your-write propose. |
+| [service-auth](libs/service-auth/Cargo.toml) | Shared request-auth middleware: extract, verify, reject, and inject verified identity into service handlers. |
+| [service-backup](libs/service-backup/Cargo.toml) | Shared backup contract: destination and policy schema, sink trait, local and S3-compatible sinks, and runner primitive. |
+| [service-http](libs/service-http/Cargo.toml) | Standard HTTP service shell: probes, readiness, metrics, OpenAPI/docs routes, tracing, graceful drain, and h2c serve. |
+| [service-metrics](libs/service-metrics/Cargo.toml) | Lock-free Prometheus primitives and text encoder for service metrics. |
+| [service-tls](libs/service-tls/Cargo.toml) | Peer mTLS material loading and rustls server/client config builders. |
+| [surface](libs/surface/Cargo.toml) | Renderer-neutral UI element model shared by Jet WASM, native readers, renderers, and parity tools. |
+| [ui-runtime](libs/ui-runtime/Cargo.toml) | Renderer-neutral component runtime: hooks, fiber storage, mount, flush, and update scheduling. |
 
 ## Install
 
@@ -31,13 +73,18 @@ an installer yet are marked _coming soon_.
 | [cap](projects/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/cap/install.sh \| sh` |
 | [guard](projects/guard/README.md) | `guard` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/guard/install.sh \| sh` |
 | [jet](projects/jet/README.md) | `jet` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/jet/install.sh \| sh` |
+| [beam](projects/beam/README.md) | `beam` | _coming soon_ |
+| [cube](projects/cube/README.md) | `cube` | _coming soon_ |
+| [defer](projects/defer/README.md) | `defer` | _coming soon_ |
 | [keep](projects/keep/README.md) | `keep` | _coming soon_ |
 | [loom](projects/loom/README.md) | `loom` | _coming soon_ |
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
 | [meter](projects/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/meter/install.sh \| sh` |
+| [preview](projects/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/preview/install.sh \| sh` |
 | [relay](projects/relay/README.md) | `relay-server` | _coming soon_ |
 | [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
+| [tape](projects/tape/README.md) | `tape` | _coming soon_ |
 | [vat](projects/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/vat/install.sh \| sh` |
 
 ## Runtime Evidence Loop
@@ -60,7 +107,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the repo-wide authoring contract:
 how to shape files, paths, and names so the tree stays legible to agents and
 tooling, plus the shared **service archetype** (HA, HTTP/2 + OpenAPI,
 k8s-native) and the **CLI convention** every binary follows (`llm` / `upgrade` /
-`report-issue`).
+`issue`).
 
 ## License
 

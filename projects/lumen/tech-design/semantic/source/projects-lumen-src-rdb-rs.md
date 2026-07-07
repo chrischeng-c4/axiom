@@ -232,6 +232,7 @@ mod tests {
                     external_id: "u1".into(),
                     field: "email".into(),
                     value: FieldValue::String("a@x.com".into()),
+                    version: None,
                 }],
                 request_id: None,
             },

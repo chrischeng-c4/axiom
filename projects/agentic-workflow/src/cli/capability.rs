@@ -2,6 +2,8 @@
 // CODEGEN-BEGIN
 //! `aw capability` -- product capability map governance.
 
+use crate::cli::doc_mirror;
+use crate::issues::types::td_phase;
 use crate::issues::{
     make_backend, resolve_default_backend, Issue, IssueFilter, IssueState, IssueType,
 };
@@ -72,6 +74,8 @@ pub enum CapabilityCommand {
     SetSurface(CapabilitySetSurfaceArgs),
     /// Upsert an EC dimension into the README contract.
     SetEcDimension(CapabilitySetEcDimensionArgs),
+    /// Rewrite a claim's Active WI reference cell in the README work-root table.
+    SetWiRef(CapabilitySetWiRefArgs),
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -145,7 +149,7 @@ pub struct CapabilityDraftArgs {
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
-    /// Write draft to this path instead of /tmp/aw/{project}/capability-map-drafts/.
+    /// Write draft to this path instead of /tmp/aw/workspaces/<workspace>/capability-map-drafts/{project}/.
     #[arg(long)]
     pub output: Option<PathBuf>,
     /// DEPRECATED compatibility no-op. Capability draft emits JSON by default.
@@ -189,6 +193,10 @@ Capability run emits the same aw.cli.v1 summary as `aw capability next`, with ru
 "#)]
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct CapabilityRunArgs {
+    /// Capability id to drive via the shared root-driven workflow runner
+    /// (delegates to the same loop as `aw wi run`). Omit to run the
+    /// existing project-scoped capability completion loop.
+    pub capability_id: Option<String>,
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
@@ -395,6 +403,27 @@ pub struct CapabilitySetEcDimensionArgs {
     /// Must be supplied together with --operating-point.
     #[arg(long)]
     pub cube: Option<String>,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// A claim id is the README work-root row id (`slugify(work_root)`, the same
+/// id space as `CapabilityGap.id`/`CapabilityClaim.id`): `--claim` targets one
+/// work-root row and this verb rewrites that row's `WI` cell.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySetWiRefArgs {
+    /// Capability id whose claim traceability row should receive the WI reference.
+    #[arg(long)]
+    pub capability: String,
+    /// Claim id (the README work-root row id) to update.
+    #[arg(long)]
+    pub claim: String,
+    /// Replacement WI reference(s). Accepts `#<n>` or bare `<n>`; repeat for a
+    /// claim row that tracks more than one WI reference.
+    #[arg(long = "wi")]
+    pub wi: Vec<String>,
     /// Pretty-print the JSON result.
     #[arg(long)]
     pub pretty: bool,
@@ -1389,7 +1418,12 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
         }
         CapabilityCommand::Run(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
-            run_capability_tick(&project, args).await
+            match args.capability_id.clone() {
+                Some(capability_id) => {
+                    run_capability_root_tick(&project, &capability_id, &args).await
+                }
+                None => run_capability_tick(&project, args).await,
+            }
         }
         CapabilityCommand::Migrate(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
@@ -1446,6 +1480,10 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
         CapabilityCommand::SetEcDimension(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
             set_capability_ec_dimension(&project, args)
+        }
+        CapabilityCommand::SetWiRef(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_wi_ref(&project, args)
         }
     }
 }
@@ -1528,10 +1566,10 @@ fn maybe_write_capability_verify_evidence(
         anyhow::bail!("--write-evidence requires --verify");
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
-        .join(&report.project)
-        .join("capability-verify-reports");
+    let project_root = crate::find_project_root()?;
+    let dir = crate::shared::workspace::workspace_runtime_path(&project_root)
+        .join("capability-verify-reports")
+        .join(&report.project);
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!(
         "{stamp}-{}-capability-verify-report.md",
@@ -1823,7 +1861,7 @@ fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()>
 
 fn render_empty_capability_readme(title: &str, brief: &str) -> String {
     format!(
-        "# {title}\n\n## Brief\n\n{brief}\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
+        "# {title}\n\n## Brief\n\n{brief}\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md). Add that file's `## Brief` here after confirming the project-local rules.\n\n## Capability Contract\n\nThe full project capability contract lives in [CAPABILITIES.md](CAPABILITIES.md). Add that file's `## Brief` here after confirming the capability contract.\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
     )
 }
 
@@ -2370,6 +2408,7 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
     let project_root = crate::find_project_root()?;
     let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
     let report = build_capability_draft_report(
+        &project_root,
         project,
         &cap_path,
         args.output.as_deref(),
@@ -2384,18 +2423,18 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
 }
 
 fn build_capability_draft_report(
+    project_root: &Path,
     project: &str,
     cap_path: &Path,
     output: Option<&Path>,
     cap_path_override: Option<&Path>,
 ) -> Result<CapabilityDraftReport> {
-    let project_root = crate::find_project_root()?;
     let cap_body = std::fs::read_to_string(cap_path)
         .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
     let document = parse_capability_document(&cap_body, cap_path)
         .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
     let profile = complete_capability_profile_for_document(
-        load_capability_profile_report(&project_root, project)?,
+        load_capability_profile_report(project_root, project)?,
         &document,
     );
     if document.requires_format_migration() || !document.legacy_rows.is_empty() {
@@ -2423,7 +2462,7 @@ fn build_capability_draft_report(
         &profile,
         existing_capability_count,
     );
-    let path = write_capability_draft_artifact(project, output, &body)?;
+    let path = write_capability_draft_artifact(project_root, project, output, &body)?;
     let apply_command = if manual_merge_required {
         String::new()
     } else {
@@ -2542,11 +2581,16 @@ fn baseline_capability_title(capability_id: &str) -> &'static str {
         "long-running-stability" => "Long-Running Stability",
         "primary-replicas" => "Primary Replicas",
         "security-hardening" => "Security Hardening",
+        "standard-operational-endpoints" => "Standard Operational Endpoints",
+        "ec-gates-configured" => "EC Gates Configured",
+        "cli-standard-surface" => "CLI Standard Surface",
+        "chainable-output-conformance" => "Chainable Output Conformance",
         _ => "Trait-Derived Baseline Capability",
     }
 }
 
 fn write_capability_draft_artifact(
+    project_root: &Path,
     project: &str,
     output: Option<&Path>,
     body: &str,
@@ -2555,10 +2599,9 @@ fn write_capability_draft_artifact(
         path.to_path_buf()
     } else {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-        let dir = PathBuf::from("/tmp")
-            .join("aw")
-            .join(project)
-            .join("capability-map-drafts");
+        let dir = crate::shared::workspace::workspace_runtime_path(project_root)
+            .join("capability-map-drafts")
+            .join(project);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
         dir.join(format!(
@@ -2775,6 +2818,32 @@ fn render_trait_baseline_caps_cell(trait_id: &str) -> String {
     if !capability_profile_trait_known(trait_id) {
         return "(unknown trait; no baseline caps derived)".to_string();
     }
+    // Issue #1078: an umbrella (`service`) derives no baseline caps of its
+    // own -- show the member expansion plus the caps that expansion derives,
+    // so the profile report makes the umbrella's effect visible instead of
+    // rendering the "prompt only" fallback a bare lookup miss would produce.
+    if let Some(expansion) = doc_mirror::TRAIT_EXPANSIONS
+        .iter()
+        .find(|exp| exp.id == trait_id)
+    {
+        let members = expansion
+            .members
+            .iter()
+            .map(|member| format!("`{member}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let member_traits = expansion
+            .members
+            .iter()
+            .map(|member| member.to_string())
+            .collect::<Vec<_>>();
+        let derived = required_baseline_caps_for_traits(&member_traits)
+            .iter()
+            .map(|cap| format!("`{cap}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!("expands: {members} → caps: {derived}");
+    }
     let caps = baseline_caps_for_trait(trait_id);
     if caps.is_empty() {
         "(prompt only; no enforced baseline cap)".to_string()
@@ -2877,36 +2946,38 @@ async fn run_capability_sweep(
     }
     if write_drafts {
         sweep.write_drafts = true;
-        sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
-        sweep.draft_index_path = write_capability_sweep_draft_index(&sweep.drafts)?;
+        sweep.drafts = write_capability_sweep_drafts(&project_root, &sweep.projects)?;
+        sweep.draft_index_path = write_capability_sweep_draft_index(&project_root, &sweep.drafts)?;
     }
     if write_wi_plans {
         sweep.write_wi_plans = true;
         sweep.wi_plans = write_capability_sweep_wi_plans(&sweep.projects).await?;
-        sweep.wi_plan_index_path = write_capability_sweep_wi_plan_index(&sweep.wi_plans)?;
+        sweep.wi_plan_index_path =
+            write_capability_sweep_wi_plan_index(&project_root, &sweep.wi_plans)?;
     }
     if write_action_queue {
         sweep.write_action_queue = true;
-        sweep.action_queue = capability_sweep_action_queue(&sweep.projects);
+        sweep.action_queue = capability_sweep_action_queue(&project_root, &sweep.projects);
         sweep.action_queue_index_path =
-            write_capability_sweep_action_queue_index(&sweep.action_queue)?;
+            write_capability_sweep_action_queue_index(&project_root, &sweep.action_queue)?;
     }
     if write_check_index {
         sweep.write_check_index = true;
         sweep.check_index =
             capability_sweep_check_index(&reports, args.verify, include_issue_inventory);
         sweep.check_index_path = write_capability_sweep_check_index(
+            &project_root,
             &sweep.check_index,
             args.verify,
             include_issue_inventory,
         )?;
     }
     if args.write_rollout {
-        sweep.rollout_index_path = write_capability_sweep_rollout_index(&sweep)?;
+        sweep.rollout_index_path = write_capability_sweep_rollout_index(&project_root, &sweep)?;
     }
     if write_review_packet {
         sweep.write_review_packet = true;
-        sweep.review_packet_path = write_capability_sweep_review_packet(&sweep)?;
+        sweep.review_packet_path = write_capability_sweep_review_packet(&project_root, &sweep)?;
     }
     if args.human {
         print_capability_sweep(&sweep);
@@ -2989,23 +3060,32 @@ fn capability_sweep_report(
 }
 
 fn write_capability_sweep_drafts(
+    project_root: &Path,
     projects: &[CapabilitySweepProject],
 ) -> Result<Vec<CapabilityDraftReport>> {
     capability_sweep_draft_projects(projects)
         .into_iter()
         .map(|project| {
-            build_capability_draft_report(&project.project, &project.cap_path, None, None)
+            build_capability_draft_report(
+                project_root,
+                &project.project,
+                &project.cap_path,
+                None,
+                None,
+            )
         })
         .collect()
 }
 
-fn write_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Result<Option<PathBuf>> {
+fn write_capability_sweep_draft_index(
+    project_root: &Path,
+    drafts: &[CapabilityDraftReport],
+) -> Result<Option<PathBuf>> {
     if drafts.is_empty() {
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
+    let dir = crate::shared::workspace::workspace_runtime_path(project_root)
         .join("capability-map-drafts");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-map-draft-index.md"));
@@ -3152,13 +3232,15 @@ async fn write_capability_sweep_wi_plans(
 }
 
 fn write_capability_sweep_wi_plan_index(
+    project_root: &Path,
     plans: &[crate::cli::issues::CapabilityWiPlanReport],
 ) -> Result<Option<PathBuf>> {
     if plans.is_empty() {
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-wi-plans");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-wi-plans");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-wi-plan-index.md"));
     std::fs::write(&path, render_capability_sweep_wi_plan_index(plans)).with_context(|| {
@@ -3250,6 +3332,7 @@ fn capability_check_index_command(
 }
 
 fn write_capability_sweep_check_index(
+    project_root: &Path,
     entries: &[CapabilityCheckIndexEntry],
     verify: bool,
     include_issue_inventory: bool,
@@ -3258,7 +3341,8 @@ fn write_capability_sweep_check_index(
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-checks");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-checks");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-check-index.md"));
     std::fs::write(
@@ -3319,9 +3403,13 @@ fn render_capability_sweep_check_index(
     out
 }
 
-fn write_capability_sweep_rollout_index(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+fn write_capability_sweep_rollout_index(
+    project_root: &Path,
+    sweep: &CapabilitySweepReport,
+) -> Result<Option<PathBuf>> {
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-rollout");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-rollout");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-rollout-index.md"));
     std::fs::write(&path, render_capability_sweep_rollout_index(sweep)).with_context(|| {
@@ -3401,9 +3489,13 @@ fn rollout_index_path_text(path: &Option<PathBuf>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-fn write_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+fn write_capability_sweep_review_packet(
+    project_root: &Path,
+    sweep: &CapabilitySweepReport,
+) -> Result<Option<PathBuf>> {
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp").join("aw").join("capability-review");
+    let dir =
+        crate::shared::workspace::workspace_runtime_path(project_root).join("capability-review");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-hitl-review-packet.md"));
     std::fs::write(&path, render_capability_sweep_review_packet(sweep)).with_context(|| {
@@ -3601,7 +3693,7 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
     out.push_str("aw capability apply-draft --project <project> --draft <path> --reviewed\n");
     out.push_str("aw capability check --project <project>\n");
     out.push_str("aw wi plan --project <project>\n");
-    out.push_str("aw run --project <project> --max-ticks 1\n");
+    out.push_str("aw capability run --project <project> --non-interactive --max-ticks 1\n");
     out.push_str("```\n");
     out
 }
@@ -3624,6 +3716,7 @@ fn capability_sweep_healthy_projects(projects: &[CapabilitySweepProject]) -> Vec
 }
 
 fn capability_sweep_action_queue(
+    project_root: &Path,
     projects: &[CapabilitySweepProject],
 ) -> Vec<CapabilityActionQueueEntry> {
     projects
@@ -3635,7 +3728,10 @@ fn capability_sweep_action_queue(
             action_group: project.next_action_group.clone(),
             target: project.next_action.target.clone(),
             command: capability_action_queue_command(project),
-            latest_evidence_path: latest_capability_verify_evidence_path(&project.project),
+            latest_evidence_path: latest_capability_verify_evidence_path(
+                project_root,
+                &project.project,
+            ),
             reason: project.next_action.reason.clone(),
         })
         .collect()
@@ -3649,11 +3745,10 @@ fn capability_action_queue_command(project: &CapabilitySweepProject) -> String {
     }
 }
 
-fn latest_capability_verify_evidence_path(project: &str) -> Option<PathBuf> {
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
-        .join(project)
-        .join("capability-verify-reports");
+fn latest_capability_verify_evidence_path(project_root: &Path, project: &str) -> Option<PathBuf> {
+    let dir = crate::shared::workspace::workspace_runtime_path(project_root)
+        .join("capability-verify-reports")
+        .join(project);
     let mut paths = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|entry| entry.ok())
@@ -3674,8 +3769,8 @@ fn current_successful_capability_verify_evidence_path(
     if report.next_action.kind != CapabilityActionKind::RunVerify {
         return None;
     }
-    let path = latest_capability_verify_evidence_path(&report.project)?;
     let project_root = crate::find_project_root().ok()?;
+    let path = latest_capability_verify_evidence_path(&project_root, &report.project)?;
     let git_head = current_git_head(&project_root)?;
     if current_git_dirty(&project_root)? {
         return None;
@@ -3777,14 +3872,14 @@ fn is_capability_executable_action(action: &CapabilityAction) -> bool {
 }
 
 fn write_capability_sweep_action_queue_index(
+    project_root: &Path,
     entries: &[CapabilityActionQueueEntry],
 ) -> Result<Option<PathBuf>> {
     if entries.is_empty() {
         return Ok(None);
     }
     let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let dir = PathBuf::from("/tmp")
-        .join("aw")
+    let dir = crate::shared::workspace::workspace_runtime_path(project_root)
         .join("capability-action-queue");
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(format!("{stamp}-capability-action-queue.md"));
@@ -4467,6 +4562,245 @@ fn validate_ec_dimension_backfill_slot(dimension: &CapabilityEcDimension) -> Res
     Ok(())
 }
 
+fn set_capability_wi_ref(project: &str, args: CapabilitySetWiRefArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, None)?;
+    let content = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("read capability map {}", cap_path.display()))?;
+    let wi_value = normalize_wi_ref_values(&args.wi)?;
+
+    let document = parse_capability_document(&content, &cap_path)
+        .with_context(|| format!("parse capability map {}", cap_path.display()))?;
+    resolve_capability_and_claim_ids(&document, &args.capability, &args.claim)?;
+
+    let updated =
+        upsert_capability_wi_ref_in_readme(&content, &args.capability, &args.claim, &wi_value)
+            .with_context(|| format!("update capability WI reference in {}", cap_path.display()))?;
+
+    // Never write a table this verb cannot itself read back: re-run the same
+    // scan `aw capability report` uses and confirm the claim row now carries
+    // the requested value before persisting.
+    let reparsed = parse_capability_document(&updated, &cap_path).with_context(|| {
+        format!(
+            "re-parse capability map {} after WI reference update",
+            cap_path.display()
+        )
+    })?;
+    let confirmed_wi = reparsed
+        .capabilities
+        .iter()
+        .find(|capability| capability.id == args.capability)
+        .and_then(|capability| {
+            capability
+                .work_roots
+                .iter()
+                .find(|work_root| work_root.id == args.claim)
+        })
+        .map(|work_root| work_root.wi.as_str());
+    if confirmed_wi != Some(wi_value.as_str()) {
+        anyhow::bail!(
+            "internal error: {} did not re-parse the updated WI reference for claim `{}`",
+            cap_path.display(),
+            args.claim
+        );
+    }
+
+    std::fs::write(&cap_path, &updated)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "set_capability_wi_ref",
+        "project": project,
+        "capability_id": args.capability,
+        "claim_id": args.claim,
+        "wi": wi_value,
+        "cap_path": cap_path.display().to_string(),
+    });
+    if args.pretty {
+        print_json_output(&payload, true)?;
+    } else {
+        print_json_output(&payload, false)?;
+    }
+    Ok(())
+}
+
+/// Resolve `capability_id`/`claim_id` against an already-parsed capability
+/// document. Fails closed with the valid id list (chainable-output
+/// convention: an agent reading the error knows exactly which ids to retry
+/// with) instead of a bare "not found".
+fn resolve_capability_and_claim_ids<'a>(
+    document: &'a CapabilityDocument,
+    capability_id: &str,
+    claim_id: &str,
+) -> Result<&'a CapabilitySection> {
+    let capability = document
+        .capabilities
+        .iter()
+        .find(|capability| capability.id == capability_id)
+        .ok_or_else(|| {
+            let valid_ids = document
+                .capabilities
+                .iter()
+                .map(|capability| capability.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::anyhow!(
+                "capability `{capability_id}` not found; valid capability ids: {valid_ids}"
+            )
+        })?;
+    if !capability
+        .work_roots
+        .iter()
+        .any(|work_root| work_root.id == claim_id)
+    {
+        let valid_claims = capability
+            .work_roots
+            .iter()
+            .map(|work_root| work_root.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "claim `{claim_id}` not found in capability `{capability_id}`; valid claim ids: {valid_claims}"
+        );
+    }
+    Ok(capability)
+}
+
+fn normalize_wi_ref_values(values: &[String]) -> Result<String> {
+    if values.is_empty() {
+        anyhow::bail!("`--wi` requires at least one value");
+    }
+    let normalized = values
+        .iter()
+        .map(|value| normalize_wi_ref_value(value))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(normalized.join(", "))
+}
+
+fn normalize_wi_ref_value(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    let digits = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        anyhow::bail!("invalid `--wi` value `{value}`; expected `#<n>` or a bare work-item number");
+    }
+    Ok(format!("#{digits}"))
+}
+
+fn upsert_capability_wi_ref_in_readme(
+    content: &str,
+    capability_id: &str,
+    claim_id: &str,
+    wi_value: &str,
+) -> Result<String> {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let block_range = {
+        let line_refs = lines.iter().map(String::as_str).collect::<Vec<_>>();
+        let fenced = markdown_fenced_line_mask(&line_refs);
+        let mut idx = 0;
+        let mut found = None;
+        while idx < line_refs.len() {
+            if fenced[idx] {
+                idx += 1;
+                continue;
+            }
+            let Some((level, _title)) = parse_heading(line_refs[idx]) else {
+                idx += 1;
+                continue;
+            };
+            if level < 2 {
+                idx += 1;
+                continue;
+            }
+            let block_end =
+                next_capability_heading(&line_refs, idx + 1, level).unwrap_or(lines.len());
+            if markdown_block_has_capability_id(
+                &line_refs,
+                &fenced,
+                idx + 1,
+                block_end,
+                capability_id,
+            ) {
+                found = Some((idx + 1, block_end));
+                break;
+            }
+            idx = block_end;
+        }
+        found
+    };
+    let Some((start, end)) = block_range else {
+        anyhow::bail!("capability `{capability_id}` not found in README capability map")
+    };
+    let fenced_full = {
+        let line_refs = lines.iter().map(String::as_str).collect::<Vec<_>>();
+        markdown_fenced_line_mask(&line_refs)
+    };
+    if !upsert_work_root_wi_cell(&mut lines, &fenced_full, start, end, claim_id, wi_value) {
+        anyhow::bail!(
+            "claim `{claim_id}` not found in capability `{capability_id}` work root table"
+        );
+    }
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn upsert_work_root_wi_cell(
+    lines: &mut [String],
+    fenced: &[bool],
+    start: usize,
+    end: usize,
+    claim_id: &str,
+    wi_value: &str,
+) -> bool {
+    let borrowed = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut cursor = start;
+    let mut replacements = Vec::<(usize, String)>::new();
+    while cursor < end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((headers, rows, next_cursor)) = parse_markdown_table_at(&borrowed, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        if let Some(indices) = markdown_work_root_indices(&headers) {
+            for (row_offset, row) in rows.iter().enumerate() {
+                let work_root = table_cell(row, indices.work_root);
+                if is_empty_table_value(&work_root) || slugify(&work_root) != claim_id {
+                    continue;
+                }
+                let mut updated_row = row.clone();
+                while updated_row.len() < headers.len() {
+                    updated_row.push(String::new());
+                }
+                updated_row[indices.wi] = wi_value.to_string();
+                replacements.push((
+                    cursor + 2 + row_offset,
+                    format!(
+                        "| {} |",
+                        updated_row
+                            .iter()
+                            .map(|cell| markdown_cell(cell))
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    ),
+                ));
+            }
+        }
+        cursor = next_cursor;
+    }
+    drop(borrowed);
+    let found = !replacements.is_empty();
+    for (line_idx, replacement_line) in replacements {
+        if let Some(line) = lines.get_mut(line_idx) {
+            *line = replacement_line;
+        }
+    }
+    found
+}
+
 fn upsert_capability_efficiency_backfill_section_in_readme(
     content: &str,
     capability_id: &str,
@@ -4811,6 +5145,27 @@ fn upsert_capability_field_in_contract_table(
     None
 }
 
+/// `aw capability run <capability-id>` -- thin shell over the shared
+/// root-driven workflow runner (`crate::cli::run`); delegates to the same
+/// loop as `aw wi run` with a `Capability` root instead of duplicating
+/// dispatch here.
+async fn run_capability_root_tick(
+    project: &str,
+    capability_id: &str,
+    args: &CapabilityRunArgs,
+) -> Result<()> {
+    crate::cli::run::run_capability_root(
+        project,
+        capability_id,
+        crate::cli::run::RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: false,
+        },
+    )
+    .await
+}
+
 async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
     if !args.non_interactive {
         anyhow::bail!("aw capability run requires --non-interactive");
@@ -5098,9 +5453,13 @@ fn normalize_capability_profile_traits(raw_traits: Vec<String>) -> Vec<String> {
     out
 }
 
+// Issue #1078 (archetype-as-traits slice 2/3): umbrella ids (`service`) are
+// expanded into their member trait ids -- with dedup against any member also
+// declared directly -- before baseline caps are gathered, so declaring the
+// umbrella alongside one of its own members never double-counts.
 fn required_baseline_caps_for_traits(traits: &[String]) -> Vec<String> {
     let mut required = BTreeSet::new();
-    for trait_id in traits {
+    for trait_id in &doc_mirror::expand_capability_profile_traits(traits) {
         for capability_id in baseline_caps_for_trait(trait_id) {
             required.insert((*capability_id).to_string());
         }
@@ -5108,30 +5467,39 @@ fn required_baseline_caps_for_traits(traits: &[String]) -> Vec<String> {
     required.into_iter().collect()
 }
 
+// Issue #1077 (archetype-as-traits slice 1/3), extended by #1078 (slice
+// 2/3): every known trait -- archetype-anchored or general -- now lives in
+// `doc_mirror::TRAITS`, the one registry CONTRIBUTING.md's generated trait
+// table also renders from. This is a thin lookup over that registry; ids
+// with no `TraitDef` (including the `service` umbrella, which lives in
+// `doc_mirror::TRAIT_EXPANSIONS` instead and is expanded away before this is
+// ever called) fall through to an empty slice.
 fn baseline_caps_for_trait(trait_id: &str) -> &'static [&'static str] {
-    match trait_id {
-        "cli_facing" => &["cli-interface"],
-        "competitive_replacement" => &["competitor-feature-parity", "competitor-performance"],
-        "http2_api" => &["http2-api-list"],
-        "kubernetes_native" => &["kubernetes-native-deployment"],
-        "long_running" => &["long-running-stability"],
-        "network_exposed" => &["security-hardening"],
-        "primary_replicas" => &["primary-replicas"],
-        "agent_facing" | "stateful_storage" => &[],
-        _ => &[],
-    }
+    doc_mirror::TRAITS
+        .iter()
+        .find(|def| def.id == trait_id)
+        .map_or(&[], |def| def.baseline_caps)
 }
 
+// Every known trait id, `doc_mirror::TRAITS`-backed or not, plus every
+// `doc_mirror::TRAIT_EXPANSIONS` umbrella id (see
+// `known_traits_include_every_doc_mirror_trait_def` for the drift guard that
+// keeps this list a superset of both registries' ids).
 fn known_capability_profile_traits() -> &'static [&'static str] {
     &[
         "agent_facing",
+        "chainable_output",
         "cli_facing",
+        "cli_std",
         "competitive_replacement",
+        "ec_gated",
         "http2_api",
         "kubernetes_native",
         "long_running",
         "network_exposed",
         "primary_replicas",
+        "service",
+        "standard_endpoints",
         "stateful_storage",
     ]
 }
@@ -5245,7 +5613,15 @@ async fn build_capability_report_inner(
 ) -> Result<CapabilityReport> {
     let project_root = crate::find_project_root()?;
     if verify {
-        eprintln!("aw capability verify: running configured project test gates for `{project}`");
+        if super::project::project_health_caps_ec_only(project) {
+            eprintln!(
+                "aw capability verify: running capability and EC gates for `{project}`; workspace test_cmd is advisory for self-health"
+            );
+        } else {
+            eprintln!(
+                "aw capability verify: running configured project test gates for `{project}`"
+            );
+        }
     }
     let test_gates = project_test_gate_report(project, &project_root, verify)?;
     let cap_path = resolve_capability_path(&project_root, project, cap_path_override)?;
@@ -5691,7 +6067,7 @@ fn capability_production_readiness(
             project,
             verify,
             verify,
-            false,
+            verify,
             test_gates.clone(),
             production_gates_evaluated,
             Some(verified_by_id),
@@ -6253,11 +6629,25 @@ fn choose_next_action(
                         wi_plan_reason(report, "open capability gap has no active WI in README"),
                     ),
                 };
+                // Issue #819: `aw capability set-wi-ref` now gives
+                // `reconcile_wi_refs` a deterministic, non-`aw wi plan`
+                // resolution path once the correct replacement WI id is
+                // known -- name it here so it is no longer the sole
+                // remediation surfaced for a stale Active WI reference.
+                let reason = if kind == CapabilityActionKind::ReconcileWiRefs {
+                    format!(
+                        "{reason}; once the correct WI id is known, resolve without a raw file edit via `aw capability set-wi-ref --project {} --capability {} --claim {} --wi <id>`",
+                        report.project, item.id, gap.id
+                    )
+                } else {
+                    reason
+                };
                 return CapabilityAction {
                     kind,
                     capability_id: Some(item.id.clone()),
                     gap_id: Some(gap.id.clone()),
-                    claim_id: None,
+                    claim_id: (kind == CapabilityActionKind::ReconcileWiRefs)
+                        .then(|| gap.id.clone()),
                     target: item.title.clone(),
                     command: command.clone(),
                     reason: reason.clone(),
@@ -6937,24 +7327,38 @@ fn lifecycle_action_for_work_item(
         );
     }
 
-    match evidence.and_then(|evidence| evidence.phase.as_deref()) {
-        Some("td_reviewed") => (
+    // issues #916 / #850: derive from the single td_phase transition table
+    // instead of a raw-string match, and normalize before matching so a WI
+    // parked at a retired CRRR phase (cb_reviewed/cb_revised/cb_arbitrated/
+    // td_reviewed) routes to the same live-lifecycle command a freshly
+    // normalized phase would — never to a verb whose guard rejects it.
+    let normalized_phase = evidence
+        .and_then(|evidence| evidence.phase.as_deref())
+        .map(td_phase::normalize);
+    match normalized_phase {
+        // td_reviewed normalizes to td_created and continues CB generation,
+        // same as a WI freshly landed at td_created.
+        Some(td_phase::TD_CREATED) => (
             CapabilityActionKind::RunCb,
             cb_gen_command(work_item, td_spec_path),
             "active WI has reviewed TD; continue CB generation".to_string(),
         ),
-        Some("cb_genned") | Some("cb_fill_in_progress") => (
+        Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
             CapabilityActionKind::RunCb,
             format!("aw td fill {work_item}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
-        Some("cb_filled") | Some("cb_reviewed") => (
+        // cb_reviewed / cb_revised / cb_arbitrated all normalize to
+        // cb_filled, which the terminal code-check guard accepts — closes
+        // the #850 dispatch-loop (cb_reviewed used to route here directly
+        // and get rejected by the un-normalized guard).
+        Some(td_phase::CB_FILLED) => (
             CapabilityActionKind::RunTd,
-            format!("aw td merge {work_item}"),
-            "active WI has generated and checked implementation output; merge TD lifecycle"
+            format!("aw td code-check {work_item}"),
+            "active WI has generated and checked implementation output; run terminal code-check"
                 .to_string(),
         ),
-        Some("td_merged") => (
+        Some(td_phase::TD_MERGED) => (
             CapabilityActionKind::RunVerify,
             format!("aw capability report --project {} --verify", report.project),
             "active WI has merged TD/CB lifecycle; verify capability readiness".to_string(),
@@ -7467,6 +7871,7 @@ fn strip_migrated_capability_sources(body: &str) -> String {
             if (heading_level == 2 || heading_level == 3)
                 && title.eq_ignore_ascii_case("Capability Index")
             {
+                push_capability_insert_marker(&mut out, &mut inserted_marker);
                 idx += 1;
                 continue;
             }
@@ -8949,6 +9354,11 @@ fn parse_markdown_capability_block(
     let mut surfaces = Vec::new();
     let mut ec_dimensions = Vec::new();
     let mut machine_table_spans = Vec::<(usize, usize)>::new();
+    if contract.is_some() {
+        if let Some(span) = markdown_field_capability_contract_span(lines, heading_idx, block_end) {
+            machine_table_spans.push(span);
+        }
+    }
     let fenced = markdown_fenced_line_mask(lines);
     let mut cursor = heading_idx + 1;
     while cursor < block_end {
@@ -9220,6 +9630,50 @@ fn parse_markdown_field_capability_contract(
             .remove("efficiencycube")
             .unwrap_or_else(|| "-".to_string()),
     })
+}
+
+fn markdown_field_capability_contract_span(
+    lines: &[&str],
+    heading_idx: usize,
+    block_end: usize,
+) -> Option<(usize, usize)> {
+    let fenced = markdown_fenced_line_mask(lines);
+    let mut cursor = heading_idx + 1;
+    let mut start = None;
+    let mut saw_id = false;
+    while cursor < block_end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let trimmed = lines[cursor].trim();
+        if start.is_none() {
+            if trimmed.is_empty() {
+                cursor += 1;
+                continue;
+            }
+            if parse_markdown_table_at(lines, cursor).is_some() || parse_heading(trimmed).is_some()
+            {
+                return None;
+            }
+            let Some((key, _value)) = parse_markdown_contract_field_line(trimmed) else {
+                cursor += 1;
+                continue;
+            };
+            saw_id = key == "id";
+            start = Some(cursor);
+            cursor += 1;
+            continue;
+        }
+        if parse_markdown_table_at(lines, cursor).is_some() || parse_heading(trimmed).is_some() {
+            break;
+        }
+        if let Some((key, _value)) = parse_markdown_contract_field_line(trimmed) {
+            saw_id |= key == "id";
+        }
+        cursor += 1;
+    }
+    start.and_then(|start| saw_id.then_some((start, cursor)))
 }
 
 fn parse_markdown_contract_field_line(line: &str) -> Option<(String, String)> {
@@ -11976,9 +12430,9 @@ Mamba should improve both runtime CPU and memory profile on selected workloads.
     #[test]
     fn capability_tables_without_contract_fields_are_candidate_input() {
         let doc = cap_doc(
-            r#"# cue
+            r#"# meter
 
-Cue turns business intent into governed internal work.
+Meter turns business intent into governed internal work.
 
 ## Required Platform Capabilities
 
@@ -12141,7 +12595,7 @@ Native PostgreSQL toolkit core.
 
     #[test]
     fn empty_capability_map_next_action_requires_hitl_definition() {
-        let document = cap_doc("# Cue\n\n## Capabilities\n\n");
+        let document = cap_doc("# Meter\n\n## Capabilities\n\n");
         let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
         report.capability_count = 0;
         report.verified_count = 0;
@@ -12253,6 +12707,45 @@ Mamba can execute the Python 3.12 language and standard library surface.
     }
 
     #[test]
+    fn known_traits_include_every_doc_mirror_trait_def() {
+        // Issue #1077: `known_capability_profile_traits` must stay a
+        // superset of `doc_mirror::TRAITS`' ids (and agree on baseline caps)
+        // even though it also carries traits with no CONTRIBUTING.md anchor
+        // yet, so the two registries can never quietly disagree.
+        for def in doc_mirror::TRAITS {
+            assert!(
+                known_capability_profile_traits().contains(&def.id),
+                "known_capability_profile_traits must list doc_mirror trait `{}`",
+                def.id
+            );
+            assert_eq!(
+                baseline_caps_for_trait(def.id),
+                def.baseline_caps,
+                "baseline_caps_for_trait must match doc_mirror::TRAITS for `{}`",
+                def.id
+            );
+        }
+        // Issue #1078: every umbrella id (`doc_mirror::TRAIT_EXPANSIONS`)
+        // must also be known, and every member it expands to must itself be
+        // a real `doc_mirror::TRAITS` id.
+        for expansion in doc_mirror::TRAIT_EXPANSIONS {
+            assert!(
+                known_capability_profile_traits().contains(&expansion.id),
+                "known_capability_profile_traits must list umbrella `{}`",
+                expansion.id
+            );
+            for member in expansion.members {
+                assert!(
+                    doc_mirror::TRAITS.iter().any(|def| &def.id == member),
+                    "umbrella `{}` member `{}` must be a real doc_mirror::TRAITS id",
+                    expansion.id,
+                    member
+                );
+            }
+        }
+    }
+
+    #[test]
     fn project_aw_traits_derive_required_baseline_caps() {
         let tmp = tempfile::tempdir().unwrap();
         let project_dir = tmp.path().join("projects/demo");
@@ -12297,6 +12790,87 @@ traits = ["long-running", "cli_facing", "competitive_replacement", "network_expo
                 "security-hardening"
             ]
         );
+    }
+
+    #[test]
+    fn project_declaring_service_umbrella_derives_full_deduped_baseline_set() {
+        // Issue #1078 AC1: declaring the `service` umbrella derives the full
+        // deduped baseline set of its members.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["service"]
+"#,
+        )
+        .unwrap();
+
+        let profile = load_capability_profile_report(tmp.path(), "demo").unwrap();
+
+        assert_eq!(profile.traits, vec!["service"]);
+        assert!(profile.unknown_traits.is_empty());
+        assert_eq!(
+            profile.required_baseline_caps,
+            vec![
+                "chainable-output-conformance",
+                "cli-standard-surface",
+                "ec-gates-configured",
+                "http2-api-list",
+                "kubernetes-native-deployment",
+                "standard-operational-endpoints",
+            ]
+        );
+    }
+
+    #[test]
+    fn project_declaring_service_umbrella_and_a_member_does_not_duplicate() {
+        // Issue #1078 AC1: umbrella+member double-declaration doesn't
+        // duplicate the derived baseline caps.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["service", "http2_api", "primary_replicas"]
+"#,
+        )
+        .unwrap();
+
+        let profile = load_capability_profile_report(tmp.path(), "demo").unwrap();
+
+        // Declaring `http2_api` alongside the `service` umbrella that already
+        // expands to include it must not duplicate `http2-api-list`; the only
+        // net-new cap on top of the umbrella's own set is `primary-replicas`
+        // (declared separately, not one of the umbrella's members).
+        assert_eq!(
+            profile.required_baseline_caps,
+            vec![
+                "chainable-output-conformance",
+                "cli-standard-surface",
+                "ec-gates-configured",
+                "http2-api-list",
+                "kubernetes-native-deployment",
+                "primary-replicas",
+                "standard-operational-endpoints",
+            ]
+        );
+        // No duplicates, by construction and by explicit assertion (the
+        // actual acceptance criterion).
+        let mut sorted = profile.required_baseline_caps.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted, profile.required_baseline_caps);
     }
 
     #[test]
@@ -12438,8 +13012,8 @@ traits = ["cli_facing", "forever_service"]
     #[test]
     fn empty_capability_map_draft_artifact_is_definition_worksheet() {
         let artifact = render_capability_map_draft(
-            "cue",
-            Path::new("projects/cue/README.md"),
+            "meter",
+            Path::new("projects/meter/README.md"),
             &[],
             &CapabilityProfileReport::default(),
             0,
@@ -12458,10 +13032,10 @@ traits = ["cli_facing", "forever_service"]
         assert!(artifact.contains("README has no candidate capability roots"));
         assert!(artifact.contains("## Review Decisions"));
         assert!(artifact.contains(
-            "| Cue Capability | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |"
+            "| Meter Capability | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |"
         ));
-        assert!(artifact.contains("### Cue Capability"));
-        assert!(artifact.contains("ID: cue-capability"));
+        assert!(artifact.contains("### Meter Capability"));
+        assert!(artifact.contains("ID: meter-capability"));
         assert!(artifact.contains(
             "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
         ));
@@ -12476,8 +13050,8 @@ traits = ["cli_facing", "forever_service"]
     #[test]
     fn apply_draft_rejects_unreviewed_placeholders() {
         let artifact = render_capability_map_draft(
-            "cue",
-            Path::new("projects/cue/README.md"),
+            "meter",
+            Path::new("projects/meter/README.md"),
             &[],
             &CapabilityProfileReport::default(),
             0,
@@ -12490,7 +13064,7 @@ traits = ["cli_facing", "forever_service"]
 
     #[test]
     fn apply_draft_requires_review_decisions_before_readme_mutation() {
-        let draft = r#"# Cue Capability Map Draft
+        let draft = r#"# Meter Capability Map Draft
 
 ## Review Decisions
 
@@ -12517,13 +13091,13 @@ Root WI: #3893
 Status: confirmed
 Required Verification: smoke
 Promise:
-Cue provides a team workflow control plane over AW Core concepts.
+Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
-- projects/cue/tests/workflow-control-plane.md
+- projects/meter/tests/workflow-control-plane.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |
 ```
 "#;
 
@@ -12534,13 +13108,13 @@ Gate Inventory:
 
     #[test]
     fn apply_draft_materializes_review_decisions_into_canonical_registry() {
-        let draft = r#"# Cue Capability Map Draft
+        let draft = r#"# Meter Capability Map Draft
 
 ## Review Decisions
 
 | Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |
 |---|---|---|---|---|---:|---|
-| Workflow Control Plane | confirm | DeveloperTool | CLI: `cue run` - app generation command | behavior: `jet e2e` - browser/API workflow | #3893 | projects/cue/tests/workflow-control-plane.md |
+| Workflow Control Plane | confirm | DeveloperTool | CLI: `meter measure` - resource measurement command | behavior: `jet e2e` - browser/API workflow | #3893 | projects/meter/tests/workflow-control-plane.md |
 
 ## Draft Canonical README Section
 
@@ -12565,7 +13139,7 @@ Root WI: -
 Status: candidate
 Required Verification: smoke
 Promise:
-Cue provides a team workflow control plane over AW Core concepts.
+Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
 - (confirm gate inventory)
 
@@ -12581,10 +13155,10 @@ Gate Inventory:
         assert!(!registry.contains("(confirm"));
         assert!(registry.contains("| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |"));
         assert!(registry.contains("Type: DeveloperTool"));
-        assert!(registry.contains("Surfaces: CLI: `cue run` - app generation command"));
+        assert!(registry.contains("Surfaces: CLI: `meter measure` - resource measurement command"));
         assert!(registry.contains("EC Dimensions: behavior: `jet e2e` - browser/API workflow"));
-        assert!(registry.contains("Gate Inventory: projects/cue/tests/workflow-control-plane.md"));
-        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |"));
+        assert!(registry.contains("Gate Inventory: projects/meter/tests/workflow-control-plane.md"));
+        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |"));
         assert_eq!(doc.capabilities.len(), 1);
         assert_eq!(doc.capabilities[0].id, "workflow-control-plane");
         assert_eq!(
@@ -12600,7 +13174,7 @@ Gate Inventory:
 
     #[test]
     fn apply_reviewed_draft_replaces_capabilities_section() {
-        let draft = r#"# Cue Capability Map Draft
+        let draft = r#"# Meter Capability Map Draft
 
 ## Draft Canonical README Section
 
@@ -12621,17 +13195,17 @@ Root WI: #3893
 Status: confirmed
 Required Verification: smoke
 Promise:
-Cue provides a team workflow control plane over AW Core concepts.
+Meter provides a team workflow control plane over AW Core concepts.
 Gate Inventory:
-- projects/cue/tests/workflow-control-plane.md
+- projects/meter/tests/workflow-control-plane.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/meter/tests/workflow-control-plane.md |
 ```
 "#;
         let registry = extract_reviewed_draft_registry(draft).unwrap();
-        let original = r#"# Cue
+        let original = r#"# Meter
 
 Team workflow product.
 
@@ -12644,7 +13218,7 @@ old placeholder
 Keep this section.
 "#;
 
-        let applied = apply_capability_registry_to_readme(original, &registry, "cue").unwrap();
+        let applied = apply_capability_registry_to_readme(original, &registry, "meter").unwrap();
         let doc = cap_doc(&applied);
 
         assert!(applied.contains("## Brief\n\nTeam workflow product."));
@@ -12773,19 +13347,19 @@ old tail placeholder
 
     #[test]
     fn draft_commands_preserve_cap_path_override() {
-        let cap_path = Path::new("/tmp/aw draft/cue README.md");
-        let draft_path = Path::new("/tmp/aw draft/cue capability draft.md");
+        let cap_path = Path::new("/tmp/aw/test/draft path/meter README.md");
+        let draft_path = Path::new("/tmp/aw/test/draft path/meter capability draft.md");
 
-        let apply = capability_apply_draft_command("cue", draft_path, Some(cap_path));
-        let check = capability_check_command("cue", Some(cap_path));
+        let apply = capability_apply_draft_command("meter", draft_path, Some(cap_path));
+        let check = capability_check_command("meter", Some(cap_path));
 
         assert_eq!(
             apply,
-            "aw capability apply-draft --project cue --draft '/tmp/aw draft/cue capability draft.md' --cap-path '/tmp/aw draft/cue README.md' --reviewed"
+            "aw capability apply-draft --project meter --draft '/tmp/aw/test/draft path/meter capability draft.md' --cap-path '/tmp/aw/test/draft path/meter README.md' --reviewed"
         );
         assert_eq!(
             check,
-            "aw capability check --project cue --cap-path '/tmp/aw draft/cue README.md'"
+            "aw capability check --project meter --cap-path '/tmp/aw/test/draft path/meter README.md'"
         );
     }
 
@@ -13512,7 +14086,8 @@ Gate Inventory:
             false,
         );
 
-        let queue = capability_sweep_action_queue(&sweep.projects)
+        let tmp = tempfile::tempdir().unwrap();
+        let queue = capability_sweep_action_queue(tmp.path(), &sweep.projects)
             .into_iter()
             .map(|entry| (entry.project, entry.action_group, entry.command))
             .collect::<Vec<_>>();
@@ -13543,28 +14118,32 @@ Gate Inventory:
                 action: "capability_draft",
                 project: "pg".to_string(),
                 cap_path: PathBuf::from("projects/pg/README.md"),
-                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "empty_capability_map",
                 candidate_count: 0,
                 agent_review_required: true,
                 review_status: "pending",
-                apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed".to_string(),
+                apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed".to_string(),
                 check_command: "aw capability check --project pg".to_string(),
             },
             CapabilityDraftReport {
                 schema_version: "aw.cli.v1",
                 action: "capability_draft",
-                project: "cue".to_string(),
-                cap_path: PathBuf::from("projects/cue/README.md"),
-                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                project: "meter".to_string(),
+                cap_path: PathBuf::from("projects/meter/README.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "prose_candidates",
                 candidate_count: 3,
                 agent_review_required: true,
                 review_status: "pending",
-                apply_command: "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed".to_string(),
-                check_command: "aw capability check --project cue".to_string(),
+                apply_command: "aw capability apply-draft --project meter --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md' --reviewed".to_string(),
+                check_command: "aw capability check --project meter".to_string(),
             },
         ]);
 
@@ -13576,11 +14155,11 @@ Gate Inventory:
         ));
         assert!(index.contains("| definition needed | 1 | 0 | define product promises before applying a README capability section |"));
         assert!(index.contains("## Suggested Review Order"));
-        assert!(index.contains("| cue | 3 | /tmp/aw/cue/capability-map-drafts/draft.md | `aw capability check --project cue` |"));
+        assert!(index.contains("| meter | 3 | /tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md | `aw capability check --project meter` |"));
         assert!(index.contains("| pg | empty_capability_map | 0 |"));
-        assert!(index.contains("/tmp/aw/pg/capability-map-drafts/draft.md"));
+        assert!(index.contains("/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md"));
         assert!(index.contains(
-            "`aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed`"
+            "`aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed`"
         ));
         assert!(index.contains("`aw capability check --project pg`"));
         assert!(index.contains("Do not edit README until the capability promise is confirmed."));
@@ -13594,7 +14173,9 @@ Gate Inventory:
                 kind: "capability_plan",
                 project: "lumen".to_string(),
                 backend: "unavailable".to_string(),
-                path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md",
+                ),
                 cap_path: PathBuf::from("projects/lumen/README.md"),
                 capability_count: 17,
                 planning_row_count: 54,
@@ -13611,7 +14192,7 @@ Gate Inventory:
         assert!(index.contains("kind: capability_wi_plan_index"));
         assert!(index.contains("plan_count: 1"));
         assert!(index.contains("| lumen | unavailable | 48 | 3 |"));
-        assert!(index.contains("/tmp/aw/lumen/capability-plan/plan.md"));
+        assert!(index.contains("/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md"));
         assert!(index.contains("`aw wi plan --project lumen`"));
         assert!(index.contains("keep the artifact local/review-only"));
     }
@@ -13636,7 +14217,7 @@ Gate Inventory:
                 command: "aw capability report --project meter --verify --write-evidence"
                     .to_string(),
                 latest_evidence_path: Some(PathBuf::from(
-                    "/tmp/aw/meter/capability-verify-reports/report.md",
+                    "/tmp/aw/workspaces/axiom/capability-verify-reports/meter/report.md",
                 )),
                 reason: "runtime verification must be rerun".to_string(),
             },
@@ -13646,7 +14227,7 @@ Gate Inventory:
         assert!(index.contains("action_count: 2"));
         assert!(index
             .contains("| jet | run_td | WASM And Multi-Target Execution | `aw td create 3783` |"));
-        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` | /tmp/aw/meter/capability-verify-reports/report.md |"));
+        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` | /tmp/aw/workspaces/axiom/capability-verify-reports/meter/report.md |"));
         assert!(index.contains("Execute one command at a time"));
     }
 
@@ -13748,10 +14329,10 @@ Gate Inventory:
     fn capability_sweep_rollout_index_links_review_artifacts() {
         let mut draftable = sample_report(sample_action(
             CapabilityActionKind::DefineCapabilityMap,
-            "aw capability draft --project cue",
+            "aw capability draft --project meter",
             false,
         ));
-        draftable.project = "cue".to_string();
+        draftable.project = "meter".to_string();
         let mut sweep = capability_sweep_report(
             &[
                 sample_report(sample_action(CapabilityActionKind::None, "", false)),
@@ -13771,44 +14352,50 @@ Gate Inventory:
             target: "projects/jet/README.md".to_string(),
             reason: "capability format and TD refs are valid".to_string(),
         }];
-        sweep.check_index_path = Some(PathBuf::from("/tmp/aw/capability-checks/check-index.md"));
+        sweep.check_index_path = Some(PathBuf::from(
+            "/tmp/aw/workspaces/axiom/capability-checks/check-index.md",
+        ));
         sweep.write_drafts = true;
         sweep.drafts = vec![
             CapabilityDraftReport {
                 schema_version: "aw.cli.v1",
                 action: "capability_draft",
-                project: "cue".to_string(),
-                cap_path: PathBuf::from("projects/cue/README.md"),
-                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                project: "meter".to_string(),
+                cap_path: PathBuf::from("projects/meter/README.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "prose_candidates",
                 candidate_count: 3,
                 agent_review_required: true,
                 review_status: "pending",
                 apply_command:
-                    "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed"
+                    "aw capability apply-draft --project meter --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md' --reviewed"
                         .to_string(),
-                check_command: "aw capability check --project cue".to_string(),
+                check_command: "aw capability check --project meter".to_string(),
             },
             CapabilityDraftReport {
                 schema_version: "aw.cli.v1",
                 action: "capability_draft",
                 project: "pg".to_string(),
                 cap_path: PathBuf::from("projects/pg/README.md"),
-                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                path: PathBuf::from(
+                    "/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md",
+                ),
                 status: "pending_review".to_string(),
                 source: "empty_capability_map",
                 candidate_count: 0,
                 agent_review_required: true,
                 review_status: "pending",
                 apply_command:
-                    "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed"
+                    "aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed"
                         .to_string(),
                 check_command: "aw capability check --project pg".to_string(),
             },
         ];
         sweep.draft_index_path = Some(PathBuf::from(
-            "/tmp/aw/capability-map-drafts/draft-index.md",
+            "/tmp/aw/workspaces/axiom/capability-map-drafts/draft-index.md",
         ));
         sweep.write_wi_plans = true;
         sweep.wi_plans = vec![crate::cli::issues::CapabilityWiPlanReport {
@@ -13816,7 +14403,7 @@ Gate Inventory:
             kind: "capability_plan",
             project: "lumen".to_string(),
             backend: "unavailable".to_string(),
-            path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+            path: PathBuf::from("/tmp/aw/workspaces/axiom/workitems/lumen/capability-plan/plan.md"),
             cap_path: PathBuf::from("projects/lumen/README.md"),
             capability_count: 17,
             planning_row_count: 54,
@@ -13830,7 +14417,7 @@ Gate Inventory:
             plan_command: "aw wi plan --project lumen".to_string(),
         }];
         sweep.wi_plan_index_path = Some(PathBuf::from(
-            "/tmp/aw/capability-wi-plans/wi-plan-index.md",
+            "/tmp/aw/workspaces/axiom/capability-wi-plans/wi-plan-index.md",
         ));
         sweep.write_action_queue = true;
         sweep.action_queue = vec![CapabilityActionQueueEntry {
@@ -13843,20 +14430,24 @@ Gate Inventory:
             reason: "runtime verification must be rerun".to_string(),
         }];
         sweep.action_queue_index_path = Some(PathBuf::from(
-            "/tmp/aw/capability-action-queue/action-queue.md",
+            "/tmp/aw/workspaces/axiom/capability-action-queue/action-queue.md",
         ));
 
         let index = render_capability_sweep_rollout_index(&sweep);
 
         assert!(index.contains("kind: capability_rollout_index"));
         assert!(index.contains("project_count: 2"));
-        assert!(index.contains("| Check index | 1 | /tmp/aw/capability-checks/check-index.md |"));
+        assert!(index.contains(
+            "| Check index | 1 | /tmp/aw/workspaces/axiom/capability-checks/check-index.md |"
+        ));
         assert!(index
-            .contains("| Capability drafts | 2 | /tmp/aw/capability-map-drafts/draft-index.md |"));
-        assert!(index.contains("| WI plans | 1 | /tmp/aw/capability-wi-plans/wi-plan-index.md |"));
+            .contains("| Capability drafts | 2 | /tmp/aw/workspaces/axiom/capability-map-drafts/draft-index.md |"));
+        assert!(index.contains(
+            "| WI plans | 1 | /tmp/aw/workspaces/axiom/capability-wi-plans/wi-plan-index.md |"
+        ));
         assert!(index
-            .contains("| Action queue | 1 | /tmp/aw/capability-action-queue/action-queue.md |"));
-        assert!(index.contains("| blocked | define_capability_map:draft | 1 | cue |"));
+            .contains("| Action queue | 1 | /tmp/aw/workspaces/axiom/capability-action-queue/action-queue.md |"));
+        assert!(index.contains("| blocked | define_capability_map:draft | 1 | meter |"));
         assert!(index.contains("Start with the check index"));
         assert!(index.contains("skipped issue inventory alone is not backlog"));
 
@@ -13876,8 +14467,9 @@ Gate Inventory:
             .projects
             .push(capability_sweep_project(&skipped_inventory));
         sweep.write_review_packet = true;
-        sweep.review_packet_path =
-            Some(PathBuf::from("/tmp/aw/capability-review/review-packet.md"));
+        sweep.review_packet_path = Some(PathBuf::from(
+            "/tmp/aw/workspaces/axiom/capability-review/review-packet.md",
+        ));
 
         let packet = render_capability_sweep_review_packet(&sweep);
 
@@ -13894,10 +14486,10 @@ Gate Inventory:
         assert!(
             packet.contains("| Project | Candidate Roots | Draft | Apply After Review | Check |")
         );
-        assert!(packet.contains("| cue | 3 | /tmp/aw/cue/capability-map-drafts/draft.md | `aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project cue` |"));
+        assert!(packet.contains("| meter | 3 | /tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md | `aw capability apply-draft --project meter --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/meter/draft.md' --reviewed` | `aw capability check --project meter` |"));
         assert!(packet.contains("### Definition Needed"));
         assert!(packet.contains("These projects have no confirmed capability roots yet."));
-        assert!(packet.contains("| pg | empty_capability_map | /tmp/aw/pg/capability-map-drafts/draft.md | `aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project pg` |"));
+        assert!(packet.contains("| pg | empty_capability_map | /tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md | `aw capability apply-draft --project pg --draft '/tmp/aw/workspaces/axiom/capability-map-drafts/pg/draft.md' --reviewed` | `aw capability check --project pg` |"));
         assert!(packet.contains("do not apply README drafts until every product promise"));
     }
 
@@ -14055,6 +14647,14 @@ generated_at: 2026-06-18T00:00:00Z
         let doc = cap_doc(&body);
 
         assert!(body.starts_with("# Cclab Core\n\n## Brief\n\n"));
+        assert!(body.contains("\n## Contributing\n\n"));
+        assert!(body.contains("[CONTRIBUTING.md](CONTRIBUTING.md)"));
+        assert!(body
+            .contains("Add that file's `## Brief` here after confirming the project-local rules."));
+        assert!(body.contains("\n## Capability Contract\n\n"));
+        assert!(body.contains("[CAPABILITIES.md](CAPABILITIES.md)"));
+        assert!(body
+            .contains("Add that file's `## Brief` here after confirming the capability contract."));
         assert!(body.contains("\n## Capabilities\n\n### Capability Index\n\n"));
         assert!(body.contains(
             "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |"
@@ -14462,6 +15062,192 @@ Gate Inventory:
         assert!(err
             .to_string()
             .contains("only valid for the efficiency EC dimension"));
+    }
+
+    fn multi_row_wasm_markdown_capability() -> &'static str {
+        r#"# demo
+
+## WASM And Multi-Target Execution
+
+ID: wasm-multi-target
+Root WI: #3783
+Status: auditing
+Required Verification: smoke, conformance
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Wasm multi target readiness | epic | #3783 | implemented | planned | none | Basic phase 1 -> phase 2 -> phase 3 |
+| DOM Renderer Controlled Input Parity | change | #4004 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance` |
+| Library WASM Lowering Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test tsx_to_rust_imports` |
+"#
+    }
+
+    #[test]
+    fn set_wi_ref_updates_work_root_row() {
+        let before =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let updated = upsert_capability_wi_ref_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            "package-manager-readiness",
+            "#4200",
+        )
+        .unwrap();
+
+        assert!(updated.contains(
+            "| Package manager readiness | epic | #4200 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |"
+        ));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        assert_eq!(parsed.capabilities[0].work_roots[0].wi, "#4200");
+        // The verb must never write a table it cannot itself re-read: it must not
+        // introduce any *new* parse findings versus the pre-edit document (the
+        // fixture's own missing Type/Surface/EC Dimensions findings are
+        // pre-existing and unrelated to the WI cell edit).
+        assert_eq!(parsed.findings, before.findings);
+    }
+
+    #[test]
+    fn set_wi_ref_only_touches_the_matching_claim_row() {
+        let updated = upsert_capability_wi_ref_in_readme(
+            multi_row_wasm_markdown_capability(),
+            "wasm-multi-target",
+            "wasm-multi-target-readiness",
+            "#5100",
+        )
+        .unwrap();
+
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        let work_roots = &parsed.capabilities[0].work_roots;
+        assert_eq!(
+            work_roots
+                .iter()
+                .find(|row| row.id == "wasm-multi-target-readiness")
+                .unwrap()
+                .wi,
+            "#5100"
+        );
+        // Sibling claim rows in the same capability are untouched.
+        assert_eq!(
+            work_roots
+                .iter()
+                .find(|row| row.id == "dom-renderer-controlled-input-parity")
+                .unwrap()
+                .wi,
+            "#4004"
+        );
+        assert_eq!(
+            work_roots
+                .iter()
+                .find(|row| row.id == "library-wasm-lowering-fixtures")
+                .unwrap()
+                .wi,
+            "#4072"
+        );
+    }
+
+    #[test]
+    fn set_wi_ref_rejects_unknown_claim_in_known_capability() {
+        let err = upsert_capability_wi_ref_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            "not-a-real-claim",
+            "#4200",
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn set_wi_ref_rejects_unknown_capability() {
+        let err = upsert_capability_wi_ref_in_readme(
+            one_field_markdown_capability(),
+            "not-a-real-capability",
+            "package-manager-readiness",
+            "#4200",
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("capability `not-a-real-capability` not found"));
+    }
+
+    #[test]
+    fn resolve_capability_and_claim_ids_lists_valid_ids_for_unknown_capability() {
+        let document =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let err = resolve_capability_and_claim_ids(&document, "not-a-real-capability", "anything")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("valid capability ids"));
+        assert!(err.to_string().contains("package-manager"));
+    }
+
+    #[test]
+    fn resolve_capability_and_claim_ids_lists_valid_claims_for_unknown_claim() {
+        let document =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let err =
+            resolve_capability_and_claim_ids(&document, "package-manager", "not-a-real-claim")
+                .unwrap_err();
+
+        assert!(err.to_string().contains("valid claim ids"));
+        assert!(err.to_string().contains("package-manager-readiness"));
+    }
+
+    #[test]
+    fn resolve_capability_and_claim_ids_accepts_a_known_claim() {
+        let document =
+            parse_capability_document(one_field_markdown_capability(), Path::new("README.md"))
+                .unwrap();
+
+        let capability = resolve_capability_and_claim_ids(
+            &document,
+            "package-manager",
+            "package-manager-readiness",
+        )
+        .unwrap();
+
+        assert_eq!(capability.id, "package-manager");
+    }
+
+    #[test]
+    fn normalize_wi_ref_values_accepts_hash_and_bare_forms() {
+        assert_eq!(
+            normalize_wi_ref_values(&["#4200".to_string()]).unwrap(),
+            "#4200"
+        );
+        assert_eq!(
+            normalize_wi_ref_values(&["4200".to_string()]).unwrap(),
+            "#4200"
+        );
+    }
+
+    #[test]
+    fn normalize_wi_ref_values_joins_repeated_values_with_a_comma() {
+        assert_eq!(
+            normalize_wi_ref_values(&["4200".to_string(), "#4201".to_string()]).unwrap(),
+            "#4200, #4201"
+        );
+    }
+
+    #[test]
+    fn normalize_wi_ref_values_rejects_empty_and_non_numeric_input() {
+        assert!(normalize_wi_ref_values(&[])
+            .unwrap_err()
+            .to_string()
+            .contains("at least one"));
+        assert!(normalize_wi_ref_values(&["abc".to_string()])
+            .unwrap_err()
+            .to_string()
+            .contains("invalid `--wi` value"));
     }
 
     #[test]
@@ -15105,6 +15891,48 @@ Legacy intro.
     }
 
     #[test]
+    fn markdown_migration_does_not_duplicate_existing_field_style_contract() {
+        let body = r#"# Jet
+
+## Brief
+
+Jet is a Rust-native frontend toolchain.
+
+## Capabilities
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Surfaces: CLI: `jet install` - package installs.
+EC Dimensions: behavior: `cargo test -p jet pkg_manager` - package lifecycle.
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let doc = cap_doc(body);
+        let migrated = render_capability_markdown_migration(body, &doc, "jet");
+
+        assert_eq!(migrated.matches("\nID: package-manager\n").count(), 1);
+        assert_eq!(migrated.matches("\nType: DeveloperTool\n").count(), 1);
+        assert_eq!(migrated.matches("\nSurfaces:\n").count(), 1);
+        assert_eq!(migrated.matches("\nEC Dimensions:\n").count(), 1);
+
+        let reparsed = cap_doc(&migrated);
+        assert_eq!(reparsed.format_version(), 2);
+        assert_eq!(reparsed.capabilities.len(), 1);
+        assert!(!reparsed.requires_format_migration());
+    }
+
+    #[test]
     fn markdown_work_root_table_rejects_invalid_enums() {
         let body = one_markdown_capability().replace("| partial |", "| doing |");
         let err = parse_capability_document(&body, Path::new("README.md")).unwrap_err();
@@ -15225,6 +16053,50 @@ Benchmark reference stays after the registry.
             migrated.find("\n### Search\n").unwrap() < migrated.find("\n## Benchmarks\n").unwrap()
         );
         assert!(!migrated.contains(CAPABILITY_MIGRATION_INSERT_MARKER));
+    }
+
+    #[test]
+    fn markdown_migration_inserts_registry_at_top_level_capability_index() {
+        let body = r#"# vat
+
+Agent runner.
+
+## Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Agent-Native Containers | #4152 | implemented | verified | smoke | ready | Runs agent-native environments. |
+
+## AW Verification Snapshot
+
+| Field | Value |
+|---|---|
+| Last verified | 2026-06-20 |
+
+## Agent-Native Containers
+
+| Field | Value |
+|---|---|
+| ID | agent-native-containers |
+| Root WI | #4152 |
+| Status | candidate |
+| Promise | Runs agent-native environments. |
+| Required Verification | smoke |
+| Gate Inventory | cargo test -p vat |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Runner protocol | epic | #4152 | implemented | verified | smoke | cargo test -p vat |
+"#;
+        let doc = cap_doc(body);
+        let migrated = render_capability_markdown_migration(body, &doc, "vat");
+
+        let registry = migrated.find("\n### Capability Index\n").unwrap();
+        let snapshot = migrated.find("\n## AW Verification Snapshot\n").unwrap();
+        assert!(registry < snapshot);
+        let reparsed = cap_doc(&migrated);
+        assert_eq!(reparsed.format_version(), 2);
+        assert!(!reparsed.requires_format_migration());
     }
 
     #[test]
@@ -16816,6 +17688,47 @@ capability_refs:
             "aw td gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
         );
         assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
+    }
+
+    // issue #850: cb_reviewed/cb_revised/cb_arbitrated are retired CRRR
+    // phases that normalize to cb_filled. Before this fix, cb_reviewed
+    // routed straight to `aw td code-check` without normalizing first,
+    // which the terminal code-check phase guard then rejected outright —
+    // an unrecoverable dispatch-loop. This proves the capability loop now
+    // routes all three retired post-fill phases to the terminal
+    // code-check command the (normalized) guard accepts.
+    #[test]
+    fn lifecycle_action_for_retired_post_fill_phases_runs_terminal_code_check() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        for phase in ["cb_reviewed", "cb_revised", "cb_arbitrated", "cb_filled"] {
+            let evidence = CapabilityWiEvidence {
+                reference: "#57".to_string(),
+                gap_id: "generated-manual-ec-evidence-schema".to_string(),
+                issue_type: "enhancement".to_string(),
+                state: "open".to_string(),
+                phase: Some(phase.to_string()),
+                expected_command: None,
+                title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
+            };
+
+            let (kind, command, reason) = lifecycle_action_for_work_item(
+                &report,
+                "57",
+                Some(&evidence),
+                Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+                None,
+                true,
+                "active WI exists; continue WI -> TD -> CB lifecycle",
+            );
+
+            assert_eq!(kind, CapabilityActionKind::RunTd, "phase: {phase}");
+            assert_eq!(command, "aw td code-check 57", "phase: {phase}");
+            assert_eq!(
+                reason,
+                "active WI has generated and checked implementation output; run terminal code-check",
+                "phase: {phase}"
+            );
+        }
     }
 
     #[test]

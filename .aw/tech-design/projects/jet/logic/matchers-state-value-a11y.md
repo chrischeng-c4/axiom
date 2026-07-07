@@ -371,31 +371,37 @@ cargo test -p jet --test matchers_state_value_a11y
 files:
   - path: .aw/tech-design/crates/jet/logic/matchers-state-value-a11y.md
     action: ADD
+    section: doc
     impl_mode: hand-written
     desc: Re-home the matcher TD as a checker-compliant current-state contract.
 
   - path: .aw/tech-design/crates/jet/testing/matchers-state-value-a11y.md
     action: DELETE
+    section: doc
     impl_mode: hand-written
     desc: Remove the unexpected top-level testing directory copy of this TD.
 
   - path: crates/jet/runtime/test/matchers.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing polling matchers and recursive matchObject helper.
 
   - path: crates/jet/runtime/test/index.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing expect surface wiring for locator and value matchers.
 
   - path: crates/jet/runtime/test/page.js
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing Locator readers for state CSS accessible name and role.
 
   - path: crates/jet/tests/matchers_state_value_a11y.rs
     action: NONE
+    section: doc
     impl_mode: hand-written
     desc: Existing end-to-end integration tests for this matcher group.
 ```

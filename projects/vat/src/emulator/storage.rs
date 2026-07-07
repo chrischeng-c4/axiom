@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-src-emulator-storage-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Built-in Cloud Storage (GCS) emulator — an axum server for the GCS JSON API
 //! v1 subset over an in-memory store. Google ships no standalone GCS emulator,
@@ -47,6 +47,7 @@ struct AppState {
 }
 
 /// Serve the Cloud Storage emulator until the process is killed.
+/// @spec projects/vat/tech-design/semantic/source/projects-vat-src-emulator-storage-rs.md#source
 pub async fn serve(host_port: &str) -> Result<()> {
     let state = AppState {
         inner: Arc::new(Mutex::new(Store::default())),

@@ -25,8 +25,8 @@ command_refs:
 $id: score-chat-schema
 description: |
   Data shapes for the `aw chat` verb. The channel file at
-  /tmp/aw-channel.md is a plain Markdown file of consecutive ## msg-NNN
-  blocks. The agents registry at /tmp/aw-channel-agents.md is a
+  /tmp/aw/chat/channel.md is a plain Markdown file of consecutive ## msg-NNN
+  blocks. The agents registry at /tmp/aw/chat/agents.md is a
   plain Markdown file of consecutive ## agent-<name> blocks each containing
   a YAML document. Listen state is persisted in ~/.aw/chat-state.json.
   Team identity is read from [team] in .aw/config.toml (walk-up from CWD).
@@ -36,7 +36,7 @@ definitions:
     $id: "#/definitions/ChannelMessage"
     type: object
     description: |
-      One message block inside /tmp/aw-channel.md.
+      One message block inside /tmp/aw/chat/channel.md.
       Serialised as a ## msg-NNN Markdown heading followed by a YAML
       frontmatter block (---) then the body text.
     required: [id, from, timestamp, body]
@@ -70,7 +70,7 @@ definitions:
     $id: "#/definitions/AgentRegistration"
     type: object
     description: |
-      One entry in /tmp/aw-channel-agents.md. Stored as a
+      One entry in /tmp/aw/chat/agents.md. Stored as a
       Markdown heading named agent-{name} followed by a YAML document. `aw chat
       agents --register` writes or replaces the caller's entry (idempotent).
     required: [name, wt_path, branch, capabilities]
@@ -260,10 +260,10 @@ definitions:
     properties:
       register:
         type: boolean
-        description: Write or replace caller's AgentRegistration in /tmp/aw-channel-agents.md.
+        description: Write or replace caller's AgentRegistration in /tmp/aw/chat/agents.md.
       list:
         type: boolean
-        description: Print all registered agents from /tmp/aw-channel-agents.md.
+        description: Print all registered agents from /tmp/aw/chat/agents.md.
       terse:
         type: boolean
         description: Force terse output.
@@ -305,11 +305,11 @@ nodes:
   detect_identity: { kind: process, label: "Walk CWD up for .aw/config.toml [team] name; fallback git-toplevel basename" }
   detect_format: { kind: process, label: "Detect output format: tty=human, pipe=terse; --terse/--human overrides" }
   branch_cmd: { kind: decision, label: "subcommand?" }
-  run_post: { kind: process, label: "post: read body-file/stdin, auto-increment msg-id, append ## msg-N block to /tmp/aw-channel.md" }
-  run_list: { kind: process, label: "list: parse /tmp/aw-channel.md, apply --mentions/--last/--status filters, render" }
-  run_read: { kind: process, label: "read: parse /tmp/aw-channel.md, find anchor msg-id, collect replies in thread order, render" }
-  run_agents_register: { kind: process, label: "agents --register: read [team] block, write/replace ## agent-{name} in /tmp/aw-channel-agents.md" }
-  run_agents_list: { kind: process, label: "agents --list: parse /tmp/aw-channel-agents.md, render all entries" }
+  run_post: { kind: process, label: "post: read body-file/stdin, auto-increment msg-id, append ## msg-N block to /tmp/aw/chat/channel.md" }
+  run_list: { kind: process, label: "list: parse /tmp/aw/chat/channel.md, apply --mentions/--last/--status filters, render" }
+  run_read: { kind: process, label: "read: parse /tmp/aw/chat/channel.md, find anchor msg-id, collect replies in thread order, render" }
+  run_agents_register: { kind: process, label: "agents --register: read [team] block, write/replace ## agent-{name} in /tmp/aw/chat/agents.md" }
+  run_agents_list: { kind: process, label: "agents --list: parse /tmp/aw/chat/agents.md, render all entries" }
   run_listen_once: { kind: process, label: "listen --once: read last_seen_msg_id from ~/.aw/chat-state.json, filter new msgs, print, update state, exit 0" }
   run_listen_loop: { kind: process, label: "listen: poll loop on interval (default 60s), print new --mentions msgs, update state each iteration" }
   output: { kind: terminal, label: "Write stdout; exit 0" }
@@ -368,13 +368,13 @@ flowchart TD
     start([aw chat cmd]) --> detect_identity[Walk CWD up for .aw/config.toml team name\nfallback: git-toplevel basename]
     detect_identity --> detect_format[Detect format: tty=human pipe=terse\n--terse/--human overrides]
     detect_format --> branch_cmd{subcommand?}
-    branch_cmd -->|post| run_post[Read body-file/stdin\nAuto-increment msg-id\nAppend ## msg-N to /tmp/aw-channel.md]
-    branch_cmd -->|list| run_list[Parse /tmp/aw-channel.md\nApply --mentions/--last/--status filters\nRender]
-    branch_cmd -->|read| run_read[Parse /tmp/aw-channel.md\nFind anchor msg-id\nCollect replies in thread order\nRender]
+    branch_cmd -->|post| run_post[Read body-file/stdin\nAuto-increment msg-id\nAppend ## msg-N to /tmp/aw/chat/channel.md]
+    branch_cmd -->|list| run_list[Parse /tmp/aw/chat/channel.md\nApply --mentions/--last/--status filters\nRender]
+    branch_cmd -->|read| run_read[Parse /tmp/aw/chat/channel.md\nFind anchor msg-id\nCollect replies in thread order\nRender]
     branch_cmd -->|agents| branch_agents{--register or --list?}
     branch_cmd -->|listen| branch_listen{--once?}
-    branch_agents -->|register| run_agents_register[Read team block\nWrite/replace agent-name in /tmp/aw-channel-agents.md]
-    branch_agents -->|list| run_agents_list[Parse /tmp/aw-channel-agents.md\nRender all entries]
+    branch_agents -->|register| run_agents_register[Read team block\nWrite/replace agent-name in /tmp/aw/chat/agents.md]
+    branch_agents -->|list| run_agents_list[Parse /tmp/aw/chat/agents.md\nRender all entries]
     branch_listen -->|yes| run_listen_once[Read last_seen_msg_id from ~/.aw/chat-state.json\nFilter new msgs\nPrint\nUpdate state\nExit 0]
     branch_listen -->|no| run_listen_loop[Poll loop on interval default 60s\nPrint new --mentions msgs\nUpdate state each iteration]
     run_post --> output([Write stdout; exit 0])
@@ -412,16 +412,16 @@ changes:
       - format_human(msgs: &[ChannelMessage]) -> String: full Markdown
         rendering with headings, metadata block, and body.
       - run_post(args: PostArgs): reads body from --body-file or stdin;
-        appends ## msg-{N} block to /tmp/aw-channel.md.
+        appends ## msg-{N} block to /tmp/aw/chat/channel.md.
       - run_list(args: ListArgs): parses channel; applies --mentions,
         --last, --status filters; renders.
       - run_read(args: ReadArgs): finds anchor by --re, collects replies;
         renders thread.
       - run_agents_register(args: AgentsArgs): reads [team] block; writes
-        or replaces ## agent-{name} entry in /tmp/aw-channel-agents.md.
+        or replaces ## agent-{name} entry in /tmp/aw/chat/agents.md.
       - run_agents_list(args: AgentsArgs): parses agents file; renders.
       - run_listen(args: ListenArgs): reads ~/.aw/chat-state.json;
-        polls /tmp/aw-channel.md; prints new msgs; updates state; loops
+        polls /tmp/aw/chat/channel.md; prints new msgs; updates state; loops
         or exits if --once.
       - All file I/O is best-effort (no locking); concurrent appends
         tolerated per R18.
@@ -467,11 +467,11 @@ tests:
     kind: manual
     description: Verify that `aw chat post` writes a message to the channel file.
     steps:
-      - run: "rm -f /tmp/aw-channel.md"
+      - run: "rm -f /tmp/aw/chat/channel.md"
       - run: "echo 'hello from score' | aw chat post --to mamba --body-file -"
-      - run: "grep '## msg-1' /tmp/aw-channel.md"
+      - run: "grep '## msg-1' /tmp/aw/chat/channel.md"
     expected: |
-      /tmp/aw-channel.md is created. The file contains a `## msg-1` heading
+      /tmp/aw/chat/channel.md is created. The file contains a `## msg-1` heading
       block with `from: score`, `to: [mamba]`, a UTC timestamp, and the body
       `hello from score`. Exit code 0.
 
@@ -501,11 +501,11 @@ tests:
     kind: manual
     description: Verify that `--register` writes the agent entry and `--list` retrieves it.
     steps:
-      - run: "rm -f /tmp/aw-channel-agents.md"
+      - run: "rm -f /tmp/aw/chat/agents.md"
       - run: "aw chat agents --register"
       - run: "aw chat agents --list"
     expected: |
-      After `--register`, `/tmp/aw-channel-agents.md` contains a
+      After `--register`, `/tmp/aw/chat/agents.md` contains a
       `## agent-score` heading with a YAML block including `name: score`,
       `wt_path`, `branch`, `capabilities`, and `last_seen`. Running `--list`
       prints the entry in human or terse format. A second `--register` is
@@ -519,7 +519,7 @@ tests:
       - run: "rm -f ~/.aw/chat-state.json"
       - run: "aw chat listen --once --mentions @me"
     expected: |
-      On first run: all messages in `/tmp/aw-channel.md` addressed to the
+      On first run: all messages in `/tmp/aw/chat/channel.md` addressed to the
       caller team (or all messages if none specifically addressed) are printed;
       `~/.aw/chat-state.json` is created with `last_seen_msg_id` set to
       the highest msg-id seen; exit code 0. On a second run with no new
