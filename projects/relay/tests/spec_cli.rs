@@ -90,7 +90,14 @@ fn spec_gen_writes_a_client_for_every_language() {
     for lang in ["ts", "py", "rust"] {
         let dir = tempfile::tempdir().expect("tempdir");
         let out = dir.path().join(lang);
-        let _ = stdout(&["spec", "gen", "--lang", lang, "--out", out.to_str().unwrap()]);
+        let _ = stdout(&[
+            "spec",
+            "gen",
+            "--lang",
+            lang,
+            "--out",
+            out.to_str().unwrap(),
+        ]);
         let files: Vec<_> = std::fs::read_dir(&out)
             .expect("client output dir")
             .filter_map(|e| e.ok())
@@ -106,7 +113,14 @@ fn spec_gen_writes_a_client_for_every_language() {
     }
     let dir = tempfile::tempdir().expect("tempdir");
     let out = dir.path().join("ts");
-    let _ = stdout(&["spec", "gen", "--lang", "ts", "--out", out.to_str().unwrap()]);
+    let _ = stdout(&[
+        "spec",
+        "gen",
+        "--lang",
+        "ts",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
     for f in ["types.ts", "client.ts", "index.ts"] {
         assert!(out.join(f).is_file(), "generated {f}");
     }
@@ -127,7 +141,10 @@ fn llm_operations_topic_documents_the_new_surfaces() {
         "RELAY_PEER_TLS_CERT",
         "RELAY_PEER_MTLS",
     ] {
-        assert!(ops.contains(needle), "llm operations must document {needle}");
+        assert!(
+            ops.contains(needle),
+            "llm operations must document {needle}"
+        );
     }
 }
 // HANDWRITE-END

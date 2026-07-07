@@ -79,7 +79,29 @@ pub const TOPICS: &[cli_std::llm::Topic] = &[
               renders the StatefulSet topology — `k8s/` base stays a single-node \
               direct install for kind/smoke).\n\
             - `relay dockerfile render --variant source|release [--version]` — the \
-              from-source and published-release images.\n",
+              from-source and published-release images.\n\
+            - `relay spec [--format openapi|openapi-yaml|json-schema]` — the offline \
+              twin of `GET /openapi.json`; `relay spec gen --lang ts|py|rust --out \
+              <dir>` generates a typed client from it (shared openapi-codegen; \
+              relay has no keep-style `--shapes`/`--fields` catalogs).\n\n\
+            Backup/restore (`--features backup`): `relay backup --url \
+            http://<node>:7000 --dest file:///path|s3://bucket/prefix \
+            [--retention-secs N]` fetches a consistent snapshot from a RUNNING \
+            node's `GET /admin/backup` (the exact raft-snapshot bytes: the live \
+            un-acked backlog + applied index) and ships it to a service-backup \
+            sink. The endpoint needs `admin` on `*` when auth is required — pass \
+            `--token` or `RELAY_BACKUP_TOKEN` (the operator injects it from \
+            `spec.backup.adminTokenSecret`; `spec.backup` renders a `<name>-backup` \
+            CronJob). Restore: feed the artifact to `load_live` on a fresh node — \
+            an idempotent per-message_id MERGE; leases are node-local, so restored \
+            work redelivers (at-least-once).\n\n\
+            Peer TLS (replica/HA mode): mount PEM material and set \
+            `RELAY_PEER_TLS_CERT` / `RELAY_PEER_TLS_KEY` / `RELAY_PEER_TLS_CA` \
+            (+ `RELAY_PEER_MTLS=on` to require client certs). Serve validates the \
+            material fail-fast at startup (partial config or a mis-pointed path \
+            exits nonzero). HONEST LIMIT: mTLS termination on the raft peer port \
+            is not yet applied — raft-host's h2c transport has no TLS seam (filed \
+            gap; peer RPCs stay cleartext h2c inside the cluster until it lands).\n",
     },
 ];
 // HANDWRITE-END

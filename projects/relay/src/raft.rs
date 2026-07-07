@@ -72,10 +72,40 @@ pub struct PubCommand {
 /// index `up_to`. Restore is an idempotent merge (message_id dedupe), which is
 /// sound because raft only installs a snapshot on a replica whose applied
 /// publish stream is a prefix of the leader's.
-#[derive(Serialize, Deserialize)]
-struct EngineSnapshot {
-    up_to: Index,
-    subjects: Vec<SubjectLive>,
+///
+/// Public since #1209: the `GET /admin/backup` endpoint and the `relay backup`
+/// artifact carry EXACTLY this serialization (via [`snapshot_bytes`] /
+/// [`load_snapshot_bytes`]) — one snapshot format, shared with raft's
+/// InstallSnapshot path, never a parallel backup format.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EngineSnapshot {
+    /// Raft applied index the capture reflects (0 on a raft-less single node).
+    pub up_to: Index,
+    /// Per-`(subject, shard)` live (un-acked) backlog, deterministically
+    /// ordered.
+    pub subjects: Vec<SubjectLive>,
+}
+
+/// Serialize the ONE snapshot format: the engine's live (un-acked) state via
+/// [`Relay::dump_live`] plus the applied raft index. This is what
+/// [`RelayStateMachine::snapshot`] produces for raft InstallSnapshot and what
+/// `GET /admin/backup` streams for `relay backup` (#1209).
+pub fn snapshot_bytes(relay: &Relay, up_to: Index) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&EngineSnapshot {
+        up_to,
+        subjects: relay.dump_live()?,
+    })?)
+}
+
+/// Load [`snapshot_bytes`] output into `relay` via the [`Relay::load_live`]
+/// MERGE (idempotent per message_id; entries the target already holds dedupe,
+/// surplus local entries stay as redelivery candidates — at-least-once).
+/// Returns the snapshot's applied index (`up_to`) so callers — raft restore,
+/// or a fresh-node restore from a backup artifact — can advance their floor.
+pub fn load_snapshot_bytes(relay: &Relay, snapshot: &[u8]) -> Result<Index> {
+    let snap: EngineSnapshot = serde_json::from_slice(snapshot)?;
+    relay.load_live(snap.subjects)?;
+    Ok(snap.up_to)
 }
 
 /// relay's [`Relay`] engine driven as a [`RaftStateMachine`].
@@ -182,17 +212,13 @@ impl RaftStateMachine for RelayStateMachine {
     }
 
     fn snapshot(&self) -> Result<Vec<u8>> {
-        Ok(serde_json::to_vec(&EngineSnapshot {
-            up_to: self.applied_index(),
-            subjects: self.relay.dump_live()?,
-        })?)
+        snapshot_bytes(&self.relay, self.applied_index())
     }
 
     fn restore(&self, snapshot: &[u8]) -> Result<()> {
-        let snap: EngineSnapshot = serde_json::from_slice(snapshot)?;
-        self.relay.load_live(snap.subjects)?;
-        self.applied.store(snap.up_to, Ordering::Release);
-        self.persist_marker(snap.up_to);
+        let up_to = load_snapshot_bytes(&self.relay, snapshot)?;
+        self.applied.store(up_to, Ordering::Release);
+        self.persist_marker(up_to);
         Ok(())
     }
 

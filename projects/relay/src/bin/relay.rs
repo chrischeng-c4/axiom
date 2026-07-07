@@ -62,6 +62,102 @@ enum Command {
     /// construction is owned here (not by `k8s`) because the same artifact
     /// feeds compose, kind, and real registries.
     Dockerfile(DockerfileArgs),
+    /// Print relay's machine-readable integration spec — offline, no server:
+    /// the same OpenAPI document `GET /openapi.json` serves. `spec gen --lang
+    /// ts|py|rust` generates a typed client from it (#1209, keep #777).
+    Spec(SpecArgs),
+    /// Write a consistent snapshot of a RUNNING node's live (un-acked) state
+    /// to a backup destination through the shared libs/service-backup runner
+    /// (#1209): fetches `GET /admin/backup` and ships the bytes to `--dest`
+    /// (`file://` always; `s3://` via the lib). Needs a build with
+    /// `--features backup`.
+    Backup(BackupArgs),
+}
+
+/// `relay spec [--format ...]` or `relay spec gen ...`. Positional slots are
+/// reserved for the `gen` subcommand; everything else is a flag (the CLI
+/// convention). relay has no request-shape cookbook / value-type catalog, so
+/// keep's `--shapes`/`--fields` are deliberately absent (never faked).
+#[derive(clap::Args, Debug)]
+struct SpecArgs {
+    /// Generate a typed client from the spec instead of printing it.
+    #[command(subcommand)]
+    gen: Option<SpecSub>,
+    /// Schema format to emit.
+    #[arg(long, value_enum, default_value_t = SpecFormat::Openapi)]
+    format: SpecFormat,
+}
+
+#[derive(Subcommand, Debug)]
+enum SpecSub {
+    /// Generate a typed API client (TypeScript / Python / Rust) from relay's
+    /// OpenAPI document, written into `--out`.
+    Gen(GenArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct GenArgs {
+    /// Target language for the generated client.
+    #[arg(long, value_enum)]
+    lang: GenLang,
+    /// Output directory for the generated files.
+    #[arg(long)]
+    out: PathBuf,
+    /// HTTP backend for the TypeScript client (ignored for py/rust).
+    #[arg(long, value_enum, default_value_t = GenHttp::Fetch)]
+    http: GenHttp,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenLang {
+    /// TypeScript: types + fetch/axios client + TanStack Query hooks.
+    Ts,
+    /// Python: pydantic models + a generated sync/async HTTP/2 runtime.
+    Py,
+    /// Rust: serde models + a reqwest client.
+    Rust,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GenHttp {
+    Fetch,
+    Axios,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SpecFormat {
+    /// Full OpenAPI 3 document as JSON (default).
+    Openapi,
+    /// Full OpenAPI 3 document as YAML for LLM/agent reading.
+    #[value(alias = "yaml", alias = "openapi.yaml")]
+    OpenapiYaml,
+    /// Just the component schemas (honest: relay registers no named schemas
+    /// today, so this serializes a null `components`).
+    JsonSchema,
+}
+
+/// `relay backup` flags (#1209): pulls a snapshot over HTTP from a running
+/// node and ships it to a destination via `libs/service-backup` (lumen #808).
+#[derive(clap::Args, Debug)]
+struct BackupArgs {
+    /// Base URL of a running relay node, e.g.
+    /// `http://<name>.<namespace>.svc.cluster.local:7000` (what the operator's
+    /// backup CronJob passes) or `http://localhost:7000` for ad hoc use.
+    #[arg(long)]
+    url: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or schema-only
+    /// `gs://bucket/prefix` (parses, but the runner supports `file://` and
+    /// `s3://` sinks today).
+    #[arg(long)]
+    dest: String,
+    /// Bearer token for `/admin/backup` (needs `admin` on `*`). Falls back to
+    /// `RELAY_BACKUP_TOKEN`; omit entirely when the node runs `--auth off`.
+    #[arg(long, env = "RELAY_BACKUP_TOKEN")]
+    token: Option<String>,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Omit to keep everything.
+    #[arg(long)]
+    retention_secs: Option<u64>,
 }
 
 /// `relay k8s <crd|operator|instance>` — cluster artifacts split by lifecycle
@@ -365,7 +461,86 @@ async fn dispatch(cmd: Command) -> Result<()> {
         Command::Issue(args) => dispatch_issue(args).await,
         Command::K8s(args) => k8s(args).await,
         Command::Dockerfile(args) => dockerfile(args),
+        Command::Spec(args) => spec(args),
+        Command::Backup(args) => dispatch_backup(args).await,
     }
+}
+
+/// `relay spec` — offline OpenAPI (JSON / YAML / component schemas), or
+/// `spec gen` to generate a typed client. No engine, no server, no I/O beyond
+/// stdout / `--out` (#1209, keep #777).
+fn spec(args: SpecArgs) -> Result<()> {
+    // `spec gen` writes a typed client; everything else prints to stdout.
+    if let Some(SpecSub::Gen(gen)) = args.gen {
+        return spec_gen(gen);
+    }
+    let out = match args.format {
+        SpecFormat::Openapi => relay::openapi::api_doc_json(),
+        SpecFormat::OpenapiYaml => relay::openapi::openapi_yaml(),
+        SpecFormat::JsonSchema => relay::openapi::json_schema_json(),
+    };
+    println!("{out}");
+    Ok(())
+}
+
+/// `relay spec gen` — generate a typed client from relay's own OpenAPI
+/// document (offline; no engine or server) via the shared
+/// `libs/openapi-codegen`, written into `--out`. One codegen path, no
+/// external tool (keep's spec_gen verbatim).
+fn spec_gen(args: GenArgs) -> Result<()> {
+    use cclab_openapi_codegen::{generate, GenOptions, HttpClient, Lang};
+    let lang = match args.lang {
+        GenLang::Ts => Lang::Ts,
+        GenLang::Py => Lang::Py,
+        GenLang::Rust => Lang::Rust,
+    };
+    let opts = GenOptions {
+        lang,
+        spec_path: PathBuf::new(),
+        out_dir: args.out.clone(),
+        client_name: "createClient".to_string(),
+        http_client: match args.http {
+            GenHttp::Fetch => HttpClient::Fetch,
+            GenHttp::Axios => HttpClient::Axios,
+        },
+        emit_types: true,
+        emit_client: true,
+        // TanStack Query hooks are a TypeScript-only concern.
+        emit_hooks: matches!(lang, Lang::Ts),
+    };
+    let output = generate(&relay::openapi::api_doc_json(), &opts)?;
+    std::fs::create_dir_all(&args.out)?;
+    for file in &output.files {
+        let path = args.out.join(&file.rel_path);
+        std::fs::write(&path, &file.contents)?;
+        println!("generated {}", path.display());
+    }
+    Ok(())
+}
+
+/// `relay backup` (#1209): fetch `{url}/admin/backup` and ship the bytes to
+/// `--dest` via `libs/service-backup`, printing the resulting
+/// `BackupRunResult` as JSON. This is what the operator's optional backup
+/// CronJob (`spec.backup`) invokes on a schedule; it works equally ad hoc.
+#[cfg(feature = "backup")]
+async fn dispatch_backup(args: BackupArgs) -> Result<()> {
+    let dest = service_backup::BackupDestination::from_uri(&args.dest)?;
+    let retention = match args.retention_secs {
+        Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
+        None => service_backup::RetentionPolicy::default(),
+    };
+    let result =
+        relay::backup::run_backup(&args.url, args.token.as_deref(), &dest, &retention).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+#[cfg(not(feature = "backup"))]
+async fn dispatch_backup(_args: BackupArgs) -> Result<()> {
+    anyhow::bail!(
+        "this relay build was compiled without backup support; rebuild with \
+         `--features backup` (the published image includes it)"
+    )
 }
 
 /// `relay k8s` — cluster artifacts split by lifecycle layer. Only `operator
@@ -709,6 +884,35 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // traffic, tokenless like probes; mTLS is a later slice). Held for the
     // process lifetime — dropping it would abort the tick/pump tasks.
     let raft = if raft_host::cluster::replica_mode() {
+        // Peer-mTLS material (#1209): load + validate BEFORE the raft group
+        // spawns, so a misconfigured deployment (partial RELAY_PEER_TLS_* set,
+        // mis-pointed path, unusable PEM) exits nonzero at startup instead of
+        // failing at dial time. Termination on the peer port is NOT yet
+        // applied — raft-host's h2c transport has no TLS seam (the filed gap
+        // in the TD); this proves the mounted material is usable today.
+        match relay::peer_tls::PeerTlsConfig::from_env()? {
+            Some(tls) => {
+                tls.rustls_server_config()?;
+                tls.rustls_client_config()?;
+                if tls.required {
+                    tracing::warn!(
+                        cert = %tls.cert.display(),
+                        "peer TLS material validated; RELAY_PEER_MTLS=on requested but mTLS \
+                         termination on the raft peer port is not yet applied (raft-host/h2c \
+                         TLS seam gap) — peer RPCs stay h2c"
+                    );
+                } else {
+                    tracing::info!(
+                        cert = %tls.cert.display(),
+                        "peer TLS material validated (not required); peer RPCs stay h2c until \
+                         the raft-host TLS seam lands"
+                    );
+                }
+            }
+            None => tracing::info!(
+                "no peer TLS material configured (RELAY_PEER_TLS_*); peer RPCs are plain h2c"
+            ),
+        }
         let peer_port = bind
             .rsplit(':')
             .next()
@@ -926,6 +1130,58 @@ mod tests {
             normalize_relay_tag(None),
             format!("relay@{}", env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    /// #1209: `relay spec` / `relay spec gen` / `relay backup` parse with
+    /// their convention flags; the keep-only `--shapes`/`--fields` do NOT
+    /// parse (relay has no catalogs — omitted, never faked).
+    #[test]
+    fn spec_and_backup_verbs_parse() {
+        Cli::try_parse_from(["relay", "spec"]).expect("spec default");
+        Cli::try_parse_from(["relay", "spec", "--format", "openapi-yaml"]).expect("spec yaml");
+        Cli::try_parse_from(["relay", "spec", "--format", "json-schema"])
+            .expect("spec json-schema");
+        assert!(
+            Cli::try_parse_from(["relay", "spec", "--shapes"]).is_err(),
+            "--shapes is keep-only"
+        );
+        assert!(
+            Cli::try_parse_from(["relay", "spec", "--fields"]).is_err(),
+            "--fields is keep-only"
+        );
+
+        let cli = Cli::try_parse_from(["relay", "spec", "gen", "--lang", "ts", "--out", "/tmp/x"])
+            .expect("spec gen should parse");
+        match cli.cmd {
+            Some(Command::Spec(SpecArgs {
+                gen: Some(SpecSub::Gen(a)),
+                ..
+            })) => {
+                assert!(matches!(a.lang, GenLang::Ts));
+                assert_eq!(a.out, PathBuf::from("/tmp/x"));
+            }
+            other => panic!("expected spec gen, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "relay",
+            "backup",
+            "--url",
+            "http://localhost:7000",
+            "--dest",
+            "file:///tmp/backups",
+            "--retention-secs",
+            "3600",
+        ])
+        .expect("backup should parse");
+        match cli.cmd {
+            Some(Command::Backup(a)) => {
+                assert_eq!(a.url, "http://localhost:7000");
+                assert_eq!(a.dest, "file:///tmp/backups");
+                assert_eq!(a.retention_secs, Some(3600));
+            }
+            other => panic!("expected backup, got {other:?}"),
+        }
     }
 
     /// R3: build-stamp envs populate ToolInfo (never empty; "unknown" is the

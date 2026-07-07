@@ -34,6 +34,8 @@
 //! ```
 
 pub mod auth;
+#[cfg(feature = "backup")]
+pub mod backup;
 pub mod config;
 pub mod consume;
 pub mod engine;
@@ -42,6 +44,7 @@ pub mod metrics;
 pub mod openapi;
 #[cfg(feature = "operator")]
 pub mod operator;
+pub mod peer_tls;
 pub mod perf_gate;
 pub mod raft;
 pub mod reconciler;
@@ -56,7 +59,9 @@ pub mod workqueue;
 pub use config::{DedupeConfig, FsyncPolicy, RelayCoreConfig, RetentionConfig, WorkQueueConfig};
 pub use engine::{Relay, SubjectLive};
 pub use log::Log;
-pub use raft::{PubCommand, RelayRaft, RelayStateMachine};
+pub use raft::{
+    load_snapshot_bytes, snapshot_bytes, EngineSnapshot, PubCommand, RelayRaft, RelayStateMachine,
+};
 pub use reconciler::{spawn_reconciler, ReconcilerHandle};
 pub use server::{router, AppState};
 pub use server_config::RelayServerConfig;

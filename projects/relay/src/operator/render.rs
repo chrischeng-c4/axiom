@@ -27,6 +27,7 @@ const KIND: &str = "Relay";
 /// The one serve port: HTTP/1.1 + h2c, data plane + probes + raft peer RPCs.
 const CLIENT_PORT: i32 = 7000;
 const COMPONENT: &str = "server";
+const BACKUP_COMPONENT: &str = "backup";
 const TOKEN_REGISTRY_VOLUME: &str = "relay-token-registry";
 const TOKEN_REGISTRY_KEY: &str = "token-registry.json";
 const TOKEN_REGISTRY_MOUNT_DIR: &str = "/var/run/secrets/relay";
@@ -90,7 +91,7 @@ pub fn render(relay: &Relay) -> Vec<Value> {
     let cx = ctx(relay, &name, &ns);
     let headless = format!("{name}-headless");
 
-    vec![
+    let mut out = vec![
         render::service_account(&cx, COMPONENT),
         statefulset(relay, &cx, &headless),
         render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
@@ -98,7 +99,74 @@ pub fn render(relay: &Relay) -> Vec<Value> {
         // Keep a raft quorum during voluntary disruptions: at most one broker
         // pod may be unavailable at a time (mirrors the old k8s/pdb.yaml).
         render::pdb(&cx, &name, COMPONENT, 1),
-    ]
+    ];
+    // Optional scheduled backup runner: only when a policy is configured
+    // (#1209, lumen #808 pattern).
+    if let Some(cj) = backup_cron_job(relay, &cx) {
+        out.push(cj);
+    }
+    out
+}
+
+/// The optional backup CronJob (#1209): rendered only when `spec.backup` is
+/// set. relay already produces a consistent point-in-time snapshot over HTTP
+/// (`GET /admin/backup`, the exact `RelayStateMachine::snapshot` bytes); this
+/// CronJob adds nothing to the snapshot path — it only *schedules and
+/// transports* that endpoint's bytes to a destination via `relay backup`
+/// (`libs/service-backup`). The shared [`operator::render::cron_job`] helper
+/// stays manifest-only (lumen #808).
+fn backup_cron_job(relay: &Relay, cx: &RenderCtx<'_>) -> Option<Value> {
+    let policy = relay.spec.backup.as_ref()?;
+    let cron_name = format!("{}-backup", cx.name);
+    // Cluster-DNS FQDN of the client ClusterIP Service, reachable from any
+    // namespace's CronJob pod regardless of DNS search suffixes.
+    let url = format!(
+        "http://{}.{}.svc.cluster.local:{CLIENT_PORT}",
+        cx.name, cx.ns
+    );
+    let mut args = vec![
+        "backup".to_string(),
+        "--url".to_string(),
+        url,
+        "--dest".to_string(),
+        policy.destination.clone(),
+    ];
+    if let Some(secs) = policy.retention_secs {
+        args.push("--retention-secs".to_string());
+        args.push(secs.to_string());
+    }
+    let mut env = Vec::new();
+    if let Some(secret) = &policy.admin_token_secret {
+        env.push(json!({
+            "name": "RELAY_BACKUP_TOKEN",
+            "valueFrom": { "secretKeyRef": { "name": secret, "key": "token" } },
+        }));
+    }
+    let image_pull_policy = relay
+        .spec
+        .cluster
+        .image_pull_policy
+        .clone()
+        .unwrap_or_else(|| "IfNotPresent".to_string());
+    Some(render::cron_job(render::CronJob {
+        cx,
+        name: &cron_name,
+        component: BACKUP_COMPONENT,
+        schedule: &policy.schedule,
+        image: relay.spec.cluster.image.as_str(),
+        image_pull_policy: &image_pull_policy,
+        command: vec!["relay".into()],
+        args,
+        env,
+        env_from: vec![],
+        volumes: vec![],
+        volume_mounts: vec![],
+        service_account_name: Some(cx.name),
+        cpu: "100m",
+        memory: "128Mi",
+        successful_jobs_history_limit: 3,
+        failed_jobs_history_limit: 3,
+    }))
 }
 
 /// The durable serving StatefulSet: the toolkit's downward-API base

@@ -48,7 +48,13 @@ async fn admin_backup_returns_the_state_machine_snapshot_bytes() {
     let (addr, state) = start_server().await;
     state
         .relay_handle()
-        .publish("jobs", "m-1", json!({"task": "t"}), BTreeMap::new(), Utc::now())
+        .publish(
+            "jobs",
+            "m-1",
+            json!({"task": "t"}),
+            BTreeMap::new(),
+            Utc::now(),
+        )
         .unwrap();
 
     let resp = reqwest::get(format!("http://{addr}/admin/backup"))
@@ -190,7 +196,13 @@ async fn run_backup_ships_snapshot_to_local_sink() {
     let (addr, state) = start_server().await;
     state
         .relay_handle()
-        .publish("jobs", "m-1", json!({"task": "t"}), BTreeMap::new(), Utc::now())
+        .publish(
+            "jobs",
+            "m-1",
+            json!({"task": "t"}),
+            BTreeMap::new(),
+            Utc::now(),
+        )
         .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -198,8 +210,7 @@ async fn run_backup_ships_snapshot_to_local_sink() {
     std::fs::write(dir.path().join("relay-0.json"), b"old").unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
-    let dest =
-        BackupDestination::from_uri(&format!("file://{}", dir.path().display())).unwrap();
+    let dest = BackupDestination::from_uri(&format!("file://{}", dir.path().display())).unwrap();
     let result = relay::backup::run_backup(
         &format!("http://{addr}"),
         None,

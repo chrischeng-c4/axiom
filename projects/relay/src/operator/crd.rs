@@ -76,6 +76,46 @@ pub struct RelaySpec {
     /// off unless the CR asks).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret: Option<String>,
+
+    /// Optional scheduled backup (#1209). When set, the operator renders a
+    /// `<name>-backup` CronJob (see [`super::render`]) invoking `relay
+    /// backup` on this schedule against the deployment's own
+    /// `GET /admin/backup` endpoint — no new snapshot mechanism, only
+    /// scheduling + transport (lumen #808). Absent means no CronJob; the
+    /// endpoint stays reachable for manual/scripted use either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<RelayBackupSpec>,
+}
+
+/// Declarative backup policy (#1209).
+///
+/// The runner contract lives in `libs/service-backup`
+/// (`BackupDestination`/`BackupSink`/`run_backup_once`); `relay backup`
+/// parses `destination` back into a `service_backup::BackupDestination` via
+/// `from_uri`. This CRD-facing shape carries the destination as a FLAT URI
+/// STRING (rather than the shared tagged-union `BackupDestination` schema,
+/// which Kubernetes structural schemas cannot represent — a `prefix` property
+/// shared across variants), mirroring keep's `KeepBackupSpec` (#776) and
+/// lumen's `ServingBackupSpec` (#808).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayBackupSpec {
+    /// Cron schedule (`CronJob.spec.schedule`) for the backup runner.
+    pub schedule: String,
+    /// Destination URI: `file:///path`, `s3://bucket/prefix`, or schema-only
+    /// `gs://bucket/prefix` (parsed, but the runner supports `file://` and
+    /// `s3://` sinks today).
+    pub destination: String,
+    /// Drop backup objects older than this many seconds after a successful
+    /// put. Absent keeps everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_secs: Option<u64>,
+    /// Name of a Secret whose `token` key holds a bearer token with `admin`
+    /// on `*`, injected into the CronJob as `RELAY_BACKUP_TOKEN`. Needed when
+    /// `auth: required`; ignored (the endpoint needs no token) when auth is
+    /// off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_token_secret: Option<String>,
 }
 
 /// Status subresource, written back by the reconcile loop.

@@ -27,6 +27,7 @@ use utoipa::OpenApi;
         crate::server::ack_batch,
         crate::server::heartbeat,
         crate::server::log_len,
+        crate::server::admin_backup,
     )
 )]
 pub struct ApiDoc;
@@ -38,12 +39,27 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
 }
 
-/// Render the OpenAPI document as pretty JSON (offline consumers; the served
-/// route uses [`openapi`]).
+/// Render the OpenAPI document as pretty JSON (offline consumers — `relay
+/// spec` and `relay spec gen`; the served route uses [`openapi`]).
 pub fn api_doc_json() -> String {
     openapi()
         .to_pretty_json()
         .unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Render the OpenAPI document as YAML (`relay spec --format openapi-yaml`,
+/// keep's pattern) — the same document, for LLM/agent reading.
+pub fn openapi_yaml() -> String {
+    serde_yaml::to_string(&openapi()).expect("OpenApi serializes to YAML")
+}
+
+/// Render just the component schemas (`relay spec --format json-schema`).
+/// Honest view: relay's handlers declare no named request/response schemas
+/// today, so `components` serializes null — never a faked catalog (that is
+/// also why relay has no keep-style `--shapes`/`--fields`).
+pub fn json_schema_json() -> String {
+    serde_json::to_string_pretty(&serde_json::json!({ "components": openapi().components }))
+        .expect("components serialize to JSON")
 }
 
 #[cfg(test)]

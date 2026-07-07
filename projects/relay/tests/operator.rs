@@ -36,6 +36,7 @@ fn spec(replicas: u32) -> RelaySpec {
         log_level: None,
         auth: "off".into(),
         tokens_secret: None,
+        backup: None,
     }
 }
 
@@ -283,5 +284,93 @@ fn status_patch_reports_phases() {
 fn rustls_provider_install_is_idempotent() {
     install_default_crypto_provider();
     install_default_crypto_provider();
+}
+
+/// #1209 R4 — the `<name>-backup` CronJob renders only when `spec.backup` is
+/// set, via the shared `operator::render::cron_job` helper: schedule, the
+/// `relay backup` args against the cluster-DNS client Service, retention, and
+/// the `RELAY_BACKUP_TOKEN` secretKeyRef when `adminTokenSecret` is named.
+/// The CRD schema carries the flat-URI backup shape (keep #776 trap: never
+/// the tagged-union `BackupDestination`) and stays structural-schema safe.
+#[test]
+fn backup_cron_job_renders_only_when_policy_set() {
+    // No policy => no CronJob.
+    let plain = Relay::new("relay", spec(1));
+    let objs = render(&plain);
+    assert!(
+        objs.iter().all(|o| o["kind"] != "CronJob"),
+        "no CronJob without spec.backup"
+    );
+
+    // Policy set => one CronJob with the full runner wiring.
+    let mut with_backup = spec(3);
+    with_backup.backup = Some(relay::operator::crd::RelayBackupSpec {
+        schedule: "0 3 * * *".into(),
+        destination: "s3://relay-backups/prod".into(),
+        retention_secs: Some(604_800),
+        admin_token_secret: Some("relay-backup-token".into()),
+    });
+    let mut cr = Relay::new("relay", with_backup);
+    cr.metadata.namespace = Some("production".into());
+    let objs = render(&cr);
+    let cj = of_kind(&objs, "CronJob");
+    assert_eq!(cj["metadata"]["name"], "relay-backup");
+    assert_eq!(cj["spec"]["schedule"], "0 3 * * *");
+    assert_eq!(cj["spec"]["concurrencyPolicy"], "Forbid");
+
+    let pod = &cj["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+    assert_eq!(pod["serviceAccountName"], "relay");
+    let container = &pod["containers"][0];
+    assert_eq!(container["command"][0], "relay");
+    let args: Vec<&str> = container["args"]
+        .as_array()
+        .expect("args array")
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "backup",
+            "--url",
+            "http://relay.production.svc.cluster.local:7000",
+            "--dest",
+            "s3://relay-backups/prod",
+            "--retention-secs",
+            "604800",
+        ]
+    );
+    let env = container["env"].as_array().expect("env array");
+    let token = env
+        .iter()
+        .find(|e| e["name"] == "RELAY_BACKUP_TOKEN")
+        .expect("RELAY_BACKUP_TOKEN env");
+    assert_eq!(
+        token["valueFrom"]["secretKeyRef"]["name"],
+        "relay-backup-token"
+    );
+    assert_eq!(token["valueFrom"]["secretKeyRef"]["key"], "token");
+
+    // The CRD schema carries the flat-URI backup shape and stays clean.
+    let yaml = crd_yaml();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
+    let backup_props = &doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
+        ["spec"]["properties"]["backup"]["properties"];
+    for field in [
+        "schedule",
+        "destination",
+        "retentionSecs",
+        "adminTokenSecret",
+    ] {
+        assert!(
+            backup_props.get(field).is_some(),
+            "CRD backup schema must carry `{field}`"
+        );
+    }
+    assert_eq!(
+        backup_props["destination"]["type"], "string",
+        "destination is a FLAT URI STRING (structural schemas cannot carry the \
+         tagged-union BackupDestination)"
+    );
 }
 // HANDWRITE-END

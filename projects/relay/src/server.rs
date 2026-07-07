@@ -172,6 +172,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/ack-batch", post(ack_batch)) // DEPRECATED → /consume
         .route("/v1/{subject}/heartbeat", post(heartbeat)) // DEPRECATED → /consume
         .route("/v1/{subject}/len", get(log_len))
+        // Admin surface (#1209): a consistent snapshot of the live engine
+        // state for `relay backup`. Inside the auth layer (unlike probes) —
+        // the handler requires Role::Admin on `*` (lumen's guard).
+        .route("/admin/backup", get(admin_backup))
         // Shared bearer auth (#1206) on the data plane ONLY — probes stay
         // tokenless. The blanket middleware authenticates (401 on a
         // missing/unknown token when required) and injects the
@@ -577,6 +581,41 @@ pub async fn heartbeat(
             expires_at,
         },
     )
+}
+
+/// `GET /admin/backup` — a consistent snapshot of the live (un-acked) engine
+/// state for backup runners (#1209): the EXACT bytes
+/// [`crate::raft::RelayStateMachine`]'s raft snapshot produces
+/// ([`crate::raft::snapshot_bytes`] — `dump_live` + the applied index; 0 on a
+/// raft-less single node). A cluster-wide admin op: requires `admin` on `*`
+/// when auth is required (lumen's guard). Restore = feed the bytes to
+/// `raft::load_snapshot_bytes` on a fresh node (`load_live` merge).
+#[utoipa::path(
+    get,
+    path = "/admin/backup",
+    responses((status = 200, description = "EngineSnapshot JSON { up_to, subjects } — the live un-acked backlog at the applied raft index"))
+)]
+pub async fn admin_backup(
+    State(st): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
+) -> Response {
+    if let Err(deny) = crate::auth::authorize(&principal, "*", Role::Admin) {
+        return deny.into_response();
+    }
+    let applied = match st.raft() {
+        Some(raft) => raft.applied_index(),
+        None => 0,
+    };
+    match crate::raft::snapshot_bytes(&st.relay, applied) {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+            .into_response(),
+    }
 }
 
 /// `GET /v1/{subject}/len` — current append count for the subject log.

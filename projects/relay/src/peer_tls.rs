@@ -228,8 +228,7 @@ LkjT2UdpFBDZGWHwqDRhXX8k
     fn mis_pointed_cert_path_fails_fast_naming_the_path() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
-        let dir =
-            std::env::temp_dir().join(format!("relay-peer-tls-miss-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("relay-peer-tls-miss-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("key.pem"), b"DUMMY").unwrap();
         std::fs::write(dir.join("ca.pem"), b"DUMMY").unwrap();
