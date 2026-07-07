@@ -76,7 +76,7 @@ pub struct LumenSpec {
     pub log_level: Option<String>,
 
     /// Auth mode: `off` (dev) or `required` (token registry supplied via
-    /// `tokensSecret`).
+    /// `tokensSecret` or `tokensSecretProviderClass`).
     #[serde(default)]
     pub auth: AuthMode,
 
@@ -85,9 +85,30 @@ pub struct LumenSpec {
     /// process as `LUMEN_TOKEN_REGISTRY_FILE` when `auth: required`.
     /// `token-registry.json` is a JSON object of
     /// `{ "<token>": { "subject": "...", "roles": { "<collection_id>|*": "read|write|admin" } } }`.
-    /// Ignored when `auth: off`.
+    /// Ignored when `auth: off`. See also `tokensSecretProviderClass` for a
+    /// Secret-free alternative; if both are set, this field wins.
     #[serde(default)]
     pub tokens_secret: Option<String>,
+
+    /// Name of an existing `SecretProviderClass` (same namespace as this
+    /// object) mounted via the Secrets Store CSI driver
+    /// (`secrets-store.csi.k8s.io`) at the same path as `tokensSecret`
+    /// (`/var/run/secrets/lumen/token-registry.json`, env
+    /// `LUMEN_TOKEN_REGISTRY_FILE`), so the token registry's content never
+    /// materializes as a k8s API object (`Secret` or `ConfigMap`) at all. The
+    /// referenced `SecretProviderClass` must project a file named
+    /// `token-registry.json` (same schema as `tokensSecret`'s Secret key).
+    /// Ignored when `auth: off`. Mutual exclusion with `tokensSecret` is by
+    /// precedence, not schema enforcement: if `tokensSecret` is also set, it
+    /// wins (backward compatible) and this field is ignored. Rotation
+    /// caveat: a CSI-mounted file only refreshes on the underlying value's
+    /// rotation if the cluster's CSI driver has secret rotation enabled
+    /// (e.g. GKE's managed add-on defaults it off); either way, lumen reads
+    /// the registry once at serve startup, so picking up a rotated value
+    /// requires a rolling restart regardless of the CSI driver's rotation
+    /// setting.
+    #[serde(default)]
+    pub tokens_secret_provider_class: Option<String>,
 
     /// Stateless serving-fleet shape.
     #[serde(default)]
@@ -245,7 +266,8 @@ pub enum AuthMode {
     #[default]
     #[serde(rename = "disabled")]
     Off,
-    /// Bearer-token required; the token registry file comes from `tokensSecret`.
+    /// Bearer-token required; the token registry file comes from
+    /// `tokensSecret` or `tokensSecretProviderClass`.
     Required,
 }
 

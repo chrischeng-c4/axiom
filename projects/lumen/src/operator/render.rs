@@ -74,12 +74,27 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
-fn token_registry_secret(lumen: &Lumen) -> Option<&str> {
-    if matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
-        lumen.spec.tokens_secret.as_deref()
-    } else {
-        None
+/// Which source (if any) supplies the token registry file. `tokensSecret`
+/// wins over `tokensSecretProviderClass` when both are set (backward
+/// compatible; documented as precedence, not schema-enforced mutual
+/// exclusion). `None` when `auth: off` or neither is set.
+enum TokenRegistrySource<'a> {
+    Secret(&'a str),
+    Csi(&'a str),
+}
+
+fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
+    if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
+        return None;
     }
+    if let Some(secret) = lumen.spec.tokens_secret.as_deref() {
+        return Some(TokenRegistrySource::Secret(secret));
+    }
+    lumen
+        .spec
+        .tokens_secret_provider_class
+        .as_deref()
+        .map(TokenRegistrySource::Csi)
 }
 
 /// Render every child object for `lumen`, in dependency order (namespace-scoped
@@ -197,19 +212,29 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
     let res = render::guaranteed_resources(&s.cpu, &s.memory);
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
-    if let Some(secret) = token_registry_secret(lumen) {
+    if let Some(source) = token_registry_source(lumen) {
         volume_mounts.push(json!({
             "name": TOKEN_REGISTRY_VOLUME,
             "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
             "readOnly": true,
         }));
-        volumes.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "secret": {
-                "secretName": secret,
-                "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
-            },
-        }));
+        let mut volume = json!({ "name": TOKEN_REGISTRY_VOLUME });
+        match source {
+            TokenRegistrySource::Secret(secret) => {
+                volume["secret"] = json!({
+                    "secretName": secret,
+                    "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
+                });
+            }
+            TokenRegistrySource::Csi(provider_class) => {
+                volume["csi"] = json!({
+                    "driver": "secrets-store.csi.k8s.io",
+                    "readOnly": true,
+                    "volumeAttributes": { "secretProviderClass": provider_class },
+                });
+            }
+        }
+        volumes.push(volume);
     }
     let spread = |key: &str| {
         json!({
@@ -338,8 +363,8 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     if lumen.spec.log_level.is_some() {
         env.push(from_cfg("LUMEN_LOG_LEVEL"));
     }
-    // Strict auth: the registry is mounted from a Secret/SecretManager projection.
-    if token_registry_secret(lumen).is_some() {
+    // Strict auth: the registry is mounted from a Secret or CSI-provided projection.
+    if token_registry_source(lumen).is_some() {
         env.push(json!({
             "name": "LUMEN_TOKEN_REGISTRY_FILE",
             "value": TOKEN_REGISTRY_FILE,
