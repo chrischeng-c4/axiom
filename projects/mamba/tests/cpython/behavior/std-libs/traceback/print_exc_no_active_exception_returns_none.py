@@ -9,7 +9,6 @@
 # case = "print_exc_no_active_exception_returns_none"
 # subject = "traceback.print_exc"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -1,4 +1,3 @@
-use super::super::dict_ops::DictKey;
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 /// Long-tail stub batch 3 for Mamba (#1261).
@@ -10,9 +9,150 @@ use super::super::value::MbValue;
 /// `_*` internal helper modules that legacy probe code touches.
 use std::collections::HashMap;
 
+/// #1040 follow-up: `dispatch_class_shell` is kept as a MARKER address only.
+/// Every call site below still writes `dispatch_class_shell as *const () as
+/// usize` (for `dispatchers` tuples) or a bare class name (for the `classes`
+/// list) exactly as before -- `register_with` (below) detects the marker
+/// address / every `classes` entry and transparently substitutes a genuinely
+/// distinct `SHELL_POOL` slot before the value is ever inserted into a
+/// module's attrs. This file funnels nearly every `dispatch_class_shell` use
+/// (all 66 `register_with` calls) through that one chokepoint, so
+/// centralizing the fix there covers the file without editing the individual
+/// call sites.
 unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
+    crate::icf_guard!();
     MbValue::from_ptr(MbObject::new_dict())
 }
+
+// #1040 follow-up: this file's `dispatch_class_shell` used to be handed out
+// as the SAME function address to every class-shell name registered here,
+// across every `register_*` call in this file. Because FUNC_NAMES/
+// NATIVE_FUNC_ADDRS are address-keyed, whichever name registered last (in
+// HashMap iteration order, which is nondeterministic per process) won
+// `X.__name__` for every other class sharing that address -- the same
+// #962/#954 symptom. The fix: give every class-shell name a genuinely
+// distinct function pointer, drawn from a pool of `SHELL_POOL_SIZE`
+// individually fold-immune trivial stub functions, indexed via a
+// thread-local "next free slot" counter (`next_shell_slot`) so every call
+// site simply draws a fresh slot per name -- no manual per-call `pool_start`
+// bookkeeping required, since `register()` runs registration sequentially
+// on a single thread at module-init time.
+//
+// IMPORTANT: this pool does NOT use `icf_guard!()` directly. That macro
+// derives its fingerprint from `module_path!()`/`line!()`/`column!()`, which
+// are resolved at the span of the *macro definition's* literal tokens -- for
+// a single `macro_rules!` invocation that expands a `$(...)* ` repetition
+// into N functions, every repetition shares that ONE span, so
+// `line!()`/`column!()` come back IDENTICAL for all N and `icf_guard!()`
+// silently fails to discriminate them. LLVM then folds all "distinct"
+// shells back onto a single address, reproducing the exact bug one level
+// down. The fix here instead fingerprints on `stringify!($name)`, which DOES
+// vary per repetition (driven by the captured `$name` token's text, not by
+// span), giving every pool slot a genuinely distinct compiled body.
+const SHELL_POOL_SIZE: usize = 460;
+type ShellFn = unsafe extern "C" fn(*const MbValue, usize) -> MbValue;
+
+macro_rules! def_shell_pool {
+    ($($name:ident),* $(,)?) => {
+        $(
+            unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue {
+                ::std::hint::black_box(crate::runtime::module::icf_fingerprint(concat!(
+                    module_path!(),
+                    "::",
+                    stringify!($name)
+                )));
+                MbValue::from_ptr(MbObject::new_dict())
+            }
+        )*
+        const SHELL_POOL: [ShellFn; SHELL_POOL_SIZE] = [$($name),*];
+    };
+}
+def_shell_pool!(
+    shell_00, shell_01, shell_02, shell_03, shell_04, shell_05, shell_06, shell_07, shell_08,
+    shell_09, shell_10, shell_11, shell_12, shell_13, shell_14, shell_15, shell_16, shell_17,
+    shell_18, shell_19, shell_20, shell_21, shell_22, shell_23, shell_24, shell_25, shell_26,
+    shell_27, shell_28, shell_29, shell_30, shell_31, shell_32, shell_33, shell_34, shell_35,
+    shell_36, shell_37, shell_38, shell_39, shell_40, shell_41, shell_42, shell_43, shell_44,
+    shell_45, shell_46, shell_47, shell_48, shell_49, shell_50, shell_51, shell_52, shell_53,
+    shell_54, shell_55, shell_56, shell_57, shell_58, shell_59, shell_60, shell_61, shell_62,
+    shell_63, shell_64, shell_65, shell_66, shell_67, shell_68, shell_69, shell_70, shell_71,
+    shell_72, shell_73, shell_74, shell_75, shell_76, shell_77, shell_78, shell_79, shell_80,
+    shell_81, shell_82, shell_83, shell_84, shell_85, shell_86, shell_87, shell_88, shell_89,
+    shell_90, shell_91, shell_92, shell_93, shell_94, shell_95, shell_96, shell_97, shell_98,
+    shell_99, shell_100, shell_101, shell_102, shell_103, shell_104, shell_105, shell_106,
+    shell_107, shell_108, shell_109, shell_110, shell_111, shell_112, shell_113, shell_114,
+    shell_115, shell_116, shell_117, shell_118, shell_119, shell_120, shell_121, shell_122,
+    shell_123, shell_124, shell_125, shell_126, shell_127, shell_128, shell_129, shell_130,
+    shell_131, shell_132, shell_133, shell_134, shell_135, shell_136, shell_137, shell_138,
+    shell_139, shell_140, shell_141, shell_142, shell_143, shell_144, shell_145, shell_146,
+    shell_147, shell_148, shell_149, shell_150, shell_151, shell_152, shell_153, shell_154,
+    shell_155, shell_156, shell_157, shell_158, shell_159, shell_160, shell_161, shell_162,
+    shell_163, shell_164, shell_165, shell_166, shell_167, shell_168, shell_169, shell_170,
+    shell_171, shell_172, shell_173, shell_174, shell_175, shell_176, shell_177, shell_178,
+    shell_179, shell_180, shell_181, shell_182, shell_183, shell_184, shell_185, shell_186,
+    shell_187, shell_188, shell_189, shell_190, shell_191, shell_192, shell_193, shell_194,
+    shell_195, shell_196, shell_197, shell_198, shell_199, shell_200, shell_201, shell_202,
+    shell_203, shell_204, shell_205, shell_206, shell_207, shell_208, shell_209, shell_210,
+    shell_211, shell_212, shell_213, shell_214, shell_215, shell_216, shell_217, shell_218,
+    shell_219, shell_220, shell_221, shell_222, shell_223, shell_224, shell_225, shell_226,
+    shell_227, shell_228, shell_229, shell_230, shell_231, shell_232, shell_233, shell_234,
+    shell_235, shell_236, shell_237, shell_238, shell_239, shell_240, shell_241, shell_242,
+    shell_243, shell_244, shell_245, shell_246, shell_247, shell_248, shell_249, shell_250,
+    shell_251, shell_252, shell_253, shell_254, shell_255, shell_256, shell_257, shell_258,
+    shell_259, shell_260, shell_261, shell_262, shell_263, shell_264, shell_265, shell_266,
+    shell_267, shell_268, shell_269, shell_270, shell_271, shell_272, shell_273, shell_274,
+    shell_275, shell_276, shell_277, shell_278, shell_279, shell_280, shell_281, shell_282,
+    shell_283, shell_284, shell_285, shell_286, shell_287, shell_288, shell_289, shell_290,
+    shell_291, shell_292, shell_293, shell_294, shell_295, shell_296, shell_297, shell_298,
+    shell_299, shell_300, shell_301, shell_302, shell_303, shell_304, shell_305, shell_306,
+    shell_307, shell_308, shell_309, shell_310, shell_311, shell_312, shell_313, shell_314,
+    shell_315, shell_316, shell_317, shell_318, shell_319, shell_320, shell_321, shell_322,
+    shell_323, shell_324, shell_325, shell_326, shell_327, shell_328, shell_329, shell_330,
+    shell_331, shell_332, shell_333, shell_334, shell_335, shell_336, shell_337, shell_338,
+    shell_339, shell_340, shell_341, shell_342, shell_343, shell_344, shell_345, shell_346,
+    shell_347, shell_348, shell_349, shell_350, shell_351, shell_352, shell_353, shell_354,
+    shell_355, shell_356, shell_357, shell_358, shell_359, shell_360, shell_361, shell_362,
+    shell_363, shell_364, shell_365, shell_366, shell_367, shell_368, shell_369, shell_370,
+    shell_371, shell_372, shell_373, shell_374, shell_375, shell_376, shell_377, shell_378,
+    shell_379, shell_380, shell_381, shell_382, shell_383, shell_384, shell_385, shell_386,
+    shell_387, shell_388, shell_389, shell_390, shell_391, shell_392, shell_393, shell_394,
+    shell_395, shell_396, shell_397, shell_398, shell_399, shell_400, shell_401, shell_402,
+    shell_403, shell_404, shell_405, shell_406, shell_407, shell_408, shell_409, shell_410,
+    shell_411, shell_412, shell_413, shell_414, shell_415, shell_416, shell_417, shell_418,
+    shell_419, shell_420, shell_421, shell_422, shell_423, shell_424, shell_425, shell_426,
+    shell_427, shell_428, shell_429, shell_430, shell_431, shell_432, shell_433, shell_434,
+    shell_435, shell_436, shell_437, shell_438, shell_439, shell_440, shell_441, shell_442,
+    shell_443, shell_444, shell_445, shell_446, shell_447, shell_448, shell_449, shell_450,
+    shell_451, shell_452, shell_453, shell_454, shell_455, shell_456, shell_457, shell_458,
+    shell_459,
+);
+
+/// Pool slot at `idx` as a raw function-pointer address.
+fn shell_addr(idx: usize) -> usize {
+    SHELL_POOL[idx] as usize
+}
+
+thread_local! {
+    static NEXT_SHELL_SLOT: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+/// Draw the next unused pool slot index. `register()` runs sequentially on
+/// a single thread at module-init time, so a simple monotonic counter gives
+/// every class-shell name a fresh, non-overlapping slot with no manual
+/// per-call range bookkeeping.
+fn next_shell_slot() -> usize {
+    NEXT_SHELL_SLOT.with(|c| {
+        let v = c.get();
+        assert!(
+            v < SHELL_POOL_SIZE,
+            "shell pool exhausted (SHELL_POOL_SIZE={}); bump it",
+            SHELL_POOL_SIZE
+        );
+        c.set(v + 1);
+        v
+    })
+}
+
 unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
@@ -78,10 +218,6 @@ fn is_tuple(v: MbValue) -> bool {
         .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Tuple(_)) })
 }
 
-fn is_callable_or_none(v: MbValue) -> bool {
-    v.is_none() || super::super::builtins::mb_callable(v).as_bool() == Some(true)
-}
-
 unsafe extern "C" fn dispatch_dbm_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let filename = a.first().copied().unwrap_or_else(MbValue::none);
@@ -115,102 +251,12 @@ unsafe extern "C" fn dispatch_importlib_cache_from_source(
     dispatch_empty_str(args_ptr, nargs)
 }
 
-unsafe extern "C" fn profiler_init(_self_v: MbValue, args: MbValue) -> MbValue {
-    let items = extract_args(args);
-    let timer = items.first().copied().unwrap_or_else(MbValue::none);
-    if !is_callable_or_none(timer) {
-        return raise_type_error("_lsprof.Profiler timer must be callable or None");
-    }
-    MbValue::none()
-}
-
-unsafe extern "C" fn profiler_enable(_self_v: MbValue, args: MbValue) -> MbValue {
-    let items = extract_args(args);
-    if let Some(subcalls) = items.first().copied() {
-        if !subcalls.is_bool() {
-            return raise_type_error("_lsprof.Profiler.enable subcalls must be bool");
-        }
-    }
-    MbValue::none()
-}
-
 unsafe extern "C" fn multibyte_decoder_setstate(_self_v: MbValue, args: MbValue) -> MbValue {
     let items = extract_args(args);
     let state = items.first().copied().unwrap_or_else(MbValue::none);
     if !is_tuple(state) {
         return raise_type_error("_multibytecodec.MultibyteIncrementalDecoder state must be tuple");
     }
-    MbValue::none()
-}
-
-extern "C" fn ctypes_array_getitem(_self_v: MbValue, _args: MbValue) -> MbValue {
-    raise_type_error("indices must be integers")
-}
-
-extern "C" fn ctypes_array_setitem(_self_v: MbValue, _args: MbValue) -> MbValue {
-    raise_type_error("indices must be integer")
-}
-
-extern "C" fn ctypes_cfuncptr_new(_self_v: MbValue, args: MbValue) -> MbValue {
-    let _ = extract_args(args);
-    raise_type_error("argument must be callable or integer function address")
-}
-
-unsafe extern "C" fn ctypes_array_getitem_direct(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
-    raise_type_error("indices must be integers")
-}
-
-unsafe extern "C" fn ctypes_array_setitem_direct(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
-    raise_type_error("indices must be integer")
-}
-
-unsafe extern "C" fn ctypes_cfuncptr_new_direct(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
-    raise_type_error("argument must be callable or integer function address")
-}
-
-unsafe extern "C" fn ctypes_pointer_type_direct(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
-    raise_type_error("must be a ctypes type")
-}
-
-unsafe extern "C" fn ctypes_pointer_obj_direct(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
-    raise_type_error("must be a ctypes instance")
-}
-
-unsafe extern "C" fn ctypes_alignment_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    raise_type_error("no alignment info")
-}
-
-unsafe extern "C" fn ctypes_buffer_info_direct(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
-    raise_type_error("not a ctypes object")
-}
-
-unsafe extern "C" fn ctypes_sizeof_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    raise_type_error("this type has no size")
-}
-
-unsafe extern "C" fn ctypes_py_incref_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    MbValue::none()
-}
-
-unsafe extern "C" fn ctypes_py_decref_direct(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::none()
 }
 
@@ -221,31 +267,6 @@ fn register_variadic_method_class(class_name: &str, methods: &[(&str, usize)]) {
         map.insert((*name).to_string(), MbValue::from_func(*addr));
     }
     super::super::class::mb_class_register(class_name, vec!["object".to_string()], map);
-}
-
-fn make_ctypes_callable_shell(name: &str, module: &str, methods: &[(&str, usize)]) -> MbValue {
-    let obj = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*obj).data {
-            let mut map = lock.write().unwrap();
-            map.insert(
-                DictKey::from("__name__"),
-                MbValue::from_ptr(MbObject::new_str(name.to_string())),
-            );
-            map.insert(
-                DictKey::from("__qualname__"),
-                MbValue::from_ptr(MbObject::new_str(name.to_string())),
-            );
-            map.insert(
-                DictKey::from("__module__"),
-                MbValue::from_ptr(MbObject::new_str(module.to_string())),
-            );
-            for (method, addr) in methods {
-                map.insert(DictKey::from(*method), MbValue::from_func(*addr));
-            }
-        }
-    }
-    MbValue::from_ptr(obj)
 }
 
 // importlib.util.find_spec(name) -> spec | None. Routes to the real
@@ -275,14 +296,29 @@ fn register_with(
     consts_str: &[(&str, &str)],
 ) {
     let mut attrs = HashMap::new();
-    let shell = dispatch_class_shell as *const () as usize;
-    let mut addrs = vec![shell];
+    // #1040: every `classes` entry used to share ONE `dispatch_class_shell`
+    // address across the WHOLE file (400+ names), and every `dispatchers`
+    // tuple using the `dispatch_class_shell` marker address shared that same
+    // one address too -- both are the exact FUNC_NAMES/NATIVE_FUNC_ADDRS
+    // address-collision bug from #962/#954. Give each a fresh, genuinely
+    // distinct SHELL_POOL slot instead; `dispatch_class_shell` itself is
+    // never handed out anymore, only used as a marker to detect (and
+    // replace) the legacy shared address in `dispatchers` tuples.
+    let class_shell_marker = dispatch_class_shell as *const () as usize;
+    let mut addrs = Vec::new();
     for cn in classes {
-        attrs.insert((*cn).into(), MbValue::from_func(shell));
+        let f = shell_addr(next_shell_slot());
+        addrs.push(f);
+        attrs.insert((*cn).into(), MbValue::from_func(f));
     }
     for (n, a) in dispatchers {
-        attrs.insert((*n).into(), MbValue::from_func(*a));
-        addrs.push(*a);
+        let addr = if *a == class_shell_marker {
+            shell_addr(next_shell_slot())
+        } else {
+            *a
+        };
+        attrs.insert((*n).into(), MbValue::from_func(addr));
+        addrs.push(addr);
     }
     for (n, v) in consts_int {
         attrs.insert((*n).into(), MbValue::from_int(*v));
@@ -329,7 +365,6 @@ fn register_type_module(name: &str, classes: &[&str]) {
 
 pub fn register() {
     register_distutils();
-    register_ctypes();
     register_html_entities();
     register_xml_subs();
     register_zoneinfo();
@@ -375,13 +410,7 @@ fn register_distutils() {
         &[],
         &[],
     );
-    register_with(
-        "distutils.command.config",
-        &["config"],
-        &[],
-        &[],
-        &[],
-    );
+    register_with("distutils.command.config", &["config"], &[], &[], &[]);
     register_with(
         "distutils.errors",
         &[
@@ -457,7 +486,10 @@ fn register_distutils() {
         &[
             ("findall", dispatch_empty_list as *const () as usize),
             ("glob_to_re", dispatch_empty_str as *const () as usize),
-            ("translate_pattern", dispatch_empty_str as *const () as usize),
+            (
+                "translate_pattern",
+                dispatch_empty_str as *const () as usize,
+            ),
         ],
         &[],
         &[],
@@ -467,7 +499,10 @@ fn register_distutils() {
         &["FancyGetopt", "OptionDummy"],
         &[
             ("fancy_getopt", dispatch_empty_dict as *const () as usize),
-            ("translate_longopt", dispatch_empty_str as *const () as usize),
+            (
+                "translate_longopt",
+                dispatch_empty_str as *const () as usize,
+            ),
             ("wrap_text", dispatch_empty_list as *const () as usize),
         ],
         &[],
@@ -605,222 +640,6 @@ fn register_distutils() {
             "MSVCCompiler",
             "get_build_version",
             "get_build_architecture",
-        ],
-        &[],
-        &[],
-        &[],
-    );
-}
-
-fn register_ctypes() {
-    register_variadic_method_class(
-        "Array",
-        &[
-            ("__getitem__", ctypes_array_getitem as *const () as usize),
-            ("__setitem__", ctypes_array_setitem as *const () as usize),
-        ],
-    );
-    register_variadic_method_class(
-        "CFuncPtr",
-        &[("__new__", ctypes_cfuncptr_new as *const () as usize)],
-    );
-
-    register_with(
-        "ctypes",
-        &[
-            "CDLL",
-            "PyDLL",
-            "WinDLL",
-            "OleDLL",
-            "LibraryLoader",
-            "Structure",
-            "Union",
-            "Array",
-            "BigEndianStructure",
-            "LittleEndianStructure",
-            "c_byte",
-            "c_ubyte",
-            "c_char",
-            "c_char_p",
-            "c_double",
-            "c_longdouble",
-            "c_float",
-            "c_int",
-            "c_uint",
-            "c_int8",
-            "c_uint8",
-            "c_int16",
-            "c_uint16",
-            "c_int32",
-            "c_uint32",
-            "c_int64",
-            "c_uint64",
-            "c_long",
-            "c_ulong",
-            "c_longlong",
-            "c_ulonglong",
-            "c_short",
-            "c_ushort",
-            "c_size_t",
-            "c_ssize_t",
-            "c_void_p",
-            "c_wchar",
-            "c_wchar_p",
-            "c_bool",
-            "POINTER",
-            "pointer",
-            "byref",
-            "cast",
-            "addressof",
-            "alignment",
-            "sizeof",
-            "string_at",
-            "wstring_at",
-            "memmove",
-            "memset",
-            "CFUNCTYPE",
-            "WINFUNCTYPE",
-            "PYFUNCTYPE",
-            "HRESULT",
-            "ArgumentError",
-            "Error",
-            "ARRAY",
-            "BigEndianUnion",
-            "LittleEndianUnion",
-            "SetPointerType",
-            "c_buffer",
-            "c_time_t",
-            "c_voidp",
-            "create_string_buffer",
-            "create_unicode_buffer",
-            "py_object",
-            "resize",
-            "pythonapi",
-        ],
-        &[
-            ("CDLL", dispatch_class_shell as *const () as usize),
-            ("cdll", dispatch_class_shell as *const () as usize),
-            ("windll", dispatch_class_shell as *const () as usize),
-            ("oledll", dispatch_class_shell as *const () as usize),
-            ("pydll", dispatch_class_shell as *const () as usize),
-            ("get_errno", dispatch_int_zero as *const () as usize),
-            ("set_errno", dispatch_int_zero as *const () as usize),
-            ("get_last_error", dispatch_int_zero as *const () as usize),
-            ("set_last_error", dispatch_int_zero as *const () as usize),
-            ("FormatError", dispatch_empty_str as *const () as usize),
-            ("WinError", dispatch_class_shell as *const () as usize),
-            ("DllCanUnloadNow", dispatch_int_zero as *const () as usize),
-            ("DllGetClassObject", dispatch_int_zero as *const () as usize),
-            ("GetLastError", dispatch_int_zero as *const () as usize),
-        ],
-        &[
-            ("DEFAULT_MODE", 0),
-            ("RTLD_LOCAL", 0),
-            ("RTLD_GLOBAL", 256),
-            ("FUNCFLAG_CDECL", 1),
-            ("FUNCFLAG_HRESULT", 2),
-            ("FUNCFLAG_PYTHONAPI", 4),
-            ("FUNCFLAG_USE_ERRNO", 8),
-            ("FUNCFLAG_USE_LASTERROR", 16),
-            ("SIZEOF_TIME_T", 8),
-        ],
-        &[],
-    );
-    let mut ctypes_internal = HashMap::new();
-    let array_getitem = ctypes_array_getitem_direct as *const () as usize;
-    let array_setitem = ctypes_array_setitem_direct as *const () as usize;
-    let cfuncptr_new = ctypes_cfuncptr_new_direct as *const () as usize;
-    let pointer_type = ctypes_pointer_type_direct as *const () as usize;
-    let pointer_obj = ctypes_pointer_obj_direct as *const () as usize;
-    let alignment = ctypes_alignment_direct as *const () as usize;
-    let buffer_info = ctypes_buffer_info_direct as *const () as usize;
-    let sizeof = ctypes_sizeof_direct as *const () as usize;
-    let py_incref = ctypes_py_incref_direct as *const () as usize;
-    let py_decref = ctypes_py_decref_direct as *const () as usize;
-    register_addrs(&[
-        array_getitem,
-        array_setitem,
-        cfuncptr_new,
-        pointer_type,
-        pointer_obj,
-        alignment,
-        buffer_info,
-        sizeof,
-        py_incref,
-        py_decref,
-    ]);
-    ctypes_internal.insert(
-        "Array".to_string(),
-        make_ctypes_callable_shell(
-            "Array",
-            "_ctypes",
-            &[
-                ("__getitem__", array_getitem),
-                ("__setitem__", array_setitem),
-            ],
-        ),
-    );
-    ctypes_internal.insert(
-        "CFuncPtr".to_string(),
-        make_ctypes_callable_shell("CFuncPtr", "_ctypes", &[("__new__", cfuncptr_new)]),
-    );
-    for name in ["Structure", "Union"] {
-        ctypes_internal.insert(name.to_string(), make_type_obj(name, "_ctypes"));
-    }
-    for (name, addr) in [
-        ("POINTER", pointer_type),
-        ("pointer", pointer_obj),
-        ("alignment", alignment),
-        ("buffer_info", buffer_info),
-        ("sizeof", sizeof),
-        ("Py_INCREF", py_incref),
-        ("Py_DECREF", py_decref),
-    ] {
-        ctypes_internal.insert(name.to_string(), MbValue::from_func(addr));
-    }
-    super::register_module("_ctypes", ctypes_internal);
-    register_with(
-        "ctypes.util",
-        &[],
-        &[
-            ("find_library", dispatch_noop as *const () as usize),
-            ("find_msvcrt", dispatch_noop as *const () as usize),
-        ],
-        &[],
-        &[],
-    );
-    register_with(
-        "ctypes.wintypes",
-        &[
-            "BOOL",
-            "BYTE",
-            "WORD",
-            "DWORD",
-            "UINT",
-            "INT",
-            "FLOAT",
-            "LPVOID",
-            "LPCVOID",
-            "HANDLE",
-            "HWND",
-            "HMODULE",
-            "HINSTANCE",
-            "HKEY",
-            "HMENU",
-            "HRESULT",
-            "LPCWSTR",
-            "LPWSTR",
-            "LPCSTR",
-            "LPSTR",
-            "LARGE_INTEGER",
-            "ULARGE_INTEGER",
-            "SIZE",
-            "POINT",
-            "RECT",
-            "FILETIME",
-            "SYSTEMTIME",
-            "MSG",
-            "BSTR",
         ],
         &[],
         &[],
@@ -1004,25 +823,11 @@ fn register_xml_subs() {
         ],
         &[],
     );
-    register_with("xml.parsers", &[], &[], &[], &[]);
-    register_with(
-        "xml.parsers.expat",
-        &[
-            "ExpatError",
-            "XMLParserType",
-            "ParserCreate",
-            "ErrorString",
-            "error",
-            "model",
-            "errors",
-        ],
-        &[
-            ("ParserCreate", dispatch_class_shell as *const () as usize),
-            ("ErrorString", dispatch_empty_str as *const () as usize),
-        ],
-        &[("EXPAT_VERSION_NUMBER", 0)],
-        &[("EXPAT_VERSION", "2.0.0"), ("native_encoding", "utf-8")],
-    );
+    // xml.parsers / xml.parsers.expat / pyexpat: registered by
+    // xml_mod::register_pyexpat() with a real ParserCreate/Parse/ErrorString
+    // implementation (issue #880) — do not re-register an empty stub here,
+    // it would replace that module's attrs (register_module is a full
+    // replace, not a merge).
     register_with(
         "xml.sax.handler",
         &[
@@ -1080,46 +885,364 @@ fn register_xml_subs() {
     );
 }
 
-/// `zoneinfo.available_timezones()` → a set of IANA zone-name strings. mamba
-/// has no full tz database, but CPython guarantees a non-empty set containing
-/// "UTC"; expose the common-zone subset so consumers see a realistic set.
-/// The common IANA zone names mamba recognises (identity/key surface only; no
-/// tz-transition data without chrono-tz).
-pub const IANA_ZONES: &[&str] = &[
-    "UTC",
-    "GMT",
-    "America/New_York",
-    "America/Chicago",
-    "America/Denver",
-    "America/Los_Angeles",
-    "America/Sao_Paulo",
-    "America/Toronto",
-    "Europe/London",
-    "Europe/Paris",
-    "Europe/Berlin",
-    "Europe/Moscow",
-    "Asia/Tokyo",
-    "Asia/Shanghai",
-    "Asia/Kolkata",
-    "Asia/Dubai",
-    "Asia/Singapore",
-    "Australia/Sydney",
-    "Pacific/Auckland",
-    "Africa/Cairo",
-    "Africa/Johannesburg",
-];
-
+/// `zoneinfo.available_timezones()` → a set of IANA zone-name strings (#876).
+/// mamba's ZoneInfo offset math is chrono-tz-backed, so the embedded
+/// chrono-tz database (`TZ_VARIANTS`, ~596 zones incl. "UTC"/"GMT") IS
+/// mamba's tz database — enumerate it directly rather than a curated subset.
+///
 /// Is `key` a zone name mamba recognises as valid (so ZoneInfo accepts it)?
+/// Anything chrono-tz can parse is constructible (matches the same set
+/// `available_timezones()` advertises below).
 pub fn is_known_zone(key: &str) -> bool {
-    IANA_ZONES.contains(&key)
+    key.parse::<chrono_tz::Tz>().is_ok()
 }
 
 unsafe extern "C" fn dispatch_available_timezones(_a: *const MbValue, _n: usize) -> MbValue {
-    let elems: Vec<MbValue> = IANA_ZONES
+    let elems: Vec<MbValue> = chrono_tz::TZ_VARIANTS
         .iter()
-        .map(|z| MbValue::from_ptr(MbObject::new_str((*z).to_string())))
+        .map(|tz| MbValue::from_ptr(MbObject::new_str(tz.name().to_string())))
         .collect();
     MbValue::from_ptr(MbObject::new_set(elems))
+}
+
+fn zi_new_str(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn zi_extract_str(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn zi_extract_bytes(val: MbValue) -> Option<Vec<u8>> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Bytes(ref b) => Some(b.clone()),
+            ObjData::Str(ref s) => Some(s.as_bytes().to_vec()),
+            _ => None,
+        }
+    })
+}
+
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Split a native-dispatcher arg slice into positional args and a trailing
+/// keyword dict (mamba lowers `f(a, k=v)` to a flat arg slice `[a, {"k": v}]`).
+fn zi_split_kwargs(args: &[MbValue]) -> (Vec<MbValue>, Option<MbValue>) {
+    if let Some(last) = args.last() {
+        let is_dict = last
+            .as_ptr()
+            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if is_dict {
+            return (args[..args.len() - 1].to_vec(), Some(*last));
+        }
+    }
+    (args.to_vec(), None)
+}
+
+fn zi_dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+/// Resolve a positional-or-keyword argument by position index or name.
+fn zi_arg_or_kw(
+    pos: &[MbValue],
+    idx: usize,
+    kwargs: &Option<MbValue>,
+    name: &str,
+) -> Option<MbValue> {
+    if let Some(v) = pos.get(idx).copied() {
+        return Some(v);
+    }
+    kwargs.and_then(|kw| zi_dict_get(kw, name))
+}
+
+/// Extract zone-name strings out of a List/Tuple value (used by
+/// `clear_cache(only_keys=...)`).
+fn zi_str_list(v: MbValue) -> Vec<String> {
+    let Some(ptr) = v.as_ptr() else {
+        return Vec::new();
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::List(lock) => lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|item| zi_extract_str(*item))
+                .collect(),
+            ObjData::Tuple(items) => items
+                .iter()
+                .filter_map(|item| zi_extract_str(*item))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// One fixed-offset period of a parsed TZif file: valid from `start`
+/// (transition-time epoch seconds; `i64::MIN` for "before the first
+/// transition") until the next period's `start`.
+struct TzifPeriod {
+    start: i64,
+    utoff: i32,
+    isdst: bool,
+    abbrev: String,
+}
+
+fn be_u32(b: &[u8], off: usize) -> Option<u32> {
+    b.get(off..off + 4)
+        .map(|s| u32::from_be_bytes(s.try_into().unwrap()))
+}
+
+fn be_i32(b: &[u8], off: usize) -> Option<i32> {
+    b.get(off..off + 4)
+        .map(|s| i32::from_be_bytes(s.try_into().unwrap()))
+}
+
+fn be_i64(b: &[u8], off: usize) -> Option<i64> {
+    b.get(off..off + 8)
+        .map(|s| i64::from_be_bytes(s.try_into().unwrap()))
+}
+
+/// Header counts of a TZif block (RFC 8536 s3), read from the 44-byte header
+/// that starts at `hdr_off` (`hdr_off..hdr_off+4` must already be `b"TZif"`).
+struct TzifHeader {
+    isutcnt: u32,
+    isstdcnt: u32,
+    leapcnt: u32,
+    timecnt: u32,
+    typecnt: u32,
+    charcnt: u32,
+}
+
+fn parse_tzif_header(data: &[u8], hdr_off: usize) -> Option<TzifHeader> {
+    if data.get(hdr_off..hdr_off + 4)? != b"TZif" {
+        return None;
+    }
+    Some(TzifHeader {
+        isutcnt: be_u32(data, hdr_off + 20)?,
+        isstdcnt: be_u32(data, hdr_off + 24)?,
+        leapcnt: be_u32(data, hdr_off + 28)?,
+        timecnt: be_u32(data, hdr_off + 32)?,
+        typecnt: be_u32(data, hdr_off + 36)?,
+        charcnt: be_u32(data, hdr_off + 40)?,
+    })
+}
+
+/// Parse one TZif body (immediately after its 44-byte header) into periods
+/// plus the number of bytes consumed. `time_size` is 4 for the v1 (32-bit)
+/// block, 8 for the v2/v3 (64-bit) block.
+fn parse_tzif_block(
+    data: &[u8],
+    hdr: &TzifHeader,
+    time_size: usize,
+) -> Option<(Vec<TzifPeriod>, usize)> {
+    let timecnt = hdr.timecnt as usize;
+    let typecnt = hdr.typecnt.max(1) as usize;
+    let charcnt = hdr.charcnt as usize;
+    let mut off = 0usize;
+
+    let mut trans_times = Vec::with_capacity(timecnt);
+    for i in 0..timecnt {
+        let t = if time_size == 8 {
+            be_i64(data, off + i * 8)?
+        } else {
+            be_i32(data, off + i * 4)? as i64
+        };
+        trans_times.push(t);
+    }
+    off += timecnt * time_size;
+
+    let trans_types: Vec<u8> = data.get(off..off + timecnt)?.to_vec();
+    off += timecnt;
+
+    struct Ttinfo {
+        utoff: i32,
+        isdst: bool,
+        desigidx: u8,
+    }
+    let mut ttinfo = Vec::with_capacity(typecnt);
+    for i in 0..typecnt {
+        let base = off + i * 6;
+        let utoff = be_i32(data, base)?;
+        let isdst = *data.get(base + 4)? != 0;
+        let desigidx = *data.get(base + 5)?;
+        ttinfo.push(Ttinfo {
+            utoff,
+            isdst,
+            desigidx,
+        });
+    }
+    off += typecnt * 6;
+
+    let abbrevs: Vec<u8> = data.get(off..off + charcnt)?.to_vec();
+    off += charcnt;
+
+    let abbrev_at = |idx: u8| -> String {
+        let start = idx as usize;
+        let end = abbrevs[start..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|p| start + p)
+            .unwrap_or(abbrevs.len());
+        String::from_utf8_lossy(&abbrevs[start..end]).to_string()
+    };
+
+    // leap-second records: (time, corr) pairs, `time` sized like transitions.
+    off += hdr.leapcnt as usize * (time_size + 4);
+    // standard/wall + UT/local indicators: one byte per record.
+    off += hdr.isstdcnt as usize;
+    off += hdr.isutcnt as usize;
+
+    if ttinfo.is_empty() {
+        return None;
+    }
+    // The period before the first transition uses the first non-DST type
+    // (falls back to type 0) per RFC 8536's "unspecified" guidance.
+    let first = ttinfo.iter().find(|t| !t.isdst).unwrap_or(&ttinfo[0]);
+    let mut periods = vec![TzifPeriod {
+        start: i64::MIN,
+        utoff: first.utoff,
+        isdst: first.isdst,
+        abbrev: abbrev_at(first.desigidx),
+    }];
+    for (i, &t) in trans_times.iter().enumerate() {
+        let type_idx = *trans_types.get(i).unwrap_or(&0) as usize;
+        let Some(info) = ttinfo.get(type_idx) else {
+            continue;
+        };
+        periods.push(TzifPeriod {
+            start: t,
+            utoff: info.utoff,
+            isdst: info.isdst,
+            abbrev: abbrev_at(info.desigidx),
+        });
+    }
+    Some((periods, off))
+}
+
+/// Parse a full TZif v1/v2/v3 file. When a 64-bit (v2/v3) block is present
+/// it is preferred (wider transition-time range, RFC 8536 s3.2).
+fn parse_tzif(data: &[u8]) -> Option<Vec<TzifPeriod>> {
+    if data.len() < 44 || &data[0..4] != b"TZif" {
+        return None;
+    }
+    let version = data[4];
+    let hdr1 = parse_tzif_header(data, 0)?;
+    let (v1_periods, v1_consumed) = parse_tzif_block(&data[44..], &hdr1, 4)?;
+    if version == 0 {
+        return Some(v1_periods);
+    }
+    let hdr2_off = 44 + v1_consumed;
+    let hdr2 = parse_tzif_header(data, hdr2_off)?;
+    let (v2_periods, _) = parse_tzif_block(&data[hdr2_off + 44..], &hdr2, 8)?;
+    Some(v2_periods)
+}
+
+/// Pack parsed periods into `[(start, utoff, isdst, abbrev), ...]` stored on
+/// a ZoneInfo instance's `_tzif_periods` field for offset lookups.
+fn tzif_periods_to_mbvalue(periods: &[TzifPeriod]) -> MbValue {
+    let items: Vec<MbValue> = periods
+        .iter()
+        .map(|p| {
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_int(p.start),
+                MbValue::from_int(p.utoff as i64),
+                MbValue::from_bool(p.isdst),
+                zi_new_str(&p.abbrev),
+            ]))
+        })
+        .collect();
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+/// `zoneinfo.ZoneInfo.from_file(fileobj, key=None)` (#876): parse a TZif v1-v3
+/// byte stream and build a ZoneInfo instance whose offsets come from the
+/// parsed transition table rather than a chrono-tz key lookup (mirrors
+/// CPython: a `from_file` instance is unnamed/uncached unless `key=` is
+/// given explicitly, and `.key` stays `None` in that case).
+unsafe extern "C" fn dispatch_zoneinfo_from_file(a: *const MbValue, n: usize) -> MbValue {
+    let raw = if n == 0 || a.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(a, n) }
+    };
+    let (pos, kwargs) = zi_split_kwargs(raw);
+    let Some(fileobj) = pos.first().copied() else {
+        return raise_type_error("from_file() missing required argument: 'fileobj'");
+    };
+    let key = zi_arg_or_kw(&pos, 1, &kwargs, "key").and_then(zi_extract_str);
+
+    let empty_args = MbValue::from_ptr(MbObject::new_list(vec![]));
+    let read_res = super::super::class::mb_call_method(fileobj, zi_new_str("read"), empty_args);
+    let Some(bytes) = zi_extract_bytes(read_res) else {
+        return raise_type_error("from_file() fileobj must be opened in binary mode");
+    };
+
+    let Some(periods) = parse_tzif(&bytes) else {
+        return raise_value_error("magic number not correct");
+    };
+
+    let inst = MbObject::new_instance("ZoneInfo".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut map = fields.write().unwrap();
+            if let Some(ref k) = key {
+                map.insert("key".to_string(), zi_new_str(k));
+            }
+            map.insert(
+                "_tzif_periods".to_string(),
+                tzif_periods_to_mbvalue(&periods),
+            );
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// `zoneinfo.ZoneInfo.clear_cache(only_keys=None)` (#876): CPython invalidates
+/// the whole strong-reference cache, or just the named keys when
+/// `only_keys` is given.
+unsafe extern "C" fn dispatch_zoneinfo_clear_cache(a: *const MbValue, n: usize) -> MbValue {
+    let raw = if n == 0 || a.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(a, n) }
+    };
+    let (pos, kwargs) = zi_split_kwargs(raw);
+    match zi_arg_or_kw(&pos, 0, &kwargs, "only_keys") {
+        Some(v) if !v.is_none() => {
+            let keys = zi_str_list(v);
+            ZI_CACHE.with(|m| {
+                let mut cache = m.borrow_mut();
+                for k in &keys {
+                    cache.remove(k);
+                }
+            });
+        }
+        _ => {
+            ZI_CACHE.with(|m| m.borrow_mut().clear());
+        }
+    }
+    MbValue::none()
 }
 
 thread_local! {
@@ -1198,12 +1321,17 @@ fn register_zoneinfo() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut map = fields.write().unwrap();
-                map.insert("clear_cache".to_string(), MbValue::from_func(shell));
-                map.insert("from_file".to_string(), MbValue::from_func(shell));
+                let cc = dispatch_zoneinfo_clear_cache as *const () as usize;
+                let ff = dispatch_zoneinfo_from_file as *const () as usize;
                 let nc = dispatch_zoneinfo_no_cache as *const () as usize;
                 super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-                    s.borrow_mut().insert(nc as u64);
+                    let mut s = s.borrow_mut();
+                    s.insert(cc as u64);
+                    s.insert(ff as u64);
+                    s.insert(nc as u64);
                 });
+                map.insert("clear_cache".to_string(), MbValue::from_func(cc));
+                map.insert("from_file".to_string(), MbValue::from_func(ff));
                 map.insert("no_cache".to_string(), MbValue::from_func(nc));
             }
         }
@@ -1678,16 +1806,10 @@ fn register_internals() {
         &[],
         &[],
     );
-    register_variadic_method_class(
-        "Profiler",
-        &[
-            ("__init__", profiler_init as *const () as usize),
-            ("enable", profiler_enable as *const () as usize),
-        ],
-    );
-    let mut lsprof = HashMap::new();
-    lsprof.insert("Profiler".to_string(), make_type_obj("Profiler", "_lsprof"));
-    super::register_module("_lsprof", lsprof);
+    // _lsprof.Profiler: real deterministic profiler backend now lives in
+    // cprofile_mod (#878) — no longer a no-op shell here. Do not
+    // re-register "_lsprof" in this function; cprofile_mod::register()
+    // must be the sole owner or it gets clobbered by registration order.
 
     register_variadic_method_class(
         "MultibyteIncrementalDecoder",

@@ -1,7 +1,7 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use mamba::bench::{BenchRunner, BenchSuite, print_report, run_suite};
-use mamba::conformance::{ConformanceOptions, run_suite as run_conformance_suite};
+use mamba::bench::{print_report, run_suite, BenchRunner, BenchSuite};
+use mamba::conformance::{run_suite as run_conformance_suite, ConformanceOptions};
 use mamba::driver::{Backend, CompilerConfig, CompilerSession, MambaConfig};
 use mamba::pkgmanage::add as pkg_add;
 use mamba::pkgmanage::audit as pkg_audit;
@@ -741,7 +741,11 @@ fn run_one_fixture(path: &str) -> i32 {
     let _ = std::fs::remove_file(&tmp);
 
     let ok = matches!(ran, Ok(Ok(()))) && captured.contains(&format!("{stem} OK"));
-    if ok { 0 } else { 1 }
+    if ok {
+        0
+    } else {
+        1
+    }
 }
 
 /// Zygote-fork batch conformance runner. The fixed ~0.16s per-process init

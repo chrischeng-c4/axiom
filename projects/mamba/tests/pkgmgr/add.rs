@@ -202,16 +202,12 @@ fn add_upserts_existing_dep_in_place() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
 
-    assert!(
-        run_add(tmp.path(), &["foo==1.0.0", "--offline"])
-            .status
-            .success()
-    );
-    assert!(
-        run_add(tmp.path(), &["foo==1.1.0", "--offline"])
-            .status
-            .success()
-    );
+    assert!(run_add(tmp.path(), &["foo==1.0.0", "--offline"])
+        .status
+        .success());
+    assert!(run_add(tmp.path(), &["foo==1.1.0", "--offline"])
+        .status
+        .success());
 
     let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
     assert!(

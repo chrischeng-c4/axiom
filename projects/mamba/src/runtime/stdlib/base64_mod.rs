@@ -1278,7 +1278,10 @@ fn read_all_binary(fileobj: MbValue) -> Result<Vec<u8>, MbValue> {
         MbValue::from_ptr(MbObject::new_str("read".to_string())),
         empty,
     );
-    if res.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) }) {
+    if res
+        .as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+    {
         return Err(raise_type_error("expected bytes-like object, not str"));
     }
     Ok(unsafe { extract_bytes_ref(&res) }.into_owned())

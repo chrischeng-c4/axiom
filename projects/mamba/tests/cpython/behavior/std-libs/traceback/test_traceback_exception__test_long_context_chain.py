@@ -9,12 +9,11 @@
 # case = "test_traceback_exception__test_long_context_chain"
 # subject = "cpython.test_traceback.TestTracebackException.test_long_context_chain"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::TestTracebackException::test_long_context_chain
 """Auto-ported test: TestTracebackException::test_long_context_chain (CPython 3.12 oracle)."""
 

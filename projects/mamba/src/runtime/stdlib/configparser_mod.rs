@@ -52,6 +52,17 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+fn extract_str_like(val: MbValue) -> Option<String> {
+    if let Some(s) = extract_str(val) {
+        return Some(s);
+    }
+    let class_name = instance_class(val)?;
+    if class_name == "str" || super::super::class::check_class_hierarchy(&class_name, "str") {
+        return extract_str(super::super::builtins::mb_str(val));
+    }
+    None
+}
+
 fn seq_items(val: MbValue) -> Vec<MbValue> {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
@@ -88,7 +99,13 @@ fn kw_get(kwargs: MbValue, name: &str) -> Option<MbValue> {
     if let Some(ptr) = kwargs.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                return lock.read().unwrap().get(name).copied();
+                for (k, v) in lock.read().unwrap().iter() {
+                    if let DictKey::Str(s) = k {
+                        if s == name {
+                            return Some(*v);
+                        }
+                    }
+                }
             }
         }
     }
@@ -135,7 +152,14 @@ fn instance_class(val: MbValue) -> Option<String> {
 fn dict_get_str(d: MbValue, key: &str) -> Option<MbValue> {
     d.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).copied()
+            for (k, v) in lock.read().unwrap().iter() {
+                if let DictKey::Str(s) = k {
+                    if s == key {
+                        return Some(*v);
+                    }
+                }
+            }
+            None
         } else {
             None
         }
@@ -178,15 +202,7 @@ fn dict_remove_str(d: MbValue, key: &str) -> bool {
 }
 
 fn dict_contains_str(d: MbValue, key: &str) -> bool {
-    d.as_ptr()
-        .map(|ptr| unsafe {
-            if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().contains_key(key)
-            } else {
-                false
-            }
-        })
-        .unwrap_or(false)
+    dict_get_str(d, key).is_some()
 }
 
 /// Ordered list of Str keys in a mamba Dict.
@@ -224,6 +240,22 @@ fn dict_str_pairs(d: MbValue) -> Vec<(String, Option<String>)> {
     out
 }
 
+fn mapping_str_pairs(value: MbValue) -> Vec<(String, Option<String>)> {
+    if value
+        .as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
+    {
+        return dict_str_pairs(value);
+    }
+    if instance_class(value).as_deref() == Some(PROXY_CLASS) {
+        let parser = proxy_parser(value);
+        let sec = proxy_name(value);
+        return merged_options(parser, &sec);
+    }
+    Vec::new()
+}
+
 // ── Errors ──────────────────────────────────────────────────────────────────
 
 fn raise_named(exc: &str, msg: &str) -> MbValue {
@@ -235,6 +267,47 @@ fn raise_type_error(msg: &str) -> MbValue {
 }
 fn raise_value_error(msg: &str) -> MbValue {
     raise_named("ValueError", msg)
+}
+
+fn raise_exc_instance(
+    class_name: &str,
+    init: unsafe extern "C" fn(MbValue, MbValue) -> MbValue,
+    args: Vec<MbValue>,
+) -> MbValue {
+    let inst = MbValue::from_ptr(MbObject::new_instance(class_name.to_string()));
+    unsafe {
+        init(inst, new_list(args));
+    }
+    super::super::class::mb_raise_instance(inst);
+    MbValue::none()
+}
+
+fn raise_no_section(sec: &str) -> MbValue {
+    raise_exc_instance("NoSectionError", init_NoSectionError, vec![new_str(sec)])
+}
+
+fn raise_no_option(option: &str, sec: &str) -> MbValue {
+    raise_exc_instance(
+        "NoOptionError",
+        init_NoOptionError,
+        vec![new_str(option), new_str(sec)],
+    )
+}
+
+fn raise_missing_section_header(source: &str, lineno: usize, raw_line: &str) -> MbValue {
+    raise_exc_instance(
+        "MissingSectionHeaderError",
+        init_MissingSectionHeaderError,
+        vec![
+            new_str(source),
+            MbValue::from_int(lineno as i64),
+            new_str(raw_line),
+        ],
+    )
+}
+
+fn raise_parsing_error(source: &str) -> MbValue {
+    raise_exc_instance("ParsingError", init_ParsingError, vec![new_str(source)])
 }
 
 // ── optionxform ─────────────────────────────────────────────────────────────
@@ -572,11 +645,21 @@ fn is_full_comment(line: &str, prefixes: &[String]) -> bool {
     prefixes.iter().any(|p| line.starts_with(p.as_str()))
 }
 
-fn first_delimiter(line: &str, delims: &[String]) -> Option<usize> {
-    let mut best: Option<usize> = None;
+fn first_delimiter(line: &str, delims: &[String]) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
     for d in delims {
         if let Some(pos) = line.find(d.as_str()) {
-            best = Some(best.map_or(pos, |b| b.min(pos)));
+            let cand = (pos, d.len());
+            best = match best {
+                None => Some(cand),
+                Some((best_pos, best_len)) => {
+                    if pos < best_pos || (pos == best_pos && d.len() > best_len) {
+                        Some(cand)
+                    } else {
+                        Some((best_pos, best_len))
+                    }
+                }
+            };
         }
     }
     best
@@ -604,14 +687,26 @@ fn parse_string(parser: MbValue, text: &str, source: &str) -> MbValue {
     let mut seen_options: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
 
-    let lines: Vec<&str> = text.split('\n').collect();
+    let lines: Vec<&str> = if text.is_empty() {
+        vec![""]
+    } else {
+        text.split_inclusive('\n').collect()
+    };
     let n = lines.len();
-    for (idx0, raw_line) in lines.iter().enumerate() {
+    for (idx0, raw_line_with_nl) in lines.iter().enumerate() {
         // Drop a trailing '\r' (universal newlines).
-        let raw_line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        let raw_line = raw_line_with_nl
+            .strip_suffix('\n')
+            .unwrap_or(raw_line_with_nl)
+            .strip_suffix('\r')
+            .unwrap_or(
+                raw_line_with_nl
+                    .strip_suffix('\n')
+                    .unwrap_or(raw_line_with_nl),
+            );
         let lineno = idx0 + 1;
-        // The very last element of split('\n') is "" for a trailing newline.
-        if idx0 == n - 1 && raw_line.is_empty() {
+        // A trailing final newline yields an empty synthetic line; ignore it.
+        if idx0 == n - 1 && raw_line.is_empty() && text.ends_with('\n') {
             continue;
         }
 
@@ -627,9 +722,9 @@ fn parse_string(parser: MbValue, text: &str, source: &str) -> MbValue {
         }
 
         // Multiline continuation: line begins with whitespace and we have an
-        // option pending.
+        // option pending. Indented section headers still start a new section.
         let indented = raw_line.starts_with(' ') || raw_line.starts_with('\t');
-        if indented && last_key.is_some() && cur_opts.is_some() {
+        if indented && !stripped.starts_with('[') && last_key.is_some() && cur_opts.is_some() {
             let cont = strip_inline_comment(stripped, &inline_pref);
             let opts = cur_opts.unwrap();
             let key = last_key.clone().unwrap();
@@ -662,41 +757,35 @@ fn parse_string(parser: MbValue, text: &str, source: &str) -> MbValue {
                     cur_sec = Some(name.clone());
                     cur_opts = Some(defaults);
                 } else {
-                    if !dict_contains_str(secs, &name) {
-                        dict_set_str(secs, &name, new_dict());
-                    }
                     cur_sec = Some(name.clone());
-                    cur_opts = dict_get_str(secs, &name);
+                    cur_opts = if let Some(existing) = dict_get_str(secs, &name) {
+                        Some(existing)
+                    } else {
+                        let fresh = new_dict();
+                        dict_set_str(secs, &name, fresh);
+                        Some(fresh)
+                    };
                 }
                 continue;
             } else {
-                return raise_named(
-                    "MissingSectionHeaderError",
-                    &format!(
-                        "File contains no section headers.\nfile: {:?}, line: {}\n{:?}",
-                        source, lineno, raw_line
-                    ),
-                );
+                return raise_missing_section_header(source, lineno, raw_line_with_nl);
             }
         }
 
         // Content line before any section header.
         if cur_opts.is_none() {
-            return raise_named(
-                "MissingSectionHeaderError",
-                &format!(
-                    "File contains no section headers.\nfile: {:?}, line: {}\n{:?}",
-                    source, lineno, raw_line
-                ),
-            );
+            return raise_missing_section_header(source, lineno, raw_line_with_nl);
         }
 
         // key = value (delimiter split). Strip inline comment first.
         let value_line = strip_inline_comment(stripped, &inline_pref);
-        if let Some(dpos) = first_delimiter(&value_line, &delims) {
+        if let Some((dpos, dlen)) = first_delimiter(&value_line, &delims) {
             let raw_key = value_line[..dpos].trim();
+            if raw_key.is_empty() {
+                return raise_parsing_error(source);
+            }
             let key = optionxform(raw_key);
-            let val = value_line[dpos + 1..].trim().to_string();
+            let val = value_line[dpos + dlen..].trim().to_string();
             let opts = cur_opts.unwrap();
             let sec_name = cur_sec.clone().unwrap_or_default();
             if strict {
@@ -727,13 +816,7 @@ fn parse_string(parser: MbValue, text: &str, source: &str) -> MbValue {
             last_key = Some(key);
             cur_opts = Some(opts);
         } else {
-            return raise_named(
-                "ParsingError",
-                &format!(
-                    "Source contains parsing errors: {:?}\n\t[line {:2}]: {:?}",
-                    source, lineno, raw_line
-                ),
-            );
+            return raise_parsing_error(source);
         }
     }
     MbValue::none()
@@ -755,7 +838,7 @@ fn resolve_get(
         if let Some(fb) = fallback {
             return fb;
         }
-        return raise_named("NoSectionError", &format!("No section: {}", pyrepr(&sec)));
+        return raise_no_section(sec);
     }
     match lookup_raw(parser, sec, &folded) {
         Some(Some(rawval)) => {
@@ -772,10 +855,7 @@ fn resolve_get(
             if let Some(fb) = fallback {
                 return fb;
             }
-            raise_named(
-                "NoOptionError",
-                &format!("No option {} in section: {}", pyrepr(&folded), pyrepr(sec)),
-            )
+            raise_no_option(&folded, sec)
         }
     }
 }
@@ -920,12 +1000,15 @@ fn ctor_dispatch(
 }
 
 unsafe extern "C" fn dispatch_ConfigParser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     ctor_dispatch(args_ptr, nargs, "ConfigParser", false)
 }
 unsafe extern "C" fn dispatch_RawConfigParser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     ctor_dispatch(args_ptr, nargs, "RawConfigParser", true)
 }
 unsafe extern "C" fn dispatch_SafeConfigParser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     ctor_dispatch(args_ptr, nargs, "SafeConfigParser", false)
 }
 unsafe extern "C" fn dispatch_interp_factory(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -1044,6 +1127,11 @@ fn iter_to_text(arg: MbValue) -> Option<String> {
     Some(out)
 }
 
+fn read_file_source_from_arg(arg: MbValue) -> Option<String> {
+    let name = super::super::class::mb_getattr_default(arg, new_str("name"), MbValue::none());
+    extract_str(name)
+}
+
 unsafe extern "C" fn m_read_file(self_v: MbValue, args: MbValue) -> MbValue {
     let (pos, _kw) = split_args(args);
     let arg = match pos.first() {
@@ -1053,6 +1141,7 @@ unsafe extern "C" fn m_read_file(self_v: MbValue, args: MbValue) -> MbValue {
     let source = pos
         .get(1)
         .and_then(|v| extract_str(*v))
+        .or_else(|| read_file_source_from_arg(arg))
         .unwrap_or_else(|| "<???>".to_string());
     match lines_from_arg(arg) {
         Some(text) => parse_string(self_v, &text, &source),
@@ -1117,12 +1206,15 @@ unsafe extern "C" fn m_read_dict(self_v: MbValue, args: MbValue) -> MbValue {
                     let opts = if sec == dflt {
                         defaults_dict(self_v)
                     } else {
-                        if !dict_contains_str(secs, &sec) {
-                            dict_set_str(secs, &sec, new_dict());
+                        if let Some(existing) = dict_get_str(secs, &sec) {
+                            existing
+                        } else {
+                            let fresh = new_dict();
+                            dict_set_str(secs, &sec, fresh);
+                            fresh
                         }
-                        dict_get_str(secs, &sec).unwrap_or_else(MbValue::none)
                     };
-                    for (k, v) in dict_str_pairs(opts_map_val) {
+                    for (k, v) in mapping_str_pairs(opts_map_val) {
                         let folded = optionxform(&k);
                         let valstr = v.unwrap_or_default();
                         dict_set_str(opts, &folded, new_str(&valstr));
@@ -1175,7 +1267,7 @@ unsafe extern "C" fn m_options(self_v: MbValue, args: MbValue) -> MbValue {
         .and_then(|v| extract_str(*v))
         .unwrap_or_default();
     if sec != default_section_name(self_v) && !has_section(self_v, &sec) {
-        return raise_named("NoSectionError", &format!("No section: {}", pyrepr(&sec)));
+        return raise_no_section(&sec);
     }
     let keys: Vec<MbValue> = merged_options(self_v, &sec)
         .into_iter()
@@ -1253,7 +1345,7 @@ unsafe extern "C" fn m_items(self_v: MbValue, args: MbValue) -> MbValue {
         Some(sec) => {
             // items(section) -> list of (key, interpolated value).
             if sec != default_section_name(self_v) && !has_section(self_v, &sec) {
-                return raise_named("NoSectionError", &format!("No section: {}", pyrepr(&sec)));
+                return raise_no_section(&sec);
             }
             let mut out = Vec::new();
             for (k, v) in merged_options(self_v, &sec) {
@@ -1301,7 +1393,7 @@ unsafe extern "C" fn m_set(self_v: MbValue, args: MbValue) -> MbValue {
     let dflt = default_section_name(self_v);
     let opts = match section_options(self_v, &sec) {
         Some(o) => o,
-        None => return raise_named("NoSectionError", &format!("No section: {}", pyrepr(&sec))),
+        None => return raise_no_section(&sec),
     };
     let _ = dflt;
     let folded = optionxform(&key);
@@ -1312,7 +1404,7 @@ unsafe extern "C" fn m_set(self_v: MbValue, args: MbValue) -> MbValue {
         }
         return raise_type_error("option values must be strings");
     }
-    let v = match extract_str(value) {
+    let v = match extract_str_like(value) {
         Some(s) => s,
         None => return raise_type_error("option values must be strings"),
     };
@@ -1329,7 +1421,7 @@ unsafe extern "C" fn m_remove_option(self_v: MbValue, args: MbValue) -> MbValue 
     let key = pos.get(1).and_then(|v| extract_str(*v)).unwrap_or_default();
     let opts = match section_options(self_v, &sec) {
         Some(o) => o,
-        None => return raise_named("NoSectionError", &format!("No section: {}", pyrepr(&sec))),
+        None => return raise_no_section(&sec),
     };
     let folded = optionxform(&key);
     MbValue::from_bool(dict_remove_str(opts, &folded))
@@ -1434,6 +1526,7 @@ unsafe extern "C" fn m_setitem(self_v: MbValue, args: MbValue) -> MbValue {
         .unwrap_or_default();
     let value = pos.get(1).copied().unwrap_or_else(MbValue::none);
     let dflt = default_section_name(self_v);
+    let pairs = mapping_str_pairs(value);
     let opts = if sec == dflt {
         // Replace defaults contents.
         set_field(self_v, "_defaults", new_dict());
@@ -1441,11 +1534,12 @@ unsafe extern "C" fn m_setitem(self_v: MbValue, args: MbValue) -> MbValue {
     } else {
         let secs = sections_dict(self_v);
         // Fresh section (cp[x] = {...} replaces).
-        dict_set_str(secs, &sec, new_dict());
-        dict_get_str(secs, &sec).unwrap_or_else(MbValue::none)
+        let fresh = new_dict();
+        dict_set_str(secs, &sec, fresh);
+        fresh
     };
     // value is a mapping.
-    for (k, v) in dict_str_pairs(value) {
+    for (k, v) in pairs {
         let folded = optionxform(&k);
         let valstr = v.unwrap_or_default();
         dict_set_str(opts, &folded, new_str(&valstr));
@@ -1612,7 +1706,7 @@ unsafe extern "C" fn p_setitem(self_v: MbValue, args: MbValue) -> MbValue {
         if value.is_none() {
             dict_set_str(opts, &folded, MbValue::none());
         } else {
-            let v = extract_str(value).unwrap_or_default();
+            let v = extract_str_like(value).unwrap_or_default();
             dict_set_str(opts, &folded, new_str(&v));
         }
     }
@@ -2133,7 +2227,6 @@ pub fn register() {
     let ctors: Vec<(&str, usize)> = vec![
         ("ConfigParser", dispatch_ConfigParser as usize),
         ("RawConfigParser", dispatch_RawConfigParser as usize),
-        ("SafeConfigParser", dispatch_SafeConfigParser as usize),
         ("BasicInterpolation", dispatch_BasicInterpolation as usize),
         (
             "ExtendedInterpolation",
@@ -2185,21 +2278,18 @@ pub fn register() {
     // (which looks the func addr up in NATIVE_TYPE_NAMES, then lookup_method in
     // the table mb_class_register populates below). Without this the methods are
     // registered but `callable(ConfigParser.read_dict)` is False.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_ConfigParser as *const () as usize as u64,
-            PARSER_CLASS.to_string(),
-        );
-        map.insert(
-            dispatch_RawConfigParser as *const () as usize as u64,
-            PARSER_CLASS.to_string(),
-        );
-        map.insert(
-            dispatch_SafeConfigParser as *const () as usize as u64,
-            PARSER_CLASS.to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_ConfigParser as *const () as usize as u64,
+        PARSER_CLASS.to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_RawConfigParser as *const () as usize as u64,
+        PARSER_CLASS.to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_SafeConfigParser as *const () as usize as u64,
+        PARSER_CLASS.to_string(),
+    );
 
     // Register parser + proxy classes.
     register_method_class(

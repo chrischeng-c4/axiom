@@ -143,8 +143,8 @@ pub fn register() {
     // constants (uppercase int attrs) rather than a partial hardcoded list —
     // otherwise a constant like EMSGSIZE is absent from errorcode.
     {
-        use super::super::rc::ObjData;
         use super::super::dict_ops::DictKey;
+        use super::super::rc::ObjData;
         let dict = MbObject::new_dict();
         unsafe {
             if let ObjData::Dict(ref lock) = (*dict).data {

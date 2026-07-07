@@ -260,8 +260,7 @@ impl Publisher {
             formats: vec![OutputFormat::Esm, OutputFormat::Cjs],
             ..Default::default()
         };
-        crate::bundler::build_library(options)
-            .context("jet publish --build: library build failed")
+        crate::bundler::build_library(options).context("jet publish --build: library build failed")
     }
 
     /// Read package.json and transform workspace:* protocols to real versions.
@@ -391,7 +390,9 @@ impl Publisher {
             });
 
         let mut collected: Vec<PathBuf> = match files_field {
-            Some(patterns) if !patterns.is_empty() => Self::collect_from_files_allowlist(root, &patterns)?,
+            Some(patterns) if !patterns.is_empty() => {
+                Self::collect_from_files_allowlist(root, &patterns)?
+            }
             _ => {
                 let npmignore = root.join(".npmignore");
                 if npmignore.is_file() {
@@ -438,7 +439,9 @@ impl Publisher {
                 dir_prefixes.push(pat.to_string());
             }
         }
-        let set = builder.build().context("invalid pattern in package.json `files`")?;
+        let set = builder
+            .build()
+            .context("invalid pattern in package.json `files`")?;
 
         let mut files = Vec::new();
         for entry in Self::publishable_walk(root) {
@@ -549,9 +552,7 @@ impl Publisher {
     /// Walk the project tree, always pruning `node_modules` / `.git` (and the
     /// historical `patches` / `.jet-cache`). Shared by all three collect modes
     /// so those dirs can NEVER leak into a tarball.
-    fn publishable_walk(
-        root: &Path,
-    ) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
+    fn publishable_walk(root: &Path) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
         walkdir::WalkDir::new(root)
             .min_depth(1)
             .into_iter()
@@ -619,7 +620,12 @@ pub(crate) fn auto_fill_metadata(
             .entries
             .iter()
             .find(|e| e.subpath == "." && e.format == OutputFormat::Cjs)
-            .or_else(|| result.entries.iter().find(|e| e.format == OutputFormat::Cjs))
+            .or_else(|| {
+                result
+                    .entries
+                    .iter()
+                    .find(|e| e.format == OutputFormat::Cjs)
+            })
         {
             if let Some(p) = rel(&cjs.path) {
                 obj.insert("main".to_string(), serde_json::Value::String(p));
@@ -632,7 +638,12 @@ pub(crate) fn auto_fill_metadata(
             .entries
             .iter()
             .find(|e| e.subpath == "." && e.format == OutputFormat::Esm)
-            .or_else(|| result.entries.iter().find(|e| e.format == OutputFormat::Esm))
+            .or_else(|| {
+                result
+                    .entries
+                    .iter()
+                    .find(|e| e.format == OutputFormat::Esm)
+            })
         {
             if let Some(p) = rel(&esm.path) {
                 obj.insert("module".to_string(), serde_json::Value::String(p));
@@ -664,10 +675,7 @@ pub(crate) fn auto_fill_metadata(
 /// On the first missing target a clear error is returned naming the field, the
 /// declared value, and the absolute path that was checked, so a publishing dev
 /// lands on the actual cause from one line.
-pub(crate) fn validate_package_metadata(
-    pkg: &serde_json::Value,
-    root_dir: &Path,
-) -> Result<()> {
+pub(crate) fn validate_package_metadata(pkg: &serde_json::Value, root_dir: &Path) -> Result<()> {
     for field in ["main", "module", "types"] {
         if let Some(serde_json::Value::String(rel)) = pkg.get(field) {
             check_metadata_target(field, rel, root_dir)?;
@@ -724,11 +732,7 @@ fn check_metadata_target(field: &str, rel: &str, root_dir: &Path) -> Result<()> 
 /// @issue #172 — build the error message for a metadata field whose declared
 /// path does not exist on disk. Extracted so the wording (field + declared
 /// value + checked absolute path + consequence) is unit-testable.
-pub(crate) fn format_missing_metadata_err(
-    field: &str,
-    declared: &str,
-    checked: &Path,
-) -> String {
+pub(crate) fn format_missing_metadata_err(field: &str, declared: &str, checked: &Path) -> String {
     format!(
         "#172 cannot publish: package.json `{field}` points at `{declared}`, but no file \
          exists at {}. The published tarball would ship a dangling `{field}` and every \
@@ -1080,7 +1084,10 @@ mod tests {
 
         let err = validate_package_metadata(&pkg, root).unwrap_err();
         let chain = format!("{err:#}");
-        assert!(chain.contains("exports"), "must name the exports field: {chain}");
+        assert!(
+            chain.contains("exports"),
+            "must name the exports field: {chain}"
+        );
         assert!(
             chain.contains("./dist/index.cjs"),
             "must echo the missing leaf: {chain}"

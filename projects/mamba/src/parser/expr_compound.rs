@@ -138,10 +138,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(TokenKind::Colon)?;
-        if self
-            .peek_kind()
-            .as_ref()
-            .map_or(false, Self::is_name_token)
+        if self.peek_kind().as_ref().map_or(false, Self::is_name_token)
             && self.peek_at(1).is_some_and(|k| *k == TokenKind::ColonEq)
         {
             return Err(crate::error::MambaError::syntax(
@@ -190,7 +187,8 @@ impl<'a> Parser<'a> {
     /// Await: `await expr`
     pub(crate) fn parse_await_expr(&mut self) -> crate::error::Result<Spanned<Expr>> {
         let (start, _) = self.advance(); // consume `await`
-        let expr = self.parse_expr()?;
+        let bp = super::expr::prefix_bp(&UnaryOp::Neg);
+        let expr = self.parse_expr_bp(bp)?;
         let span = Span::new(self.file_id, start, expr.span.end);
         Ok(Spanned::new(Expr::Await(Box::new(expr)), span))
     }
@@ -211,7 +209,11 @@ impl<'a> Parser<'a> {
         if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RParen)?;
-            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
+            self.validate_comprehension_assignment_exprs(
+                &[&first],
+                &generators,
+                self.span_from(start),
+            )?;
             return Ok(Spanned::new(
                 Expr::GeneratorExpr {
                     element: Box::new(first),
@@ -255,7 +257,11 @@ impl<'a> Parser<'a> {
         if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBracket)?;
-            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
+            self.validate_comprehension_assignment_exprs(
+                &[&first],
+                &generators,
+                self.span_from(start),
+            )?;
             return Ok(Spanned::new(
                 Expr::ListComp {
                     element: Box::new(first),
@@ -325,7 +331,11 @@ impl<'a> Parser<'a> {
             if self.at_comprehension_clause_start() {
                 let generators = self.parse_comprehension_clauses()?;
                 self.expect(TokenKind::RBrace)?;
-                self.validate_comprehension_assignment_exprs(&[&first, &value], &generators, self.span_from(start))?;
+                self.validate_comprehension_assignment_exprs(
+                    &[&first, &value],
+                    &generators,
+                    self.span_from(start),
+                )?;
                 return Ok(Spanned::new(
                     Expr::DictComp {
                         key: Box::new(first),
@@ -362,7 +372,11 @@ impl<'a> Parser<'a> {
         if self.at_comprehension_clause_start() {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBrace)?;
-            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
+            self.validate_comprehension_assignment_exprs(
+                &[&first],
+                &generators,
+                self.span_from(start),
+            )?;
             return Ok(Spanned::new(
                 Expr::SetComp {
                     element: Box::new(first),
@@ -436,8 +450,11 @@ impl<'a> Parser<'a> {
     ) -> crate::error::Result<(Vec<String>, bool, Vec<String>)> {
         let mut targets = Vec::new();
         let mut target_reads = Vec::new();
-        let unpack_target =
-            self.parse_comprehension_target_list_until(TokenKind::In, &mut targets, &mut target_reads)?;
+        let unpack_target = self.parse_comprehension_target_list_until(
+            TokenKind::In,
+            &mut targets,
+            &mut target_reads,
+        )?;
         if targets.is_empty() {
             let span = self
                 .peek()
@@ -497,12 +514,11 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LParen => {
                 self.advance();
-                let had_comma =
-                    self.parse_comprehension_target_list_until(
-                        TokenKind::RParen,
-                        targets,
-                        target_reads,
-                    )?;
+                let had_comma = self.parse_comprehension_target_list_until(
+                    TokenKind::RParen,
+                    targets,
+                    target_reads,
+                )?;
                 self.expect(TokenKind::RParen)?;
                 Ok(had_comma)
             }
@@ -636,7 +652,10 @@ impl<'a> Parser<'a> {
             .flat_map(|generator| generator.targets.iter().map(String::as_str))
             .collect();
         for target in &walrus_targets {
-            if iteration_targets.iter().any(|iteration| *iteration == target.as_str()) {
+            if iteration_targets
+                .iter()
+                .any(|iteration| *iteration == target.as_str())
+            {
                 return Err(crate::error::MambaError::syntax(
                     span,
                     format!(
@@ -672,7 +691,10 @@ impl<'a> Parser<'a> {
                 Self::collect_walrus_targets(lhs, out);
                 Self::collect_walrus_targets(rhs, out);
             }
-            Expr::UnaryOp { operand, .. } | Expr::Attr { object: operand, .. } => {
+            Expr::UnaryOp { operand, .. }
+            | Expr::Attr {
+                object: operand, ..
+            } => {
                 Self::collect_walrus_targets(operand, out);
             }
             Expr::Call { func, args } => {
@@ -701,7 +723,10 @@ impl<'a> Parser<'a> {
                     Self::collect_walrus_targets(value, out);
                 }
             }
-            Expr::ListLit(values) | Expr::SetLit(values) | Expr::TupleLit(values) | Expr::UnpackTarget(values) => {
+            Expr::ListLit(values)
+            | Expr::SetLit(values)
+            | Expr::TupleLit(values)
+            | Expr::UnpackTarget(values) => {
                 for value in values {
                     Self::collect_walrus_targets(value, out);
                 }
@@ -714,15 +739,28 @@ impl<'a> Parser<'a> {
                     Self::collect_walrus_targets(value, out);
                 }
             }
-            Expr::IfExpr { body, condition, else_body } => {
+            Expr::IfExpr {
+                body,
+                condition,
+                else_body,
+            } => {
                 Self::collect_walrus_targets(body, out);
                 Self::collect_walrus_targets(condition, out);
                 Self::collect_walrus_targets(else_body, out);
             }
             Expr::Lambda { .. } => {}
-            Expr::ListComp { element, generators }
-            | Expr::SetComp { element, generators }
-            | Expr::GeneratorExpr { element, generators } => {
+            Expr::ListComp {
+                element,
+                generators,
+            }
+            | Expr::SetComp {
+                element,
+                generators,
+            }
+            | Expr::GeneratorExpr {
+                element,
+                generators,
+            } => {
                 Self::collect_walrus_targets(element, out);
                 for generator in generators {
                     for condition in &generator.conditions {
@@ -730,7 +768,11 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            Expr::DictComp { key, value, generators } => {
+            Expr::DictComp {
+                key,
+                value,
+                generators,
+            } => {
                 Self::collect_walrus_targets(key, out);
                 Self::collect_walrus_targets(value, out);
                 for generator in generators {
@@ -783,7 +825,6 @@ impl<'a> Parser<'a> {
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -920,6 +961,21 @@ mod tests {
                 assert!(matches!(inner.node, Expr::Call { .. }));
             }
             other => panic!("expected Await, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_await_expr_binds_tighter_than_add() {
+        match parse_expr("await left() + await right()") {
+            Expr::BinOp {
+                op: BinOp::Add,
+                lhs,
+                rhs,
+            } => {
+                assert!(matches!(lhs.node, Expr::Await(_)));
+                assert!(matches!(rhs.node, Expr::Await(_)));
+            }
+            other => panic!("expected Add of Await operands, got {other:?}"),
         }
     }
 

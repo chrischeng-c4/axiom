@@ -1,19 +1,19 @@
 // `mamba pip` — pip-compatible installed-environment inspection commands.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::path::{Path, PathBuf};
 
 use crate::pkgmanage::pkgmgr::pip_check::check_consistency;
 use crate::pkgmanage::pkgmgr::pip_compile::{
-    CompileIndex, CompileOptions, compile_sources, parse_compile_format, write_compile_output,
+    compile_sources, parse_compile_format, write_compile_output, CompileIndex, CompileOptions,
 };
 use crate::pkgmanage::pkgmgr::pip_install::{
-    InstallIndex, InstallOptions, InstallSource, install_sources, load_requirements_sources,
-    parse_install_source, sync_sources, uninstall_packages,
+    install_sources, load_requirements_sources, parse_install_source, sync_sources,
+    uninstall_packages, InstallIndex, InstallOptions, InstallSource,
 };
 use crate::pkgmanage::pkgmgr::pip_inventory::{
-    ListOptions, enumerate_installed, find_by_name, render_freeze, render_list, render_show,
+    enumerate_installed, find_by_name, render_freeze, render_list, render_show, ListOptions,
 };
 use crate::pkgmanage::pkgmgr::pip_tree::render_installed_tree;
 use crate::pkgmanage::pkgmgr::tree::TreeOptions;

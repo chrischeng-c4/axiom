@@ -1,4 +1,4 @@
-use super::check::TypeChecker;
+use super::check::{NumericRoot, TypeChecker};
 use super::generic::{check_bounds, infer_type_args};
 use super::{Ty, TypeId};
 use crate::parser::ast::*;
@@ -60,7 +60,7 @@ fn is_pep695_lazy_thunk_arg(
     matches!(arg.node, Expr::Lambda { .. })
         && matches!(
             (func_name, positional_index),
-            (Some("__mb_pep695_typevar__"), 2 | 3) | (Some("__mb_pep695_type_alias__"), 1)
+            (Some("__mb_pep695_typevar__"), 2 | 3 | 4) | (Some("__mb_pep695_type_alias__"), 1)
         )
 }
 
@@ -127,32 +127,45 @@ impl TypeChecker {
                 match op {
                     UnaryOp::Pos => {
                         // Bool is a subtype of int in Python — `+True == 1`,
-                        // `+False == 0`, `type(+True) is int`.
-                        if !matches!(
-                            self.tcx.get(ot),
-                            Ty::Int | Ty::Float | Ty::Bool | Ty::Error | Ty::Any
-                        ) {
+                        // `+False == 0`, `type(+True) is int`. #1031: a class
+                        // deriving int/float (`class P(int): pass`) is
+                        // numeric too — `is_numeric_like` covers both.
+                        // #1041: a class that is NOT numeric-derived but
+                        // defines `__pos__` itself (walking bases) is also
+                        // accepted — the runtime dispatches to the override
+                        // (#1030); its result type isn't inferable here, so
+                        // it resolves to `Any`.
+                        let numeric_like = self.is_numeric_like(ot);
+                        let has_pos_dunder =
+                            !numeric_like && self.class_defines_dunder(ot, "__pos__");
+                        if !numeric_like && !has_pos_dunder {
                             self.error(operand.span, "unary `+` requires numeric type");
                         }
-                        if matches!(self.tcx.get(ot), Ty::Bool) {
+                        if has_pos_dunder {
+                            self.tcx.any()
+                        } else if matches!(self.tcx.get(ot), Ty::Bool) {
                             self.tcx.int()
                         } else {
-                            ot
+                            self.numeric_derived_result_ty(ot).unwrap_or(ot)
                         }
                     }
                     UnaryOp::Neg => {
                         // Bool is a subtype of int — `-True == -1`, `-False == 0`,
-                        // `type(-True) is int`.
-                        if !matches!(
-                            self.tcx.get(ot),
-                            Ty::Int | Ty::Float | Ty::Bool | Ty::Error | Ty::Any
-                        ) {
+                        // `type(-True) is int`. #1031: same numeric-derived-class
+                        // acceptance as `+`. #1041: same non-numeric-but-
+                        // dunder-carrying acceptance as `+`, via `__neg__`.
+                        let numeric_like = self.is_numeric_like(ot);
+                        let has_neg_dunder =
+                            !numeric_like && self.class_defines_dunder(ot, "__neg__");
+                        if !numeric_like && !has_neg_dunder {
                             self.error(operand.span, "unary `-` requires numeric type");
                         }
-                        if matches!(self.tcx.get(ot), Ty::Bool) {
+                        if has_neg_dunder {
+                            self.tcx.any()
+                        } else if matches!(self.tcx.get(ot), Ty::Bool) {
                             self.tcx.int()
                         } else {
-                            ot
+                            self.numeric_derived_result_ty(ot).unwrap_or(ot)
                         }
                     }
                     UnaryOp::Not => {
@@ -161,11 +174,25 @@ impl TypeChecker {
                         self.tcx.bool()
                     }
                     UnaryOp::BitNot => {
-                        // Bool is a subtype of int — ~True == -2, ~False == -1
-                        if !matches!(self.tcx.get(ot), Ty::Int | Ty::Bool | Ty::Error | Ty::Any) {
+                        // Bool is a subtype of int — ~True == -2, ~False == -1.
+                        // #1031: `~` is int-only (unlike `+`/`-`) — a
+                        // float-derived class must still be rejected, so use
+                        // `is_int_like` rather than `is_numeric_like`.
+                        // #1041: a class that is NOT int-derived but defines
+                        // `__invert__` itself (walking bases) is also
+                        // accepted; result type resolves to `Any` since the
+                        // runtime dispatch (#1030) decides it dynamically.
+                        let int_like = self.is_int_like(ot);
+                        let has_invert_dunder =
+                            !int_like && self.class_defines_dunder(ot, "__invert__");
+                        if !int_like && !has_invert_dunder {
                             self.error(operand.span, "`~` requires int type");
                         }
-                        self.tcx.int()
+                        if has_invert_dunder {
+                            self.tcx.any()
+                        } else {
+                            self.tcx.int()
+                        }
                     }
                 }
             }
@@ -461,6 +488,22 @@ impl TypeChecker {
                     Ty::Any => {
                         for arg in args {
                             self.check_call_arg(arg);
+                        }
+                        // #1021: a whole-module-import constructor call
+                        // (`queue.Queue()`, `selectors.DefaultSelector()`)
+                        // naming a known native class — give the call a
+                        // concrete `Ty::Class` result (mirrors #982's
+                        // dict-literal Any-hole fix) so the receiver has a
+                        // type for `hir_to_mir.rs`'s `direct_method_fn` table
+                        // to key off of instead of starving on a bare Any.
+                        // Checked before the #887 stdlib-return fallback so
+                        // it wins over a coarser scalar/Any StdlibSig guess.
+                        if let Some(class_name) = self.native_ctor_class_call(func) {
+                            return self.tcx.intern(Ty::Class {
+                                name: class_name.to_string(),
+                                fields: Vec::new(),
+                                match_args: None,
+                            });
                         }
                         // #887: a from-imported / module-qualified stdlib
                         // callee resolves to `Ty::Any` at this layer (module
@@ -894,6 +937,58 @@ impl TypeChecker {
         }
     }
 
+    /// #1021: whole-module-import constructor calls (`queue.Queue()`,
+    /// `selectors.DefaultSelector()`) that are known to construct a
+    /// *specific* native stdlib class. Extensible allowlist — add `(module,
+    /// class)` pairs here as more native classes gain receiver-type
+    /// specialization in `hir_to_mir.rs`'s `direct_method_fn` table (#979).
+    const NATIVE_CTOR_CLASSES: &[(&str, &str)] =
+        &[("queue", "Queue"), ("selectors", "DefaultSelector")];
+
+    /// #1021: resolve `func` to a concrete native-class name when it is
+    /// unambiguously a whole-module-import attribute call (`queue.Queue(...)`)
+    /// naming one of `NATIVE_CTOR_CLASSES`. Deliberately narrow
+    /// (skip-when-unsure, matching this file's zero-false-positive goal):
+    /// - Only fires for `Expr::Attr { object: Ident(base), attr }` — never a
+    ///   bare `Ident` call, so a from-imported `Queue` (which could be
+    ///   locally shadowed far more easily than a module name) never adopts
+    ///   this path.
+    /// - `base` must resolve through `import_origins` with an *empty*
+    ///   qualifier — i.e. `base` is bound to the whole module (`import
+    ///   queue` / `import queue as q`), not a from-imported class/value that
+    ///   merely shares the module's name.
+    /// - The `(module, attr)` pair must be an exact match in the allowlist;
+    ///   any miss returns `None` and the caller falls back to `Any` as
+    ///   before.
+    ///
+    /// Also recognizes a bare `Expr::Ident` callee that was previously bound
+    /// to one of these classes via a *class-reference* alias assignment
+    /// (`_Queue = queue.Queue`, then `_Queue()`) — the perf-tier "hoist
+    /// convention" (#2097) that avoids a per-iteration module-attribute
+    /// lookup. `class_ref_origins` is only ever populated by re-running this
+    /// same Attr-shape check against the assignment's value (see
+    /// `check_stmt.rs`), so this never widens what counts as a native
+    /// constructor beyond the allowlist above.
+    pub(crate) fn native_ctor_class_call(&self, func: &Spanned<Expr>) -> Option<&'static str> {
+        match &func.node {
+            Expr::Attr { object, attr } => {
+                let Expr::Ident(base) = &object.node else {
+                    return None;
+                };
+                let (module, qual) = self.import_origins.get(base)?;
+                if !qual.is_empty() {
+                    return None;
+                }
+                Self::NATIVE_CTOR_CLASSES
+                    .iter()
+                    .find(|&&(m, c)| m == module.as_str() && c == attr.as_str())
+                    .map(|&(_, c)| c)
+            }
+            Expr::Ident(name) => self.class_ref_origins.get(name).copied(),
+            _ => None,
+        }
+    }
+
     /// #886: fall back to a receiver's already-*inferred* `Ty::Class` name to
     /// resolve a Method-row lookup when `instance_origins` misses. This covers
     /// receivers that `instance_origins` never sees because it is only
@@ -1094,7 +1189,11 @@ impl TypeChecker {
             && sig.module == "keyword"
             && sig.qualifier.is_empty()
             && matches!(sig.name, "iskeyword" | "issoftkeyword");
-        if !sig.enforceable && !strict_keyword_wall {
+        let strict_textwrap_indent_wall = self.strict_type_fixture
+            && sig.module == "textwrap"
+            && sig.qualifier.is_empty()
+            && sig.name == "indent";
+        if !sig.enforceable && !strict_keyword_wall && !strict_textwrap_indent_wall {
             return ret_ty;
         }
 
@@ -1126,6 +1225,7 @@ impl TypeChecker {
             if param.star {
                 break; // never enforce past `*args`
             }
+            let strict_textwrap_text_param = strict_textwrap_indent_wall && param.name == "text";
             let classinfo_param = sig.module == "builtins"
                 && sig.qualifier.is_empty()
                 && matches!(sig.name, "isinstance" | "issubclass")
@@ -1146,7 +1246,20 @@ impl TypeChecker {
                 continue;
             }
             let bytes_encoding_source = bytes_encoding_arg_is_positional && param_idx == 0;
-            self.check_stdlib_scalar_arg(param, a, bytes_encoding_source);
+            let strict_textwrap_param = super::stdlib_sigs::ParamSig {
+                name: "text",
+                ty: super::stdlib_sigs::CoreTy::Str,
+                star: false,
+            };
+            self.check_stdlib_scalar_arg(
+                if strict_textwrap_text_param {
+                    &strict_textwrap_param
+                } else {
+                    param
+                },
+                a,
+                bytes_encoding_source,
+            );
             param_idx += 1;
             arg_idx += 1;
         }
@@ -1170,7 +1283,20 @@ impl TypeChecker {
             else {
                 continue;
             };
-            self.check_stdlib_scalar_arg(param, value, false);
+            let strict_textwrap_param = super::stdlib_sigs::ParamSig {
+                name: "text",
+                ty: super::stdlib_sigs::CoreTy::Str,
+                star: false,
+            };
+            self.check_stdlib_scalar_arg(
+                if strict_textwrap_indent_wall && param.name == "text" {
+                    &strict_textwrap_param
+                } else {
+                    param
+                },
+                value,
+                false,
+            );
         }
         ret_ty
     }
@@ -1232,29 +1358,37 @@ impl TypeChecker {
         // the `Typed` nominal/protocol contract) can never legitimately
         // receive a raw class object either, so widening them to the
         // inferred type adds no false positives.
-        let bare_arg = self.classinfo_bare_instance_name(a).or_else(|| {
-            if matches!(param.ty, super::stdlib_sigs::CoreTy::Type) {
-                return None;
-            }
-            // The type model gives the class object `_W` and an instance
-            // `_W()` the identical `Ty::Class`, so an ident that NAMES a
-            // known class is the class object itself
-            // (`object.__subclasshook__(_W)`, `slice.__new__(slice, ...)`)
-            // — curated `Typed` rows rely on those staying accepted. Only
-            // differently-named idents (variables holding constructor
-            // results) count as instances here.
-            if let Expr::Ident(id) = &a.node {
-                if self.user_bare_classes.contains(id) || self.class_methods.contains_key(id) {
-                    return None;
-                }
-            }
-            match self.tcx.get(actual) {
-                Ty::Class { name, .. } if self.user_bare_classes.contains(name) => {
-                    Some(name.clone())
+        let bare_arg = self
+            .classinfo_bare_instance_name(a)
+            .or_else(|| match param.ty {
+                super::stdlib_sigs::CoreTy::Typed | super::stdlib_sigs::CoreTy::TypedNamed(_) => {
+                    self.typed_literal_bare_instance_name(a)
                 }
                 _ => None,
-            }
-        });
+            })
+            .or_else(|| {
+                if matches!(param.ty, super::stdlib_sigs::CoreTy::Type) {
+                    return None;
+                }
+                // The type model gives the class object `_W` and an instance
+                // `_W()` the identical `Ty::Class`, so an ident that NAMES a
+                // known class is the class object itself
+                // (`object.__subclasshook__(_W)`, `slice.__new__(slice, ...)`)
+                // — curated `Typed` rows rely on those staying accepted. Only
+                // differently-named idents (variables holding constructor
+                // results) count as instances here.
+                if let Expr::Ident(id) = &a.node {
+                    if self.user_bare_classes.contains(id) || self.class_methods.contains_key(id) {
+                        return None;
+                    }
+                }
+                match self.tcx.get(actual) {
+                    Ty::Class { name, .. } if self.user_bare_classes.contains(name) => {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                }
+            });
         if let (true, Some(name)) = (concrete_param, &bare_arg) {
             self.error(
                 a.span,
@@ -1462,6 +1596,22 @@ impl TypeChecker {
         }
     }
 
+    /// `Typed` walls keep skip-when-unsure for arbitrary iterables, but a
+    /// literal list/tuple/set containing a syntactically bare user-class
+    /// instance (`[_W()]`, `(_W(),)`, `{_W()}`) is concrete enough to reject.
+    /// Dict key/value contracts stay out of scope.
+    fn typed_literal_bare_instance_name(&self, expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
+            Expr::ListLit(elems) | Expr::SetLit(elems) | Expr::TupleLit(elems) => {
+                elems.iter().find_map(|elem| {
+                    self.classinfo_bare_instance_name(elem)
+                        .or_else(|| self.typed_literal_bare_instance_name(elem))
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve attribute access (#246).
     fn resolve_unbound_class_method(
         &mut self,
@@ -1612,6 +1762,96 @@ impl TypeChecker {
         }
     }
 
+    /// #1031: numeric builtin `ty` satisfies, if any — a plain numeric
+    /// builtin satisfies its own root directly (`bool` collapses to `Int`,
+    /// matching Python's `bool` being an `int` subtype), and `Ty::Class(name)`
+    /// satisfies a root only when `name`'s base chain was recorded in
+    /// `numeric_derived_classes` (i.e. it derives `int`/`float` — a bare
+    /// `class Q: pass` does NOT reach this). Shared by every hard numeric-type
+    /// wall below so an int-derived-class instance (`class P(int): pass`)
+    /// compiles wherever a bare `int` would, without loosening rejection of
+    /// genuinely non-numeric classes.
+    fn numeric_root(&self, ty: &Ty) -> Option<NumericRoot> {
+        match ty {
+            Ty::Int | Ty::Bool => Some(NumericRoot::Int),
+            Ty::Float => Some(NumericRoot::Float),
+            Ty::Class { name, .. } => self.numeric_derived_classes.get(name).copied(),
+            _ => None,
+        }
+    }
+
+    /// #1031: true when `ty_id` may stand in for a numeric operand — a plain
+    /// numeric builtin, `Any`/`Error` (already deferred/reported elsewhere),
+    /// or a numeric-derived class instance ([`Self::numeric_root`]).
+    fn is_numeric_like(&self, ty_id: TypeId) -> bool {
+        let ty = self.tcx.get(ty_id);
+        matches!(ty, Ty::Any | Ty::Error) || self.numeric_root(ty).is_some()
+    }
+
+    /// #1031: true when `ty_id` may stand in for an `int` operand
+    /// specifically — plain `int`/`bool`, `Any`/`Error`, or a class whose
+    /// base chain reaches `int` (NOT `float`: a `float`-derived class must
+    /// still reject `~`/shifts exactly like a bare `float` does).
+    fn is_int_like(&self, ty_id: TypeId) -> bool {
+        let ty = self.tcx.get(ty_id);
+        matches!(ty, Ty::Any | Ty::Error) || matches!(self.numeric_root(ty), Some(NumericRoot::Int))
+    }
+
+    /// #1041: true when `ty_id` is a `Ty::Class` whose method table — or any
+    /// class in its base chain — defines `dunder`. Sibling of
+    /// [`Self::numeric_root`]/[`Self::is_numeric_like`]/[`Self::is_int_like`]
+    /// above (#1031), which only recognize classes deriving `int`/`float`;
+    /// this lets a class with an explicit unary/shift dunder override
+    /// (`__neg__`/`__pos__`/`__invert__`/`__lshift__`/`__rshift__`) pass the
+    /// walls below even when it is NOT numeric-derived (`class V:
+    /// def __neg__(self): ...`). Walks `class_bases` (#885/#886's
+    /// `class_methods`, plus the base-name side table populated alongside it
+    /// in `check.rs`) so an inherited dunder several levels up
+    /// (`class W(V): pass`) is found too. A class without the dunder
+    /// anywhere in its chain returns `false` — the walls' rejection of
+    /// genuinely non-overriding classes is unchanged.
+    fn class_defines_dunder(&self, ty_id: TypeId, dunder: &str) -> bool {
+        let Ty::Class { name, .. } = self.tcx.get(ty_id) else {
+            return false;
+        };
+        let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut queue: Vec<&str> = vec![name.as_str()];
+        while let Some(cur) = queue.pop() {
+            if !visited.insert(cur) {
+                continue;
+            }
+            if self
+                .class_methods
+                .get(cur)
+                .is_some_and(|methods| methods.contains_key(dunder))
+            {
+                return true;
+            }
+            if let Some(bases) = self.class_bases.get(cur) {
+                queue.extend(bases.iter().map(String::as_str));
+            }
+        }
+        false
+    }
+
+    /// #1031: resolve the compile-time result type of a numeric-derived-class
+    /// unary op. Builtin numeric operations on a subclass instance return a
+    /// plain instance of the base builtin (never the subclass) when the
+    /// subclass hasn't overridden the dunder — checker has no dunder-override
+    /// visibility, so this always collapses to the root, matching the common
+    /// (unoverridden) case. `None` when `ty_id` isn't a numeric-derived class
+    /// (caller keeps its existing fallback).
+    fn numeric_derived_result_ty(&mut self, ty_id: TypeId) -> Option<TypeId> {
+        let Ty::Class { name, .. } = self.tcx.get(ty_id) else {
+            return None;
+        };
+        match self.numeric_derived_classes.get(name).copied() {
+            Some(NumericRoot::Int) => Some(self.tcx.int()),
+            Some(NumericRoot::Float) => Some(self.tcx.float()),
+            None => None,
+        }
+    }
+
     pub(crate) fn check_binop(&mut self, op: BinOp, lt: TypeId, rt: TypeId, span: Span) -> TypeId {
         if self.tcx.get(lt).is_error() || self.tcx.get(rt).is_error() {
             return self.tcx.error();
@@ -1641,6 +1881,27 @@ impl TypeChecker {
                     && matches!(self.tcx.get(lt), Ty::List(_))
                     && matches!(self.tcx.get(rt), Ty::List(_))
                 {
+                    return lt;
+                }
+                // Set binops on statically-known sets route to the existing
+                // runtime set operator support; keep the gate narrow to real
+                // Set types so unrelated non-numeric `-` expressions still
+                // hard-error.
+                if matches!(op, BinOp::Sub)
+                    && matches!(self.tcx.get(lt), Ty::Set(_))
+                    && matches!(self.tcx.get(rt), Ty::Set(_))
+                {
+                    if !self.types_compatible(lt, rt) {
+                        self.error(
+                            span,
+                            format!(
+                                "operand type mismatch: `{}` vs `{}`",
+                                self.ty_name(lt),
+                                self.ty_name(rt),
+                            ),
+                        );
+                        return self.tcx.error();
+                    }
                     return lt;
                 }
                 // Tuple + Tuple → Tuple (concatenation)
@@ -1738,16 +1999,49 @@ impl TypeChecker {
                 lt
             }
             BinOp::LShift | BinOp::RShift => {
-                // Bool is a subtype of int — accept both
-                if !matches!(self.tcx.get(lt), Ty::Int | Ty::Bool)
-                    || !matches!(self.tcx.get(rt), Ty::Int | Ty::Bool)
-                {
+                // Bool is a subtype of int — accept both. #1031: also accept
+                // a class deriving int (`class P(int): pass; P(7) << 1`);
+                // `is_int_like` rejects a float-derived class exactly like a
+                // bare `float` operand. #1041: a `lt` class that is NOT
+                // int-derived but defines the matching shift dunder itself
+                // (walking bases) is also accepted for the left/receiver
+                // operand — mirrors the unary wall's dunder acceptance.
+                // `rt` (the shift amount) keeps the unchanged `is_int_like`
+                // requirement; the receiver's own dunder decides dispatch at
+                // runtime regardless of `rt`'s concrete type.
+                let shift_dunder = if matches!(op, BinOp::LShift) {
+                    "__lshift__"
+                } else {
+                    "__rshift__"
+                };
+                let lt_int_like = self.is_int_like(lt);
+                let lt_has_dunder = !lt_int_like && self.class_defines_dunder(lt, shift_dunder);
+                if (!lt_int_like && !lt_has_dunder) || !self.is_int_like(rt) {
                     self.error(span, "shift operators require int types");
                     return self.tcx.error();
                 }
-                self.tcx.int()
+                if lt_has_dunder {
+                    self.tcx.any()
+                } else {
+                    self.tcx.int()
+                }
             }
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                if matches!(self.tcx.get(lt), Ty::Set(_)) && matches!(self.tcx.get(rt), Ty::Set(_))
+                {
+                    if !self.types_compatible(lt, rt) {
+                        self.error(
+                            span,
+                            format!(
+                                "operand type mismatch: `{}` vs `{}`",
+                                self.ty_name(lt),
+                                self.ty_name(rt),
+                            ),
+                        );
+                        return self.tcx.error();
+                    }
+                    return lt;
+                }
                 // Bool is a subtype of int — accept both for bitwise ops.
                 // Python: bool & bool → bool, bool & int → int, int & int → int
                 if matches!(self.tcx.get(lt), Ty::Bool) && matches!(self.tcx.get(rt), Ty::Bool) {
@@ -1771,6 +2065,7 @@ impl TypeChecker {
                         | Ty::Bool
                         | Ty::Str
                         | Ty::List(_)
+                        | Ty::Set(_)
                         | Ty::Tuple(_)
                         | Ty::Any
                         | Ty::Class { .. }
@@ -1782,6 +2077,7 @@ impl TypeChecker {
                         | Ty::Bool
                         | Ty::Str
                         | Ty::List(_)
+                        | Ty::Set(_)
                         | Ty::Tuple(_)
                         | Ty::Any
                         | Ty::Class { .. }
@@ -2133,6 +2429,13 @@ mod tests {
         Spanned::new(node, Span::dummy())
     }
 
+    fn bare_ctor_call(name: &str) -> Spanned<Expr> {
+        sp(Expr::Call {
+            func: Box::new(sp(Expr::Ident(name.to_string()))),
+            args: Vec::new(),
+        })
+    }
+
     // --- Literal types (via check_expr, which is pub(crate)) ---
 
     #[test]
@@ -2168,6 +2471,31 @@ mod tests {
         let mut checker = TypeChecker::new();
         let ty = checker.check_expr(&sp(Expr::NoneLit));
         assert_eq!(checker.tcx.get(ty), &Ty::None);
+    }
+
+    #[test]
+    fn test_typed_literal_bare_instance_name_detects_nested_container_element() {
+        let mut checker = TypeChecker::new();
+        checker.user_bare_classes.insert("_W".to_string());
+        let expr = sp(Expr::ListLit(vec![
+            sp(Expr::TupleLit(vec![bare_ctor_call("_W")])),
+            sp(Expr::SetLit(vec![bare_ctor_call("_W")])),
+        ]));
+        assert_eq!(
+            checker.typed_literal_bare_instance_name(&expr),
+            Some("_W".to_string())
+        );
+    }
+
+    #[test]
+    fn test_typed_literal_bare_instance_name_skips_dict_literal() {
+        let mut checker = TypeChecker::new();
+        checker.user_bare_classes.insert("_W".to_string());
+        let expr = sp(Expr::DictLit(vec![(
+            Some(sp(Expr::StrLit("k".to_string()))),
+            bare_ctor_call("_W"),
+        )]));
+        assert_eq!(checker.typed_literal_bare_instance_name(&expr), None);
     }
 
     // --- Undefined ident → check_module returns errors ---

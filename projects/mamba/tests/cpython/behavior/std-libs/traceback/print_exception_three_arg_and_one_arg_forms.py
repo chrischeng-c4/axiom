@@ -9,7 +9,6 @@
 # case = "print_exception_three_arg_and_one_arg_forms"
 # subject = "traceback.print_exception"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

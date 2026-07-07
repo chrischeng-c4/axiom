@@ -9,7 +9,6 @@
 # case = "stacksummary_from_list_formats_one_block_per_frame"
 # subject = "traceback.StackSummary"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

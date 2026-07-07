@@ -9,12 +9,10 @@
 # case = "a_s_t_helpers__test__test_literal_eval_malformed_dict_nodes"
 # subject = "cpython.test_ast.ASTHelpers_Test.test_literal_eval_malformed_dict_nodes"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
 import builtins
 import dis

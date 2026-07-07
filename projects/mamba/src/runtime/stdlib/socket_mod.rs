@@ -60,14 +60,17 @@ unsafe extern "C" fn d_socket_stub(_a: *const MbValue, _n: usize) -> MbValue {
 // as `AddressFamily`, `SocketKind`, `SocketType`). Registered via
 // `NATIVE_TYPE_NAMES` so they read back as a type and are callable.
 unsafe extern "C" fn d_socket_type_stub(_a: *const MbValue, _n: usize) -> MbValue {
+    crate::icf_guard!();
     MbValue::none()
 }
 
 unsafe extern "C" fn d_address_family(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     socket_enum_class_call("AddressFamily", args_ptr, nargs)
 }
 
 unsafe extern "C" fn d_socket_kind(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     socket_enum_class_call("SocketKind", args_ptr, nargs)
 }
 
@@ -111,9 +114,7 @@ pub fn register() {
         ("SocketKind", d_socket_kind as *const () as usize),
     ] {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(addr as u64, name.to_string());
-        });
+        super::super::module::register_native_type_name(addr as u64, name.to_string());
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
@@ -393,9 +394,7 @@ pub fn register() {
     ];
     for name in type_names {
         attrs.insert((*name).to_string(), MbValue::from_func(type_addr));
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(type_addr as u64, (*name).to_string());
-        });
+        super::super::module::register_native_type_name(type_addr as u64, (*name).to_string());
     }
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(type_addr as u64);
@@ -2045,6 +2044,7 @@ fn extract_repr_of_tuple(t: MbValue) -> String {
 
 /// socket.socket(family=AF_INET, type=SOCK_STREAM, proto=0, fileno=None)
 unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let raw = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kwargs = kwargs_of(raw);
     let positional: &[MbValue] = if kwargs.is_some() {
@@ -2704,10 +2704,10 @@ pub(crate) fn register_real_socket(attrs: &mut HashMap<String, MbValue>) {
         });
     }
     // The constructor doubles as the socket TYPE for isinstance checks.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(d_socket_real as *const () as u64, SOCK_CLASS.to_string());
-    });
+    super::super::module::register_native_type_name(
+        d_socket_real as *const () as u64,
+        SOCK_CLASS.to_string(),
+    );
 
     // Real OS-level option constants (macOS values).
     attrs.insert(

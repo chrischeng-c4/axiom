@@ -9,12 +9,10 @@
 # case = "test_stack__test_custom_format_frame"
 # subject = "cpython.test_traceback.TestStack.test_custom_format_frame"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::TestStack::test_custom_format_frame
 """Auto-ported test: TestStack::test_custom_format_frame (CPython 3.12 oracle)."""
 

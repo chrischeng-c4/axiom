@@ -248,11 +248,7 @@ fn declaration_off_emits_no_dts() {
         "package.json",
         r#"{ "name": "no-dts-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
     );
-    write_file(
-        root,
-        "src/index.ts",
-        "export const N: number = 1;\n",
-    );
+    write_file(root, "src/index.ts", "export const N: number = 1;\n");
 
     let mut options = lib_options(root);
     options.declaration = false;
@@ -289,11 +285,7 @@ fn untyped_export_fails_build() {
         r#"{ "name": "bad-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
     );
     // No explicit type annotation on the exported const.
-    write_file(
-        root,
-        "src/index.ts",
-        "export const VERSION = \"1.0.0\";\n",
-    );
+    write_file(root, "src/index.ts", "export const VERSION = \"1.0.0\";\n");
 
     let err = build_library(lib_options(root)).expect_err("untyped export must fail the build");
     let msg = format!("{err:#}");

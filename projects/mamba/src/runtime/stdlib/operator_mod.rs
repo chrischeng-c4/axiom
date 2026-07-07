@@ -578,9 +578,8 @@ unsafe extern "C" fn dispatch_call(args_ptr: *const MbValue, nargs: usize) -> Mb
     // `operator.call(f, a=2)` wrongly produced `(({'a':2},), {})`).
     let mut rest: Vec<MbValue> = a[1..].to_vec();
     let trailing_kwargs = rest.last().copied().filter(|v| {
-        v.as_ptr().is_some_and(|p| unsafe {
-            matches!((*p).data, super::super::rc::ObjData::Dict(_))
-        })
+        v.as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, super::super::rc::ObjData::Dict(_)) })
     });
     if let Some(kw) = trailing_kwargs {
         rest.pop();

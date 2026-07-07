@@ -9,7 +9,6 @@
 # case = "except_star_test_cases__test_nested_else_mixed1"
 # subject = "cpython.test_exception_variations.ExceptStarTestCases.test_nested_else_mixed1"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_exception_variations.py"
 # status = "filled"

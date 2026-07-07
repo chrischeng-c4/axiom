@@ -9,6 +9,21 @@ and peak-RSS values:
     python3 tests/harness/cpython/tools/perf_baseline.py record --missing-only --ready-only --limit 10
     python3 tests/harness/cpython/tools/perf_baseline.py get --pin tests/harness/cpython/config/perf/pins/abc_1447.toml
 
+The SQLite DB itself is machine-local (gitignored, absolute-ns values,
+host-implicit) and is never committed. To share/review/restore a baseline
+across machines (#966), export it to a diffable, committable JSONL sidecar
+and import it back on another host:
+
+    python3 tests/harness/cpython/tools/perf_baseline.py export
+    python3 tests/harness/cpython/tools/perf_baseline.py import --db /tmp/fresh.sqlite
+
+`export` writes one sorted JSON object per row (by `pin_path`) to
+`tests/harness/cpython/config/perf/pins/baseline.jsonl` by default; `import`
+upserts each JSONL row back into the target `--db`. Every row is stamped with
+the recording host (`platform.node()`); `perf_pin.rs` warns (does not fail)
+when the baseline it loads was recorded on a different host than the one
+running the gate, since CPU/RSS ratios aren't portable across machines.
+
 No third-party dependencies; stdlib only.
 """
 
@@ -36,6 +51,16 @@ CPYTHON_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython (fixtures + .cac
 MAMBA_DIR = CPYTHON_DIR.parent.parent
 PINS_DIR = TOOLS_DIR.parent / "config" / "perf" / "pins"  # config under harness/
 DEFAULT_DB = CPYTHON_DIR / ".cache" / "perf" / "cpython_baseline.sqlite"
+# Diffable, committable sidecar (#966) for the machine-local DEFAULT_DB above.
+DEFAULT_JSONL = PINS_DIR / "baseline.jsonl"
+
+# Columns carried by every row (see `connect()`'s CREATE TABLE); shared by
+# `export`/`import` so the JSONL sidecar round-trips the DB losslessly.
+ROW_COLUMNS = (
+    "pin_path", "issue", "lib", "fixture", "fixture_sha256", "samples",
+    "internal_time_ns", "cpu_time_ns", "peak_rss_bytes", "python", "platform",
+    "argv", "captured_at_unix", "host",
+)
 
 INTERNAL_RE = re.compile(r"^INTERNAL_TIME_NS=(\d+)\s*$", re.MULTILINE)
 RSS_MACOS_RE = re.compile(r"^\s*(\d+)\s+maximum resident set size\s*$", re.MULTILINE)
@@ -212,6 +237,7 @@ def measure_pin(pin_path: Path, python: str) -> dict | None:
         "peak_rss_bytes": min(rss_values) if rss_values else None,
         "python": python,
         "platform": platform.platform(),
+        "host": platform.node(),
         "argv": shlex.join([python, str(fixture)]),
         "captured_at_unix": int(time.time()),
     }
@@ -235,10 +261,18 @@ def connect(db_path: Path) -> sqlite3.Connection:
             python TEXT NOT NULL,
             platform TEXT NOT NULL,
             argv TEXT NOT NULL,
-            captured_at_unix INTEGER NOT NULL
+            captured_at_unix INTEGER NOT NULL,
+            host TEXT
         )
         """
     )
+    # Backfill `host` (#966) on pre-existing DBs created before this column
+    # existed; CREATE TABLE IF NOT EXISTS above is a no-op on those.
+    existing_cols = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(cpython_perf_baseline)")
+    }
+    if "host" not in existing_cols:
+        conn.execute("ALTER TABLE cpython_perf_baseline ADD COLUMN host TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cpython_perf_baseline_fixture "
         "ON cpython_perf_baseline(fixture)"
@@ -247,16 +281,17 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 def upsert(conn: sqlite3.Connection, row: dict) -> None:
+    row = {**row, "host": row.get("host")}
     conn.execute(
         """
         INSERT INTO cpython_perf_baseline (
             pin_path, issue, lib, fixture, fixture_sha256, samples,
             internal_time_ns, cpu_time_ns, peak_rss_bytes, python, platform,
-            argv, captured_at_unix
+            argv, captured_at_unix, host
         ) VALUES (
             :pin_path, :issue, :lib, :fixture, :fixture_sha256, :samples,
             :internal_time_ns, :cpu_time_ns, :peak_rss_bytes, :python,
-            :platform, :argv, :captured_at_unix
+            :platform, :argv, :captured_at_unix, :host
         )
         ON CONFLICT(pin_path) DO UPDATE SET
             issue = excluded.issue,
@@ -270,7 +305,8 @@ def upsert(conn: sqlite3.Connection, row: dict) -> None:
             python = excluded.python,
             platform = excluded.platform,
             argv = excluded.argv,
-            captured_at_unix = excluded.captured_at_unix
+            captured_at_unix = excluded.captured_at_unix,
+            host = excluded.host
         """,
         row,
     )
@@ -356,6 +392,46 @@ def get(args: argparse.Namespace) -> int:
     return 0
 
 
+def export_cmd(args: argparse.Namespace) -> int:
+    """Serialize every row of `--db` to a diffable, committable JSONL file
+    (#966): one sorted JSON object per line, ordered by `pin_path` so the
+    file diffs cleanly across recordings."""
+    conn = connect(Path(args.db))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM cpython_perf_baseline ORDER BY pin_path"
+    ).fetchall()
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w") as fh:
+        for row in rows:
+            fh.write(json.dumps(dict(row), sort_keys=True))
+            fh.write("\n")
+    print(f"exported {len(rows)} rows: {Path(args.db)} -> {out_path}")
+    return 0
+
+
+def import_cmd(args: argparse.Namespace) -> int:
+    """Rebuild/upsert `--db` from a JSONL file previously written by
+    `export` (#966). Missing optional columns (e.g. a `host`-less export
+    from before #966) default to NULL rather than erroring."""
+    in_path = Path(args.file)
+    conn = connect(Path(args.db))
+    imported = 0
+    with in_path.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            raw = json.loads(line)
+            row = {col: raw.get(col) for col in ROW_COLUMNS}
+            upsert(conn, row)
+            imported += 1
+    conn.commit()
+    print(f"imported {imported} rows: {in_path} -> {Path(args.db)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=os.environ.get("MAMBA_CPYTHON_PERF_BASELINE_DB", str(DEFAULT_DB)))
@@ -373,6 +449,24 @@ def main(argv: list[str] | None = None) -> int:
     getp = sub.add_parser("get")
     getp.add_argument("--pin", required=True)
     getp.set_defaults(func=get)
+
+    exp = sub.add_parser(
+        "export", help="serialize --db to a diffable, committable JSONL file"
+    )
+    exp.add_argument(
+        "--out", default=str(DEFAULT_JSONL),
+        help="JSONL output path (default: config/perf/pins/baseline.jsonl)",
+    )
+    exp.set_defaults(func=export_cmd)
+
+    imp = sub.add_parser(
+        "import", help="rebuild/upsert --db from a JSONL file written by export"
+    )
+    imp.add_argument(
+        "--file", default=str(DEFAULT_JSONL),
+        help="JSONL input path (default: config/perf/pins/baseline.jsonl)",
+    )
+    imp.set_defaults(func=import_cmd)
 
     args = parser.parse_args(argv)
     return args.func(args)

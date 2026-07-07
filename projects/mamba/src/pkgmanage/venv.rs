@@ -1,11 +1,11 @@
 // `mamba venv` — uv-style virtual environment create/remove CLI driver.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use clap::ArgMatches;
 use std::path::PathBuf;
 
 use crate::pkgmanage::pkgmgr::venv::{
-    VenvCreationOutcome, VenvOptions, create_venv, first_python_on_path, remove_venv,
+    create_venv, first_python_on_path, remove_venv, VenvCreationOutcome, VenvOptions,
 };
 
 pub fn cmd_venv(sub: &ArgMatches) -> Result<()> {

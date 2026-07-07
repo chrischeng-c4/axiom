@@ -1,7 +1,8 @@
-# Mamba Coverage Gaps
+# Mamba llvm-cov gap ranking
 
 Auto-sorted list of `projects/mamba/src/**/*.rs` files with <100% region coverage.
 Generated alongside the baseline at commit `6edea62d5` (2026-05-18T14:22:40Z).
+Canonical evidence path for the retired project-root gap list.
 
 Sorted by **missed regions descending** — top entries are the highest-impact targets
 for the autonomous loop to pick a coverage-improving fire.

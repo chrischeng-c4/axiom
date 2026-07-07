@@ -25,7 +25,8 @@ fn ram() -> Relay {
 fn lease_exposes_entry_body() {
     let r = ram();
     let now = Utc::now();
-    r.publish("q", "m0", msg("hello"), BTreeMap::new(), now).unwrap();
+    r.publish("q", "m0", msg("hello"), BTreeMap::new(), now)
+        .unwrap();
 
     let l = r.lease("q", "c1", now).unwrap().expect("a lease");
     let entry = r

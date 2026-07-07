@@ -159,7 +159,7 @@ fn make_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValu
 // kwargs plumbing (trailing Dict positional)
 // ──────────────────────────────────────────────────────────────────────
 
-type KwMap = indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>;
+type KwMap = super::super::rc::MbDictMap;
 
 fn trailing_kwargs(a: &[MbValue]) -> Option<KwMap> {
     a.last().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
@@ -229,6 +229,13 @@ fn dialect_field(dialect: MbValue, key: &str) -> Option<MbValue> {
         }
         // A class-name string that names a registered dialect class.
         return class_attr_opt(&name, key);
+    }
+    // Type objects (e.g. `class MyDialect(csv.excel): ...`) arrive as the
+    // runtime's class instances with `class_name == "type"` and `__name__`
+    // carrying the user class. Resolve them explicitly so register_dialect()
+    // sees subclass overrides instead of silently falling back to defaults.
+    if let Some(class_name) = super::super::class::resolve_class_name(dialect) {
+        return class_attr_opt(&class_name, key);
     }
     getattr_opt(dialect, key)
 }
@@ -2155,7 +2162,7 @@ unsafe extern "C" fn dispatch_dictreader(args_ptr: *const MbValue, nargs: usize)
     } else {
         MbValue::none()
     };
-    let mut fmt_kw: KwMap = indexmap::IndexMap::new();
+    let mut fmt_kw: KwMap = KwMap::default();
     if let Some(ref m) = kw {
         for (k, v) in m.iter() {
             if let super::super::dict_ops::DictKey::Str(ref ks) = k {
@@ -2212,7 +2219,7 @@ unsafe extern "C" fn dispatch_dictwriter(args_ptr: *const MbValue, nargs: usize)
     } else {
         MbValue::none()
     };
-    let mut fmt_kw: KwMap = indexmap::IndexMap::new();
+    let mut fmt_kw: KwMap = KwMap::default();
     if let Some(ref m) = kw {
         for (k, v) in m.iter() {
             if let super::super::dict_ops::DictKey::Str(ref ks) = k {
@@ -2237,6 +2244,7 @@ unsafe extern "C" fn dispatch_dictwriter(args_ptr: *const MbValue, nargs: usize)
 }
 
 unsafe extern "C" fn dispatch_sniffer_new(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     build_sniffer()
 }
 
@@ -2688,13 +2696,10 @@ pub fn register() {
     }
 
     // Bind constructor types so isinstance() / type() see them.
-    NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_sniffer_new as *const () as u64,
-            "csv.Sniffer".into(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_sniffer_new as *const () as u64,
+        "csv.Sniffer".into(),
+    );
 
     // Quoting constants.
     attrs.insert("QUOTE_MINIMAL".into(), MbValue::from_int(QUOTE_MINIMAL));

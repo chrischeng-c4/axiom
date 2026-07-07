@@ -9,12 +9,10 @@
 # case = "test_frame__test_len"
 # subject = "cpython.test_traceback.TestFrame.test_len"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::TestFrame::test_len
 """Auto-ported test: TestFrame::test_len (CPython 3.12 oracle)."""
 

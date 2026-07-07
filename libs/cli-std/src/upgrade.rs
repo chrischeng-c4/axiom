@@ -6,7 +6,7 @@
 //! download + atomic self-replacement live behind the `online` feature.
 
 use crate::ToolInfo;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use semver::Version;
 use std::io::Read;
 
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn extract_inner() {
-        use flate2::{Compression, write::GzEncoder};
+        use flate2::{write::GzEncoder, Compression};
         let inner = "lumen-t/lumen";
         let payload = b"ELF...";
         let mut enc = GzEncoder::new(Vec::new(), Compression::fast());

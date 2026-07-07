@@ -86,22 +86,20 @@ fn tool_upgrade_reinstalls_latest_available_version() {
     let tmp = tempfile::tempdir().unwrap();
     let tools = tmp.path().join("mamba-tools");
 
-    assert!(
-        run(
-            &tools,
-            &[
-                "tool",
-                "install",
-                "frozen_demo_pkg",
-                "--version",
-                "0.1.0",
-                "--index",
-                index.path().to_str().unwrap(),
-            ],
-        )
-        .status
-        .success()
-    );
+    assert!(run(
+        &tools,
+        &[
+            "tool",
+            "install",
+            "frozen_demo_pkg",
+            "--version",
+            "0.1.0",
+            "--index",
+            index.path().to_str().unwrap(),
+        ],
+    )
+    .status
+    .success());
 
     let upgrade = run(
         &tools,

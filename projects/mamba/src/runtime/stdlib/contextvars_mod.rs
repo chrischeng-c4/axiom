@@ -82,7 +82,10 @@ fn empty_context_data() -> MbValue {
         }
         let ptr = MbObject::new_dict();
         unsafe {
-            (*ptr).header.rc.store(super::super::rc::IMMORTAL_REFCOUNT, Ordering::Relaxed);
+            (*ptr)
+                .header
+                .rc
+                .store(super::super::rc::IMMORTAL_REFCOUNT, Ordering::Relaxed);
         }
         // Immortal — never freed, so it doesn't need cycle tracking either.
         super::super::gc::gc_untrack(ptr);
@@ -190,6 +193,7 @@ pub fn missing_sentinel() -> MbValue {
 /// `ContextVar(name, *, default=...)` constructor. The keyword form lowers
 /// to a trailing kwargs dict.
 unsafe extern "C" fn dispatch_contextvar_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let name = a.first().copied().unwrap_or_else(MbValue::none);
     let mut default = None;
@@ -542,12 +546,10 @@ pub fn register() {
     }
     // isinstance(cv, contextvars.ContextVar) — bind the constructor addr to
     // the instance class name.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(
-            dispatch_contextvar_new as usize as u64,
-            "ContextVar".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_contextvar_new as usize as u64,
+        "ContextVar".to_string(),
+    );
     // Register the ContextVar class with its instance methods so the unbound
     // forms `ContextVar.get`/`set`/`reset` resolve to callable methods (the
     // func->native-class bridge does lookup_method against this table).

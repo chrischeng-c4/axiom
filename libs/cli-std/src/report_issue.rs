@@ -76,7 +76,10 @@ pub fn prefilled_url(repo: &str, title: &str, body: &str, labels: &[String]) -> 
         percent_encode_query(body),
     );
     if !labels.is_empty() {
-        url.push_str(&format!("&labels={}", percent_encode_query(&labels.join(","))));
+        url.push_str(&format!(
+            "&labels={}",
+            percent_encode_query(&labels.join(","))
+        ));
     }
     url
 }

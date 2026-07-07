@@ -9,7 +9,6 @@
 # case = "format_exception_only_swallows_broken_str"
 # subject = "traceback.format_exception_only"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

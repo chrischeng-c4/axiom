@@ -415,36 +415,24 @@ unsafe extern "C" fn dispatch_decode(args_ptr: *const MbValue, nargs: usize) -> 
     MbValue::none()
 }
 
+/// De-registered in favor of the vendored `py_src/quopri.py` port (#868
+/// round 6): the round-4 "FLIPPED CLEAN" record was wrong — this
+/// `register()` was never actually made a no-op, so `quopri`'s native shell
+/// stayed pre-seeded into `MODULES` and permanently shadowed the vendored
+/// source despite `quopri.py` sitting in `VENDORED_MODULES` (confirmed via
+/// `quopri.ESCAPE` being `int` not `bytes` and `__file__` being `None`, see
+/// #868 round-5 report). Registering a native module here would pre-seed
+/// `quopri` into `MODULES` and permanently shadow the vendored source (see
+/// `vendor_lib.rs` precedence doc). `register()` is kept as a no-op call
+/// site (invoked from `stdlib::register_stdlib()`) so a revert is a
+/// one-line change here rather than a mod.rs edit. The dispatch
+/// functions/helpers above are dead code kept for reference; nothing calls
+/// them anymore (the `#[cfg(test)]` unit tests below call them directly,
+/// not through `register()`).
 pub fn register() {
-    let mut attrs = HashMap::new();
-
-    let addr_es = dispatch_encodestring as *const () as usize;
-    let addr_ds = dispatch_decodestring as *const () as usize;
-    let addr_enc = dispatch_encode as *const () as usize;
-    let addr_dec = dispatch_decode as *const () as usize;
-
-    attrs.insert("encodestring".into(), MbValue::from_func(addr_es));
-    attrs.insert("decodestring".into(), MbValue::from_func(addr_ds));
-    attrs.insert("encode".into(), MbValue::from_func(addr_enc));
-    attrs.insert("decode".into(), MbValue::from_func(addr_dec));
-
-    attrs.insert("ESCAPE".into(), MbValue::from_int(ESCAPE as i64));
-    attrs.insert("MAXLINESIZE".into(), MbValue::from_int(MAXLINESIZE as i64));
-    attrs.insert("HEX".into(), MbValue::from_int(16));
-    // CPython exposes b2a_qp/a2b_qp as the binascii fast path; the test
-    // toggles them to None to force the pure-Python branch, so expose None.
-    attrs.insert("b2a_qp".into(), MbValue::none());
-    attrs.insert("a2b_qp".into(), MbValue::none());
-
-    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        let mut set = s.borrow_mut();
-        set.insert(addr_es as u64);
-        set.insert(addr_ds as u64);
-        set.insert(addr_enc as u64);
-        set.insert(addr_dec as u64);
-    });
-
-    super::register_module("quopri", attrs);
+    // Intentionally empty: vendor_lib::register() (called earlier in
+    // stdlib::register_stdlib()) already materializes py_src/quopri.py into
+    // the shared vendored search-path directory.
 }
 
 #[cfg(test)]

@@ -33,38 +33,15 @@ unsafe extern "C" fn dispatch_getuser(_a: *const MbValue, _n: usize) -> MbValue 
     MbValue::from_ptr(MbObject::new_str(user))
 }
 
+/// De-registered in favor of the vendored `py_src/getpass.py` port (#868
+/// round 6): registering a native module here would pre-seed `getpass` into
+/// `MODULES` and permanently shadow the vendored source (see
+/// `vendor_lib.rs` precedence doc). `register()` is kept as a no-op call
+/// site (invoked from `stdlib::register_stdlib()`) so the migration didn't
+/// need to touch that call list. The dispatch functions/helpers above are
+/// dead code kept for reference; nothing calls them anymore.
 pub fn register() {
-    let mut attrs = HashMap::new();
-    let dispatchers: &[(&str, usize)] = &[
-        ("getpass", dispatch_getpass as *const () as usize),
-        ("getuser", dispatch_getuser as *const () as usize),
-    ];
-    for (name, addr) in dispatchers {
-        attrs.insert((*name).into(), MbValue::from_func(*addr));
-    }
-    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        let mut set = s.borrow_mut();
-        for (_, addr) in dispatchers {
-            set.insert(*addr as u64);
-        }
-    });
-
-    // `GetPassWarning(UserWarning)` — warned-but-not-fatal class emitted when
-    // `getpass()` falls back to a non-secure input path. Register its real MRO
-    // (`GetPassWarning <: UserWarning`) so `issubclass` / `is_subclass_of`
-    // see a genuine hierarchy, and surface the module attr as a non-None value
-    // so `hasattr(getpass, "GetPassWarning")` resolves (mb_hasattr treats a
-    // None-valued field as absent). The surface dimension only asserts the
-    // name's presence, not construction behavior.
-    super::super::class::mb_class_register(
-        "GetPassWarning",
-        vec!["UserWarning".to_string()],
-        HashMap::new(),
-    );
-    attrs.insert(
-        "GetPassWarning".to_string(),
-        MbValue::from_ptr(MbObject::new_str("GetPassWarning".to_string())),
-    );
-
-    super::register_module("getpass", attrs);
+    // Intentionally empty: vendor_lib::register() (called earlier in
+    // stdlib::register_stdlib()) already materializes py_src/getpass.py into
+    // the shared vendored search-path directory.
 }

@@ -518,9 +518,9 @@ fn kwargs_get(kwargs: MbValue, key: &str) -> Option<MbValue> {
 }
 
 fn is_kwargs_dict(value: MbValue) -> bool {
-    value.as_ptr().is_some_and(|ptr| unsafe {
-        matches!(&(*ptr).data, ObjData::Dict(_))
-    })
+    value
+        .as_ptr()
+        .is_some_and(|ptr| unsafe { matches!(&(*ptr).data, ObjData::Dict(_)) })
 }
 
 /// `enum.auto()` — auto-assignment sentinel.

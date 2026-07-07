@@ -20,7 +20,7 @@ fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
     // a temporary operand (e.g. `f(xs) | f(ys)` where both calls return fresh
     // sets) leaves the result holding dangling pointers.
     for item in &items {
-        unsafe { super::rc::retain_if_ptr(*item) };
+        super::rc::store_owned(*item);
     }
     let is_frozen = left
         .as_ptr()
@@ -117,7 +117,7 @@ pub fn mb_set_remove(set_val: MbValue, elem: MbValue) {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
                 if let Some(removed) = lock.write().unwrap().set_remove(elem) {
-                    super::rc::release_if_ptr(removed);
+                    super::rc::release_owned(removed);
                     return;
                 }
                 // CPython raises KeyError(elem) with the bare element, not
@@ -150,7 +150,7 @@ pub fn mb_set_discard(set_val: MbValue, elem: MbValue) {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
                 if let Some(removed) = lock.write().unwrap().set_remove(elem) {
-                    super::rc::release_if_ptr(removed);
+                    super::rc::release_owned(removed);
                 }
             }
         }
@@ -318,7 +318,7 @@ pub fn mb_set_intersection_update(receiver: MbValue, other: MbValue) -> MbValue 
                 for elem in current {
                     if !other_items.iter().any(|v| eq_py(*v, elem)) {
                         if let Some(dropped) = items.set_remove(elem) {
-                            super::rc::release_if_ptr(dropped);
+                            super::rc::release_owned(dropped);
                         }
                     }
                 }
@@ -337,7 +337,7 @@ pub fn mb_set_difference_update(receiver: MbValue, other: MbValue) -> MbValue {
                 let mut items = lock.write().unwrap();
                 for elem in other_items {
                     if let Some(dropped) = items.set_remove(elem) {
-                        super::rc::release_if_ptr(dropped);
+                        super::rc::release_owned(dropped);
                     }
                 }
             }
@@ -360,7 +360,7 @@ pub fn mb_set_symmetric_difference_update(receiver: MbValue, other: MbValue) -> 
                 for elem in other_items {
                     // Present in both → remove; present in only `other` → add.
                     if let Some(dropped) = items.set_remove(elem) {
-                        super::rc::release_if_ptr(dropped);
+                        super::rc::release_owned(dropped);
                     } else {
                         // `set_insert` retains only on a newly-added element.
                         items.set_insert(elem);

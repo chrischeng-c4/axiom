@@ -157,7 +157,17 @@ fn dict_as_kwargs(v: MbValue) -> Option<MbValue> {
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
-            if ["lo", "hi", "key"].iter().any(|k| map.contains_key(*k)) {
+            let mut saw_known = false;
+            for key in map.keys() {
+                let super::super::dict_ops::DictKey::Str(name) = key else {
+                    return None;
+                };
+                match name.as_str() {
+                    "a" | "x" | "lo" | "hi" | "key" => saw_known = true,
+                    _ => return None,
+                }
+            }
+            if saw_known {
                 return Some(v);
             }
         }
@@ -169,7 +179,13 @@ fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
     let ptr = dict.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock.read().unwrap().get(key).copied();
+            for (k, v) in lock.read().unwrap().iter() {
+                if let super::super::dict_ops::DictKey::Str(name) = k {
+                    if name == key {
+                        return Some(*v);
+                    }
+                }
+            }
         }
     }
     None
@@ -388,6 +404,9 @@ fn call_richcmp(recv: MbValue, dunder: &str, arg: MbValue) -> MbValue {
 /// * For native operands (int/float/str/list/tuple/…) we defer to `mb_lt`,
 ///   which already returns a proper bool.
 fn elem_lt(a: MbValue, b: MbValue) -> Cmp {
+    if let Some(native) = native_lt(a, b) {
+        return Cmp::Bool(native);
+    }
     let a_is_instance = instance_class_name(a).is_some();
     if let Some(class_name) = instance_class_name(a) {
         if instance_has_dunder(a, &class_name, "__lt__") {
@@ -424,6 +443,36 @@ fn elem_lt(a: MbValue, b: MbValue) -> Cmp {
     match r.as_bool() {
         Some(b) => Cmp::Bool(b),
         None => Cmp::Bool(super::super::builtins::mb_is_truthy(r) != 0),
+    }
+}
+
+fn native_lt(a: MbValue, b: MbValue) -> Option<bool> {
+    if let (Some(ai), Some(bi)) = (a.as_int_pyint(), b.as_int_pyint()) {
+        return Some(ai < bi);
+    }
+    if let (Some(af), Some(bf)) = (
+        a.as_float().or_else(|| a.as_int_pyint().map(|i| i as f64)),
+        b.as_float().or_else(|| b.as_int_pyint().map(|i| i as f64)),
+    ) {
+        return Some(af < bf);
+    }
+    let astr = a.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    });
+    let bstr = b.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    });
+    match (astr, bstr) {
+        (Some(astr), Some(bstr)) => Some(astr < bstr),
+        _ => None,
     }
 }
 
@@ -565,7 +614,7 @@ fn bisect_index(
     x: MbValue,
     lo_in: i64,
     hi_in: Option<i64>,
-    key: MbValue,
+    elem_key: MbValue,
     right: bool,
 ) -> Result<usize, MbValue> {
     if lo_in < 0 {
@@ -590,11 +639,11 @@ fn bisect_index(
     // A non-callable key only matters once we actually need to map an element;
     // an empty search window never invokes it (matching CPython's laziness).
     if lo < hi {
-        check_key_callable(key)?;
+        check_key_callable(elem_key)?;
     }
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
-        let elem = apply_key(key, seq_get(a, mid));
+        let elem = apply_key(elem_key, seq_get(a, mid));
         // A `key(...)` callback or `__getitem__` may itself raise; propagate.
         if exception_pending() {
             return Err(MbValue::none());
@@ -636,7 +685,8 @@ fn insort(a: MbValue, x: MbValue, lo: i64, hi: Option<i64>, key: MbValue, right:
     let search_x = apply_key(key, x);
     // A key callback during the search may raise; if so `bisect_index` returns
     // Err and we must not attempt the insert.
-    let pos = match bisect_index(a, search_x, lo, hi, key, right) {
+    let elem_key = if key.is_none() { MbValue::none() } else { key };
+    let pos = match bisect_index(a, search_x, lo, hi, elem_key, right) {
         Ok(p) => p,
         Err(v) => return v,
     };

@@ -4,14 +4,14 @@
 // resolver path as `mamba add` / `mamba lock`, including stored auth,
 // marker filtering, yanked filtering, cache use, and tag-aware wheel choice.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::pkgmanage::pkgmgr::requirements_parse::PackageRequirement;
 use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
-use crate::pkgmanage::pkgmgr::resolver::{Requirement, ResolvedGraph, Resolver, parse_requirement};
-use crate::pkgmanage::pkgmgr::tags::{TagSelector, parse_wheel_filename};
+use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Requirement, ResolvedGraph, Resolver};
+use crate::pkgmanage::pkgmgr::tags::{parse_wheel_filename, TagSelector};
 use crate::pkgmanage::pkgmgr::types::{FileHash, IndexClient, ReleaseFile};
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub fn resolve_registry(
     index_url: &str,
     reqs: &[PackageRequirement],
 ) -> Result<RegistryResolution> {
-    use crate::pkgmanage::pkgmgr::markers::{MarkerEnv, evaluate as eval_marker};
+    use crate::pkgmanage::pkgmgr::markers::{evaluate as eval_marker, MarkerEnv};
 
     let roots = reqs
         .iter()

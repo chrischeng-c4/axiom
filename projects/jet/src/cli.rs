@@ -3735,9 +3735,7 @@ fn run_library_build(
     let preserve_modules = if m.get_flag("preserve-modules") {
         true
     } else {
-        lib_config
-            .and_then(|c| c.preserve_modules)
-            .unwrap_or(false)
+        lib_config.and_then(|c| c.preserve_modules).unwrap_or(false)
     };
 
     // Global name for IIFE output: --global-name flag wins, else [lib]
@@ -3766,9 +3764,7 @@ fn run_library_build(
         preserve_modules,
         declaration,
         library_global_name,
-        entry: lib_config
-            .and_then(|c| c.entry.clone())
-            .unwrap_or_default(),
+        entry: lib_config.and_then(|c| c.entry.clone()).unwrap_or_default(),
         // CSS cascade-merge + raw-asset copy from [lib] of jet.toml. Both
         // default to empty (no-op) so a build without them is unchanged.
         css_merge: lib_config
@@ -3802,7 +3798,10 @@ fn run_library_build(
             .strip_prefix(root_dir)
             .unwrap_or(&entry.path)
             .display();
-        println!("  {} ({:?}) → {} ({:.1} KB)", entry.subpath, entry.format, rel, size_kb);
+        println!(
+            "  {} ({:?}) → {} ({:.1} KB)",
+            entry.subpath, entry.format, rel, size_kb
+        );
     }
     for types in &result.types {
         let rel = types

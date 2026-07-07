@@ -55,8 +55,20 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
             mangle_expr(target, class);
             mangle_expr(value, class);
         }
-        Stmt::FnDef { decorators, name, params, body, .. }
-        | Stmt::AsyncFnDef { decorators, name, params, body, .. } => {
+        Stmt::FnDef {
+            decorators,
+            name,
+            params,
+            body,
+            ..
+        }
+        | Stmt::AsyncFnDef {
+            decorators,
+            name,
+            params,
+            body,
+            ..
+        } => {
             for d in decorators.iter_mut() {
                 mangle_expr(d, class);
             }
@@ -69,7 +81,14 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
                 mangle_stmt(s, class);
             }
         }
-        Stmt::ClassDef { decorators, name, bases, keyword_args, body, .. } => {
+        Stmt::ClassDef {
+            decorators,
+            name,
+            bases,
+            keyword_args,
+            body,
+            ..
+        } => {
             for d in decorators.iter_mut() {
                 mangle_expr(d, class);
             }
@@ -92,7 +111,13 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
                 mangle_in_place(&mut v.name, class);
             }
         }
-        Stmt::If { condition, body, elif_clauses, else_body, .. } => {
+        Stmt::If {
+            condition,
+            body,
+            elif_clauses,
+            else_body,
+            ..
+        } => {
             mangle_expr(condition, class);
             mangle_stmts(body, class);
             for (cond, eb) in elif_clauses.iter_mut() {
@@ -103,15 +128,32 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
                 mangle_stmts(eb, class);
             }
         }
-        Stmt::While { condition, body, else_body, .. } => {
+        Stmt::While {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
             mangle_expr(condition, class);
             mangle_stmts(body, class);
             if let Some(eb) = else_body {
                 mangle_stmts(eb, class);
             }
         }
-        Stmt::For { targets, iter, body, else_body, .. }
-        | Stmt::AsyncFor { targets, iter, body, else_body, .. } => {
+        Stmt::For {
+            targets,
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | Stmt::AsyncFor {
+            targets,
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
             for t in targets.iter_mut() {
                 mangle_in_place(t, class);
             }
@@ -148,7 +190,12 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
                 mangle_expr(f, class);
             }
         }
-        Stmt::Try { body, handlers, else_body, finally_body } => {
+        Stmt::Try {
+            body,
+            handlers,
+            else_body,
+            finally_body,
+        } => {
             mangle_stmts(body, class);
             for h in handlers.iter_mut() {
                 if let Some(t) = &mut h.exc_type {
@@ -257,7 +304,11 @@ fn mangle_expr(expr: &mut Spanned<Expr>, class: Option<&str>) {
                 mangle_expr(v, class);
             }
         }
-        Expr::IfExpr { body, condition, else_body } => {
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
             mangle_expr(body, class);
             mangle_expr(condition, class);
             mangle_expr(else_body, class);
@@ -268,13 +319,26 @@ fn mangle_expr(expr: &mut Spanned<Expr>, class: Option<&str>) {
             }
             mangle_expr(body, class);
         }
-        Expr::ListComp { element, generators }
-        | Expr::SetComp { element, generators }
-        | Expr::GeneratorExpr { element, generators } => {
+        Expr::ListComp {
+            element,
+            generators,
+        }
+        | Expr::SetComp {
+            element,
+            generators,
+        }
+        | Expr::GeneratorExpr {
+            element,
+            generators,
+        } => {
             mangle_comprehensions(generators, class);
             mangle_expr(element, class);
         }
-        Expr::DictComp { key, value, generators } => {
+        Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => {
             mangle_comprehensions(generators, class);
             mangle_expr(key, class);
             mangle_expr(value, class);
@@ -337,7 +401,10 @@ fn mangle_pattern(pat: &mut Spanned<Pattern>, class: Option<&str>) {
     match &mut pat.node {
         Pattern::Binding(name) => mangle_in_place(name, class),
         Pattern::Literal(e) => {
-            let mut tmp = Spanned { node: std::mem::replace(e, Expr::NoneLit), span: pat.span };
+            let mut tmp = Spanned {
+                node: std::mem::replace(e, Expr::NoneLit),
+                span: pat.span,
+            };
             mangle_expr(&mut tmp, class);
             *e = tmp.node;
         }

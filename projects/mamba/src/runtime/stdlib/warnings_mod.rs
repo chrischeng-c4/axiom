@@ -317,6 +317,16 @@ unsafe extern "C" fn d_warning_message(args_ptr: *const MbValue, nargs: usize) -
     mb_warnings_warning_message_new(&pos)
 }
 
+/// warnings._deprecated(name, message=..., *, remove, _version=sys.version_info).
+unsafe extern "C" fn d_deprecated(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let (pos, kw) = split_args(a);
+    let name = pos.first().copied().unwrap_or_else(MbValue::none);
+    let message = arg_or_kw(&pos, 1, &kw, "message");
+    let remove = kwarg(&kw, "remove");
+    deprecated_impl(name, message, remove)
+}
+
 /// Read a named field off an Instance value.
 fn inst_field(obj: MbValue, name: &str) -> Option<MbValue> {
     obj.as_ptr().and_then(|ptr| unsafe {
@@ -342,6 +352,7 @@ pub fn register() {
         ("formatwarning", d_formatwarning as *const () as usize),
         ("catch_warnings", d_catch_warnings as *const () as usize),
         ("WarningMessage", d_warning_message as *const () as usize),
+        ("_deprecated", d_deprecated as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -694,6 +705,70 @@ pub fn warn_impl(message: MbValue, category: MbValue) -> MbValue {
 /// Back-compat alias used by the in-crate unit tests.
 pub fn mb_warnings_warn(message: MbValue, category: MbValue) -> MbValue {
     warn_impl(message, category)
+}
+
+/// Turn a list/tuple value into a Vec<MbValue>; anything else -> empty.
+fn seq_items(val: MbValue) -> Vec<MbValue> {
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::List(lock) => return lock.read().unwrap().to_vec(),
+                ObjData::Tuple(items) => return items.clone(),
+                _ => {}
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// warnings._deprecated(name, message=_DEPRECATED_MSG, *, remove, _version=...)
+/// (#1019). Internal helper CPython's stdlib modules call at import time to
+/// announce their own scheduled removal (Lib/warnings.py). `remove` is a
+/// `(major, minor)` tuple: once the running interpreter's (major, minor) has
+/// reached or passed it, this raises RuntimeError instead of warning. Mamba
+/// reports a fixed `sys.version_info` of 3.12.0 "final" (see
+/// `sys_mod::version_info_fields`), which is below every vendored module's
+/// `remove` tuple today, so in practice this always takes the warn() branch;
+/// the RuntimeError branch mirrors CPython for parity/completeness.
+fn deprecated_impl(name: MbValue, message: Option<MbValue>, remove: Option<MbValue>) -> MbValue {
+    let name_str = extract_str(name).unwrap_or_default();
+    let remove_pair = remove.and_then(|r| {
+        let items = seq_items(r);
+        if items.len() >= 2 {
+            Some((items[0].as_int()?, items[1].as_int()?))
+        } else {
+            None
+        }
+    });
+    let Some((remove_major, remove_minor)) = remove_pair else {
+        return raise_exc(
+            "TypeError",
+            "_deprecated() missing 1 required keyword-only argument: 'remove'",
+        );
+    };
+    let remove_formatted = format!("{remove_major}.{remove_minor}");
+    // Mamba's runtime version is fixed at 3.12.0 "final" (never "alpha").
+    let (cur_major, cur_minor) = (3i64, 12i64);
+    let is_alpha = false;
+    let removal_due = (cur_major, cur_minor) > (remove_major, remove_minor)
+        || ((cur_major, cur_minor) == (remove_major, remove_minor) && !is_alpha);
+    if removal_due {
+        let msg = format!(
+            "{} was slated for removal after Python {remove_formatted} alpha",
+            crate::runtime::string_ops::repr_string(&name_str)
+        );
+        return raise_exc("RuntimeError", &msg);
+    }
+    let template = message.and_then(extract_str).unwrap_or_else(|| {
+        "{name!r} is deprecated and slated for removal in Python {remove}".to_string()
+    });
+    let msg = template
+        .replace(
+            "{name!r}",
+            &crate::runtime::string_ops::repr_string(&name_str),
+        )
+        .replace("{remove}", &remove_formatted);
+    warn_impl(new_str(msg), new_str("DeprecationWarning".to_string()))
 }
 
 /// warnings.warn_explicit(message, category, filename, lineno, ..., registry).
@@ -1287,6 +1362,81 @@ mod tests {
         assert!(get_field(wm, "filename").is_none());
     }
 
+    // -- _deprecated --
+
+    fn tuple2(a: i64, b: i64) -> MbValue {
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_int(a),
+            MbValue::from_int(b),
+        ]))
+    }
+
+    #[test]
+    fn test_deprecated_warns_when_remove_is_future() {
+        mb_warnings_resetwarnings();
+        // Mamba's fixed version is 3.12; remove=(3, 13) is still ahead, so this
+        // must warn (DeprecationWarning), not raise — matching CPython 3.12's
+        // `warnings._deprecated("uu", remove=(3, 13))` behavior used by the
+        // vendored `uu` module at import time.
+        let result = deprecated_impl(s("uu"), None, Some(tuple2(3, 13)));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_deprecated_message_format() {
+        mb_warnings_resetwarnings();
+        RECORD_LIST.with(|r| *r.borrow_mut() = None);
+        let cw = catch_warnings_new(true);
+        let list = cw_enter(cw);
+        deprecated_impl(s("uu"), None, Some(tuple2(3, 13)));
+        unsafe {
+            if let ObjData::List(ref lock) = (*list.as_ptr().unwrap()).data {
+                let recorded = lock.read().unwrap();
+                assert_eq!(recorded.len(), 1);
+                let wm = recorded[0];
+                let msg = get_field(wm, "message");
+                let text = message_text(msg);
+                assert_eq!(
+                    text,
+                    "'uu' is deprecated and slated for removal in Python 3.13"
+                );
+                assert_eq!(
+                    get_str(get_field(wm, "category")),
+                    Some("DeprecationWarning".to_string())
+                );
+            } else {
+                panic!("expected List");
+            }
+        }
+        cw_exit(cw, MbValue::none(), MbValue::none(), MbValue::none());
+    }
+
+    #[test]
+    fn test_deprecated_raises_runtime_error_once_removal_due() {
+        mb_warnings_resetwarnings();
+        super::super::super::exception::clear_current_exception();
+        // remove=(3, 12) equals mamba's fixed version and is not "alpha", so
+        // CPython's real interpreter would already be past removal here.
+        deprecated_impl(s("gone"), None, Some(tuple2(3, 12)));
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("RuntimeError")
+        );
+        super::super::super::exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_deprecated_missing_remove_raises_type_error() {
+        mb_warnings_resetwarnings();
+        super::super::super::exception::clear_current_exception();
+        deprecated_impl(s("uu"), None, None);
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+        super::super::super::exception::clear_current_exception();
+    }
+
     // -- registration smoke test --
 
     /// Test helper: read a snapshot of the warnings module's attrs.
@@ -1311,6 +1461,7 @@ mod tests {
             "formatwarning",
             "catch_warnings",
             "WarningMessage",
+            "_deprecated",
             "filters",
             "defaultaction",
             "onceregistry",

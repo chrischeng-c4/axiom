@@ -47,6 +47,7 @@ macro_rules! disp_binary {
 macro_rules! disp_typevar_ctor {
     ($disp:ident, $kind:expr) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             let name = a
                 .first()
@@ -78,6 +79,15 @@ macro_rules! disp_typevar_ctor {
                     )
                 })
                 .filter(|b| !b.is_none());
+            let default = kwargs
+                .map(|kw| {
+                    super::super::dict_ops::mb_dict_get(
+                        kw,
+                        MbValue::from_ptr(MbObject::new_str("default".to_string())),
+                        MbValue::none(),
+                    )
+                })
+                .filter(|d| !d.is_none());
             // CPython: constraints and a bound are mutually exclusive.
             if bound.is_some() && !rest.is_empty() {
                 super::super::exception::mb_raise(
@@ -88,7 +98,32 @@ macro_rules! disp_typevar_ctor {
                 );
                 return MbValue::none();
             }
-            let inst = super::super::pep695::make_typevar_instance(&name, $kind, rest);
+            if $kind == 0 && rest.len() == 1 {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "A single constraint is not allowed".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            if ($kind == 1 || $kind == 2) && !rest.is_empty() {
+                let ctor_name = if $kind == 1 {
+                    "typevartuple"
+                } else {
+                    "paramspec"
+                };
+                let positional_count = rest.len() + 1;
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "{ctor_name}() takes exactly 1 positional argument ({} given)",
+                        positional_count
+                    ))),
+                );
+                return MbValue::none();
+            }
+            let inst = super::super::pep695::make_typevar_instance(&name, $kind, rest, default);
             if let Some(b) = bound {
                 super::super::pep695::instance_field_set_pub(inst, "__bound__", b);
             }
@@ -114,7 +149,12 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let is_seq = |v: MbValue| -> bool {
         v.as_ptr()
-            .map(|p| unsafe { matches!((*p).data, super::super::rc::ObjData::List(_) | super::super::rc::ObjData::Tuple(_)) })
+            .map(|p| unsafe {
+                matches!(
+                    (*p).data,
+                    super::super::rc::ObjData::List(_) | super::super::rc::ObjData::Tuple(_)
+                )
+            })
             .unwrap_or(false)
     };
     let nonempty_dict = |v: MbValue| -> bool {
@@ -136,7 +176,8 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
                     "Either list of fields or keywords can be provided to \
-                     NamedTuple, not both".to_string(),
+                     NamedTuple, not both"
+                        .to_string(),
                 )),
             );
             return MbValue::none();
@@ -149,24 +190,32 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
     let name = a.first().copied().unwrap_or_else(MbValue::none);
     let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
     if !name.is_none() && is_seq(fields_v) {
-        let items: Vec<MbValue> = fields_v.as_ptr().map(|p| unsafe {
-            match &(*p).data {
-                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                ObjData::Tuple(ref t) => t.to_vec(),
-                _ => Vec::new(),
-            }
-        }).unwrap_or_default();
-        let names: Vec<MbValue> = items.iter().map(|item| {
-            item.as_ptr().and_then(|p| unsafe {
+        let items: Vec<MbValue> = fields_v
+            .as_ptr()
+            .map(|p| unsafe {
                 match &(*p).data {
-                    // (name, type) pair → name; plain string → itself.
-                    ObjData::Tuple(ref t) => t.first().copied(),
-                    ObjData::List(ref l) => l.read().unwrap().first().copied(),
-                    ObjData::Str(_) => Some(*item),
-                    _ => None,
+                    ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+                    ObjData::Tuple(ref t) => t.to_vec(),
+                    _ => Vec::new(),
                 }
-            }).unwrap_or(*item)
-        }).collect();
+            })
+            .unwrap_or_default();
+        let names: Vec<MbValue> = items
+            .iter()
+            .map(|item| {
+                item.as_ptr()
+                    .and_then(|p| unsafe {
+                        match &(*p).data {
+                            // (name, type) pair → name; plain string → itself.
+                            ObjData::Tuple(ref t) => t.first().copied(),
+                            ObjData::List(ref l) => l.read().unwrap().first().copied(),
+                            ObjData::Str(_) => Some(*item),
+                            _ => None,
+                        }
+                    })
+                    .unwrap_or(*item)
+            })
+            .collect();
         let names_list = MbValue::from_ptr(MbObject::new_list(names));
         return super::collections_mod::mb_namedtuple(name, names_list, MbValue::none());
     }
@@ -195,10 +244,8 @@ thread_local! {
 /// `(module, qualname)` key for the decorated function. For a top-level `def`,
 /// `__qualname__ == __name__`, so the registered name suffices.
 fn overload_key(func: MbValue) -> (String, String) {
-    let module = extract_str(super::super::closure::mb_func_get_module(func))
-        .unwrap_or_default();
-    let name = extract_str(super::super::closure::mb_func_get_name(func))
-        .unwrap_or_default();
+    let module = extract_str(super::super::closure::mb_func_get_module(func)).unwrap_or_default();
+    let name = extract_str(super::super::closure::mb_func_get_name(func)).unwrap_or_default();
     (module, name)
 }
 
@@ -275,7 +322,10 @@ pub fn register() {
     // NamedTuple validates the call shape (mixing the list form with keyword
     // fields is a TypeError) but otherwise behaves like the sentinel.
     let namedtuple_addr = d_namedtuple as *const () as usize;
-    attrs.insert("NamedTuple".to_string(), MbValue::from_func(namedtuple_addr));
+    attrs.insert(
+        "NamedTuple".to_string(),
+        MbValue::from_func(namedtuple_addr),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(namedtuple_addr as u64);
     });
@@ -317,9 +367,8 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(addr as u64, name.to_string());
-        });
+        super::super::module::register_kwargs_func(addr as u64);
+        super::super::module::register_native_type_name(addr as u64, name.to_string());
     }
 
     // `Generic` is a class and `ClassVar` / `Final` are `_SpecialForm`
@@ -776,7 +825,10 @@ fn collect_params_into(v: MbValue, out: &mut Vec<MbValue>) {
         }
         return;
     }
-    if matches!(instance_class_of(v).as_deref(), Some("typing.Alias") | Some("UnionType")) {
+    if matches!(
+        instance_class_of(v).as_deref(),
+        Some("typing.Alias") | Some("UnionType")
+    ) {
         for a in alias_args_vec(v) {
             collect_params_into(a, out);
         }
@@ -791,7 +843,9 @@ pub(crate) fn typevar_params_tuple(args: &[MbValue]) -> MbValue {
         collect_params_into(*a, &mut params);
     }
     for p in &params {
-        unsafe { super::super::rc::retain_if_ptr(*p); }
+        unsafe {
+            super::super::rc::retain_if_ptr(*p);
+        }
     }
     MbValue::from_ptr(MbObject::new_tuple(params))
 }
@@ -845,7 +899,11 @@ pub(crate) fn alias_subscript(self_v: MbValue, key: MbValue) -> MbValue {
             new_str_v("TypeError"),
             new_str_v(&format!(
                 "Too {} arguments for {}; actual {}, expected {}",
-                if provided.len() >= params.len() { "many" } else { "few" },
+                if provided.len() >= params.len() {
+                    "many"
+                } else {
+                    "few"
+                },
                 alias_repr(self_v),
                 provided.len(),
                 params.len(),
@@ -1009,12 +1067,14 @@ pub(crate) fn alias_hash_value(self_v: MbValue) -> MbValue {
     if let Some(meta) = instance_field_of(self_v, "__metadata__") {
         for m in tuple_items(meta) {
             if let Some(ptr) = m.as_ptr() {
-                let bad = unsafe { match &(*ptr).data {
-                    ObjData::List(_) => Some("list"),
-                    ObjData::Dict(_) => Some("dict"),
-                    ObjData::Set(_) => Some("set"),
-                    _ => None,
-                } };
+                let bad = unsafe {
+                    match &(*ptr).data {
+                        ObjData::List(_) => Some("list"),
+                        ObjData::Dict(_) => Some("dict"),
+                        ObjData::Set(_) => Some("set"),
+                        _ => None,
+                    }
+                };
                 if let Some(tn) = bad {
                     super::super::exception::mb_raise(
                         new_str_v("TypeError"),
@@ -1445,20 +1505,29 @@ pub fn mb_typing_get_type_hints(obj: MbValue) -> MbValue {
     // and resolve textual annotations to runtime types. Class annotations may
     // already carry runtime objects after class registration normalizes them.
     let ann = super::super::class::mb_getattr(obj, new_str_v("__annotations__"));
-    let pairs: Vec<(String, MbValue)> = ann.as_ptr().map(|ptr| unsafe {
-        if let super::super::rc::ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().iter().filter_map(|(k, v)| {
-                if let super::super::dict_ops::DictKey::Str(s) = k {
-                    Some((s.clone(), *v))
-                } else {
-                    None
-                }
-            }).collect()
-        } else {
-            Vec::new()
-        }
-    }).unwrap_or_default();
-    unsafe { super::super::rc::release_if_ptr(ann); }
+    let pairs: Vec<(String, MbValue)> = ann
+        .as_ptr()
+        .map(|ptr| unsafe {
+            if let super::super::rc::ObjData::Dict(ref lock) = (*ptr).data {
+                lock.read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        if let super::super::dict_ops::DictKey::Str(s) = k {
+                            Some((s.clone(), *v))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+    unsafe {
+        super::super::rc::release_if_ptr(ann);
+    }
     for (name, val) in pairs {
         if let Some(anno) = extract_str(val) {
             if let Some(t) = resolve_annotation(&anno) {
@@ -1483,7 +1552,7 @@ fn parse_subscript_args(s: &str) -> Option<Vec<MbValue>> {
     let mut args = Vec::new();
     let mut current = String::new();
     let mut depth = 0;
-    
+
     for ch in s.chars() {
         match ch {
             '[' => {
@@ -1506,7 +1575,7 @@ fn parse_subscript_args(s: &str) -> Option<Vec<MbValue>> {
             _ => current.push(ch),
         }
     }
-    
+
     if !current.is_empty() {
         let arg_str = current.trim();
         if let Some(arg) = resolve_annotation(arg_str) {
@@ -1515,11 +1584,11 @@ fn parse_subscript_args(s: &str) -> Option<Vec<MbValue>> {
             return None;
         }
     }
-    
+
     if args.is_empty() {
         return None;
     }
-    
+
     Some(args)
 }
 
@@ -1529,16 +1598,16 @@ fn parse_generic_alias(s: &str) -> Option<MbValue> {
         if !s.ends_with(']') {
             return None;
         }
-        
+
         let base = s[..bracket_pos].trim();
         let subscript = &s[bracket_pos + 1..s.len() - 1];
-        
+
         let name = if let Some(dot_pos) = base.rfind('.') {
             &base[dot_pos + 1..]
         } else {
             base
         };
-        
+
         if let Some(args) = parse_subscript_args(subscript) {
             let key = if args.len() == 1 {
                 args[0]
@@ -1558,14 +1627,14 @@ fn parse_generic_alias(s: &str) -> Option<MbValue> {
 pub(crate) fn resolve_annotation(anno: &str) -> Option<MbValue> {
     let name = anno.trim();
     let name = name.trim_matches(|c| c == '"' || c == '\'');
-    
+
     // Try parsing as a generic alias first (e.g., "typing.List[int]")
     if name.contains('[') {
         if let Some(result) = parse_generic_alias(name) {
             return Some(result);
         }
     }
-    
+
     match name {
         "int" | "float" | "str" | "bool" | "bytes" | "bytearray" | "list" | "dict" | "set"
         | "frozenset" | "tuple" | "type" | "object" | "complex" | "range" | "memoryview"
@@ -1577,9 +1646,20 @@ pub(crate) fn resolve_annotation(anno: &str) -> Option<MbValue> {
         s if s.contains('|')
             || matches!(
                 s,
-                "Optional" | "List" | "Dict" | "Set" | "Tuple" | "FrozenSet"
-                    | "Union" | "Callable" | "Sequence" | "Mapping" | "Iterable"
-                    | "Iterator" | "ClassVar" | "Final"
+                "Optional"
+                    | "List"
+                    | "Dict"
+                    | "Set"
+                    | "Tuple"
+                    | "FrozenSet"
+                    | "Union"
+                    | "Callable"
+                    | "Sequence"
+                    | "Mapping"
+                    | "Iterable"
+                    | "Iterator"
+                    | "ClassVar"
+                    | "Final"
             ) =>
         {
             Some(special_form("Any"))
@@ -1631,10 +1711,9 @@ pub fn mb_typing_is_typeddict(tp: MbValue) -> MbValue {
         unsafe {
             let name = match &(*ptr).data {
                 super::super::rc::ObjData::Str(name) => Some(name.clone()),
-                super::super::rc::ObjData::Instance {
-                    class_name,
-                    fields,
-                } if class_name == "type" => {
+                super::super::rc::ObjData::Instance { class_name, fields }
+                    if class_name == "type" =>
+                {
                     fields
                         .read()
                         .ok()
@@ -1659,10 +1738,9 @@ pub fn mb_typing_runtime_checkable(cls: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 super::super::rc::ObjData::Str(name) => Some(name.clone()),
-                super::super::rc::ObjData::Instance {
-                    class_name,
-                    fields,
-                } if class_name == "type" => {
+                super::super::rc::ObjData::Instance { class_name, fields }
+                    if class_name == "type" =>
+                {
                     fields
                         .read()
                         .ok()
@@ -1754,5 +1832,117 @@ mod tests {
                 panic!("expected Dict");
             }
         }
+    }
+
+    #[test]
+    fn test_typevar_ctor_accepts_default_kwarg() {
+        use super::super::super::dict_ops::mb_dict_new;
+        use super::super::super::dict_ops::mb_dict_setitem;
+        use super::super::super::rc::ObjData;
+
+        let kwargs = mb_dict_new();
+        mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("default".to_string())),
+            MbValue::from_int(11),
+        );
+        let args = [
+            MbValue::from_ptr(MbObject::new_str("T".to_string())),
+            kwargs,
+        ];
+        let tv = unsafe { d_typevar_ctor(args.as_ptr(), args.len()) };
+        let ptr = tv.as_ptr().expect("instance");
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                assert_eq!(
+                    fields
+                        .read()
+                        .unwrap()
+                        .get("__default__")
+                        .and_then(|v| v.as_int()),
+                    Some(11)
+                );
+            } else {
+                panic!("expected Instance");
+            }
+        }
+    }
+
+    #[test]
+    fn test_typevar_family_ctors_are_registered_for_kwargs() {
+        register();
+        for addr in [
+            d_typevar_ctor as *const () as u64,
+            d_typevartuple_ctor as *const () as u64,
+            d_paramspec_ctor as *const () as u64,
+        ] {
+            assert!(super::super::super::module::is_kwargs_func(addr));
+        }
+    }
+
+    #[test]
+    fn test_typevar_ctor_rejects_single_constraint() {
+        super::super::super::exception::mb_clear_exception();
+
+        let args = [
+            MbValue::from_ptr(MbObject::new_str("T".to_string())),
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+        ];
+        let tv = unsafe { d_typevar_ctor(args.as_ptr(), args.len()) };
+        assert!(tv.is_none());
+
+        let exc = super::super::super::exception::mb_catch_exception();
+        assert_eq!(
+            super::super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            super::super::super::exception::get_exception_message_pub(exc).as_deref(),
+            Some("A single constraint is not allowed")
+        );
+    }
+
+    #[test]
+    fn test_typevartuple_ctor_rejects_extra_positional_constraint() {
+        super::super::super::exception::mb_clear_exception();
+
+        let args = [
+            MbValue::from_ptr(MbObject::new_str("Ts".to_string())),
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+        ];
+        let tv = unsafe { d_typevartuple_ctor(args.as_ptr(), args.len()) };
+        assert!(tv.is_none());
+
+        let exc = super::super::super::exception::mb_catch_exception();
+        assert_eq!(
+            super::super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            super::super::super::exception::get_exception_message_pub(exc).as_deref(),
+            Some("typevartuple() takes exactly 1 positional argument (2 given)")
+        );
+    }
+
+    #[test]
+    fn test_paramspec_ctor_rejects_extra_positional_constraint() {
+        super::super::super::exception::mb_clear_exception();
+
+        let args = [
+            MbValue::from_ptr(MbObject::new_str("P".to_string())),
+            MbValue::from_ptr(MbObject::new_str("int".to_string())),
+        ];
+        let tv = unsafe { d_paramspec_ctor(args.as_ptr(), args.len()) };
+        assert!(tv.is_none());
+
+        let exc = super::super::super::exception::mb_catch_exception();
+        assert_eq!(
+            super::super::super::exception::get_exception_type_pub(exc).as_deref(),
+            Some("TypeError")
+        );
+        assert_eq!(
+            super::super::super::exception::get_exception_message_pub(exc).as_deref(),
+            Some("paramspec() takes exactly 1 positional argument (2 given)")
+        );
     }
 }

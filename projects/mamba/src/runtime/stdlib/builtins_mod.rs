@@ -100,7 +100,12 @@ fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
     })
 }
 
-fn arg_or_kw(pos_args: &[MbValue], idx: usize, kwargs: &Option<MbValue>, name: &str) -> Option<MbValue> {
+fn arg_or_kw(
+    pos_args: &[MbValue],
+    idx: usize,
+    kwargs: &Option<MbValue>,
+    name: &str,
+) -> Option<MbValue> {
     if let Some(v) = pos_args.get(idx).copied() {
         if !v.is_none() {
             return Some(v);
@@ -112,13 +117,16 @@ fn arg_or_kw(pos_args: &[MbValue], idx: usize, kwargs: &Option<MbValue>, name: &
 }
 
 fn open_flags_for_mode(mode: MbValue) -> MbValue {
-    let mode_s = mode.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
-    }).unwrap_or_else(|| "r".to_string());
+    let mode_s = mode
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "r".to_string());
     let mut flags = if mode_s.contains('+') {
         0x0002 // O_RDWR
     } else if mode_s.contains('w') || mode_s.contains('a') || mode_s.contains('x') {
@@ -182,12 +190,25 @@ unsafe extern "C" fn dispatch_int(args_ptr: *const MbValue, nargs: usize) -> MbV
         return MbValue::from_int(0);
     }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    if nargs > 2 {
-        raise_type_error(&format!("int() takes at most 2 arguments ({nargs} given)"))
-    } else if nargs == 2 {
-        super::super::builtins::mb_int_base(args[0], args[1])
+    // #942: a keyword call (`int("ff", base=16)`) reaches this dispatcher via
+    // `mb_call_spread_kwargs`'s native-target fallback, which appends the
+    // kwargs dict as a trailing positional (see runtime/builtins.rs). Split
+    // it back out so `base=` binds to the base slot instead of landing in
+    // `args[1]` as a dict — `x` stays positional-only (matches CPython: `int`
+    // has no keyword-visible name for its first argument).
+    let (pos, kwargs) = split_kwargs(args);
+    if pos.is_empty() {
+        return MbValue::from_int(0);
+    }
+    if pos.len() > 2 {
+        raise_type_error(&format!(
+            "int() takes at most 2 arguments ({} given)",
+            pos.len()
+        ))
+    } else if let Some(base) = arg_or_kw(&pos, 1, &kwargs, "base") {
+        super::super::builtins::mb_int_base(pos[0], base)
     } else {
-        super::super::builtins::mb_int(args[0])
+        super::super::builtins::mb_int(pos[0])
     }
 }
 
@@ -347,14 +368,15 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
     let args = unsafe { safe_args(args_ptr, nargs) };
     let (pos, kwargs) = split_kwargs(args);
     let mut path = pos.first().copied().unwrap_or_else(MbValue::none);
-    let mode = arg_or_kw(&pos, 1, &kwargs, "mode").unwrap_or_else(|| {
-        MbValue::from_ptr(MbObject::new_str("r".to_string()))
-    });
+    let mode = arg_or_kw(&pos, 1, &kwargs, "mode")
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str("r".to_string())));
     let encoding = arg_or_kw(&pos, 3, &kwargs, "encoding").unwrap_or_else(MbValue::none);
     let errors = arg_or_kw(&pos, 4, &kwargs, "errors").unwrap_or_else(MbValue::none);
-    let closefd = arg_or_kw(&pos, 6, &kwargs, "closefd").unwrap_or_else(|| MbValue::from_bool(true));
+    let closefd =
+        arg_or_kw(&pos, 6, &kwargs, "closefd").unwrap_or_else(|| MbValue::from_bool(true));
     if let Some(opener) = arg_or_kw(&pos, 7, &kwargs, "opener") {
-        let opener_args = MbValue::from_ptr(MbObject::new_list(vec![path, open_flags_for_mode(mode)]));
+        let opener_args =
+            MbValue::from_ptr(MbObject::new_list(vec![path, open_flags_for_mode(mode)]));
         path = super::super::builtins::mb_call_spread(opener, opener_args);
     }
     super::super::file_io::mb_open_ex(path, mode, encoding, errors, closefd)
@@ -387,17 +409,26 @@ unsafe extern "C" fn dispatch_bin(args_ptr: *const MbValue, nargs: usize) -> MbV
 
 unsafe extern "C" fn dispatch_round(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    let val = args.first().copied().unwrap_or_else(MbValue::none);
-    let ndigits = args.get(1).copied().unwrap_or_else(MbValue::none);
+    // #942: same trailing-kwargs-dict convention as dispatch_int/dispatch_pow
+    // — `round(number, ndigits=...)` reaches here via mb_call_spread_kwargs's
+    // native fallback with the kwargs dict appended as a positional. Both
+    // `number` and `ndigits` are keyword-visible in CPython.
+    let (pos, kwargs) = split_kwargs(args);
+    let val = arg_or_kw(&pos, 0, &kwargs, "number").unwrap_or_else(MbValue::none);
+    let ndigits = arg_or_kw(&pos, 1, &kwargs, "ndigits").unwrap_or_else(MbValue::none);
     super::super::builtins::mb_round(val, ndigits)
 }
 
 unsafe extern "C" fn dispatch_pow(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    let base = args.first().copied().unwrap_or_else(MbValue::none);
-    let exp = args.get(1).copied().unwrap_or_else(MbValue::none);
-    if nargs >= 3 {
-        super::super::builtins::mb_pow_mod(base, exp, args[2])
+    // #942: `pow(base, exp, mod=...)` — split the trailing kwargs dict (see
+    // dispatch_int) so `mod=` binds to the modulus slot instead of landing
+    // as a dict-shaped positional `exp`/`mod` argument.
+    let (pos, kwargs) = split_kwargs(args);
+    let base = arg_or_kw(&pos, 0, &kwargs, "base").unwrap_or_else(MbValue::none);
+    let exp = arg_or_kw(&pos, 1, &kwargs, "exp").unwrap_or_else(MbValue::none);
+    if let Some(m) = arg_or_kw(&pos, 2, &kwargs, "mod") {
+        super::super::builtins::mb_pow_mod(base, exp, m)
     } else {
         super::super::builtins::mb_pow(base, exp)
     }
@@ -501,9 +532,9 @@ unsafe extern "C" fn dispatch_ascii(args_ptr: *const MbValue, nargs: usize) -> M
 unsafe extern "C" fn dispatch_eval(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
     match args.len() {
-        0 | 1 => super::super::builtins::mb_eval(
-            args.first().copied().unwrap_or_else(MbValue::none),
-        ),
+        0 | 1 => {
+            super::super::builtins::mb_eval(args.first().copied().unwrap_or_else(MbValue::none))
+        }
         2 => super::super::builtins::mb_eval_with_globals(args[0], args[1]),
         _ => super::super::builtins::mb_eval_with_namespaces(args[0], args[1], args[2]),
     }
@@ -512,9 +543,9 @@ unsafe extern "C" fn dispatch_eval(args_ptr: *const MbValue, nargs: usize) -> Mb
 unsafe extern "C" fn dispatch_exec(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
     match args.len() {
-        0 | 1 => super::super::builtins::mb_exec(
-            args.first().copied().unwrap_or_else(MbValue::none),
-        ),
+        0 | 1 => {
+            super::super::builtins::mb_exec(args.first().copied().unwrap_or_else(MbValue::none))
+        }
         2 => super::super::builtins::mb_exec_with_globals(args[0], args[1]),
         _ => super::super::builtins::mb_exec_with_globals_locals(args[0], args[1], args[2]),
     }
@@ -525,7 +556,13 @@ unsafe extern "C" fn dispatch_compile(args_ptr: *const MbValue, nargs: usize) ->
     let source = args.first().copied().unwrap_or_else(MbValue::none);
     let filename = args.get(1).copied().unwrap_or_else(MbValue::none);
     let mode = args.get(2).copied().unwrap_or_else(MbValue::none);
-    super::super::builtins::mb_compile(source, filename, mode)
+    // A 4th arg means the call carried a keyword argument (e.g. `optimize=`);
+    // mb_call_spread_kwargs's native-target fallback appends the kwargs dict
+    // as a trailing positional (see runtime/builtins.rs mb_call_spread_kwargs).
+    match args.get(3) {
+        Some(&kwargs) => super::super::builtins::mb_compile_kwargs(source, filename, mode, kwargs),
+        None => super::super::builtins::mb_compile(source, filename, mode),
+    }
 }
 
 unsafe extern "C" fn dispatch_dunder_import(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -747,28 +784,78 @@ unsafe extern "C" fn dispatch_breakpoint(_args_ptr: *const MbValue, _nargs: usiz
     super::super::builtins::mb_breakpoint()
 }
 
-// ── Present-but-stub callables ──
-//
-// CPython exposes these names in `builtins` and they are callable. mamba does
-// not yet implement their behaviour; registering a callable stub satisfies the
-// module surface (`hasattr(builtins, NAME)` / `callable(builtins.NAME)`)
-// without claiming real semantics. Each returns None.
+// ── Misc builtins dispatchers ──
 
 unsafe extern "C" fn dispatch_aiter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    // aiter(async_iterable) — async iteration is not yet supported; return the
-    // argument unchanged so the name is present and callable.
+    if nargs != 1 {
+        return raise_type_error(&format!("aiter expected 1 argument, got {nargs}"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    args.first().copied().unwrap_or_else(MbValue::none)
+    super::super::builtins::mb_aiter(args[0])
 }
 
 unsafe extern "C" fn dispatch_anext(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    if !(1..=2).contains(&nargs) {
+        return raise_type_error(&format!("anext expected 1 or 2 arguments, got {nargs}"));
+    }
     let args = unsafe { safe_args(args_ptr, nargs) };
-    args.get(1).copied().unwrap_or_else(MbValue::none)
+    if nargs == 1 {
+        return super::super::builtins::mb_anext(args[0]);
+    }
+    super::super::builtins::mb_anext_default(args[0], args[1])
+}
+
+fn raise_system_exit_from_args(name: &str, args: &[MbValue]) -> MbValue {
+    if args.len() > 1 {
+        return raise_type_error(&format!(
+            "{name} expected at most 1 argument, got {}",
+            args.len()
+        ));
+    }
+    let args_list = MbValue::from_ptr(MbObject::new_list(args.to_vec()));
+    let exc = super::super::class::mb_instance_new_with_init(
+        MbValue::from_ptr(MbObject::new_str("SystemExit".to_string())),
+        args_list,
+    );
+    super::super::class::mb_raise_instance(exc);
+    MbValue::none()
+}
+
+unsafe extern "C" fn dispatch_exit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { safe_args(args_ptr, nargs) };
+    raise_system_exit_from_args("exit", args)
+}
+
+unsafe extern "C" fn dispatch_quit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { safe_args(args_ptr, nargs) };
+    raise_system_exit_from_args("quit", args)
+}
+
+unsafe extern "C" fn dispatch_build_class(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs < 2 {
+        return raise_type_error(&format!(
+            "__build_class__ expected at least 2 arguments, got {nargs}"
+        ));
+    }
+    if super::super::builtins::mb_callable(args[0]).as_bool() != Some(true) {
+        return raise_type_error("__build_class__: func must be callable");
+    }
+    if !is_str_value(args[1]) {
+        return raise_type_error("__build_class__: name is not a string");
+    }
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("NotImplementedError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "__build_class__ class-body execution is not implemented".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 unsafe extern "C" fn dispatch_builtins_stub(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    // exit / quit / help / copyright / credits / license: interactive helpers
-    // present in the builtins namespace. Stubbed to a no-op returning None.
+    // help / copyright / credits / license: interactive helpers present in the
+    // builtins namespace. Stubbed to a no-op returning None.
     MbValue::none()
 }
 
@@ -871,8 +958,12 @@ pub fn register() {
         ("breakpoint", dispatch_breakpoint as *const () as usize),
         ("aiter", dispatch_aiter as *const () as usize),
         ("anext", dispatch_anext as *const () as usize),
-        ("exit", dispatch_builtins_stub as *const () as usize),
-        ("quit", dispatch_builtins_stub as *const () as usize),
+        ("exit", dispatch_exit as *const () as usize),
+        ("quit", dispatch_quit as *const () as usize),
+        (
+            "__build_class__",
+            dispatch_build_class as *const () as usize,
+        ),
         ("help", dispatch_builtins_stub as *const () as usize),
         ("copyright", dispatch_builtins_stub as *const () as usize),
         ("credits", dispatch_builtins_stub as *const () as usize),
@@ -904,18 +995,17 @@ pub fn register() {
                     With a single iterable argument, return its biggest item. The\n\
                     default keyword-only argument specifies an object to return if\n\
                     the provided iterable is empty.\n\
-                    With two or more arguments, return the largest argument.".to_string(),
+                    With two or more arguments, return the largest argument."
+                    .to_string(),
                 "min" => "min(iterable, *[, default=obj, key=func]) -> value\n\n\
                     With a single iterable argument, return its smallest item. The\n\
                     default keyword-only argument specifies an object to return if\n\
                     the provided iterable is empty.\n\
-                    With two or more arguments, return the smallest argument.".to_string(),
+                    With two or more arguments, return the smallest argument."
+                    .to_string(),
                 _ => format!("Built-in function {name}."),
             };
-            super::super::closure::mb_func_set_doc(
-                func,
-                MbValue::from_ptr(MbObject::new_str(doc)),
-            );
+            super::super::closure::mb_func_set_doc(func, MbValue::from_ptr(MbObject::new_str(doc)));
         }
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(*addr as u64);
@@ -1014,12 +1104,17 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::{class, exception};
     use super::*;
 
     /// Helper: produce a valid aligned pointer for zero-arg dispatch calls.
     fn empty_args_ptr() -> *const MbValue {
         static EMPTY: [u8; 8] = [0; 8];
         EMPTY.as_ptr() as *const MbValue
+    }
+
+    fn str_value(s: &str) -> MbValue {
+        MbValue::from_ptr(MbObject::new_str(s.to_string()))
     }
 
     #[test]
@@ -1182,5 +1277,39 @@ mod tests {
                 panic!("expected Set");
             }
         }
+    }
+
+    #[test]
+    fn test_dispatch_exit_raises_system_exit_with_code() {
+        exception::clear_current_exception();
+        class::clear_last_raised_instance();
+
+        let args = [MbValue::from_int(3)];
+        let result = unsafe { dispatch_exit(args.as_ptr(), args.len()) };
+        assert!(result.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("SystemExit")
+        );
+
+        let exc = class::mb_catch_exception_instance();
+        let code = class::mb_getattr(exc, str_value("code"));
+        assert_eq!(code.as_int(), Some(3));
+    }
+
+    #[test]
+    fn test_dispatch_build_class_requires_func_and_name() {
+        exception::clear_current_exception();
+        class::clear_last_raised_instance();
+
+        let result = unsafe { dispatch_build_class(empty_args_ptr(), 0) };
+        assert!(result.is_none());
+        assert_eq!(
+            exception::current_exception_type().as_deref(),
+            Some("TypeError")
+        );
+
+        exception::clear_current_exception();
+        class::clear_last_raised_instance();
     }
 }

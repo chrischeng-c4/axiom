@@ -9,7 +9,6 @@
 # case = "stacksummary_entries_are_mutable_and_roundtrip"
 # subject = "traceback.StackSummary"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

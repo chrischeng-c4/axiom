@@ -87,7 +87,7 @@ fn raise_unicode_decode_error(encoding: &str, data: &[u8], pos: usize, reason: &
 fn known_text_codec_fallback(enc: &str) -> bool {
     matches!(
         enc.replace('_', "-").as_str(),
-            "idna"
+        "idna"
             | "utf-7"
             | "utf7"
             | "euc-jp"
@@ -361,7 +361,9 @@ fn try_sequence_getitem_to_u8s(source: MbValue, class_name: &str) -> Option<Opti
     }
     let data = validated_bytes_from_items(&items);
     for &item in &items {
-        unsafe { super::rc::release_if_ptr(item); }
+        unsafe {
+            super::rc::release_if_ptr(item);
+        }
     }
     data.map(Some)
 }
@@ -1124,19 +1126,19 @@ pub fn mb_bytes_find_range(
         let Some(n) = bytes_search_needle_arg(needle) else {
             return MbValue::none();
         };
-            let (s, e) = clamp_range(h.len(), start, end);
-            if n.is_empty() {
-                // Empty needle matches at `start` if the slice is non-empty
-                // (CPython returns `start` even when start == end for empty
-                // sub on empty haystack — match that quirk).
-                return MbValue::from_int(s as i64);
-            }
-            if s + n.len() > e {
-                return MbValue::from_int(-1);
-            }
-            let slice = &h[s..e];
-            let pos = slice.windows(n.len()).position(|w| w == n.as_slice());
-            MbValue::from_int(pos.map(|p| (s + p) as i64).unwrap_or(-1))
+        let (s, e) = clamp_range(h.len(), start, end);
+        if n.is_empty() {
+            // Empty needle matches at `start` if the slice is non-empty
+            // (CPython returns `start` even when start == end for empty
+            // sub on empty haystack — match that quirk).
+            return MbValue::from_int(s as i64);
+        }
+        if s + n.len() > e {
+            return MbValue::from_int(-1);
+        }
+        let slice = &h[s..e];
+        let pos = slice.windows(n.len()).position(|w| w == n.as_slice());
+        MbValue::from_int(pos.map(|p| (s + p) as i64).unwrap_or(-1))
     }
 }
 
@@ -1149,16 +1151,16 @@ pub fn mb_bytes_rfind(haystack: MbValue, needle: MbValue, start: MbValue, end: M
         let Some(n) = bytes_search_needle_arg(needle) else {
             return MbValue::none();
         };
-            let (s, e) = clamp_range(h.len(), start, end);
-            if n.is_empty() {
-                return MbValue::from_int(e as i64);
-            }
-            if s + n.len() > e {
-                return MbValue::from_int(-1);
-            }
-            let slice = &h[s..e];
-            let pos = slice.windows(n.len()).rposition(|w| w == n.as_slice());
-            MbValue::from_int(pos.map(|p| (s + p) as i64).unwrap_or(-1))
+        let (s, e) = clamp_range(h.len(), start, end);
+        if n.is_empty() {
+            return MbValue::from_int(e as i64);
+        }
+        if s + n.len() > e {
+            return MbValue::from_int(-1);
+        }
+        let slice = &h[s..e];
+        let pos = slice.windows(n.len()).rposition(|w| w == n.as_slice());
+        MbValue::from_int(pos.map(|p| (s + p) as i64).unwrap_or(-1))
     }
 }
 
@@ -1210,9 +1212,9 @@ pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
         let Some(fmt) = as_bytes_cloned(template) else {
             return MbValue::none();
         };
-        let is_bytearray = template.as_ptr().map_or(false, |p| {
-            matches!(&(*p).data, ObjData::ByteArray(_))
-        });
+        let is_bytearray = template
+            .as_ptr()
+            .map_or(false, |p| matches!(&(*p).data, ObjData::ByteArray(_)));
         let mut values = if let Some(ptr) = args.as_ptr() {
             match &(*ptr).data {
                 ObjData::Tuple(items) => items.clone(),
@@ -1312,14 +1314,18 @@ pub fn mb_bytes_percent_format(template: MbValue, args: MbValue) -> MbValue {
                         if (0..=255).contains(&n) {
                             vec![n as u8]
                         } else {
-                            raise_type_error("%c requires an integer in range(256) or a single byte");
+                            raise_type_error(
+                                "%c requires an integer in range(256) or a single byte",
+                            );
                             return MbValue::none();
                         }
                     } else if let Some(data) = as_bytes_cloned(arg) {
                         if data.len() == 1 {
                             data
                         } else {
-                            raise_type_error("%c requires an integer in range(256) or a single byte");
+                            raise_type_error(
+                                "%c requires an integer in range(256) or a single byte",
+                            );
                             return MbValue::none();
                         }
                     } else {
@@ -1413,7 +1419,8 @@ pub fn mb_bytes_contains(bytes: MbValue, value: MbValue) -> MbValue {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(
-                        "a bytes-like object is required, not 'str'".to_string())),
+                        "a bytes-like object is required, not 'str'".to_string(),
+                    )),
                 );
                 return MbValue::none();
             }
@@ -1541,7 +1548,8 @@ pub fn mb_bytearray_pop_at(ba: MbValue, index: MbValue) -> MbValue {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(
-                            "pop from empty bytearray".to_string())),
+                            "pop from empty bytearray".to_string(),
+                        )),
                     );
                     return MbValue::none();
                 }
@@ -1551,8 +1559,7 @@ pub fn mb_bytearray_pop_at(ba: MbValue, index: MbValue) -> MbValue {
                     drop(v);
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(
-                            "pop index out of range".to_string())),
+                        MbValue::from_ptr(MbObject::new_str("pop index out of range".to_string())),
                     );
                     return MbValue::none();
                 }
@@ -1576,9 +1583,13 @@ pub fn mb_bytearray_insert(ba: MbValue, index: MbValue, value: MbValue) {
                     let mut idx = index.as_int().unwrap_or(0);
                     if idx < 0 {
                         idx += len;
-                        if idx < 0 { idx = 0; }
+                        if idx < 0 {
+                            idx = 0;
+                        }
                     }
-                    if idx > len { idx = len; }
+                    if idx > len {
+                        idx = len;
+                    }
                     v.insert(idx as usize, b as u8);
                 }
             }
@@ -1602,7 +1613,8 @@ pub fn mb_bytearray_remove(ba: MbValue, value: MbValue) {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(
-                                "value not found in bytearray".to_string())),
+                                "value not found in bytearray".to_string(),
+                            )),
                         );
                     }
                 }
@@ -1616,7 +1628,9 @@ pub fn mb_bytearray_remove(ba: MbValue, value: MbValue) {
 pub fn mb_bytearray_delitem(ba: MbValue, key: MbValue) {
     unsafe {
         let Some(ptr) = ba.as_ptr() else { return };
-        let ObjData::ByteArray(ref lock) = (*ptr).data else { return };
+        let ObjData::ByteArray(ref lock) = (*ptr).data else {
+            return;
+        };
         if let Some(kp) = key.as_ptr() {
             if let ObjData::Tuple(ref t) = (*kp).data {
                 if t.len() == 3 {
@@ -1711,26 +1725,26 @@ pub fn mb_bytes_count_range(
             return MbValue::from_int(0);
         };
         let Some(n) = bytes_search_needle_arg(needle) else {
-                return MbValue::none();
+            return MbValue::none();
         };
-            let (s, e) = clamp_range(h.len(), start, end);
-            let slice = &h[s..e];
-            if n.is_empty() {
-                return MbValue::from_int((slice.len() + 1) as i64);
+        let (s, e) = clamp_range(h.len(), start, end);
+        let slice = &h[s..e];
+        if n.is_empty() {
+            return MbValue::from_int((slice.len() + 1) as i64);
+        }
+        // Non-overlapping count: jump by n.len() after each hit, matching
+        // CPython's str.count semantics.
+        let mut count = 0i64;
+        let mut i = 0usize;
+        while i + n.len() <= slice.len() {
+            if &slice[i..i + n.len()] == n.as_slice() {
+                count += 1;
+                i += n.len();
+            } else {
+                i += 1;
             }
-            // Non-overlapping count: jump by n.len() after each hit, matching
-            // CPython's str.count semantics.
-            let mut count = 0i64;
-            let mut i = 0usize;
-            while i + n.len() <= slice.len() {
-                if &slice[i..i + n.len()] == n.as_slice() {
-                    count += 1;
-                    i += n.len();
-                } else {
-                    i += 1;
-                }
-            }
-            MbValue::from_int(count)
+        }
+        MbValue::from_int(count)
     }
 }
 
@@ -1835,39 +1849,39 @@ pub fn mb_bytes_replace_count(
         let Some(n) = bytes_like_arg(new) else {
             return MbValue::none();
         };
-            let max = count.as_int().unwrap_or(-1);
-            let unlimited = max < 0;
-            let mut remaining = if unlimited { i64::MAX } else { max };
-            if o.is_empty() {
-                // Replace empty pattern: insert `new` before each byte (and at
-                // the end). CPython caps the insertions at `count + 1` because
-                // the empty needle matches `len + 1` positions.
-                let mut result = Vec::new();
-                for byte in &h {
-                    if remaining > 0 {
-                        result.extend_from_slice(&n);
-                        remaining -= 1;
-                    }
-                    result.push(*byte);
-                }
+        let max = count.as_int().unwrap_or(-1);
+        let unlimited = max < 0;
+        let mut remaining = if unlimited { i64::MAX } else { max };
+        if o.is_empty() {
+            // Replace empty pattern: insert `new` before each byte (and at
+            // the end). CPython caps the insertions at `count + 1` because
+            // the empty needle matches `len + 1` positions.
+            let mut result = Vec::new();
+            for byte in &h {
                 if remaining > 0 {
                     result.extend_from_slice(&n);
-                }
-                return MbValue::from_ptr(MbObject::new_bytes(result));
-            }
-            let mut result = Vec::new();
-            let mut i = 0;
-            while i < h.len() {
-                if remaining > 0 && i + o.len() <= h.len() && &h[i..i + o.len()] == o.as_slice() {
-                    result.extend_from_slice(&n);
-                    i += o.len();
                     remaining -= 1;
-                } else {
-                    result.push(h[i]);
-                    i += 1;
                 }
+                result.push(*byte);
             }
-            MbValue::from_ptr(MbObject::new_bytes(result))
+            if remaining > 0 {
+                result.extend_from_slice(&n);
+            }
+            return MbValue::from_ptr(MbObject::new_bytes(result));
+        }
+        let mut result = Vec::new();
+        let mut i = 0;
+        while i < h.len() {
+            if remaining > 0 && i + o.len() <= h.len() && &h[i..i + o.len()] == o.as_slice() {
+                result.extend_from_slice(&n);
+                i += o.len();
+                remaining -= 1;
+            } else {
+                result.push(h[i]);
+                i += 1;
+            }
+        }
+        MbValue::from_ptr(MbObject::new_bytes(result))
     }
 }
 
@@ -2363,10 +2377,7 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             mb_bytearray_clear(receiver);
             MbValue::none()
         }
-        "pop" => mb_bytearray_pop_at(
-            receiver,
-            if argc() > 0 { arg(0) } else { MbValue::none() },
-        ),
+        "pop" => mb_bytearray_pop_at(receiver, if argc() > 0 { arg(0) } else { MbValue::none() }),
         "insert" => {
             mb_bytearray_insert(receiver, arg(0), arg(1));
             MbValue::none()

@@ -312,42 +312,17 @@ unsafe extern "C" fn dispatch_getopt_error(args_ptr: *const MbValue, nargs: usiz
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+/// De-registered in favor of the vendored `py_src/getopt.py` port (#868
+/// round 6, post-#1018): registering a native module here would pre-seed
+/// `getopt` into `MODULES` and permanently shadow the vendored source (see
+/// `vendor_lib.rs` precedence doc). `register()` is kept as a no-op call
+/// site (invoked from `stdlib::register_stdlib()`) so the migration didn't
+/// need to touch that call list. The dispatch functions/helpers above are
+/// dead code kept for reference; nothing calls them anymore.
 pub fn register() {
-    let mut attrs = HashMap::new();
-    let dispatchers: Vec<(&str, usize)> = vec![
-        ("getopt", dispatch_getopt as usize),
-        ("gnu_getopt", dispatch_gnu_getopt as usize),
-    ];
-    for (name, addr) in dispatchers {
-        attrs.insert(name.to_string(), MbValue::from_func(addr));
-        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-            s.borrow_mut().insert(addr as u64);
-        });
-    }
-    // GetoptError + its `getopt.error` alias: a real exception class (re.error
-    // pattern). Both names share one constructor whose addr resolves to
-    // "GetoptError" via NATIVE_TYPE_NAMES, so `except`/`isinstance` match the
-    // raised instance; mb_class_register seeds the chaining slots so
-    // `hasattr(getopt.GetoptError, "__cause__")` is True.
-    let err_addr = dispatch_getopt_error as *const () as usize;
-    attrs.insert("GetoptError".to_string(), MbValue::from_func(err_addr));
-    attrs.insert("error".to_string(), MbValue::from_func(err_addr));
-    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(err_addr as u64);
-    });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(err_addr as u64, "GetoptError".to_string());
-    });
-    {
-        let mut slots: HashMap<String, MbValue> = HashMap::new();
-        let slot = MbValue::from_func(err_addr);
-        slots.insert("__cause__".to_string(), slot);
-        slots.insert("__context__".to_string(), slot);
-        slots.insert("__suppress_context__".to_string(), slot);
-        super::super::class::mb_class_register("GetoptError", vec!["Exception".to_string()], slots);
-    }
-    super::register_module("getopt", attrs);
+    // Intentionally empty: vendor_lib::register() (called earlier in
+    // stdlib::register_stdlib()) already materializes py_src/getopt.py into
+    // the shared vendored search-path directory.
 }
 
 // ── Public runtime functions ──

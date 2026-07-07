@@ -342,7 +342,14 @@ fn format_stats(rows: &[(FuncKey, FuncStat)], sort_label: &str) -> String {
         };
         out.push_str(&format!(
             "{:>10}  {:>7.3}  {:>7.3}  {:>7.3}  {:>7.3} {}:{}({})\n",
-            ncalls_str, s.total_time, percall_tot, s.cumulative_time, percall_cum, k.filename, k.lineno, k.name
+            ncalls_str,
+            s.total_time,
+            percall_tot,
+            s.cumulative_time,
+            percall_cum,
+            k.filename,
+            k.lineno,
+            k.name
         ));
     }
     out
@@ -433,7 +440,11 @@ unsafe extern "C" fn m_runctx(self_v: MbValue, args: MbValue) -> MbValue {
         .copied()
         .filter(|v| !v.is_none())
         .unwrap_or_else(super::super::builtins::mb_globals);
-    let locals = pos.get(2).copied().filter(|v| !v.is_none()).unwrap_or(globals);
+    let locals = pos
+        .get(2)
+        .copied()
+        .filter(|v| !v.is_none())
+        .unwrap_or(globals);
     run_with_context(self_v, cmd, globals, locals)
 }
 
@@ -465,6 +476,7 @@ unsafe extern "C" fn m_runcall(self_v: MbValue, args: MbValue) -> MbValue {
 //    the convention `mb_call_spread`'s native fast path recognizes) ──
 
 unsafe extern "C" fn dispatch_profile_new(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     // Profile(timer=None, timeunit=0.0, subcalls=True, builtins=True) — a
     // deterministic wall-clock profiler has no pluggable timer, so the
     // constructor args are accepted (for call-signature compatibility) and
@@ -502,7 +514,11 @@ unsafe extern "C" fn dispatch_runctx(args_ptr: *const MbValue, nargs: usize) -> 
         .copied()
         .filter(|v| !v.is_none())
         .unwrap_or_else(super::super::builtins::mb_globals);
-    let locals = a.get(2).copied().filter(|v| !v.is_none()).unwrap_or(globals);
+    let locals = a
+        .get(2)
+        .copied()
+        .filter(|v| !v.is_none())
+        .unwrap_or(globals);
     let id = alloc_profiler_id();
     let inst = new_profile_instance("Profile", id);
     run_with_context(inst, cmd, globals, locals);
@@ -553,9 +569,7 @@ pub fn register() {
         set.insert(run_addr as u64);
         set.insert(runctx_addr as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(ctor_addr as u64, "Profile".to_string());
-    });
+    super::super::module::register_native_type_name(ctor_addr as u64, "Profile".to_string());
 
     let mut cprofile_attrs: HashMap<String, MbValue> = HashMap::new();
     cprofile_attrs.insert("Profile".to_string(), MbValue::from_func(ctor_addr));

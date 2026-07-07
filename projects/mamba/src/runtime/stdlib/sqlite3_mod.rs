@@ -141,7 +141,10 @@ fn store_callback_or_none(conn: MbValue, field: &str, callback: MbValue) -> MbVa
 }
 
 unsafe extern "C" fn m_connection_set_trace_callback(self_v: MbValue, args: MbValue) -> MbValue {
-    let callback = args_vec(args).first().copied().unwrap_or_else(MbValue::none);
+    let callback = args_vec(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
     store_callback_or_none(self_v, "_trace_callback", callback)
 }
 
@@ -158,7 +161,10 @@ unsafe extern "C" fn m_connection_set_progress_handler(self_v: MbValue, args: Mb
 }
 
 unsafe extern "C" fn m_connection_set_authorizer(self_v: MbValue, args: MbValue) -> MbValue {
-    let callback = args_vec(args).first().copied().unwrap_or_else(MbValue::none);
+    let callback = args_vec(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
     store_callback_or_none(self_v, "_authorizer", callback)
 }
 
@@ -184,7 +190,9 @@ unsafe extern "C" fn m_connection_close(self_v: MbValue, _args: MbValue) -> MbVa
 
 /// `with conn:` enter — returns the connection.
 unsafe extern "C" fn m_connection_enter(self_v: MbValue, _args: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(self_v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
     self_v
 }
 
@@ -209,7 +217,9 @@ unsafe extern "C" fn m_cursor_execute(self_v: MbValue, args: MbValue) -> MbValue
     let a = args_vec(args);
     let sql = a.first().copied().and_then(extract_str).unwrap_or_default();
     cursor_do_execute(self_v, &sql, parse_params(a.get(1).copied()));
-    unsafe { super::super::rc::retain_if_ptr(self_v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
     self_v
 }
 
@@ -239,7 +249,9 @@ unsafe extern "C" fn m_cursor_executemany(self_v: MbValue, args: MbValue) -> MbV
         cs.borrow_mut()
             .insert(cur_id_of(self_v), CursorState::default());
     });
-    unsafe { super::super::rc::retain_if_ptr(self_v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
     self_v
 }
 
@@ -251,7 +263,9 @@ unsafe extern "C" fn m_cursor_executescript(self_v: MbValue, args: MbValue) -> M
             let _ = conn.execute_batch(&sql);
         }
     });
-    unsafe { super::super::rc::retain_if_ptr(self_v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
     self_v
 }
 
@@ -332,7 +346,9 @@ unsafe extern "C" fn m_row_getitem(self_v: MbValue, args: MbValue) -> MbValue {
         let idx = if i < 0 { i + vals.len() as i64 } else { i };
         if idx >= 0 && (idx as usize) < vals.len() {
             let v = vals[idx as usize];
-            unsafe { super::super::rc::retain_if_ptr(v); }
+            unsafe {
+                super::super::rc::retain_if_ptr(v);
+            }
             return v;
         }
         return MbValue::none();
@@ -343,7 +359,9 @@ unsafe extern "C" fn m_row_getitem(self_v: MbValue, args: MbValue) -> MbValue {
             if extract_str(*c).as_deref() == Some(name.as_str()) {
                 if i < vals.len() {
                     let v = vals[i];
-                    unsafe { super::super::rc::retain_if_ptr(v); }
+                    unsafe {
+                        super::super::rc::retain_if_ptr(v);
+                    }
                     return v;
                 }
             }
@@ -370,17 +388,29 @@ fn register_sqlite3_classes() {
     {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         for (name, addr) in [
-            ("cursor",      m_connection_cursor      as *const () as usize),
-            ("execute",     m_connection_execute     as *const () as usize),
-            ("executemany", m_connection_executemany as *const () as usize),
-            ("set_trace_callback", m_connection_set_trace_callback as *const () as usize),
-            ("set_progress_handler", m_connection_set_progress_handler as *const () as usize),
-            ("set_authorizer", m_connection_set_authorizer as *const () as usize),
-            ("commit",      m_connection_commit      as *const () as usize),
-            ("rollback",    m_connection_rollback    as *const () as usize),
-            ("close",       m_connection_close       as *const () as usize),
-            ("__enter__",   m_connection_enter       as *const () as usize),
-            ("__exit__",    m_connection_exit        as *const () as usize),
+            ("cursor", m_connection_cursor as *const () as usize),
+            ("execute", m_connection_execute as *const () as usize),
+            (
+                "executemany",
+                m_connection_executemany as *const () as usize,
+            ),
+            (
+                "set_trace_callback",
+                m_connection_set_trace_callback as *const () as usize,
+            ),
+            (
+                "set_progress_handler",
+                m_connection_set_progress_handler as *const () as usize,
+            ),
+            (
+                "set_authorizer",
+                m_connection_set_authorizer as *const () as usize,
+            ),
+            ("commit", m_connection_commit as *const () as usize),
+            ("rollback", m_connection_rollback as *const () as usize),
+            ("close", m_connection_close as *const () as usize),
+            ("__enter__", m_connection_enter as *const () as usize),
+            ("__exit__", m_connection_exit as *const () as usize),
         ] {
             super::super::module::register_variadic_func(addr as u64);
             methods.insert(name.to_string(), MbValue::from_func(addr));
@@ -392,14 +422,17 @@ fn register_sqlite3_classes() {
     {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         for (name, addr) in [
-            ("execute",       m_cursor_execute       as *const () as usize),
-            ("executemany",   m_cursor_executemany   as *const () as usize),
-            ("executescript", m_cursor_executescript as *const () as usize),
-            ("fetchone",      m_cursor_fetchone      as *const () as usize),
-            ("fetchmany",     m_cursor_fetchmany     as *const () as usize),
-            ("fetchall",      m_cursor_fetchall      as *const () as usize),
-            ("__iter__",      m_cursor_iter          as *const () as usize),
-            ("close",         m_cursor_close         as *const () as usize),
+            ("execute", m_cursor_execute as *const () as usize),
+            ("executemany", m_cursor_executemany as *const () as usize),
+            (
+                "executescript",
+                m_cursor_executescript as *const () as usize,
+            ),
+            ("fetchone", m_cursor_fetchone as *const () as usize),
+            ("fetchmany", m_cursor_fetchmany as *const () as usize),
+            ("fetchall", m_cursor_fetchall as *const () as usize),
+            ("__iter__", m_cursor_iter as *const () as usize),
+            ("close", m_cursor_close as *const () as usize),
         ] {
             super::super::module::register_variadic_func(addr as u64);
             methods.insert(name.to_string(), MbValue::from_func(addr));
@@ -836,8 +869,8 @@ fn extract_str(val: MbValue) -> Option<String> {
 }
 
 // ── Real SQLite backend (rusqlite) ───────────────────────────────────────
-use std::cell::{Cell, RefCell};
 use rusqlite::types::Value as RValue;
+use std::cell::{Cell, RefCell};
 
 thread_local! {
     /// Live rusqlite connections, keyed by the id stored in `Connection._cid`.
@@ -1007,8 +1040,7 @@ fn run_one(conn_id: u64, sql: &str, params: &SqParams) -> Result<QueryOut, rusql
         };
         let mut stmt = conn.prepare(sql)?;
         let ncols = stmt.column_count();
-        let columns: Vec<String> =
-            stmt.column_names().iter().map(|s| s.to_string()).collect();
+        let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
         if ncols > 0 {
             let mut out: Vec<Vec<RValue>> = Vec::new();
             let mut collect = |rows: &mut rusqlite::Rows| -> Result<(), rusqlite::Error> {
@@ -1031,20 +1063,30 @@ fn run_one(conn_id: u64, sql: &str, params: &SqParams) -> Result<QueryOut, rusql
                     collect(&mut rows)?;
                 }
                 SqParams::Named(pairs) => {
-                    let named: Vec<(&str, &dyn rusqlite::ToSql)> =
-                        pairs.iter().map(|(k, v)| (k.as_str(), v as &dyn rusqlite::ToSql)).collect();
+                    let named: Vec<(&str, &dyn rusqlite::ToSql)> = pairs
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v as &dyn rusqlite::ToSql))
+                        .collect();
                     let mut rows = stmt.query(&named[..])?;
                     collect(&mut rows)?;
                 }
             }
-            Ok(QueryOut { rows: out, columns, changes: 0, last_id: 0, returns_rows: true })
+            Ok(QueryOut {
+                rows: out,
+                columns,
+                changes: 0,
+                last_id: 0,
+                returns_rows: true,
+            })
         } else {
             let changes = match params {
                 SqParams::None => stmt.execute([])?,
                 SqParams::Positional(v) => stmt.execute(rusqlite::params_from_iter(v.iter()))?,
                 SqParams::Named(pairs) => {
-                    let named: Vec<(&str, &dyn rusqlite::ToSql)> =
-                        pairs.iter().map(|(k, v)| (k.as_str(), v as &dyn rusqlite::ToSql)).collect();
+                    let named: Vec<(&str, &dyn rusqlite::ToSql)> = pairs
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v as &dyn rusqlite::ToSql))
+                        .collect();
                     stmt.execute(&named[..])?
                 }
             };
@@ -1098,7 +1140,9 @@ fn conn_id_of(v: MbValue) -> u64 {
     inst_field(v, "_cid").and_then(|x| x.as_int()).unwrap_or(0) as u64
 }
 fn cur_id_of(v: MbValue) -> u64 {
-    inst_field(v, "_curid").and_then(|x| x.as_int()).unwrap_or(0) as u64
+    inst_field(v, "_curid")
+        .and_then(|x| x.as_int())
+        .unwrap_or(0) as u64
 }
 
 /// Build the value yielded for one result row — a plain tuple, or a `Row`
@@ -1148,7 +1192,11 @@ fn cursor_do_execute(cur: MbValue, sql: &str, params: SqParams) {
             CURSORS.with(|cs| {
                 cs.borrow_mut().insert(
                     cur_id,
-                    CursorState { rows: q.rows, columns: q.columns, pos: 0 },
+                    CursorState {
+                        rows: q.rows,
+                        columns: q.columns,
+                        pos: 0,
+                    },
                 );
             });
             let rc = if q.returns_rows { -1 } else { q.changes };
@@ -1227,7 +1275,9 @@ pub fn mb_sqlite3_cursor(conn: MbValue) -> MbValue {
         cs.borrow_mut().insert(curid, CursorState::default());
     });
     let rf = inst_field(conn, "row_factory").unwrap_or_else(MbValue::none);
-    unsafe { super::super::rc::retain_if_ptr(rf); }
+    unsafe {
+        super::super::rc::retain_if_ptr(rf);
+    }
     let mut fields: FxHashMap<String, MbValue> = FxHashMap::default();
     fields.insert("_cid".to_string(), MbValue::from_int(cid as i64));
     fields.insert("_curid".to_string(), MbValue::from_int(curid as i64));
@@ -1326,9 +1376,17 @@ mod tests {
     fn test_cursor_tracks_connection_and_state_ids() {
         let conn = mb_sqlite3_connect(s(":memory:"));
         let cursor = mb_sqlite3_cursor(conn);
-        assert_eq!(inst_field(cursor, "_cid").and_then(|v| v.as_int()), inst_field(conn, "_cid").and_then(|v| v.as_int()));
-        assert!(inst_field(cursor, "_curid").and_then(|v| v.as_int()).is_some());
-        assert_eq!(inst_field(cursor, "rowcount").and_then(|v| v.as_int()), Some(-1));
+        assert_eq!(
+            inst_field(cursor, "_cid").and_then(|v| v.as_int()),
+            inst_field(conn, "_cid").and_then(|v| v.as_int())
+        );
+        assert!(inst_field(cursor, "_curid")
+            .and_then(|v| v.as_int())
+            .is_some());
+        assert_eq!(
+            inst_field(cursor, "rowcount").and_then(|v| v.as_int()),
+            Some(-1)
+        );
     }
 
     #[test]

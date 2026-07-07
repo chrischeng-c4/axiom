@@ -64,8 +64,9 @@ fn xml_attrib_and_extras(args: &[MbValue]) -> (MbValue, Vec<(MbValue, MbValue)>)
         } else if attrib.is_none() {
             attrib = *v;
         } else {
-            for pair in super::super::builtins::extract_items(
-                super::super::dict_ops::mb_dict_items(*v)) {
+            for pair in
+                super::super::builtins::extract_items(super::super::dict_ops::mb_dict_items(*v))
+            {
                 let kv = super::super::builtins::extract_items(pair);
                 if kv.len() == 2 {
                     extras.push((kv[0], kv[1]));
@@ -79,6 +80,7 @@ fn xml_attrib_and_extras(args: &[MbValue]) -> (MbValue, Vec<(MbValue, MbValue)>)
 /// Element(tag, attrib={}, **extra) — the trailing kwargs dict may carry
 /// `attrib=` (a real attribute mapping) plus extra attribute kwargs.
 unsafe extern "C" fn d_element(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let tag = a.first().copied().unwrap_or_else(MbValue::none);
     let (attrib, extras) = xml_attrib_and_extras(&a[1..]);
@@ -251,11 +253,7 @@ unsafe extern "C" fn d_xmlparser(_args_ptr: *const MbValue, _nargs: usize) -> Mb
         "_data",
         MbValue::from_ptr(MbObject::new_str(String::new())),
     );
-    dict_set_key(
-        stub,
-        "entity",
-        MbValue::from_ptr(MbObject::new_dict()),
-    );
+    dict_set_key(stub, "entity", MbValue::from_ptr(MbObject::new_dict()));
     stub
 }
 
@@ -319,9 +317,7 @@ unsafe extern "C" fn d_iterparse(args_ptr: *const MbValue, nargs: usize) -> MbVa
     let mut want_start = false;
     let mut want_end = true;
     if nargs >= 2 {
-        if let Some(events) = kwarg_get(a[nargs - 1], "events")
-            .or_else(|| a.get(1).copied())
-        {
+        if let Some(events) = kwarg_get(a[nargs - 1], "events").or_else(|| a.get(1).copied()) {
             let names: Vec<String> = seq_items(events)
                 .into_iter()
                 .filter_map(extract_str)
@@ -356,6 +352,220 @@ unsafe extern "C" fn d_iterparse(args_ptr: *const MbValue, nargs: usize) -> MbVa
     }
     walk(root, want_start, want_end, &mut out);
     MbValue::from_ptr(MbObject::new_list(out))
+}
+
+// ── pyexpat ──────────────────────────────────────────────────────────────
+
+/// `xml.parsers.expat.ParserCreate()` / `pyexpat.ParserCreate()` — a stub
+/// object whose `StartElementHandler`/`EndElementHandler`/
+/// `CharacterDataHandler` (and any other) attributes are settable via the
+/// generic `__class__`-tagged dict attribute-write path; `Parse` fires them
+/// via `dispatch_xml_stub_method`'s `"XMLParserType"` arm below.
+unsafe extern "C" fn d_pyexpat_parsercreate(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
+    let stub = new_stub_dict("XMLParserType");
+    dict_set_key(
+        stub,
+        "_data",
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+    );
+    stub
+}
+
+/// `xml.parsers.expat.ErrorString(code)`.
+unsafe extern "C" fn d_pyexpat_errorstring(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = if nargs == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let code = args.first().copied().and_then(|v| v.as_int()).unwrap_or(0);
+    MbValue::from_ptr(MbObject::new_str(xml_error_string(code).to_string()))
+}
+
+/// `xml.parsers.expat.model` / `.errors` — surface-completion placeholders
+/// (empty dict, callable); no fixture in scope inspects their contents.
+unsafe extern "C" fn d_pyexpat_shell(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_dict())
+}
+
+/// Build a real `ExpatError` instance carrying `.code`/`.lineno`/`.offset`
+/// (CPython's positional attributes) and raise it, mirroring the
+/// `JSONDecodeError` recipe in `json_mod.rs`.
+fn raise_expat_error(fail: &XmlFailure) -> MbValue {
+    let msg = fail.message();
+    let inst_ptr = MbObject::new_instance("ExpatError".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+            let mut f = fields.write().unwrap();
+            f.insert(
+                "code".to_string(),
+                MbValue::from_int(xml_error_code(fail.kind)),
+            );
+            f.insert("lineno".to_string(), MbValue::from_int(fail.line as i64));
+            f.insert("offset".to_string(), MbValue::from_int(fail.column as i64));
+            f.insert(
+                "args".to_string(),
+                MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                    MbObject::new_str(msg),
+                )])),
+            );
+            f.insert(
+                "__class__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("ExpatError".to_string())),
+            );
+        }
+    }
+    super::super::class::mb_raise_instance(MbValue::from_ptr(inst_ptr));
+    MbValue::none()
+}
+
+/// Walk a parsed element tree firing `StartElementHandler(name, attrs)` /
+/// `CharacterDataHandler(data)` / `EndElementHandler(name)` in expat's
+/// streaming order (start before children, text/tail data as encountered,
+/// end after children) — the tree is fully parsed first (like `iterparse`
+/// above), then replayed as callbacks.
+fn fire_expat_events(receiver: MbValue, root: MbValue) {
+    let start = dict_get_key(receiver, "StartElementHandler");
+    let end = dict_get_key(receiver, "EndElementHandler");
+    let data = dict_get_key(receiver, "CharacterDataHandler");
+
+    fn fire_data(handler: Option<MbValue>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(h) = handler {
+            if !h.is_none() {
+                let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+                    MbObject::new_str(text.to_string()),
+                )]));
+                super::super::builtins::mb_call_spread(h, args);
+            }
+        }
+    }
+
+    fn walk(elem: MbValue, start: Option<MbValue>, end: Option<MbValue>, data: Option<MbValue>) {
+        let tag = element_tag_str(elem).unwrap_or_default();
+        if let Some(h) = start {
+            if !h.is_none() {
+                let attrib = dict_get_key(elem, "attrib")
+                    .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+                unsafe { super::super::rc::retain_if_ptr(attrib) };
+                let args = MbValue::from_ptr(MbObject::new_list(vec![
+                    MbValue::from_ptr(MbObject::new_str(tag.clone())),
+                    attrib,
+                ]));
+                super::super::builtins::mb_call_spread(h, args);
+            }
+        }
+        if let Some(text) = dict_get_key(elem, "text").and_then(extract_str) {
+            fire_data(data, &text);
+        }
+        for c in children_items(elem) {
+            walk(c, start, end, data);
+            if let Some(tail) = dict_get_key(c, "tail").and_then(extract_str) {
+                fire_data(data, &tail);
+            }
+        }
+        if let Some(h) = end {
+            if !h.is_none() {
+                let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+                    MbObject::new_str(tag),
+                )]));
+                super::super::builtins::mb_call_spread(h, args);
+            }
+        }
+    }
+    walk(root, start, end, data);
+}
+
+/// Register `xml.parsers.expat` and the bare top-level `pyexpat` alias
+/// (same attrs; CPython's `xml.parsers.expat` is itself just a thin
+/// re-export of the `pyexpat` C extension).
+fn register_pyexpat() {
+    use super::super::module::NATIVE_FUNC_ADDRS;
+
+    let mut attrs = HashMap::new();
+    let dispatchers: &[(&str, usize)] = &[
+        ("ParserCreate", d_pyexpat_parsercreate as *const () as usize),
+        ("ErrorString", d_pyexpat_errorstring as *const () as usize),
+        ("model", d_pyexpat_shell as *const () as usize),
+        ("errors", d_pyexpat_shell as *const () as usize),
+    ];
+    for (name, addr) in dispatchers {
+        attrs.insert(name.to_string(), MbValue::from_func(*addr));
+        NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(*addr as u64);
+        });
+    }
+    // `isinstance(p, pyexpat.XMLParserType)` — same recipe as `Element`
+    // above: resolve the constructor dispatcher's address to the stub's
+    // `__class__` tag.
+    super::super::module::register_native_type_name(
+        d_pyexpat_parsercreate as *const () as u64,
+        "XMLParserType".to_string(),
+    );
+    // `pyexpat.XMLParserType` aliases the constructor (mirrors `PI` aliasing
+    // `ProcessingInstruction` above) — present + callable + isinstance-checkable.
+    attrs.insert(
+        "XMLParserType".to_string(),
+        MbValue::from_func(d_pyexpat_parsercreate as *const () as usize),
+    );
+
+    // ExpatError is a real exception type so `except ExpatError`/`isinstance`
+    // resolve through the class registry (recipe B, same as ParseError above).
+    super::super::class::mb_class_register(
+        "ExpatError",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
+    let expat_error = MbObject::new_instance("type".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*expat_error).data {
+            let mut f = fields.write().unwrap();
+            f.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("ExpatError".to_string())),
+            );
+            f.insert(
+                "__qualname__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("ExpatError".to_string())),
+            );
+            f.insert(
+                "__module__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("xml.parsers.expat".to_string())),
+            );
+            f.insert(
+                "__cause__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(String::new())),
+            );
+        }
+    }
+    attrs.insert("ExpatError".to_string(), MbValue::from_ptr(expat_error));
+    // `expat.error is expat.ExpatError` — same object, not a copy.
+    attrs.insert("error".to_string(), MbValue::from_ptr(expat_error));
+
+    attrs.insert("EXPAT_VERSION_NUMBER".to_string(), MbValue::from_int(0));
+    attrs.insert(
+        "EXPAT_VERSION".to_string(),
+        MbValue::from_ptr(MbObject::new_str("2.0.0".to_string())),
+    );
+    attrs.insert(
+        "native_encoding".to_string(),
+        MbValue::from_ptr(MbObject::new_str("utf-8".to_string())),
+    );
+
+    // `register_module`'s dotted-name propagation auto-creates (or reuses)
+    // the `xml.parsers` package and wires `expat` onto it, then wires
+    // `parsers` onto the already-registered `xml` package — no manual
+    // splicing needed (mirrors how `email.mime.text` etc. rely on the same
+    // auto-create-intermediate-packages behavior). Must run after this
+    // module's own `xml` registration below so it reuses (not races) that
+    // module entry, and must be the *only* registrant of `xml.parsers` this
+    // module owns exclusively (see long_tail3_mod.rs) so nothing re-replaces
+    // it with an empty attrs map afterward.
+    super::register_module("xml.parsers.expat", attrs.clone());
+    super::register_module("pyexpat", attrs);
 }
 
 /// Register the xml module (also registers xml.etree.ElementTree).
@@ -405,10 +615,10 @@ pub fn register() {
     // `isinstance(e, ET.Element)` — record the constructor-dispatcher address
     // so mb_isinstance resolves the target name "Element" (matched against the
     // dict stub's __class__ tag).
-    super::super::module::NATIVE_TYPE_NAMES.with(|map| {
-        map.borrow_mut()
-            .insert(d_element as *const () as u64, "Element".to_string());
-    });
+    super::super::module::register_native_type_name(
+        d_element as *const () as u64,
+        "Element".to_string(),
+    );
 
     // Class shells (Instance with class_name; full construction stubbed).
     //
@@ -540,6 +750,10 @@ pub fn register() {
             }
         }
     });
+
+    // Run after the `xml` package above is registered so the dotted-name
+    // propagation in `register_pyexpat` reuses (not races) that module entry.
+    register_pyexpat();
 }
 
 // ── Small helpers ──────────────────────────────────────────────────────────
@@ -644,10 +858,7 @@ pub fn qname_text_value(val: MbValue) -> Option<String> {
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
-            let class = map
-                .get("__class__")
-                .copied()
-                .and_then(extract_str)?;
+            let class = map.get("__class__").copied().and_then(extract_str)?;
             if class == "QName" {
                 return map.get("text").copied().and_then(extract_str);
             }
@@ -866,10 +1077,8 @@ fn pull_feed_chunk(receiver: MbValue, chunk: &str) {
             let raw = after[..end].trim();
             let tag = pull_pop_stack(receiver, raw);
             if pull_wants(receiver, "_want_end") {
-                let elem = mb_xml_element(
-                    MbValue::from_ptr(MbObject::new_str(tag)),
-                    MbValue::none(),
-                );
+                let elem =
+                    mb_xml_element(MbValue::from_ptr(MbObject::new_str(tag)), MbValue::none());
                 pull_queue_event(receiver, "end", elem);
                 unsafe { super::super::rc::release_if_ptr(elem) };
             }
@@ -1074,7 +1283,10 @@ fn ascii_numeric_escape(s: &str) -> String {
 }
 
 fn encode_serialized_bytes(payload: &str, encoding: Option<&str>) -> Vec<u8> {
-    if encoding.map(|e| e.eq_ignore_ascii_case("us-ascii")).unwrap_or(true) {
+    if encoding
+        .map(|e| e.eq_ignore_ascii_case("us-ascii"))
+        .unwrap_or(true)
+    {
         ascii_numeric_escape(payload).into_bytes()
     } else {
         payload.as_bytes().to_vec()
@@ -1274,9 +1486,15 @@ fn element_text_only(elem: MbValue) -> String {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                let mut out = map.get("text").and_then(|v| extract_str(*v)).unwrap_or_default();
+                let mut out = map
+                    .get("text")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_default();
                 let children = map.get("_children").copied();
-                let tail = map.get("tail").and_then(|v| extract_str(*v)).unwrap_or_default();
+                let tail = map
+                    .get("tail")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_default();
                 let child_items: Vec<MbValue> = children
                     .and_then(|c| c.as_ptr())
                     .map(|p| {
@@ -1421,8 +1639,20 @@ fn element_to_string(
 fn is_html_void_tag(tag: &str) -> bool {
     matches!(
         tag.to_ascii_lowercase().as_str(),
-        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
-            | "link" | "meta" | "param" | "source" | "track" | "wbr"
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
     )
 }
 
@@ -1502,34 +1732,163 @@ pub fn mb_xml_fromstring(val: MbValue) -> MbValue {
             })
         })
         .unwrap_or_default();
+    match parse_xml_str(&s) {
+        Ok(elem) => elem,
+        Err(fail) => raise_parse_error(&fail.message()),
+    }
+}
+
+/// expat-shaped parse failure: an error *kind* string (matching
+/// `xml.parsers.expat.ErrorString`'s vocabulary) plus a 1-based line and
+/// 0-based column, computed from the failing byte offset the same way
+/// expat counts (columns reset to 0 after every `\n`).
+struct XmlFailure {
+    kind: &'static str,
+    line: usize,
+    column: usize,
+}
+
+impl XmlFailure {
+    fn message(&self) -> String {
+        format!("{}: line {}, column {}", self.kind, self.line, self.column)
+    }
+}
+
+thread_local! {
+    /// Byte offset of a detected mismatched end-tag name (pointing at the
+    /// close-tag name, right after `</`), set by `parse_element_with_ns` at
+    /// the point of detection. The recursive parser threads a single shared
+    /// `&mut usize` cursor, so by the time a `None` from a deeply nested
+    /// mismatch unwinds back to `parse_xml_str` the cursor has advanced past
+    /// the close tag's `>` — this side-channel preserves the exact
+    /// expat-reported position.
+    static XML_MISMATCH_POS: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
+}
+
+/// expat error code for `xml.parsers.expat.ErrorString(code)` / `ExpatError.code`.
+fn xml_error_code(kind: &str) -> i64 {
+    match kind {
+        "out of memory" => 1,
+        "syntax error" => 2,
+        "no element found" => 3,
+        "not well-formed (invalid token)" => 4,
+        "unclosed token" => 5,
+        "partial character" => 6,
+        "mismatched tag" => 7,
+        "duplicate attribute" => 8,
+        "junk after document element" => 9,
+        "illegal parameter entity reference" => 10,
+        "undefined entity" => 11,
+        "recursive entity reference" => 12,
+        "asynchronous entity" => 13,
+        "reference to invalid character number" => 14,
+        "reference to binary entity" => 15,
+        "reference to external entity in attribute" => 16,
+        "XML or text declaration not at start of entity" => 17,
+        "unknown encoding" => 18,
+        "encoding specified in XML declaration is incorrect" => 19,
+        _ => 2,
+    }
+}
+
+/// `xml.parsers.expat.ErrorString(code)` — the reverse of `xml_error_code`.
+fn xml_error_string(code: i64) -> &'static str {
+    match code {
+        1 => "out of memory",
+        2 => "syntax error",
+        3 => "no element found",
+        4 => "not well-formed (invalid token)",
+        5 => "unclosed token",
+        6 => "partial character",
+        7 => "mismatched tag",
+        8 => "duplicate attribute",
+        9 => "junk after document element",
+        10 => "illegal parameter entity reference",
+        11 => "undefined entity",
+        12 => "recursive entity reference",
+        13 => "asynchronous entity",
+        14 => "reference to invalid character number",
+        15 => "reference to binary entity",
+        16 => "reference to external entity in attribute",
+        17 => "XML or text declaration not at start of entity",
+        18 => "unknown encoding",
+        19 => "encoding specified in XML declaration is incorrect",
+        _ => "",
+    }
+}
+
+/// 1-based line / 0-based column for a byte offset, matching how expat
+/// counts positions (column resets to 0 after each `\n`).
+fn line_col(bytes: &[u8], pos: usize) -> (usize, usize) {
+    let pos = pos.min(bytes.len());
+    let mut line = 1usize;
+    let mut col = 0usize;
+    for &b in &bytes[..pos] {
+        if b == b'\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+/// Parse a full XML document, classifying malformed input the way expat
+/// does (kind + line/column) closely enough to match CPython's
+/// `ElementTree.ParseError` / `expat.ExpatError` messages for mismatched
+/// tags, premature EOF, undefined entities, trailing junk, and non-XML
+/// input. Shared by `ET.fromstring`/`parse`/`iterparse` and
+/// `pyexpat.ParserCreate().Parse`.
+fn parse_xml_str(s: &str) -> Result<MbValue, XmlFailure> {
     let bytes = s.as_bytes();
     let mut i = 0;
     skip_prolog(bytes, &mut i);
     // Malformed/undefined entity references outside ignored XML markup are a
     // ParseError (the 5 standard names and character refs are fine).
-    if let Some(bad) = find_bad_entity_reference(&s) {
-        return raise_parse_error(&format!("undefined entity {bad}: line 1, column 0"));
+    if let Some(pos) = find_bad_entity_reference(s) {
+        let (line, column) = line_col(bytes, pos);
+        return Err(XmlFailure {
+            kind: "undefined entity",
+            line,
+            column,
+        });
     }
+    XML_MISMATCH_POS.with(|c| c.set(None));
     match parse_element(bytes, &mut i) {
         Some(elem) => {
             skip_trailing_misc(bytes, &mut i);
             if i < bytes.len() {
-                raise_parse_error("junk after document element: line 1, column 0")
+                let (line, column) = line_col(bytes, i);
+                Err(XmlFailure {
+                    kind: "junk after document element",
+                    line,
+                    column,
+                })
             } else {
-                elem
+                Ok(elem)
             }
         }
-        None => raise_parse_error(if s.trim().is_empty() {
-            "no element found: line 1, column 0"
-        } else {
-            "not well-formed (invalid token): line 1, column 0"
-        }),
+        None => {
+            let (kind, pos) = if let Some(mismatch) = XML_MISMATCH_POS.with(|c| c.take()) {
+                ("mismatched tag", mismatch)
+            } else if i >= bytes.len() {
+                ("no element found", bytes.len())
+            } else if bytes.get(i) != Some(&b'<') {
+                ("syntax error", i)
+            } else {
+                ("not well-formed (invalid token)", i)
+            };
+            let (line, column) = line_col(bytes, pos);
+            Err(XmlFailure { kind, line, column })
+        }
     }
 }
 
 /// First malformed `&` reference, or `&name;` reference that is not a standard
-/// entity or char ref. CDATA/comment/PI/DOCTYPE bodies do not expand entities.
-fn find_bad_entity_reference(s: &str) -> Option<String> {
+/// entity or char ref, returned as its byte offset (the position of `&`).
+/// CDATA/comment/PI/DOCTYPE bodies do not expand entities.
+fn find_bad_entity_reference(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -1567,11 +1926,11 @@ fn find_bad_entity_reference(s: &str) -> Option<String> {
         }
         let after = &bytes[i + 1..];
         let Some(end) = after.iter().position(|b| *b == b';') else {
-            return Some("&".to_string());
+            return Some(i);
         };
         let name = std::str::from_utf8(&after[..end]).unwrap_or("");
         if !matches!(name, "lt" | "gt" | "amp" | "quot" | "apos") && !name.starts_with('#') {
-            return Some(format!("&{name};"));
+            return Some(i);
         }
         i += end + 2;
     }
@@ -1579,7 +1938,9 @@ fn find_bad_entity_reference(s: &str) -> Option<String> {
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// CPython ElementPath rejections: absolute paths on elements and 0-based
@@ -1836,6 +2197,7 @@ fn parse_element_with_ns(
                 .trim()
                 .to_string();
             if close_name != tag {
+                XML_MISMATCH_POS.with(|c| c.set(Some(close_start)));
                 return None;
             }
             *i += 1;
@@ -2263,10 +2625,7 @@ fn parse_pathspec(path: &str, namespaces: &HashMap<String, String>) -> PathSpec 
             }
         })
         .collect();
-    PathSpec {
-        descendant,
-        steps,
-    }
+    PathSpec { descendant, steps }
 }
 
 fn tag_matches(actual: &str, pattern: &str) -> bool {
@@ -2283,7 +2642,10 @@ fn tag_matches(actual: &str, pattern: &str) -> bool {
             .unwrap_or(actual)
             == local;
     }
-    if let Some(uri) = pattern.strip_prefix('{').and_then(|rest| rest.strip_suffix("}*")) {
+    if let Some(uri) = pattern
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix("}*"))
+    {
         return actual
             .strip_prefix('{')
             .and_then(|rest| rest.split_once('}').map(|(actual_uri, _)| actual_uri))
@@ -2305,11 +2667,13 @@ fn non_position_predicate_matches(elem: MbValue, predicate: &Option<PathPredicat
         Some(PathPredicate::AttrExists(name)) => dict_get_key(elem, "attrib")
             .and_then(|attrib| dict_get_key(attrib, name))
             .is_some(),
-        Some(PathPredicate::AttrEq(name, want)) => dict_get_key(elem, "attrib")
-            .and_then(|attrib| dict_get_key(attrib, name))
-            .and_then(extract_str)
-            .as_deref()
-            == Some(want.as_str()),
+        Some(PathPredicate::AttrEq(name, want)) => {
+            dict_get_key(elem, "attrib")
+                .and_then(|attrib| dict_get_key(attrib, name))
+                .and_then(extract_str)
+                .as_deref()
+                == Some(want.as_str())
+        }
         Some(PathPredicate::AttrNe(name, want)) => dict_get_key(elem, "attrib")
             .and_then(|attrib| dict_get_key(attrib, name))
             .and_then(extract_str)
@@ -2719,9 +3083,7 @@ pub fn dispatch_xml_stub_method(
                 );
                 Some(MbValue::none())
             }
-            "close" => {
-                Some(parse_xmlparser_data(receiver))
-            }
+            "close" => Some(parse_xmlparser_data(receiver)),
             _ => None,
         },
         "XMLPullParser" => match name {
@@ -2739,9 +3101,8 @@ pub fn dispatch_xml_stub_method(
                 Some(MbValue::none())
             }
             "read_events" => {
-                let events = dict_get_key(receiver, "_events").unwrap_or_else(|| {
-                    MbValue::from_ptr(MbObject::new_list(vec![]))
-                });
+                let events = dict_get_key(receiver, "_events")
+                    .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_list(vec![])));
                 unsafe { super::super::rc::retain_if_ptr(events) };
                 dict_set_key(
                     receiver,
@@ -2750,9 +3111,7 @@ pub fn dispatch_xml_stub_method(
                 );
                 Some(events)
             }
-            "close" => {
-                Some(MbValue::none())
-            }
+            "close" => Some(MbValue::none()),
             _ => None,
         },
         "TreeBuilder" => match name {
@@ -2802,6 +3161,47 @@ pub fn dispatch_xml_stub_method(
             "close" => {
                 let root = dict_get_key(receiver, "_root").unwrap_or_else(MbValue::none);
                 Some(retained(root))
+            }
+            _ => None,
+        },
+        "XMLParserType" => match name {
+            // pyexpat.ParserCreate().Parse(data, isfinal=True): buffers
+            // chunks across isfinal=False calls in `_data`, then parses the
+            // full accumulated document and fires the Start/End/CharacterData
+            // handlers (whichever attributes were assigned) once isfinal is
+            // true. A malformed document raises a real ExpatError carrying
+            // `.code`/`.lineno`/`.offset`.
+            "Parse" => {
+                let chunk = extract_str(arg(0)).unwrap_or_default();
+                let isfinal = if items.len() >= 2 {
+                    arg(1).as_bool().unwrap_or(true)
+                } else {
+                    true
+                };
+                let existing = dict_get_key(receiver, "_data")
+                    .and_then(extract_str)
+                    .unwrap_or_default();
+                let combined = format!("{existing}{chunk}");
+                if !isfinal {
+                    dict_set_key(
+                        receiver,
+                        "_data",
+                        MbValue::from_ptr(MbObject::new_str(combined)),
+                    );
+                    return Some(MbValue::from_int(1));
+                }
+                dict_set_key(
+                    receiver,
+                    "_data",
+                    MbValue::from_ptr(MbObject::new_str(String::new())),
+                );
+                match parse_xml_str(&combined) {
+                    Ok(root) => {
+                        fire_expat_events(receiver, root);
+                        Some(MbValue::from_int(1))
+                    }
+                    Err(fail) => Some(raise_expat_error(&fail)),
+                }
             }
             _ => None,
         },
@@ -2941,10 +3341,8 @@ mod tests {
 
     #[test]
     fn test_elementpath_query_language_subset() {
-        let root = mb_xml_fromstring(s(
-            "<body><tag class='a'>text</tag><tag class='b'/>\
-             <section><tag class='b' id='inner'>subtext</tag></section></body>",
-        ));
+        let root = mb_xml_fromstring(s("<body><tag class='a'>text</tag><tag class='b'/>\
+             <section><tag class='b' id='inner'>subtext</tag></section></body>"));
         assert_eq!(path_matches(root, "tag").len(), 2);
         assert_eq!(path_matches(root, "section/tag").len(), 1);
         assert_eq!(path_matches(root, ".//tag[@class]").len(), 3);
@@ -2987,7 +3385,10 @@ mod tests {
             path_matches_with_namespaces(nsroot, "{}*", &HashMap::new()).len(),
             2
         );
-        assert_eq!(path_matches_with_namespaces(nsroot, ".//xx:b", &ns).len(), 2);
+        assert_eq!(
+            path_matches_with_namespaces(nsroot, ".//xx:b", &ns).len(),
+            2
+        );
     }
 
     #[test]

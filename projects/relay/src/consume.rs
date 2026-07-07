@@ -96,14 +96,30 @@ async fn read_up(stream: &mut BodyDataStream, dec: &mut Frames) -> Option<Consum
     params(("subject" = String, Path, description = "Target subject")),
     responses((status = 200, description = "A length-prefixed JSON frame stream of leased entries; the request body streams Subscribe/Ack/Nack frames"))
 )]
-pub async fn consume(State(st): State<AppState>, Path(subject): Path<String>, req: Body) -> Response {
+pub async fn consume(
+    State(st): State<AppState>,
+    Path(subject): Path<String>,
+    req: Body,
+) -> Response {
     let consumer_id = format!("consume-{}", CONSUMER_SEQ.fetch_add(1, Ordering::Relaxed));
     let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
-    tokio::spawn(drive(st.relay_handle(), subject, consumer_id, req.into_data_stream(), tx));
+    tokio::spawn(drive(
+        st.relay_handle(),
+        subject,
+        consumer_id,
+        req.into_data_stream(),
+        tx,
+    ));
     let stream = futures::stream::unfold(rx, |mut rx| async move {
-        rx.recv().await.map(|f| (Ok::<Bytes, Infallible>(Bytes::from(f)), rx))
+        rx.recv()
+            .await
+            .map(|f| (Ok::<Bytes, Infallible>(Bytes::from(f)), rx))
     });
-    (StatusCode::OK, [(header::CONTENT_TYPE, "application/octet-stream")], Body::from_stream(stream))
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        Body::from_stream(stream),
+    )
         .into_response()
 }
 
@@ -129,7 +145,10 @@ async fn drive(
     let mut wake = relay.subscribe_wake(&subject);
     loop {
         while inflight < prefetch {
-            match relay.lease(&subject, &consumer_id, Utc::now()).unwrap_or(None) {
+            match relay
+                .lease(&subject, &consumer_id, Utc::now())
+                .unwrap_or(None)
+            {
                 Some(l) => {
                     let (message_id, payload) = relay
                         .entry(&l.subject, l.shard, l.seq)
@@ -137,7 +156,12 @@ async fn drive(
                         .flatten()
                         .map(|e| (e.message_id, e.payload))
                         .unwrap_or_default();
-                    let frame = LeasedEntry { lease_id: l.lease_id, epoch: l.epoch, message_id, payload };
+                    let frame = LeasedEntry {
+                        lease_id: l.lease_id,
+                        epoch: l.epoch,
+                        message_id,
+                        payload,
+                    };
                     if tx.send(encode_frame(&frame)).await.is_err() {
                         return;
                     }

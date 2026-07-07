@@ -59,6 +59,7 @@ use std::thread::JoinHandle;
 macro_rules! disp_nullary {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue {
+            crate::icf_guard!();
             $fn()
         }
     };
@@ -67,6 +68,7 @@ macro_rules! disp_nullary {
 macro_rules! disp_unary {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
         }
@@ -76,6 +78,7 @@ macro_rules! disp_unary {
 macro_rules! disp_binary {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(
                 a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -89,6 +92,7 @@ macro_rules! disp_binary {
 // public form `Thread(target=..., name=..., daemon=..., args=..., kwargs=...)`
 // is commonly invoked with kwargs only, lowered as a trailing-dict arg.
 unsafe extern "C" fn d_thread(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let mut target = MbValue::none();
     let mut name = MbValue::none();
@@ -259,12 +263,9 @@ pub fn register() {
         ("Timer", d_timer as usize),
         ("local", d_local as usize),
     ];
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        for (name, addr) in class_dispatchers {
-            map.insert(*addr as u64, name.to_string());
-        }
-    });
+    for (name, addr) in class_dispatchers {
+        super::super::module::register_native_type_name(*addr as u64, name.to_string());
+    }
 
     // `Lock` / `RLock` instances are context managers. Register a class method
     // table (keyed by the instance `class_name`) carrying `__enter__`/`__exit__`
@@ -374,6 +375,7 @@ thread_local! {
     static THREAD_NAME: Cell<Option<String>> = const { Cell::new(None) };
     static PROFILE_FN: Cell<MbValue> = Cell::new(MbValue::none());
     static TRACE_FN: Cell<MbValue> = Cell::new(MbValue::none());
+    static TRACE_PROFILE_HOOK_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static STACK_SIZE: Cell<i64> = const { Cell::new(0) };
     /// The ident observed by `get_ident()` / `get_native_id()` for the code
     /// currently executing. The main thread starts at 1 (CPython always has a
@@ -404,10 +406,33 @@ thread_local! {
     static WORKER_STDLIB_READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-static THREAD_HANDLES: OnceLock<Mutex<HashMap<u64, JoinHandle<HashMap<i64, MbValue>>>>> =
-    OnceLock::new();
+static THREAD_HANDLES: OnceLock<
+    Mutex<
+        HashMap<
+            u64,
+            JoinHandle<(
+                HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
+                HashMap<
+                    super::super::closure::ScopedSymbolKey,
+                    super::super::closure::ActiveCellSnapshot,
+                >,
+            )>,
+        >,
+    >,
+> = OnceLock::new();
 
-fn thread_handles() -> &'static Mutex<HashMap<u64, JoinHandle<HashMap<i64, MbValue>>>> {
+fn thread_handles() -> &'static Mutex<
+    HashMap<
+        u64,
+        JoinHandle<(
+            HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
+            HashMap<
+                super::super::closure::ScopedSymbolKey,
+                super::super::closure::ActiveCellSnapshot,
+            >,
+        )>,
+    >,
+> {
     THREAD_HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -718,6 +743,7 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     snapshot_excepthook_for_thread(thread);
                     let locals_snapshot = snapshot_locals();
                     let globals_snapshot = super::super::closure::snapshot_global_id_namespace();
+                    let active_cells_snapshot = super::super::closure::snapshot_active_cells();
                     let class_snapshot = super::super::class::snapshot_thread_class_state();
                     super::super::rc::retain_if_ptr(thread);
                     super::super::rc::retain_if_ptr(target);
@@ -733,6 +759,7 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                             kwargs,
                             call_run_override,
                             globals_snapshot,
+                            active_cells_snapshot,
                             class_snapshot,
                         );
                         restore_locals(locals_snapshot);
@@ -806,8 +833,9 @@ pub fn mb_threading_thread_join(thread: MbValue) -> MbValue {
                 }
                 let handle = thread_handles().lock().unwrap().remove(&thread.to_bits());
                 if let Some(handle) = handle {
-                    if let Ok(worker_globals) = handle.join() {
+                    if let Ok((worker_globals, worker_cells)) = handle.join() {
                         super::super::closure::merge_global_id_namespace(&worker_globals);
+                        super::super::closure::merge_active_cells(&worker_cells);
                     }
                 }
                 let mut f = fields.write().unwrap();
@@ -1137,11 +1165,19 @@ fn run_thread_target(
     args: MbValue,
     kwargs: MbValue,
     call_run_override: bool,
-    globals_snapshot: HashMap<i64, MbValue>,
+    globals_snapshot: HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
+    active_cells_snapshot: HashMap<
+        super::super::closure::ScopedSymbolKey,
+        super::super::closure::ActiveCellSnapshot,
+    >,
     class_snapshot: super::super::class::ThreadClassState,
-) -> HashMap<i64, MbValue> {
+) -> (
+    HashMap<super::super::closure::ScopedSymbolKey, MbValue>,
+    HashMap<super::super::closure::ScopedSymbolKey, super::super::closure::ActiveCellSnapshot>,
+) {
     ensure_worker_stdlib_registered();
     let previous_globals = super::super::closure::replace_global_id_namespace(globals_snapshot);
+    let previous_cells = super::super::closure::replace_active_cells(active_cells_snapshot);
     let previous_classes = super::super::class::replace_thread_class_state(class_snapshot);
     let prev_ident = CURRENT_IDENT.with(|c| c.get());
     let prev_obj = CURRENT_THREAD_OBJ.with(|c| c.get());
@@ -1161,7 +1197,9 @@ fn run_thread_target(
     CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
     CURRENT_IDENT.with(|c| c.set(prev_ident));
     super::super::class::replace_thread_class_state(previous_classes);
-    super::super::closure::replace_global_id_namespace(previous_globals)
+    let worker_globals = super::super::closure::replace_global_id_namespace(previous_globals);
+    let worker_cells = super::super::closure::replace_active_cells(previous_cells);
+    (worker_globals, worker_cells)
 }
 
 fn thread_run_override_needed(thread: MbValue) -> bool {
@@ -1331,6 +1369,115 @@ pub fn mb_threading_gettrace() -> MbValue {
     })
 }
 
+struct TraceProfileHookGuard;
+
+impl TraceProfileHookGuard {
+    fn enter() -> Option<Self> {
+        TRACE_PROFILE_HOOK_ACTIVE.with(|active| {
+            if active.get() {
+                None
+            } else {
+                active.set(true);
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for TraceProfileHookGuard {
+    fn drop(&mut self) {
+        TRACE_PROFILE_HOOK_ACTIVE.with(|active| active.set(false));
+    }
+}
+
+fn call_trace_profile_hook(hook: MbValue, event: &str, arg: MbValue) -> MbValue {
+    if hook.is_none() {
+        return MbValue::none();
+    }
+    let frame = super::traceback_mod::mb_traceback_make_current_frame_for_hook();
+    let call_args = MbValue::from_ptr(MbObject::new_list(vec![
+        frame,
+        MbValue::from_ptr(MbObject::new_str(event.to_string())),
+        arg,
+    ]));
+    super::super::builtins::mb_call_spread(hook, call_args)
+}
+
+pub(crate) fn mb_threading_emit_call_event() {
+    let trace_hook = TRACE_FN.with(|t| t.get());
+    let profile_hook = PROFILE_FN.with(|p| p.get());
+    if trace_hook.is_none() && profile_hook.is_none() {
+        return;
+    }
+    let Some(_guard) = TraceProfileHookGuard::enter() else {
+        return;
+    };
+    let had_exception = super::super::exception::mb_has_exception().as_bool() == Some(true);
+    let local_trace_hook = call_trace_profile_hook(trace_hook, "call", MbValue::none());
+    let has_exception = super::super::exception::mb_has_exception().as_bool() == Some(true);
+    if !trace_hook.is_none() && !had_exception && has_exception {
+        return;
+    }
+    if !trace_hook.is_none() {
+        super::traceback_mod::mb_traceback_set_current_frame_local_trace_hook(local_trace_hook);
+    }
+    let _ = call_trace_profile_hook(profile_hook, "call", MbValue::none());
+}
+
+pub(crate) fn mb_threading_emit_line_event() {
+    let local_trace_hook = super::traceback_mod::mb_traceback_current_frame_local_trace_hook();
+    if local_trace_hook.is_none() {
+        return;
+    }
+    let Some(_guard) = TraceProfileHookGuard::enter() else {
+        return;
+    };
+    let _ = call_trace_profile_hook(local_trace_hook, "line", MbValue::none());
+}
+
+pub(crate) fn mb_threading_emit_return_event(arg: MbValue) {
+    let local_trace_hook = super::traceback_mod::mb_traceback_current_frame_local_trace_hook();
+    let profile_hook = PROFILE_FN.with(|p| p.get());
+    if local_trace_hook.is_none() && profile_hook.is_none() {
+        return;
+    }
+    let Some(_guard) = TraceProfileHookGuard::enter() else {
+        return;
+    };
+    let had_exception = super::super::exception::mb_has_exception().as_bool() == Some(true);
+    let _ = call_trace_profile_hook(local_trace_hook, "return", arg);
+    let has_exception = super::super::exception::mb_has_exception().as_bool() == Some(true);
+    if !local_trace_hook.is_none() && !had_exception && has_exception {
+        return;
+    }
+    let _ = call_trace_profile_hook(profile_hook, "return", arg);
+}
+
+pub(crate) fn mb_threading_emit_exception_event(tb: MbValue) {
+    let local_trace_hook = super::traceback_mod::mb_traceback_current_frame_local_trace_hook();
+    if local_trace_hook.is_none() {
+        return;
+    }
+    let Some(_guard) = TraceProfileHookGuard::enter() else {
+        return;
+    };
+    let value = super::super::exception::mb_get_exception();
+    let arg = if value.is_none() {
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::none(),
+            MbValue::none(),
+            tb,
+        ]))
+    } else {
+        let type_name = super::super::exception::get_exception_type_pub(value)
+            .or_else(|| super::super::exception::current_exception_type())
+            .unwrap_or_else(|| "Exception".to_string());
+        let ty = super::super::builtins::make_type_object(&type_name);
+        MbValue::from_ptr(MbObject::new_tuple(vec![ty, value, tb]))
+    };
+    let _ = call_trace_profile_hook(local_trace_hook, "exception", arg);
+}
+
 /// threading.stack_size(size=None) -> int
 ///
 /// Returns the previously-recorded value, then stores `size` if provided.
@@ -1350,6 +1497,8 @@ pub fn mb_threading_excepthook(_args: MbValue) -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::stdlib::traceback_mod;
+    use crate::runtime::{exception, module};
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
@@ -1756,6 +1905,427 @@ mod tests {
             Some("global_trace".to_string())
         );
         mb_threading_settrace(MbValue::none());
+    }
+
+    thread_local! {
+        static TEST_TRACE_EVENTS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        static TEST_TRACE_RETURN_ARGS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        static TEST_GLOBAL_TRACE_RETURN: Cell<MbValue> = Cell::new(MbValue::none());
+    }
+
+    unsafe extern "C" fn test_trace_hook(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+        crate::icf_guard!();
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        let event = args
+            .get(1)
+            .copied()
+            .and_then(extract_str)
+            .unwrap_or_default();
+        TEST_TRACE_EVENTS.with(|events| events.borrow_mut().push(event));
+        MbValue::from_func(test_trace_hook as *const () as usize)
+    }
+
+    unsafe extern "C" fn test_trace_return_arg_hook(
+        args_ptr: *const MbValue,
+        nargs: usize,
+    ) -> MbValue {
+        crate::icf_guard!();
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        let event = args
+            .get(1)
+            .copied()
+            .and_then(extract_str)
+            .unwrap_or_default();
+        if event == "return" {
+            let rendered = match args.get(2).copied() {
+                Some(arg) if arg.is_none() => "None".to_string(),
+                Some(arg) => arg
+                    .as_int()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "<non-int>".to_string()),
+                None => "<missing>".to_string(),
+            };
+            TEST_TRACE_RETURN_ARGS.with(|values| values.borrow_mut().push(rendered));
+        }
+        MbValue::from_func(test_trace_return_arg_hook as *const () as usize)
+    }
+
+    fn push_test_trace_event(prefix: &str, args: &[MbValue]) {
+        let event = args
+            .get(1)
+            .copied()
+            .and_then(extract_str)
+            .unwrap_or_default();
+        TEST_TRACE_EVENTS.with(|events| {
+            events.borrow_mut().push(format!("{prefix}:{event}"));
+        });
+    }
+
+    unsafe extern "C" fn test_local_trace_hook(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+        crate::icf_guard!();
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        push_test_trace_event("local", args);
+        MbValue::from_func(test_local_trace_hook as *const () as usize)
+    }
+
+    unsafe extern "C" fn test_global_trace_hook(
+        args_ptr: *const MbValue,
+        nargs: usize,
+    ) -> MbValue {
+        crate::icf_guard!();
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        push_test_trace_event("global", args);
+        TEST_GLOBAL_TRACE_RETURN.with(|hook| hook.get())
+    }
+
+    unsafe extern "C" fn test_profile_hook(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+        crate::icf_guard!();
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        push_test_trace_event("profile", args);
+        MbValue::from_func(test_profile_hook as *const () as usize)
+    }
+
+    fn register_test_hooks(addrs: &[usize]) {
+        module::NATIVE_FUNC_ADDRS.with(|s| {
+            let mut s = s.borrow_mut();
+            for addr in addrs {
+                s.insert(*addr as u64);
+            }
+        });
+    }
+
+    fn clear_test_trace_events() {
+        TEST_TRACE_EVENTS.with(|events| events.borrow_mut().clear());
+        TEST_TRACE_RETURN_ARGS.with(|values| values.borrow_mut().clear());
+        TEST_GLOBAL_TRACE_RETURN.with(|hook| hook.set(MbValue::none()));
+        mb_threading_settrace(MbValue::none());
+        mb_threading_setprofile(MbValue::none());
+        exception::clear_current_exception();
+        traceback_mod::mb_traceback_reset_stack();
+    }
+
+    fn test_trace_events() -> Vec<String> {
+        TEST_TRACE_EVENTS.with(|events| events.borrow().clone())
+    }
+
+    fn test_trace_return_args() -> Vec<String> {
+        TEST_TRACE_RETURN_ARGS.with(|values| values.borrow().clone())
+    }
+
+    #[test]
+    fn test_trace_hook_observes_call_and_return_events() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(s("trace_test.py"), MbValue::from_int(7), s("f"));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec!["call".to_string(), "return".to_string()]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_hook_observes_explicit_return_arg_value() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_return_arg_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_return_arg_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("trace_return_value.py"),
+            MbValue::from_int(7),
+            s("f"),
+        );
+        traceback_mod::mb_traceback_pop_frame_with_return(MbValue::from_int(42));
+        assert_eq!(test_trace_return_args(), vec!["42".to_string()]);
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_hook_observes_implicit_return_arg_none() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_return_arg_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_return_arg_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("trace_return_none.py"),
+            MbValue::from_int(8),
+            s("f"),
+        );
+        traceback_mod::mb_traceback_pop_frame_with_return(MbValue::none());
+        assert_eq!(test_trace_return_args(), vec!["None".to_string()]);
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_hook_observes_line_events_from_current_line_updates() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(s("trace_lines.py"), MbValue::from_int(20), s("f"));
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(20));
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(21));
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(22));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec![
+                "call".to_string(),
+                "line".to_string(),
+                "line".to_string(),
+                "line".to_string(),
+                "return".to_string()
+            ]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_profile_hook_observes_call_and_return_events() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_setprofile(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("profile_test.py"),
+            MbValue::from_int(11),
+            s("g"),
+        );
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec!["call".to_string(), "return".to_string()]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_profile_hook_skips_line_events() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_setprofile(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("profile_lines.py"),
+            MbValue::from_int(30),
+            s("g"),
+        );
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(30));
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(31));
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(32));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec!["call".to_string(), "return".to_string()]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_hook_observes_exception_events_from_raise_capture() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("trace_exception.py"),
+            MbValue::from_int(40),
+            s("f"),
+        );
+        exception::mb_raise(s("ValueError"), s("x"));
+        traceback_mod::mb_traceback_capture_raise(MbValue::from_int(41));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec![
+                "call".to_string(),
+                "exception".to_string(),
+                "return".to_string()
+            ]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_profile_hook_skips_exception_events_from_raise_capture() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_setprofile(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("profile_exception.py"),
+            MbValue::from_int(50),
+            s("g"),
+        );
+        exception::mb_raise(s("ValueError"), s("x"));
+        traceback_mod::mb_traceback_capture_raise(MbValue::from_int(51));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec!["call".to_string(), "return".to_string()]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_profile_hooks_do_not_recurse_through_hook_body() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(s("outer.py"), MbValue::from_int(3), s("outer"));
+        // Simulate compiled Python work inside the hook body: nested frame
+        // hooks should not emit additional trace/profile callbacks.
+        TRACE_PROFILE_HOOK_ACTIVE.with(|active| active.set(true));
+        traceback_mod::mb_traceback_push_frame(s("hook.py"), MbValue::from_int(4), s("inner"));
+        traceback_mod::mb_traceback_pop_frame();
+        TRACE_PROFILE_HOOK_ACTIVE.with(|active| active.set(false));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec!["call".to_string(), "return".to_string()]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_hook_ignores_line_updates_without_current_frame() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(99));
+        assert!(test_trace_events().is_empty());
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_hook_does_not_backfill_existing_frame_line_events() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_trace_hook as *const () as usize]);
+        traceback_mod::mb_traceback_push_frame(
+            s("module.py"),
+            MbValue::from_int(1),
+            s("<module>"),
+        );
+        let hook = MbValue::from_func(test_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(2));
+        traceback_mod::mb_traceback_pop_frame();
+        assert!(test_trace_events().is_empty());
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_call_returning_none_suppresses_line_return_and_exception_events() {
+        clear_test_trace_events();
+        register_test_hooks(&[test_global_trace_hook as *const () as usize]);
+        let hook = MbValue::from_func(test_global_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(s("trace_none.py"), MbValue::from_int(10), s("f"));
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(11));
+        exception::mb_raise(s("ValueError"), s("x"));
+        traceback_mod::mb_traceback_capture_raise(MbValue::from_int(12));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(test_trace_events(), vec!["global:call".to_string()]);
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_call_return_value_becomes_local_trace_hook() {
+        clear_test_trace_events();
+        register_test_hooks(&[
+            test_global_trace_hook as *const () as usize,
+            test_local_trace_hook as *const () as usize,
+        ]);
+        TEST_GLOBAL_TRACE_RETURN.with(|hook| {
+            hook.set(MbValue::from_func(test_local_trace_hook as *const () as usize));
+        });
+        let hook = MbValue::from_func(test_global_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("trace_local.py"),
+            MbValue::from_int(20),
+            s("f"),
+        );
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(21));
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(22));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec![
+                "global:call".to_string(),
+                "local:line".to_string(),
+                "local:line".to_string(),
+                "local:return".to_string()
+            ]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_trace_exception_event_uses_local_trace_hook() {
+        clear_test_trace_events();
+        register_test_hooks(&[
+            test_global_trace_hook as *const () as usize,
+            test_local_trace_hook as *const () as usize,
+        ]);
+        TEST_GLOBAL_TRACE_RETURN.with(|hook| {
+            hook.set(MbValue::from_func(test_local_trace_hook as *const () as usize));
+        });
+        let hook = MbValue::from_func(test_global_trace_hook as *const () as usize);
+        mb_threading_settrace(hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("trace_exception_local.py"),
+            MbValue::from_int(30),
+            s("f"),
+        );
+        exception::mb_raise(s("ValueError"), s("x"));
+        traceback_mod::mb_traceback_capture_raise(MbValue::from_int(31));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec![
+                "global:call".to_string(),
+                "local:exception".to_string(),
+                "local:return".to_string()
+            ]
+        );
+        clear_test_trace_events();
+    }
+
+    #[test]
+    fn test_profile_hook_still_observes_call_and_return_when_trace_returns_none() {
+        clear_test_trace_events();
+        register_test_hooks(&[
+            test_global_trace_hook as *const () as usize,
+            test_profile_hook as *const () as usize,
+        ]);
+        let trace_hook = MbValue::from_func(test_global_trace_hook as *const () as usize);
+        let profile_hook = MbValue::from_func(test_profile_hook as *const () as usize);
+        mb_threading_settrace(trace_hook);
+        mb_threading_setprofile(profile_hook);
+        traceback_mod::mb_traceback_push_frame(
+            s("trace_profile.py"),
+            MbValue::from_int(40),
+            s("f"),
+        );
+        traceback_mod::mb_traceback_set_current_line(MbValue::from_int(41));
+        traceback_mod::mb_traceback_pop_frame();
+        assert_eq!(
+            test_trace_events(),
+            vec![
+                "global:call".to_string(),
+                "profile:call".to_string(),
+                "profile:return".to_string()
+            ]
+        );
+        clear_test_trace_events();
     }
 
     #[test]

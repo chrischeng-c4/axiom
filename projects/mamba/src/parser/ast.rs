@@ -12,8 +12,8 @@ pub enum TypeParamKind {
 
 /// PEP 695 type parameter: `T`, `T: bound`, `T: (c1, c2)`, `*Ts`, `**P`.
 ///
-/// The bound / constraint expressions are kept as ordinary expressions so the
-/// runtime can evaluate them lazily (CPython semantics).
+/// The bound / constraint / default expressions are kept as ordinary
+/// expressions so the runtime can evaluate them lazily (CPython semantics).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
     pub name: Name,
@@ -22,6 +22,8 @@ pub struct TypeParam {
     pub bound: Option<Spanned<Expr>>,
     /// `T: (c1, c2, ...)` — tuple of constraint expressions.
     pub constraints: Option<Vec<Spanned<Expr>>>,
+    /// `T = default` — lazily evaluated default expression (PEP 696).
+    pub default: Option<Spanned<Expr>>,
 }
 
 impl TypeParam {
@@ -32,6 +34,7 @@ impl TypeParam {
             kind: TypeParamKind::TypeVar,
             bound: None,
             constraints: None,
+            default: None,
         }
     }
 }

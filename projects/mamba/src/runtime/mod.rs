@@ -18,6 +18,7 @@ pub mod output;
 pub mod pep695;
 pub mod rc;
 pub mod registry_bridge;
+pub mod repr_guard;
 pub mod set_ops;
 #[allow(non_snake_case)]
 pub mod stdlib;

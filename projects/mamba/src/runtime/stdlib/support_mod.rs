@@ -35,10 +35,12 @@
 //! `test_mod.rs`; the win here is removing the *import wall* so the fixtures can
 //! reach their actual test body.
 
+use super::super::dict_ops::DictKey;
 use super::super::module::{MODULES, NATIVE_FUNC_ADDRS};
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 // ── byte-size constants used by bigmem / array / gzip fixtures ──
 const _1G: i64 = 1024 * 1024 * 1024;
@@ -71,6 +73,22 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+fn dict_get_kw(dict: MbValue, key: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().iter().find_map(|(k, v)| {
+                if matches!(k, DictKey::Str(s) if s == key) {
+                    Some(*v)
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        }
+    })
+}
+
 /// A no-op variadic callable: returns None regardless of arguments.
 unsafe extern "C" fn dispatch_noop(_args: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
@@ -89,6 +107,52 @@ unsafe extern "C" fn dispatch_identity(args: *const MbValue, n: usize) -> MbValu
 /// the import-unblock goal.
 unsafe extern "C" fn dispatch_empty_iter(_args: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
+}
+
+/// `test.support.findfile(name, subdir=...)` for CPython stdlib test data.
+///
+/// The conformance oracle environment vendors CPython's `test/configdata`
+/// files under `tests/cpython/.cache/oracle-env`. Returning a concrete path
+/// keeps ported fixtures on their normal file-driven parse path.
+unsafe extern "C" fn dispatch_findfile(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    let Some(name) = a.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    let kwargs = a.last().copied().filter(|v| {
+        v.as_ptr()
+            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .unwrap_or(false)
+    });
+    let subdir = a.get(1).copied().and_then(extract_str).or_else(|| {
+        kwargs
+            .and_then(|kw| dict_get_kw(kw, "subdir"))
+            .and_then(extract_str)
+    });
+
+    let mut rel =
+        PathBuf::from("tests/cpython/.cache/oracle-env/lib/python3.12/site-packages/test");
+    if let Some(s) = subdir {
+        rel.push(s);
+    }
+    rel.push(&name);
+
+    if let Ok(cwd) = std::env::current_dir() {
+        for dir in std::iter::once(cwd.as_path()).chain(cwd.ancestors().skip(1)) {
+            let direct = dir.join(&rel);
+            if direct.exists() {
+                return MbValue::from_ptr(MbObject::new_str(direct.to_string_lossy().into_owned()));
+            }
+            let via_projects = dir.join("projects/mamba").join(&rel);
+            if via_projects.exists() {
+                return MbValue::from_ptr(MbObject::new_str(
+                    via_projects.to_string_lossy().into_owned(),
+                ));
+            }
+        }
+    }
+
+    MbValue::from_ptr(MbObject::new_str(name))
 }
 
 /// `import_helper.import_module(name)` — really import the module.
@@ -316,6 +380,7 @@ pub fn register() {
     let identity = func(dispatch_identity as usize);
     let empty_iter = func(dispatch_empty_iter as usize);
     let import_module = func(dispatch_import_module as usize);
+    let findfile = func(dispatch_findfile as usize);
     let captured_out = func(dispatch_captured_stdout as usize);
     let captured_err = func(dispatch_captured_stderr as usize);
     let captured_in = func(dispatch_captured_stdin as usize);
@@ -337,6 +402,11 @@ pub fn register() {
             // mamba target that is False. Without this the multi-name import line
             // raises ImportError and skips the whole fixture.
             ("is_s390x", MbValue::from_bool(false)),
+            // Traceback's CPython tests import this debug-range predicate in
+            // their shared prelude; mamba does not expose a no-debug-ranges
+            // mode, so keep the predicate false and let tests reach their body.
+            ("has_no_debug_ranges", MbValue::from_bool(false)),
+            ("findfile", findfile),
             // Make the top-level captured_* match the real context-manager behavior:
             // __enter__ pushes a StringIO onto the stdout/stderr redirect stack so
             // print() inside the block is captured, and yields it for getvalue().

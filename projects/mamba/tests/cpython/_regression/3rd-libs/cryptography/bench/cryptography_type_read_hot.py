@@ -32,6 +32,25 @@ Goal 2.
 
 import cryptography
 
+# Fixture repair (#967): `cryptography/__init__.py` only exposes
+# `__author__`/`__copyright__`/`__version__` today — `Fernet`, `x509`,
+# `hazmat`, and `exceptions` are only bound as package attributes once their
+# submodules are imported (Python's import machinery sets
+# `cryptography.<name>` as a side effect of importing `cryptography.<name>`).
+# `Fernet` itself is a class in the `fernet` submodule, not a submodule, so
+# it needs an explicit rebind onto the package. Under mamba, `cryptography`
+# is a flat native shim with no real submodules to import — it already
+# registers all four names directly as top-level attributes, so the
+# (expected) ImportError here is a no-op fallback to that existing shim
+# surface.
+try:
+    from cryptography import exceptions, hazmat, x509  # noqa: F401
+    from cryptography.fernet import Fernet as _Fernet
+
+    cryptography.Fernet = _Fernet
+except ImportError:
+    pass
+
 
 _FERNET_BASELINE = cryptography.Fernet
 _X509_BASELINE = cryptography.x509

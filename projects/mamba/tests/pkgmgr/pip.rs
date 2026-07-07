@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use mamba::pkgmanage::pkgmgr::wheel_build::{
-    CoreMetadata, WheelBuilder, WheelMetadata, compose_filename,
+    compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
 };
 use sha2::{Digest, Sha256};
 

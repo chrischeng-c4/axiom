@@ -353,15 +353,15 @@ except Exception as e:
 #
 # This is an ADDITIVE mode. It does NOT touch the type-wall fixture generation
 # above. It walks the same typeshed `.pyi` files with the same `ast.parse`,
-# maps EACH positional parameter to a closed CoreTy (scalar set only, else
-# Unknown), and emits a deterministic `const STDLIB_SIGS_GENERATED` consumed by
-# src/types/stdlib_sigs.rs. The guardrails (skip-when-unsure, Bool->Int /
-# Int->Float allow, stop-at-star) all live in the Rust hook and are unchanged;
-# this table only declares the contract, and is deliberately conservative:
-#   * ANY Unknown param            -> enforceable = false
+# maps EACH positional parameter to a closed CoreTy, and emits a deterministic
+# `const STDLIB_SIGS_GENERATED` consumed by src/types/stdlib_sigs.rs. The
+# guardrails (skip-when-unsure, Bool->Int / Int->Float allow, stop-at-star) all
+# live in the Rust hook and are unchanged; this table only declares the
+# contract, and is deliberately conservative:
 #   * ANY *args / *  param         -> enforceable = false (alignment uncertain)
-#   * OVERLOADED name (>=2 defs)   -> enforceable = false (which overload?)
-#   * NO concrete-scalar param     -> enforceable = false (nothing to check)
+#   * SINGLE signature row         -> enforceable if any param is not Unknown
+#   * OVERLOADED 3.12 row set      -> fold each always-typed position to Typed
+#   * NO checkable param           -> enforceable = false (nothing to check)
 # The row is still EMITTED in every case (documented negative / skip), exactly
 # like the PoC's b64encode/factorial guards — the hook reads `enforceable`.
 #
@@ -457,14 +457,15 @@ def _typevar_convention(ident: str) -> bool:
     )
 
 
-# Per-module set of names `core_ty_of` must treat as Unknown: module-local
-# typevars + PEP 695 type params + aliases that resolve to a wildcard type.
-# Set by `rust_rows` before walking each `.pyi`.
-_CTX_EXCLUDE: set[str] = set()
-# GLOBAL union of those names across ALL stubs — a typevar / `= Any` alias is
-# routinely defined in one module and imported+used in another, where the local
-# scan cannot see its definition. Set once by `rust_rows`.
-_GLOBAL_EXCLUDE: set[str] = set()
+# Per-module conservative name->CoreTy map consumed by `core_ty_of`: typevars,
+# PEP 695 type params, and aliases that resolve to a wildcard type. Most names
+# stay `"Unknown"`; constrained/bound `TypeVar(...)` definitions can narrow to a
+# non-Unknown wall. Set by `rust_rows` before walking each `.pyi`.
+_CTX_NAME_CORE: dict[str, str] = {}
+# GLOBAL conservative name->CoreTy map across ALL stubs so imported/global uses
+# of typevars or wildcard aliases resolve too. Duplicate names only stay
+# non-Unknown when every observed definition agrees on the same wall.
+_GLOBAL_NAME_CORE: dict[str, str] = {}
 
 
 def _expr_is_wildcard(e: ast.expr | None) -> bool:
@@ -497,13 +498,72 @@ def _expr_is_wildcard(e: ast.expr | None) -> bool:
     return False
 
 
-def _collect_module_exclusions(tree: ast.Module) -> set[str]:
-    """Names defined in THIS module that `core_ty_of` must NOT map to `Typed`:
-    TypeVar/ParamSpec/TypeVarTuple targets, PEP 695 `type_params`, and aliases
+def _merge_name_core(dst: dict[str, str], name: str, core: str) -> None:
+    """Conservative merge: duplicate spellings only keep a non-Unknown wall
+    when every observed definition agrees on it exactly."""
+    prev = dst.get(name)
+    if prev is None:
+        dst[name] = core
+    elif prev != core:
+        dst[name] = "Unknown"
+
+
+def _name_core_override(node: ast.expr, name_core: dict[str, str]) -> str | None:
+    """Resolve a simple name/attr through a conservative local map."""
+    if isinstance(node, ast.Name):
+        return name_core.get(node.id)
+    if isinstance(node, ast.Attribute):
+        return name_core.get(node.attr)
+    return None
+
+
+def _typevar_call_core(node: ast.Call, *, name_core: dict[str, str] | None = None) -> str:
+    """Conservative wall for `TypeVar(...)` definitions.
+
+    Rules for #840:
+    - unconstrained TypeVar / ParamSpec / TypeVarTuple stay Unknown
+    - `TypeVar("T", A, B, ...)` with >=2 constraints becomes Typed only when
+      every constraint itself maps non-Unknown
+    - `TypeVar("T", bound=X)` inherits `core_ty_of(X)` only when that bound is
+      non-wildcard and non-Unknown (e.g. `bound=Hashable` stays Unknown)
+    """
+    func_name = (
+        node.func.id if isinstance(node.func, ast.Name)
+        else node.func.attr if isinstance(node.func, ast.Attribute)
+        else ""
+    )
+    if func_name != "TypeVar":
+        return "Unknown"
+    constraints = node.args[1:]
+    if len(constraints) >= 2:
+        def _constraint_core(arg: ast.expr) -> str:
+            if name_core is not None:
+                override = _name_core_override(arg, name_core)
+                if override is not None:
+                    return override
+            return core_ty_of(arg)
+        return (
+            "Typed"
+            if all(_constraint_core(arg) != "Unknown" for arg in constraints)
+            else "Unknown"
+        )
+    for kw in node.keywords:
+        if kw.arg == "bound" and not _expr_is_wildcard(kw.value):
+            override = None if name_core is None else _name_core_override(kw.value, name_core)
+            ct = override if override is not None else core_ty_of(kw.value)
+            if ct != "Unknown":
+                return ct
+    return "Unknown"
+
+
+def _collect_module_name_core(tree: ast.Module) -> dict[str, str]:
+    """Names defined in THIS module that `core_ty_of` should resolve
+    conservatively: TypeVar-family targets, PEP 695 `type_params`, and aliases
     that resolve to a wildcard (`Unused = object`, `_X: TypeAlias = Any | int`).
     Missing one only risks a false positive, so collection is structural and
     backed by the `_typevar_convention` fallback for imported typevars."""
-    excl: set[str] = set()
+    name_core: dict[str, str] = {}
+    typevar_assigns: list[tuple[str, ast.Call]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             val = node.value
@@ -512,39 +572,46 @@ def _collect_module_exclusions(tree: ast.Module) -> set[str]:
                 and isinstance(val.func, ast.Name)
                 and val.func.id in ("TypeVar", "ParamSpec", "TypeVarTuple")
             )
-            if is_tv or _expr_is_wildcard(val):
+            if is_tv:
                 for t in node.targets:
                     if isinstance(t, ast.Name):
-                        excl.add(t.id)
+                        typevar_assigns.append((t.id, val))
+            elif _expr_is_wildcard(val):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        _merge_name_core(name_core, t.id, "Unknown")
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             if node.value is not None and _expr_is_wildcard(node.value):
-                excl.add(node.target.id)
+                _merge_name_core(name_core, node.target.id, "Unknown")
         elif isinstance(node, ast.TypeAlias) and isinstance(node.name, ast.Name):
             if _expr_is_wildcard(node.value):
-                excl.add(node.name.id)
+                _merge_name_core(name_core, node.name.id, "Unknown")
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             for tp in getattr(node, "type_params", []):  # PEP 695 def f[T] / class C[T]
-                excl.add(tp.name)
-    return excl
+                _merge_name_core(name_core, tp.name, "Unknown")
+    for name, val in typevar_assigns:
+        _merge_name_core(name_core, name, _typevar_call_core(val, name_core=name_core))
+    return name_core
 
 
-def _collect_global_exclusions() -> set[str]:
-    """Union of `_collect_module_exclusions` across EVERY typeshed stdlib stub.
+def _collect_global_name_core() -> dict[str, str]:
+    """Conservative union of `_collect_module_name_core` across EVERY typeshed stdlib stub.
 
     A typevar or `= Any` alias defined in module A is frequently imported and
     used in module B's signatures; B's local scan cannot see A's definition, so
     without a global pass those names wrongly map to `Typed` and would reject a
     valid bare class (a real false positive an adversarial typeshed audit caught:
-    `_StrPathT`, `_TC`, `_RetAddress`, `AnnotationForm`, …). Excluding a name
-    globally only ever costs a conservative MISS — never a false positive — so
-    the union is safe even where a name is also a real class elsewhere."""
-    g: set[str] = set()
+    `_StrPathT`, `_TC`, `_RetAddress`, `AnnotationForm`, …). A global name only
+    keeps a non-Unknown wall when every observed definition agrees; otherwise it
+    degrades to Unknown, which only costs a conservative MISS."""
+    g: dict[str, str] = {}
     for pyi in TYPESHED_STDLIB.rglob("*.pyi"):
         try:
             tree = ast.parse(pyi.read_text(encoding="utf-8", errors="replace"))
         except SyntaxError:
             continue
-        g |= _collect_module_exclusions(tree)
+        for name, ct in _collect_module_name_core(tree).items():
+            _merge_name_core(g, name, ct)
     return g
 
 
@@ -798,9 +865,13 @@ def core_ty_of(node: ast.expr | None) -> str:
             return SCALAR_CORE_TY[ident]
         if _is_protocol_name(ident):
             return "Typed"
+        if ident in _CTX_NAME_CORE:
+            return _CTX_NAME_CORE[ident]
+        if ident in _GLOBAL_NAME_CORE:
+            return _GLOBAL_NAME_CORE[ident]
         if ident in _WILDCARD_TYPES or "Any" in ident:
             return "Unknown"
-        if ident in _CTX_EXCLUDE or ident in _GLOBAL_EXCLUDE or _typevar_convention(ident):
+        if _typevar_convention(ident):
             return "Unknown"
         # Nominal class name or alias to a concrete (non-wildcard) type: a bare
         # no-base no-method class instance can satisfy none of them.
@@ -810,9 +881,13 @@ def core_ty_of(node: ast.expr | None) -> str:
         attr = node.attr
         if _is_protocol_name(attr):
             return "Typed"
+        if attr in _CTX_NAME_CORE:
+            return _CTX_NAME_CORE[attr]
+        if attr in _GLOBAL_NAME_CORE:
+            return _GLOBAL_NAME_CORE[attr]
         if attr in _WILDCARD_TYPES or "Any" in attr:
             return "Unknown"
-        if attr in _GLOBAL_EXCLUDE or _typevar_convention(attr):
+        if _typevar_convention(attr):
             return "Unknown"
         return "Typed"
     # ---- L2: clean Union / Optional (no wildcard member) -> Typed. -----------
@@ -836,11 +911,11 @@ def core_ty_of(node: ast.expr | None) -> str:
         # the container scalar map nor the nominal-protocol allowlist may fire).
         if (
             not base_name
-            or base_name in _CTX_EXCLUDE
-            or base_name in _GLOBAL_EXCLUDE
+            or base_name in _CTX_NAME_CORE
+            or base_name in _GLOBAL_NAME_CORE
             or _typevar_convention(base_name)
         ):
-            return "Unknown"
+            return _CTX_NAME_CORE.get(base_name, _GLOBAL_NAME_CORE.get(base_name, "Unknown"))
         # ---- L3a: subscripted container/type-object -> its own negative
         # scalar-wall CoreTy. `list[str]`, `dict[str, int]`, `type[C]` — the
         # type ARGUMENT is irrelevant to the hook (a concrete int/float/str/
@@ -912,7 +987,8 @@ def _collect_params(fn: ast.FunctionDef | ast.AsyncFunctionDef, drop_first: bool
     `params` is a list of (name, core_ty) for the positional parameters
     (posonly + args), in order, with `self`/`cls` dropped for methods.
     `has_star` is True iff the callable has a `*args` (vararg): positional
-    alignment past it is uncertain, so such signatures are non-enforceable."""
+    alignment past it is uncertain, so render marks one trailing star/Unknown
+    row to document the unaligned tail."""
     pos = fn.args.posonlyargs + fn.args.args
     if drop_first:
         pos = pos[1:]
@@ -1016,30 +1092,26 @@ def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True
     `Public = _impl` re-export aliases this walker doesn't track structurally
     — see its docstring).
 
-    An *all-scalar* star-free single-signature row is enforced in full. A row
-    whose LEADING params are scalar but which is then interrupted by a non-scalar
-    param (Unknown/bool/bytes/None) is still enforceable on that leading scalar
-    PREFIX only: we emit the prefix as the row's params (so the emitted
-    enforceable row stays all-scalar, satisfying the `stdlib_sigs.rs` invariant)
-    and the hook checks exactly those leading positions. Overloaded names and
-    `*args` rows are never enforceable (which overload / where does positional
-    alignment end?). A row with no leading scalar param is non-enforceable and
-    keeps its full param list for documentation.
+    An *all-scalar* single-signature row is enforced in full. A row whose fixed
+    positional prefix has checkable params remains enforceable even when a
+    trailing `*args` exists: the fixed prefix is still alignable, and render
+    appends one trailing star/Unknown row so the variadic tail is documented but
+    skipped. Overloaded names remain non-enforceable, including any merged row
+    that carries a star. A row with no checkable fixed param is non-enforceable
+    and keeps its full param list for documentation.
 
     `ret` (#887) is INDEPENDENT of `enforceable`: it is fed into the CALL
     EXPRESSION's inferred type at the call site regardless of whether the
     call's arguments are enforceable (a zero-arg call like `os.getcwd()` is
     never `enforceable`, but its `str` return still must flow into
     inference)."""
-    # A sig is enforceable if it has ANY concrete-scalar param (not just a
-    # LEADING run) and is neither `*args` nor overloaded. The ① hook walks params
-    # in positional order and SKIPS Unknown params (`core_ty_to_type_id` -> None)
-    # while still advancing the index, so a scalar param sitting BEHIND an Unknown
-    # param (`f(a: Unknown, b: str)`) is enforced correctly at its real position.
-    # Overloaded names stay non-enforceable — which overload's param types apply?
-    # (the `logging.getLevelName` int|str overload is exactly the false-positive
-    # hazard a wholesale enforce would hit). Emit the FULL param list so the hook
-    # aligns positions past the skipped Unknowns.
+    # A single-signature sig is enforceable if its fixed positional prefix has
+    # ANY checkable param; a trailing `*args` does not block enforcement of that
+    # prefix because render appends an explicit star/Unknown tail row and the
+    # hook stops there. Overloaded names stay non-enforceable — which overload's
+    # param types apply? (the `logging.getLevelName` int|str overload is exactly
+    # the false-positive hazard a wholesale enforce would hit). Emit the FULL
+    # fixed param list so the hook aligns positions past skipped Unknowns.
     # A scalar (Int/Float/Str/Bytes/Bool/Complex/List/Tuple/Dict/Type) param is
     # checked by value (a negative scalar wall, or — Int/Float/Str/Bool — the
     # ordinary compatibility rule); a `Typed` protocol param is checked by the
@@ -1057,7 +1129,7 @@ def _sig_row(mod, qualifier, name, kind, params, has_star, overloaded, v312=True
             for pn, ct in params
         ]
     has_checkable = any(ct != "Unknown" for _name, ct in params)
-    enforceable = (not has_star) and (not overloaded) and has_checkable
+    enforceable = (not overloaded) and has_checkable
     emitted_params = params
     return dict(
         module=mod,
@@ -1145,18 +1217,18 @@ def _count_defs(body, mod, scope, counts):
 
 def rust_rows():
     """Yield every signature row across typeshed stdlib, deterministically."""
-    global _CTX_EXCLUDE, _GLOBAL_EXCLUDE
+    global _CTX_NAME_CORE, _GLOBAL_NAME_CORE
     # One global pass first: cross-module typevars / `= Any` aliases that a
     # per-module scan cannot resolve at the use site.
-    _GLOBAL_EXCLUDE = _collect_global_exclusions()
+    _GLOBAL_NAME_CORE = _collect_global_name_core()
     for pyi in sorted(TYPESHED_STDLIB.rglob("*.pyi")):
         mod = module_name(pyi)
         try:
             tree = ast.parse(pyi.read_text(encoding="utf-8", errors="replace"))
         except SyntaxError:
             continue
-        # Per-module typevar / wildcard-alias exclusions consumed by `core_ty_of`.
-        _CTX_EXCLUDE = _collect_module_exclusions(tree)
+        # Per-module typevar / wildcard-alias map consumed by `core_ty_of`.
+        _CTX_NAME_CORE = _collect_module_name_core(tree)
         counts: dict[tuple[str, str], int] = {}
         _count_defs(tree.body, mod, mod, counts)
         yield from _walk_module_rust(tree.body, mod, counts)
@@ -1178,33 +1250,17 @@ def _core_ty_rust(ct: str) -> str:
     return ct
 
 
-_ENF_SCALARS = {"Int", "Float", "Str"}
-
-
-def _is_enforceable_ct(ct: str) -> bool:
-    """AGREEMENT-fold enforceability: the plain closed scalars, plus (#882) a
-    hand-pinned `TypedNamed:` contract tag (see `_PARAM_CORE_TY_OVERRIDE`) —
-    both carry a real `check_expr.rs` predicate, unlike `"Unknown"`/`"Typed"`.
-    `os.fspath`'s 3-branch `str`/`bytes`/`PathLike[AnyStr]` `@overload` chain
-    is the one case this reaches: `_PARAM_CORE_TY_OVERRIDE` pins ALL three
-    branches' `path` param to the SAME `"TypedNamed:PathLike"` tag, so they
-    trivially agree in `merge_overload_params` below (a plain per-position
-    AGREEMENT fold over the natural, un-pinned `Str`/`Bytes`/`Typed` CoreTys
-    could never agree — the three branches never share one)."""
-    return ct in _ENF_SCALARS or ct.startswith("TypedNamed:")
-
-
 def merge_overload_params(rows):
     """Merge a real @overload chain (>=2 signatures applicable to 3.12 at once)
-    into ONE enforceable row by AGREEMENT: a position is enforced only when
-    EVERY overload has the SAME enforceable CoreTy there (`_is_enforceable_ct`
-    — a scalar, or #882's hand-pinned `TypedNamed:` tag). A valid call must
-    satisfy some overload, but if all overloads demand the same enforceable
-    CoreTy at a position, any actual disjoint from it is wrong for all of them
-    (provably false-positive-clean). Positions where the overloads disagree,
-    or where any is non-enforceable, collapse to Unknown (which also ends the
-    enforceable prefix the hook reads). Conservative on arity: only positions
-    present in EVERY overload are considered."""
+    into ONE folded row for the 3.12-applicable set: a position is checkable
+    only when EVERY overload has a non-Unknown contract there, and folded
+    overloaded positions always degrade to `Typed` rather than preserving a
+    concrete scalar/type-tag wall. That keeps overload groups conservative:
+    they can reject a bare sentinel against positions that are always typed,
+    but never guess which concrete scalar wall applies across the whole set.
+    Positions missing from some overload, or carrying Unknown in any branch,
+    collapse to Unknown. Conservative on arity: only positions present in
+    EVERY overload are considered."""
     base = dict(rows[0])
     param_lists = [r["params"] for r in rows]
     n = min(len(pl) for pl in param_lists)
@@ -1212,14 +1268,14 @@ def merge_overload_params(rows):
     for i in range(n):
         ctys = {pl[i][1] for pl in param_lists}
         name = param_lists[0][i][0]
-        if len(ctys) == 1 and _is_enforceable_ct(next(iter(ctys))):
-            merged.append((name, next(iter(ctys))))
+        if all(ct != "Unknown" for ct in ctys):
+            merged.append((name, "Typed"))
         else:
             merged.append((name, "Unknown"))
     has_star = any(r.get("has_star") for r in rows)
     base["params"] = merged
     base["has_star"] = has_star
-    base["enforceable"] = (not has_star) and any(_is_enforceable_ct(ct) for _, ct in merged)
+    base["enforceable"] = any(ct != "Unknown" for _, ct in merged)
     # #887: same AGREEMENT rule for the return type — a real `@overload` chain
     # only has ONE knowable return if every branch declares the SAME scalar;
     # otherwise (a `logging.getLevelName`-style int|str-return split) the
@@ -1277,9 +1333,12 @@ def render_rust() -> str:
         "//! stdlib callable's positional params to the closed [`CoreTy`] scalar set\n"
         "//! (int/float/str/bytes/bool/complex/list/tuple/dict/type/None); everything\n"
         "//! richer is `CoreTy::Unknown`.\n"
-        "//! A row is `enforceable` only when it is non-overloaded, star-free, and\n"
-        "//! every positional param is a concrete scalar — otherwise the hook skips\n"
-        "//! it (skip-when-unsure, zero false positives on correct calls).\n"
+        "//! A single-signature row is `enforceable` when its fixed positional\n"
+        "//! prefix has at least one checkable param; a trailing `*args` is\n"
+        "//! rendered as one star/Unknown tail row and skipped. A 3.12 overload\n"
+        "//! set folds positions that are non-Unknown in every branch to\n"
+        "//! `CoreTy::Typed`; divergent or missing positions become\n"
+        "//! `CoreTy::Unknown`.\n"
         "//!\n"
         "//! #887: each row also carries `ret`, the callable's typeshed RETURN\n"
         "//! annotation closed to the concrete positive scalars (`Int`/`Float`/\n"

@@ -833,6 +833,7 @@ unsafe extern "C" fn dispatch_interactive_interpreter(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let locals = if nargs >= 1 {
         let arg0 = *args_ptr;
         if arg0.is_none() {
@@ -853,6 +854,7 @@ unsafe extern "C" fn dispatch_interactive_console(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let locals = if nargs >= 1 {
         let arg0 = *args_ptr;
         if arg0.is_none() {
@@ -978,11 +980,14 @@ pub fn register() {
             set.insert(addr as u64);
         }
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(addr_ii as u64, "InteractiveInterpreter".to_string());
-        map.insert(addr_ic as u64, "InteractiveConsole".to_string());
-    });
+    super::super::module::register_native_type_name(
+        addr_ii as u64,
+        "InteractiveInterpreter".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        addr_ic as u64,
+        "InteractiveConsole".to_string(),
+    );
 
     super::register_module("code", attrs);
 }

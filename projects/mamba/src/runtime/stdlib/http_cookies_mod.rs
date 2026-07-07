@@ -52,6 +52,7 @@ use std::collections::HashMap;
 macro_rules! disp_variadic {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(a)
         }
@@ -833,7 +834,12 @@ unsafe extern "C" fn morsel_eq(self_v: MbValue, other: MbValue) -> MbValue {
 /// second, redundant dict lookup by key (#1477: the key string is also
 /// built once here and reused across the lookup/field/setitem instead of
 /// being allocated three separate times).
-fn cookie_set_inner(self_v: MbValue, key: &str, real: MbValue, coded: MbValue) -> Result<MbValue, ()> {
+fn cookie_set_inner(
+    self_v: MbValue,
+    key: &str,
+    real: MbValue,
+    coded: MbValue,
+) -> Result<MbValue, ()> {
     let lower = key.to_lowercase();
     if RESERVED.iter().any(|(k, _)| *k == lower) {
         raise_cookie_error(&format!("Attempt to set a reserved key {key:?}"));
@@ -1197,22 +1203,22 @@ fn register_cookie_classes() {
 
     // Map each constructor func addr -> its class name so the func->native-class
     // method bridge in mb_getattr can find the class for `Class.method`.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            d_base_cookie as *const () as usize as u64,
-            "BaseCookie".to_string(),
-        );
-        map.insert(
-            d_cookie_error as *const () as usize as u64,
-            "CookieError".to_string(),
-        );
-        map.insert(
-            d_simple_cookie as *const () as usize as u64,
-            "SimpleCookie".to_string(),
-        );
-        map.insert(d_morsel as *const () as usize as u64, "Morsel".to_string());
-    });
+    super::super::module::register_native_type_name(
+        d_base_cookie as *const () as usize as u64,
+        "BaseCookie".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_cookie_error as *const () as usize as u64,
+        "CookieError".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_simple_cookie as *const () as usize as u64,
+        "SimpleCookie".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_morsel as *const () as usize as u64,
+        "Morsel".to_string(),
+    );
 }
 
 /// Register a cookie class with real, variadic (`self, args_list`) instance

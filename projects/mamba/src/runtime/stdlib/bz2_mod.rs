@@ -220,6 +220,7 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
 /// body is still unimplemented, but no in-scope fixture uses it after a
 /// valid construction).
 unsafe extern "C" fn dispatch_bz2file(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // filename must be a str/bytes path or an open file object; a number / None
     // (BZ2File(123.456)) is a TypeError, like CPython.
@@ -260,6 +261,7 @@ unsafe extern "C" fn dispatch_bz2file(args_ptr: *const MbValue, nargs: usize) ->
 /// `decompress` consumes one bz2 stream and then raises EOFError on any
 /// further call (mirrors zlib._ZlibDecompressor's single-use contract).
 unsafe extern "C" fn dispatch_bz2decompressor(_args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     // BZ2Decompressor() takes no positional arguments; BZ2Decompressor(42) is
     // a TypeError in CPython.
     if nargs > 0 {
@@ -330,7 +332,9 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
     // max_length: `max_length=` keyword (default -1 = unbounded). The whole
     // stream is decoded once into `_outbuf`; each call serves up to max_length
     // bytes and keeps the remainder, so bounded reads reassemble (CPython).
-    let max_length = items.iter().copied()
+    let max_length = items
+        .iter()
+        .copied()
         .find(|v| is_kwargs_dict(*v))
         .and_then(|d| {
             let r = super::super::dict_ops::mb_dict_get(
@@ -338,7 +342,11 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
                 MbValue::from_ptr(MbObject::new_str("max_length".to_string())),
                 MbValue::from_bits(u64::MAX),
             );
-            if r.to_bits() == u64::MAX { None } else { r.as_int() }
+            if r.to_bits() == u64::MAX {
+                None
+            } else {
+                r.as_int()
+            }
         })
         .unwrap_or(-1);
 
@@ -359,8 +367,11 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
                 outbuf = buf;
                 set_field(self_obj, "_stream_done", MbValue::from_bool(true));
                 if !unused.is_empty() {
-                    set_field(self_obj, "unused_data",
-                        MbValue::from_ptr(MbObject::new_bytes(unused)));
+                    set_field(
+                        self_obj,
+                        "unused_data",
+                        MbValue::from_ptr(MbObject::new_bytes(unused)),
+                    );
                 }
             }
             // A decode failure here is ambiguous between truly-invalid data and
@@ -382,22 +393,33 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
     let rest = outbuf[n..].to_vec();
     let drained = rest.is_empty();
     let done = field_bool(self_obj, "_stream_done");
-    set_field(self_obj, "_outbuf", MbValue::from_ptr(MbObject::new_bytes(rest)));
+    set_field(
+        self_obj,
+        "_outbuf",
+        MbValue::from_ptr(MbObject::new_bytes(rest)),
+    );
     set_field(self_obj, "eof", MbValue::from_bool(done && drained));
-    set_field(self_obj, "needs_input", MbValue::from_bool(drained && !done));
+    set_field(
+        self_obj,
+        "needs_input",
+        MbValue::from_bool(drained && !done),
+    );
     MbValue::from_ptr(MbObject::new_bytes(ret))
 }
 
 /// Read an Instance's bytes field into a Vec (empty when missing/not bytes).
 fn field_bytes(instance: MbValue, name: &str) -> Vec<u8> {
-    instance.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            let v = fields.read().unwrap().get(name).copied()?;
-            Some(with_bytes(v, |b| b.to_vec()))
-        } else {
-            None
-        }
-    }).unwrap_or_default()
+    instance
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let v = fields.read().unwrap().get(name).copied()?;
+                Some(with_bytes(v, |b| b.to_vec()))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// bz2.BZ2Compressor(compresslevel=9) -> a stateful incremental compressor.
@@ -406,9 +428,14 @@ fn field_bytes(instance: MbValue, name: &str) -> Vec<u8> {
 /// valid stream that round-trips through BZ2Decompressor (compresslevel is
 /// accepted and ignored — the backend always uses best).
 unsafe extern "C" fn dispatch_bz2compressor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let obj = MbObject::new_instance("bz2.BZ2Compressor".to_string());
     let val = MbValue::from_ptr(obj);
-    set_field(val, "_buf", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_field(
+        val,
+        "_buf",
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+    );
     set_field(val, "_flushed", MbValue::from_bool(false));
     val
 }
@@ -425,7 +452,11 @@ extern "C" fn mb_bz2compressor_compress(self_obj: MbValue, args: MbValue) -> MbV
     };
     let mut buf = field_bytes(self_obj, "_buf");
     with_bytes(data, |b| buf.extend_from_slice(b));
-    set_field(self_obj, "_buf", MbValue::from_ptr(MbObject::new_bytes(buf)));
+    set_field(
+        self_obj,
+        "_buf",
+        MbValue::from_ptr(MbObject::new_bytes(buf)),
+    );
     MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
 }
 
@@ -496,9 +527,10 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(bz2comp_addr as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(bz2comp_addr as u64, "BZ2Compressor".to_string());
-    });
+    super::super::module::register_native_type_name(
+        bz2comp_addr as u64,
+        "BZ2Compressor".to_string(),
+    );
     {
         let c_addr = mb_bz2compressor_compress as usize;
         let f_addr = mb_bz2compressor_flush as usize;
@@ -522,10 +554,7 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(bz2file_addr as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(bz2file_addr as u64, "BZ2File".to_string());
-    });
+    super::super::module::register_native_type_name(bz2file_addr as u64, "BZ2File".to_string());
     // Streaming method table shared with lzma.LZMAFile / gzip.GzipFile.
     super::compressed_file::register_class("BZ2File");
 
@@ -537,10 +566,10 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(bz2dec_addr as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(bz2dec_addr as u64, "BZ2Decompressor".to_string());
-    });
+    super::super::module::register_native_type_name(
+        bz2dec_addr as u64,
+        "BZ2Decompressor".to_string(),
+    );
     {
         let decompress_addr = mb_bz2decompressor_decompress as usize;
         super::super::module::register_variadic_func(decompress_addr as u64);
@@ -645,7 +674,11 @@ fn decompress_bz2_streams(b: &[u8]) -> Result<Vec<u8>, ()> {
         }
     }
 
-    if decoded_any { Ok(out) } else { Err(()) }
+    if decoded_any {
+        Ok(out)
+    } else {
+        Err(())
+    }
 }
 
 /// bz2.decompress(data) -> bytes (real bzip2 stream decode).
@@ -769,9 +802,7 @@ mod tests {
     #[test]
     fn test_decompress_ignores_trailing_junk_after_stream() {
         let payload = b"bz2 payload".to_vec();
-        let compressed = mb_bz2_compress(MbValue::from_ptr(
-            MbObject::new_bytes(payload.clone()),
-        ));
+        let compressed = mb_bz2_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
         let mut cb = get_bytes_val(compressed).expect("compressed bytes");
         cb.extend_from_slice(b"not a bzip2 stream");
 
@@ -783,14 +814,14 @@ mod tests {
     fn test_decompress_joins_streams_before_trailing_junk() {
         let left = b"left".to_vec();
         let right = b"right".to_vec();
-        let mut joined = get_bytes_val(mb_bz2_compress(MbValue::from_ptr(
-            MbObject::new_bytes(left.clone()),
-        )))
+        let mut joined = get_bytes_val(mb_bz2_compress(MbValue::from_ptr(MbObject::new_bytes(
+            left.clone(),
+        ))))
         .expect("left compressed bytes");
         joined.extend(
-            get_bytes_val(mb_bz2_compress(MbValue::from_ptr(
-                MbObject::new_bytes(right.clone()),
-            )))
+            get_bytes_val(mb_bz2_compress(MbValue::from_ptr(MbObject::new_bytes(
+                right.clone(),
+            ))))
             .expect("right compressed bytes"),
         );
         joined.extend_from_slice(b"trailing junk");

@@ -747,30 +747,45 @@ impl<'a> Parser<'a> {
         }
         self.advance();
         let mut params = Vec::new();
+        let mut saw_default = false;
         while self.peek_kind() != Some(TokenKind::RBracket)
             && self.peek_kind() != Some(TokenKind::Eof)
         {
+            let param_start = self.peek().map(|t| t.start).unwrap_or(0);
+            let param;
             // ParamSpec: **P
             if self.peek_kind() == Some(TokenKind::DoubleStar) {
                 self.advance(); // consume **
                 let (s, e) = self.expect_name()?;
-                params.push(TypeParam {
+                param = TypeParam {
                     name: self.text_at(s, e).to_string(),
                     kind: TypeParamKind::ParamSpec,
                     bound: None,
                     constraints: None,
-                });
+                    default: if self.peek_kind() == Some(TokenKind::Eq) {
+                        self.advance();
+                        Some(self.parse_expr()?)
+                    } else {
+                        None
+                    },
+                };
             }
             // TypeVarTuple: *Ts
             else if self.peek_kind() == Some(TokenKind::Star) {
                 self.advance(); // consume *
                 let (s, e) = self.expect_name()?;
-                params.push(TypeParam {
+                param = TypeParam {
                     name: self.text_at(s, e).to_string(),
                     kind: TypeParamKind::TypeVarTuple,
                     bound: None,
                     constraints: None,
-                });
+                    default: if self.peek_kind() == Some(TokenKind::Eq) {
+                        self.advance();
+                        Some(self.parse_expr()?)
+                    } else {
+                        None
+                    },
+                };
             }
             // Regular type param: T  or  T: bound  or  T: (c1, c2, ...)
             else {
@@ -778,6 +793,7 @@ impl<'a> Parser<'a> {
                 let name = self.text_at(s, e).to_string();
                 let mut bound = None;
                 let mut constraints = None;
+                let mut default = None;
                 // Optional bound: T: expr  or  T: (expr1, expr2, ...)
                 if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance(); // consume :
@@ -800,13 +816,26 @@ impl<'a> Parser<'a> {
                         bound = Some(self.parse_expr()?);
                     }
                 }
-                params.push(TypeParam {
+                if self.peek_kind() == Some(TokenKind::Eq) {
+                    self.advance(); // consume =
+                    default = Some(self.parse_expr()?);
+                }
+                param = TypeParam {
                     name,
                     kind: TypeParamKind::TypeVar,
                     bound,
                     constraints,
-                });
+                    default,
+                };
             }
+            if saw_default && param.default.is_none() {
+                return Err(crate::error::MambaError::syntax(
+                    self.span_from(param_start),
+                    "non-default type parameter follows default type parameter",
+                ));
+            }
+            saw_default |= param.default.is_some();
+            params.push(param);
             if self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
             }

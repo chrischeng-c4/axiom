@@ -2,9 +2,11 @@
 """Coverage regression gate for mamba — child task #3 of #1885.
 
 Compares the total region coverage in a `cargo llvm-cov --json` output
-against the frozen baseline in `COVERAGE-BASELINE.md` (68.98% region as
-of commit 6edea62d5). Exits non-zero when the PR run drops region
-coverage by more than the configured threshold (default 0.5pp).
+against the frozen baseline in
+`validation/evidence/coverage/llvm-cov-baseline-2026-05-18.md`
+(68.98% region as of commit 6edea62d5). Exits non-zero when the PR run
+drops region coverage by more than the configured threshold (default
+0.5pp).
 
 Usage:
     python3 scripts/coverage_gate.py cov.json
@@ -29,7 +31,7 @@ import sys
 from pathlib import Path
 
 
-BASELINE_REGION_PCT = 68.98  # COVERAGE-BASELINE.md @ 6edea62d5
+BASELINE_REGION_PCT = 68.98  # validation/evidence/coverage/llvm-cov-baseline-2026-05-18.md @ 6edea62d5
 DEFAULT_MAX_DROP_PP = 0.5
 
 

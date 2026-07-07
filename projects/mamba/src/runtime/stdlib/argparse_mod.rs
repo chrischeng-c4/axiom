@@ -76,7 +76,8 @@ fn extract_str(val: MbValue) -> Option<String> {
 fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
     dict.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).copied()
+            let guard = lock.read().unwrap();
+            super::super::dict_ops::dict_get_exact_str(&guard, key)
         } else {
             None
         }
@@ -121,8 +122,11 @@ fn raise(exc: &str, msg: &str) {
 fn raise_exit(code: i64) {
     let inst = MbValue::from_ptr(MbObject::new_instance("SystemExit".to_string()));
     set_field(inst, "code", MbValue::from_int(code));
-    set_field(inst, "args",
-        MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(code)])));
+    set_field(
+        inst,
+        "args",
+        MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(code)])),
+    );
     super::super::class::mb_raise_instance(inst);
 }
 
@@ -204,6 +208,7 @@ fn make_action(spec: &ArgSpec) -> MbValue {
 
 /// ArgumentParser(description=..., prog=..., exit_on_error=..., ...) -> parser.
 unsafe extern "C" fn dispatch_argument_parser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let parser = MbValue::from_ptr(MbObject::new_instance(PARSER_CLASS.to_string()));
     set_field(parser, "_actions", new_list(vec![]));
@@ -355,18 +360,20 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
         derive_dest(&names, explicit_dest)
     };
 
-    // Resolve action. A user Action subclass reaches native code as its
-    // class-name string (e.g. "CollectAction"); a registered class name that
-    // is not one of the builtin action keywords is treated as a custom action.
+    // Resolve action. A user Action subclass can reach native code either as
+    // its class-name string or as a runtime type object; any registered class
+    // name that is not one of the builtin action keywords is treated as a
+    // custom action.
     let action_kw = dict_get(kwargs, "action");
     let mut custom_action = MbValue::none();
-    let action = match action_kw.and_then(extract_str).as_deref() {
+    let action_name = action_kw.and_then(super::super::class::resolve_class_name);
+    let action = match action_name.as_deref() {
         Some("store_true") => "store_true".to_string(),
         Some("store_false") => "store_false".to_string(),
         Some("store") | None => "store".to_string(),
         Some("append") => "append".to_string(),
         Some(other) if super::super::class::class_is_registered(other) => {
-            custom_action = action_kw.unwrap();
+            custom_action = new_str(other);
             "custom".to_string()
         }
         Some(other) => other.to_string(),
@@ -586,7 +593,8 @@ unsafe extern "C" fn method_parse_args(self_v: MbValue, args: MbValue) -> MbValu
     let (ns, extras) = run_parser(self_v, &argv, false);
     if !extras.is_empty() {
         let msg = format!("unrecognized arguments: {}", extras.join(" "));
-        let _ = &msg; raise_exit(2);
+        let _ = &msg;
+        raise_exit(2);
         return MbValue::none();
     }
     ns
@@ -810,7 +818,8 @@ fn apply_type(type_v: MbValue, raw: &str, parser: MbValue, argname: &str) -> MbV
         let msg = format!("{label}invalid {raw}: '{raw}'");
         let _ = exc_type;
         if exit_on_error(parser) {
-            let _ = &msg; raise_exit(2);
+            let _ = &msg;
+            raise_exit(2);
         } else {
             raise("ArgumentError", &msg);
         }
@@ -1192,13 +1201,8 @@ fn invoke_custom_action(
                     } else {
                         new_str(option_string)
                     };
-                    let call_args = new_list(vec![
-                        custom_action_inst,
-                        parser,
-                        ns,
-                        values,
-                        option_value,
-                    ]);
+                    let call_args =
+                        new_list(vec![custom_action_inst, parser, ns, values, option_value]);
                     super::super::builtins::mb_call_spread(call_method, call_args);
                     return;
                 }
@@ -1346,12 +1350,10 @@ pub fn register() {
     // register_classes() populates for PARSER_CLASS below. Without this mapping
     // the methods are registered but `callable(ArgumentParser.add_argument)` is
     // False (same gap fixed for ConfigParser in commit 34a0fe7237).
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(
-            dispatch_argument_parser as *const () as usize as u64,
-            PARSER_CLASS.to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_argument_parser as *const () as usize as u64,
+        PARSER_CLASS.to_string(),
+    );
 
     // `ArgumentError` is exposed as its registered class-name string so that
     // `except argparse.ArgumentError` matches (the except-clause matcher reads

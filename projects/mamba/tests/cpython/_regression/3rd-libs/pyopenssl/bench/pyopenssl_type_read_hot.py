@@ -29,6 +29,19 @@ Goal 2.
 
 import OpenSSL
 
+# Fixture repair (#967): recent pyOpenSSL no longer auto-binds `rand` as an
+# `OpenSSL` package attribute (only `SSL`/`crypto`/`version` are imported by
+# `OpenSSL/__init__.py`); it stays resolvable only via its own submodule
+# import. Bind it explicitly under real CPython so `OpenSSL.rand` is a real,
+# identity-stable attribute again. Under mamba, `OpenSSL` is a flat native
+# shim with no real `rand` submodule to import — it already registers
+# `rand` directly as a top-level attribute, so the (expected) ImportError
+# here is a no-op fallback to that existing shim attribute.
+try:
+    import OpenSSL.rand  # noqa: F401
+except ImportError:
+    pass
+
 
 _SSL_BASELINE = OpenSSL.SSL
 _CRYPTO_BASELINE = OpenSSL.crypto

@@ -9,7 +9,6 @@
 # case = "stacksummary_subclass_format_frame_summary_hook"
 # subject = "traceback.StackSummary"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

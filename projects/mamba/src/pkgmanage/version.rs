@@ -1,11 +1,11 @@
 // `mamba version` — uv-compatible PEP 621 version read/set/bump entrypoint.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::path::PathBuf;
 
 use crate::pkgmanage::pkgmgr::version_bump::{
-    BumpKind, bump, parse_version, read_pyproject_version, write_pyproject_version,
+    bump, parse_version, read_pyproject_version, write_pyproject_version, BumpKind,
 };
 
 const PYPROJECT_FILE: &str = "pyproject.toml";

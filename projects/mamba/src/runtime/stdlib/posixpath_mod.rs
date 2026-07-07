@@ -491,7 +491,11 @@ unsafe extern "C" fn dispatch_splitdrive(args_ptr: *const MbValue, nargs: usize)
 
 unsafe extern "C" fn dispatch_splitroot(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let (a, b, c) = posix_splitroot(&s);
     mk_tuple3(a, b, c)
 }

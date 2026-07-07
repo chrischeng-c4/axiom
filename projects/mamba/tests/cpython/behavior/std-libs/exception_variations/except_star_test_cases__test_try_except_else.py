@@ -9,12 +9,10 @@
 # case = "except_star_test_cases__test_try_except_else"
 # subject = "cpython.test_exception_variations.ExceptStarTestCases.test_try_except_else"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_exception_variations.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_exception_variations.py::ExceptStarTestCases::test_try_except_else
 """Auto-ported test: ExceptStarTestCases::test_try_except_else (CPython 3.12 oracle)."""
 

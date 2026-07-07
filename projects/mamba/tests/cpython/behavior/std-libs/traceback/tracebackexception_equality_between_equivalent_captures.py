@@ -9,7 +9,6 @@
 # case = "tracebackexception_equality_between_equivalent_captures"
 # subject = "traceback.TracebackException"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

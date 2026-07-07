@@ -6,7 +6,7 @@ use futures::StreamExt;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
-use hyper::header::{CONTENT_TYPE, HeaderValue};
+use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{Method, Request as HyperRequest, Response as HyperResponse, StatusCode};

@@ -69,8 +69,9 @@ regresses, the same gate fails and the fix is `git mv pass/<f>.py fail/<f>.py`
 
 Numbers from this suite are **externally defined** — they reflect how much
 CPython 3.12 surface mamba supports, not how much regression-prevention
-coverage we've authored. See `NOTES-NEXT.md` top-of-file caveat (#1398
-context) for why the existing self-defined fixture pass rate is
+coverage we've authored. See
+`docs/notes/archive/autonomous-loop-scratchpad.md` top-of-file caveat
+(#1398 context) for why the existing self-defined fixture pass rate is
 regression-baseline only.
 
 Per-run sidecar JSON is written to

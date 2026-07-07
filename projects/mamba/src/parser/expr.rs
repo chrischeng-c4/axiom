@@ -5,7 +5,7 @@ use crate::lexer::token::{TokenKind, BIG_INT_LITERAL_SENTINEL};
 use crate::source::span::{Span, Spanned};
 
 /// Binding power for Pratt parsing.
-fn prefix_bp(op: &UnaryOp) -> u8 {
+pub(crate) fn prefix_bp(op: &UnaryOp) -> u8 {
     match op {
         UnaryOp::Pos | UnaryOp::Neg | UnaryOp::BitNot => 21,
         UnaryOp::Not => 5,
@@ -95,9 +95,6 @@ impl<'a> Parser<'a> {
         }
         if self.peek_kind() == Some(TokenKind::Lambda) {
             return self.parse_lambda();
-        }
-        if self.peek_kind() == Some(TokenKind::Await) {
-            return self.parse_await_expr();
         }
         if self.peek_kind() == Some(TokenKind::Star) {
             let start = self.peek().unwrap().start;
@@ -438,14 +435,10 @@ impl<'a> Parser<'a> {
             // `await` in operand position (e.g. `-await f()`, `await f() * 10`).
             // It binds at the unary level — tighter than binary operators — so
             // those parse as `-(await f())` and `(await f()) * 10`. (Top-level
-            // `await …` at the start of an expression is handled in parse_expr.)
-            TokenKind::Await => {
-                self.advance();
-                let bp = prefix_bp(&UnaryOp::Neg);
-                let operand = self.parse_expr_bp(bp)?;
-                let span = Span::new(self.file_id, start, operand.span.end);
-                Ok(Spanned::new(Expr::Await(Box::new(operand)), span))
-            }
+            // `await …` at the start of an expression flows through the same
+            // prefix parser so `await a() + await b()` becomes
+            // `(await a()) + (await b())`, matching Python precedence.
+            TokenKind::Await => self.parse_await_expr(),
             // Type keywords usable as expressions: int(x), bool(x), etc.
             TokenKind::IntType
             | TokenKind::FloatType

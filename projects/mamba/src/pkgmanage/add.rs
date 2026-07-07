@@ -15,7 +15,7 @@
 // `name==version` specifier per invocation. Transitive resolution and
 // complex version selection are out of scope (per #2681 issue body).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -401,7 +401,7 @@ fn pick_best_wheel(
     meta: &crate::pkgmanage::pkgmgr::PackageMetadata,
     version: &str,
 ) -> Option<WheelPick> {
-    use crate::pkgmanage::pkgmgr::tags::{TagSelector, parse_wheel_filename};
+    use crate::pkgmanage::pkgmgr::tags::{parse_wheel_filename, TagSelector};
     let files = meta.releases.get(version)?;
     let selector = TagSelector::current_host();
     let mut best: Option<(u32, &str, &str)> = None;

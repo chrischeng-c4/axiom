@@ -74,7 +74,6 @@ pub fn register() {
         "jose",
         "ldap3",
         // Process / system
-        "greenlet",
         "setproctitle",
         "psutil",
         // Docs / parsing

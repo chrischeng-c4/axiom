@@ -19,7 +19,7 @@
 //   <INDEX>/<normalized_name>/<version>/metadata.toml   # optional;
 //     requires = ["other_pkg==X.Y.Z", ...]              # transitive edges
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -27,8 +27,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::pkgmanage::add::{
-    ManifestState, SourceMeta, append_lock_source_fields, atomic_write, dep_name,
-    source_meta_from_manifest,
+    append_lock_source_fields, atomic_write, dep_name, source_meta_from_manifest, ManifestState,
+    SourceMeta,
 };
 
 const MANIFEST_FILE: &str = "mamba.toml";
@@ -106,10 +106,10 @@ fn resolve_index_url(sub: &ArgMatches) -> Option<String> {
 }
 
 fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
-    use crate::pkgmanage::pkgmgr::IndexClient;
-    use crate::pkgmanage::pkgmgr::markers::{MarkerEnv, evaluate as eval_marker};
+    use crate::pkgmanage::pkgmgr::markers::{evaluate as eval_marker, MarkerEnv};
     use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
-    use crate::pkgmanage::pkgmgr::resolver::{Resolver, parse_requirement};
+    use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Resolver};
+    use crate::pkgmanage::pkgmgr::IndexClient;
 
     let roots: Vec<crate::pkgmanage::pkgmgr::resolver::Requirement> = deps
         .iter()

@@ -597,6 +597,7 @@ unsafe extern "C" fn dispatch_itemgetter(args_ptr: *const MbValue, nargs: usize)
 /// NormalDist(mu=0.0, sigma=1.0). A negative sigma is a StatisticsError,
 /// matching CPython (`sigma must be non-negative`).
 unsafe extern "C" fn dispatch_normaldist(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { args_slice(args_ptr, nargs) };
     let mu = a
         .get(0)
@@ -647,6 +648,7 @@ fn class_token(name: &str, module: &str) -> MbValue {
 /// keep matching the raised instance, while the registered chaining slots make
 /// `hasattr(statistics.StatisticsError, "__cause__")` True.
 unsafe extern "C" fn dispatch_statistics_error(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let msg = a.first().copied().unwrap_or_else(MbValue::none);
     let mut fields = FxHashMap::default();
@@ -736,12 +738,10 @@ pub fn register() {
     // NormalDist doubles as a class object: resolve_class_name must map the
     // constructor dispatcher to "NormalDist" so classmethod dispatch
     // (`NormalDist.from_samples(...)`) and isinstance checks see the class.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(
-            dispatch_normaldist as *const () as u64,
-            "NormalDist".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_normaldist as *const () as u64,
+        "NormalDist".to_string(),
+    );
 
     // StatisticsError: a real exception class (re.error pattern). The name is a
     // callable constructor whose addr resolves to "StatisticsError" via
@@ -757,10 +757,10 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(stat_err_addr as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(stat_err_addr as u64, "StatisticsError".to_string());
-    });
+    super::super::module::register_native_type_name(
+        stat_err_addr as u64,
+        "StatisticsError".to_string(),
+    );
     {
         let mut slots: HashMap<String, MbValue> = HashMap::new();
         let slot = MbValue::from_func(stat_err_addr);

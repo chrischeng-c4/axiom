@@ -1843,9 +1843,12 @@ fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path)
             .with_context(|| format!("remove stale {}", sock_dir.display()))?;
     }
     std::fs::create_dir_all(&sock_dir).with_context(|| format!("create {}", sock_dir.display()))?;
-    let sock_dir_abs = sock_dir
-        .canonicalize()
-        .with_context(|| format!("canonicalize postgres seed socket dir {}", sock_dir.display()))?;
+    let sock_dir_abs = sock_dir.canonicalize().with_context(|| {
+        format!(
+            "canonicalize postgres seed socket dir {}",
+            sock_dir.display()
+        )
+    })?;
     let sock_arg = format!(
         "-h '' -k {} -p 5432",
         shell_single_quote(&sock_dir_abs.to_string_lossy())

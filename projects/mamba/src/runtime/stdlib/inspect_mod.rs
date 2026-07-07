@@ -210,6 +210,8 @@ thread_local! {
         std::cell::RefCell::new(Vec::new());
     static EMPTY_SINGLETON: std::cell::RefCell<Option<MbValue>> =
         std::cell::RefCell::new(None);
+    static IMPLICIT_DEFAULT_SINGLETON: std::cell::RefCell<Option<MbValue>> =
+        std::cell::RefCell::new(None);
 }
 
 /// The shared `inspect.Parameter.<KIND>` singleton for ordinal `k` (0..=4).
@@ -249,6 +251,18 @@ fn empty_singleton() -> MbValue {
     })
 }
 
+pub(crate) fn implicit_default_singleton() -> MbValue {
+    IMPLICIT_DEFAULT_SINGLETON.with(|c| {
+        let mut slot = c.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(MbValue::from_ptr(MbObject::new_instance(
+                "inspect._implicit_default".to_string(),
+            )));
+        }
+        slot.unwrap()
+    })
+}
+
 /// Kind ordinal of an `inspect._ParameterKind` instance, or None.
 fn kind_value(v: MbValue) -> Option<i64> {
     if inst_class_name(v).as_deref() == Some("inspect._ParameterKind") {
@@ -256,6 +270,10 @@ fn kind_value(v: MbValue) -> Option<i64> {
     } else {
         None
     }
+}
+
+fn is_implicit_default_sentinel(v: MbValue) -> bool {
+    inst_class_name(v).as_deref() == Some("inspect._implicit_default")
 }
 
 fn raise_exc(exc: &str, msg: &str) -> MbValue {
@@ -471,7 +489,7 @@ pub fn register() {
         ("getmro", d_getmro as *const () as usize),
         ("getclasstree", d_getclasstree as *const () as usize),
         ("getargvalues", d_argvalues as *const () as usize),
-        ("getouterframes", d_empty_list as *const () as usize),
+        ("getouterframes", d_getouterframes as *const () as usize),
         ("getinnerframes", d_empty_list as *const () as usize),
         ("formatargspec", d_empty_str as *const () as usize),
         ("formatargvalues", d_empty_str as *const () as usize),
@@ -878,13 +896,21 @@ unsafe extern "C" fn d_getframeinfo(args_ptr: *const MbValue, nargs: usize) -> M
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
     let v = a.first().copied().unwrap_or_else(MbValue::none);
-    if v.is_none() {
+    if !mb_inspect_isframe(v).as_bool().unwrap_or(false) {
         return raise_exc(
             "AttributeError",
-            "'NoneType' object has no attribute 'f_lineno'",
+            &format!(
+                "'{}' object has no attribute 'f_lineno'",
+                frame_attr_type_name(v)
+            ),
         );
     }
-    MbValue::none()
+    let context = a
+        .get(1)
+        .copied()
+        .and_then(MbValue::as_int_pyint)
+        .unwrap_or(1);
+    make_frame_info(v, context)
 }
 
 /// inspect.getgeneratorlocals(generator) -> dict of live generator locals.
@@ -1252,57 +1278,249 @@ unsafe extern "C" fn d_isdatadescriptor(args_ptr: *const MbValue, nargs: usize) 
     MbValue::from_bool(result)
 }
 
-pub(crate) fn make_current_frame_with_locals(locals: MbValue) -> MbValue {
-    let frame = MbValue::from_ptr(MbObject::new_instance("frame".to_string()));
+/// Build a "code" Instance carrying the real (filename, function-name) of a
+/// stack level instead of the hollow `"<unknown>"` placeholder. Reuses
+/// `class::make_module_code_object` (whose fields are all owned FxHashMap
+/// entries mutable via the generic Instance field API) and overrides
+/// `co_name`/`co_qualname` afterward — avoids widening that function's
+/// signature or touching class.rs beyond this read-only reuse (#889).
+fn make_named_code_object(filename: &str, name: &str) -> MbValue {
+    let code = super::super::class::make_module_code_object(filename, "");
     inst_set_field(
-        frame,
-        "f_code",
-        super::super::class::make_module_code_object("<unknown>", ""),
+        code,
+        "co_name",
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
     );
-    inst_set_field(frame, "f_locals", locals);
-    inst_set_field(frame, "f_globals", MbValue::from_ptr(MbObject::new_dict()));
-    inst_set_field(frame, "f_builtins", MbValue::from_ptr(MbObject::new_dict()));
-    inst_set_field(frame, "f_lineno", MbValue::from_int(1));
-    inst_set_field(frame, "f_lasti", MbValue::from_int(0));
-    inst_set_field(frame, "f_back", MbValue::none());
-    inst_set_field(frame, "f_trace", MbValue::none());
-    frame
+    inst_set_field(
+        code,
+        "co_qualname",
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    code
+}
+
+/// Build the full call-stack frame chain (module frame ... current frame),
+/// wiring `f_back` through every level (#889 R2) from mamba's existing
+/// TRACE_FRAME_STACK push/pop tracking (traceback_mod, already maintained at
+/// every Python-level function entry/exit for traceback rendering).
+///
+/// The innermost (current) frame receives `top_locals` — a REAL locals
+/// snapshot captured at the call site by hir_to_mir's
+/// `emit_current_locals_dict` (R1). Older/`f_back` frames only carry
+/// filename/lineno/name plus the most recent trace-hook state from
+/// TRACE_FRAME_STACK. Mamba does not keep a live locals snapshot per stack
+/// level, only at the call site itself, so older frames' `f_locals` stays a
+/// best-effort empty dict (documented gap, see report).
+///
+/// `f_globals` is real and shared across every frame in the chain
+/// (`closure::build_globals_dict()`): mamba's JIT keeps one
+/// GLOBAL_ID_NAMESPACE per module, so every frame from that module
+/// legitimately shares the same namespace object (R1, AC2).
+fn build_frame_chain(top_locals: MbValue) -> MbValue {
+    let mut entries = super::traceback_mod::trace_stack_snapshot_with_locals();
+    if entries.is_empty() {
+        // No JIT-tracked call stack (e.g. called from a native/test context
+        // outside compiled code) — fall back to the historical single
+        // hollow-module-frame shape so non-JIT callers keep working.
+        entries.push(super::traceback_mod::TraceFrameSnapshot {
+            filename: "<unknown>".to_string(),
+            lineno: 1,
+            name: "<module>".to_string(),
+            locals: None,
+            local_trace_hook: None,
+        });
+    }
+    let globals = super::super::closure::build_globals_dict();
+    let n = entries.len();
+    let mut back = MbValue::none();
+    let mut current = MbValue::none();
+    for (i, entry) in entries.into_iter().enumerate() {
+        let frame = MbValue::from_ptr(MbObject::new_instance("frame".to_string()));
+        inst_set_field(
+            frame,
+            "f_code",
+            make_named_code_object(&entry.filename, &entry.name),
+        );
+        let locals = if i + 1 == n {
+            top_locals
+        } else {
+            entry
+                .locals
+                .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()))
+        };
+        inst_set_field(frame, "f_locals", locals);
+        inst_set_field(frame, "f_globals", globals);
+        inst_set_field(frame, "f_builtins", MbValue::from_ptr(MbObject::new_dict()));
+        inst_set_field(frame, "f_lineno", MbValue::from_int(entry.lineno as i64));
+        inst_set_field(frame, "f_lasti", MbValue::from_int(0));
+        inst_set_field(frame, "f_back", back);
+        inst_set_field(
+            frame,
+            "f_trace",
+            entry.local_trace_hook.unwrap_or_else(MbValue::none),
+        );
+        current = frame;
+        back = frame;
+    }
+    current
+}
+
+pub(crate) fn make_current_frame_with_locals(locals: MbValue) -> MbValue {
+    build_frame_chain(locals)
 }
 
 pub(crate) fn make_current_frame() -> MbValue {
     make_current_frame_with_locals(MbValue::from_ptr(MbObject::new_dict()))
 }
 
+/// Shared `sys._getframe(depth)` / `inspect.currentframe()` entry point
+/// (#889 R3). `locals` is the real snapshot for depth 0 (the immediate
+/// caller of the builtin); `depth` walks that many steps up the `f_back`
+/// chain. Matches CPython: too-deep raises `ValueError("call stack is not
+/// deep enough")` — NOT IndexError (verified against the 3.12 oracle).
+pub(crate) fn frame_at_depth_with_locals(locals: MbValue, depth: MbValue) -> MbValue {
+    let steps = depth.as_int_pyint().unwrap_or(0).max(0) as usize;
+    let mut frame = build_frame_chain(locals);
+    for _ in 0..steps {
+        let back = inst_field(frame, "f_back").unwrap_or_else(MbValue::none);
+        if back.is_none() {
+            return insp_raise("ValueError", "call stack is not deep enough");
+        }
+        frame = back;
+    }
+    if steps > 0 {
+        // build_frame_chain returns an owned (rc-contributing) handle only
+        // for depth 0 (the innermost node it directly constructed); every
+        // hop above walked a *borrowed* `f_back` pointer (owned by the
+        // descendant frame's field map), so convert it to an owned handle
+        // before returning it to a caller that will eventually release it.
+        unsafe {
+            super::super::rc::retain_if_ptr(frame);
+        }
+    }
+    frame
+}
+
 unsafe extern "C" fn d_currentframe(_a: *const MbValue, _n: usize) -> MbValue {
     make_current_frame()
 }
 
-fn make_stack_frame_info() -> MbValue {
+fn frame_attr_type_name(v: MbValue) -> String {
+    match classify_for_introspection(v) {
+        Introspected::Scalar(label) => label.to_string(),
+        Introspected::UserClass(name) | Introspected::BuiltinType(name) => name,
+        Introspected::Int => "int".to_string(),
+        Introspected::NativeFunc => "builtin_function_or_method".to_string(),
+        Introspected::Other => "object".to_string(),
+    }
+}
+
+fn frame_code_field(frame: MbValue, name: &str, default: &str) -> MbValue {
+    inst_field(frame, "f_code")
+        .and_then(|code| inst_field(code, name))
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str(default.to_string())))
+}
+
+fn frame_lineno(frame: MbValue) -> MbValue {
+    inst_field(frame, "f_lineno").unwrap_or_else(|| MbValue::from_int(1))
+}
+
+fn make_frame_info(frame: MbValue, context: i64) -> MbValue {
     let info = MbValue::from_ptr(MbObject::new_instance("FrameInfo".to_string()));
-    inst_set_field(info, "frame", make_current_frame());
+    let tuple_fields = vec![
+        "frame",
+        "filename",
+        "lineno",
+        "function",
+        "code_context",
+        "index",
+    ];
+    let tuple_field_values: Vec<MbValue> = tuple_fields
+        .iter()
+        .map(|name| MbValue::from_ptr(MbObject::new_str((*name).to_string())))
+        .collect();
+    inst_set_field(
+        info,
+        "_namedtuple_name",
+        MbValue::from_ptr(MbObject::new_str("FrameInfo".to_string())),
+    );
+    inst_set_field(
+        info,
+        "_namedtuple_fields",
+        MbValue::from_ptr(MbObject::new_list(tuple_field_values)),
+    );
+    inst_set_field(info, "frame", frame);
     inst_set_field(
         info,
         "filename",
-        MbValue::from_ptr(MbObject::new_str("<mamba>".to_string())),
+        frame_code_field(frame, "co_filename", "<unknown>"),
     );
-    inst_set_field(info, "lineno", MbValue::from_int(1));
+    inst_set_field(info, "lineno", frame_lineno(frame));
     inst_set_field(
         info,
         "function",
-        MbValue::from_ptr(MbObject::new_str("<module>".to_string())),
+        frame_code_field(frame, "co_name", "<module>"),
     );
-    inst_set_field(
-        info,
-        "code_context",
-        MbValue::from_ptr(MbObject::new_list(vec![])),
-    );
+    let code_context = if context <= 0 {
+        MbValue::none()
+    } else {
+        MbValue::from_ptr(MbObject::new_list(vec![]))
+    };
+    inst_set_field(info, "code_context", code_context);
     inst_set_field(info, "index", MbValue::from_int(0));
     inst_set_field(info, "positions", MbValue::none());
     info
 }
 
-unsafe extern "C" fn d_stack(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(vec![make_stack_frame_info()]))
+fn make_outerframes_list(frame: MbValue, context: i64) -> MbValue {
+    let mut items = Vec::new();
+    let mut cursor = frame;
+    loop {
+        if cursor.is_none() {
+            break;
+        }
+        items.push(make_frame_info(cursor, context));
+        cursor = inst_field(cursor, "f_back").unwrap_or_else(MbValue::none);
+    }
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+unsafe extern "C" fn d_getouterframes(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let frame = a.first().copied().unwrap_or_else(MbValue::none);
+    if !mb_inspect_isframe(frame).as_bool().unwrap_or(false) {
+        return raise_exc(
+            "AttributeError",
+            &format!(
+                "'{}' object has no attribute 'f_lineno'",
+                frame_attr_type_name(frame)
+            ),
+        );
+    }
+    let context = a
+        .get(1)
+        .copied()
+        .and_then(MbValue::as_int_pyint)
+        .unwrap_or(1);
+    make_outerframes_list(frame, context)
+}
+
+unsafe extern "C" fn d_stack(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let context = a
+        .first()
+        .copied()
+        .and_then(MbValue::as_int_pyint)
+        .unwrap_or(1);
+    make_outerframes_list(make_current_frame(), context)
 }
 
 unsafe extern "C" fn d_empty_list(_a: *const MbValue, _n: usize) -> MbValue {
@@ -2045,6 +2263,8 @@ fn param_equal(a: MbValue, b: MbValue) -> bool {
             (Some(x), Some(y)) => {
                 if x.to_bits() == y.to_bits() {
                     true
+                } else if is_implicit_default_sentinel(x) && is_implicit_default_sentinel(y) {
+                    true
                 } else if is_empty_sentinel(x) || is_empty_sentinel(y) {
                     false
                 } else {
@@ -2130,7 +2350,11 @@ fn param_render(p: MbValue) -> String {
             } else {
                 out.push('=');
             }
-            out.push_str(&repr_str(d));
+            if is_implicit_default_sentinel(d) {
+                out.push_str("<implicit>");
+            } else {
+                out.push_str(&repr_str(d));
+            }
         }
     }
     out
@@ -2716,6 +2940,15 @@ pub fn mb_inspect_signature(func: MbValue) -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::module;
+
+    unsafe extern "C" fn test_local_trace_hook(
+        _args_ptr: *const MbValue,
+        _nargs: usize,
+    ) -> MbValue {
+        crate::icf_guard!();
+        MbValue::none()
+    }
 
     #[test]
     fn test_isfunction() {
@@ -2777,6 +3010,112 @@ mod tests {
     }
 
     #[test]
+    fn test_getframeinfo_returns_namedtuple_shaped_frameinfo() {
+        let frame = make_current_frame();
+        let args = [frame];
+        let info = unsafe { d_getframeinfo(args.as_ptr(), args.len()) };
+        assert_eq!(
+            inst_field(info, "function")
+                .and_then(extract_str)
+                .as_deref(),
+            Some("<module>")
+        );
+        let tuple_items = super::super::collections_mod::namedtuple_values(info)
+            .expect("FrameInfo should expose namedtuple values");
+        assert_eq!(extract_str(tuple_items[3]).as_deref(), Some("<module>"));
+    }
+
+    #[test]
+    fn test_stack_and_getouterframes_walk_traceback_frame_chain() {
+        let baseline = super::super::traceback_mod::trace_stack_snapshot().len();
+        let filename = |s: &str| MbValue::from_ptr(MbObject::new_str(s.to_string()));
+        super::super::traceback_mod::mb_traceback_push_frame(
+            filename("demo.py"),
+            MbValue::from_int(10),
+            filename("<module>"),
+        );
+        super::super::traceback_mod::mb_traceback_push_frame(
+            filename("demo.py"),
+            MbValue::from_int(20),
+            filename("outer"),
+        );
+        super::super::traceback_mod::mb_traceback_push_frame(
+            filename("demo.py"),
+            MbValue::from_int(30),
+            filename("inner"),
+        );
+
+        let stack = unsafe { d_stack(std::ptr::null(), 0) };
+        let Some(stack_ptr) = stack.as_ptr() else {
+            panic!("inspect.stack did not return a list");
+        };
+        unsafe {
+            let ObjData::List(ref lock) = (*stack_ptr).data else {
+                panic!("inspect.stack did not return a list");
+            };
+            let items = lock.read().unwrap();
+            assert_eq!(items.len(), 3);
+            assert_eq!(
+                inst_field(items[0], "function")
+                    .and_then(extract_str)
+                    .as_deref(),
+                Some("inner")
+            );
+            let tuple_items = super::super::collections_mod::namedtuple_values(items[1])
+                .expect("FrameInfo should expose namedtuple values");
+            assert_eq!(extract_str(tuple_items[3]).as_deref(), Some("outer"));
+        }
+
+        let current = make_current_frame();
+        let args = [current];
+        let outer = unsafe { d_getouterframes(args.as_ptr(), args.len()) };
+        let Some(outer_ptr) = outer.as_ptr() else {
+            panic!("inspect.getouterframes did not return a list");
+        };
+        unsafe {
+            let ObjData::List(ref lock) = (*outer_ptr).data else {
+                panic!("inspect.getouterframes did not return a list");
+            };
+            let items = lock.read().unwrap();
+            assert_eq!(items.len(), baseline + 3);
+            assert_eq!(
+                inst_field(items[2], "function")
+                    .and_then(extract_str)
+                    .as_deref(),
+                Some("<module>")
+            );
+            assert_eq!(
+                inst_field(items[2], "lineno").and_then(MbValue::as_int),
+                Some(10)
+            );
+        }
+
+        super::super::traceback_mod::mb_traceback_pop_frame();
+        super::super::traceback_mod::mb_traceback_pop_frame();
+        super::super::traceback_mod::mb_traceback_pop_frame();
+    }
+
+    #[test]
+    fn test_current_hook_frame_exposes_current_local_trace_hook_via_f_trace() {
+        let filename = |s: &str| MbValue::from_ptr(MbObject::new_str(s.to_string()));
+        let hook = MbValue::from_func(test_local_trace_hook as *const () as usize);
+        super::super::traceback_mod::mb_traceback_push_frame(
+            filename("trace_demo.py"),
+            MbValue::from_int(30),
+            filename("f"),
+        );
+        super::super::traceback_mod::mb_traceback_set_current_frame_local_trace_hook(hook);
+
+        let frame = super::super::traceback_mod::mb_traceback_make_current_frame_for_hook();
+        assert_eq!(
+            inst_field(frame, "f_trace").map(MbValue::to_bits),
+            Some(hook.to_bits())
+        );
+
+        super::super::traceback_mod::mb_traceback_pop_frame();
+    }
+
+    #[test]
     fn test_getmembers_instance() {
         let inst = MbObject::new_instance("Foo".to_string());
         unsafe {
@@ -2804,6 +3143,34 @@ mod tests {
             } else {
                 panic!("expected list");
             }
+        }
+    }
+
+    #[test]
+    fn test_signature_renders_traceback_native_implicit_defaults() {
+        super::super::traceback_mod::register();
+        let _traceback = module::mb_import(MbValue::from_ptr(MbObject::new_str(
+            "traceback".to_string(),
+        )));
+        for (name, expected) in [
+            (
+                "print_exception",
+                "(exc, /, value=<implicit>, tb=<implicit>, limit=None, file=None, chain=True)",
+            ),
+            (
+                "format_exception",
+                "(exc, /, value=<implicit>, tb=<implicit>, limit=None, chain=True)",
+            ),
+            (
+                "format_exception_only",
+                "(exc, /, value=<implicit>)",
+            ),
+        ] {
+            let func = module::mb_module_value_getattr("traceback", name)
+                .unwrap_or_else(|| panic!("missing traceback.{name}"));
+            let sig = mb_inspect_signature(func);
+            let rendered = unsafe { s_str(sig, MbValue::none()) };
+            assert_eq!(extract_str(rendered).as_deref(), Some(expected));
         }
     }
 }

@@ -21,6 +21,26 @@ Goal 2.
 
 import grpclib
 
+# Fixture repair (#967): top-level `grpclib/__init__.py` only re-exports
+# `GRPCError`/`Status` (via `const`/`exceptions`) — `Server`, `Channel`, and
+# `Stream` all live in their own submodules and were never re-exported at
+# package level. Rebind them explicitly so they're real, identity-stable
+# `grpclib.<name>` attributes. Under mamba, `grpclib` is a flat native shim
+# with no real `server`/`client` submodules to import — it already
+# registers all three names directly as top-level attributes, so the
+# (expected) ImportError here is a no-op fallback to that existing shim
+# surface.
+try:
+    from grpclib.client import Channel as _Channel
+    from grpclib.client import Stream as _Stream
+    from grpclib.server import Server as _Server
+
+    grpclib.Server = _Server
+    grpclib.Channel = _Channel
+    grpclib.Stream = _Stream
+except ImportError:
+    pass
+
 
 _S_BASELINE = grpclib.Server
 _C_BASELINE = grpclib.Channel

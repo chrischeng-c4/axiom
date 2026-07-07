@@ -15,7 +15,14 @@
 # status = "filled"
 # ///
 # mamba-xfail: mamba must run the pyperformance asyncio_tcp workload faster than CPython on CPU+RSS
-import sys as _sys, types as _t
+import os as _os, sys as _sys, types as _t
+
+_fixture_dir = _os.path.abspath(_os.path.dirname(__file__))
+_sys.path = [
+    p for p in _sys.path if _os.path.abspath(p or _os.getcwd()) != _fixture_dir
+]
+
+
 class _Args:
     """Minimal argparser stand-in (no `import argparse`, which a sibling
     perf/argparse.py fixture would shadow). Records add_argument defaults."""
@@ -59,6 +66,7 @@ def _pc():
     return time.perf_counter()
 _p.perf_counter = _pc
 _sys.modules["pyperf"] = _p
+Runner = _Runner
 
 """
 Benchmark for asyncio TCP server and client performance
@@ -69,7 +77,6 @@ Author: Kumar Aditya
 
 
 import asyncio
-from pyperf import Runner
 import ssl
 import os
 

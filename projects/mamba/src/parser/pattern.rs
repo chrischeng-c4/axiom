@@ -304,12 +304,16 @@ impl<'a> Parser<'a> {
     /// value-pattern keys (`case {Keys.KEY: value}:`), but not bare capture
     /// names or arbitrary expressions.
     fn parse_mapping_key(&mut self) -> crate::error::Result<Spanned<Expr>> {
-        let token = self.peek().ok_or_else(|| {
-            MambaError::syntax(Span::dummy(), "expected mapping pattern key")
-        })?;
+        let token = self
+            .peek()
+            .ok_or_else(|| MambaError::syntax(Span::dummy(), "expected mapping pattern key"))?;
         match &token.kind {
-            TokenKind::Int(_) | TokenKind::Float(_) | TokenKind::Str(_)
-            | TokenKind::True | TokenKind::False | TokenKind::None_
+            TokenKind::Int(_)
+            | TokenKind::Float(_)
+            | TokenKind::Str(_)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::None_
             | TokenKind::Minus => self.parse_pattern_literal(),
             kind if Parser::is_name_token(kind) => self.parse_dotted_value_key(),
             other => Err(MambaError::syntax(
@@ -334,7 +338,10 @@ impl<'a> Parser<'a> {
             let attr = self.text_at(as_, ae).to_string();
             let span = expr.span.merge(Span::new(self.file_id, as_, ae));
             expr = Spanned::new(
-                Expr::Attr { object: Box::new(expr), attr },
+                Expr::Attr {
+                    object: Box::new(expr),
+                    attr,
+                },
                 span,
             );
         }

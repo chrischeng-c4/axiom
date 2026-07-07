@@ -15,9 +15,76 @@ use super::super::value::MbValue;
 ///   xdrlib.
 use std::collections::HashMap;
 
-unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+// #962 follow-up: `build_attrs` used to hand every "class" name (across every
+// `register_*` call in this file, e.g. ftplib's FTP and _thread's LockType)
+// the SAME single `dispatch_class_shell` address. Because NATIVE_TYPE_NAMES/
+// FUNC_NAMES are address-keyed, whichever name registered last won
+// `X.__name__` for every other name sharing that address — observed as
+// `ftplib.FTP.__name__` reading back as `"LockType"` (a *different* module's
+// class, registered later in this file's `register()`), and, even after
+// giving each call its own shell, still misreading as `"error_perm"` (one of
+// ftplib's OWN sibling shell classes, sharing that call's one shell). Plain
+// `icf_guard!()` can't fix either case: it stops the *compiler* from folding
+// distinct bodies onto one address, but here ONE symbol is deliberately
+// reused, on purpose, across many class names. The real fix: give every
+// shell class name a genuinely distinct function pointer, drawn from a pool
+// of `SHELL_POOL_SIZE` individually fold-immune trivial stub functions,
+// indexed by a compile-time-computed, non-overlapping `pool_start` per
+// `build_attrs` call.
+//
+// IMPORTANT: this pool does NOT use `icf_guard!()` directly. That macro
+// derives its fingerprint from `module_path!()`/`line!()`/`column!()`, which
+// are resolved at the span of the *macro definition's* literal tokens — and
+// for a single `macro_rules!` invocation that expands a `$(...)* `
+// repetition into N functions (as here, one `def_shell_pool!(...)` call
+// generating all 96 shells), every repetition shares that ONE span, so
+// `line!()`/`column!()` come back IDENTICAL for all N and `icf_guard!()`
+// silently fails to discriminate them (verified empirically: a minimal
+// repro macro prints the same `file:line:col` for every repeated item).
+// LLVM then folds all 96 "distinct" shells back onto a single address,
+// reproducing the exact #954/#962 symptom one level down. The fix here
+// instead fingerprints on `stringify!($name)`, which DOES vary per
+// repetition (it's driven by the captured `$name` token's text, not by
+// span), giving every pool slot a genuinely distinct compiled body.
+const SHELL_POOL_SIZE: usize = 96;
+type ShellFn = unsafe extern "C" fn(*const MbValue, usize) -> MbValue;
+
+macro_rules! def_shell_pool {
+    ($($name:ident),* $(,)?) => {
+        $(
+            unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue {
+                ::std::hint::black_box(crate::runtime::module::icf_fingerprint(concat!(
+                    module_path!(),
+                    "::",
+                    stringify!($name)
+                )));
+                MbValue::from_ptr(MbObject::new_dict())
+            }
+        )*
+        const SHELL_POOL: [ShellFn; SHELL_POOL_SIZE] = [$($name),*];
+    };
 }
+def_shell_pool!(
+    shell_00, shell_01, shell_02, shell_03, shell_04, shell_05, shell_06, shell_07, shell_08,
+    shell_09, shell_10, shell_11, shell_12, shell_13, shell_14, shell_15, shell_16, shell_17,
+    shell_18, shell_19, shell_20, shell_21, shell_22, shell_23, shell_24, shell_25, shell_26,
+    shell_27, shell_28, shell_29, shell_30, shell_31, shell_32, shell_33, shell_34, shell_35,
+    shell_36, shell_37, shell_38, shell_39, shell_40, shell_41, shell_42, shell_43, shell_44,
+    shell_45, shell_46, shell_47, shell_48, shell_49, shell_50, shell_51, shell_52, shell_53,
+    shell_54, shell_55, shell_56, shell_57, shell_58, shell_59, shell_60, shell_61, shell_62,
+    shell_63, shell_64, shell_65, shell_66, shell_67, shell_68, shell_69, shell_70, shell_71,
+    shell_72, shell_73, shell_74, shell_75, shell_76, shell_77, shell_78, shell_79, shell_80,
+    shell_81, shell_82, shell_83, shell_84, shell_85, shell_86, shell_87, shell_88, shell_89,
+    shell_90, shell_91, shell_92, shell_93, shell_94, shell_95,
+);
+
+/// Pool slot at `idx` as a raw function-pointer address. Each `build_attrs`
+/// call site passes a `pool_start` computed so its `classes` slice's slots
+/// (`pool_start..pool_start+classes.len()`) never overlap another call's.
+fn shell_addr(idx: usize) -> usize {
+    SHELL_POOL[idx] as usize
+}
+
 unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
@@ -105,16 +172,17 @@ fn register_addrs(addrs: &[usize]) {
 
 fn build_attrs(
     classes: &[&str],
+    pool_start: usize,
     dispatchers: &[(&str, usize)],
     consts_int: &[(&str, i64)],
     consts_str: &[(&str, &str)],
 ) -> HashMap<String, MbValue> {
     let mut attrs = HashMap::new();
-    let shell = dispatch_class_shell as *const () as usize;
     let mut addrs: Vec<usize> = Vec::new();
-    addrs.push(shell);
-    for name in classes {
-        attrs.insert((*name).into(), MbValue::from_func(shell));
+    for (i, name) in classes.iter().enumerate() {
+        let f = shell_addr(pool_start + i);
+        attrs.insert((*name).into(), MbValue::from_func(f));
+        addrs.push(f);
     }
     for (name, addr) in dispatchers {
         attrs.insert((*name).into(), MbValue::from_func(*addr));
@@ -211,6 +279,7 @@ fn register_smtplib() {
             "quoteaddr",
             "quotedata",
         ],
+        0,
         &[
             ("SMTP_PORT", dispatch_int_zero as *const () as usize),
             ("SMTP_SSL_PORT", dispatch_int_zero as *const () as usize),
@@ -237,6 +306,7 @@ fn register_ftplib() {
             "error_proto",
             "all_errors",
         ],
+        15,
         &[],
         &[("FTP_PORT", 21), ("MSG_OOB", 1), ("MAXLINE", 8192)],
         &[("CRLF", "\r\n"), ("B_CRLF", "\r\n")],
@@ -247,6 +317,7 @@ fn register_ftplib() {
 fn register_poplib() {
     let attrs = build_attrs(
         &["POP3", "POP3_SSL", "error_proto"],
+        23,
         &[],
         &[
             ("POP3_PORT", 110),
@@ -270,6 +341,7 @@ fn register_imaplib() {
             "ParseFlags",
             "Time2Internaldate",
         ],
+        26,
         &[],
         &[
             ("IMAP4_PORT", 143),
@@ -286,6 +358,7 @@ fn register_imaplib() {
 fn register_telnetlib() {
     let mut attrs = build_attrs(
         &["Telnet"],
+        33,
         &[],
         &[
             ("DEBUGLEVEL", 0),
@@ -327,6 +400,7 @@ fn register_nntplib() {
             "NNTPDataError",
             "decode_header",
         ],
+        34,
         &[],
         &[("NNTP_PORT", 119), ("NNTP_SSL_PORT", 563)],
         &[],
@@ -346,6 +420,7 @@ fn register_nntplib() {
 fn register_cgitb() {
     let attrs = build_attrs(
         &["Hook"],
+        43,
         &[
             ("enable", dispatch_noop as *const () as usize),
             ("reset", dispatch_empty_str as *const () as usize),
@@ -363,6 +438,7 @@ fn register_cgitb() {
 fn register_shelve() {
     let attrs = build_attrs(
         &["Shelf", "BsdDbShelf", "DbfilenameShelf"],
+        44,
         &[("open", dispatch_empty_dict as *const () as usize)],
         &[],
         &[],
@@ -373,6 +449,7 @@ fn register_shelve() {
 fn register_pickletools() {
     let attrs = build_attrs(
         &["OpcodeInfo", "StackObject", "ArgumentDescriptor"],
+        47,
         &[
             ("dis", dispatch_noop as *const () as usize),
             ("genops", dispatch_empty_list as *const () as usize),
@@ -392,6 +469,7 @@ fn register_pickletools() {
 fn register_xdrlib() {
     let attrs = build_attrs(
         &["Packer", "Unpacker", "Error", "ConversionError"],
+        50,
         &[],
         &[],
         &[],
@@ -402,6 +480,7 @@ fn register_xdrlib() {
 fn register_marshal() {
     let attrs = build_attrs(
         &[],
+        54,
         &[
             ("dump", dispatch_noop as *const () as usize),
             ("dumps", dispatch_empty_str as *const () as usize),
@@ -434,6 +513,7 @@ fn register_optparse() {
             "check_choice",
             "check_builtin",
         ],
+        54,
         &[],
         &[
             ("SUPPRESS_HELP", 0),
@@ -448,6 +528,7 @@ fn register_optparse() {
 fn register_pydoc() {
     let attrs = build_attrs(
         &["Helper", "ModuleScanner", "TextDoc", "HTMLDoc", "Doc"],
+        70,
         &[
             ("help", dispatch_noop as *const () as usize),
             ("doc", dispatch_noop as *const () as usize),
@@ -471,6 +552,7 @@ fn register_pydoc() {
 fn register_rlcompleter() {
     let attrs = build_attrs(
         &["Completer"],
+        75,
         &[(
             "readline_complete",
             dispatch_empty_str as *const () as usize,
@@ -484,8 +566,9 @@ fn register_rlcompleter() {
 fn register_thread() {
     let attrs = build_attrs(
         &["LockType", "RLock", "_local", "error"],
+        76,
         &[
-            ("allocate_lock", dispatch_class_shell as *const () as usize),
+            ("allocate_lock", shell_addr(80)),
             ("get_ident", dispatch_int_zero as *const () as usize),
             ("get_native_id", dispatch_int_zero as *const () as usize),
             ("start_new_thread", dispatch_int_zero as *const () as usize),

@@ -13,9 +13,7 @@ use crate::scheduler::TaskMessage;
 
 /// Build the [`TaskMessage`] from the `LOOM_TASK_*` env the job-controller set.
 fn task_from_env() -> anyhow::Result<TaskMessage> {
-    let var = |k: &str| {
-        std::env::var(k).map_err(|_| anyhow::anyhow!("run-task requires {k}"))
-    };
+    let var = |k: &str| std::env::var(k).map_err(|_| anyhow::anyhow!("run-task requires {k}"));
     let input_refs = std::env::var("LOOM_TASK_INPUT_REFS")
         .unwrap_or_default()
         .split(',')
@@ -25,7 +23,10 @@ fn task_from_env() -> anyhow::Result<TaskMessage> {
     Ok(TaskMessage {
         run_id: var("LOOM_TASK_RUN")?,
         node_id: var("LOOM_TASK_NODE")?,
-        attempt: std::env::var("LOOM_TASK_ATTEMPT").ok().and_then(|s| s.parse().ok()).unwrap_or(0),
+        attempt: std::env::var("LOOM_TASK_ATTEMPT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
         task_name: var("LOOM_TASK_NAME")?,
         args: serde_json::Value::Null,
         input_refs,

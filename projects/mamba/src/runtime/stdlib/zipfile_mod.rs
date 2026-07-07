@@ -263,6 +263,7 @@ fn zi_datetime(zi: MbValue) -> Vec<i64> {
 }
 
 unsafe extern "C" fn d_zipinfo_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let kw = a
         .iter()
@@ -615,6 +616,7 @@ fn refresh_filelist(zf: MbValue) {
 // ── ZipFile constructor ──
 
 unsafe extern "C" fn d_zipfile_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let kw = a
         .iter()
@@ -1049,7 +1051,11 @@ unsafe extern "C" fn extfile_read(self_v: MbValue, args: MbValue) -> MbValue {
 
 /// ZipExtFile.tell() -> current position in the decompressed stream.
 unsafe extern "C" fn extfile_tell(self_v: MbValue, _args: MbValue) -> MbValue {
-    MbValue::from_int(get_field(self_v, "_pos").and_then(|v| v.as_int()).unwrap_or(0))
+    MbValue::from_int(
+        get_field(self_v, "_pos")
+            .and_then(|v| v.as_int())
+            .unwrap_or(0),
+    )
 }
 
 /// ZipExtFile.seek(offset, whence=SEEK_SET) -> new position. Seekable since
@@ -1058,8 +1064,13 @@ unsafe extern "C" fn extfile_seek(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
     let offset = items.first().and_then(|v| v.as_int()).unwrap_or(0);
     let whence = items.get(1).and_then(|v| v.as_int()).unwrap_or(0);
-    let len = get_field(self_v, "_data").and_then(extract_bytes).map(|b| b.len() as i64).unwrap_or(0);
-    let cur = get_field(self_v, "_pos").and_then(|v| v.as_int()).unwrap_or(0);
+    let len = get_field(self_v, "_data")
+        .and_then(extract_bytes)
+        .map(|b| b.len() as i64)
+        .unwrap_or(0);
+    let cur = get_field(self_v, "_pos")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     let base = match whence {
         1 => cur,
         2 => len,
@@ -1233,6 +1244,7 @@ unsafe extern "C" fn d_is_zipfile(args_ptr: *const MbValue, nargs: usize) -> MbV
 }
 
 unsafe extern "C" fn d_zipfile_badzipfile(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     make_instance("zipfile.BadZipFile", vec![])
 }
 
@@ -1277,21 +1289,18 @@ pub fn register() {
 
     // `except zipfile.BadZipFile` resolves the constructor func to the raised
     // type name through NATIVE_TYPE_NAMES.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            d_zipfile_badzipfile as *const () as usize as u64,
-            "zipfile.BadZipFile".to_string(),
-        );
-        map.insert(
-            d_zipinfo_new as *const () as usize as u64,
-            "zipfile.ZipInfo".to_string(),
-        );
-        map.insert(
-            d_zipfile_new as *const () as usize as u64,
-            ZIPFILE_CLASS.to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        d_zipfile_badzipfile as *const () as usize as u64,
+        "zipfile.BadZipFile".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_zipinfo_new as *const () as usize as u64,
+        "zipfile.ZipInfo".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_zipfile_new as *const () as usize as u64,
+        ZIPFILE_CLASS.to_string(),
+    );
 
     super::register_module("zipfile", attrs);
 }
@@ -1338,11 +1347,7 @@ fn register_zip_classes() {
     // stable reprs, while the exported constructor is typed as
     // `zipfile.ZipInfo`. Link the two nominally so isinstance(getinfo(...),
     // zipfile.ZipInfo) succeeds.
-    super::super::class::mb_class_register(
-        ZIPINFO_CLASS,
-        vec!["zipfile.ZipInfo".into()],
-        zi,
-    );
+    super::super::class::mb_class_register(ZIPINFO_CLASS, vec!["zipfile.ZipInfo".into()], zi);
     // The qualified name is what NATIVE_TYPE_NAMES maps to for the gate.
     let mut zi2: Map<String, MbValue> = Map::new();
     zi2.insert(
@@ -1355,7 +1360,10 @@ fn register_zip_classes() {
     ext.insert("read".into(), var(extfile_read as *const () as usize));
     ext.insert("tell".into(), var(extfile_tell as *const () as usize));
     ext.insert("seek".into(), var(extfile_seek as *const () as usize));
-    ext.insert("seekable".into(), var(extfile_seekable as *const () as usize));
+    ext.insert(
+        "seekable".into(),
+        var(extfile_seekable as *const () as usize),
+    );
     ext.insert("__enter__".into(), var(extfile_enter as *const () as usize));
     ext.insert("__exit__".into(), var(extfile_exit as *const () as usize));
     super::super::class::mb_class_register("zipfile.ZipExtFile", vec![], ext);
