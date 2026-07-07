@@ -12,7 +12,7 @@ templates/
 ├── knowledge/
 │   └── index.md             # Knowledge base index template
 ├── mainthread/
-│   ├── CLAUDE.md            # AW section for project CLAUDE.md
+│   ├── CLAUDE.md.tmpl       # AW section for project CLAUDE.md
 │   └── skills/              # Claude Code skills
 │       ├── aw-capability/
 │       ├── aw-wi/
@@ -33,7 +33,7 @@ templates/
 | Destination | Source | Mode |
 |-------------|--------|------|
 | `.aw/config.toml` | Generated | Create/Update |
-| `CLAUDE.md` | `mainthread/CLAUDE.md` | Merge AW section |
+| `CLAUDE.md` | `mainthread/CLAUDE.md.tmpl` | Merge AW section |
 
 ### Claude Code Skills
 

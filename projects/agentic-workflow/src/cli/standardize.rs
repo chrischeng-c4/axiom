@@ -2219,7 +2219,7 @@ fn active_doc_paths(project_root: &Path) -> Vec<PathBuf> {
         "CLAUDE.md",
         "CONTRIBUTING.md",
         "projects/agentic-workflow/templates/cli/README.md",
-        "projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md",
+        "projects/agentic-workflow/templates/cli/mainthread/CLAUDE.md.tmpl",
     ] {
         let path = project_root.join(rel);
         if path.exists() {
