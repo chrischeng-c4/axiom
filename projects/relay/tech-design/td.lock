@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T15:42:30.189895+00:00"
-digest = "sha256:a19f97da2a48cd1bb7e285293184d1fc0f3a92b87d1137870001d53596b83234"
-source_digest = "sha256:a19f97da2a48cd1bb7e285293184d1fc0f3a92b87d1137870001d53596b83234"
-ir_digest = "sha256:728692ea9db9d0a4ebbbf1f9b5df7779517ed49c7039dba72803db33c8b9f129"
+generated_at = "2026-07-07T15:52:23.009396+00:00"
+digest = "sha256:43af9de1eb1fe67696dc4f86038a786f97cf041a665ae65e885c918912faf204"
+source_digest = "sha256:43af9de1eb1fe67696dc4f86038a786f97cf041a665ae65e885c918912faf204"
+ir_digest = "sha256:cc90883283a9c0c91e22ba4090ab14f7df9698f5b8218ef0a848ad480c009e77"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
@@ -39,8 +39,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md"
-digest = "sha256:c61444f8aa2939428688320b76d7f611664e8547c974b5bc817475ce0ccbe881"
-ir_digest = "sha256:80b080f30889c1100e5b3ed7a37a8cf3e2ec4f10d0db9c1db0baa9e5a21781d0"
+digest = "sha256:80e88760a17a030655499171b08a6a1c965a17d52815558b0f74d551b19cec97"
+ir_digest = "sha256:def9b049d3081dcd56e67044dd8452f73c9e9a2e57c4c0d5af024ff957a8a281"
 section_count = 6
 
 [[files]]

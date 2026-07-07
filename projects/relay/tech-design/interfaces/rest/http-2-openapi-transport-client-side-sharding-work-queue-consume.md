@@ -4,10 +4,10 @@ summary: axum HTTP/2 (h2c) + utoipa OpenAPI transport over the relay core — pu
 capability_refs:
   - id: cli-interface
     role: primary
-    gap: relay-server-process-interface
-    claim: relay-server-process-interface
+    gap: single-relay-bin-serve-default
+    claim: single-relay-bin-serve-default
     coverage: full
-    rationale: "Defines the relay-server h2c process surface, config shape, OpenAPI document, and HTTP route entrypoints."
+    rationale: "Defines the single relay bin's h2c serve surface, config shape, OpenAPI document, and HTTP route entrypoints."
   - id: competitor-feature-parity
     role: primary
     gap: http-worker-protocol-parity

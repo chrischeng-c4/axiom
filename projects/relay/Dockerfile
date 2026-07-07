@@ -11,5 +11,5 @@ FROM debian:bookworm-slim
 RUN useradd -m -u 10001 relay
 COPY --chown=relay:relay --from=build /src/target/release/relay /usr/local/bin/relay
 USER relay
-EXPOSE 8080
+EXPOSE 7000
 ENTRYPOINT ["/usr/local/bin/relay"]
