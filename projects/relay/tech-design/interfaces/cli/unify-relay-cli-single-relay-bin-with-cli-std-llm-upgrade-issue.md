@@ -49,3 +49,35 @@ flowchart TD
     upgrade --> out
     issue --> out
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: relay-cli-std-surface-verification
+requirements:
+  build_stamp_feeds_toolinfo:
+    id: R3
+    text: "RELAY_GIT_SHA, RELAY_BUILT_AT, and RELAY_TARGET are emitted by libs/build-stamp and populate the cli-std ToolInfo used by llm/upgrade/issue."
+    kind: functional
+    risk: low
+    verify: toolinfo_is_stamped test in projects/relay/src/bin/relay.rs
+  cli_parses_convention_verbs:
+    id: R1
+    text: "The relay CLI parses llm, upgrade, and issue search/view/create with their convention flags, and bare relay (no subcommand) parses as serve."
+    kind: functional
+    risk: medium
+    verify: cli_parse_surface tests in projects/relay/src/bin/relay.rs
+  serve_replaces_relay_server:
+    id: R2
+    text: "Bare relay serves exactly what relay-server served (RELAY_BIND/RELAY_DATA_DIR honored); the relay-server binary is removed from the crate."
+    kind: regression
+    risk: medium
+    verify: projects/relay/tests/http2_transport.rs against the relay serve router
+---
+flowchart TD
+    r1[R1 cli parses convention verbs] --> cli_parse_surface_tests_in_projects_relay_src_bin_relay_rs[cli_parse_surface tests in projects/relay/src/bin/relay.rs]
+    r2[R2 serve replaces relay server] --> projects_relay_tests_http2_transport_rs_against_the_relay_serve_router[projects/relay/tests/http2_transport.rs against the relay serve router]
+    r3[R3 build stamp feeds toolinfo] --> toolinfo_is_stamped_test_in_projects_relay_src_bin_relay_rs[toolinfo_is_stamped test in projects/relay/src/bin/relay.rs]
+```
