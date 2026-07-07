@@ -14,6 +14,7 @@ mod assertions;
 mod async_iteration;
 mod boxing;
 mod breakpoint;
+mod callable;
 mod char_radix;
 mod complex_constructor;
 mod eval_exec;
@@ -43,6 +44,7 @@ pub use boxing::{
     mb_unbox_inline_int_if_boxed, mb_unbox_int, mb_unbox_int_if_boxed,
 };
 pub use breakpoint::{mb_breakpoint, mb_breakpoint_call};
+pub use callable::mb_callable;
 pub(crate) use char_radix::resolve_index_value;
 pub use char_radix::{mb_bin, mb_chr, mb_hex, mb_oct, mb_ord};
 pub use complex_constructor::mb_complex;
@@ -7230,113 +7232,6 @@ pub fn mb_max_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
         super::rc::retain_if_ptr(result);
     }
     result
-}
-
-/// callable(obj) — return True if the object appears callable.
-pub fn mb_callable(obj: MbValue) -> MbValue {
-    // TAG_FUNC values + closure handles (TAG_INT carrying a closure id):
-    // resolve_callable recognises both kinds of compiled-function references,
-    // so user-defined `def`s and `lambda`s round-trip correctly.
-    if resolve_callable(obj).is_some() {
-        return MbValue::from_bool(true);
-    }
-    if let Some(ptr) = obj.as_ptr() {
-        unsafe {
-            match &(*ptr).data {
-                ObjData::Instance { class_name, .. } => {
-                    if super::stdlib::enum_mod::is_functional_enum_class(obj) {
-                        return MbValue::from_bool(true);
-                    }
-                    if class_name == "__exec_function__" {
-                        return MbValue::from_bool(true);
-                    }
-                    if class_name == "__unbound_method__" || class_name == "__bound_native_method__"
-                    {
-                        return MbValue::from_bool(true);
-                    }
-                    // A `functools.partial` (and partial-shaped bound methods,
-                    // e.g. the bound `Struct.pack` / `Struct.unpack` methods)
-                    // is callable: `mb_call_spread` knows how to prepend the
-                    // bound args and dispatch the wrapped func.
-                    if class_name == "functools.partial" {
-                        return MbValue::from_bool(true);
-                    }
-                    if class_name == "functools._singledispatchmethod_bound" {
-                        return MbValue::from_bool(true);
-                    }
-                    if class_name == "collections.abc._register_bound"
-                        || class_name == "abc._user_register_bound"
-                    {
-                        return MbValue::from_bool(true);
-                    }
-                    // A type object (the value bound to a class name like `C`
-                    // or returned by `type(name, bases, dict)`) is itself
-                    // callable — calling it constructs an instance.
-                    if class_name == "type" {
-                        return MbValue::from_bool(true);
-                    }
-                    // For ordinary user instances, callability is determined
-                    // by the presence of a `__call__` dunder.
-                    let method = super::class::mb_lookup_dunder(
-                        obj,
-                        MbValue::from_ptr(MbObject::new_str("__call__".to_string())),
-                    );
-                    return MbValue::from_bool(!method.is_none());
-                }
-                ObjData::Str(s) => {
-                    // Builtin type-name strings (`int`, `str`, `list`, ...) are
-                    // resolved as string identifiers at compile time but behave
-                    // as callable type constructors at runtime.
-                    if matches!(
-                        s.as_str(),
-                        "int"
-                            | "str"
-                            | "float"
-                            | "bool"
-                            | "list"
-                            | "dict"
-                            | "set"
-                            | "frozenset"
-                            | "tuple"
-                            | "bytes"
-                            | "bytearray"
-                            | "complex"
-                            | "type"
-                            | "object"
-                            | "range"
-                            | "enumerate"
-                            | "zip"
-                            | "map"
-                            | "filter"
-                            | "iter"
-                            | "reversed"
-                            | "abs"
-                            | "len"
-                            | "repr"
-                            | "chr"
-                            | "ord"
-                            | "print"
-                            | "sorted"
-                            | "sum"
-                            | "min"
-                            | "max"
-                            | "any"
-                            | "all"
-                    ) {
-                        return MbValue::from_bool(true);
-                    }
-                    // User-defined class names also flow through as bare
-                    // strings — calling `C(...)` invokes the registered ctor.
-                    if super::class::class_is_registered(s) {
-                        return MbValue::from_bool(true);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    // Primitives (int, float, bool, None, etc.) are not callable
-    MbValue::from_bool(false)
 }
 
 /// sum(iterable, start) — sum with an initial value.
