@@ -16,7 +16,7 @@ version, and restores manifest files after the debug build.
 Run the build script:
 
 ```bash
-.agents/skills/lumen-build-debug/scripts/build.sh
+.claude/skills/lumen-build-debug/scripts/build.sh
 ```
 
 Report the result to the user, including whether `~/.cargo/bin/lumen --version`
