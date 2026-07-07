@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T15:07:51.254057+00:00"
-digest = "sha256:15b72ff5c2d96191d2482099d65bc485fea691be2e4e718d01f35255c1d8f594"
-source_digest = "sha256:15b72ff5c2d96191d2482099d65bc485fea691be2e4e718d01f35255c1d8f594"
-ir_digest = "sha256:cea6be84e5cf1c355ae74b805a29d38123a2b507006f846bf4af952ec06dfd27"
+generated_at = "2026-07-07T15:42:30.189895+00:00"
+digest = "sha256:a19f97da2a48cd1bb7e285293184d1fc0f3a92b87d1137870001d53596b83234"
+source_digest = "sha256:a19f97da2a48cd1bb7e285293184d1fc0f3a92b87d1137870001d53596b83234"
+ir_digest = "sha256:728692ea9db9d0a4ebbbf1f9b5df7779517ed49c7039dba72803db33c8b9f129"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
@@ -78,6 +78,12 @@ path = "logic/core-durable-log-single-multi-broadcast-delivery-model.md"
 digest = "sha256:2c529e192b23166b2dd7ade0c8da103e6458eca13c7d6899360447809eb48cff"
 ir_digest = "sha256:95c9fb03f0f7994c3a0ecd4875d41455d6401be81a2a792689229db7a1f903a6"
 section_count = 5
+
+[[files]]
+path = "logic/declare-service-umbrella-traits-sync-readme-ha-docs-to-the-conve.md"
+digest = "sha256:0911c048d5500ddca128cf1cdd6b124cd4892488b7bd2359680320d39be5cfaa"
+ir_digest = "sha256:a32991614d6ff5a3ab0db5a06081cc9a9df56db94c15170a505584cfea19a0a9"
+section_count = 3
 
 [[files]]
 path = "logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md"
