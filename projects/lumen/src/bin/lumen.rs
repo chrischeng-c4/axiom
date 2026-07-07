@@ -431,6 +431,8 @@ enum LlmTopic {
     Quickstart,
     /// Bearer-token auth, token registry schema, and Secret projection.
     Auth,
+    /// Kubernetes-native deployment topology, shard/replica knobs, and bootstrap.
+    Deployment,
     /// Operator storage/ops contract: StatefulSet + durable PVC-backed WAL,
     /// including at `replicasPerShard: 1`.
     Storage,
@@ -686,6 +688,7 @@ async fn main() -> Result<()> {
                 LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
                 LlmTopic::Auth => lumen::spec::llm_auth_md(),
+                LlmTopic::Deployment => lumen::spec::llm_deployment_md(),
                 LlmTopic::Storage => lumen::spec::llm_storage_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
@@ -711,6 +714,9 @@ async fn main() -> Result<()> {
                     )?,
                     LlmTopic::Auth => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "auth", "markdown": md }),
+                    )?,
+                    LlmTopic::Deployment => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "deployment", "markdown": md }),
                     )?,
                     LlmTopic::Storage => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "storage", "markdown": md }),
