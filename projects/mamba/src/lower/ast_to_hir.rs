@@ -12907,7 +12907,7 @@ async def main():
     }
 
     #[test]
-    fn test_lower_ordering_against_numeric_literal_keeps_raw_int_param() {
+    fn test_lower_ordering_against_numeric_literal_uses_boxed_param() {
         let mut checker = TypeChecker::new();
         checker
             .symbols
@@ -12928,7 +12928,7 @@ async def main():
         };
         let hir = lower_module(&module, &checker).expect("lower failed");
         assert_eq!(hir.functions.len(), 1);
-        assert_eq!(hir.functions[0].params[0].1, checker.tcx.int());
+        assert_eq!(hir.functions[0].params[0].1, checker.tcx.any());
     }
 
     // -------------------------------------------------------------------------
@@ -13211,16 +13211,16 @@ async def main():
         for (idx, arg) in args.iter().enumerate() {
             assert!(matches!(
                 arg,
-                HirExpr::Index {
-                    object,
-                    index,
+                HirExpr::Call {
+                    func,
+                    args,
                     ..
                 } if matches!(
-                    (object.as_ref(), index.as_ref()),
+                    (func.as_ref(), args.as_slice()),
                     (
-                        HirExpr::Attr { attr, .. },
-                        HirExpr::IntLit(n, _),
-                    ) if attr == "__defaults__" && *n == idx as i64 - 3
+                        HirExpr::StrLit(name, _),
+                        [_, HirExpr::IntLit(n, _)],
+                    ) if name == "mb_func_default_at" && *n == idx as i64 - 3
                 )
             ));
         }
@@ -13861,22 +13861,26 @@ async def main():
             &["f"],
         );
 
-        let HirStmt::Let {
-            target: default_sym,
-            value: HirExpr::Walrus { .. },
-            ..
-        } = &hir.top_level[0]
-        else {
-            panic!("expected hidden default Let before call");
-        };
-        let HirStmt::Expr {
+        let default_sym = hir
+            .top_level
+            .iter()
+            .find_map(|stmt| match stmt {
+                HirStmt::Let {
+                    target,
+                    value: HirExpr::Walrus { .. },
+                    ..
+                } => Some(*target),
+                _ => None,
+            })
+            .expect("expected hidden default Let before call");
+        let Some(HirStmt::Expr {
             expr: HirExpr::Call { args, .. },
             ..
-        } = &hir.top_level[1]
+        }) = hir.top_level.last()
         else {
-            panic!("expected f() call after hidden default Let");
+            panic!("expected final f() call");
         };
-        assert!(matches!(args.as_slice(), [HirExpr::Var(sym, _)] if sym == default_sym));
+        assert!(matches!(args.as_slice(), [HirExpr::Var(sym, _)] if *sym == default_sym));
     }
 
     #[test]

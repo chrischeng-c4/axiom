@@ -656,6 +656,8 @@ fn register_turtle() {
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     // json submodules
     register_with(
         "json.decoder",

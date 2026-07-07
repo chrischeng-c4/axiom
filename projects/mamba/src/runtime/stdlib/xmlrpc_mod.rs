@@ -97,6 +97,8 @@ unsafe extern "C" fn dispatch_loads(_a: *const MbValue, _n: usize) -> MbValue {
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     register_xmlrpc_root();
     register_xmlrpc_client();
     register_xmlrpc_server();

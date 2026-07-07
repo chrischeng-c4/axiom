@@ -120,6 +120,8 @@ unsafe extern "C" fn dispatch_test_results(_a: *const MbValue, _n: usize) -> MbV
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     register_pyclbr();
     register_symtable();
     register_modulefinder();

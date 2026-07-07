@@ -1537,6 +1537,8 @@ unsafe extern "C" fn ctx_set_servername_callback(_self_v: MbValue, args: MbValue
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     let mut attrs = HashMap::new();
 
     // Protocol constants (CPython 3.12 ssl.h verbatim). These are
