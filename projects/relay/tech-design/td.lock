@@ -2,15 +2,21 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T12:36:13.927203+00:00"
-digest = "sha256:a5aeb44c7e2736103d1d342769f05c40e8560589f85a10840dec55fe01eb64ee"
-source_digest = "sha256:a5aeb44c7e2736103d1d342769f05c40e8560589f85a10840dec55fe01eb64ee"
-ir_digest = "sha256:8a9215d6f72e737f539f85b9e3ebc3d9b4df4a0419e8b485fa9a1dec6c80e7ea"
+generated_at = "2026-07-07T12:56:35.697468+00:00"
+digest = "sha256:582797d5af0b26bdbbbc7de65060eae9e4542dcce3ce94be26bca17e2719b1c6"
+source_digest = "sha256:582797d5af0b26bdbbbc7de65060eae9e4542dcce3ce94be26bca17e2719b1c6"
+ir_digest = "sha256:11daf08d7c96288a53128a95321b56074204b3d878de0f19d65675cd6beb3c55"
 
 [[files]]
 path = "interfaces/cli/unify-relay-cli-single-relay-bin-with-cli-std-llm-upgrade-issue.md"
 digest = "sha256:13cc09a152d8f8d3c89184762f7b54e5324ac4ed591c8bf2d1161276935a260d"
 ir_digest = "sha256:8528515be5a3f84efb1b102d762ea649c5ecfa51ffcd034d9d0f2860996a1090"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/adopt-service-http-shell-h2c-serve-service-metrics-standard-endp.md"
+digest = "sha256:ee3772e5fc2a3a3b755d3608c3412d9e4c3787a4edffc0c70f31faca884a74c8"
+ir_digest = "sha256:858fe244012aab522e07709c83efdf3fd672039f12ccb3bdc3909dd4ae3840b7"
 section_count = 3
 
 [[files]]
