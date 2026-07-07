@@ -20,16 +20,21 @@ Public API manifest for `projects/lumen/src/spec.rs` generated from AST during S
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `field_catalog` | projects/lumen/src/spec.rs | function | pub | 110 | field_catalog() -> Value |
+| `field_catalog` | projects/lumen/src/spec.rs | function | pub | 184 | field_catalog() -> Value |
 | `json_schema_json` | projects/lumen/src/spec.rs | function | pub | 30 | json_schema_json() -> String |
-| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 215 | llm_integration_md() -> String |
-| `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 131 | llm_outline_md() -> String |
-| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 250 | llm_quickstart_md() -> String |
-| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 306 | llm_recipes_md() -> String |
-| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 155 | llm_workflow_md() -> String |
+| `llm_auth_md` | projects/lumen/src/spec.rs | function | pub | 345 | llm_auth_md() -> String |
+| `llm_deployment_md` | projects/lumen/src/spec.rs | function | pub | 243 | llm_deployment_md() -> String |
+| `llm_integration_md` | projects/lumen/src/spec.rs | function | pub | 506 | llm_integration_md() -> String |
+| `llm_outline_md` | projects/lumen/src/spec.rs | function | pub | 213 | llm_outline_md() -> String |
+| `llm_quickstart_md` | projects/lumen/src/spec.rs | function | pub | 546 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | projects/lumen/src/spec.rs | function | pub | 606 | llm_recipes_md() -> String |
+| `llm_storage_md` | projects/lumen/src/spec.rs | function | pub | 632 | llm_storage_md() -> String |
+| `llm_workflow_md` | projects/lumen/src/spec.rs | function | pub | 419 | llm_workflow_md() -> String |
 | `openapi_json` | projects/lumen/src/spec.rs | function | pub | 15 | openapi_json() -> String |
 | `openapi_yaml` | projects/lumen/src/spec.rs | function | pub | 23 | openapi_yaml() -> String |
-| `query_shapes` | projects/lumen/src/spec.rs | function | pub | 41 | query_shapes() -> Value |
+| `query_shapes` | projects/lumen/src/spec.rs | function | pub | 113 | query_shapes() -> Value |
+| `token_registry_example_json` | projects/lumen/src/spec.rs | function | pub | 90 | token_registry_example_json() -> String |
+| `token_registry_schema` | projects/lumen/src/spec.rs | function | pub | 45 | token_registry_schema() -> Value |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -76,7 +81,7 @@ pub fn json_schema_json() -> String {
 
 /// The deployment-side token registry file schema. This is not an HTTP request
 /// body, so it lives under `operationalSchemas` in `lumen spec --format
-/// json-schema` and in `lumen llm auth`.
+/// json-schema` and in `lumen llm --topic auth`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn token_registry_schema() -> Value {
     json!({
@@ -161,6 +166,8 @@ pub fn query_shapes() -> Value {
               "request": { "query": { "range": { "field": "price", "gte": 1000, "lt": 5000 } }, "limit": 20 } },
             { "name": "match_bm25", "description": "lexical BM25 ranking over a text field",
               "request": { "query": { "match": { "field": "bio", "text": "rust search engineer" } }, "limit": 20 } },
+            { "name": "autocomplete_ngram", "description": "autocomplete/suggest recipe: declare a text field with analyzer=ngram, index the searchable label, then run match on the prefix/substring; lumen returns external_ids, not suggestion payloads",
+              "request": { "query": { "match": { "field": "title_suggest", "text": "wire" } }, "limit": 10 } },
             { "name": "boolean_and", "description": "conjunction; planner drives from the most selective clause",
               "request": { "query": { "and": [
                   { "match": { "field": "name", "text": "手機殼" } },
@@ -224,7 +231,13 @@ pub fn field_catalog() -> Value {
             { "type": "number", "purpose": "numeric range + sort (dates as epoch)" },
             { "type": "set", "purpose": "multi-valued keyword membership" },
             { "type": "vector", "purpose": "semantic kNN over a caller-supplied embedding (HNSW)", "metrics": ["cosine", "dot", "l2"] },
-            { "type": "hash", "purpose": "perceptual/structural near-dup search — 64-bit hex hash, queried by Hamming distance (pHash / SimHash / b-bit MinHash)" }
+            {
+                "type": "hash",
+                "purpose": "perceptual/structural near-dup search — caller-supplied 64-bit hex hash, queried by Hamming distance (pHash / SimHash / b-bit MinHash)",
+                "value": "16-hex-character string; optional 0x prefix accepted",
+                "queries": ["hamming"],
+                "schema": { "type": "hash" }
+            }
         ],
         "analyzers": [
             { "name": "whitespace_lower", "purpose": "split on whitespace, lowercase (default lexical)" },
@@ -234,25 +247,30 @@ pub fn field_catalog() -> Value {
     })
 }
 
-/// The agent-facing LLM topic outline (`lumen llm outline`) as Markdown.
+/// The agent-facing LLM topic outline (`lumen llm --topic outline`) as
+/// Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec projects/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 pub fn llm_outline_md() -> String {
     r#"# lumen LLM outline
 
 Use the smallest topic that answers the task:
 
-- `lumen llm workflow` — product model, declare→ingest→search→hydrate, query
+- `lumen llm --topic workflow` — product model, declare→ingest→search→hydrate, query
   flavor choices, connection, and non-goals.
-- `lumen llm integration` — recommended Postgres/AlloyDB adapter boundary:
+- `lumen llm --topic integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
   and no direct external writes to lumen's internal WAL.
-- `lumen llm quickstart` — copy-paste local create → index → search flow.
-- `lumen llm auth` — bearer-token auth contract, token-registry.json schema,
+- `lumen llm --topic quickstart` — copy-paste local create → index → search flow.
+- `lumen llm --topic auth` — bearer-token auth contract, token-registry.json schema,
   Secret Manager / Kubernetes Secret projection, and client header wiring.
-- `lumen llm storage` — operator storage/ops contract: the serving fleet is
+- `lumen llm --topic deployment` — Kubernetes-native deployment topology:
+  StatefulSet, shardCount, replicasPerShard, HPA boundary, reshard workflow,
+  and empty-PVC bootstrap.
+- `lumen llm --topic storage` — operator storage/ops contract: the serving fleet is
   always a StatefulSet with a durable PVC-backed WAL, including at
   `replicasPerShard: 1`.
-- `lumen llm recipes` — task → ready-to-POST query bodies.
+- `lumen llm --topic recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
@@ -260,11 +278,113 @@ Use the smallest topic that answers the task:
     .to_string()
 }
 
-/// Bearer-token auth + deployment secret contract (`lumen llm auth`) as
+/// Kubernetes-native deployment topology (`lumen llm --topic deployment`) as
 /// Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn llm_deployment_md() -> String {
+    let mut out = r#"# lumen deployment
+
+## Artifact layers
+Use the layered service CLI surface so image, cluster API, operator, and
+instance ownership stay separate:
+
+```
+lumen dockerfile render --variant release --version lumen@<version> --out Dockerfile
+lumen k8s crd render --out lumen-crd.yaml
+lumen k8s operator render --namespace lumen-system --out operator/
+lumen k8s instance render --profile prod --out lumen.yaml
+```
+
+`dockerfile render` is intentionally outside `k8s`: compose, kind, and
+registries all consume the same image artifact. `k8s crd render` is the
+cluster-scoped API layer, `k8s operator render|run` is the control plane, and
+`k8s instance render` is the app-namespace custom resource.
+
+## Storage topology knobs
+The operator-owned storage topology has two independent knobs:
+
+- `spec.shardCount`: the number of physical storage shards that own the corpus.
+- `spec.replicasPerShard`: how many pods belong to each shard group.
+
+The serving StatefulSet replica count is always:
+
+```
+totalPods = shardCount * replicasPerShard
+```
+
+Pod ordinals map deterministically to topology slots:
+
+```
+shardIndex = ordinal % shardCount
+replicaIndex = ordinal / shardCount
+```
+
+That means `shardCount = 3, replicasPerShard = 2` creates six pods: shard 0
+has ordinals 0 and 3, shard 1 has ordinals 1 and 4, and shard 2 has ordinals
+2 and 5.
+
+## Replica modes
+- `replicasPerShard: 1`: one durable member per shard. It uses the local WAL,
+  no raft consensus, and is the simplest topology for dev, small prod, or
+  sharded-but-not-HA deployments. It is not a primary/follower replication
+  mode: there is no background follower catching up from a primary.
+- `replicasPerShard: 2`: failover-oriented shape. It adds a second member per
+  shard; use it only when the operator/raft policy for the environment is
+  intentionally configured for that failover mode.
+- `replicasPerShard: 3`: normal raft quorum shape. Set `voterCount: 3` for a
+  three-voter shard group.
+
+`voterCount` is per shard group, not cluster-wide. Extra replicas beyond
+`voterCount` are learners.
+
+## HPA boundary
+HPA is for stateless or near-stateless serving capacity, not for changing
+storage ownership. Do not use HPA to change `shardCount` or to add/remove raft
+members. Lumen attaches HPA only where the rendered topology can tolerate it;
+raft-HA shard groups use a fixed `shardCount * replicasPerShard` peer set.
+HPA-created pods in a single-member topology must not be treated as synced data
+replicas; production data fan-out is `shardCount`, and production HA is
+`replicasPerShard > 1` raft.
+
+## Dynamic shard growth
+Shard growth is an operator workflow, not a direct response to request load.
+The normal trigger is storage pressure: for example, prepare a split around
+50% of the configured shard ceiling, then move virtual buckets in bounded
+snapshot batches. The versioned virtual-bucket map decides ownership:
+
+```
+bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount
+```
+
+Search without a routing key scatters/gathers across shards. Search with a
+routing key can target the owning shard. Do not auto-split when the max shard
+size or max shard count is unknown; surface the condition to the operator
+instead.
+
+## Empty-PVC bootstrap
+Existing pods restart from their PVC: local raft state, snapshots, and WAL are
+authoritative. A replacement pod with an empty PVC should seed from an exact
+`SnapshotV1` object first, then catch up the WAL/raft delta:
+
+```
+LUMEN_BOOTSTRAP_SEED_URI=file:///snapshots/shard-0.json
+LUMEN_BOOTSTRAP_SEED_URI=s3://bucket/path/shard-0.json
+```
+
+Backup is the cold disaster-recovery and seed surface; it is not the normal
+live replica synchronization mechanism.
+"#
+    .to_string();
+    out.push_str("\n## Shared raft-host topology primitive\n");
+    out.push_str(raft_host::llm::topic().body);
+    out
+}
+
+/// Bearer-token auth + deployment secret contract (`lumen llm --topic auth`)
+/// as Markdown.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_auth_md() -> String {
-    format!(
+    let mut out = format!(
         r#"# lumen auth
 
 ## Runtime contract
@@ -326,13 +446,16 @@ Generated Python clients accept either `auth_token="<token>"` or
 `AsyncClient`. Other clients send the same `Authorization: Bearer` header.
 "#,
         token_registry_example_json()
-    )
+    );
+    out.push_str("\n## Shared auth primitive\n");
+    out.push_str(service_auth::llm::topic().body);
+    out
 }
 
-/// The agent workflow model (`lumen llm workflow`) as Markdown — the mental
+/// The agent workflow model (`lumen llm --topic workflow`) as Markdown — the mental
 /// model, declare→ingest→search→hydrate workflow, search-flavor decision map,
 /// connection, and non-goals. Where exact wire shape is needed it points at
-/// `lumen spec` / `lumen llm recipes` so there is one source of truth.
+/// `lumen spec` / `lumen llm --topic recipes` so there is one source of truth.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_workflow_md() -> String {
     r#"# lumen workflow
@@ -365,11 +488,30 @@ hydrate the hits against your own store.
 - perceptual / near-duplicate → `hash` + `hamming`
 - hybrid lexical+semantic → `rrf` (fuse `match` + `knn` by rank; put any filter
   INSIDE each leg so the kNN leg stays filter-correct)
+- autocomplete / suggest → declare a dedicated `text` field with the `ngram`
+  analyzer and use `match`; lumen returns candidate `external_id`s, not
+  completion strings
 - which `external_id`s share a value → `POST /duplicates`
 - nested data-table / "parent whose child matches" → `has_child`; combine it
   with parent-field `sort` for list-row flows that filter by child rows then
   order/count parent rows
 - compose any of the above under `and` / `or` / `not`
+
+## Search concept boundaries
+These boundaries are explicit so search-engine selection does not infer silent
+parity with PostGIS, OpenSearch, or MongoDB features that are not part of
+Lumen's current contract.
+
+| Concept | Disposition |
+|---------|-------------|
+| Geo / spatial search | Roadmap candidate; use PostGIS/MongoDB/OpenSearch or a caller-owned geospatial prefilter today, then pass matching `external_id`s to lumen. |
+| Phrase / proximity queries | Roadmap candidate; current `match` is bag-of-words BM25 over analyzer tokens, not phrase order or slop. |
+| Fuzzy / typo tolerance | Roadmap candidate; no edit-distance automaton today. For coarse prefix/substring recall, use the `ngram` analyzer recipe. |
+| Synonyms | Caller-owned query expansion or normalized companion fields; lumen has no synonym analyzer or managed synonym dictionary. |
+| Autocomplete / suggest | Recipe via a dedicated `text` field with `analyzer: "ngram"` plus `match`; hydrate suggestions from the caller's source of truth. |
+| Highlighting | Non-goal: responses contain only `external_id` + `score`, and lumen does not store source text to return fragments. |
+| Per-field / per-clause boost | Not supported as an arbitrary query knob. Use separate fields/query legs plus `rrf` and, if needed, final reranking in the caller. |
+| Document TTL / expiry | Caller-owned lifecycle. Delete/reindex expired `external_id`s from the source-of-truth event stream; collection soft-delete grace is not per-document TTL. |
 
 ## Connection
 HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. When the
@@ -386,20 +528,24 @@ deployments route on the client: `crc32(collection_id) % shard_count`.
 - aggregate (group-by / histogram / percentile / cardinality) — pair it with an
   OLAP store (ClickHouse / Druid / BigQuery / DuckDB)
 - generate embeddings or hashes — you compute them; lumen indexes the bits
+- return highlights, snippets, stored fields, or document payloads
+- enforce per-document TTL/expiry independent of caller-owned delete/reindex
+  events
 
 ## Exact wire shapes
 `lumen spec` (OpenAPI), `lumen spec --shapes` (query cookbook), `lumen spec
---fields` (field/analyzer catalog), or `lumen llm recipes` (task → ready-to-POST
-body). `lumen llm integration` covers database/pubsub adapter boundaries.
+--fields` (field/analyzer catalog), or `lumen llm --topic recipes` (task →
+ready-to-POST body). `lumen llm --topic integration` covers database/pubsub
+adapter boundaries.
 "#
     .to_string()
 }
 
-/// The recommended database/pubsub integration boundary (`lumen llm
+/// The recommended database/pubsub integration boundary (`lumen llm --topic
 /// integration`) as Markdown.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_integration_md() -> String {
-    r#"# lumen integration
+    let mut out = r#"# lumen integration
 
 ## Recommended Postgres / AlloyDB integration
 Use this boundary when Postgres or AlloyDB is the source of truth:
@@ -427,11 +573,16 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
   ACK/retry/DLQ, upstream credentials, source offsets, stale-event suppression,
   and hydration against the source database.
 "#
-    .to_string()
+    .to_string();
+    out.push_str("\n## Shared generated-client primitive\n");
+    out.push_str(cclab_openapi_codegen::llm::topic().body);
+    out.push_str("\n## Shared h2c client primitive\n");
+    out.push_str(h2c::llm::topic().body);
+    out
 }
 
-/// A copy-paste end-to-end (`lumen llm quickstart`) as Markdown: create → index
-/// → search against a local `lumen serve` on `:7373`.
+/// A copy-paste end-to-end (`lumen llm --topic quickstart`) as Markdown:
+/// create → index → search against a local `lumen serve` on `:7373`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
@@ -484,13 +635,14 @@ curl -sS -XPOST localhost:7373/collections/products/search \
 The response is `{ "hits": [ { "external_id", "score" } ], ... }`. Fetch the full
 records from YOUR store by those `external_id`s — lumen never stored them.
 
-More shapes: `lumen llm recipes`. Full schema: `lumen spec`.
+More shapes: `lumen llm --topic recipes`. Full schema: `lumen spec`.
 "#
     .to_string()
 }
 
-/// Task → ready-to-POST body recipes (`lumen llm recipes`) as Markdown, rendered
-/// from [`query_shapes`] so the bodies never drift from the canonical cookbook.
+/// Task → ready-to-POST body recipes (`lumen llm --topic recipes`) as Markdown,
+/// rendered from [`query_shapes`] so the bodies never drift from the canonical
+/// cookbook.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_recipes_md() -> String {
     let shapes = query_shapes();
@@ -514,12 +666,12 @@ pub fn llm_recipes_md() -> String {
     out
 }
 
-/// Operator storage/ops contract (`lumen llm storage`) as Markdown: the
+/// Operator storage/ops contract (`lumen llm --topic storage`) as Markdown: the
 /// serving fleet's workload kind and PVC durability guarantee, independent of
 /// `replicasPerShard`.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_storage_md() -> String {
-    r#"# lumen storage
+    let mut out = r#"# lumen storage
 
 ## The serving fleet is always a StatefulSet
 The operator (`lumen::operator::render`) renders the serving fleet as a
@@ -538,9 +690,9 @@ consensus; it never changes whether the WAL is durable.
 - One StatefulSet member per shard, with the durable `raft` PVC.
 - No raft peer-identity env — the pod runs a local WAL with no consensus
   overhead.
-- A `HorizontalPodAutoscaler` (`scaleTargetRef.kind: StatefulSet`) still owns
-  the live replica count between `spec.serving.autoscaling.minReplicas` and
-  `maxReplicas`, exactly as it did before the fleet became a StatefulSet.
+- The legacy single-shard HPA path is serving-capacity only. It is not a
+  primary/follower data-replica mode, and extra pods do not continuously catch
+  up a shared shard from a primary.
 
 ## `replicasPerShard > 1` — raft-HA
 - Fixed replica count `shardCount * replicasPerShard` (raft needs a known,
@@ -553,6 +705,80 @@ consensus; it never changes whether the WAL is durable.
   `serviceName`.
 - This regime, including the PVC, is unchanged from before `replicasPerShard:
   1` also started getting a StatefulSet.
+
+## Shards, replicas, and HPA
+Storage topology has two independent knobs:
+
+- `spec.shardCount` controls how many physical storage shards own the corpus.
+- `spec.replicasPerShard` controls HA inside each shard group.
+
+The serving pod count is `shardCount * replicasPerShard`. StatefulSet pod
+ordinals map to topology slots with `shardIndex = ordinal % shardCount` and
+`replicaIndex = ordinal / shardCount`. HPA does not change storage ownership:
+it must never be used as the mechanism for increasing `shardCount` or changing
+raft membership. Dynamic shard growth is an operator workflow driven by
+storage pressure and a versioned virtual-bucket map, with bounded snapshot-batch
+movement between physical shards.
+
+When an operator does not know the max shard size or max shard count, it should
+report the pressure condition instead of auto-splitting.
+
+## Empty-PVC replica bootstrap
+Existing pods restart from their PVC-local raft state, snapshots, and WAL. A
+new replacement pod with an empty PVC should seed from an exact `SnapshotV1`
+object before WAL/raft delta catch-up:
+
+```
+LUMEN_BOOTSTRAP_SEED_URI=file:///snapshots/shard-0.json
+LUMEN_BOOTSTRAP_SEED_URI=s3://bucket/path/shard-0.json
+```
+
+External backup is the cold disaster-recovery and bootstrap seed surface; it is
+not the normal live replica synchronization mechanism.
+
+## Upgrading `<=0.4.9` Deployment-backed instances to `>=0.4.10` (#834)
+Lumen `<=0.4.9` rendered `spec.replicasPerShard: 1` serving fleets as an
+`apps/v1` `Deployment` named `<name>`. Lumen `>=0.4.10` renders the serving
+fleet as an `apps/v1` `StatefulSet` with the same `<name>`. Kubernetes treats
+those as different resources, and the shared operator only server-side-applies
+the currently rendered child objects; it does not prune a stale child object
+whose API kind changed. Applying the new operator/image alone can therefore
+leave the old `Deployment/<name>` beside the new `StatefulSet/<name>`.
+
+Use an explicit handoff for any cluster that already reconciled the CR with
+`<=0.4.9`:
+
+1. Apply the new CRD first if needed. This only updates the schema and is safe
+   before the workload handoff.
+2. Schedule write downtime and take an admin backup (`GET /admin/backup`) if
+   you need to carry data into the new PVC-backed StatefulSet.
+3. Pause the old `<=0.4.9` operator reconciliation, for example by scaling the
+   operator `Deployment/lumen-operator` to zero or pausing the GitOps rollout
+   that runs it. Otherwise the old operator or old HPA can recreate/scale the
+   serving Deployment while you are migrating.
+4. Stop the old serving workload before the `>=0.4.10` operator reconciles:
+
+   ```
+   kubectl -n <ns> scale deployment/<name> --replicas=0
+   kubectl -n <ns> delete deployment/<name> --wait=true
+   ```
+
+   Scaling first is reversible; deleting with `--wait=true` makes the handoff
+   boundary explicit.
+5. Deploy or unpause the `>=0.4.10` operator/image and let it create
+   `StatefulSet/<name>` plus the `raft-<name>-<ordinal>` PVCs.
+6. Wait for the new fleet before resuming traffic or writes:
+
+   ```
+   kubectl -n <ns> rollout status statefulset/<name>
+   ```
+
+Do not run both the old `Deployment/<name>` pods and the new
+`StatefulSet/<name>` pods behind the same Service. They have independent WAL /
+engine storage, and the operator does not copy a Deployment pod's filesystem
+or local WAL into the new StatefulSet PVC. If you must preserve data from the
+old Deployment-backed pod, restore an admin backup into the new pod or rebuild
+from your upstream source-of-truth before reopening writes.
 
 ## Snapshot / backup (#808)
 The durable `raft` PVC protects against pod reschedule/eviction/node loss,
@@ -581,6 +807,21 @@ per-collection grant) when `spec.auth: required`:
 These three routes are the safe procedure for ad hoc or scripted
 snapshot/restore — pull with `GET /admin/backup`, keep the bytes wherever you
 like, push back with `POST /admin/restore` to recover.
+
+### Direct CLI data movement: `dump` / `export` / `load` / `import`
+For ad hoc SnapshotV1 movement from a shell, use the direct CLI wrappers:
+
+```
+lumen export --url http://localhost:7373 --out snapshot.json
+lumen import --url http://localhost:7373 --file snapshot.json
+```
+
+`lumen dump` is an alias of `export`, and `lumen load` is an alias of
+`import`. With no `--out`, dump/export write the exact SnapshotV1 JSON bytes to
+stdout; with no `--file`, load/import read SnapshotV1 JSON from stdin. These
+verbs do not add a new format, merge mode, or partial import semantics:
+load/import still replace all engine state via `/admin/restore`. `--token`
+uses the same `LUMEN_BACKUP_TOKEN` fallback as `lumen backup`.
 
 ### Optional scheduled backup: `spec.serving.backup`
 Set `spec.serving.backup` on the CR to make the operator render a
@@ -707,7 +948,12 @@ CRD validation ambiguity (which one wins if both are set?) for no real
 gain. `raftStorageClass` already lets a deployer set any StorageClass name
 they want — the fix here is this guidance, not new API surface.
 "#
-    .to_string()
+    .to_string();
+    out.push_str("\n## Shared backup primitive\n");
+    out.push_str(service_backup::llm::topic().body);
+    out.push_str("\n## Shared raft-host primitive\n");
+    out.push_str(raft_host::llm::topic().body);
+    out
 }
 // CODEGEN-END
 ````
