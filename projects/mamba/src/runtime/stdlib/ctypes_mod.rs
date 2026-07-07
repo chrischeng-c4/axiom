@@ -1267,6 +1267,8 @@ fn make_ctypes_exception_type_object(name: &str) -> MbValue {
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     register_classes();
 
     let mut attrs: HashMap<String, MbValue> = HashMap::new();

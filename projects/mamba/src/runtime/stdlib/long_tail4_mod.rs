@@ -575,6 +575,8 @@ fn register_punycode_module() {
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     register_xml_remainder();
     register_email_internals();
     register_asyncio_remainder();

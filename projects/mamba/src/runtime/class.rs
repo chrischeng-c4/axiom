@@ -25832,11 +25832,10 @@ mod tests {
     fn test_callable_class_attr_dunder_repr_dispatches_via_mb_call_method1() {
         cleanup_all_classes();
 
+        let wrapper_call = decorated_repr_wrapper_call as usize;
+        super::super::module::register_variadic_func(wrapper_call as u64);
         let mut wrapper_methods = HashMap::new();
-        wrapper_methods.insert(
-            "__call__".to_string(),
-            MbValue::from_func(decorated_repr_wrapper_call as usize),
-        );
+        wrapper_methods.insert("__call__".to_string(), MbValue::from_func(wrapper_call));
         mb_class_register("DecoratedReprWrapper1086", vec![], wrapper_methods);
         mb_class_register("DecoratedReprTarget1086", vec![], HashMap::new());
 

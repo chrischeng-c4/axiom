@@ -73,6 +73,12 @@ thread_local! {
     static NEXT_SHELL_SLOT: std::cell::Cell<usize> = std::cell::Cell::new(0);
 }
 
+/// Reset the per-thread shell pool cursor so the next stdlib registration pass
+/// can reuse the fixed shell-function pool from slot 0.
+fn reset_shell_slots() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+}
+
 /// Draw the next unused pool slot index. `register()` runs sequentially on
 /// a single thread at module-init time, so a simple monotonic counter gives
 /// every class-shell name a fresh, non-overlapping slot with no manual
@@ -407,6 +413,11 @@ unsafe extern "C" fn dispatch_unwrap(args_ptr: *const MbValue, nargs: usize) -> 
 /// Register the http/urllib module family.
 pub fn register() {
     use super::super::module::NATIVE_FUNC_ADDRS;
+
+    // Test and benchmark harnesses can re-initialize the stdlib repeatedly in
+    // one process. Slot uniqueness only needs to hold within one registration
+    // pass; the module table is overwritten on the next pass.
+    reset_shell_slots();
 
     fn add_dispatch(attrs: &mut HashMap<String, MbValue>, name: &str, addr: usize) {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -2560,6 +2571,14 @@ mod tests {
             extract_str(unparsed).unwrap(),
             "https://example.com/path?q=1#frag"
         );
+    }
+
+    #[test]
+    fn test_cleanup_resets_http_shell_pool_cursor() {
+        NEXT_SHELL_SLOT.with(|c| c.set(SHELL_POOL_SIZE));
+        reset_shell_slots();
+        assert_eq!(next_shell_slot(), 0);
+        reset_shell_slots();
     }
 }
 

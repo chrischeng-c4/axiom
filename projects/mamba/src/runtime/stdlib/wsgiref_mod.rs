@@ -162,6 +162,8 @@ fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usi
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     register_wsgiref_root();
     register_wsgiref_util();
     register_wsgiref_headers();
