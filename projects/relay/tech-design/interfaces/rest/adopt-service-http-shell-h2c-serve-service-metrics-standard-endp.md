@@ -134,7 +134,6 @@ flowchart TD
     r5[R5 error envelope] --> tests_http2_transport_rs_errors_render_the_shared_envelope[tests/http2_transport.rs::errors_render_the_shared_envelope]
     r6[R6 existing transport regression] --> tests_http2_transport_rs_worker_leases_and_acks_over_h2c[tests/http2_transport.rs::worker_leases_and_acks_over_h2c]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
