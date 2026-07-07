@@ -6,13 +6,20 @@
 #   - workflow_dispatch                 → build artifacts only (manual smoke)
 #
 # Targets (macOS Intel intentionally dropped — Apple Silicon only):
-#   - aarch64-apple-darwin      (Apple Silicon,      macos-14 native)
-#   - x86_64-unknown-linux-gnu  (most Linux servers, ubuntu-latest native)
-#   - aarch64-unknown-linux-gnu (Linux on ARM,       ubuntu-latest cross)
+#   - aarch64-apple-darwin        (Apple Silicon,      macos-14 native)
+#   - x86_64-unknown-linux-gnu    (most Linux servers, ubuntu-latest native)
+#   - aarch64-unknown-linux-gnu   (Linux on ARM,       ubuntu-latest cross)
+#   - x86_64-unknown-linux-musl   (static Linux,       ubuntu-latest native)
+#   - aarch64-unknown-linux-musl  (static Linux ARM,   ubuntu-24.04-arm native)
 #
 # lumen's serving binary speaks REST/OpenAPI and uses rustls-backed HTTP clients
 # for raft/CLI online paths, so there is no openssl in the build graph — the
 # aarch64 Linux cross leg needs only the gcc cross-linker, same as cap/vat/meter.
+# The two musl legs are fully static (see #1195: `Dockerfile.release`'s runtime
+# stage is glibc-free `distroless/static-debian12`, so it needs a static
+# binary — a gnu binary built on ubuntu-latest's glibc otherwise outpaces the
+# base image's). Both musl legs build native (same CPU arch as the runner), so
+# `musl-tools`' `musl-gcc` is enough — no cross toolchain, unlike aarch64-gnu.
 name: lumen-release
 
 on:
@@ -35,12 +42,23 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
             cross: false
+            musl: false
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cross: false
+            musl: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
+            musl: false
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: false
+            musl: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            cross: false
+            musl: true
 
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +77,14 @@ jobs:
           [target.aarch64-unknown-linux-gnu]
           linker = "aarch64-linux-gnu-gcc"
           EOF
+
+      - name: Install musl toolchain (Linux musl targets)
+        # Both musl legs build native (same CPU arch as the runner), so
+        # `musl-tools`' `musl-gcc` is sufficient — no cross linker needed.
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
 
       - uses: Swatinem/rust-cache@v2
         with:
