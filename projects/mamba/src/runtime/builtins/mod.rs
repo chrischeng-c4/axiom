@@ -19,6 +19,7 @@ mod import_hook;
 mod input;
 mod map_filter;
 mod memoryview;
+mod object_identity;
 mod range_slice;
 mod set_constructors;
 mod truthiness;
@@ -51,6 +52,7 @@ pub use map_filter::{
     call_any_callable, call_named_callable_pub, callable_as_type_name, mb_filter, mb_map,
 };
 pub use memoryview::mb_memoryview;
+pub use object_identity::mb_id;
 pub use range_slice::{
     mb_range, mb_range_2, mb_range_3, mb_range_no_args, mb_range_too_many_args, mb_slice,
     mb_slice_no_args,
@@ -7220,17 +7222,6 @@ pub fn mb_hash(val: MbValue) -> MbValue {
         }
     } else {
         MbValue::from_int(0)
-    }
-}
-
-/// id(value) — return unique identity of an object.
-pub fn mb_id(val: MbValue) -> MbValue {
-    if let Some(ptr) = val.as_ptr() {
-        // Truncate to fit 48-bit signed int range
-        MbValue::from_int((ptr as u64 & 0x0000_7FFF_FFFF_FFFF) as i64)
-    } else {
-        // For primitives, use the raw bits truncated
-        MbValue::from_int((val.to_bits() >> 17) as i64)
     }
 }
 
