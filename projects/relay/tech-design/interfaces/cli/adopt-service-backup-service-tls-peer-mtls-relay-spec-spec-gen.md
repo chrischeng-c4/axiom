@@ -194,3 +194,85 @@ flowchart TD
     r4[R4 crd backup cron render] --> tests_operator_rs_backup_cron_job_renders_only_when_policy_set_cfg_feature_operator[tests/operator.rs::backup_cron_job_renders_only_when_policy_set (cfg feature operator)]
     r5[R5 llm operations topic] --> tests_spec_cli_rs_llm_operations_topic_documents_the_new_surfaces[tests/spec_cli.rs::llm_operations_topic_documents_the_new_surfaces]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/relay/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Feature `backup` = [dep:reqwest, service-backup/s3] (lumen #808 layout). New unconditional deps: service-backup (shared destination/policy/sink/runner contract), service-tls (peer-mTLS material loading — links rustls in every build), cclab-openapi-codegen (spec gen), serde_yaml (spec --format openapi-yaml; was operator-only), rustls (peer_tls builder passthrough types). reqwest becomes an optional runtime dep (still a dev-dep). The private rustls-provider feature collapses: rustls is always linked now, so self-update/issue/operator drop the indirection and src/tls.rs installs unconditionally."
+  - path: projects/relay/src/bin/relay.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Command::Spec(SpecArgs{gen subcommand, --format openapi|openapi-yaml|json-schema}) mirroring keep minus --shapes/--fields, Command::Backup(BackupArgs{--url, --dest, --token env RELAY_BACKUP_TOKEN, --retention-secs}) mirroring lumen; dispatch spec/spec_gen (cclab_openapi_codegen::generate on openapi::api_doc_json) + dispatch_backup (feature backup; the not-gated arm bails with the rebuild hint); serve_main validates peer_tls::PeerTlsConfig::from_env in replica mode before the raft group spawns. Parse-surface tests extended."
+  - path: projects/relay/src/backup.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "New module, cfg(feature = backup): fetch_snapshot_bytes(base_url, token) GETs {base_url}/admin/backup via reqwest (Bearer when set, non-2xx bails with status + body); run_backup(base_url, token, dest, retention) hands the exact bytes to service_backup::run_backup_once against sink_from_destination — lumen src/backup.rs pattern minus the restore POST (relay restore is load_live merge, library-side)."
+  - path: projects/relay/src/peer_tls.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: "New always-compiled thin adapter over libs/service-tls (lumen src/tls.rs #971 pattern): ENV_PREFIX RELAY_PEER, pub PeerTlsConfig {cert,key,ca,required} + From conversions, from_env() deriving RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on|off, rustls_server_config/rustls_client_config passthroughs. Unit tests: none-set => None, all-set + on => required, partial => must-all-be-set error, mis-pointed cert path => error naming the path, PEM fixture builds both rustls configs."
+  - path: projects/relay/src/tls.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "install_default_crypto_provider() now delegates unconditionally to service_tls::install_default_crypto_provider (service-tls links rustls in every build; the rustls-provider cfg gate and doc caveats go away)."
+  - path: projects/relay/src/raft.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "EngineSnapshot becomes pub with pub fields; new pub fn snapshot_bytes(relay, up_to) and pub fn load_snapshot_bytes(relay, bytes) -> Index factor the ONE snapshot serialization out of RaftStateMachine::{snapshot,restore}, which now delegate — the /admin/backup endpoint and the backup artifact carry the identical bytes."
+  - path: projects/relay/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "GET /admin/backup joins the data-plane router inside the service-auth middleware: authorize Role::Admin on '*' (lumen's guard), then application/json bytes from raft::snapshot_bytes(&relay, raft.map(applied_index).unwrap_or(0)); utoipa::path registered."
+  - path: projects/relay/src/openapi.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "New offline accessors: openapi_yaml() (serde_yaml over the same document, keep's pattern) and json_schema_json() ({components: ...} view); crate::server::admin_backup added to the ApiDoc paths."
+  - path: projects/relay/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Module wiring: pub mod peer_tls; cfg(feature = backup) pub mod backup."
+  - path: projects/relay/src/operator/crd.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "RelaySpec gains backup: Option<RelayBackupSpec> { schedule, destination (flat URI STRING — keep #776 structural-schema trap), retention_secs: Option<u64>, admin_token_secret: Option<String> }; skip_serializing_if none so existing CRs round-trip."
+  - path: projects/relay/src/operator/render.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "backup_cron_job(relay, cx) -> Option<Value> via the shared operator::render::cron_job helper: {name}-backup, schedule, same relay image, command [relay], args [backup --url http://{name}.{ns}.svc.cluster.local:7000 --dest <destination> (--retention-secs N)], RELAY_BACKUP_TOKEN secretKeyRef when adminTokenSecret set, serviceAccountName {name}; appended to render() only when spec.backup is Some."
+  - path: projects/relay/src/llm.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "operations topic documents relay spec / spec gen, relay backup + GET /admin/backup + the operator CronJob + RELAY_BACKUP_TOKEN, and the RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on contract with the raft-host/h2c mTLS-termination gap stated honestly."
+  - path: projects/relay/tests/spec_cli.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Drives the COMPILED relay binary offline (deploy_cli.rs harness pattern): spec parses as OpenAPI JSON listing the /v1 paths + /admin/backup; --format openapi-yaml parses via serde_yaml; --format json-schema parses as JSON with a components key; spec gen writes a non-empty client per lang (ts asserts types.ts/client.ts/index.ts); llm operations names the new surfaces."
+  - path: projects/relay/tests/backup.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Live-node integration over the http2_transport.rs harness (service_http::serve on 127.0.0.1:0): /admin/backup returns parseable EngineSnapshot bytes carrying a published un-acked message; the artifact round-trips through load_snapshot_bytes on a FRESH engine and the message leases back with the original payload (idempotent merge re-load asserted); with auth required the endpoint 401s tokenless, 403s a non-admin token, 200s an admin-on-* token; cfg(feature = backup): relay::backup::run_backup ships the snapshot to a file:// sink (BackupRunResult + artifact on disk) and prunes by retention."
+  - path: projects/relay/tests/operator.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "cfg(feature = operator): backup_cron_job_renders_only_when_policy_set — no CronJob without spec.backup; with it, the rendered CronJob carries kind CronJob, the schedule, the relay backup args (cluster-DNS --url, --dest, --retention-secs), and RELAY_BACKUP_TOKEN secretKeyRef when adminTokenSecret is set; CRD render stays structural-schema safe with the new field."
+```
