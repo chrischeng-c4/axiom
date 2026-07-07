@@ -1,0 +1,13 @@
+[package]
+name = "defer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Delayed push-queue scheduler core for Axiom"
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

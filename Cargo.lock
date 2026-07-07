@@ -3536,6 +3536,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "defer"
+version = "0.4.3"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "deflate64"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
