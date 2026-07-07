@@ -24,7 +24,7 @@ print(sorted(words, key=len, reverse=True))
     );
     assert_output(
         &out,
-        "[1, 1, 2, 3, 4, 5, 6, 9]\n[9, 6, 5, 4, 3, 2, 1, 1]\n['apple', 'banana', 'cherry']\n['cherry', 'banana', 'apple']\n",
+        "[1, 1, 2, 3, 4, 5, 6, 9]\n[9, 6, 5, 4, 3, 2, 1, 1]\n['apple', 'banana', 'cherry']\n['banana', 'cherry', 'apple']\n",
     );
 }
 
