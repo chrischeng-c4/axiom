@@ -1,7 +1,10 @@
 # Raft-backed relay as a StatefulSet: stable identity (relay-<ordinal>), a
-# per-pod PVC for the durable Raft log, and downward-API env so each node
-# derives its id / role / peers itself. Keep replicas == RELAY_REPLICAS (odd N
-# is the cleanest; an even N makes the trailing pod a read-only learner).
+# per-pod PVC for the durable log + raft hard state, and the STANDARD
+# downward-API contract raft-host reads (#544): POD_NAME + the
+# SHARD_COUNT / REPLICAS_PER_SHARD / VOTER_COUNT quartet. The single `relay`
+# entrypoint auto-flips into replica/HA mode when REPLICAS_PER_SHARD > 1 —
+# there is no separate raft bin. Keep spec.replicas ==
+# SHARD_COUNT * REPLICAS_PER_SHARD and VOTER_COUNT odd.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -9,7 +12,7 @@ metadata:
   labels:
     app: relay
 spec:
-  serviceName: relay # the headless Service above
+  serviceName: relay # the headless Service above (raft peer DNS)
   replicas: 3
   podManagementPolicy: Parallel
   selector:
@@ -30,37 +33,44 @@ spec:
           type: RuntimeDefault
       containers:
         - name: relay
-          image: relay-raft:dev
+          image: relay:dev
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
           env:
-            # Pod name == relay-<ordinal>; ordinal_from_hostname() -> node id.
-            - name: HOSTNAME
+            # Standard raft-host downward-API contract: pod name -> ordinal ->
+            # (shard, replica); replica_mode() flips HA when
+            # REPLICAS_PER_SHARD > 1. relay is single-group: SHARD_COUNT=1.
+            - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: RELAY_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: RELAY_REPLICAS
-              value: "3" # must match spec.replicas
-            - name: RELAY_SERVICE
+            - name: SHARD_COUNT
+              value: "1"
+            - name: REPLICAS_PER_SHARD
+              value: "3" # must match spec.replicas (x SHARD_COUNT)
+            - name: VOTER_COUNT
+              value: "3"
+            # Headless Service for peer DNS: relay-<ordinal>.relay:<port>.
+            - name: RELAY_PEER_SERVICE
               value: "relay"
-            - name: RELAY_PORT
-              value: "8080"
-            - name: RELAY_SUBJECT
-              value: "events"
+            - name: RELAY_BIND
+              value: "0.0.0.0:8080"
             - name: RELAY_DATA_DIR
               value: "/data"
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8080
             initialDelaySeconds: 2
             periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
           securityContext:
             runAsNonRoot: true
             runAsUser: 10001

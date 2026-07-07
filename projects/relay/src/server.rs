@@ -47,8 +47,9 @@ use crate::wire::{
 };
 
 /// Shared application state: the relay core plus this shard's config, the
-/// per-op request metrics, the drain flag `/readyz` reports, and the bearer
-/// verifier the data-plane auth layer runs (#1206).
+/// per-op request metrics, the drain flag `/readyz` reports, the bearer
+/// verifier the data-plane auth layer runs (#1206), and — in replica/HA mode
+/// (#544) — the raft group the publish path proposes through.
 #[derive(Clone)]
 pub struct AppState {
     relay: Arc<Relay>,
@@ -56,6 +57,7 @@ pub struct AppState {
     metrics: Arc<RelayMetrics>,
     draining: Arc<AtomicBool>,
     verifier: Arc<StaticRoleMapVerifier>,
+    raft: Option<Arc<crate::raft::RelayRaft>>,
 }
 
 impl AppState {
@@ -70,6 +72,7 @@ impl AppState {
             metrics: Arc::new(RelayMetrics::new()),
             draining: Arc::new(AtomicBool::new(false)),
             verifier: Arc::new(StaticRoleMapVerifier::open()),
+            raft: None,
         }
     }
 
@@ -85,6 +88,18 @@ impl AppState {
     /// The bearer verifier the data-plane auth middleware runs.
     pub fn verifier(&self) -> Arc<StaticRoleMapVerifier> {
         Arc::clone(&self.verifier)
+    }
+
+    /// Attach the raft group (replica/HA mode, #544): publish/publish-batch
+    /// propose through it instead of writing the engine directly. The group
+    /// MUST replicate into this state's engine (`relay_handle()`).
+    pub fn set_raft(&mut self, raft: Arc<crate::raft::RelayRaft>) {
+        self.raft = Some(raft);
+    }
+
+    /// The raft group, when running in replica/HA mode.
+    pub fn raft(&self) -> Option<Arc<crate::raft::RelayRaft>> {
+        self.raft.clone()
     }
 
     /// This shard's advertised config.
@@ -257,6 +272,23 @@ pub async fn publish(
         req.delay_ms
             .map(|ms| now + chrono::Duration::milliseconds(ms as i64))
     });
+    // Replica/HA mode (#544): replicate the publish through raft — the host
+    // proposes locally on the leader or forwards to the leader, and returns
+    // once THIS node's engine applied it (read-your-write).
+    if let Some(raft) = st.raft() {
+        let cmd = crate::raft::PubCommand {
+            subject,
+            message_id: req.message_id,
+            payload: req.payload,
+            headers: req.headers,
+            priority: req.priority,
+            not_before,
+        };
+        return match propose_publish(&st, &raft, cmd).await {
+            Ok(outcome) => encode_body(cbor, StatusCode::OK, &outcome),
+            Err(resp) => resp,
+        };
+    }
     let result = st.relay.publish_at(
         &subject,
         &req.message_id,
@@ -270,6 +302,42 @@ pub async fn publish(
         Ok(outcome) => encode_body(cbor, StatusCode::OK, &outcome),
         Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
             .into_response(),
+    }
+}
+
+/// Propose one publish through the raft group and resolve its engine outcome:
+/// normally claimed from the state machine's outcome window; if it aged out
+/// (an unclaimed backlog raced past the window) the engine's idempotent
+/// publish returns the existing `{seq, deduped}`. Raft unavailability (no
+/// leader / apply timeout) maps to 503.
+async fn propose_publish(
+    st: &AppState,
+    raft: &crate::raft::RelayRaft,
+    cmd: crate::raft::PubCommand,
+) -> Result<crate::types::AppendOutcome, Response> {
+    match raft.publish(&cmd).await {
+        Ok((_, Some(outcome))) => Ok(outcome),
+        Ok((_, None)) => st
+            .relay
+            .publish_at(
+                &cmd.subject,
+                &cmd.message_id,
+                cmd.payload,
+                cmd.headers,
+                cmd.not_before,
+                cmd.priority,
+                Utc::now(),
+            )
+            .map_err(|e| {
+                ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+                    .into_response()
+            }),
+        Err(e) => Err(ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "raft_unavailable",
+            e.to_string(),
+        )
+        .into_response()),
     }
 }
 
@@ -296,6 +364,27 @@ pub async fn publish_batch(
         Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
+    // Replica/HA mode (#544): each message is one raft command, proposed in
+    // input order (per-entry raft fsync replaces the local group commit — an
+    // accepted HA trade documented in the TD).
+    if let Some(raft) = st.raft() {
+        let mut outcomes = Vec::with_capacity(req.messages.len());
+        for m in req.messages {
+            let cmd = crate::raft::PubCommand {
+                subject: subject.clone(),
+                message_id: m.message_id,
+                payload: m.payload,
+                headers: m.headers,
+                priority: m.priority,
+                not_before: None,
+            };
+            match propose_publish(&st, &raft, cmd).await {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(resp) => return resp,
+            }
+        }
+        return encode_body(cbor, StatusCode::OK, &PublishBatchResponse { outcomes });
+    }
     let messages = req
         .messages
         .into_iter()

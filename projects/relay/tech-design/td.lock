@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T13:53:58.886885+00:00"
-digest = "sha256:930e4480979ade5710b6807ce4d259802cc2981a7411d6095c6f43e3680de950"
-source_digest = "sha256:930e4480979ade5710b6807ce4d259802cc2981a7411d6095c6f43e3680de950"
-ir_digest = "sha256:ce8d1e1b1ae3dcaa81d2ca4d9c2f4204fa44ae9876162081a0a8f692d9575c09"
+generated_at = "2026-07-07T14:07:38.019308+00:00"
+digest = "sha256:8031206f70d8e40678edbaac6d815cf7ab654da8518fa64237d2fee454c393ae"
+source_digest = "sha256:8031206f70d8e40678edbaac6d815cf7ab654da8518fa64237d2fee454c393ae"
+ir_digest = "sha256:6331e4a5372aad8ced49e4d47cb3270b970026eaadca1fcab21e9dfc78f482dd"
 
 [[files]]
 path = "interfaces/cli/unify-relay-cli-single-relay-bin-with-cli-std-llm-upgrade-issue.md"
@@ -74,18 +74,6 @@ ir_digest = "sha256:1858b98a882785b0484d5499c9d3f5138cb679d41b37e3257066d7d618ca
 section_count = 5
 
 [[files]]
-path = "logic/h2c-raft-transport-driver-producer-redirect-to-leader.md"
-digest = "sha256:a5f8ca1aa48fa912ff7d768569b378ecff21ba60cb87703abb6eaec1df79de73"
-ir_digest = "sha256:9eadc77351a8cc86f8a719dc2efc50b7fa372a7f2af01d8700055f2ef6192990"
-section_count = 3
-
-[[files]]
-path = "logic/k8s-manifests-ordinal-role-kind-failover-smoke-raft-ha-layer-2.md"
-digest = "sha256:2919f9b9be02bf1d55f3f05de90f58128346820df51feecb752e6c250de3786a"
-ir_digest = "sha256:7161114e3eec7fbd2411c0aa5df1d8cd217b2983d8efa44d679c974c813a50e0"
-section_count = 3
-
-[[files]]
 path = "logic/log-segment-rotation-retention-full-log-lifecycle.md"
 digest = "sha256:3930b2dee7401c5d00ff61af3d52c29a2fde70186194bb7a4a4e92a914c431e3"
 ir_digest = "sha256:6cdc72c1718e75e531cc85462e56c02ddc0c08e00279a13f8abfae86794ec53a"
@@ -98,22 +86,10 @@ ir_digest = "sha256:b344197684273809073c51a51130ba11eac87eb4641f7ea961d86b760936
 section_count = 3
 
 [[files]]
-path = "logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md"
-digest = "sha256:e0abf58c27e661333d5feff7b93cbe350b8897d525335c1a93a2c235fc190633"
-ir_digest = "sha256:79a0e977dc50f71290754d7eb4334ebb072b0a46762c9f8fa6c2df8fec0ed4c4"
-section_count = 3
-
-[[files]]
 path = "logic/reconciler-lease-reclaim-redeliver-liveness.md"
 digest = "sha256:dc3ce1e8d3933099d6d7a87a95b8b23e71c446842229e4e7760802aadeb59ff1"
 ir_digest = "sha256:6b86b0fa29ac1285406d60823093b71357045237eea35abe6284ca6bc804dec4"
 section_count = 4
-
-[[files]]
-path = "logic/single-shard-raft-consensus-core-self-contained-rsm-auto-voter-l.md"
-digest = "sha256:a0c64c71c4d6fcd535e231a8c861fca1fe362948f5665ddcc9684dc2a65fa131"
-ir_digest = "sha256:21f7d12f66de134c2c91ca0352e4547b3de1a284aaa40ee2b9f19c83bc9c95f5"
-section_count = 3
 
 [[files]]
 path = "logic/sparse-offset-index-scale-the-log-to-billions-of-entries.md"

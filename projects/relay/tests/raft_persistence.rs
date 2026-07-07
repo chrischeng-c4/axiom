@@ -1,128 +1,136 @@
-// SPEC-MANAGED: projects/relay/tech-design/logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:8ae02b04" tracker="pending-tracker" reason="Tests: PersistedState save/load round-trip; a sole-voter node persisted then restored via from_persisted keeps its committed log; votedFor is remembered across restore (no double-vote); loading an empty dir returns None."
-//! Raft hard-state persistence (#137): save/load round-trips, a restored node
-//! keeps its committed log and remembers its vote, and an empty dir is a clean
-//! fresh start.
+// SPEC-MANAGED: projects/relay/tech-design/logic/adopt-raft-host-relaystatemachine-auto-mode-ha-drop-hand-rolled.md#unit-test
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:8ae02b04" tracker="pending-tracker" reason="Restart-recovery tests over RelayRaft (#544): a single-node group restarted from its data dir rejoins with applied state intact and accepts new proposes (no double-apply); and the resurrection case — acked work already trimmed by delete-on-ack is NOT re-appended by cold replay thanks to the fsynced applied-index floor."
+//! Restart recovery over the raft-host stack (#544): the fsynced
+//! applied-index marker is relay's honest floor. The engine is delete-on-ack
+//! with a bounded dedupe window, so cold-replaying the resident committed raft
+//! log without a floor would resurrect acked (already-trimmed) work; with it,
+//! a restarted node rejoins exactly where it left off.
 
-use relay::raft::{auto_membership, PersistedState, RaftEntry, RaftMsg, RaftNode, VoteReq};
-use relay::{FsyncPolicy, RaftStore};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
 
-fn entry(term: u64, index: u64, c: u8) -> RaftEntry {
-    RaftEntry {
-        term,
-        index,
-        command: vec![c],
+use chrono::Utc;
+use raft_host::Membership;
+use relay::{PubCommand, Relay, RelayCoreConfig, RelayRaft};
+
+fn sole_voter() -> Membership {
+    Membership {
+        voters: vec![0],
+        learners: vec![],
     }
 }
 
-#[test]
-fn persisted_state_round_trips() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = PersistedState {
-        term: 5,
-        voted_for: Some(2),
-        log: vec![entry(1, 1, 10), entry(3, 2, 20), entry(5, 3, 30)],
-        ..Default::default()
-    };
-    RaftStore::open(dir.path().to_str().unwrap(), 0, FsyncPolicy::Always)
-        .unwrap()
-        .save(&state)
-        .unwrap();
-    // A fresh store over the same dir loads the identical state.
-    let loaded = RaftStore::open(dir.path().to_str().unwrap(), 0, FsyncPolicy::Always)
-        .unwrap()
-        .load()
-        .unwrap();
-    assert_eq!(loaded, Some(state));
-}
-
-#[test]
-fn empty_dir_loads_none() {
-    let dir = tempfile::tempdir().unwrap();
-    let got = RaftStore::open(dir.path().to_str().unwrap(), 7, FsyncPolicy::Always)
-        .unwrap()
-        .load()
-        .unwrap();
-    assert_eq!(got, None);
-}
-
-#[test]
-fn sole_voter_restore_keeps_log_and_resumes() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = RaftStore::open(dir.path().to_str().unwrap(), 0, FsyncPolicy::Always).unwrap();
-    let m = auto_membership(1); // single voter
-
-    let saved = {
-        let mut node = RaftNode::new(0, &m);
-        for _ in 0..12 {
-            node.tick();
-        }
-        assert!(node.is_leader(), "sole voter elected itself");
-        for c in 0..3u8 {
-            node.propose(vec![c]).unwrap();
-        }
-        assert_eq!(node.commit_index(), 3, "sole voter commits immediately");
-        let state = node.persisted();
-        store.save(&state).unwrap();
-        state
-    };
-
-    // "Restart": load + from_persisted.
-    let loaded = store.load().unwrap().unwrap();
-    assert_eq!(loaded, saved);
-    let mut restored = RaftNode::from_persisted(0, &m, loaded);
-    assert_eq!(restored.last_index(), 3, "log intact after restart");
-
-    // It resumes: re-elects and can commit fresh entries (which also commits the
-    // recovered prefix).
-    for _ in 0..12 {
-        restored.tick();
+fn cmd(id: &str) -> PubCommand {
+    PubCommand {
+        subject: "s".to_string(),
+        message_id: id.to_string(),
+        payload: serde_json::json!({ "m": id }),
+        headers: Default::default(),
+        priority: relay::DEFAULT_PRIORITY,
+        not_before: None,
     }
-    assert!(restored.is_leader());
-    restored.propose(vec![99]).unwrap();
-    assert_eq!(restored.last_index(), 4);
-    assert_eq!(restored.commit_index(), 4, "recovered + new entries commit");
 }
 
-#[test]
-fn votedfor_remembered_prevents_double_vote() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = RaftStore::open(dir.path().to_str().unwrap(), 1, FsyncPolicy::Always).unwrap();
-    let m = auto_membership(3);
+fn disk_engine(dir: &Path, segment_bytes: u64) -> Arc<Relay> {
+    Arc::new(Relay::new(RelayCoreConfig {
+        data_dir: dir.join("relay").to_str().unwrap().to_string(),
+        segment_bytes,
+        ..RelayCoreConfig::default()
+    }))
+}
 
-    // Node 1 grants its vote to candidate 0 in term 1.
-    let mut node = RaftNode::new(1, &m);
-    node.handle(
+fn spawn(engine: Arc<Relay>, dir: &Path) -> RelayRaft {
+    RelayRaft::spawn(
+        engine,
+        &dir.join("raft"),
         0,
-        RaftMsg::Vote(VoteReq {
-            term: 1,
-            candidate: 0,
-            last_log_index: 0,
-            last_log_term: 0,
-        }),
-    );
-    let _ = node.take_outgoing();
-    assert_eq!(node.persisted().voted_for, Some(0));
-    store.save(&node.persisted()).unwrap();
+        sole_voter(),
+        HashMap::new(),
+        RelayRaft::host_config(1024),
+    )
+    .unwrap()
+}
 
-    // Restart, then a different candidate asks for a vote in the SAME term.
-    let mut restored = RaftNode::from_persisted(1, &m, store.load().unwrap().unwrap());
-    restored.handle(
-        2,
-        RaftMsg::Vote(VoteReq {
-            term: 1,
-            candidate: 2,
-            last_log_index: 0,
-            last_log_term: 0,
-        }),
+/// AC3 (idempotency + floor): a restarted sole-voter node recovers its engine
+/// from disk and its applied floor from the marker, performs NO double-apply
+/// of the resident committed log, and resumes proposing at the next index.
+#[tokio::test]
+async fn restart_rejoins_with_applied_state_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let engine = disk_engine(dir.path(), 134_217_728);
+        let raft = spawn(engine.clone(), dir.path());
+        for i in 0..3 {
+            let (_, out) = raft.publish(&cmd(&format!("m{i}"))).await.unwrap();
+            assert!(!out.expect("outcome").deduped);
+        }
+        assert_eq!(raft.applied_index(), 3);
+        assert_eq!(engine.log_len("s").unwrap(), 3);
+    } // drop = restart (host tasks abort; engine files stay)
+
+    let engine = disk_engine(dir.path(), 134_217_728);
+    let raft = spawn(engine.clone(), dir.path());
+    // The marker survived: the floor is back before any replay runs.
+    assert_eq!(raft.applied_index(), 3, "applied floor recovered");
+    assert_eq!(
+        engine.log_len("s").unwrap(),
+        3,
+        "no double-apply on restart"
     );
-    let granted = restored
-        .take_outgoing()
-        .into_iter()
-        .any(|o| matches!(o.msg, RaftMsg::VoteResp(r) if r.granted));
-    assert!(
-        !granted,
-        "remembered votedFor blocks a second vote in the term"
+
+    // The group resumes: the next publish lands at raft index 4 / engine seq 3.
+    let (idx, out) = raft.publish(&cmd("m99")).await.unwrap();
+    assert_eq!(idx, 4);
+    let out = out.expect("outcome");
+    assert!(!out.deduped);
+    assert_eq!(out.seq, 3);
+    assert_eq!(engine.log_len("s").unwrap(), 4);
+}
+
+/// AC3 (the resurrection case — the marker is load-bearing): with tiny
+/// segments, acking everything trims the acked entries from disk AND from the
+/// recovered dedupe window. The committed raft log still holds those
+/// publishes; only the persisted applied floor stops cold replay from
+/// re-appending (resurrecting) them after a restart.
+#[tokio::test]
+async fn acked_work_is_not_resurrected_by_cold_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let engine = disk_engine(dir.path(), 1); // 1-byte segments: one entry each
+        let raft = spawn(engine.clone(), dir.path());
+        for i in 0..5 {
+            raft.publish(&cmd(&format!("m{i}"))).await.unwrap();
+        }
+        // Drain the queue locally (leases are node-local): ack all 5, which
+        // persists the watermark and drops the fully-acked segments.
+        let now = Utc::now();
+        while let Some(l) = engine.lease("s", "w", now).unwrap() {
+            assert!(engine.ack("s", &l.lease_id, Some(l.epoch)).unwrap());
+        }
+        assert_eq!(engine.log_len("s").unwrap(), 5);
+    } // drop = restart
+
+    let engine = disk_engine(dir.path(), 1);
+    let raft = spawn(engine.clone(), dir.path());
+    assert_eq!(raft.applied_index(), 5, "applied floor recovered");
+
+    // A new-term publish forces the recovered backlog to (re-)commit; the
+    // floor makes replay skip entries 1..=5. Without it, m0..m3 (trimmed from
+    // disk and dedupe) would re-append here and log_len would exceed 6.
+    let (idx, out) = raft.publish(&cmd("m100")).await.unwrap();
+    assert_eq!(idx, 6);
+    assert!(!out.expect("outcome").deduped);
+    assert_eq!(
+        engine.log_len("s").unwrap(),
+        6,
+        "acked work must not be resurrected by cold replay"
     );
+
+    // Only the new entry is leasable — the acked five stay acked.
+    let now = Utc::now();
+    let lease = engine.lease("s", "w", now).unwrap().expect("new entry");
+    assert_eq!(lease.seq, 5);
+    assert!(engine.lease("s", "w2", now).unwrap().is_none());
 }
 // HANDWRITE-END

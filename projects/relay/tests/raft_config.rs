@@ -1,43 +1,72 @@
-// SPEC-MANAGED: projects/relay/tech-design/logic/k8s-manifests-ordinal-role-kind-failover-smoke-raft-ha-layer-2.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:d0cba133" tracker="pending-tracker" reason="Tests: ordinal_from_hostname parses relay-<n> and rejects others; peer_urls builds the headless-Service DNS URLs for all peers except self; membership marks the trailing even ordinal a learner."
-//! k8s cluster-config derivation (#139): a node figures out its id, peers and
-//! voter/learner role from its hostname + replica count alone.
+// SPEC-MANAGED: projects/relay/tech-design/logic/adopt-raft-host-relaystatemachine-auto-mode-ha-drop-hand-rolled.md#unit-test
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:d0cba133" tracker="pending-tracker" reason="Topology smoke (#544): relay derives node id / membership / peer URLs from the standard downward-API quartet via raft_host::cluster (the hand-derived local ordinal math is deleted); replica_mode is off without cluster env; RELAY_PEERS overrides peer DNS for a local multi-node group."
+//! Topology smoke (#544): relay's cluster shape comes from
+//! `raft_host::cluster` and the STANDARD downward-API env — the hand-derived
+//! ordinal/peer-DNS module is gone, per CONTRIBUTING's "never re-derive the
+//! ordinal math locally".
 
-use relay::{auto_membership, ordinal_from_hostname, peer_urls};
+use std::sync::Mutex;
 
-#[test]
-fn ordinal_parsed_from_statefulset_hostname() {
-    assert_eq!(ordinal_from_hostname("relay-0"), Some(0));
-    assert_eq!(ordinal_from_hostname("relay-3"), Some(3));
-    // namespaced / FQDN-style prefixes still resolve by the trailing ordinal.
-    assert_eq!(ordinal_from_hostname("my-relay-12"), Some(12));
-    // non-numeric suffixes are rejected.
-    assert_eq!(ordinal_from_hostname("relay-x"), None);
-    assert_eq!(ordinal_from_hostname("standalone"), None);
+use raft_host::cluster::{replica_mode, ClusterTopology};
+
+// The standard env vars are process-global; serialize the env tests.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+const QUARTET: [(&str, &str); 4] = [
+    ("POD_NAME", "relay-1"),
+    ("SHARD_COUNT", "1"),
+    ("REPLICAS_PER_SHARD", "3"),
+    ("VOTER_COUNT", "3"),
+];
+
+fn clear_env() {
+    for (k, _) in QUARTET {
+        std::env::remove_var(k);
+    }
+    std::env::remove_var("RELAY_PEERS");
 }
 
+/// Auto-mode switch: no cluster env (or a single replica) = single-node;
+/// REPLICAS_PER_SHARD > 1 = replica/HA.
 #[test]
-fn peer_urls_use_headless_dns_and_exclude_self() {
-    let peers = peer_urls("relay", "default", 8080, 3, 1);
-    assert_eq!(peers.len(), 2, "all peers except self");
-    assert!(!peers.contains_key(&1), "self excluded");
-    assert_eq!(
-        peers[&0],
-        "http://relay-0.relay.default.svc.cluster.local:8080"
-    );
-    assert_eq!(
-        peers[&2],
-        "http://relay-2.relay.default.svc.cluster.local:8080"
-    );
+fn replica_mode_is_off_without_cluster_env() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_env();
+    assert!(!replica_mode(), "no env = single-node");
+    std::env::set_var("REPLICAS_PER_SHARD", "1");
+    assert!(!replica_mode(), "one replica = single-node");
+    std::env::set_var("REPLICAS_PER_SHARD", "3");
+    assert!(replica_mode(), "scaled out = replica/HA");
+    clear_env();
 }
 
+/// The serve path's exact derivation: pod relay-1 in a 1-shard/3-replica
+/// group is node 1 with voters {0,1,2}; peer URLs use the headless-Service
+/// DNS template, and RELAY_PEERS replaces them for a local multi-node group.
 #[test]
-fn membership_makes_the_trailing_even_node_a_learner() {
-    // N=4 -> voters {0,1,2}, learner {3} (voter count stays odd).
-    let m = auto_membership(4);
-    assert_eq!(m.voters, vec![0, 1, 2]);
-    assert_eq!(m.learners, vec![3]);
-    // N=3 -> all voters, no learner.
-    assert_eq!(auto_membership(3).learners.len(), 0);
+fn topology_derives_from_standard_env_via_raft_host() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_env();
+    for (k, v) in QUARTET {
+        std::env::set_var(k, v);
+    }
+
+    let t = ClusterTopology::from_env("relay", "relay", 8080, "RELAY_PEERS").unwrap();
+    assert_eq!(t.node_id, 1, "node id = replica index from the pod ordinal");
+    assert_eq!(t.membership.voters, vec![0, 1, 2]);
+    assert!(t.membership.learners.is_empty());
+    assert_eq!(t.peers.len(), 2, "self excluded");
+    assert_eq!(t.peers[&0], "http://relay-0.relay:8080");
+    assert_eq!(t.peers[&2], "http://relay-2.relay:8080");
+
+    // RELAY_PEERS local override replaces the DNS-derived addresses.
+    std::env::set_var(
+        "RELAY_PEERS",
+        "127.0.0.1:7101,127.0.0.1:7102,127.0.0.1:7103",
+    );
+    let t = ClusterTopology::from_env("relay", "relay", 8080, "RELAY_PEERS").unwrap();
+    assert_eq!(t.peers[&0], "http://127.0.0.1:7101");
+    assert_eq!(t.peers[&2], "http://127.0.0.1:7103");
+    clear_env();
 }
 // HANDWRITE-END

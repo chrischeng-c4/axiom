@@ -1,14 +1,19 @@
-// SPEC-MANAGED: projects/relay/tech-design/logic/single-shard-raft-consensus-core-self-contained-rsm-auto-voter-l.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:b72bd304" tracker="pending-tracker" reason="Deterministic in-process simulation: a message bus pumps node outboxes to handlers. Tests leader election, replicate+commit ordering, kill-leader -> re-elect with no committed loss, learner replicates/applies but never votes nor counts toward majority, stale higher-term step-down, and a relay-integration scenario (command=publish, apply=relay engine) that converges across a leader failover."
+// SPEC-MANAGED: projects/relay/tech-design/logic/adopt-raft-host-relaystatemachine-auto-mode-ha-drop-hand-rolled.md#unit-test
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:b72bd304" tracker="pending-tracker" reason="Deterministic in-process simulation driving raft_core directly (dev-dependency, #544 — relay no longer re-exports the consensus core): leader election, replicate+commit ordering, kill-leader -> re-elect with no committed loss, learner semantics, stale higher-term step-down, and the relay-integration scenario (command=publish, apply=relay engine) that converges across a leader failover."
 //! Single-shard Raft core (#136): a deterministic in-process simulation. A
 //! message bus pumps every node's outbox to its target's handler until
 //! quiescent, so the whole protocol runs with no real network or clock.
+//!
+//! Drives `raft_core` directly (dev-dependency): relay no longer re-exports
+//! the consensus core it does not own — production code reaches raft only
+//! through `raft_host` (#544). The relay-specific value here is the
+//! command=publish / apply=engine integration scenario at the bottom.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::Utc;
 
-use relay::raft::{auto_membership, AppendResp, NodeId, RaftMsg, RaftNode, Role};
+use raft_core::{auto_membership, AppendResp, NodeId, RaftMsg, RaftNode, Role};
 use relay::{Relay, RelayCoreConfig};
 
 /// A deterministic cluster: owns the nodes, pumps messages, and records every

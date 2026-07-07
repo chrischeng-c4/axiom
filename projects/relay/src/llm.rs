@@ -58,8 +58,17 @@ pub const TOPICS: &[cli_std::llm::Topic] = &[
             Delivery model: single-cast work-queue — each message is leased to exactly one \
             competing consumer, acked, then deleted (delete-on-ack retention), with \
             lease-expiry redelivery, a dead-letter path, and priority bands.\n\n\
-            HA: `relay-raft` is the Raft-backed node for Kubernetes (identity/peers from \
-            the StatefulSet downward API); see projects/relay/k8s.\n",
+            HA is auto-mode raft (shared raft-host driver): scale the StatefulSet and set \
+            `REPLICAS_PER_SHARD` > 1 (plus `POD_NAME`, `SHARD_COUNT=1`, `VOTER_COUNT` from \
+            the downward API) and the same `relay` bin runs a raft group — publishes \
+            replicate (leader propose; follower publishes are forwarded to the leader), \
+            peer RPCs (`/raft/*`, `/raftz`) ride the serve port as tokenless cluster \
+            traffic, and `--peer-service` (`RELAY_PEER_SERVICE`) names the headless \
+            Service for peer DNS. `RELAY_PEERS=host:port,...` overrides peer DNS for a \
+            local multi-node group. No cluster env = plain single-node (zero flags). \
+            Limitation: leases/acks are NOT replicated (node-local, like the old driver) \
+            — a failover redelivers unacked work; delivery stays at-least-once. See \
+            projects/relay/k8s.\n",
     },
 ];
 // HANDWRITE-END

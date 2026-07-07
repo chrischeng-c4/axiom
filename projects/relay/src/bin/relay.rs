@@ -78,6 +78,11 @@ struct ServeArgs {
     /// startup) when `--auth required`.
     #[arg(long, env = "RELAY_TOKEN_REGISTRY_FILE")]
     token_registry_file: Option<String>,
+    /// Headless-Service name for raft peer DNS in replica/HA mode
+    /// (`relay-<ordinal>.<peer-service>:<serve port>`). Only read when the
+    /// standard downward-API env says `REPLICAS_PER_SHARD > 1`.
+    #[arg(long, env = "RELAY_PEER_SERVICE", default_value = "relay")]
+    peer_service: String,
 }
 
 /// `relay llm` flags.
@@ -282,11 +287,58 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     let bind = config.bind.clone();
     let reconcile_interval = Duration::from_millis(config.reconcile_interval_ms);
 
-    let state = AppState::with_auth(config, auth);
+    let mut state = AppState::with_auth(config, auth);
     // Held for the process lifetime; aborts on drop (i.e. never, since serve runs forever).
     let _reconciler = spawn_reconciler(state.relay_handle(), reconcile_interval);
 
-    let app = router(state.clone());
+    // Auto-mode HA (#544): the standard downward-API quartet flips replica
+    // mode (REPLICAS_PER_SHARD > 1) — no relay-specific flags. Topology comes
+    // from raft-host (never re-derive the ordinal math locally); the raft
+    // group replicates publishes into this process's engine and its peer
+    // router rides the serve port OUTSIDE the bearer-auth data plane (cluster
+    // traffic, tokenless like probes; mTLS is a later slice). Held for the
+    // process lifetime — dropping it would abort the tick/pump tasks.
+    let raft = if raft_host::cluster::replica_mode() {
+        let peer_port = bind
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .ok_or_else(|| {
+                anyhow::anyhow!("cannot derive the raft peer port from --bind {bind}")
+            })?;
+        let topo = raft_host::ClusterTopology::from_env(
+            "relay",
+            &args.peer_service,
+            peer_port,
+            "RELAY_PEERS",
+        )?;
+        let data_dir = state.config().core.data_dir.clone();
+        anyhow::ensure!(
+            !data_dir.is_empty(),
+            "replica/HA mode requires a durable --data-dir (RELAY_DATA_DIR)"
+        );
+        let raft = std::sync::Arc::new(relay::RelayRaft::from_topology(
+            state.relay_handle(),
+            std::path::Path::new(&data_dir),
+            &topo,
+            relay::RelayRaft::host_config(relay::raft::SNAPSHOT_EVERY),
+        )?);
+        state.set_raft(std::sync::Arc::clone(&raft));
+        tracing::info!(
+            node_id = topo.node_id,
+            replicas = topo.replicas_per_shard,
+            voters = topo.membership.voters.len(),
+            "raft: replica/HA mode — publishes replicate; peer RPCs on the serve port"
+        );
+        Some(raft)
+    } else {
+        None
+    };
+
+    let mut app = router(state.clone());
+    if let Some(raft) = &raft {
+        app = app.merge(raft.router());
+    }
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(
         addr = %listener.local_addr()?,
@@ -377,6 +429,11 @@ mod tests {
             cli.serve.token_registry_file.as_deref(),
             Some("/var/run/secrets/relay/token-registry.json")
         );
+        // #544: the raft peer-DNS service name surfaces as a serve flag with
+        // env fallback; default matches the headless Service in k8s/.
+        assert_eq!(cli.serve.peer_service, "relay");
+        let cli = Cli::try_parse_from(["relay", "--peer-service", "relay-peer"]).unwrap();
+        assert_eq!(cli.serve.peer_service, "relay-peer");
     }
 
     /// R3: build-stamp envs populate ToolInfo (never empty; "unknown" is the

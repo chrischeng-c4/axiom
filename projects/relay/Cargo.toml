@@ -16,11 +16,6 @@ path = "src/lib.rs"
 name = "relay"
 path = "src/bin/relay.rs"
 
-# Raft-backed node for k8s (HA): identity/peers from the downward API.
-[[bin]]
-name = "relay-raft"
-path = "src/bin/relay_raft.rs"
-
 [[bench]]
 name = "relay_bench"
 harness = false
@@ -41,14 +36,10 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 ciborium = "0.2"
 crc32fast = "1.4"
 
-# Shared Raft consensus engine (extracted to libs/raft-core; serde-only).
-raft-core = { path = "../../libs/raft-core" }
-
-# HA: the follower is an HTTP/2 client tailing the leader (#135).
-reqwest = { workspace = true }
-
-# Shared h2c client construction (ln(concurrency) pool heuristic) — #468.
-h2c = { path = "../../libs/h2c" }
+# Shared raft driver (#544): RaftHost tick/pump/h2c transport + RaftStore +
+# ClusterTopology (k8s downward-API derive) + OutcomeWindow. relay supplies
+# only the RelayStateMachine; the hand-rolled driver/store/config are gone.
+raft-host = { path = "../../libs/raft-host" }
 
 # Shared service shell (#1205): standard probe routes (/healthz /readyz
 # /metrics /openapi.json /docs), the h2c + HTTP/1.1 one-port serve loop,
@@ -88,4 +79,10 @@ issue = ["cli-std/online"]
 [dev-dependencies]
 tempfile = "3"
 criterion = "0.5"
+# The deterministic consensus simulation (tests/raft_core.rs) drives the core
+# directly; production code reaches raft only through raft-host.
+raft-core = { path = "../../libs/raft-core" }
+# h2c test clients for the transport/cluster integration tests.
+reqwest = { workspace = true }
+h2c = { path = "../../libs/h2c" }
 # HANDWRITE-END

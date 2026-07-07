@@ -42,9 +42,6 @@ pub mod metrics;
 pub mod openapi;
 pub mod perf_gate;
 pub mod raft;
-pub mod raft_config;
-pub mod raft_driver;
-pub mod raft_store;
 pub mod reconciler;
 pub mod server;
 pub mod server_config;
@@ -54,15 +51,9 @@ pub mod wire;
 pub mod workqueue;
 
 pub use config::{DedupeConfig, FsyncPolicy, RelayCoreConfig, RetentionConfig, WorkQueueConfig};
-pub use engine::Relay;
+pub use engine::{Relay, SubjectLive};
 pub use log::Log;
-pub use raft::{
-    auto_membership, AppendReq, AppendResp, Membership, NodeId, Outgoing, PersistedState,
-    RaftEntry, RaftMsg, RaftNode, RaftTransport, Role, VoteReq, VoteResp,
-};
-pub use raft_config::{ordinal_from_hostname, peer_urls, RaftClusterConfig};
-pub use raft_driver::RaftDriver;
-pub use raft_store::RaftStore;
+pub use raft::{PubCommand, RelayRaft, RelayStateMachine};
 pub use reconciler::{spawn_reconciler, ReconcilerHandle};
 pub use server::{router, AppState};
 pub use server_config::RelayServerConfig;

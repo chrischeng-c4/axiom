@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::config::RelayCoreConfig;
 use crate::log::Log;
@@ -34,6 +35,17 @@ use tokio::sync::watch;
 struct SubjectState {
     log: Log,
     workqueue: WorkQueue,
+}
+
+/// One `(subject, shard)`'s live (un-acked) tail — the unit of the raft
+/// snapshot (#544): everything at or above the committed watermark, i.e. the
+/// backlog a replica must hold to keep serving the work-queue after a
+/// failover. Acked (deleted-on-ack) entries are deliberately excluded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubjectLive {
+    pub subject: String,
+    pub shard: ShardId,
+    pub entries: Vec<LogEntry>,
 }
 
 #[derive(Clone)]
@@ -512,6 +524,60 @@ impl Relay {
         let ss = self.shard_state(subject, 0)?;
         let g = ss.lock().expect("subject mutex");
         Ok(g.workqueue.committed_offset())
+    }
+
+    /// Dump the live (un-acked) state of every open `(subject, shard)` — the
+    /// raft snapshot body (#544): per shard, the entries at or above the
+    /// committed watermark, in seq order; fully-acked shards are omitted.
+    /// Deterministically ordered by `(subject, shard)`.
+    pub fn dump_live(&self) -> io::Result<Vec<SubjectLive>> {
+        let states: Vec<((String, ShardId), Arc<Mutex<SubjectState>>)> = {
+            self.subjects
+                .read()
+                .expect("subjects rwlock")
+                .iter()
+                .map(|(k, s)| (k.clone(), Arc::clone(s)))
+                .collect()
+        };
+        let mut out = Vec::new();
+        for ((subject, shard), s) in states {
+            let g = s.lock().expect("subject mutex");
+            let entries = g.log.range(g.workqueue.committed_watermark())?;
+            if !entries.is_empty() {
+                out.push(SubjectLive {
+                    subject,
+                    shard,
+                    entries,
+                });
+            }
+        }
+        out.sort_by(|a, b| (&a.subject, a.shard).cmp(&(&b.subject, b.shard)));
+        Ok(out)
+    }
+
+    /// Load a [`dump_live`](Relay::dump_live) capture by re-publishing every
+    /// entry through the normal engine path — idempotent per `message_id`
+    /// (dedupe merges overlap), preserving `not_before`/`priority` and the
+    /// original append timestamp. An idempotent MERGE, not a wipe: raft only
+    /// installs a snapshot on a replica whose applied publish stream is a
+    /// prefix of the leader's, so merging extends it; entries this node holds
+    /// that the leader already trimmed stay (surplus redelivery candidates —
+    /// at-least-once, same as the un-replicated lease model).
+    pub fn load_live(&self, dumps: Vec<SubjectLive>) -> io::Result<()> {
+        for d in dumps {
+            for e in d.entries {
+                self.publish_at(
+                    &d.subject,
+                    &e.message_id,
+                    e.payload,
+                    e.headers,
+                    e.not_before,
+                    e.priority,
+                    e.appended_at,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Sweep every `(subject, shard)`'s expired leases (frontier-only); returns
