@@ -5,9 +5,9 @@
 //! JSON with the expected top-level shape (no server, no I/O).
 
 use lumen::spec::{
-    field_catalog, json_schema_json, llm_auth_md, llm_integration_md, llm_outline_md,
-    llm_quickstart_md, llm_recipes_md, llm_storage_md, llm_workflow_md, openapi_json, openapi_yaml,
-    query_shapes,
+    field_catalog, json_schema_json, llm_auth_md, llm_deployment_md, llm_integration_md,
+    llm_outline_md, llm_quickstart_md, llm_recipes_md, llm_storage_md, llm_workflow_md,
+    openapi_json, openapi_yaml, query_shapes,
 };
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
@@ -254,6 +254,7 @@ fn llm_outline_maps_agent_topics() {
         "lumen llm --topic integration",
         "lumen llm --topic quickstart",
         "lumen llm --topic auth",
+        "lumen llm --topic deployment",
         "lumen llm --topic storage",
         "lumen llm --topic recipes",
         "lumen spec --format openapi-yaml",
@@ -266,6 +267,7 @@ fn llm_outline_maps_agent_topics() {
         "`lumen llm integration`",
         "`lumen llm quickstart`",
         "`lumen llm auth`",
+        "`lumen llm deployment`",
         "`lumen llm storage`",
         "`lumen llm recipes`",
     ] {
@@ -299,6 +301,42 @@ fn llm_auth_publishes_token_registry_shape() {
     }
 }
 
+#[test]
+fn llm_deployment_documents_shard_cluster_topology() {
+    let deployment = llm_deployment_md();
+    assert!(
+        !deployment.trim().is_empty(),
+        "deployment topic is non-empty"
+    );
+    for needle in [
+        "lumen dockerfile render",
+        "lumen k8s crd render",
+        "lumen k8s operator render",
+        "lumen k8s instance render",
+        "spec.shardCount",
+        "spec.replicasPerShard",
+        "totalPods = shardCount * replicasPerShard",
+        "shardIndex = ordinal % shardCount",
+        "replicaIndex = ordinal / shardCount",
+        "replicasPerShard: 1",
+        "replicasPerShard: 2",
+        "replicasPerShard: 3",
+        "voterCount",
+        "HPA is for stateless or near-stateless serving capacity",
+        "Dynamic shard growth",
+        "50% of the configured shard ceiling",
+        "versioned virtual-bucket map",
+        "Search without a routing key scatters/gathers",
+        "LUMEN_BOOTSTRAP_SEED_URI",
+        "Backup is the cold disaster-recovery and seed surface",
+    ] {
+        assert!(
+            deployment.contains(needle),
+            "deployment topic missing `{needle}`"
+        );
+    }
+}
+
 /// #812: the serving fleet is always a StatefulSet with a durable PVC-backed
 /// WAL, including at `replicasPerShard: 1` — this must be discoverable
 /// offline via `lumen llm --topic storage`, not only in the CRD doc comments.
@@ -316,6 +354,29 @@ fn llm_storage_documents_unconditional_statefulset_pvc() {
         "20Gi",
         "no raft consensus",
         "HorizontalPodAutoscaler",
+    ] {
+        assert!(storage.contains(needle), "storage topic missing `{needle}`");
+    }
+}
+
+#[test]
+fn llm_storage_documents_shard_replica_and_bootstrap_boundaries() {
+    let storage = llm_storage_md();
+    for needle in [
+        "spec.shardCount",
+        "spec.replicasPerShard",
+        "shardCount * replicasPerShard",
+        "shardIndex = ordinal % shardCount",
+        "replicaIndex = ordinal / shardCount",
+        "HPA does not change storage ownership",
+        "Dynamic shard growth is an operator workflow",
+        "storage pressure",
+        "versioned virtual-bucket map",
+        "bounded snapshot-batch",
+        "Empty-PVC replica bootstrap",
+        "LUMEN_BOOTSTRAP_SEED_URI",
+        "before WAL/raft delta catch-up",
+        "not the normal live replica synchronization mechanism",
     ] {
         assert!(storage.contains(needle), "storage topic missing `{needle}`");
     }
@@ -430,14 +491,14 @@ fn llm_workflow_covers_the_integration_model() {
     // Mental model + the 4-step workflow + flavor guide + non-goals must be
     // present so an agent can wire lumen in without a docs site.
     for needle in [
-        "search index",        // mental model: not a database
-        "external_id",         // returns ids, not documents
-        "Declare",             // step 1
-        "Ingest",              // step 2 (caller pub/sub)
-        "Search",              // step 3
-        "Hydrate",             // step 4
-        "Which \"find\"",      // flavor decision guide
-        "parent-field `sort`", // has_child + parent-field sort support
+        "search index",         // mental model: not a database
+        "external_id",          // returns ids, not documents
+        "Declare",              // step 1
+        "Ingest",               // step 2 (caller pub/sub)
+        "Search",               // step 3
+        "Hydrate",              // step 4
+        "Which \"find\"",       // flavor decision guide
+        "parent-field `sort`",  // has_child + parent-field sort support
         "Geo / spatial search", // explicit unsupported/search-boundary list
         "Phrase / proximity queries",
         "Fuzzy / typo tolerance",
@@ -446,7 +507,7 @@ fn llm_workflow_covers_the_integration_model() {
         "Highlighting",
         "Per-field / per-clause boost",
         "Document TTL / expiry",
-        ":7373",               // connection
+        ":7373", // connection
         "Authorization: Bearer",
         "LUMEN_TOKEN_REGISTRY_FILE",
         "Do NOT", // non-goals

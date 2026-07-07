@@ -223,6 +223,9 @@ Use the smallest topic that answers the task:
 - `lumen llm --topic quickstart` — copy-paste local create → index → search flow.
 - `lumen llm --topic auth` — bearer-token auth contract, token-registry.json schema,
   Secret Manager / Kubernetes Secret projection, and client header wiring.
+- `lumen llm --topic deployment` — Kubernetes-native deployment topology:
+  StatefulSet, shardCount, replicasPerShard, HPA boundary, reshard workflow,
+  and empty-PVC bootstrap.
 - `lumen llm --topic storage` — operator storage/ops contract: the serving fleet is
   always a StatefulSet with a durable PVC-backed WAL, including at
   `replicasPerShard: 1`.
@@ -230,6 +233,101 @@ Use the smallest topic that answers the task:
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
 - `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
   vector metric catalogs.
+"#
+    .to_string()
+}
+
+/// Kubernetes-native deployment topology (`lumen llm --topic deployment`) as
+/// Markdown.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+pub fn llm_deployment_md() -> String {
+    r#"# lumen deployment
+
+## Artifact layers
+Use the layered service CLI surface so image, cluster API, operator, and
+instance ownership stay separate:
+
+```
+lumen dockerfile render --variant release --version lumen@<version> --out Dockerfile
+lumen k8s crd render --out lumen-crd.yaml
+lumen k8s operator render --namespace lumen-system --out operator/
+lumen k8s instance render --profile prod --out lumen.yaml
+```
+
+`dockerfile render` is intentionally outside `k8s`: compose, kind, and
+registries all consume the same image artifact. `k8s crd render` is the
+cluster-scoped API layer, `k8s operator render|run` is the control plane, and
+`k8s instance render` is the app-namespace custom resource.
+
+## Storage topology knobs
+The operator-owned storage topology has two independent knobs:
+
+- `spec.shardCount`: the number of physical storage shards that own the corpus.
+- `spec.replicasPerShard`: how many pods belong to each shard group.
+
+The serving StatefulSet replica count is always:
+
+```
+totalPods = shardCount * replicasPerShard
+```
+
+Pod ordinals map deterministically to topology slots:
+
+```
+shardIndex = ordinal % shardCount
+replicaIndex = ordinal / shardCount
+```
+
+That means `shardCount = 3, replicasPerShard = 2` creates six pods: shard 0
+has ordinals 0 and 3, shard 1 has ordinals 1 and 4, and shard 2 has ordinals
+2 and 5.
+
+## Replica modes
+- `replicasPerShard: 1`: one durable member per shard. It uses the local WAL,
+  no raft consensus, and is the simplest topology for dev, small prod, or
+  sharded-but-not-HA deployments.
+- `replicasPerShard: 2`: failover-oriented shape. It adds a second member per
+  shard; use it only when the operator/raft policy for the environment is
+  intentionally configured for that failover mode.
+- `replicasPerShard: 3`: normal raft quorum shape. Set `voterCount: 3` for a
+  three-voter shard group.
+
+`voterCount` is per shard group, not cluster-wide. Extra replicas beyond
+`voterCount` are learners.
+
+## HPA boundary
+HPA is for stateless or near-stateless serving capacity, not for changing
+storage ownership. Do not use HPA to change `shardCount` or to add/remove raft
+members. Lumen attaches HPA only where the rendered topology can tolerate it;
+raft-HA shard groups use a fixed `shardCount * replicasPerShard` peer set.
+
+## Dynamic shard growth
+Shard growth is an operator workflow, not a direct response to request load.
+The normal trigger is storage pressure: for example, prepare a split around
+50% of the configured shard ceiling, then move virtual buckets in bounded
+snapshot batches. The versioned virtual-bucket map decides ownership:
+
+```
+bucket = hash(collection_id, routing_key || external_id) % virtualBucketCount
+```
+
+Search without a routing key scatters/gathers across shards. Search with a
+routing key can target the owning shard. Do not auto-split when the max shard
+size or max shard count is unknown; surface the condition to the operator
+instead.
+
+## Empty-PVC bootstrap
+Existing pods restart from their PVC: local raft state, snapshots, and WAL are
+authoritative. A replacement pod with an empty PVC should seed from an exact
+`SnapshotV1` object first, then catch up the WAL/raft delta:
+
+```
+LUMEN_BOOTSTRAP_SEED_URI=file:///snapshots/shard-0.json
+LUMEN_BOOTSTRAP_SEED_URI=s3://bucket/path/shard-0.json
+```
+
+Backup is the cold disaster-recovery and seed surface; it is not the normal
+live replica synchronization mechanism.
 "#
     .to_string()
 }
@@ -547,6 +645,36 @@ consensus; it never changes whether the WAL is durable.
   `serviceName`.
 - This regime, including the PVC, is unchanged from before `replicasPerShard:
   1` also started getting a StatefulSet.
+
+## Shards, replicas, and HPA
+Storage topology has two independent knobs:
+
+- `spec.shardCount` controls how many physical storage shards own the corpus.
+- `spec.replicasPerShard` controls HA inside each shard group.
+
+The serving pod count is `shardCount * replicasPerShard`. StatefulSet pod
+ordinals map to topology slots with `shardIndex = ordinal % shardCount` and
+`replicaIndex = ordinal / shardCount`. HPA does not change storage ownership:
+it must never be used as the mechanism for increasing `shardCount` or changing
+raft membership. Dynamic shard growth is an operator workflow driven by
+storage pressure and a versioned virtual-bucket map, with bounded snapshot-batch
+movement between physical shards.
+
+When an operator does not know the max shard size or max shard count, it should
+report the pressure condition instead of auto-splitting.
+
+## Empty-PVC replica bootstrap
+Existing pods restart from their PVC-local raft state, snapshots, and WAL. A
+new replacement pod with an empty PVC should seed from an exact `SnapshotV1`
+object before WAL/raft delta catch-up:
+
+```
+LUMEN_BOOTSTRAP_SEED_URI=file:///snapshots/shard-0.json
+LUMEN_BOOTSTRAP_SEED_URI=s3://bucket/path/shard-0.json
+```
+
+External backup is the cold disaster-recovery and bootstrap seed surface; it is
+not the normal live replica synchronization mechanism.
 
 ## Upgrading `<=0.4.9` Deployment-backed instances to `>=0.4.10` (#834)
 Lumen `<=0.4.9` rendered `spec.replicasPerShard: 1` serving fleets as an
