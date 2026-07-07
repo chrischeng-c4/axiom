@@ -15,6 +15,7 @@ mod boxing;
 mod breakpoint;
 mod char_radix;
 mod eval_exec;
+mod import_hook;
 mod input;
 mod map_filter;
 mod memoryview;
@@ -43,6 +44,7 @@ pub use eval_exec::{
     mb_eval_with_namespaces, mb_exec, mb_exec_function_call, mb_exec_function_is_async,
     mb_exec_with_globals, mb_exec_with_globals_locals, mb_globals, mb_locals,
 };
+pub use import_hook::mb_dunder_import;
 pub use input::mb_input;
 use map_filter::call_named_callable;
 pub use map_filter::{
@@ -2535,16 +2537,6 @@ pub fn mb_complex(real: MbValue, imag: MbValue) -> MbValue {
         (0.0, 0.0)
     };
     MbValue::from_ptr(MbObject::new_complex(re0 - im1, im0 + re1))
-}
-
-/// __import__(name) — public hook into the import machinery
-/// (#1256 sub-priority 2). Honors only `name`; the optional
-/// globals/locals/fromlist/level args are dropped at the
-/// lower-pass level since Mamba's import path doesn't yet
-/// thread package context through. Returns the same module
-/// namespace `mb_import` returns for an `import name` stmt.
-pub fn mb_dunder_import(name: MbValue) -> MbValue {
-    super::module::mb_import(name)
 }
 
 fn mb_str_value(val: MbValue) -> Option<String> {
