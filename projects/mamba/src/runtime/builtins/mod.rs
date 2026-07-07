@@ -7,6 +7,7 @@ use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
 use rustc_hash::FxHashMap;
 
+mod absolute;
 mod any_all;
 mod ascii;
 mod assertions;
@@ -29,6 +30,7 @@ mod set_constructors;
 mod truthiness;
 mod type_objects;
 
+pub use absolute::mb_abs;
 pub use any_all::{mb_all, mb_any};
 pub use ascii::mb_ascii;
 pub use assertions::{mb_assertion_error, mb_assertion_error_no_msg};
@@ -1971,74 +1973,6 @@ pub fn mb_str_construct(object: MbValue, encoding: MbValue, errors: MbValue) -> 
         ));
     }
     super::bytes_ops::mb_bytes_decode_with(object, encoding, errors)
-}
-
-/// abs(value) — absolute value.
-pub fn mb_abs(val: MbValue) -> MbValue {
-    if is_decimal_handle_value(val) {
-        return super::stdlib::decimal_mod::mb_decimal_abs(val);
-    }
-    if is_fraction_handle_value(val) {
-        return super::stdlib::fractions_mod::mb_fraction_abs(val);
-    }
-    if let Some(i) = val.as_int() {
-        MbValue::from_int(i.abs())
-    } else if let Some(f) = val.as_float() {
-        MbValue::from_float(f.abs())
-    } else if let Some(b) = val.as_bool() {
-        MbValue::from_int(if b { 1 } else { 0 })
-    } else if let Some(ptr) = val.as_ptr() {
-        unsafe {
-            match &(*ptr).data {
-                ObjData::Complex(re, im) => {
-                    // abs(complex) = hypot(re, im); a finite input overflowing
-                    // to inf raises OverflowError (CPython c_abs).
-                    let m = re.hypot(*im);
-                    if m.is_infinite() && re.is_finite() && im.is_finite() {
-                        super::exception::mb_raise(
-                            MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(
-                                "absolute value too large".to_string(),
-                            )),
-                        );
-                        return MbValue::none();
-                    }
-                    return MbValue::from_float(m);
-                }
-                ObjData::BigInt(big) => {
-                    use num_traits::Signed;
-                    return super::bigint_ops::bigint_from_big(big.abs());
-                }
-                ObjData::Instance { class_name, .. } => {
-                    // abs(timedelta) — exact microsecond magnitude.
-                    if class_name == "datetime.timedelta" {
-                        if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(val) {
-                            return super::stdlib::datetime_mod::timedelta_from_us(us.abs());
-                        }
-                    }
-                    let abs_method = super::class::lookup_method(class_name, "__abs__");
-                    if !abs_method.is_none() {
-                        let method_name =
-                            MbValue::from_ptr(MbObject::new_str("__abs__".to_string()));
-                        let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-                        return super::class::mb_call_method(val, method_name, args);
-                    }
-                }
-                _ => {}
-            }
-        }
-        super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(format!(
-                "bad operand type for abs(): '{}'",
-                add_operand_type_name(val),
-            ))),
-        );
-        MbValue::none()
-    } else {
-        // Preserve the legacy None fallback used by existing runtime tests.
-        MbValue::from_int(0)
-    }
 }
 
 /// Try to extract `(real, imag)` from any numeric `MbValue` — int, float,
