@@ -6144,13 +6144,21 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                         .all(|x| b.iter().any(|y| mb_richcmp_eq(*x, *y)))
                 }
                 (ObjData::Dict(la), ObjData::Dict(lb)) => {
-                    let a = la.read().unwrap();
-                    let b = lb.read().unwrap();
-                    if a.len() != b.len() {
+                    let a_items: Vec<(super::dict_ops::DictKey, MbValue)> = {
+                        let a = la.read().unwrap();
+                        a.iter().map(|(k, &v)| (k.clone(), v)).collect()
+                    };
+                    if a_items.len() != lb.read().unwrap().len() {
                         return false;
                     }
-                    a.iter()
-                        .all(|(k, v)| b.get(k).map_or(false, |v2| mb_richcmp_eq(*v, *v2)))
+                    a_items.iter().all(|(k, v)| {
+                        let key = super::dict_ops::dict_key_to_mbvalue(k);
+                        if super::dict_ops::mb_dict_contains(b, key).as_bool() != Some(true) {
+                            return false;
+                        }
+                        let found = super::dict_ops::mb_dict_getitem(b, key);
+                        mb_richcmp_eq(*v, found)
+                    })
                 }
                 (ObjData::Bytes(a), ObjData::Bytes(b)) => a == b,
                 (ObjData::Complex(ar, ai), ObjData::Complex(br, bi)) => {
