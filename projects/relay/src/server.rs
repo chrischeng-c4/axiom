@@ -7,20 +7,31 @@
 //! `consume` is the streaming work-queue path. The core is internally
 //! synchronized (per-shard locking, #128), so the server holds it as a plain
 //! `Arc<Relay>` — no global lock.
+//!
+//! The operational surface is the shared service shell (#1205): the standard
+//! probe routes (`/healthz` `/readyz` `/metrics` `/openapi.json` `/docs`)
+//! come from `service_http::standard_probe_routes` merged with the `/v1`
+//! data plane; error responses render the shared `{error, message}` envelope
+//! ([`service_http::ApiErr`]); per-op request metrics are recorded by
+//! [`crate::metrics::track`] on the data plane.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{header, HeaderMap, StatusCode},
+    middleware::from_fn_with_state,
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
 use chrono::Utc;
+use service_http::{ApiErr, MetricsProvider};
 
 use crate::engine::Relay;
+use crate::metrics::RelayMetrics;
 use crate::server_config::RelayServerConfig;
 use crate::wire::{
     self, AckBatchRequest, AckBatchResponse, AckRequest, AckResponse, HeartbeatRequest,
@@ -28,11 +39,14 @@ use crate::wire::{
     PublishBatchRequest, PublishBatchResponse, PublishRequest,
 };
 
-/// Shared application state: the relay core plus this shard's config.
+/// Shared application state: the relay core plus this shard's config, the
+/// per-op request metrics, and the drain flag `/readyz` reports.
 #[derive(Clone)]
 pub struct AppState {
     relay: Arc<Relay>,
     config: Arc<RelayServerConfig>,
+    metrics: Arc<RelayMetrics>,
+    draining: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -42,6 +56,8 @@ impl AppState {
         AppState {
             relay: Arc::new(relay),
             config: Arc::new(config),
+            metrics: Arc::new(RelayMetrics::new()),
+            draining: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -54,13 +70,45 @@ impl AppState {
     pub fn relay_handle(&self) -> Arc<Relay> {
         Arc::clone(&self.relay)
     }
+
+    /// The per-op request metrics `/metrics` renders.
+    pub fn metrics(&self) -> Arc<RelayMetrics> {
+        Arc::clone(&self.metrics)
+    }
+
+    /// Flip readiness to draining so `/readyz` returns 503. Called on SIGTERM
+    /// via `service_http::shutdown_with_drain`.
+    pub fn start_drain(&self) {
+        self.draining.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+}
+
+/// Readiness source for the shared probe router: `/readyz` reports 503 once
+/// SIGTERM flips `start_drain`.
+impl service_http::ReadinessHook for AppState {
+    fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+}
+
+/// Prometheus exposition for the shared `/metrics` route: relay's per-op
+/// request counts + latency (the engine exposes no aggregate gauges today).
+impl service_http::MetricsProvider for AppState {
+    fn render_metrics(&self) -> String {
+        self.metrics.render()
+    }
 }
 
 /// Build the HTTP/2 router for the relay transport.
 ///
 /// @spec projects/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#logic
 pub fn router(state: AppState) -> Router {
-    let app = Router::new()
+    let req_metrics = state.metrics();
+    let data_plane = Router::new()
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/publish-batch", post(publish_batch))
         // Streaming work-queue consume (#449) — the primary consume path, listed
@@ -82,12 +130,27 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/ack-batch", post(ack_batch)) // DEPRECATED → /consume
         .route("/v1/{subject}/heartbeat", post(heartbeat)) // DEPRECATED → /consume
         .route("/v1/{subject}/len", get(log_len))
-        .route("/healthz", get(healthz))
-        .route("/openapi.json", get(openapi_json))
-        .with_state(state);
+        // Per-op request metrics (counts + latency). route_layer => only for
+        // matched data-plane routes, and MatchedPath is populated.
+        .route_layer(from_fn_with_state(req_metrics, crate::metrics::track))
+        .with_state(state.clone());
+
+    // Standard probes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
+    // `/docs`) come from the shared service shell so the operational surface
+    // matches every other service; the hand-rolled healthz/openapi_json
+    // handlers are gone. AppState supplies readiness + Prometheus metrics;
+    // `/readyz` reports 503 while draining.
+    let probe_state = Arc::new(state);
+    let metrics: Arc<dyn MetricsProvider> = probe_state.clone();
+    let probes =
+        service_http::standard_probe_routes(probe_state, Some(metrics), crate::openapi::openapi);
+
     // relay is single-tenant per deployment (tenancy = k8s namespace); no
     // app-level namespace rewrite. Run one relay per tenant for isolation.
-    app
+    probes
+        .merge(data_plane)
+        // One INFO-level tracing span per request — spans probes + data plane.
+        .layer(service_http::trace_layer())
 }
 
 fn wants_cbor(headers: &HeaderMap) -> bool {
@@ -122,7 +185,8 @@ fn encode_body<T: serde::Serialize>(cbor: bool, status: StatusCode, value: &T) -
             Ok(bytes) => {
                 (status, [(header::CONTENT_TYPE, "application/json")], bytes).into_response()
             }
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+                .into_response(),
         }
     }
 }
@@ -143,7 +207,7 @@ pub async fn publish(
     let cbor = wants_cbor(&headers);
     let req: PublishRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
     // Resolve the optional visibility gate: explicit not_before wins, else
@@ -163,7 +227,8 @@ pub async fn publish(
     );
     match result {
         Ok(outcome) => encode_body(cbor, StatusCode::OK, &outcome),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+            .into_response(),
     }
 }
 
@@ -183,7 +248,7 @@ pub async fn publish_batch(
     let cbor = wants_cbor(&headers);
     let req: PublishBatchRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
     let messages = req
@@ -193,7 +258,8 @@ pub async fn publish_batch(
         .collect();
     match st.relay.publish_batch(&subject, messages, now) {
         Ok(outcomes) => encode_body(cbor, StatusCode::OK, &PublishBatchResponse { outcomes }),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+            .into_response(),
     }
 }
 
@@ -213,7 +279,7 @@ pub async fn lease(
     let cbor = wants_cbor(&headers);
     let req: LeaseRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
     let lease = st
@@ -244,7 +310,7 @@ pub async fn ack(
     let cbor = wants_cbor(&headers);
     let req: AckRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let acked = st
         .relay
@@ -282,7 +348,7 @@ pub async fn lease_batch(
     let cbor = wants_cbor(&headers);
     let req: LeaseBatchRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
     let leases = st
@@ -308,7 +374,7 @@ pub async fn ack_batch(
     let cbor = wants_cbor(&headers);
     let req: AckBatchRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let acks: Vec<(String, Option<u64>)> = req
         .acks
@@ -342,7 +408,7 @@ pub async fn heartbeat(
     let cbor = wants_cbor(&headers);
     let req: HeartbeatRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
     let expires_at = st
@@ -375,21 +441,8 @@ pub async fn log_len(State(st): State<AppState>, Path(subject): Path<String>) ->
                 "latest_seq": latest_seq,
             }),
         ),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
+            .into_response(),
     }
-}
-
-async fn healthz() -> StatusCode {
-    StatusCode::OK
-}
-
-async fn openapi_json() -> Response {
-    let doc = crate::openapi::api_doc_json();
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
-        doc,
-    )
-        .into_response()
 }
 // HANDWRITE-END

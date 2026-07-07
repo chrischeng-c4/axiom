@@ -31,9 +31,17 @@ use utoipa::OpenApi;
 )]
 pub struct ApiDoc;
 
-/// Render the OpenAPI document as pretty JSON for `/openapi.json`.
-pub fn api_doc_json() -> String {
+/// The relay OpenAPI document — the accessor the shared `service_http`
+/// `/openapi.json` and `/docs` probe routes serve (a
+/// `fn() -> utoipa::openapi::OpenApi` pointer).
+pub fn openapi() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
+}
+
+/// Render the OpenAPI document as pretty JSON (offline consumers; the served
+/// route uses [`openapi`]).
+pub fn api_doc_json() -> String {
+    openapi()
         .to_pretty_json()
         .unwrap_or_else(|_| "{}".to_string())
 }

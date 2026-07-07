@@ -64,6 +64,10 @@ struct ServeArgs {
     /// Durable log directory (defaults to the core config's data dir).
     #[arg(long, env = "RELAY_DATA_DIR")]
     data_dir: Option<String>,
+    /// Graceful-drain window (seconds) held after SIGTERM before the listener
+    /// closes, while `/readyz` reports 503 so k8s stops routing.
+    #[arg(long, env = "RELAY_GRACE_SECS", default_value_t = 10)]
+    grace_secs: u64,
 }
 
 /// `relay llm` flags.
@@ -236,8 +240,15 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
 
 /// Run the relay server (the default, no-subcommand path) — the former
 /// `relay-server` entrypoint: load config, spawn the lease reconciler, serve
-/// the h2c app.
+/// the app through the shared service shell (#1205): HTTP/1.1 + h2c on one
+/// port with a SIGTERM-aware graceful drain (`--grace-secs`).
 async fn serve_main(args: ServeArgs) -> Result<()> {
+    // RUST_LOG wins; otherwise default to info (keep's pattern — relay's
+    // single `--bind` string doesn't map onto service_http::HttpConfig).
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+
     let mut config = RelayServerConfig::default();
     config.bind = args.bind;
     if let Some(data_dir) = args.data_dir {
@@ -250,10 +261,23 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // Held for the process lifetime; aborts on drop (i.e. never, since serve runs forever).
     let _reconciler = spawn_reconciler(state.relay_handle(), reconcile_interval);
 
-    let app = router(state);
+    let app = router(state.clone());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    eprintln!("relay listening on {} (h2c)", listener.local_addr()?);
-    axum::serve(listener, app).await?;
+    tracing::info!(
+        addr = %listener.local_addr()?,
+        "relay listening (HTTP/1.1 + HTTP/2 cleartext)"
+    );
+
+    // Serve HTTP/1.1 + h2c on one port and drain on SIGTERM through the shared
+    // service shell: `start_drain` flips `/readyz` to 503 for the grace window
+    // before the listener closes.
+    let grace = Duration::from_secs(args.grace_secs);
+    service_http::serve(
+        listener,
+        app,
+        service_http::shutdown_with_drain(move || state.start_drain(), grace),
+    )
+    .await;
     Ok(())
 }
 
@@ -307,6 +331,10 @@ mod tests {
         assert!(cli.cmd.is_none());
         assert_eq!(cli.serve.bind, "127.0.0.1:0");
         assert_eq!(cli.serve.data_dir.as_deref(), Some("/tmp/x"));
+        // #1205: graceful-drain window — default 10, overridable via flag.
+        assert_eq!(cli.serve.grace_secs, 10);
+        let cli = Cli::try_parse_from(["relay", "--grace-secs", "3"]).unwrap();
+        assert_eq!(cli.serve.grace_secs, 3);
     }
 
     /// R3: build-stamp envs populate ToolInfo (never empty; "unknown" is the

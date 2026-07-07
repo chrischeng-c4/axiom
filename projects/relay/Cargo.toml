@@ -50,6 +50,17 @@ reqwest = { workspace = true }
 # Shared h2c client construction (ln(concurrency) pool heuristic) — #468.
 h2c = { path = "../../libs/h2c" }
 
+# Shared service shell (#1205): standard probe routes (/healthz /readyz
+# /metrics /openapi.json /docs), the h2c + HTTP/1.1 one-port serve loop,
+# SIGTERM-aware graceful drain, and the {error, message} ApiErr envelope.
+service-http = { path = "../../libs/service-http" }
+# Prometheus metric primitives (Counter/Latency + text-format render) for
+# RelayMetrics.
+service-metrics = { path = "../../libs/service-metrics" }
+# Serve-path tracing init (RUST_LOG wins, else info EnvFilter — keep's pattern).
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
 # The single `relay` CLI bin (CONTRIBUTING.md CLI convention): clap parsing +
 # the standard llm/upgrade/issue ops via the shared cli-std lib. Offline paths
 # always build; the HTTPS paths are pulled in by the `self-update`/`issue`

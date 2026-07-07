@@ -37,6 +37,7 @@ pub mod config;
 pub mod consume;
 pub mod engine;
 pub mod log;
+pub mod metrics;
 pub mod openapi;
 pub mod perf_gate;
 pub mod raft;

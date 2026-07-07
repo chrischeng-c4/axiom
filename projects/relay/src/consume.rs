@@ -18,6 +18,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use service_http::ApiErr;
 use tokio::sync::mpsc;
 
 use crate::engine::Relay;
@@ -96,31 +97,63 @@ async fn read_up(stream: &mut BodyDataStream, dec: &mut Frames) -> Option<Consum
     params(("subject" = String, Path, description = "Target subject")),
     responses((status = 200, description = "A length-prefixed JSON frame stream of leased entries; the request body streams Subscribe/Ack/Nack frames"))
 )]
-pub async fn consume(State(st): State<AppState>, Path(subject): Path<String>, req: Body) -> Response {
+pub async fn consume(
+    State(st): State<AppState>,
+    Path(subject): Path<String>,
+    req: Body,
+) -> Response {
     let consumer_id = format!("consume-{}", CONSUMER_SEQ.fetch_add(1, Ordering::Relaxed));
+    // Read the handshake before the response head goes out: the protocol's
+    // first up-frame must be Subscribe{prefetch}. A missing/undecodable first
+    // frame is a client error and returns 400 in the shared {error, message}
+    // envelope (#1205) instead of the silent empty 200 stream it used to get.
+    let mut up = req.into_data_stream();
+    let mut dec = Frames::default();
+    let prefetch = match read_up(&mut up, &mut dec).await {
+        Some(ConsumeUp::Subscribe { prefetch }) => prefetch.max(1),
+        _ => {
+            return ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "consume stream must open with a subscribe frame",
+            )
+            .into_response()
+        }
+    };
     let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
-    tokio::spawn(drive(st.relay_handle(), subject, consumer_id, req.into_data_stream(), tx));
+    tokio::spawn(drive(
+        st.relay_handle(),
+        subject,
+        consumer_id,
+        prefetch,
+        up,
+        dec,
+        tx,
+    ));
     let stream = futures::stream::unfold(rx, |mut rx| async move {
-        rx.recv().await.map(|f| (Ok::<Bytes, Infallible>(Bytes::from(f)), rx))
+        rx.recv()
+            .await
+            .map(|f| (Ok::<Bytes, Infallible>(Bytes::from(f)), rx))
     });
-    (StatusCode::OK, [(header::CONTENT_TYPE, "application/octet-stream")], Body::from_stream(stream))
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        Body::from_stream(stream),
+    )
         .into_response()
 }
 
-/// Drive one consume session: Subscribe, then keep ≤ prefetch entries in flight
-/// (lease + push), freeing a credit per Ack/Nack; poll the queue while idle.
+/// Drive one consume session (post-Subscribe): keep ≤ prefetch entries in
+/// flight (lease + push), freeing a credit per Ack/Nack; wake on publish.
 async fn drive(
     relay: std::sync::Arc<Relay>,
     subject: String,
     consumer_id: String,
+    prefetch: u32,
     mut up: BodyDataStream,
+    mut dec: Frames,
     tx: mpsc::Sender<Vec<u8>>,
 ) {
-    let mut dec = Frames::default();
-    let prefetch = match read_up(&mut up, &mut dec).await {
-        Some(ConsumeUp::Subscribe { prefetch }) => prefetch.max(1),
-        _ => return, // first frame must be Subscribe
-    };
     let mut inflight: u32 = 0;
     // Wake-based push (#465): re-lease the instant a publish or release touches
     // this subject, instead of polling the queue every 50ms while idle. The
@@ -129,7 +162,10 @@ async fn drive(
     let mut wake = relay.subscribe_wake(&subject);
     loop {
         while inflight < prefetch {
-            match relay.lease(&subject, &consumer_id, Utc::now()).unwrap_or(None) {
+            match relay
+                .lease(&subject, &consumer_id, Utc::now())
+                .unwrap_or(None)
+            {
                 Some(l) => {
                     let (message_id, payload) = relay
                         .entry(&l.subject, l.shard, l.seq)
@@ -137,7 +173,12 @@ async fn drive(
                         .flatten()
                         .map(|e| (e.message_id, e.payload))
                         .unwrap_or_default();
-                    let frame = LeasedEntry { lease_id: l.lease_id, epoch: l.epoch, message_id, payload };
+                    let frame = LeasedEntry {
+                        lease_id: l.lease_id,
+                        epoch: l.epoch,
+                        message_id,
+                        payload,
+                    };
                     if tx.send(encode_frame(&frame)).await.is_err() {
                         return;
                     }

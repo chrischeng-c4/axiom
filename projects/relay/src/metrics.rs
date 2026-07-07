@@ -174,11 +174,7 @@ impl RelayMetrics {
 /// `route_layer` middleware: time each matched data-plane request and record
 /// it against its op family. Matched patterns collapse `{subject}`
 /// cardinality (`/v1/{subject}/publish`), so the metric set stays bounded.
-pub async fn track(
-    State(metrics): State<Arc<RelayMetrics>>,
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn track(State(metrics): State<Arc<RelayMetrics>>, req: Request, next: Next) -> Response {
     let route = req
         .extensions()
         .get::<MatchedPath>()

@@ -10356,8 +10356,12 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "service-http",
+ "service-metrics",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "utoipa",
 ]
 
