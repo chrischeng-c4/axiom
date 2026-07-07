@@ -118,3 +118,91 @@ flowchart TD
     tree --> smoke([kind smoke: single relay image, auto-mode env, zero relay-raft refs])
     dock --> smoke
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: relay-adopt-libs-operator-deploy-cli-verification
+requirements:
+  auth_secret_wiring_opt_in:
+    id: R2
+    text: "With --features operator: a CR with auth: required and tokensSecret set renders the token-registry Secret volume mounted read-only at /var/run/secrets/relay and injects RELAY_AUTH=required + RELAY_TOKEN_REGISTRY_FILE=/var/run/secrets/relay/token-registry.json; a CR without them (the default) renders NO RELAY_AUTH / RELAY_TOKEN_REGISTRY_FILE env and no such volume (lumen's pattern, off unless the CR asks)."
+    kind: functional
+    risk: high
+    verify: tests/operator.rs::auth_secret_wiring_is_opt_in
+  crd_fixture_matches_generated:
+    id: R3
+    text: "The rendered CRD YAML (the committed k8s/operator/crd.yaml fixture in the default build; the live-generated document in the operator build) contains no `format: uint32` or `format: uint64` (Kubernetes structural-schema rules reject them) and the normalized unsigned counts keep a `minimum: 0` floor; the fixture parses as YAML and declares kind Relay under group relay.dev."
+    kind: functional
+    risk: high
+    verify: tests/deploy_cli.rs::crd_render_is_structural_schema_safe
+  crd_flattens_cluster_spec:
+    id: R2
+    text: "With --features operator: the generated Relay CRD schema carries the flattened operator::ClusterSpec fields (image, imagePullPolicy, shardCount, replicasPerShard, voterCount, resources) directly under spec.properties (no nested `cluster` wrapper) plus relay's own knobs (storage, storageClass, graceSecs, logLevel, auth, tokensSecret)."
+    kind: functional
+    risk: medium
+    verify: tests/operator.rs::crd_flattens_cluster_spec
+  dockerfile_fixture_equality:
+    id: R4
+    text: "`relay dockerfile render --variant source` reproduces the committed projects/relay/Dockerfile byte-for-byte and `--variant release` reproduces the committed projects/relay/Dockerfile.release; an explicit `--version 9.9.9` substitutes the relay@9.9.9 ARG and the relay:9.9.9 image tag (the checked-in files are fixtures of the render — keep #777 pattern)."
+    kind: functional
+    risk: medium
+    verify: tests/deploy_cli.rs::dockerfile_render_reproduces_committed_fixtures
+  feature_builds_green:
+    id: R1
+    text: "cargo build -p relay --features operator compiles the controller (`relay k8s operator run` real path); cargo build -p relay --features self-update,issue stays green with the new rustls-provider gating; the default build links no kube-rs; the workspace lockfile stays single-versioned on kube 0.98 / k8s-openapi 0.24 / schemars 0.8."
+    kind: regression
+    risk: medium
+    verify: cargo build -p relay --features operator (+ self-update,issue) — WI AC5 build gates
+  llm_operations_topic_deploy_verbs:
+    id: R7
+    text: "The relay llm operations topic documents the deploy verbs (k8s crd/operator/instance render, k8s operator run, dockerfile render) so the outline stays honest about the CLI surface."
+    kind: functional
+    risk: low
+    verify: tests/deploy_cli.rs::llm_operations_topic_names_deploy_verbs
+  offline_render_verbs_default_build:
+    id: R4
+    text: "In the DEFAULT build (no operator feature), driving the compiled relay binary: `relay k8s crd render`, `relay k8s operator render`, and `relay k8s instance render` for all four profiles (dev/staging/prod/template) succeed offline and every emitted document round-trips through serde_yaml (multi-doc output split on `---`); `relay dockerfile render` succeeds for both variants. `relay k8s operator run` without the feature exits nonzero with the rebuild hint."
+    kind: functional
+    risk: high
+    verify: tests/deploy_cli.rs::render_verbs_emit_parseable_yaml_offline
+  rustls_provider_idempotent:
+    id: R1
+    text: "relay::tls::install_default_crypto_provider() is idempotent and safe to call repeatedly (main calls it before command parsing); it is a no-op in builds without the private rustls-provider feature and installs the aws-lc-rs default provider once in builds that link a rustls path (operator/self-update/issue)."
+    kind: functional
+    risk: low
+    verify: tests/operator.rs::rustls_provider_install_is_idempotent
+  smoke_script_single_bin:
+    id: R6
+    text: "scripts/kind-failover-smoke.sh contains zero relay-raft references, builds/loads the single `relay` image, and its embedded kubernetes manifests (extracted from the heredoc) parse as YAML and carry the auto-mode downward-API env (SHARD_COUNT=1, REPLICAS_PER_SHARD=3, VOTER_COUNT=3, POD_NAME fieldRef, RELAY_PEER_SERVICE) on port 7000; `bash -n` accepts the script."
+    kind: regression
+    risk: medium
+    verify: tests/deploy_cli.rs::smoke_script_is_single_bin_auto_mode
+  statefulset_env_probe_contract:
+    id: R2
+    text: "With --features operator: render() of a Relay CR emits, via the shared operator::render toolkit, a StatefulSet whose container env carries exactly the downward-API contract relay's serve reads — POD_NAME (fieldRef metadata.name), SHARD_COUNT pinned to 1, REPLICAS_PER_SHARD, VOTER_COUNT, RELAY_PEER_SERVICE={name}-headless — plus RELAY_BIND=0.0.0.0:7000, RELAY_DATA_DIR=/data and RELAY_GRACE_SECS; replicas == replicasPerShard (single group); readiness probe /readyz and liveness+startup probes /healthz on the http port; the ServiceAccount, headless + client Services and PDB are present; the /data PVC template carries the CR's storage size."
+    kind: functional
+    risk: high
+    verify: tests/operator.rs::render_emits_downward_api_statefulset
+  status_patch_phases:
+    id: R2
+    text: "With --features operator: ManagedService for Relay reports readiness_targets = the instance StatefulSet and status_patch phases Pending (0 ready) / Reconciling (partial) / Ready (readyReplicas >= replicasPerShard, shard count pinned 1), with observedGeneration and desired/ready replica counts."
+    kind: functional
+    risk: medium
+    verify: tests/operator.rs::status_patch_reports_phases
+---
+flowchart TD
+    r1[R1 feature builds green] --> cargo_build_p_relay_features_operator_self_update_issue_wi_ac5_build_gates[cargo build -p relay --features operator (+ self-update,issue) — WI AC5 build gates]
+    r1[R1 rustls provider idempotent] --> tests_operator_rs_rustls_provider_install_is_idempotent[tests/operator.rs::rustls_provider_install_is_idempotent]
+    r2[R2 auth secret wiring opt in] --> tests_operator_rs_auth_secret_wiring_is_opt_in[tests/operator.rs::auth_secret_wiring_is_opt_in]
+    r2[R2 crd flattens cluster spec] --> tests_operator_rs_crd_flattens_cluster_spec[tests/operator.rs::crd_flattens_cluster_spec]
+    r2[R2 statefulset env probe contract] --> tests_operator_rs_render_emits_downward_api_statefulset[tests/operator.rs::render_emits_downward_api_statefulset]
+    r2[R2 status patch phases] --> tests_operator_rs_status_patch_reports_phases[tests/operator.rs::status_patch_reports_phases]
+    r3[R3 crd fixture matches generated] --> tests_deploy_cli_rs_crd_render_is_structural_schema_safe[tests/deploy_cli.rs::crd_render_is_structural_schema_safe]
+    r4[R4 dockerfile fixture equality] --> tests_deploy_cli_rs_dockerfile_render_reproduces_committed_fixtures[tests/deploy_cli.rs::dockerfile_render_reproduces_committed_fixtures]
+    r4[R4 offline render verbs default build] --> tests_deploy_cli_rs_render_verbs_emit_parseable_yaml_offline[tests/deploy_cli.rs::render_verbs_emit_parseable_yaml_offline]
+    r6[R6 smoke script single bin] --> tests_deploy_cli_rs_smoke_script_is_single_bin_auto_mode[tests/deploy_cli.rs::smoke_script_is_single_bin_auto_mode]
+    r7[R7 llm operations topic deploy verbs] --> tests_deploy_cli_rs_llm_operations_topic_names_deploy_verbs[tests/deploy_cli.rs::llm_operations_topic_names_deploy_verbs]
+```
