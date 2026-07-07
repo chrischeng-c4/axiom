@@ -6915,7 +6915,7 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "0.4.14"
+version = "0.4.15"
 dependencies = [
  "anyhow",
  "async-nats",
