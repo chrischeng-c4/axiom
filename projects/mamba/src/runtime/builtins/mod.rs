@@ -10,6 +10,7 @@ use rustc_hash::FxHashMap;
 mod boxing;
 mod eval_exec;
 mod range_slice;
+mod set_constructors;
 mod type_objects;
 
 use boxing::format_bytes_inner;
@@ -29,6 +30,7 @@ pub use range_slice::{
     mb_range, mb_range_2, mb_range_3, mb_range_no_args, mb_range_too_many_args, mb_slice,
     mb_slice_no_args,
 };
+pub use set_constructors::{mb_frozenset_empty, mb_frozenset_new, mb_set_from_iterable};
 pub(crate) use type_objects::{make_type_object, reject_non_constructible_type_object};
 pub use type_objects::{
     mb_builtin_type_obj, mb_type, mb_type2, mb_type3, mb_type3_kwargs, mb_type_no_args,
@@ -11633,60 +11635,6 @@ pub fn mb_is_truthy(val: MbValue) -> i64 {
         }
     }
     1 // fallback: truthy
-}
-
-/// frozenset() — create an empty frozenset (zero-arg fast path).
-pub fn mb_frozenset_empty() -> MbValue {
-    MbValue::from_ptr(MbObject::new_frozenset(Vec::new()))
-}
-
-/// frozenset(iterable) — create an immutable frozenset from an iterable.
-pub fn mb_frozenset_new(args: MbValue) -> MbValue {
-    if args.is_none() {
-        return MbValue::from_ptr(MbObject::new_frozenset(vec![]));
-    }
-    let items = extract_items(args);
-    // Dedup via Python-semantic equality (dispatches __eq__ on instances).
-    let mut unique: Vec<MbValue> = Vec::new();
-    for item in items {
-        if !unique.iter().any(|v| mb_values_eq(*v, item)) {
-            unique.push(item);
-        }
-    }
-    MbValue::from_ptr(MbObject::new_frozenset(unique))
-}
-
-/// set(iterable) — create a mutable set from an iterable.
-pub fn mb_set_from_iterable(args: MbValue) -> MbValue {
-    if args.is_none() {
-        return MbValue::from_ptr(MbObject::new_set(vec![]));
-    }
-    // Heap-container sources (list/tuple/set/frozenset/dict) lend their
-    // elements: extract_items copies the MbValues without retaining, so the
-    // set must retain what it keeps — otherwise releasing the source (e.g. a
-    // temporary list from a method call inside a function) leaves the set
-    // holding dangling pointers. Iterator/str sources hand over fresh values.
-    let borrowed_source = args.as_ptr().is_some_and(|p| unsafe {
-        matches!(
-            (*p).data,
-            ObjData::List(_)
-                | ObjData::Tuple(_)
-                | ObjData::Set(_)
-                | ObjData::FrozenSet(_)
-                | ObjData::Dict(_)
-        )
-    });
-    let items = extract_items(args);
-    let mut unique: Vec<MbValue> = Vec::new();
-    for item in items {
-        if !unique.iter().any(|v| mb_values_eq(*v, item)) {
-            if borrowed_source {
-                unsafe { super::rc::retain_if_ptr(item) };
-            }
-            unique.push(item);
-        }
-    }
-    MbValue::from_ptr(MbObject::new_set(unique))
 }
 
 /// assert statement failure — raise AssertionError via exception system.
