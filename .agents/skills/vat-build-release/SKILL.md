@@ -1,6 +1,7 @@
 ---
 name: vat:build:release
 description: Release vat end-to-end: prepare the release build, land via git:land, tag/push vat@<version>, then monitor GitHub Actions and the GitHub Release until published. Use when the user asks to release vat or run a vat release build.
+user-invocable: true
 ---
 
 # /vat:build:release

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-preview-build-sh" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# <HANDWRITE gap="standardize:claim-code" tracker="projects-preview-build-sh" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 set -euo pipefail
 
 usage() {
@@ -42,4 +42,4 @@ esac
 codesign -s - -f "$HOME/.cargo/bin/preview" 2>/dev/null || true
 echo "Installed: $("$HOME/.cargo/bin/preview" --version 2>/dev/null || echo preview)"
 
-// </HANDWRITE>
+# </HANDWRITE>
