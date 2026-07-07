@@ -1708,6 +1708,7 @@ pub fn random_subclass_method(recv: MbValue, method: &str, args: &[MbValue]) -> 
 
 /// `Random(seed=None)` — constructor returns a handle id wrapped as int.
 unsafe extern "C" fn dispatch_Random(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let seed_val = a.first().copied().unwrap_or_else(MbValue::none);
     let seed = if seed_val.is_none() {
@@ -1724,6 +1725,7 @@ unsafe extern "C" fn dispatch_Random(args_ptr: *const MbValue, nargs: usize) -> 
 /// shares the integer-handle method protocol (random/getrandbits/choice/…).
 /// Distribution-correct; not cryptographically strong.
 unsafe extern "C" fn dispatch_SystemRandom(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let id = make_handle(None);
     MbValue::from_int(id as i64)
 }
@@ -1777,9 +1779,7 @@ pub fn register() {
         ("Random", dispatch_Random as usize),
         ("SystemRandom", dispatch_SystemRandom as usize),
     ] {
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(addr as u64, cls.to_string());
-        });
+        super::super::module::register_native_type_name(addr as u64, cls.to_string());
         let stub = MbValue::from_func(addr);
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         for name in [

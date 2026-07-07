@@ -1,10 +1,10 @@
 // `mamba shell` — print shell integration snippets.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::path::PathBuf;
 
-use crate::pkgmanage::pkgmgr::shell::{Shell, detect_from_shell_env};
+use crate::pkgmanage::pkgmgr::shell::{detect_from_shell_env, Shell};
 use crate::pkgmanage::pkgmgr::tools::default_bin_root;
 
 pub fn cmd_shell(sub: &ArgMatches) -> Result<()> {

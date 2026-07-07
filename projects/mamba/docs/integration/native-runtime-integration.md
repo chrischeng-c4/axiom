@@ -1,12 +1,15 @@
-# Mamba Integration Guide
+# Native runtime integration
 
-How to extend mamba with native Rust code — for both first-party (monorepo) crates
-and true 3rd-party vendors.
+How to extend mamba with native Rust code — for both first-party (monorepo)
+crates and true 3rd-party vendors.
 
-This guide is the operational reference. The **contract** itself lives in
-`crates/cclab-mamba-registry/` (the `MambaModule` trait, `MAMBA_MODULES` slice,
-`rt_sym!` macro, `MbValue` type). `mamba` crate is the runtime that loads the
-bindings — do not confuse the two.
+This scoped doc replaces the retired project-root integration guide.
+
+This guide is the operational reference for capability C3 and native-module
+bring-up. The **contract** itself lives in `crates/cclab-mamba-registry/`
+(the `MambaModule` trait, `MAMBA_MODULES` slice, `rt_sym!` macro, `MbValue`
+type). `mamba` crate is the runtime that loads the bindings — do not confuse
+the two.
 
 ## Architecture Overview
 

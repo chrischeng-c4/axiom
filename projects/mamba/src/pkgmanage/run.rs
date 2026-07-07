@@ -14,7 +14,7 @@
 // the file off to the compiler. Legacy `mamba run <file>` outside a
 // mamba project is untouched (returns `Mode::Legacy`).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

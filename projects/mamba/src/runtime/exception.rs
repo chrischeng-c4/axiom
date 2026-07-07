@@ -213,7 +213,10 @@ fn populate_import_error_fields(fields: &mut FxHashMap<String, MbValue>, arg_ite
     fields.insert("path".to_string(), MbValue::none());
 }
 
-fn populate_syntax_error_fields(fields: &mut FxHashMap<String, MbValue>, arg_items: &[MbValue]) -> bool {
+fn populate_syntax_error_fields(
+    fields: &mut FxHashMap<String, MbValue>,
+    arg_items: &[MbValue],
+) -> bool {
     let msg = arg_items.first().copied().unwrap_or_else(MbValue::none);
     insert_borrowed_field(fields, "msg", msg);
     fields.insert("filename".to_string(), MbValue::none());
@@ -251,7 +254,9 @@ fn populate_unicode_error_fields(
     arg_items: &[MbValue],
 ) {
     let slots: &[&str] = match type_name {
-        "UnicodeEncodeError" | "UnicodeDecodeError" => &["encoding", "object", "start", "end", "reason"],
+        "UnicodeEncodeError" | "UnicodeDecodeError" => {
+            &["encoding", "object", "start", "end", "reason"]
+        }
         "UnicodeTranslateError" => &["object", "start", "end", "reason"],
         _ => return,
     };
@@ -277,7 +282,10 @@ fn populate_exception_fields(
     if include_chain_fields {
         fields.insert("__cause__".to_string(), MbValue::none());
         fields.insert("__context__".to_string(), MbValue::none());
-        fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+        fields.insert(
+            "__suppress_context__".to_string(),
+            MbValue::from_bool(false),
+        );
     }
     if type_name == "StopIteration" {
         let value_val = arg_items.first().copied().unwrap_or_else(MbValue::none);
@@ -290,11 +298,17 @@ fn populate_exception_fields(
         fields.insert("name".to_string(), MbValue::none());
     } else if type_name == "ImportError" || type_name == "ModuleNotFoundError" {
         populate_import_error_fields(fields, arg_items);
-    } else if type_name == "SyntaxError" || type_name == "IndentationError" || type_name == "TabError" {
+    } else if type_name == "SyntaxError"
+        || type_name == "IndentationError"
+        || type_name == "TabError"
+    {
         if !populate_syntax_error_fields(fields, arg_items) {
             return false;
         }
-    } else if matches!(type_name, "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError") {
+    } else if matches!(
+        type_name,
+        "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError"
+    ) {
         populate_unicode_error_fields(fields, type_name, arg_items);
     }
     let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(arg_items.to_vec()));
@@ -442,7 +456,10 @@ fn unicode_range_fields(instance: MbValue) -> Option<(i64, i64, String)> {
 }
 
 pub fn unicode_error_str(class_name: &str, instance: MbValue) -> Option<String> {
-    if !matches!(class_name, "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError") {
+    if !matches!(
+        class_name,
+        "UnicodeEncodeError" | "UnicodeDecodeError" | "UnicodeTranslateError"
+    ) {
         return None;
     }
     let object = instance_field(instance, "object").unwrap_or_else(MbValue::none);
@@ -456,16 +473,20 @@ pub fn unicode_error_str(class_name: &str, instance: MbValue) -> Option<String> 
     let range_end = end.saturating_sub(1);
     match class_name {
         "UnicodeEncodeError" => {
-            let encoding = stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
+            let encoding =
+                stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
             if end == start + 1 {
-                let ch = unicode_char_at(object, start).map(unicode_char_escape).unwrap_or_default();
+                let ch = unicode_char_at(object, start)
+                    .map(unicode_char_escape)
+                    .unwrap_or_default();
                 Some(format!("'{encoding}' codec can't encode character '{ch}' in position {start}: {reason}"))
             } else {
                 Some(format!("'{encoding}' codec can't encode characters in position {start}-{range_end}: {reason}"))
             }
         }
         "UnicodeDecodeError" => {
-            let encoding = stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
+            let encoding =
+                stringish_value(instance_field(instance, "encoding").unwrap_or_else(MbValue::none));
             let bytes = match value_as_bytes(object) {
                 Some(bytes) => bytes,
                 None => return Some(String::new()),
@@ -479,10 +500,16 @@ pub fn unicode_error_str(class_name: &str, instance: MbValue) -> Option<String> 
         }
         "UnicodeTranslateError" => {
             if end == start + 1 {
-                let ch = unicode_char_at(object, start).map(unicode_char_escape).unwrap_or_default();
-                Some(format!("can't translate character '{ch}' in position {start}: {reason}"))
+                let ch = unicode_char_at(object, start)
+                    .map(unicode_char_escape)
+                    .unwrap_or_default();
+                Some(format!(
+                    "can't translate character '{ch}' in position {start}: {reason}"
+                ))
             } else {
-                Some(format!("can't translate characters in position {start}-{range_end}: {reason}"))
+                Some(format!(
+                    "can't translate characters in position {start}-{range_end}: {reason}"
+                ))
             }
         }
         _ => None,
@@ -507,7 +534,9 @@ pub fn mb_exception_new_with_args_and_kwargs(
     };
     for key in dict_string_keys(kwargs_dict) {
         if !allowed.contains(&key.as_str()) {
-            raise_type_error_message(format!("'{key}' is an invalid keyword argument for {type_name}()"));
+            raise_type_error_message(format!(
+                "'{key}' is an invalid keyword argument for {type_name}()"
+            ));
             return MbValue::none();
         }
     }
@@ -680,6 +709,18 @@ fn message_display(message: MbValue) -> String {
         .unwrap_or_default()
 }
 
+fn current_handled_exception_context() -> Option<MbException> {
+    let caught = super::class::last_caught_exception_value();
+    if caught.is_none() {
+        return None;
+    }
+    let context = exception_value_to_owned(caught);
+    unsafe {
+        super::rc::release_if_ptr(caught);
+    }
+    context
+}
+
 // ── Raise / Catch ──
 
 /// Raise an exception. Sets the thread-local exception state.
@@ -691,7 +732,10 @@ pub fn mb_raise(exc_type: MbValue, message: MbValue) {
     if type_name == "StopIteration" {
         super::iter::signal_stop_iteration();
     }
-    let exc = MbException::new(&type_name, &msg);
+    let mut exc = MbException::new(&type_name, &msg);
+    if let Some(context) = current_handled_exception_context() {
+        exc.context = Some(Box::new(context));
+    }
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
     });
@@ -707,7 +751,7 @@ pub fn mb_raise(exc_type: MbValue, message: MbValue) {
 /// rebuilding the cause from just its type+message dropped the inner links.
 /// Bounded depth guards a cyclic chain.
 fn mbvalue_to_mbexception(exc: MbValue, depth: u32) -> Option<MbException> {
-    if depth > 64 || exc.is_none() {
+    if depth > 4096 || exc.is_none() {
         return None;
     }
     let ty = get_exception_type(exc)?;
@@ -733,6 +777,10 @@ fn mbvalue_to_mbexception(exc: MbValue, depth: u32) -> Option<MbException> {
         }
     }
     Some(out)
+}
+
+pub(crate) fn exception_value_to_owned(exc: MbValue) -> Option<MbException> {
+    mbvalue_to_mbexception(exc, 0)
 }
 
 pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
@@ -943,12 +991,12 @@ pub fn set_current_traceback(entries: Vec<(String, u32, String)>) {
 pub fn update_current_traceback_frame_line(filename: &str, name: &str, lineno: u32) {
     CURRENT_EXCEPTION.with(|cell| {
         if let Some(exc) = cell.borrow_mut().as_mut() {
-            if let Some(idx) = exc
-                .traceback
-                .iter()
-                .rposition(|(frame_filename, _line, frame_name)| {
-                    frame_filename == filename && frame_name == name
-                })
+            if let Some(idx) =
+                exc.traceback
+                    .iter()
+                    .rposition(|(frame_filename, _line, frame_name)| {
+                        frame_filename == filename && frame_name == name
+                    })
             {
                 exc.traceback[idx].1 = lineno;
             }
@@ -1043,6 +1091,8 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
         "BaseException" | "Exception"
         | "ArithmeticError" | "ZeroDivisionError" | "OverflowError" | "FloatingPointError"
         | "LookupError" | "IndexError" | "KeyError"
+        // zoneinfo.ZoneInfoNotFoundError derives from KeyError (CPython).
+        | "ZoneInfoNotFoundError"
         | "UnicodeError" | "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
         | "ValueError" | "JSONDecodeError"
         | "OSError" | "IOError"
@@ -1448,8 +1498,11 @@ pub fn eg_member_is_bare_base(m: MbValue) -> bool {
             if let ObjData::Instance { ref class_name, .. } = (*p).data {
                 matches!(
                     class_name.as_str(),
-                    "BaseException" | "KeyboardInterrupt" | "SystemExit"
-                        | "GeneratorExit" | "BaseExceptionGroup"
+                    "BaseException"
+                        | "KeyboardInterrupt"
+                        | "SystemExit"
+                        | "GeneratorExit"
+                        | "BaseExceptionGroup"
                 )
             } else {
                 false
@@ -1519,6 +1572,14 @@ pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> 
         );
         return MbValue::none();
     }
+    let Some(seq) = eg_validate_exception_sequence_arg(exceptions, &cn) else {
+        return MbValue::none();
+    };
+    let actual = narrow_eg_class_name(&cn, &seq);
+    mb_exception_group_new_as(message, exceptions, &actual)
+}
+
+fn eg_validate_exception_sequence_arg(exceptions: MbValue, cn: &str) -> Option<Vec<MbValue>> {
     // 2. exceptions must be a sequence (list or tuple).
     let seq: Option<Vec<MbValue>> = exceptions.as_ptr().and_then(|p| unsafe {
         match &(*p).data {
@@ -1534,7 +1595,7 @@ pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> 
                 "second argument (exceptions) must be a sequence".to_string(),
             )),
         );
-        return MbValue::none();
+        return None;
     };
     // 3. non-empty.
     if seq.is_empty() {
@@ -1544,7 +1605,7 @@ pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> 
                 "second argument (exceptions) must be a non-empty sequence".to_string(),
             )),
         );
-        return MbValue::none();
+        return None;
     }
     // 4. every element must be an exception instance.
     for (i, it) in seq.iter().enumerate() {
@@ -1555,7 +1616,7 @@ pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> 
                     "Item {i} of second argument (exceptions) is not an exception"
                 ))),
             );
-            return MbValue::none();
+            return None;
         }
     }
     // PEP 654: only BaseExceptionGroup may hold a bare BaseException; an
@@ -1565,10 +1626,9 @@ pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> 
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(eg_nest_error_message(&cn))),
         );
-        return MbValue::none();
+        return None;
     }
-    let actual = narrow_eg_class_name(&cn, &seq);
-    mb_exception_group_new_as(message, exceptions, &actual)
+    Some(seq)
 }
 
 /// The CPython TypeError text for nesting a BaseException in a non-base group:
@@ -1811,7 +1871,11 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("UnicodeWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("BytesWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("ResourceWarning", vec!["Warning".into()], empty());
-    super::class::mb_class_register("InvalidTZPathWarning", vec!["RuntimeWarning".into()], empty());
+    super::class::mb_class_register(
+        "InvalidTZPathWarning",
+        vec!["RuntimeWarning".into()],
+        empty(),
+    );
     super::class::mb_class_register("ImportWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("EncodingWarning", vec!["Warning".into()], empty());
 
@@ -1838,32 +1902,7 @@ pub fn mb_get_exception() -> MbValue {
     }
     CURRENT_EXCEPTION.with(|cell| match cell.borrow().as_ref() {
         Some(exc) => {
-            let val = store_exception_as_value(MbException {
-                exc_type: exc.exc_type.clone(),
-                message: exc.message.clone(),
-                cause: exc.cause.as_ref().map(|c| {
-                    Box::new(MbException {
-                        exc_type: c.exc_type.clone(),
-                        message: c.message.clone(),
-                        cause: None,
-                        context: None,
-                        suppress_context: c.suppress_context,
-                        traceback: c.traceback.clone(),
-                    })
-                }),
-                context: exc.context.as_ref().map(|c| {
-                    Box::new(MbException {
-                        exc_type: c.exc_type.clone(),
-                        message: c.message.clone(),
-                        cause: None,
-                        context: None,
-                        suppress_context: c.suppress_context,
-                        traceback: c.traceback.clone(),
-                    })
-                }),
-                suppress_context: exc.suppress_context,
-                traceback: exc.traceback.clone(),
-            });
+            let val = store_exception_as_value(exc.clone());
             unsafe {
                 super::rc::retain_if_ptr(val);
             }
@@ -2122,6 +2161,18 @@ fn eg_derive(group: MbValue, excs: Vec<MbValue>) -> MbValue {
     );
     eg_copy_notes(group, derived);
     derived
+}
+
+/// `ExceptionGroup.derive(exceptions)` validation + dispatch for the Python-
+/// visible bound-method path. This reuses the constructor's sequence/member
+/// validation, then delegates construction/custom-derive handling to
+/// `eg_derive`.
+pub fn mb_exception_group_derive(group: MbValue, exceptions: MbValue) -> MbValue {
+    let class_name = eg_class_name(group);
+    let Some(seq) = eg_validate_exception_sequence_arg(exceptions, &class_name) else {
+        return MbValue::none();
+    };
+    eg_derive(group, seq)
 }
 
 /// Recursive `split` per PEP 654. Returns `(matched, rest)` where each side is a
@@ -2906,6 +2957,31 @@ mod tests {
         mb_clear_exception();
     }
 
+    #[test]
+    fn test_get_exception_preserves_nested_cause_chain() {
+        mb_clear_exception();
+        let inner = mb_key_error("level-0");
+        let mid_type = MbValue::from_ptr(MbObject::new_str("LookupError".into()));
+        let mid_msg = MbValue::from_ptr(MbObject::new_str("level-1".into()));
+        mb_raise_from(mid_type, mid_msg, inner);
+        let mid = mb_catch_exception();
+
+        let outer_type = MbValue::from_ptr(MbObject::new_str("ValueError".into()));
+        let outer_msg = MbValue::from_ptr(MbObject::new_str("level-2".into()));
+        mb_raise_from(outer_type, outer_msg, mid);
+
+        let exc = mb_get_exception();
+        let cause_attr = MbValue::from_ptr(MbObject::new_str("__cause__".into()));
+        let mid_val = crate::runtime::class::mb_getattr(exc, cause_attr);
+        assert_eq!(get_exception_type(mid_val).unwrap(), "LookupError");
+
+        let nested = crate::runtime::class::mb_getattr(mid_val, cause_attr);
+        assert_eq!(get_exception_type(nested).unwrap(), "KeyError");
+        assert_eq!(get_exception_message(nested).unwrap(), "level-0");
+
+        mb_clear_exception();
+    }
+
     // ── R4: mb_raise / mb_clear_exception lifecycle ──
 
     #[test]
@@ -2993,6 +3069,35 @@ mod tests {
         let ctx_attr = MbValue::from_ptr(MbObject::new_str("__context__".into()));
         let ctx_val = crate::runtime::class::mb_getattr(exc, ctx_attr);
         assert!(!ctx_val.is_none(), "__context__ should still be set");
+    }
+
+    #[test]
+    fn test_raise_instance_from_preserves_nested_cause_chain() {
+        mb_clear_exception();
+
+        let inner_cause = mb_key_error("level-0");
+        let lookup = mb_exception_new(
+            MbValue::from_ptr(MbObject::new_str("LookupError".into())),
+            MbValue::from_ptr(MbObject::new_str("level-1".into())),
+        );
+        crate::runtime::class::mb_raise_instance_from(lookup, inner_cause);
+        let lookup_exc = mb_catch_exception();
+
+        let outer = mb_exception_new(
+            MbValue::from_ptr(MbObject::new_str("ValueError".into())),
+            MbValue::from_ptr(MbObject::new_str("level-2".into())),
+        );
+        crate::runtime::class::mb_raise_instance_from(outer, lookup_exc);
+        let outer_exc = mb_catch_exception();
+
+        let cause_attr = MbValue::from_ptr(MbObject::new_str("__cause__".into()));
+        let outer_cause = crate::runtime::class::mb_getattr(outer_exc, cause_attr);
+        assert_eq!(get_exception_type(outer_cause).unwrap(), "LookupError");
+
+        let nested_cause_attr = MbValue::from_ptr(MbObject::new_str("__cause__".into()));
+        let nested_cause = crate::runtime::class::mb_getattr(outer_cause, nested_cause_attr);
+        assert_eq!(get_exception_type(nested_cause).unwrap(), "KeyError");
+        assert_eq!(get_exception_message(nested_cause).unwrap(), "level-0");
     }
 
     // ── R4: mb_reraise ──
@@ -3155,6 +3260,64 @@ mod tests {
             subgroup.is_none(),
             "subgroup should be None when no exceptions match"
         );
+    }
+
+    #[test]
+    fn test_exception_group_derive_reuses_group_message_and_class() {
+        let msg = MbValue::from_ptr(MbObject::new_str("eg".into()));
+        let group = mb_exception_group_new(
+            msg,
+            MbValue::from_ptr(MbObject::new_list(vec![mb_value_error("v")])),
+        );
+
+        let derived = mb_exception_group_derive(
+            group,
+            MbValue::from_ptr(MbObject::new_tuple(vec![mb_type_error("t")])),
+        );
+
+        assert_eq!(get_exception_type(derived).unwrap(), "ExceptionGroup");
+        assert_eq!(get_exception_message(derived).unwrap(), "eg");
+
+        let derived_excs = mb_exception_group_exceptions(derived);
+        let items = super::super::builtins::extract_items(derived_excs);
+        assert_eq!(items.len(), 1);
+        assert_eq!(get_exception_type(items[0]).unwrap(), "TypeError");
+        assert_eq!(get_exception_message(items[0]).unwrap(), "t");
+    }
+
+    #[test]
+    fn test_exception_group_derive_validation_reuses_constructor_errors() {
+        let group = mb_exception_group_new(
+            MbValue::from_ptr(MbObject::new_str("eg".into())),
+            MbValue::from_ptr(MbObject::new_list(vec![mb_value_error("v")])),
+        );
+
+        let bad_cases = [
+            (
+                MbValue::from_ptr(MbObject::new_list(vec![])),
+                "ValueError",
+                "second argument (exceptions) must be a non-empty sequence",
+            ),
+            (
+                MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)])),
+                "ValueError",
+                "Item 0 of second argument (exceptions) is not an exception",
+            ),
+            (
+                MbValue::from_int(1),
+                "TypeError",
+                "second argument (exceptions) must be a sequence",
+            ),
+        ];
+
+        for (arg, expect_type, expect_msg) in bad_cases {
+            mb_clear_exception();
+            let derived = mb_exception_group_derive(group, arg);
+            assert!(derived.is_none(), "derive should fail for invalid input");
+            let exc = mb_catch_exception();
+            assert_eq!(get_exception_type(exc).unwrap(), expect_type);
+            assert_eq!(get_exception_message(exc).unwrap(), expect_msg);
+        }
     }
 
     #[test]

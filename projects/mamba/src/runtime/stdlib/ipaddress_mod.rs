@@ -509,8 +509,14 @@ fn make_ipv6_network_instance(
             f.insert("compressed".to_string(), estr(&text));
             f.insert("exploded".to_string(), estr(&text));
             f.insert("with_prefixlen".to_string(), estr(&text));
-            f.insert("network_address".to_string(), make_handle(IpState::V6(addr)));
-            f.insert("netmask".to_string(), make_handle(IpState::V6(ipv6_mask(prefix))));
+            f.insert(
+                "network_address".to_string(),
+                make_handle(IpState::V6(addr)),
+            );
+            f.insert(
+                "netmask".to_string(),
+                make_handle(IpState::V6(ipv6_mask(prefix))),
+            );
             f.insert(
                 "hostmask".to_string(),
                 make_handle(IpState::V6(ipv6_hostmask(prefix))),
@@ -697,7 +703,11 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
     // Integer prefix length. A dotted-netmask form (e.g. "0.0.0.255") is not an
     // integer, so keep the legacy None for it; an in-range parse continues, and
     // an out-of-range integer prefix (>32) is a NetmaskValueError.
-    let prefix: u8 = match if prefix_part.is_empty() { Ok(32) } else { prefix_part.parse::<u32>() } {
+    let prefix: u8 = match if prefix_part.is_empty() {
+        Ok(32)
+    } else {
+        prefix_part.parse::<u32>()
+    } {
         Ok(p) if p <= 32 => p as u8,
         Ok(p) => {
             return raise(
@@ -1005,6 +1015,7 @@ unsafe extern "C" fn dispatch_class_ipv4_address(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     if nargs == 0 {
         return MbValue::none();
     }
@@ -1026,6 +1037,7 @@ unsafe extern "C" fn dispatch_class_ipv6_address(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     if nargs == 0 {
         return MbValue::none();
     }
@@ -1040,13 +1052,17 @@ unsafe extern "C" fn dispatch_class_ipv6_address(
             return make_handle(IpState::V6(b));
         }
     }
-    raise("AddressValueError", "At least 3 parts expected in IPv6 address")
+    raise(
+        "AddressValueError",
+        "At least 3 parts expected in IPv6 address",
+    )
 }
 
 unsafe extern "C" fn dispatch_class_ipv4_network(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     if nargs == 0 {
         return MbValue::none();
     }
@@ -1057,6 +1073,7 @@ unsafe extern "C" fn dispatch_class_ipv6_network(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     if nargs == 0 {
         return MbValue::none();
     }
@@ -1067,6 +1084,7 @@ unsafe extern "C" fn dispatch_class_ipv4_interface(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     if nargs == 0 {
         return MbValue::none();
     }
@@ -1077,6 +1095,7 @@ unsafe extern "C" fn dispatch_class_ipv6_interface(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     if nargs == 0 {
         return MbValue::none();
     }
@@ -1665,33 +1684,30 @@ pub fn register() {
     // constructor's func addr to the instance class name. ip_address()
     // dispatches by version, so v6 inputs through IPv4Address bind to the
     // v6 class — acceptable for the isinstance surface.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_class_ipv4_address as *const () as usize as u64,
-            "IPv4Address".to_string(),
-        );
-        map.insert(
-            dispatch_class_ipv6_address as *const () as usize as u64,
-            "IPv6Address".to_string(),
-        );
-        map.insert(
-            dispatch_class_ipv4_network as *const () as usize as u64,
-            "IPv4Network".to_string(),
-        );
-        map.insert(
-            dispatch_class_ipv6_network as *const () as usize as u64,
-            "IPv6Network".to_string(),
-        );
-        map.insert(
-            dispatch_class_ipv4_interface as *const () as usize as u64,
-            "IPv4Interface".to_string(),
-        );
-        map.insert(
-            dispatch_class_ipv6_interface as *const () as usize as u64,
-            "IPv6Interface".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_class_ipv4_address as *const () as usize as u64,
+        "IPv4Address".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_class_ipv6_address as *const () as usize as u64,
+        "IPv6Address".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_class_ipv4_network as *const () as usize as u64,
+        "IPv4Network".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_class_ipv6_network as *const () as usize as u64,
+        "IPv6Network".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_class_ipv4_interface as *const () as usize as u64,
+        "IPv4Interface".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_class_ipv6_interface as *const () as usize as u64,
+        "IPv6Interface".to_string(),
+    );
     register_ip_classes();
 
     // Exception classes. Expose them as plain string values (the class name)

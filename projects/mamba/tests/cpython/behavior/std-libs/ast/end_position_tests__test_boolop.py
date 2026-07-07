@@ -9,12 +9,10 @@
 # case = "end_position_tests__test_boolop"
 # subject = "cpython.test_ast.EndPositionTests.test_boolop"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
 import builtins
 import dis

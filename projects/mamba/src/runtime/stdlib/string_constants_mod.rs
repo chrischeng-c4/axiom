@@ -113,10 +113,12 @@ unsafe extern "C" fn dispatch_capwords(args_ptr: *const MbValue, nargs: usize) -
 }
 
 unsafe extern "C" fn dispatch_formatter(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     make_instance("Formatter", vec![])
 }
 
 unsafe extern "C" fn dispatch_template(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let template = a.first().copied().unwrap_or_else(MbValue::none);
     make_instance("Template", vec![("template", template)])
@@ -194,9 +196,7 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(*addr as u64);
         });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(*addr as u64, type_name.to_string());
-        });
+        super::super::module::register_native_type_name(*addr as u64, type_name.to_string());
     }
 
     let func_dispatchers: Vec<(&str, usize)> =
@@ -777,9 +777,10 @@ fn dict_empty_or_has_non_string_key(v: MbValue) -> bool {
     v.as_ptr().is_some_and(|p| unsafe {
         if let ObjData::Dict(ref lock) = (*p).data {
             let map = lock.read().unwrap();
-            map.is_empty() || map.keys().any(|k| {
-                !matches!(k, super::super::dict_ops::DictKey::Str(_))
-            })
+            map.is_empty()
+                || map
+                    .keys()
+                    .any(|k| !matches!(k, super::super::dict_ops::DictKey::Str(_)))
         } else {
             false
         }
@@ -787,10 +788,16 @@ fn dict_empty_or_has_non_string_key(v: MbValue) -> bool {
 }
 
 fn formatter_needs_positional_zero_path(format_string: MbValue) -> bool {
-    let Some(fmt) = str_of(format_string) else { return false };
-    let Ok(fields) = formatter_parse(&fmt) else { return false };
+    let Some(fmt) = str_of(format_string) else {
+        return false;
+    };
+    let Ok(fields) = formatter_parse(&fmt) else {
+        return false;
+    };
     fields.iter().any(|field| {
-        let Some(name) = field.field_name.as_deref() else { return false };
+        let Some(name) = field.field_name.as_deref() else {
+            return false;
+        };
         let (first, rest) = field_name_split(name);
         first == "0" && !rest.is_empty()
     })

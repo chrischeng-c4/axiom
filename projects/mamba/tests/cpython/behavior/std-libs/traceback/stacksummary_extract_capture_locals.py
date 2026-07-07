@@ -9,7 +9,6 @@
 # case = "stacksummary_extract_capture_locals"
 # subject = "traceback.StackSummary"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -94,8 +94,8 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 - [src/config/](src/config/): `mamba.toml` schema + parser
 - [src/pkgmgr/](src/pkgmgr/): package manager (resolver, installer, PyPI client) — Epic 2
 - [cpython_known_failures.toml](cpython_known_failures.toml): per-test allowlist of known CPython-compat failures
-- [MAMBA_INTEGRATION.md](MAMBA_INTEGRATION.md): how to write a native binding crate (`MambaModule` trait, `rt_sym!`, `mamba.toml [crates.*]` schema)
-- [NOTES-NEXT.md](NOTES-NEXT.md): autonomous-loop scratchpad — single-fire investigation notes
+- [docs/integration/native-runtime-integration.md](docs/integration/native-runtime-integration.md): how to write a native binding crate (`MambaModule` trait, `rt_sym!`, `mamba.toml [crates.*]` schema)
+- [docs/notes/archive/autonomous-loop-scratchpad.md](docs/notes/archive/autonomous-loop-scratchpad.md): non-authoritative autonomous-loop scratchpad archive — single-fire investigation notes
 
 ## Key external references
 

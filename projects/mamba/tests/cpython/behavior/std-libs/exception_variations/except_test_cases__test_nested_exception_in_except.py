@@ -9,7 +9,6 @@
 # case = "except_test_cases__test_nested_exception_in_except"
 # subject = "cpython.test_exception_variations.ExceptTestCases.test_nested_exception_in_except"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_exception_variations.py"
 # status = "filled"

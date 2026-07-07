@@ -9,7 +9,6 @@
 # case = "tracebackexception_limit_trims_stack"
 # subject = "traceback.TracebackException"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

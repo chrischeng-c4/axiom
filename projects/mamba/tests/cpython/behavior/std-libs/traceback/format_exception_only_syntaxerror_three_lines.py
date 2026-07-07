@@ -9,7 +9,6 @@
 # case = "format_exception_only_syntaxerror_three_lines"
 # subject = "traceback.format_exception_only"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

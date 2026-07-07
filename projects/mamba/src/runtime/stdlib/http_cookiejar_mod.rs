@@ -190,6 +190,7 @@ fn call_method(receiver: MbValue, name: &str, args: Vec<MbValue>) -> MbValue {
 macro_rules! disp_variadic {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             // mb_call0 passes a null args_ptr with nargs=0; from_raw_parts
             // requires a non-null pointer even for empty slices.
             let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
@@ -250,9 +251,7 @@ pub fn register() {
         // `except http.cookiejar.LoadError`; the raised exception type name is
         // the bare "LoadError", so both sides resolve to the same class.
         if name == "LoadError" {
-            super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-                m.borrow_mut().insert(addr as u64, "LoadError".to_string());
-            });
+            super::super::module::register_native_type_name(addr as u64, "LoadError".to_string());
         }
     }
 

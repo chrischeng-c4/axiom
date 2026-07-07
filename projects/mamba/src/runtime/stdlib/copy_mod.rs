@@ -175,6 +175,11 @@ pub fn mb_copy_copy(obj: MbValue) -> MbValue {
                     let data = lock.read().unwrap().clone();
                     MbValue::from_ptr(MbObject::new_bytearray(data))
                 }
+                // memoryview has no __reduce_ex__ support (CPython raises
+                // from the default reductor before any copy dispatch runs).
+                ObjData::Instance { class_name, .. } if class_name == "memoryview" => {
+                    raise_exc("TypeError", "cannot pickle memoryview objects")
+                }
                 ObjData::Instance { class_name, .. } => {
                     let cls = class_name.clone();
                     copy_instance(obj, &cls)
@@ -599,6 +604,16 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
                 if cls == "method" {
                     return deepcopy_bound_method(obj, key, memo);
                 }
+                // Instance `__dict__` proxy (#969): it isn't a registered user
+                // class, so `deepcopy_instance`'s default fallback would return
+                // it (and the live attributes it aliases) by identity. A
+                // `__reduce__` 3-tuple commonly supplies `self.__dict__` as
+                // state, and CPython deep-copies that state independently
+                // (`rd.foo is not r.foo`) — mirror the literal-dict branch
+                // above instead.
+                if cls == "__instance_dict_proxy__" {
+                    return deepcopy_instance_dict_proxy(obj, key, memo);
+                }
                 deepcopy_instance(obj, &cls, key, memo)
             }
             _ => return_identity(obj),
@@ -735,6 +750,46 @@ unsafe fn deepcopy_bound_method(
     let result = MbValue::from_ptr(new_inst);
     memo.insert(key, result);
     record_memoized(obj, result);
+    result
+}
+
+/// Deep-copy an instance `__dict__` proxy (#969): snapshot its live target
+/// fields into a plain dict (the same snapshot `unwrap_dictlike_data` uses for
+/// read-only dict-shaped ops), then rebuild a fresh, independent dict whose
+/// values are recursively deep-copied — mirroring the literal `ObjData::Dict`
+/// branch above. Without this, the proxy falls through `deepcopy_instance`'s
+/// unregistered-class default and returns by identity, so a `__reduce__`
+/// 3-tuple's `self.__dict__` state (and any mutable values inside it) would
+/// alias the original instance's attributes instead of copying them.
+unsafe fn deepcopy_instance_dict_proxy(
+    obj: MbValue,
+    key: u64,
+    memo: &mut FxHashMap<u64, MbValue>,
+) -> MbValue {
+    let Some(snapshot) = super::super::dict_ops::instance_dict_proxy_snapshot(obj) else {
+        return return_identity(obj);
+    };
+    let new_d = MbObject::new_dict();
+    let result = MbValue::from_ptr(new_d);
+    memo.insert(key, result);
+    record_memoized(obj, result);
+    if let Some(sp) = snapshot.as_ptr() {
+        if let ObjData::Dict(ref lock) = (*sp).data {
+            let pairs: Vec<(super::super::dict_ops::DictKey, MbValue)> = lock
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            for (k, v) in pairs {
+                let dv = deepcopy_memo(v, memo);
+                if let ObjData::Dict(ref nl) = (*new_d).data {
+                    nl.write().unwrap().insert(k, dv);
+                }
+            }
+        }
+    }
+    super::super::rc::release_if_ptr(snapshot);
     result
 }
 
@@ -881,7 +936,19 @@ unsafe fn apply_state(inst: MbValue, state: MbValue) {
             return;
         }
     }
-    // Default: state is a dict of attributes to set on the instance.
+    // Default: state is a dict of attributes to set on the instance. A
+    // `__reduce__` result commonly supplies `self.__dict__` as the state
+    // (e.g. `(cls, args, self.__dict__)`); that's the instance `__dict__`
+    // proxy (#969), not a literal `ObjData::Dict`, so snapshot it to a real
+    // dict first — otherwise the `ObjData::Dict` match below silently no-ops
+    // and the reconstructed instance never receives its attributes.
+    let state = match super::super::dict_ops::instance_dict_proxy_snapshot(state) {
+        Some(snapshot) => {
+            super::super::rc::release_if_ptr(state);
+            snapshot
+        }
+        None => state,
+    };
     if let Some(p) = state.as_ptr() {
         if let ObjData::Dict(ref lock) = (*p).data {
             let pairs: Vec<(super::super::dict_ops::DictKey, MbValue)> = lock

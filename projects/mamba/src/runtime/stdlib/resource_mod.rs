@@ -13,7 +13,7 @@
 /// attribute calls (see `os_mod.rs`/`time_mod.rs`/`pwd_mod.rs`); the
 /// `fn(MbValue) -> MbValue` packed-list convention seen in `posix_mod.rs`
 /// does not receive arguments correctly for `mod.func(arg)`-style calls.
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind, MbRwLock};
+use super::super::rc::{MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
 use super::super::value::MbValue;
 use num_traits::ToPrimitive;
 use rustc_hash::FxHashMap;
@@ -523,7 +523,9 @@ mod tests {
     #[test]
     fn test_getrusage_self_has_16_fields() {
         let result = mb_resource_getrusage(&[MbValue::from_int(libc::RUSAGE_SELF as i64)]);
-        let ptr = result.as_ptr().expect("getrusage should return an Instance");
+        let ptr = result
+            .as_ptr()
+            .expect("getrusage should return an Instance");
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let fields = fields.read().unwrap();

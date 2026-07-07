@@ -51,6 +51,17 @@ pub struct HirParamSig {
     /// True when a default is declared but not a representable literal —
     /// the runtime records "has a default" with a None placeholder.
     pub default_opaque: bool,
+    /// For a non-literal default (`default_opaque = true`), the hidden
+    /// module-scope symbol (and its HIR type) that holds the value CPython
+    /// computes once at `def`-execution time (#897's `frozen_param_info` /
+    /// `ParamDefault::Frozen` mechanism, reused here). When present,
+    /// lowering reads this symbol's already-lowered vreg to populate
+    /// FUNC_PARAMS with the real computed value instead of `None`, so
+    /// value-call routes (calling through a variable, spread calls, class
+    /// construction via variable) splice the correct default (#1047).
+    /// `None` for literal defaults (unchanged, compile-time-embedded path)
+    /// or when no frozen slot was produced.
+    pub frozen_default: Option<(SymbolId, TypeId)>,
     /// Textual annotation (`"int"`), None when un-annotated.
     pub annotation: Option<String>,
 }
@@ -177,6 +188,16 @@ pub struct HirImport {
     /// Alias for `import X as Y` (#1014).
     pub module_alias: Option<String>,
     pub span: Span,
+    /// Resolver-populated SymbolId(s) for the locally-bound name(s), resolved
+    /// by `ast_to_hir` in the enclosing scope at HIR-build time (#951). For
+    /// `from X import a, b as c` this parallels the non-`*` entries of
+    /// `names` in order (empty for `from X import *`, which binds via
+    /// `mb_import_star` instead). For bare `import X[.Y.Z][ as W]` this holds
+    /// exactly one entry: the symbol for the bound name (alias, or the top
+    /// package, or the sole segment). MIR lowering must consume these
+    /// directly instead of re-resolving by name string, since a module-wide
+    /// name search cannot tell apart same-named locals in sibling functions.
+    pub bound_symbols: Vec<SymbolId>,
 }
 
 /// Exception handler in try/except.
@@ -352,6 +373,7 @@ pub enum HirExpr {
     BytesLit(Vec<u8>, TypeId),
     BoolLit(bool, TypeId),
     NoneLit(TypeId),
+    EllipsisLit(TypeId),
     Var(SymbolId, TypeId),
     BinOp {
         op: HirBinOp,
@@ -555,6 +577,7 @@ impl HirExpr {
             | HirExpr::BytesLit(_, t)
             | HirExpr::BoolLit(_, t)
             | HirExpr::NoneLit(t)
+            | HirExpr::EllipsisLit(t)
             | HirExpr::Var(_, t)
             | HirExpr::BinOp { ty: t, .. }
             | HirExpr::UnaryOp { ty: t, .. }

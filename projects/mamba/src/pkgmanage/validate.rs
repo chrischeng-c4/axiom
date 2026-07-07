@@ -1412,7 +1412,7 @@ fn write_dist(site: &Path, dir_name: &str, metadata: &str) {
 
 fn build_probe_wheel(out_dir: &Path, name: &str, version: &str, requires: &[&str]) -> PathBuf {
     use crate::pkgmanage::pkgmgr::wheel_build::{
-        CoreMetadata, WheelBuilder, WheelMetadata, compose_filename,
+        compose_filename, CoreMetadata, WheelBuilder, WheelMetadata,
     };
 
     let filename = compose_filename(name, version, "py3", "none", "any");

@@ -379,12 +379,16 @@ unsafe extern "C" fn dispatch_thread_pool_executor(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let _ = unsafe { arg_slice(args_ptr, nargs) };
     make_instance(
         "concurrent.futures.ThreadPoolExecutor",
         vec![
             ("_shutdown", MbValue::from_bool(false)),
-            ("_futures", MbValue::from_ptr(MbObject::new_list(Vec::new()))),
+            (
+                "_futures",
+                MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            ),
         ],
     )
 }
@@ -397,6 +401,7 @@ unsafe extern "C" fn dispatch_process_pool_executor(
 }
 
 unsafe extern "C" fn dispatch_future(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     make_pending_future()
 }
 
@@ -531,10 +536,16 @@ unsafe extern "C" fn dispatch_wait(args_ptr: *const MbValue, nargs: usize) -> Mb
 }
 
 unsafe extern "C" fn dispatch_executor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    make_instance("concurrent.futures.Executor", vec![
-        ("_shutdown", MbValue::from_bool(false)),
-        ("_futures", MbValue::from_ptr(MbObject::new_list(Vec::new()))),
-    ])
+    make_instance(
+        "concurrent.futures.Executor",
+        vec![
+            ("_shutdown", MbValue::from_bool(false)),
+            (
+                "_futures",
+                MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            ),
+        ],
+    )
 }
 
 unsafe extern "C" fn dispatch_timeout_error(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -701,14 +712,14 @@ pub fn register() {
     let addr_timeout = dispatch_timeout_error as *const () as usize;
     let _ = addr_timeout;
 
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(addr_fut as u64, "concurrent.futures.Future".to_string());
-        map.insert(
-            addr_tpe as u64,
-            "concurrent.futures.ThreadPoolExecutor".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        addr_fut as u64,
+        "concurrent.futures.Future".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        addr_tpe as u64,
+        "concurrent.futures.ThreadPoolExecutor".to_string(),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
         set.insert(addr_tpe as u64);

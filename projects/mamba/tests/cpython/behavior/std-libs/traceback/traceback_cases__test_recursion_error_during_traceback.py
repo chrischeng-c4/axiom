@@ -9,12 +9,10 @@
 # case = "traceback_cases__test_recursion_error_during_traceback"
 # subject = "cpython.test_traceback.TracebackCases.test_recursion_error_during_traceback"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::TracebackCases::test_recursion_error_during_traceback
 """Auto-ported test: TracebackCases::test_recursion_error_during_traceback (CPython 3.12 oracle)."""
 

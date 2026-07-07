@@ -103,10 +103,11 @@ fn as_str(v: MbValue) -> Option<String> {
     })
 }
 
-/// Raise `lzma.LZMAError` through the pending-exception channel. The handler
-/// type `lzma.LZMAError` is registered as the Str sentinel "LZMAError", and
-/// `resolve_class_name` resolves it back to that name, so `except
-/// lzma.LZMAError:` matches an exception raised with this exact type name.
+/// Raise `lzma.LZMAError` through the pending-exception channel. The module
+/// attr stays the existing class-name string `"LZMAError"`, but `register()`
+/// now also seeds that name into the exception hierarchy as an
+/// `Exception` subclass, so `except lzma.LZMAError:` and
+/// `issubclass(lzma.LZMAError, Exception)` both work.
 fn raise_lzma_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("LZMAError".to_string())),
@@ -724,11 +725,16 @@ pub fn register() {
         });
     }
 
-    // LZMAError stays a sentinel string: surface fixtures only assert
-    // `hasattr(lzma, "LZMAError")` (no callable/isinstance/construct check
-    // in the surface set), and it is an exception *class* rather than a
-    // plain callable. LZMAFile / open / LZMACompressor / LZMADecompressor are
-    // registered above as callable stubs.
+    // Keep `lzma.LZMAError` as the existing class-name string surface
+    // (`resolve_class_name` / constructor dispatch already understand that
+    // representation for registered exception classes), but register the name
+    // in the runtime hierarchy so `except lzma.LZMAError` no longer trips the
+    // "catching classes that do not inherit from BaseException" TypeError.
+    super::super::class::mb_class_register(
+        "LZMAError",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
     attrs.insert(
         "LZMAError".to_string(),
         MbValue::from_ptr(MbObject::new_str("LZMAError".to_string())),
@@ -906,6 +912,7 @@ pub fn mb_lzma_decompress(data: MbValue) -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{class, exception, module};
 
     fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
@@ -1015,5 +1022,34 @@ mod tests {
         let bad = MbValue::from_ptr(MbObject::new_bytes(vec![0, 1, 2, 3, 4]));
         let dec = mb_lzma_decompress(bad);
         assert_eq!(get_bytes_val(dec), None);
+    }
+
+    #[test]
+    fn test_lzmaerror_module_attr_is_registered_exception_class() {
+        register();
+        let exc_type =
+            module::mb_module_attr_lookup("lzma", "LZMAError").expect("lzma.LZMAError attr");
+        let exception = MbValue::from_ptr(MbObject::new_str("Exception".to_string()));
+
+        assert_eq!(
+            class::mb_issubclass(exc_type, exception).as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_lzmaerror_matches_runtime_exception_handler() {
+        register();
+        exception::mb_clear_exception();
+        let exc_type =
+            module::mb_module_attr_lookup("lzma", "LZMAError").expect("lzma.LZMAError attr");
+
+        raise_lzma_error("boom");
+        let exc = exception::mb_catch_exception();
+
+        assert_eq!(
+            exception::mb_exception_matches(exc, exc_type).as_bool(),
+            Some(true)
+        );
     }
 }

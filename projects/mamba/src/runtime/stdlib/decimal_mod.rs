@@ -1117,7 +1117,9 @@ pub fn mb_decimal_truediv(a: MbValue, b: MbValue) -> MbValue {
             }
             let ctx = current_ctx();
             let precision = context_precision(ctx) as usize;
-            unsafe { super::super::rc::release_if_ptr(ctx); }
+            unsafe {
+                super::super::rc::release_if_ptr(ctx);
+            }
             match divide_finite_with_prec(&lhs.value, &rhs.value, precision) {
                 Ok(st) => make_state_handle(st),
                 Err(()) => overflow_result(),
@@ -1692,8 +1694,8 @@ fn decimal_from_tuple(items: &[MbValue]) -> MbDecimal {
     let c: BigInt = BigInt::from_str(&coeff).unwrap_or_else(|_| BigInt::from(0u32));
     let is_zero = c.is_zero();
     let signed = if sign == 1 { -c } else { c };
-    let mut state = finite_from_coeff_scale(signed, -exp)
-        .unwrap_or_else(|_| MbDecimal::finite(Decimal::ZERO));
+    let mut state =
+        finite_from_coeff_scale(signed, -exp).unwrap_or_else(|_| MbDecimal::finite(Decimal::ZERO));
     if is_zero {
         if sign == 1 {
             state.value.set_sign_negative(true);
@@ -1917,7 +1919,9 @@ fn ctx_int(ctx: MbValue, key: &str) -> Option<i64> {
 }
 
 fn context_precision(ctx: MbValue) -> i64 {
-    ctx_int(ctx, "prec").unwrap_or(PREC as i64).clamp(1, PREC as i64)
+    ctx_int(ctx, "prec")
+        .unwrap_or(PREC as i64)
+        .clamp(1, PREC as i64)
 }
 
 fn round_state_to_context(st: &MbDecimal, ctx: MbValue) -> Option<MbDecimal> {
@@ -2907,6 +2911,7 @@ macro_rules! dispatch_binary {
 /// constructor can tell `Decimal()` (-> Decimal('0')) apart from
 /// `Decimal(None)` (-> TypeError).
 unsafe extern "C" fn dispatch_Decimal(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let provided = nargs >= 1;
     let val = a.first().copied().unwrap_or_else(MbValue::none);
@@ -3018,7 +3023,11 @@ fn copy_context(src: MbValue) -> MbValue {
     let inst = MbObject::new_instance("Context".to_string());
     unsafe {
         if let (Some(sp), ObjData::Instance { ref fields, .. }) = (src.as_ptr(), &(*inst).data) {
-            if let ObjData::Instance { fields: ref sfields, .. } = (*sp).data {
+            if let ObjData::Instance {
+                fields: ref sfields,
+                ..
+            } = (*sp).data
+            {
                 let s = sfields.read().unwrap();
                 let mut m = fields.write().unwrap();
                 for (k, v) in s.iter() {
@@ -3042,7 +3051,9 @@ fn default_ctx() -> MbValue {
             *g = Some(new_context(28, "ROUND_HALF_EVEN", -999999, 999999));
         }
         let c = g.unwrap();
-        unsafe { super::super::rc::retain_if_ptr(c); }
+        unsafe {
+            super::super::rc::retain_if_ptr(c);
+        }
         c
     })
 }
@@ -3052,7 +3063,9 @@ fn default_ctx() -> MbValue {
 fn current_ctx() -> MbValue {
     match CTX_STACK.with(|s| s.borrow().last().copied()) {
         Some(c) => {
-            unsafe { super::super::rc::retain_if_ptr(c); }
+            unsafe {
+                super::super::rc::retain_if_ptr(c);
+            }
             c
         }
         None => default_ctx(),
@@ -3077,7 +3090,9 @@ unsafe extern "C" fn dispatch_decimal_setcontext(
     };
     if let Some(c) = a.first().copied() {
         if ctx_field(c, "prec").is_some() {
-            unsafe { super::super::rc::retain_if_ptr(c); }
+            unsafe {
+                super::super::rc::retain_if_ptr(c);
+            }
             DEFAULT_CTX.with(|d| *d.borrow_mut() = Some(c));
         }
     }
@@ -3164,10 +3179,14 @@ unsafe extern "C" fn dispatch_decimal_localcontext(
 unsafe extern "C" fn localctx_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     let ctx = ctx_field(self_v, "_ctx").unwrap_or_else(MbValue::none);
     if !ctx.is_none() {
-        unsafe { super::super::rc::retain_if_ptr(ctx); }
+        unsafe {
+            super::super::rc::retain_if_ptr(ctx);
+        }
         CTX_STACK.with(|s| s.borrow_mut().push(ctx));
     }
-    unsafe { super::super::rc::retain_if_ptr(ctx); }
+    unsafe {
+        super::super::rc::retain_if_ptr(ctx);
+    }
     ctx
 }
 
@@ -3175,7 +3194,9 @@ unsafe extern "C" fn localctx_enter(self_v: MbValue, _args: MbValue) -> MbValue 
 unsafe extern "C" fn localctx_exit(_self: MbValue, _args: MbValue) -> MbValue {
     CTX_STACK.with(|s| {
         if let Some(c) = s.borrow_mut().pop() {
-            unsafe { super::super::rc::release_if_ptr(c); }
+            unsafe {
+                super::super::rc::release_if_ptr(c);
+            }
         }
     });
     MbValue::from_bool(false)
@@ -3251,13 +3272,15 @@ fn make_type_class_shell(name: &str, attrs: &[(&str, MbValue)]) -> MbValue {
 
 /// Positional args of a Context instance method (runtime passes a List/Tuple).
 fn ctx_method_args(args: MbValue) -> Vec<MbValue> {
-    args.as_ptr().map(|p| unsafe {
-        match &(*p).data {
-            ObjData::List(lock) => lock.read().unwrap().to_vec(),
-            ObjData::Tuple(items) => items.clone(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default()
+    args.as_ptr()
+        .map(|p| unsafe {
+            match &(*p).data {
+                ObjData::List(lock) => lock.read().unwrap().to_vec(),
+                ObjData::Tuple(items) => items.clone(),
+                _ => Vec::new(),
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// First positional argument coerced to a Decimal handle (CPython Context
@@ -3265,7 +3288,10 @@ fn ctx_method_args(args: MbValue) -> Vec<MbValue> {
 fn ctx_first_decimal(args: MbValue) -> MbValue {
     let pos = ctx_method_args(args);
     let a = pos.first().copied().unwrap_or_else(MbValue::none);
-    if a.as_int().map(|i| is_decimal_handle(i as u64)).unwrap_or(false) {
+    if a.as_int()
+        .map(|i| is_decimal_handle(i as u64))
+        .unwrap_or(false)
+    {
         return a; // already a Decimal handle
     }
     // CPython Context unary methods accept only int or Decimal; a str/float
@@ -3313,12 +3339,15 @@ unsafe extern "C" fn ctx_clear_flags(self_v: MbValue, _args: MbValue) -> MbValue
 fn register_context_methods() {
     let mut m: HashMap<String, MbValue> = HashMap::new();
     for (name, addr) in [
-        ("to_eng_string",     ctx_to_eng_string     as *const () as usize),
-        ("normalize",         ctx_normalize         as *const () as usize),
-        ("to_integral_value", ctx_to_integral_value as *const () as usize),
-        ("copy_decimal",      ctx_copy_decimal      as *const () as usize),
-        ("number_class",      ctx_number_class      as *const () as usize),
-        ("clear_flags",       ctx_clear_flags       as *const () as usize),
+        ("to_eng_string", ctx_to_eng_string as *const () as usize),
+        ("normalize", ctx_normalize as *const () as usize),
+        (
+            "to_integral_value",
+            ctx_to_integral_value as *const () as usize,
+        ),
+        ("copy_decimal", ctx_copy_decimal as *const () as usize),
+        ("number_class", ctx_number_class as *const () as usize),
+        ("clear_flags", ctx_clear_flags as *const () as usize),
     ] {
         super::super::module::register_variadic_func(addr as u64);
         m.insert(name.to_string(), MbValue::from_func(addr));
@@ -3525,12 +3554,10 @@ pub fn register() {
 
         // Bridge the `Decimal` constructor func -> its class name so the
         // func->native-class method bridge in mb_getattr fires.
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(
-                dispatch_Decimal as *const () as usize as u64,
-                "Decimal".to_string(),
-            );
-        });
+        super::super::module::register_native_type_name(
+            dispatch_Decimal as *const () as usize as u64,
+            "Decimal".to_string(),
+        );
     }
 
     // #2111: integer-handle refcount hooks.

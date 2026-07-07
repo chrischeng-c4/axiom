@@ -125,7 +125,8 @@ fn resolve_fd(file: MbValue) -> i32 {
     // Best-effort: try file.fileno() (real file objects / tempfiles).
     let empty_args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
     let result = super::super::class::mb_call_method(file, new_str("fileno"), empty_args);
-    let raised = super::super::builtins::mb_is_truthy(super::super::exception::mb_has_exception()) != 0;
+    let raised =
+        super::super::builtins::mb_is_truthy(super::super::exception::mb_has_exception()) != 0;
     if raised {
         super::super::exception::mb_clear_exception();
         return 2;

@@ -144,16 +144,19 @@ pub fn mb_urllib_error_ContentTooShortError(a: &[MbValue]) -> MbValue {
 // ── Dispatch shims (variadic stdlib ABI) ─────────────────────────────────────
 
 extern "C" fn dispatch_URLError(args: *const MbValue, len: usize) -> MbValue {
+    crate::icf_guard!();
     let slice = unsafe { std::slice::from_raw_parts(args, len) };
     mb_urllib_error_URLError(slice)
 }
 
 extern "C" fn dispatch_HTTPError(args: *const MbValue, len: usize) -> MbValue {
+    crate::icf_guard!();
     let slice = unsafe { std::slice::from_raw_parts(args, len) };
     mb_urllib_error_HTTPError(slice)
 }
 
 extern "C" fn dispatch_ContentTooShortError(args: *const MbValue, len: usize) -> MbValue {
+    crate::icf_guard!();
     let slice = unsafe { std::slice::from_raw_parts(args, len) };
     mb_urllib_error_ContentTooShortError(slice)
 }
@@ -166,13 +169,16 @@ extern "C" fn dispatch_ContentTooShortError(args: *const MbValue, len: usize) ->
 /// HTTPError.read(...) delegates to the stored response file object's read()
 /// (CPython's HTTPError doubles as an http.client.HTTPResponse).
 unsafe extern "C" fn m_httperror_read(self_v: MbValue, args: MbValue) -> MbValue {
-    let fp = self_v.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*p).data {
-            fields.read().ok().and_then(|f| f.get("fp").copied())
-        } else {
-            None
-        }
-    }).unwrap_or_else(MbValue::none);
+    let fp = self_v
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.read().ok().and_then(|f| f.get("fp").copied())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none);
     super::super::class::mb_call_method(
         fp,
         MbValue::from_ptr(MbObject::new_str("read".to_string())),
@@ -221,9 +227,7 @@ pub fn register() {
         // func addr as a native type name so `mb_getattr` consults the class's
         // method table when an attribute is read off the class itself
         // (same mechanism as socket.py type stubs / pathlib.Path).
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(addr as u64, name.to_string());
-        });
+        super::super::module::register_native_type_name(addr as u64, name.to_string());
         // BaseException exposes the exception-chaining slots (`__cause__`,
         // `__context__`, `__suppress_context__`) as getset descriptors, so on
         // the real CPython classes `hasattr(urllib.error.URLError, "__cause__")`

@@ -9,12 +9,10 @@
 # case = "limit_tests__test_extract_tb"
 # subject = "cpython.test_traceback.LimitTests.test_extract_tb"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::LimitTests::test_extract_tb
 """Auto-ported test: LimitTests::test_extract_tb (CPython 3.12 oracle)."""
 

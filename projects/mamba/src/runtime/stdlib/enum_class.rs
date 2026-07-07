@@ -280,7 +280,9 @@ fn class_kind(class_name: &str) -> Option<EnumKind> {
 /// A populated enum is final; subclassing it to add members raises TypeError.
 fn is_populated_enum(class_name: &str) -> bool {
     ENUM_CLASSES.with(|m| {
-        m.borrow().get(class_name).map_or(false, |i| !i.by_name.is_empty())
+        m.borrow()
+            .get(class_name)
+            .map_or(false, |i| !i.by_name.is_empty())
     })
 }
 
@@ -360,9 +362,10 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
     {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                format!("{} is not a string", repr_string(value)),
-            )),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{} is not a string",
+                repr_string(value)
+            ))),
         );
         return None;
     }
@@ -472,8 +475,7 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
                 call_args.push(value);
             }
             let args_list = MbValue::from_ptr(MbObject::new_list(call_args));
-            let name_val =
-                MbValue::from_ptr(MbObject::new_str("__init__".to_string()));
+            let name_val = MbValue::from_ptr(MbObject::new_str("__init__".to_string()));
             super::super::class::mb_call_method(member, name_val, args_list);
         }
     }
@@ -943,7 +945,10 @@ pub fn member_str(v: MbValue) -> Option<String> {
     }
     // IntEnum/ReprEnum and StrEnum stringify through their raw data value;
     // a plain (str, Enum) mixin keeps the qualified form (CPython 3.12).
-    if matches!(class_kind(&cls), Some(EnumKind::IntFlag | EnumKind::IntMixin)) {
+    if matches!(
+        class_kind(&cls),
+        Some(EnumKind::IntFlag | EnumKind::IntMixin)
+    ) {
         return Some(repr_string(member_value(v)));
     }
     if class_kind(&cls) == Some(EnumKind::StrEnum) {
@@ -962,9 +967,9 @@ pub fn member_repr(v: MbValue) -> Option<String> {
         return None;
     }
     // global_enum members (e.g. calendar.Day) repr as `module.NAME`.
-    if let Some(module) = ENUM_CLASSES.with(|m| {
-        m.borrow().get(&cls).and_then(|i| i.global_module.clone())
-    }) {
+    if let Some(module) =
+        ENUM_CLASSES.with(|m| m.borrow().get(&cls).and_then(|i| i.global_module.clone()))
+    {
         return Some(format!("{module}.{name}"));
     }
     let vr = repr_string(member_value(v));
@@ -985,14 +990,16 @@ pub fn register_global_enum(
     let mut out = Vec::new();
     ENUM_CLASSES.with(|m| {
         let mut map = m.borrow_mut();
-        let info = map.entry(class_name.to_string()).or_insert_with(|| EnumClassInfo {
-            kind: EnumKind::IntMixin,
-            next_auto: 1,
-            canonical: Vec::new(),
-            by_name: Vec::new(),
-            composites: FxHashMap::default(),
-            global_module: Some(module.to_string()),
-        });
+        let info = map
+            .entry(class_name.to_string())
+            .or_insert_with(|| EnumClassInfo {
+                kind: EnumKind::IntMixin,
+                next_auto: 1,
+                canonical: Vec::new(),
+                by_name: Vec::new(),
+                composites: FxHashMap::default(),
+                global_module: Some(module.to_string()),
+            });
         info.global_module = Some(module.to_string());
         for (name, value) in members {
             let member = new_member(class_name, name, MbValue::from_int(*value));
@@ -1007,7 +1014,8 @@ pub fn register_global_enum(
     });
     // Make enum_kind_for agree (these classes are not in CLASS_REGISTRY).
     ENUM_KIND_MEMO.with(|m| {
-        m.borrow_mut().insert(class_name.to_string(), Some(EnumKind::IntMixin));
+        m.borrow_mut()
+            .insert(class_name.to_string(), Some(EnumKind::IntMixin));
     });
     out
 }
@@ -1131,7 +1139,6 @@ pub fn class_all_member_int_values(class_name: &str) -> Option<Vec<(String, i64)
         Some(out)
     })
 }
-
 
 /// class_first_alias fallback for data-mixin enums (IntEnum et al.) that
 /// keep raw values as class attrs instead of ENUM_CLASSES members.

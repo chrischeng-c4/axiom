@@ -9,7 +9,6 @@
 # case = "extract_tb_entries_have_frame_fields"
 # subject = "traceback.extract_tb"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

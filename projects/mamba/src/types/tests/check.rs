@@ -41,6 +41,14 @@ fn check_warnings(src: &str) -> Vec<String> {
         .collect()
 }
 
+fn check_runtime(src: &str) -> Vec<String> {
+    let module = parser::parse(src, FileId(0)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    checker.allow_runtime_unresolved_names = true;
+    let errors = checker.check_module(&module);
+    errors.into_iter().map(|e| e.to_string()).collect()
+}
+
 #[test]
 fn test_valid_fibonacci() {
     let errors = check(
@@ -178,7 +186,9 @@ fn test_keyword_iskeyword_wall_is_deliberately_fixture_only() {
     // `# mamba-strict-type:`) still gets mamba's stricter hypothetical wall.
     let errors = check_strict_type_fixture("from keyword import iskeyword\niskeyword(12345)\n");
     assert!(
-        errors.iter().any(|e| e.contains("expected `str`, got `int`")),
+        errors
+            .iter()
+            .any(|e| e.contains("expected `str`, got `int`")),
         "strict-type fixture should still reject a non-str iskeyword arg, got: {errors:?}"
     );
 
@@ -207,6 +217,23 @@ fn test_undefined_variable() {
     let errors = check("x: int = y\n");
     assert!(!errors.is_empty());
     assert!(errors[0].contains("undefined name"));
+}
+
+#[test]
+fn test_runtime_mode_allows_unknown_annotation_names() {
+    let errors = check("def foo(a: THIS_DOES_NOT_EXIST) -> int:\n    return 0\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("unknown type: `THIS_DOES_NOT_EXIST`")),
+        "non-runtime checking should keep rejecting unknown annotations, got: {errors:?}"
+    );
+
+    let errors = check_runtime("def foo(a: THIS_DOES_NOT_EXIST) -> int:\n    return 0\n");
+    assert!(
+        errors.is_empty(),
+        "runtime mode should defer unknown annotation names instead of hard-failing, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -838,6 +865,25 @@ fn test_str_add_int_is_type_error() {
          c: str = a + b\n",
     );
     assert!(!errors.is_empty(), "str + int should produce a type error");
+}
+
+#[test]
+fn test_set_literal_binops_and_comparisons_typecheck() {
+    let errors = check(
+        "s = {1, 2}\n\
+         a = s - {1}\n\
+         b = {1, 2} <= {1, 2, 3}\n\
+         c = {1, 2} | {3}\n\
+         d = {1, 2} & {2, 3}\n\
+         e = {1, 2} ^ {2, 3}\n\
+         f = {1, 2} < {1, 2, 3}\n\
+         g = {1, 2, 3} >= {1, 2}\n\
+         h = {1, 2, 3} > {1, 2}\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "set literal binops/comparisons should type-check: {errors:?}"
+    );
 }
 
 // ── R9: Type checker — multi-argument stdlib forms ──
@@ -1505,6 +1551,33 @@ fn test_stdlib_path_or_fd_wall_keeps_valid_overloads_clean() {
     assert!(
         errors.iter().any(|e| e.contains("argument type mismatch")),
         "listdir(bare object) should be rejected, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stdlib_fileinput_files_typed_wall_rejected() {
+    let errors = check("class _W:\n    pass\nfrom fileinput import input\ninput(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `files`")),
+        "fileinput.input(_W()) should reject the files arg, got: {errors:?}"
+    );
+
+    let errors = check("class _W:\n    pass\nfrom fileinput import FileInput\nFileInput(_W())\n");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("does not satisfy parameter `files`")),
+        "fileinput.FileInput(_W()) should reject the files arg, got: {errors:?}"
+    );
+
+    let errors = check(
+        "from fileinput import input, FileInput\ninput([\"a.txt\"])\nFileInput([\"a.txt\"])\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "fileinput files iterables should stay accepted, got: {errors:?}"
     );
 }
 

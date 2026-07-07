@@ -1448,9 +1448,7 @@ unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: us
             .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
             .then_some(idx)
     });
-    let kwargs = kwargs_index
-        .map(|idx| a[idx])
-        .unwrap_or_else(MbValue::none);
+    let kwargs = kwargs_index.map(|idx| a[idx]).unwrap_or_else(MbValue::none);
     let positional_bases = a.get(2).copied().filter(|_| kwargs_index != Some(2));
     let bases = get_kwarg(kwargs, "bases")
         .or(positional_bases)

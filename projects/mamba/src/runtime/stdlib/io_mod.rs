@@ -140,9 +140,7 @@ fn make_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValu
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-fn trailing_kwargs(
-    a: &[MbValue],
-) -> Option<indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>> {
+fn trailing_kwargs(a: &[MbValue]) -> Option<super::super::rc::MbDictMap> {
     a.last().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
         if let ObjData::Dict(ref lock) = (*p).data {
             Some(lock.read().unwrap().clone())
@@ -152,10 +150,7 @@ fn trailing_kwargs(
     })
 }
 
-fn kwarg_str(
-    kw: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>,
-    key: &str,
-) -> Option<String> {
+fn kwarg_str(kw: &super::super::rc::MbDictMap, key: &str) -> Option<String> {
     for (k, v) in kw.iter() {
         if let super::super::dict_ops::DictKey::Str(ref ks) = k {
             if ks == key {
@@ -166,10 +161,7 @@ fn kwarg_str(
     None
 }
 
-fn kwarg_int(
-    kw: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>,
-    key: &str,
-) -> Option<i64> {
+fn kwarg_int(kw: &super::super::rc::MbDictMap, key: &str) -> Option<i64> {
     for (k, v) in kw.iter() {
         if let super::super::dict_ops::DictKey::Str(ref ks) = k {
             if ks == key {
@@ -181,6 +173,7 @@ fn kwarg_int(
 }
 
 unsafe extern "C" fn dispatch_stringio_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let initial = if nargs > 0 {
         extract_str(unsafe { *args_ptr }).unwrap_or_default()
     } else {
@@ -190,6 +183,7 @@ unsafe extern "C" fn dispatch_stringio_new(args_ptr: *const MbValue, nargs: usiz
 }
 
 unsafe extern "C" fn dispatch_bytesio_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let initial = if nargs > 0 {
         extract_bytes(unsafe { *args_ptr }).unwrap_or_default()
     } else {
@@ -199,6 +193,7 @@ unsafe extern "C" fn dispatch_bytesio_new(args_ptr: *const MbValue, nargs: usize
 }
 
 unsafe extern "C" fn dispatch_textiowrapper_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
     let positional_end = if kw.is_some() {
@@ -242,6 +237,7 @@ unsafe extern "C" fn dispatch_bufferedreader_new(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
     let positional_end = if kw.is_some() {
@@ -335,14 +331,11 @@ pub fn register() {
         set.insert(addr_bw as u64);
     });
 
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(addr_sio as u64, "StringIO".into());
-        map.insert(addr_bio as u64, "BytesIO".into());
-        map.insert(addr_tio as u64, "TextIOWrapper".into());
-        map.insert(addr_br as u64, "BufferedReader".into());
-        map.insert(addr_bw as u64, "BufferedWriter".into());
-    });
+    super::super::module::register_native_type_name(addr_sio as u64, "StringIO".into());
+    super::super::module::register_native_type_name(addr_bio as u64, "BytesIO".into());
+    super::super::module::register_native_type_name(addr_tio as u64, "TextIOWrapper".into());
+    super::super::module::register_native_type_name(addr_br as u64, "BufferedReader".into());
+    super::super::module::register_native_type_name(addr_bw as u64, "BufferedWriter".into());
 
     // ── Abstract base classes exposed as registered class-name strings.
     // A registered class name is callable() and usable as an isinstance target.
@@ -1207,6 +1200,7 @@ unsafe extern "C" fn dispatch_bufferedwriter_new(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
     let positional_end = if kw.is_some() {

@@ -26,6 +26,21 @@ Goal 2.
 
 import google.api_core
 
+# Fixture repair (#967): `google.api_core` doesn't auto-import
+# `retry`/`timeout`/`exceptions` in its own `__init__.py`, so each needs an
+# explicit import (a side effect of which binds it onto the parent
+# package) before `google.api_core.<name>` resolves. Under mamba,
+# `google.api_core` is a flat native shim with no real submodules to
+# import — it already registers all three names directly as top-level
+# attributes, so the (expected) ImportError here is a no-op fallback to
+# that existing shim surface.
+try:
+    import google.api_core.exceptions  # noqa: F401
+    import google.api_core.retry  # noqa: F401
+    import google.api_core.timeout  # noqa: F401
+except ImportError:
+    pass
+
 
 _R_BASELINE = google.api_core.retry
 _T_BASELINE = google.api_core.timeout

@@ -1,6 +1,6 @@
 // `mamba workspace` — inspect uv-compatible workspace membership.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use clap::ArgMatches;
 use std::path::PathBuf;
 

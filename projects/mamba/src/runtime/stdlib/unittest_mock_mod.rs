@@ -305,6 +305,7 @@ fn call_repr(c: MbValue) -> String {
 
 /// `unittest.mock.call(...)` factory.
 unsafe extern "C" fn dispatch_call_factory(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
     let (pos, kw) = split_call_args(list);
@@ -413,13 +414,18 @@ unsafe extern "C" fn dispatch_create_autospec(args_ptr: *const MbValue, nargs: u
         set_field(
             m,
             "_autospec_max_pos",
-            MbValue::from_int(if has_varargs { -1 } else { positional.len() as i64 }),
+            MbValue::from_int(if has_varargs {
+                -1
+            } else {
+                positional.len() as i64
+            }),
         );
     }
     m
 }
 
 unsafe extern "C" fn dispatch_magic_mock(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let m = build_mock("MagicMock", "mock");
     if let Some(kw) = a.iter().copied().find(|v| is_dict_value(*v)) {
@@ -429,6 +435,7 @@ unsafe extern "C" fn dispatch_magic_mock(args_ptr: *const MbValue, nargs: usize)
 }
 
 unsafe extern "C" fn dispatch_plain_mock(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let m = build_mock("Mock", "mock");
     if let Some(kw) = a.iter().copied().find(|v| is_dict_value(*v)) {
@@ -438,6 +445,7 @@ unsafe extern "C" fn dispatch_plain_mock(args_ptr: *const MbValue, nargs: usize)
 }
 
 unsafe extern "C" fn dispatch_async_mock(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let m = build_mock("AsyncMock", "mock");
     if let Some(kw) = a.iter().copied().find(|v| is_dict_value(*v)) {
@@ -447,6 +455,7 @@ unsafe extern "C" fn dispatch_async_mock(args_ptr: *const MbValue, nargs: usize)
 }
 
 unsafe extern "C" fn dispatch_property_mock(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let m = build_mock("PropertyMock", "mock");
     if let Some(kw) = a.iter().copied().find(|v| is_dict_value(*v)) {
@@ -989,6 +998,7 @@ fn seal_recursive(mock: MbValue, depth: usize) {
 
 /// `patch(target, new=..., return_value=..., ...)` → a _patch instance.
 unsafe extern "C" fn dispatch_patch(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let target = a.first().copied().unwrap_or_else(MbValue::none);
     let kwargs = a
@@ -1283,7 +1293,11 @@ unsafe extern "C" fn patch_object_exit(self_v: MbValue, _args: MbValue) -> MbVal
 
 unsafe extern "C" fn dispatch_mock_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { arg_slice(args_ptr, nargs) };
-    let kwargs = a.iter().copied().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
+    let kwargs = a
+        .iter()
+        .copied()
+        .find(|v| is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
     let read_data = kwarg_get(kwargs, "read_data")
         .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str(String::new())));
     let open_mock = build_mock("MagicMock", "open");
@@ -1322,7 +1336,10 @@ pub fn register() {
         ),
         ("AsyncMock", dispatch_async_mock as *const () as usize),
         ("PropertyMock", dispatch_property_mock as *const () as usize),
-        ("create_autospec", dispatch_create_autospec as *const () as usize),
+        (
+            "create_autospec",
+            dispatch_create_autospec as *const () as usize,
+        ),
         ("patch", dispatch_patch as *const () as usize),
         ("call", dispatch_call_factory as *const () as usize),
         ("mock_open", dispatch_mock_open as *const () as usize),
@@ -1419,33 +1436,30 @@ pub fn register() {
 
     // patch.<attr> and call.<name> resolve through the func→native-class
     // bridge: map the constructor addrs to class names.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_patch as *const () as usize as u64,
-            "patch".to_string(),
-        );
-        map.insert(
-            dispatch_call_factory as *const () as usize as u64,
-            "_mock_call_factory".to_string(),
-        );
-        map.insert(
-            dispatch_magic_mock as *const () as usize as u64,
-            "MagicMock".to_string(),
-        );
-        map.insert(
-            dispatch_plain_mock as *const () as usize as u64,
-            "Mock".to_string(),
-        );
-        map.insert(
-            dispatch_async_mock as *const () as usize as u64,
-            "AsyncMock".to_string(),
-        );
-        map.insert(
-            dispatch_property_mock as *const () as usize as u64,
-            "PropertyMock".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_patch as *const () as usize as u64,
+        "patch".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_call_factory as *const () as usize as u64,
+        "_mock_call_factory".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_magic_mock as *const () as usize as u64,
+        "MagicMock".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_plain_mock as *const () as usize as u64,
+        "Mock".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_async_mock as *const () as usize as u64,
+        "AsyncMock".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_property_mock as *const () as usize as u64,
+        "PropertyMock".to_string(),
+    );
     {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         for (name, addr) in [
@@ -1676,7 +1690,9 @@ mod tests {
         let replacement = unsafe { patch_object_enter(patcher, MbValue::none()) };
         assert_eq!(extract_str(replacement).as_deref(), Some("patched"));
         assert_eq!(
-            get_instance_field(target, "fetch").and_then(extract_str).as_deref(),
+            get_instance_field(target, "fetch")
+                .and_then(extract_str)
+                .as_deref(),
             Some("patched")
         );
 

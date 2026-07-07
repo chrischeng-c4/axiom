@@ -6,6 +6,12 @@ Force-typed Python compiler. Lexes Python source with `logos`, lowers through HI
 
 For implementation map, see [llms.txt](llms.txt).
 
+Canonical supporting docs:
+
+- Validation coverage evidence: [validation/evidence/coverage/README.md](validation/evidence/coverage/README.md)
+- Native runtime integration: [docs/integration/native-runtime-integration.md](docs/integration/native-runtime-integration.md)
+- Archived autonomous notes: [docs/notes/archive/autonomous-loop-scratchpad.md](docs/notes/archive/autonomous-loop-scratchpad.md)
+
 ## Capabilities
 
 ### Capability Index
@@ -211,7 +217,7 @@ cannot both enforce and not-enforce the same line. The policy:
 
 ## Library coverage — what's implemented, what's stub
 
-Per-**library** ② behavior status scoped to **CPython 3.12**. The unit is the **top-level importable module** — std-libs submodules are folded into their parent via each fixture's CPython `source`/`subject` metadata (all `asyncio.*` → `asyncio`, every codec page → `encodings`), so the denominator is CPython's own taxonomy, not an inflatable per-file split. Pass = mamba's stdout matches the **live CPython 3.12 oracle** (≤8 sampled fixtures/lib; fixtures CPython itself can't run are excluded, not graded). Core-language and built-in rows are mamba feature buckets, not modules, and are not collapsed. Regenerate: `MAMBA_BIN=… tools/coverage_matrix.py --sample 8 --write`; per-submodule detail in [COVERAGE.md](COVERAGE.md).
+Per-**library** ② behavior status scoped to **CPython 3.12**. The unit is the **top-level importable module** — std-libs submodules are folded into their parent via each fixture's CPython `source`/`subject` metadata (all `asyncio.*` → `asyncio`, every codec page → `encodings`), so the denominator is CPython's own taxonomy, not an inflatable per-file split. Pass = mamba's stdout matches the **live CPython 3.12 oracle** (≤8 sampled fixtures/lib; fixtures CPython itself can't run are excluded, not graded). Core-language and built-in rows are mamba feature buckets, not modules, and are not collapsed. Regenerate: `MAMBA_BIN=… tools/coverage_matrix.py --sample 8 --write`; per-submodule detail in [validation/evidence/coverage/cpython-library-coverage-drilldown.md](validation/evidence/coverage/cpython-library-coverage-drilldown.md).
 
 **Overall: ✅ 10 · 🟢 29 · 🟡 103 · 🔴 284** across 426 top-level libs.
 
@@ -856,13 +862,12 @@ kit). Status today is **stub / planned** — none are real shims yet.
 | `pydantic-core` | already Rust upstream | FastAPI · validation | 🟡 stub → partial |
 | `orjson` / `msgpack` | serde (already Rust upstream) | JSON / msgpack serialization | 🔴 stub |
 | `numpy` | `arraykit` | pandas · scipy · sklearn (whole data stack) | 🔴 none |
-| `gevent` / `greenlet` | mamba native async / threads | gunicorn gevent workers | 🔴 none |
+| `gevent` / `greenlet` | migrate to `asyncio` / native async | gevent-based workers and patching stacks | 🟠 migration-only |
 
-> **`gevent` is special — a free upgrade, not a port.** `greenlet` exists to work
-> around CPython's GIL with cooperative coroutines. mamba has *no* GIL, so the shim
-> maps gevent's API onto **real native concurrency** instead of porting greenlet's
-> stack-switching C magic. Libs that exist to patch a CPython limitation mamba
-> doesn't have (gevent, uvloop) become thin shims over native primitives.
+> **`gevent` / `greenlet` are not getting a mamba shim in this track.** Imports
+> intentionally fail with migration guidance. Replace gevent/greenlet usage with
+> `asyncio`, native async libraries, and ASGI-native serving; see
+> [`docs/migrations/gevent-greenlet-to-asyncio.md`](docs/migrations/gevent-greenlet-to-asyncio.md).
 
 > **What you actually get.** A hacked package is API-compatible by intent and
 > MVP-coverage in practice. If you depend on `protobuf` under mamba you receive the
@@ -906,3 +911,11 @@ Measured numbers per axis are in **[Capability status — the four axes](#capabi
 | Standardization | managed                     | No — 5.1%; epic [#3882](https://github.com/chrischeng-c4/cclab/issues/3882) |
 | Standardization | semantic                    | No — 0.7%; epic [#3883](https://github.com/chrischeng-c4/cclab/issues/3883) |
 | Standardization | regenerable                 | No — 0.1%; epic [#3884](https://github.com/chrischeng-c4/cclab/issues/3884) |
+
+## Contributing
+
+Engineering doctrine, build/test/verification rules, and the working-tree
+discipline live in [CONTRIBUTING.md](CONTRIBUTING.md). The orchestration
+playbook and bootstrap prompt for agent sessions: tracker issue #1134.
+Open work is tracked exclusively in GitHub issues (`aw wi list --project
+mamba`); the tracker is the source of truth.

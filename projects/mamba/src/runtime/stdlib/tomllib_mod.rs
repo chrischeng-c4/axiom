@@ -66,8 +66,13 @@ fn toml_to_mbvalue(val: &toml::Value, parse_float: MbValue) -> MbValue {
                 (Some(d), Some(t)) => {
                     let micro = (t.nanosecond / 1000) as i64;
                     let list = MbValue::from_ptr(MbObject::new_list(vec![
-                        i(d.year as i64), i(d.month as i64), i(d.day as i64),
-                        i(t.hour as i64), i(t.minute as i64), i(t.second as i64), i(micro),
+                        i(d.year as i64),
+                        i(d.month as i64),
+                        i(d.day as i64),
+                        i(t.hour as i64),
+                        i(t.minute as i64),
+                        i(t.second as i64),
+                        i(micro),
                     ]));
                     super::datetime_mod::mb_datetime_new(list)
                 }
@@ -77,14 +82,22 @@ fn toml_to_mbvalue(val: &toml::Value, parse_float: MbValue) -> MbValue {
                 }
                 (None, Some(t)) => {
                     let micro = (t.nanosecond / 1000) as i64;
-                    let args = [i(t.hour as i64), i(t.minute as i64), i(t.second as i64), i(micro)];
+                    let args = [
+                        i(t.hour as i64),
+                        i(t.minute as i64),
+                        i(t.second as i64),
+                        i(micro),
+                    ];
                     unsafe { super::datetime_mod::dispatch_time(args.as_ptr(), args.len()) }
                 }
                 (None, None) => MbValue::from_ptr(MbObject::new_str(dt.to_string())),
             }
         }
         toml::Value::Array(arr) => {
-            let items: Vec<MbValue> = arr.iter().map(|v| toml_to_mbvalue(v, parse_float)).collect();
+            let items: Vec<MbValue> = arr
+                .iter()
+                .map(|v| toml_to_mbvalue(v, parse_float))
+                .collect();
             MbValue::from_ptr(MbObject::new_list(items))
         }
         toml::Value::Table(tbl) => {
@@ -119,7 +132,9 @@ unsafe fn extract_parse_float(args: &[MbValue]) -> MbValue {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
                 if let Some(v) = map
-                    .get(&super::super::dict_ops::DictKey::Str("parse_float".to_string()))
+                    .get(&super::super::dict_ops::DictKey::Str(
+                        "parse_float".to_string(),
+                    ))
                     .copied()
                 {
                     if !v.is_none() {

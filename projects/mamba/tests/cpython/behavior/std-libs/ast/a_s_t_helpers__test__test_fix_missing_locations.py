@@ -9,12 +9,11 @@
 # case = "a_s_t_helpers__test__test_fix_missing_locations"
 # subject = "cpython.test_ast.ASTHelpers_Test.test_fix_missing_locations"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
 import builtins
 import dis

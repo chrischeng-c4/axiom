@@ -5,12 +5,36 @@ use super::rc::{MbObject, ObjData};
 /// All functions operate on MbValue (NaN-boxed) and return MbValue.
 use super::value::MbValue;
 use std::cell::RefCell;
+use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::sync::OnceLock;
 
 const SURROGATE_SENTINEL: &str = "\u{e000}";
 
 thread_local! {
     static SURROGATE_STRINGS: RefCell<HashMap<usize, Vec<u32>>> = RefCell::new(HashMap::new());
+}
+
+static STRING_HASH_STATE: OnceLock<RandomState> = OnceLock::new();
+
+fn string_hash_state() -> &'static RandomState {
+    STRING_HASH_STATE.get_or_init(RandomState::new)
+}
+
+pub(crate) fn string_hash_value(text: &str) -> i64 {
+    if text.is_empty() {
+        return 0;
+    }
+    let mut hasher = string_hash_state().build_hasher();
+    text.hash(&mut hasher);
+    (hasher.finish() >> 17) as i64
+}
+
+pub(crate) fn codepoints_hash_value(codepoints: &[u32]) -> i64 {
+    let mut hasher = string_hash_state().build_hasher();
+    codepoints.hash(&mut hasher);
+    (hasher.finish() >> 17) as i64
 }
 
 /// Helper: extract string reference from a MbValue pointer.
@@ -205,6 +229,10 @@ fn raise_exception(kind: &str, msg: String) -> MbValue {
 
 fn raise_type_error(msg: impl Into<String>) -> MbValue {
     raise_exception("TypeError", msg.into())
+}
+
+fn raise_value_error(msg: impl Into<String>) -> MbValue {
+    raise_exception("ValueError", msg.into())
 }
 
 fn raise_index_error(msg: impl Into<String>) -> MbValue {
@@ -620,9 +648,7 @@ pub fn mb_str_slice_full(s: MbValue, start: MbValue, stop: MbValue, step: MbValu
             if step_val == 0 {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        "slice step cannot be zero".to_string(),
-                    )),
+                    MbValue::from_ptr(MbObject::new_str("slice step cannot be zero".to_string())),
                 );
                 return new_str(String::new());
             }
@@ -2386,24 +2412,12 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
 }
 
 pub fn mb_str_hash(s: MbValue) -> MbValue {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
     unsafe {
         if let Some(codepoints) = surrogate_codepoints(s) {
-            let mut hasher = DefaultHasher::new();
-            codepoints.hash(&mut hasher);
-            let h = (hasher.finish() >> 17) as i64;
-            return MbValue::from_int(h);
+            return MbValue::from_int(codepoints_hash_value(&codepoints));
         }
         if let Some(st) = as_str(s) {
-            // CPython: hash of the empty string is 0.
-            if st.is_empty() {
-                return MbValue::from_int(0);
-            }
-            let mut hasher = DefaultHasher::new();
-            st.hash(&mut hasher);
-            let h = (hasher.finish() >> 17) as i64;
-            MbValue::from_int(h)
+            MbValue::from_int(string_hash_value(st))
         } else {
             MbValue::from_int(0)
         }
@@ -4157,6 +4171,9 @@ pub fn mb_str_translate_dict_from_pairs(
 pub fn mb_str_maketrans(x: MbValue, y: MbValue, z: MbValue) -> MbValue {
     // 1-arg form: dict input — normalize keys to codepoints.
     if y.is_none() {
+        if !z.is_none() {
+            return raise_type_error("maketrans() argument 2 must be str, not None");
+        }
         if let Some(ptr) = x.as_ptr() {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -4179,12 +4196,29 @@ pub fn mb_str_maketrans(x: MbValue, y: MbValue, z: MbValue) -> MbValue {
                 }
             }
         }
-        return MbValue::from_ptr(MbObject::new_dict());
+        return raise_type_error("if you give only one argument to maketrans it must be a dict");
     }
     // 2/3-arg form: equal-length strings x/y, optional delete string z.
-    let x_s = as_str_owned(x).unwrap_or_default();
-    let y_s = as_str_owned(y).unwrap_or_default();
-    let z_s = as_str_owned(z).unwrap_or_default();
+    let Some(x_s) = as_str_owned(x) else {
+        return raise_type_error(
+            "first maketrans argument must be a string if there is a second argument",
+        );
+    };
+    let Some(y_s) = as_str_owned(y) else {
+        return raise_type_error(
+            "second maketrans argument must be a string if there is a third argument",
+        );
+    };
+    let z_s = if z.is_none() {
+        String::new()
+    } else if let Some(z_s) = as_str_owned(z) {
+        z_s
+    } else {
+        return raise_type_error("third maketrans argument must be a string");
+    };
+    if x_s.chars().count() != y_s.chars().count() {
+        return raise_value_error("the first two maketrans arguments must have equal length");
+    }
     mb_str_translate_dict_from_pairs(&x_s, &y_s, &z_s)
 }
 
@@ -4879,31 +4913,62 @@ pub fn value_to_string(val: MbValue) -> String {
             match &(*ptr).data {
                 ObjData::Str(s) => s.clone(),
                 ObjData::List(ref lock) => {
-                    let items = lock.read().unwrap();
-                    let parts: Vec<String> = items.iter().map(|v| repr_in_container(*v)).collect();
-                    format!("[{}]", parts.join(", "))
+                    // Self-referential lists (`l.append(l)`) would otherwise
+                    // recurse into `repr_in_container` -> `value_to_string`
+                    // forever; CPython's Py_ReprEnter detects the re-entry
+                    // and prints `[...]` instead (#1061).
+                    let self_ptr = ptr as usize;
+                    if !super::repr_guard::enter(self_ptr) {
+                        return "[...]".to_string();
+                    }
+                    let result = {
+                        let items = lock.read().unwrap();
+                        let parts: Vec<String> =
+                            items.iter().map(|v| repr_in_container(*v)).collect();
+                        format!("[{}]", parts.join(", "))
+                    };
+                    super::repr_guard::leave(self_ptr);
+                    result
                 }
                 ObjData::Dict(ref lock) => {
-                    let items = lock.read().unwrap();
-                    let parts: Vec<String> = items
-                        .iter()
-                        .map(|(k, v)| {
-                            format!(
-                                "{}: {}",
-                                super::dict_ops::dict_key_display(k),
-                                repr_in_container(*v)
-                            )
-                        })
-                        .collect();
-                    format!("{{{}}}", parts.join(", "))
+                    // Cycle guard — see the List arm above (#1061).
+                    let self_ptr = ptr as usize;
+                    if !super::repr_guard::enter(self_ptr) {
+                        return "{...}".to_string();
+                    }
+                    let result = {
+                        let items = lock.read().unwrap();
+                        let parts: Vec<String> = items
+                            .iter()
+                            .map(|(k, v)| {
+                                format!(
+                                    "{}: {}",
+                                    super::dict_ops::dict_key_display(k),
+                                    repr_in_container(*v)
+                                )
+                            })
+                            .collect();
+                        format!("{{{}}}", parts.join(", "))
+                    };
+                    super::repr_guard::leave(self_ptr);
+                    result
                 }
                 ObjData::Tuple(items) => {
+                    // Tuples are immutable but can still cycle through a
+                    // mutable element that holds a reference back to the
+                    // tuple (CPython's tuplerepr guards the same way) (#1061).
+                    let self_ptr = ptr as usize;
+                    if !super::repr_guard::enter(self_ptr) {
+                        return "(...)".to_string();
+                    }
                     let parts: Vec<String> = items.iter().map(|v| repr_in_container(*v)).collect();
-                    if items.len() == 1 {
+                    let result = if items.len() == 1 {
                         format!("({},)", parts[0])
                     } else {
                         format!("({})", parts.join(", "))
-                    }
+                    };
+                    super::repr_guard::leave(self_ptr);
+                    result
                 }
                 ObjData::Instance {
                     class_name,
@@ -5037,9 +5102,22 @@ pub fn value_to_string(val: MbValue) -> String {
                         }
                         return value_to_string(result);
                     }
-                    if let Some((_base, payload)) =
+                    if let Some((base, payload)) =
                         super::class::builtin_data_payload_if_unoverridden(val, "__str__")
                     {
+                        // set/frozenset subclasses fall back to repr
+                        // (CPython's default object.__str__), so delegate
+                        // to mb_repr's class-name-prefixed fallback
+                        // instead of the raw payload's un-prefixed
+                        // stringification. (#1051)
+                        if base == "set" || base == "frozenset" {
+                            let r = super::builtins::mb_repr(val);
+                            if let Some(rp) = r.as_ptr() {
+                                if let ObjData::Str(ref s) = (*rp).data {
+                                    return s.clone();
+                                }
+                            }
+                        }
                         return value_to_string(payload);
                     }
                     if let Some(s) = super::exception::unicode_error_str(class_name, val) {
@@ -5169,23 +5247,42 @@ pub fn value_to_string(val: MbValue) -> String {
                     format!("<{class_name} instance>")
                 }
                 ObjData::Set(ref lock) => {
-                    let items = lock.read().unwrap();
-                    if items.is_empty() {
-                        "set()".to_string()
-                    } else {
-                        let parts: Vec<String> =
-                            items.iter().map(|v| value_to_string(*v)).collect();
-                        format!("{{{}}}", parts.join(", "))
+                    // Sets can't directly self-reference (elements must be
+                    // hashable, and a set is not), but an element's __repr__
+                    // can call back into the same set's repr indirectly —
+                    // guard against that re-entry too (#1061).
+                    let self_ptr = ptr as usize;
+                    if !super::repr_guard::enter(self_ptr) {
+                        return "set(...)".to_string();
                     }
+                    let result = {
+                        let items = lock.read().unwrap();
+                        if items.is_empty() {
+                            "set()".to_string()
+                        } else {
+                            let parts: Vec<String> =
+                                items.iter().map(|v| value_to_string(*v)).collect();
+                            format!("{{{}}}", parts.join(", "))
+                        }
+                    };
+                    super::repr_guard::leave(self_ptr);
+                    result
                 }
                 ObjData::FrozenSet(items) => {
-                    if items.is_empty() {
+                    // Cycle guard — see the Set arm above (#1061).
+                    let self_ptr = ptr as usize;
+                    if !super::repr_guard::enter(self_ptr) {
+                        return "frozenset(...)".to_string();
+                    }
+                    let result = if items.is_empty() {
                         "frozenset()".to_string()
                     } else {
                         let parts: Vec<String> =
                             items.iter().map(|v| value_to_string(*v)).collect();
                         format!("frozenset({{{}}})", parts.join(", "))
-                    }
+                    };
+                    super::repr_guard::leave(self_ptr);
+                    result
                 }
                 ObjData::Bytes(data) => format!("b{}", format_bytes_inline(data)),
                 ObjData::ByteArray(ref lock) => {
@@ -5615,6 +5712,7 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::dict_ops::DictKey;
 
     fn s(val: &str) -> MbValue {
         new_str(val.to_string())
@@ -6299,9 +6397,87 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_common_prefix_flood_keys_remain_distinct() {
+        const N: usize = 4096;
+        let mut hashes = std::collections::HashSet::with_capacity(N);
+
+        for i in 0..N {
+            let repeated = char::from(b'a' + (i % 26) as u8).to_string().repeat(48);
+            let key = format!("header-{repeated}-{i:04}");
+            let first = string_hash_value(&key);
+            let second = string_hash_value(&key);
+            assert_eq!(first, second, "hash must be stable within one process");
+            assert!(
+                hashes.insert(first),
+                "unexpected hash collision for key {key}"
+            );
+        }
+
+        assert_eq!(hashes.len(), N);
+    }
+
+    #[test]
     fn test_hash_non_string_returns_zero() {
         let result = mb_str_hash(MbValue::from_int(42));
         assert_eq!(result.as_int(), Some(0));
+    }
+
+    #[test]
+    fn test_str_maketrans_string_pairs_translate() {
+        let table = mb_str_maketrans(
+            new_str("ab".to_string()),
+            new_str("xy".to_string()),
+            new_str("c".to_string()),
+        );
+        let translated = mb_str_translate(new_str("abc cab".to_string()), table);
+
+        unsafe {
+            assert_eq!(as_str(translated), Some("xy xy"));
+        }
+
+        let table_ptr = table.as_ptr().expect("dict table");
+        unsafe {
+            let ObjData::Dict(ref lock) = (*table_ptr).data else {
+                panic!("expected dict");
+            };
+            let guard = lock.read().unwrap();
+            assert_eq!(
+                guard
+                    .get(&DictKey::Int('a' as i64))
+                    .and_then(|v| v.as_int()),
+                Some('x' as i64)
+            );
+            assert_eq!(
+                guard
+                    .get(&DictKey::Int('b' as i64))
+                    .and_then(|v| v.as_int()),
+                Some('y' as i64)
+            );
+            assert!(guard
+                .get(&DictKey::Int('c' as i64))
+                .is_some_and(|v| v.is_none()));
+        }
+    }
+
+    #[test]
+    fn test_str_maketrans_mapping_form_translate() {
+        let src = MbObject::new_dict();
+        unsafe {
+            let ObjData::Dict(ref lock) = (*src).data else {
+                panic!("expected dict");
+            };
+            let mut guard = lock.write().unwrap();
+            guard.insert(DictKey::Str("a".to_string()), new_str("Q".to_string()));
+            guard.insert(DictKey::Int('b' as i64), MbValue::none());
+            guard.insert(DictKey::Str("c".to_string()), new_str("see".to_string()));
+        }
+
+        let table = mb_str_maketrans(MbValue::from_ptr(src), MbValue::none(), MbValue::none());
+        let translated = mb_str_translate(new_str("abc".to_string()), table);
+
+        unsafe {
+            assert_eq!(as_str(translated), Some("Qsee"));
+        }
     }
 
     // ── eq ──

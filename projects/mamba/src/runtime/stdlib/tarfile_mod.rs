@@ -67,7 +67,10 @@ fn tf_kw_get(kwargs: Option<MbValue>, key: &str) -> Option<MbValue> {
     let ptr = kwargs?.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).copied()
+            lock.read()
+                .unwrap()
+                .get(&DictKey::Str(key.to_string()))
+                .copied()
         } else {
             None
         }
@@ -181,7 +184,10 @@ fn dget(d: MbValue, key: &str) -> Option<MbValue> {
     let ptr = d.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).copied()
+            lock.read()
+                .unwrap()
+                .get(&DictKey::Str(key.to_string()))
+                .copied()
         } else {
             None
         }
@@ -211,6 +217,45 @@ fn s_val(s: &str) -> MbValue {
 
 fn b_val(b: Vec<u8>) -> MbValue {
     MbValue::from_ptr(MbObject::new_bytes(b))
+}
+
+fn tf_arg_or_kw(pos: Option<MbValue>, kw: Option<MbValue>, key: &str) -> Option<MbValue> {
+    match pos {
+        Some(v) if !v.is_none() => Some(v),
+        _ => tf_kw_get(kw, key),
+    }
+}
+
+fn inst_set(inst: MbValue, key: &str, val: MbValue) {
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(val);
+                let old = fields.write().unwrap().insert(key.to_string(), val);
+                if let Some(old) = old {
+                    super::super::rc::release_if_ptr(old);
+                }
+            }
+        }
+    }
+}
+
+fn inst_get(inst: MbValue, key: &str) -> Option<MbValue> {
+    inst.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn tf_method_value(receiver: MbValue, class_name: &str, method_name: &str) -> MbValue {
+    let inst = MbValue::from_ptr(MbObject::new_instance("_TarStubMethod".to_string()));
+    inst_set(inst, "_receiver", receiver);
+    inst_set(inst, "_class", s_val(class_name));
+    inst_set(inst, "_method", s_val(method_name));
+    inst
 }
 
 // ── number/string field codecs (CPython Lib/tarfile.py itn/nti/stn/nts) ─────
@@ -909,7 +954,27 @@ fn tarinfo_dict_new(name: &str) -> MbValue {
             );
         }
     }
-    MbValue::from_ptr(d)
+    let dv = MbValue::from_ptr(d);
+    for method in [
+        "get_info",
+        "tobuf",
+        "create_pax_header",
+        "create_ustar_header",
+        "create_gnu_header",
+        "isreg",
+        "isfile",
+        "isdir",
+        "issym",
+        "islnk",
+        "ischr",
+        "isblk",
+        "isfifo",
+        "isdev",
+        "issparse",
+    ] {
+        dset(dv, method, tf_method_value(dv, "TarInfo", method));
+    }
+    dv
 }
 
 /// Materialize a parsed member as a TarInfo dict-stub (payload under `_data`).
@@ -1235,7 +1300,24 @@ fn tarfile_dict_new(
             );
         }
     }
-    MbValue::from_ptr(d)
+    let dv = MbValue::from_ptr(d);
+    for method in [
+        "add",
+        "addfile",
+        "getmembers",
+        "getnames",
+        "getmember",
+        "extractfile",
+        "extractall",
+        "extract",
+        "next",
+        "close",
+        "__enter__",
+        "__exit__",
+    ] {
+        dset(dv, method, tf_method_value(dv, "TarFile", method));
+    }
+    dv
 }
 
 fn tf_members(tf: MbValue) -> Vec<MbValue> {
@@ -1243,7 +1325,11 @@ fn tf_members(tf: MbValue) -> Vec<MbValue> {
         if let Some(ptr) = members.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    return lock.read().unwrap().to_vec();
+                    let snapshot = lock.read().unwrap().to_vec();
+                    for &member in &snapshot {
+                        super::super::rc::retain_if_ptr(member);
+                    }
+                    return snapshot;
                 }
             }
         }
@@ -1369,6 +1455,7 @@ fn split_known_kwargs(items: &[MbValue], known: &[&str]) -> (Vec<MbValue>, Optio
 }
 
 const METHOD_KWS: &[&str] = &[
+    "info",
     "format",
     "encoding",
     "errors",
@@ -1453,13 +1540,18 @@ fn member_matches(m: MbValue, name: &str) -> bool {
 fn resolve_member(tf: MbValue, arg: MbValue) -> Option<MbValue> {
     if let Some(name) = tf_as_str(arg) {
         let want = name.trim_end_matches('/').to_string();
-        let members = tf_members(tf);
-        return members
-            .into_iter()
-            .rev()
-            .find(|m| member_matches(*m, &want));
+        let mut found = None;
+        for member in tf_members(tf).into_iter().rev() {
+            if found.is_none() && member_matches(member, &want) {
+                found = Some(member);
+            } else {
+                unsafe { super::super::rc::release_if_ptr(member) };
+            }
+        }
+        return found;
     }
     if tf_is_dict(arg) {
+        unsafe { super::super::rc::retain_if_ptr(arg) };
         return Some(arg);
     }
     None
@@ -1519,17 +1611,118 @@ fn tf_extract_members(
             }
             F::Tar => match filter_transform(m, dest, false) {
                 Ok(v) => v,
-                Err((exc, msg)) => return tf_raise(&exc, &msg),
+                Err((exc, msg)) => {
+                    unsafe { super::super::rc::release_if_ptr(m) };
+                    return tf_raise(&exc, &msg);
+                }
             },
             F::Data => match filter_transform(m, dest, true) {
                 Ok(v) => v,
-                Err((exc, msg)) => return tf_raise(&exc, &msg),
+                Err((exc, msg)) => {
+                    unsafe { super::super::rc::release_if_ptr(m) };
+                    return tf_raise(&exc, &msg);
+                }
             },
         };
         write_member_to_disk(dest, filtered);
         unsafe { super::super::rc::release_if_ptr(filtered) };
+        unsafe { super::super::rc::release_if_ptr(m) };
     }
     MbValue::none()
+}
+
+fn tar_addfile_member(receiver: MbValue, ti: MbValue, data: Option<Vec<u8>>) -> MbValue {
+    let v = view_of(ti);
+    let format = dget(receiver, "format")
+        .and_then(|x| x.as_int())
+        .unwrap_or(PAX_FORMAT);
+    let buf = match tobuf_view(&v, format) {
+        Ok(b) => b,
+        Err(msg) => return tf_raise("ValueError", &msg),
+    };
+    wbuf_extend(receiver, &buf);
+    if let Some(bytes) = data {
+        wbuf_extend(receiver, &pad_block(bytes));
+    }
+    if let Some(members) = dget(receiver, "_members") {
+        super::super::list_ops::mb_list_append(members, ti);
+    }
+    MbValue::none()
+}
+
+fn tar_add_path(
+    receiver: MbValue,
+    src: &std::path::Path,
+    arcname: String,
+    recursive: bool,
+) -> MbValue {
+    let meta = match std::fs::symlink_metadata(src) {
+        Ok(m) => m,
+        Err(_) => {
+            return tf_raise(
+                "FileNotFoundError",
+                &format!("[Errno 2] No such file or directory: '{}'", src.display()),
+            );
+        }
+    };
+    let ti = tarinfo_dict_new(&arcname);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        dset(ti, "mtime", int_value(meta.mtime() as i128));
+        dset(
+            ti,
+            "mode",
+            int_value((meta.permissions().mode() & 0o7777) as i128),
+        );
+    }
+    if meta.is_dir() {
+        dset(ti, "type", b_val(vec![b'5']));
+        dset(ti, "size", MbValue::from_int(0));
+        let add_result = tar_addfile_member(receiver, ti, None);
+        unsafe { super::super::rc::release_if_ptr(ti) };
+        if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+            return add_result;
+        }
+        if recursive {
+            let mut entries: Vec<std::path::PathBuf> = match std::fs::read_dir(src) {
+                Ok(rd) => rd.filter_map(|e| e.ok().map(|x| x.path())).collect(),
+                Err(_) => Vec::new(),
+            };
+            entries.sort();
+            for child in entries {
+                let child_name = child
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let child_arcname = if arcname.is_empty() {
+                    child_name
+                } else {
+                    format!("{}/{}", arcname.trim_end_matches('/'), child_name)
+                };
+                let result = tar_add_path(receiver, &child, child_arcname, true);
+                if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+                    return result;
+                }
+            }
+        }
+        MbValue::none()
+    } else {
+        let data = match std::fs::read(src) {
+            Ok(d) => d,
+            Err(_) => {
+                unsafe { super::super::rc::release_if_ptr(ti) };
+                return tf_raise(
+                    "FileNotFoundError",
+                    &format!("[Errno 2] No such file or directory: '{}'", src.display()),
+                );
+            }
+        };
+        dset(ti, "size", int_value(data.len() as i128));
+        let result = tar_addfile_member(receiver, ti, Some(data));
+        unsafe { super::super::rc::release_if_ptr(ti) };
+        result
+    }
 }
 
 /// Dispatch a method call on a TarFile / TarInfo dict-stub. Returns None to
@@ -1548,10 +1741,7 @@ pub fn dispatch_tar_stub_method(
         "TarInfo" => match name {
             "get_info" => Some(ti_get_info(receiver)),
             "tobuf" => {
-                let format = pos
-                    .first()
-                    .copied()
-                    .or_else(|| tf_kw_get(kw, "format"))
+                let format = tf_arg_or_kw(pos.first().copied(), kw, "format")
                     .and_then(|v| v.as_int())
                     .unwrap_or(PAX_FORMAT);
                 let v = view_of(receiver);
@@ -1560,17 +1750,21 @@ pub fn dispatch_tar_stub_method(
                     Err(msg) => tf_raise("ValueError", &msg),
                 })
             }
-            "create_pax_header" => {
-                Some(ti_header_method(receiver, pos.first().copied(), PAX_FORMAT))
-            }
+            "create_pax_header" => Some(ti_header_method(
+                receiver,
+                tf_arg_or_kw(pos.first().copied(), kw, "info"),
+                PAX_FORMAT,
+            )),
             "create_ustar_header" => Some(ti_header_method(
                 receiver,
-                pos.first().copied(),
+                tf_arg_or_kw(pos.first().copied(), kw, "info"),
                 USTAR_FORMAT,
             )),
-            "create_gnu_header" => {
-                Some(ti_header_method(receiver, pos.first().copied(), GNU_FORMAT))
-            }
+            "create_gnu_header" => Some(ti_header_method(
+                receiver,
+                tf_arg_or_kw(pos.first().copied(), kw, "info"),
+                GNU_FORMAT,
+            )),
             "isreg" | "isfile" | "isdir" | "issym" | "islnk" | "ischr" | "isblk" | "isfifo"
             | "isdev" | "issparse" => {
                 let t = dget(receiver, "type")
@@ -1593,59 +1787,72 @@ pub fn dispatch_tar_stub_method(
             _ => None,
         },
         "TarFile" => match name {
+            "add" => {
+                if !tf_check_open(receiver) {
+                    return Some(MbValue::none());
+                }
+                let src = tf_arg_or_kw(pos.first().copied(), kw, "name")
+                    .and_then(tf_as_str)
+                    .unwrap_or_default();
+                if src.is_empty() {
+                    return Some(tf_raise(
+                        "FileNotFoundError",
+                        "[Errno 2] No such file or directory: ''",
+                    ));
+                }
+                let default_arcname = std::path::Path::new(&src)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| src.clone());
+                let arcname = tf_arg_or_kw(pos.get(1).copied(), kw, "arcname")
+                    .and_then(tf_as_str)
+                    .unwrap_or(default_arcname);
+                let recursive = tf_arg_or_kw(pos.get(2).copied(), kw, "recursive")
+                    .and_then(|v| v.as_bool().or_else(|| v.as_int().map(|i| i != 0)))
+                    .unwrap_or(true);
+                Some(tar_add_path(
+                    receiver,
+                    std::path::Path::new(&src),
+                    arcname,
+                    recursive,
+                ))
+            }
             "addfile" => {
                 if !tf_check_open(receiver) {
                     return Some(MbValue::none());
                 }
-                let ti = pos
-                    .first()
-                    .copied()
-                    .or_else(|| tf_kw_get(kw, "tarinfo"))
-                    .unwrap_or_else(MbValue::none);
+                let ti =
+                    tf_arg_or_kw(pos.first().copied(), kw, "tarinfo").unwrap_or_else(MbValue::none);
                 if !tf_is_dict(ti) {
                     return Some(tf_raise("TypeError", "addfile() requires a TarInfo object"));
                 }
-                let fobj = pos
-                    .get(1)
-                    .copied()
-                    .or_else(|| tf_kw_get(kw, "fileobj"))
-                    .filter(|f| !f.is_none());
-                let v = view_of(ti);
-                let format = dget(receiver, "format")
-                    .and_then(|x| x.as_int())
-                    .unwrap_or(PAX_FORMAT);
-                let buf = match tobuf_view(&v, format) {
-                    Ok(b) => b,
-                    Err(msg) => return Some(tf_raise("ValueError", &msg)),
-                };
-                wbuf_extend(receiver, &buf);
-                if let Some(f) = fobj {
-                    let data = fileobj_peek_n(f, v.size.max(0) as usize);
-                    wbuf_extend(receiver, &pad_block(data));
-                }
-                if let Some(members) = dget(receiver, "_members") {
-                    super::super::list_ops::mb_list_append(members, ti);
-                }
-                Some(MbValue::none())
+                let fobj =
+                    tf_arg_or_kw(pos.get(1).copied(), kw, "fileobj").filter(|f| !f.is_none());
+                let data = fobj.map(|f| {
+                    let size = view_of(ti).size.max(0) as usize;
+                    fileobj_peek_n(f, size)
+                });
+                Some(tar_addfile_member(receiver, ti, data))
             }
             "getmembers" => {
                 let members = tf_members(receiver);
-                Some(MbValue::from_ptr(MbObject::new_list_borrowed(members)))
+                Some(MbValue::from_ptr(MbObject::new_list(members)))
             }
             "getnames" => {
                 let names: Vec<MbValue> = tf_members(receiver)
                     .into_iter()
-                    .map(|m| s_val(&dget(m, "name").and_then(tf_as_str).unwrap_or_default()))
+                    .map(|m| {
+                        let name = dget(m, "name").and_then(tf_as_str).unwrap_or_default();
+                        unsafe { super::super::rc::release_if_ptr(m) };
+                        s_val(&name)
+                    })
                     .collect();
                 Some(MbValue::from_ptr(MbObject::new_list(names)))
             }
             "getmember" => {
                 let raw = arg(0);
                 match resolve_member(receiver, raw) {
-                    Some(m) => {
-                        unsafe { super::super::rc::retain_if_ptr(m) };
-                        Some(m)
-                    }
+                    Some(m) => Some(m),
                     None => {
                         let nm = tf_as_str(raw).unwrap_or_default();
                         Some(tf_raise(
@@ -1666,11 +1873,13 @@ pub fn dispatch_tar_stub_method(
                             .and_then(tf_as_bytes)
                             .and_then(|b| b.first().copied())
                             .unwrap_or(b'0');
-                        if is_regular_type(t) {
-                            Some(super::io_mod::mb_bytesio_new_with(member_data(m)))
+                        let out = if is_regular_type(t) {
+                            super::io_mod::mb_bytesio_new_with(member_data(m))
                         } else {
-                            Some(MbValue::none())
-                        }
+                            MbValue::none()
+                        };
+                        unsafe { super::super::rc::release_if_ptr(m) };
+                        Some(out)
                     }
                     None => {
                         let nm = tf_as_str(raw).unwrap_or_default();
@@ -1685,10 +1894,7 @@ pub fn dispatch_tar_stub_method(
                 if !tf_check_open(receiver) {
                     return Some(MbValue::none());
                 }
-                let dest = pos
-                    .first()
-                    .copied()
-                    .or_else(|| tf_kw_get(kw, "path"))
+                let dest = tf_arg_or_kw(pos.first().copied(), kw, "path")
                     .and_then(tf_as_str)
                     .unwrap_or_else(|| ".".to_string());
                 let filter_name = tf_kw_get(kw, "filter")
@@ -1711,10 +1917,8 @@ pub fn dispatch_tar_stub_method(
                         ));
                     }
                 };
-                let dest = pos
-                    .get(1)
-                    .copied()
-                    .or_else(|| tf_kw_get(kw, "path"))
+                let dest = pos.get(1).copied();
+                let dest = tf_arg_or_kw(dest, kw, "path")
                     .and_then(tf_as_str)
                     .unwrap_or_default();
                 let dest = if dest.is_empty() {
@@ -1738,11 +1942,20 @@ pub fn dispatch_tar_stub_method(
                     .unwrap_or(0);
                 let members = tf_members(receiver);
                 if (idx as usize) < members.len() {
-                    let m = members[idx as usize];
                     dset(receiver, "_next", MbValue::from_int(idx + 1));
-                    unsafe { super::super::rc::retain_if_ptr(m) };
-                    Some(m)
+                    let mut out = MbValue::none();
+                    for (i, member) in members.into_iter().enumerate() {
+                        if i == idx as usize {
+                            out = member;
+                        } else {
+                            unsafe { super::super::rc::release_if_ptr(member) };
+                        }
+                    }
+                    Some(out)
                 } else {
+                    for member in members {
+                        unsafe { super::super::rc::release_if_ptr(member) };
+                    }
                     Some(MbValue::none())
                 }
             }
@@ -1761,6 +1974,23 @@ pub fn dispatch_tar_stub_method(
     }
 }
 
+extern "C" fn tar_stub_method_call(self_v: MbValue, args: MbValue) -> MbValue {
+    let receiver = inst_get(self_v, "_receiver").unwrap_or_else(MbValue::none);
+    let cls = inst_get(self_v, "_class")
+        .and_then(tf_as_str)
+        .unwrap_or_default();
+    let method = inst_get(self_v, "_method")
+        .and_then(tf_as_str)
+        .unwrap_or_default();
+    match dispatch_tar_stub_method(&cls, &method, receiver, args) {
+        Some(v) => v,
+        None => tf_raise(
+            "AttributeError",
+            &format!("'{}' object has no attribute '{}'", cls, method),
+        ),
+    }
+}
+
 // ── module-level entry points ───────────────────────────────────────────────
 
 /// `tarfile.open(name=None, mode='r', fileobj=None, ..., format=, compresslevel=)`.
@@ -1775,9 +2005,9 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, kw) = tf_split(a);
 
-    let name_val = pos.first().copied().or_else(|| tf_kw_get(kw, "name"));
-    let mode_val = pos.get(1).copied().or_else(|| tf_kw_get(kw, "mode"));
-    let fileobj = pos.get(2).copied().or_else(|| tf_kw_get(kw, "fileobj"));
+    let name_val = tf_arg_or_kw(pos.first().copied(), kw, "name");
+    let mode_val = tf_arg_or_kw(pos.get(1).copied(), kw, "mode");
+    let fileobj = tf_arg_or_kw(pos.get(2).copied(), kw, "fileobj");
     let compresslevel = tf_kw_get(kw, "compresslevel").and_then(|v| v.as_int());
     let format = tf_kw_get(kw, "format")
         .and_then(|v| v.as_int())
@@ -1967,12 +2197,10 @@ unsafe extern "C" fn dispatch_stn(args_ptr: *const MbValue, nargs: usize) -> MbV
 
 /// `tarfile.TarInfo(name="")` constructor.
 unsafe extern "C" fn dispatch_tarinfo_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, kw) = tf_split(a);
-    let name = pos
-        .first()
-        .copied()
-        .or_else(|| tf_kw_get(kw, "name"))
+    let name = tf_arg_or_kw(pos.first().copied(), kw, "name")
         .and_then(tf_as_str)
         .unwrap_or_default();
     tarinfo_dict_new(&name)
@@ -2037,10 +2265,17 @@ pub fn register() {
     }
     // isinstance(x, tarfile.TarInfo) resolves the constructor dispatcher to
     // the dict-stub __class__ tag via NATIVE_TYPE_NAMES.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(dispatch_tarinfo_new as usize as u64, "TarInfo".into());
-    });
+    super::super::module::register_native_type_name(
+        dispatch_tarinfo_new as usize as u64,
+        "TarInfo".into(),
+    );
+    super::super::module::register_variadic_func(tar_stub_method_call as usize as u64);
+    let mut tar_stub_methods = HashMap::new();
+    tar_stub_methods.insert(
+        "__call__".to_string(),
+        MbValue::from_func(tar_stub_method_call as usize),
+    );
+    super::super::class::mb_class_register("_TarStubMethod", vec![], tar_stub_methods);
     // surface: missing CPython module constants (auto-added)
     attrs.insert("BLOCKSIZE".into(), MbValue::from_int(512));
     attrs.insert("DEFAULT_FORMAT".into(), MbValue::from_int(2));

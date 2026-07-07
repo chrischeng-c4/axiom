@@ -9,7 +9,6 @@
 # case = "format_tb_includes_source_and_raise"
 # subject = "traceback.format_tb"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

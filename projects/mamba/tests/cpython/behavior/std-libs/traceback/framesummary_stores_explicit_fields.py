@@ -9,7 +9,6 @@
 # case = "framesummary_stores_explicit_fields"
 # subject = "traceback.FrameSummary"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

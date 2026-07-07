@@ -23,6 +23,21 @@ Goal 2.
 
 import alembic
 
+# Fixture repair (#967): `EnvironmentContext` was never re-exported from
+# top-level `alembic/__init__.py` (only `context`/`op` are) — it lives in
+# `alembic.runtime.environment`. Rebind it explicitly so
+# `alembic.EnvironmentContext` is a real, identity-stable attribute. Under
+# mamba, `alembic` is a flat native shim with no real `runtime.environment`
+# submodule to import — it already registers `EnvironmentContext` directly
+# as a top-level attribute, so the (expected) ImportError here is a no-op
+# fallback to that existing shim attribute.
+try:
+    from alembic.runtime.environment import EnvironmentContext as _EnvironmentContext
+
+    alembic.EnvironmentContext = _EnvironmentContext
+except ImportError:
+    pass
+
 
 _V_BASELINE = alembic.__version__
 _C_BASELINE = alembic.context

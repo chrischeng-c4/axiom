@@ -6,8 +6,8 @@ use rustc_hash::FxHashMap;
 /// Provides: reduce, partial, lru_cache, cache, total_ordering, wraps,
 ///   cached_property, cmp_to_key, update_wrapper, singledispatch,
 ///   singledispatchmethod.
-/// Note: reduce and partial are stubs — full function-call dispatch
-/// is not yet wired in. lru_cache is an identity passthrough.
+/// Note: reduce keeps a narrow stub fallback; partial is instance-backed and
+/// forwards calls through the runtime dispatcher. lru_cache is an MVP wrapper.
 /// cached_property is an MVP stub; singledispatch and singledispatchmethod
 /// carry runtime dispatch registries.
 use std::collections::HashMap;
@@ -70,6 +70,16 @@ fn reject_non_callable(v: MbValue, msg: &str) -> Option<MbValue> {
     } else {
         Some(raise_exc("TypeError", msg))
     }
+}
+
+fn is_class_or_static_method_descriptor(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if class_name == "__classmethod__" || class_name == "__staticmethod__"
+        )
+    })
 }
 
 unsafe extern "C" fn dispatch_partial(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -634,7 +644,11 @@ unsafe extern "C" fn dispatch_singledispatchmethod(
 ) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let func = args.get(0).copied().unwrap_or_else(MbValue::none);
-    if let Some(err) = reject_non_callable(func, "the first argument must be callable") {
+    if !is_callable_value(func) && !is_class_or_static_method_descriptor(func) {
+        let err = raise_exc(
+            "TypeError",
+            "the first argument must be callable or a descriptor",
+        );
         return err;
     }
     mb_functools_singledispatchmethod(func)
@@ -789,6 +803,24 @@ fn wrapper_updates_tuple() -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(items))
 }
 
+extern "C" fn partial_call(self_v: MbValue, args_list: MbValue) -> MbValue {
+    super::super::builtins::mb_call_spread_kwargs(
+        self_v,
+        args_list,
+        MbValue::from_ptr(MbObject::new_dict()),
+    )
+}
+
+fn register_partial_class() {
+    super::super::module::register_variadic_func(partial_call as usize as u64);
+    let mut methods = HashMap::new();
+    methods.insert(
+        "__call__".to_string(),
+        MbValue::from_func(partial_call as *const () as usize),
+    );
+    super::super::class::mb_class_register("functools.partial", vec![], methods);
+}
+
 /// Register the functools module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -851,6 +883,7 @@ pub fn register() {
     );
     attrs.insert("WRAPPER_UPDATES".to_string(), wrapper_updates_tuple());
 
+    register_partial_class();
     super::register_module("functools", attrs);
 }
 
@@ -906,6 +939,34 @@ fn reduce_getitem_sequence(iterable: MbValue) -> Option<Vec<MbValue>> {
         }
     }
     Some(out)
+}
+
+fn finish_callable_result(func: MbValue, raw: MbValue, is_boxed_ret: bool) -> MbValue {
+    let result = if is_boxed_ret {
+        raw
+    } else {
+        super::super::builtins::mb_box_int(raw.to_bits() as i64)
+    };
+    if super::super::stdlib::types_mod::is_coroutine_generator(result) {
+        result
+    } else {
+        super::super::stdlib::types_mod::mark_coroutine_result(func, result)
+    }
+}
+
+fn reduce_call_binary(func: MbValue, lhs: MbValue, rhs: MbValue) -> MbValue {
+    if let Some(addr) = func.as_func() {
+        if addr > 4096 {
+            if super::super::module::is_native_func(addr as u64) {
+                let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                    unsafe { std::mem::transmute(addr) };
+                let args = [lhs, rhs];
+                return unsafe { f(args.as_ptr(), args.len()) };
+            }
+        }
+    }
+    let pair = MbValue::from_ptr(MbObject::new_list(vec![lhs, rhs]));
+    super::super::builtins::mb_call_spread(func, pair)
 }
 
 pub fn mb_functools_reduce(func: MbValue, iterable: MbValue, initial: MbValue) -> MbValue {
@@ -986,8 +1047,7 @@ pub fn mb_functools_reduce(func: MbValue, iterable: MbValue, initial: MbValue) -
         // so JIT raw-i64 returns are re-boxed correctly (CheckedAdd returns
         // unboxed i64 for perf).
         for item in &items[start..] {
-            let pair = MbValue::from_ptr(MbObject::new_list(vec![acc, *item]));
-            acc = super::super::builtins::mb_call_spread(func, pair);
+            acc = reduce_call_binary(func, acc, *item);
         }
         return acc;
     }
@@ -1359,11 +1419,14 @@ pub fn mb_functools_lru_cache_invoke(wrapper: MbValue, items: Vec<MbValue>) -> M
     };
     let typed = typed_v.as_bool().unwrap_or(false);
     let maxsize_opt: Option<i64> = maxsize_v.as_int();
+    let invoke_inner = |items: &[MbValue]| -> MbValue {
+        let args_list = MbValue::from_ptr(MbObject::new_list(items.to_vec()));
+        super::super::builtins::mb_call_spread(inner_func, args_list)
+    };
     // maxsize == 0 → caching disabled, always call through.
     if matches!(maxsize_opt, Some(0)) {
         bump_lru_counter(wrapper, "_misses");
-        let args_list = MbValue::from_ptr(MbObject::new_list(items));
-        return super::super::builtins::mb_call_spread(inner_func, args_list);
+        return invoke_inner(&items);
     }
     // Compute cache key.
     let key_dk = lru_build_cache_key_dk(&items, typed);
@@ -1383,8 +1446,7 @@ pub fn mb_functools_lru_cache_invoke(wrapper: MbValue, items: Vec<MbValue>) -> M
     }
     // Miss — call inner, store result.
     bump_lru_counter(wrapper, "_misses");
-    let args_list = MbValue::from_ptr(MbObject::new_list(items));
-    let result = super::super::builtins::mb_call_spread(inner_func, args_list);
+    let result = invoke_inner(&items);
     // Insert into cache.
     if let Some(cache_ptr) = cache_val.as_ptr() {
         unsafe {
@@ -1817,6 +1879,12 @@ thread_local! {
 
 /// Record `wrapper.__wrapped__ = wrapped`.
 pub fn set_func_wrapped(wrapper: MbValue, wrapped: MbValue) {
+    if super::super::closure::mb_closure_set_wrapped(wrapper, wrapped) {
+        return;
+    }
+    if wrapper.as_func().is_none() {
+        return;
+    }
     unsafe {
         super::super::rc::retain_if_ptr(wrapped);
     }
@@ -1828,6 +1896,9 @@ pub fn set_func_wrapped(wrapper: MbValue, wrapped: MbValue) {
 /// Read `wrapper.__wrapped__`, or a None-MbValue when unset. Consulted by the
 /// runtime attribute-access path for the `__wrapped__` dunder.
 pub fn get_func_wrapped(wrapper: MbValue) -> MbValue {
+    if let Some(wrapped) = super::super::closure::mb_closure_get_wrapped(wrapper) {
+        return wrapped;
+    }
     FUNC_WRAPPED.with(|m| {
         m.borrow()
             .get(&wrapper.to_bits())
@@ -2168,9 +2239,7 @@ fn sd_mro(type_name: &str) -> Vec<String> {
     out
 }
 
-/// Find the implementation registered for `type_name` (walking its MRO),
-/// falling back to the base `_func`.
-fn sd_lookup_impl(inst: MbValue, type_name: &str) -> MbValue {
+fn sd_lookup_registered_impl(inst: MbValue, type_name: &str) -> Option<MbValue> {
     let registry = sd_field(inst, "_registry");
     if let Some(rp) = registry.as_ptr() {
         unsafe {
@@ -2178,13 +2247,19 @@ fn sd_lookup_impl(inst: MbValue, type_name: &str) -> MbValue {
                 let guard = lock.read().unwrap();
                 for ancestor in sd_mro(type_name) {
                     if let Some(v) = guard.get(&super::super::dict_ops::DictKey::Str(ancestor)) {
-                        return *v;
+                        return Some(*v);
                     }
                 }
             }
         }
     }
-    sd_field(inst, "_func")
+    None
+}
+
+/// Find the implementation registered for `type_name` (walking its MRO),
+/// falling back to the base `_func`.
+fn sd_lookup_impl(inst: MbValue, type_name: &str) -> MbValue {
+    sd_lookup_registered_impl(inst, type_name).unwrap_or_else(|| sd_field(inst, "_func"))
 }
 
 /// `singledispatch.register(...)`:
@@ -2431,7 +2506,7 @@ pub fn mb_singledispatchmethod_call(
         return MbValue::none();
     };
     let type_name = super::super::builtins::value_type_name(dispatch_arg);
-    let impl_val = sd_lookup_impl(sd, &type_name);
+    let impl_val = sd_lookup_registered_impl(sd, &type_name).unwrap_or(base);
     let (callable, kind) = sdm_unwrap_impl(impl_val);
     let mut call_args = Vec::with_capacity(args.len() + 1);
     match kind {
@@ -2460,6 +2535,9 @@ pub fn mb_singledispatchmethod_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::closure;
+    use crate::runtime::class;
+    use crate::runtime::module::NATIVE_FUNC_ADDRS;
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
@@ -2467,6 +2545,11 @@ mod tests {
 
     fn make_list(vals: Vec<MbValue>) -> MbValue {
         MbValue::from_ptr(MbObject::new_list(vals))
+    }
+
+    unsafe extern "C" fn test_partial_target(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        args.first().copied().unwrap_or_else(MbValue::none)
     }
 
     #[test]
@@ -2520,6 +2603,22 @@ mod tests {
                 panic!("expected functools.partial Instance");
             }
         }
+    }
+
+    #[test]
+    fn test_partial_zero_arg_call_routes_through_mb_call0() {
+        register_partial_class();
+        let addr = test_partial_target as *const () as usize;
+        NATIVE_FUNC_ADDRS.with(|set| {
+            set.borrow_mut().insert(addr as u64);
+        });
+        let partial = build_partial(
+            MbValue::from_func(addr),
+            vec![MbValue::from_int(7)],
+            MbValue::from_ptr(MbObject::new_dict()),
+        );
+        let result = class::mb_call0(partial);
+        assert_eq!(result.as_int(), Some(7));
     }
 
     #[test]
@@ -2631,6 +2730,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_wraps_apply_keeps_closure_wrapper_metadata_local() {
+        closure::cleanup_all_closures();
+
+        let wrapped = MbValue::from_func(test_partial_target as *const () as usize);
+        closure::mb_func_set_name(wrapped, s("base_name"));
+        closure::mb_func_set_doc(wrapped, s("base doc"));
+        closure::mb_func_set_module(wrapped, s("base.mod"));
+
+        let wrapper = closure::mb_closure_new(
+            s("wrapper"),
+            MbValue::from_int(99),
+            make_list(vec![]),
+        );
+        let result = mb_functools_wraps_apply(wrapper, wrapped);
+
+        assert_eq!(result, wrapper);
+        assert_eq!(
+            extract_str(closure::mb_func_get_name(wrapper)).as_deref(),
+            Some("base_name")
+        );
+        assert_eq!(
+            extract_str(closure::mb_func_get_doc(wrapper)).as_deref(),
+            Some("base doc")
+        );
+        assert_eq!(
+            extract_str(closure::mb_func_get_module(wrapper)).as_deref(),
+            Some("base.mod")
+        );
+        assert_eq!(get_func_wrapped(wrapper), wrapped);
+
+        let plain = MbValue::from_int(123456);
+        set_func_wrapped(plain, wrapped);
+        assert!(get_func_wrapped(plain).is_none());
+
+        closure::cleanup_all_closures();
+    }
+
     // REQ: R9
     #[test]
     fn test_singledispatch_creates_instance() {
@@ -2694,6 +2831,36 @@ mod tests {
         }
         let sd = sdm_field(result, "_sd");
         assert_eq!(sd_field(sd, "_func").as_int(), Some(77));
+    }
+
+    #[test]
+    fn test_singledispatchmethod_accepts_classmethod_descriptor() {
+        let cm = class::mb_classmethod_new(MbValue::from_int(11));
+        let args = [cm];
+        let result = unsafe { dispatch_singledispatchmethod(args.as_ptr(), args.len()) };
+        unsafe {
+            let ptr = result.as_ptr().expect("expected descriptor instance");
+            if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+                assert_eq!(class_name, "functools.singledispatchmethod");
+            } else {
+                panic!("expected functools.singledispatchmethod Instance");
+            }
+        }
+    }
+
+    #[test]
+    fn test_singledispatchmethod_accepts_staticmethod_descriptor() {
+        let sm = class::mb_staticmethod_new(MbValue::from_int(12));
+        let args = [sm];
+        let result = unsafe { dispatch_singledispatchmethod(args.as_ptr(), args.len()) };
+        unsafe {
+            let ptr = result.as_ptr().expect("expected descriptor instance");
+            if let ObjData::Instance { class_name, .. } = &(*ptr).data {
+                assert_eq!(class_name, "functools.singledispatchmethod");
+            } else {
+                panic!("expected functools.singledispatchmethod Instance");
+            }
+        }
     }
 
     #[test]

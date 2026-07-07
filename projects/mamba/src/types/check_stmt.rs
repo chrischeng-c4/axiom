@@ -141,6 +141,17 @@ impl TypeChecker {
                         // Reassignment to something else clears the origin.
                         self.instance_origins.remove(var);
                     }
+                    // #1021: `_Queue = queue.Queue` — a bare class-reference
+                    // alias (not a call) to a `NATIVE_CTOR_CLASSES` entry.
+                    // `native_ctor_class_call` matches on the exact same
+                    // `Expr::Attr { object: Ident(base), attr }` shape
+                    // whether it's a call's callee or (as here) an
+                    // assignment's value, so it's reused as-is.
+                    if let Some(class_name) = self.native_ctor_class_call(value) {
+                        self.class_ref_origins.insert(var.clone(), class_name);
+                    } else {
+                        self.class_ref_origins.remove(var);
+                    }
                 }
                 // Implicit variable declaration: bare `x = val` where x is not
                 // yet in scope behaves like Python — declares x with the

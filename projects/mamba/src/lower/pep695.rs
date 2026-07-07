@@ -45,7 +45,7 @@ fn sp(node: Expr, span: Span) -> Spanned<Expr> {
     Spanned::new(node, span)
 }
 
-/// Build `name = __mb_pep695_typevar__("name", kind, bound, constraints)`.
+/// Build `name = __mb_pep695_typevar__("name", kind, bound, constraints, default)`.
 fn typevar_assign(param: &TypeParam, span: Span) -> Spanned<Stmt> {
     let kind = match param.kind {
         TypeParamKind::TypeVar => 0,
@@ -72,6 +72,16 @@ fn typevar_assign(param: &TypeParam, span: Span) -> Spanned<Stmt> {
         ),
         None => sp(Expr::NoneLit, span),
     };
+    let default_arg = match &param.default {
+        Some(default) => sp(
+            Expr::Lambda {
+                params: vec![],
+                body: Box::new(default.clone()),
+            },
+            default.span,
+        ),
+        None => sp(Expr::NoneLit, span),
+    };
     let call = Expr::Call {
         func: Box::new(sp(Expr::Ident(TYPEVAR_INTRINSIC.to_string()), span)),
         args: vec![
@@ -79,6 +89,7 @@ fn typevar_assign(param: &TypeParam, span: Span) -> Spanned<Stmt> {
             CallArg::Positional(sp(Expr::IntLit(kind), span)),
             CallArg::Positional(bound_arg),
             CallArg::Positional(constraints_arg),
+            CallArg::Positional(default_arg),
         ],
     };
     Spanned::new(
@@ -662,12 +673,7 @@ fn collect_runtime_type_param_uses_stmt(
             collect_runtime_type_param_uses_block(body, type_param_names, out, shadowed);
             for handler in handlers {
                 if let Some(exc_type) = &handler.exc_type {
-                    collect_runtime_type_param_uses_expr(
-                        exc_type,
-                        type_param_names,
-                        out,
-                        shadowed,
-                    );
+                    collect_runtime_type_param_uses_expr(exc_type, type_param_names, out, shadowed);
                 }
                 collect_runtime_type_param_uses_block(
                     &handler.body,
@@ -1535,6 +1541,9 @@ mod tests {
                         assert!(
                             matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
                         );
+                        assert!(
+                            matches!(args.get(4), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+                        );
                     }
                     other => panic!("expected typevar call, got {other:?}"),
                 }
@@ -1552,12 +1561,30 @@ mod tests {
                         assert!(
                             matches!(args.get(3), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. }))
                         );
+                        assert!(
+                            matches!(args.get(4), Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::NoneLit))
+                        );
                     }
                     other => panic!("expected typevar call, got {other:?}"),
                 }
             }
             other => panic!("expected U assign, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn typevar_default_is_lowered_as_lazy_thunk() {
+        let m = desugared("def f[T = Undefined]():\n    return T\n");
+        let Stmt::Assign { value, .. } = &m.stmts[0].node else {
+            panic!("expected typevar assignment");
+        };
+        let Expr::Call { args, .. } = &value.node else {
+            panic!("expected typevar constructor call");
+        };
+        assert!(matches!(
+            args.get(4),
+            Some(CallArg::Positional(arg)) if matches!(arg.node, Expr::Lambda { .. })
+        ));
     }
 
     #[test]

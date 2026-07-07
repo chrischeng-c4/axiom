@@ -9,7 +9,6 @@
 # case = "walk_stack_returns_iterator"
 # subject = "traceback.walk_stack"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

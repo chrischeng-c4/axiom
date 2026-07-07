@@ -4,7 +4,7 @@
 // reads wheel dist-info/METADATA for dependency edges, and renders the resolved
 // closure through the same requirements/pylock exporters used by `mamba export`.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -18,13 +18,13 @@ use crate::pkgmanage::pkgmgr::pip_install::{
     find_index_wheel, is_extra_marker, read_wheel_metadata,
 };
 use crate::pkgmanage::pkgmgr::pip_registry::resolve_registry;
-use crate::pkgmanage::pkgmgr::pylock_export::{PylockOptions, render_pylock_toml};
-use crate::pkgmanage::pkgmgr::requirements_export::{ExportOptions, export_requirements_txt};
+use crate::pkgmanage::pkgmgr::pylock_export::{render_pylock_toml, PylockOptions};
+use crate::pkgmanage::pkgmgr::requirements_export::{export_requirements_txt, ExportOptions};
 use crate::pkgmanage::pkgmgr::requirements_loader::{
-    LoadedRequirements, load_requirements_file, load_requirements_text,
+    load_requirements_file, load_requirements_text, LoadedRequirements,
 };
 use crate::pkgmanage::pkgmgr::requirements_parse::{
-    PackageRequirement, RequirementLine, parse_one_line,
+    parse_one_line, PackageRequirement, RequirementLine,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

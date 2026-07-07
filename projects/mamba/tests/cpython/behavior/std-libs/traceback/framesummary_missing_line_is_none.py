@@ -9,7 +9,6 @@
 # case = "framesummary_missing_line_is_none"
 # subject = "traceback.FrameSummary"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

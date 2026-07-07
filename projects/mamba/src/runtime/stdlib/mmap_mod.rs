@@ -254,7 +254,11 @@ fn slice_indices(
     if step == 0 {
         return Err(raise_value_error("slice step cannot be zero"));
     }
-    let (lower, upper) = if step < 0 { (-1i64, len - 1) } else { (0i64, len) };
+    let (lower, upper) = if step < 0 {
+        (-1i64, len - 1)
+    } else {
+        (0i64, len)
+    };
     let clamp = |mut s: i64| -> i64 {
         if s < 0 {
             s += len;
@@ -522,7 +526,11 @@ fn build_mmap(pos: &[MbValue], kwargs: Option<MbValue>) -> Result<MbValue, MbVal
 
     let map_len = length as usize;
     let raw_fd_for_mmap = if anonymous { -1 } else { real_fd };
-    let mmap_flags = if anonymous { flags | libc::MAP_ANON } else { flags };
+    let mmap_flags = if anonymous {
+        flags | libc::MAP_ANON
+    } else {
+        flags
+    };
 
     let ptr = unsafe {
         libc::mmap(
@@ -571,6 +579,7 @@ fn build_mmap(pos: &[MbValue], kwargs: Option<MbValue>) -> Result<MbValue, MbVal
 // ── module-level constructor entry point (flat ABI) ──
 
 unsafe extern "C" fn dispatch_mmap_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = if nargs == 0 || args_ptr.is_null() {
         &[]
     } else {
@@ -771,9 +780,7 @@ unsafe extern "C" fn m_delitem(_self_v: MbValue, _args: MbValue) -> MbValue {
 fn m_find_impl(self_v: MbValue, pos: &[MbValue], reverse: bool) -> MbValue {
     let name = if reverse { "rfind" } else { "find" };
     let Some(sub_v) = pos.first().copied() else {
-        return raise_type_error(format!(
-            "{name}() missing required argument: 'sub' (pos 1)"
-        ));
+        return raise_type_error(format!("{name}() missing required argument: 'sub' (pos 1)"));
     };
     let Some(sub) = super::super::builtins::try_bytes_like(sub_v) else {
         return raise_type_error(format!(
@@ -1315,7 +1322,9 @@ unsafe extern "C" fn m_buffer(self_v: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_release_buffer(_self_v: MbValue, args: MbValue) -> MbValue {
     let pos = method_pos(args);
     let Some(buf_v) = pos.first().copied() else {
-        return raise_type_error("__release_buffer__() missing required argument: 'buffer' (pos 1)");
+        return raise_type_error(
+            "__release_buffer__() missing required argument: 'buffer' (pos 1)",
+        );
     };
     let is_mv = buf_v
         .as_ptr()
@@ -1375,35 +1384,48 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(addr_new as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(addr_new as u64, "mmap".to_string());
-    });
+    super::super::module::register_native_type_name(addr_new as u64, "mmap".to_string());
 
     register_mmap_class();
 
     // ── ACCESS_* constants ──
-    attrs.insert("ACCESS_DEFAULT".to_string(), MbValue::from_int(ACCESS_DEFAULT));
+    attrs.insert(
+        "ACCESS_DEFAULT".to_string(),
+        MbValue::from_int(ACCESS_DEFAULT),
+    );
     attrs.insert("ACCESS_READ".to_string(), MbValue::from_int(ACCESS_READ));
     attrs.insert("ACCESS_WRITE".to_string(), MbValue::from_int(ACCESS_WRITE));
     attrs.insert("ACCESS_COPY".to_string(), MbValue::from_int(ACCESS_COPY));
 
     // ── mmap/prot flags (real libc values; match CPython's POSIX surface) ──
-    attrs.insert("MAP_SHARED".to_string(), MbValue::from_int(libc::MAP_SHARED as i64));
+    attrs.insert(
+        "MAP_SHARED".to_string(),
+        MbValue::from_int(libc::MAP_SHARED as i64),
+    );
     attrs.insert(
         "MAP_PRIVATE".to_string(),
         MbValue::from_int(libc::MAP_PRIVATE as i64),
     );
-    attrs.insert("MAP_ANON".to_string(), MbValue::from_int(libc::MAP_ANON as i64));
+    attrs.insert(
+        "MAP_ANON".to_string(),
+        MbValue::from_int(libc::MAP_ANON as i64),
+    );
     attrs.insert(
         "MAP_ANONYMOUS".to_string(),
         MbValue::from_int(libc::MAP_ANON as i64),
     );
-    attrs.insert("PROT_READ".to_string(), MbValue::from_int(libc::PROT_READ as i64));
+    attrs.insert(
+        "PROT_READ".to_string(),
+        MbValue::from_int(libc::PROT_READ as i64),
+    );
     attrs.insert(
         "PROT_WRITE".to_string(),
         MbValue::from_int(libc::PROT_WRITE as i64),
     );
-    attrs.insert("PROT_EXEC".to_string(), MbValue::from_int(libc::PROT_EXEC as i64));
+    attrs.insert(
+        "PROT_EXEC".to_string(),
+        MbValue::from_int(libc::PROT_EXEC as i64),
+    );
 
     // ── madvise() option constants (POSIX-standard, cross-platform in libc). ──
     attrs.insert(
@@ -1429,7 +1451,10 @@ pub fn register() {
 
     let pagesize = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     attrs.insert("PAGESIZE".to_string(), MbValue::from_int(pagesize));
-    attrs.insert("ALLOCATIONGRANULARITY".to_string(), MbValue::from_int(pagesize));
+    attrs.insert(
+        "ALLOCATIONGRANULARITY".to_string(),
+        MbValue::from_int(pagesize),
+    );
 
     // `mmap.error is OSError` — a literal alias, matching CPython (and the
     // select.error / os.error convention already used elsewhere in mamba).

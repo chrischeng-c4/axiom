@@ -6,6 +6,7 @@ use std::collections::HashMap;
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+            crate::icf_guard!();
             $fn()
         }
     };
@@ -46,9 +47,7 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(addr as u64, name.to_string());
-        });
+        super::super::module::register_native_type_name(addr as u64, name.to_string());
         NUMBERS_ABC_RANKS.with(|m| {
             m.borrow_mut().insert(addr as u64, rank);
         });

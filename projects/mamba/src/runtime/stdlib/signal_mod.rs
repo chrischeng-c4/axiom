@@ -228,12 +228,7 @@ fn mask_numbers(mask: MbValue) -> Option<Vec<i64>> {
 }
 
 fn blocked_snapshot() -> Vec<i64> {
-    BLOCKED_SIGNALS
-        .lock()
-        .unwrap()
-        .iter()
-        .copied()
-        .collect()
+    BLOCKED_SIGNALS.lock().unwrap().iter().copied().collect()
 }
 
 fn is_signal_blocked(signum: i64) -> bool {
@@ -260,7 +255,10 @@ fn take_unblocked_pending() -> Vec<i64> {
 
 fn take_pending_from(mask: &[i64]) -> Option<i64> {
     let mut pending = PENDING_SIGNALS.lock().unwrap();
-    let signum = mask.iter().copied().find(|signum| pending.contains(signum))?;
+    let signum = mask
+        .iter()
+        .copied()
+        .find(|signum| pending.contains(signum))?;
     pending.remove(&signum);
     Some(signum)
 }
@@ -331,6 +329,7 @@ fn signal_description(signum: i64) -> Option<&'static str> {
 macro_rules! disp_nullary {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue {
+            crate::icf_guard!();
             $fn()
         }
     };
@@ -339,6 +338,7 @@ macro_rules! disp_nullary {
 macro_rules! disp_unary {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
         }
@@ -348,6 +348,7 @@ macro_rules! disp_unary {
 macro_rules! disp_binary {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(
                 a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -360,6 +361,7 @@ macro_rules! disp_binary {
 macro_rules! disp_variadic {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(a)
         }
@@ -427,9 +429,7 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
         if matches!(name, "Signals" | "Handlers" | "Sigmasks" | "ItimerError") {
-            super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-                m.borrow_mut().insert(addr as u64, name.to_string());
-            });
+            super::super::module::register_native_type_name(addr as u64, name.to_string());
         }
     }
 
@@ -789,7 +789,14 @@ pub fn mb_signal_pause() -> MbValue {
 
 /// signal.sigpending() -> set of pending signals.
 pub fn mb_signal_sigpending() -> MbValue {
-    signal_set(PENDING_SIGNALS.lock().unwrap().iter().copied().collect::<Vec<_>>())
+    signal_set(
+        PENDING_SIGNALS
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// signal.sigwait(sigset) -> received signum.

@@ -1,4 +1,9 @@
-# NOTES-NEXT — Mamba autonomous loop scratchpad
+# Autonomous loop scratchpad archive
+
+Non-authoritative archive of short-lived autonomous-loop notes that used to
+live at the project root. Capability status, validation gates, and work
+tracking now belong in README capabilities, validation manifests/evidence, and
+issue/TD surfaces; use this file only for historical context.
 
 Short, single-fire notes from the autonomous cron loop. Each entry is one
 investigation that ran out of budget before it could land. Pick up from the

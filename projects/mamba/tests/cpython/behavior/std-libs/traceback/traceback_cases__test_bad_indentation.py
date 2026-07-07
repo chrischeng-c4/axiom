@@ -9,12 +9,10 @@
 # case = "traceback_cases__test_bad_indentation"
 # subject = "cpython.test_traceback.TracebackCases.test_bad_indentation"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::TracebackCases::test_bad_indentation
 """Auto-ported test: TracebackCases::test_bad_indentation (CPython 3.12 oracle)."""
 

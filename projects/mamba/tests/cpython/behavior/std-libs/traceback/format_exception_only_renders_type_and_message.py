@@ -9,7 +9,6 @@
 # case = "format_exception_only_renders_type_and_message"
 # subject = "traceback.format_exception_only"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

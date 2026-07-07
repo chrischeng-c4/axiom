@@ -118,6 +118,7 @@ fn run_pending_processes() {
 }
 
 unsafe extern "C" fn dispatch_process(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kwargs = a.last().copied().unwrap_or_else(MbValue::none);
     let target = kwargs_get(kwargs, "target")
@@ -157,6 +158,7 @@ unsafe extern "C" fn dispatch_array(args_ptr: *const MbValue, nargs: usize) -> M
 }
 
 unsafe extern "C" fn dispatch_pool(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let pool = MbValue::from_ptr(MbObject::new_instance("Pool".to_string()));
     if let Some(ptr) = pool.as_ptr() {
         unsafe {
@@ -583,11 +585,8 @@ pub fn register() {
         set.insert(addr_value as u64);
     });
 
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(addr_process as u64, "Process".to_string());
-        m.borrow_mut().insert(addr_pool as u64, "Pool".to_string());
-    });
+    super::super::module::register_native_type_name(addr_process as u64, "Process".to_string());
+    super::super::module::register_native_type_name(addr_pool as u64, "Pool".to_string());
 
     let mut process_methods: HashMap<String, MbValue> = HashMap::new();
     for (name, addr) in [

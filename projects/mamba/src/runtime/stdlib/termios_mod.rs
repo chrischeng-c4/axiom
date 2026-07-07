@@ -121,10 +121,7 @@ fn raise_termios_error(errno: i32) -> MbValue {
     let message = super::super::builtins::mb_repr(args_tuple);
     let mut fields = InstanceFields::default();
     fields.insert("message".to_string(), message);
-    fields.insert(
-        "__type__".to_string(),
-        new_str("termios.error".to_string()),
-    );
+    fields.insert("__type__".to_string(), new_str("termios.error".to_string()));
     fields.insert("__cause__".to_string(), MbValue::none());
     fields.insert("__context__".to_string(), MbValue::none());
     fields.insert(
@@ -148,7 +145,9 @@ fn raise_termios_error(errno: i32) -> MbValue {
 
 fn raise_if_errno(rv: c_int) -> Option<MbValue> {
     if rv < 0 {
-        Some(raise_termios_error(std::io::Error::last_os_error().raw_os_error().unwrap_or(0)))
+        Some(raise_termios_error(
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+        ))
     } else {
         None
     }
@@ -167,7 +166,9 @@ fn extract_c_int_arg(val: MbValue, what: &str) -> Result<c_int, MbValue> {
         return Ok(i as c_int);
     }
     if is_bigint(val) {
-        return Err(raise_overflow_error("Python int too large to convert to C int"));
+        return Err(raise_overflow_error(
+            "Python int too large to convert to C int",
+        ));
     }
     Err(raise_type_error(format!(
         "an integer is required (got type {})",
@@ -256,7 +257,9 @@ fn extract_flag_field(value: MbValue) -> Result<i64, MbValue> {
         return Ok(i);
     }
     if is_bigint(value) {
-        return Err(raise_overflow_error("Python int too large to convert to C long"));
+        return Err(raise_overflow_error(
+            "Python int too large to convert to C long",
+        ));
     }
     Err(raise_type_error(format!(
         "an integer is required (got type {})",
@@ -348,13 +351,22 @@ pub fn register() {
 
     // tcsetattr() `when` actions.
     attrs.insert("TCSANOW".into(), MbValue::from_int(libc::TCSANOW as i64));
-    attrs.insert("TCSADRAIN".into(), MbValue::from_int(libc::TCSADRAIN as i64));
-    attrs.insert("TCSAFLUSH".into(), MbValue::from_int(libc::TCSAFLUSH as i64));
+    attrs.insert(
+        "TCSADRAIN".into(),
+        MbValue::from_int(libc::TCSADRAIN as i64),
+    );
+    attrs.insert(
+        "TCSAFLUSH".into(),
+        MbValue::from_int(libc::TCSAFLUSH as i64),
+    );
 
     // tcflush() queue selectors.
     attrs.insert("TCIFLUSH".into(), MbValue::from_int(libc::TCIFLUSH as i64));
     attrs.insert("TCOFLUSH".into(), MbValue::from_int(libc::TCOFLUSH as i64));
-    attrs.insert("TCIOFLUSH".into(), MbValue::from_int(libc::TCIOFLUSH as i64));
+    attrs.insert(
+        "TCIOFLUSH".into(),
+        MbValue::from_int(libc::TCIOFLUSH as i64),
+    );
 
     // tcflow() actions.
     attrs.insert("TCOOFF".into(), MbValue::from_int(libc::TCOOFF as i64));
@@ -633,7 +645,13 @@ fn mb_tcgetwinsize(args: &[MbValue]) -> MbValue {
         Err(err) => return err,
     };
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    let rv = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ as c_ulong, &mut ws as *mut libc::winsize) };
+    let rv = unsafe {
+        libc::ioctl(
+            fd,
+            libc::TIOCGWINSZ as c_ulong,
+            &mut ws as *mut libc::winsize,
+        )
+    };
     if let Some(err) = raise_if_errno(rv as c_int) {
         return err;
     }
@@ -669,13 +687,20 @@ fn mb_tcsetwinsize(args: &[MbValue]) -> MbValue {
     // Preserve xpixel/ypixel via a get-modify-set round trip (matches
     // CPython's `termios.c` implementation).
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    let get_rv = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ as c_ulong, &mut ws as *mut libc::winsize) };
+    let get_rv = unsafe {
+        libc::ioctl(
+            fd,
+            libc::TIOCGWINSZ as c_ulong,
+            &mut ws as *mut libc::winsize,
+        )
+    };
     if let Some(err) = raise_if_errno(get_rv as c_int) {
         return err;
     }
     ws.ws_row = row as libc::c_ushort;
     ws.ws_col = col as libc::c_ushort;
-    let set_rv = unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as c_ulong, &ws as *const libc::winsize) };
+    let set_rv =
+        unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as c_ulong, &ws as *const libc::winsize) };
     if let Some(err) = raise_if_errno(set_rv as c_int) {
         return err;
     }

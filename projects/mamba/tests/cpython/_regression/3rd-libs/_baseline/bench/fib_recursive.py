@@ -1,3 +1,5 @@
+# tier: exploratory
+
 """Recursive Fibonacci — pure-Python baseline for the cross-runtime
 bench harness (Phase 1.C, issue #1265 tier:compute).
 

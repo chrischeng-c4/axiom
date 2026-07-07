@@ -9,7 +9,6 @@
 # case = "format_exception_three_arg_returns_str_list"
 # subject = "traceback.format_exception"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

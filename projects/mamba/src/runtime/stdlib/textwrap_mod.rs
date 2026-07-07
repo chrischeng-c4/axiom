@@ -917,6 +917,7 @@ unsafe extern "C" fn dispatch_shorten(args_ptr: *const MbValue, nargs: usize) ->
 
 /// TextWrapper(width=70, **kwargs) -> instance with option fields set.
 unsafe extern "C" fn dispatch_text_wrapper(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let (pos, kwargs) = split_args(a);
     let inst = MbValue::from_ptr(MbObject::new_instance(WRAPPER_CLASS.to_string()));
@@ -1078,13 +1079,10 @@ pub fn register() {
     // up in NATIVE_TYPE_NAMES, then lookup_method in the table that
     // mb_class_register populated). Without this the methods are registered but
     // `hasattr(textwrap.TextWrapper, "fill")` / `callable(...)` is False.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_text_wrapper as *const () as usize as u64,
-            WRAPPER_CLASS.to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_text_wrapper as *const () as usize as u64,
+        WRAPPER_CLASS.to_string(),
+    );
 
     super::register_module("textwrap", attrs);
 }

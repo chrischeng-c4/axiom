@@ -9,12 +9,10 @@
 # case = "test_traceback_exception__test_comparison_basic"
 # subject = "cpython.test_traceback.TestTracebackException.test_comparison_basic"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::TestTracebackException::test_comparison_basic
 """Auto-ported test: TestTracebackException::test_comparison_basic (CPython 3.12 oracle)."""
 

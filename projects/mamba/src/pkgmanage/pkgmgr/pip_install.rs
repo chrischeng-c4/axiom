@@ -4,22 +4,22 @@
 // frozen-index package requirements into a selected site-packages directory,
 // then uses installed RECORD files for uninstall/prune.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::pkgmanage::pkgmgr::pip_check::version_satisfies_all;
 use crate::pkgmanage::pkgmgr::pip_inventory::{
-    InstalledDist, enumerate_installed, find_by_name, parse_metadata,
+    enumerate_installed, find_by_name, parse_metadata, InstalledDist,
 };
 use crate::pkgmanage::pkgmgr::pip_registry::{download_registry_artifact, resolve_registry};
-use crate::pkgmanage::pkgmgr::requirements_loader::{LoadedRequirements, load_requirements_file};
+use crate::pkgmanage::pkgmgr::requirements_loader::{load_requirements_file, LoadedRequirements};
 use crate::pkgmanage::pkgmgr::requirements_parse::{
-    PackageRequirement, RequirementLine, parse_one_line,
+    parse_one_line, PackageRequirement, RequirementLine,
 };
 use crate::pkgmanage::pkgmgr::{
-    InstallKind, InstallMode, InstallRequest, Installer, name_normalize::pep503_normalize, pep440,
+    name_normalize::pep503_normalize, pep440, InstallKind, InstallMode, InstallRequest, Installer,
 };
 
 #[derive(Debug, Clone)]

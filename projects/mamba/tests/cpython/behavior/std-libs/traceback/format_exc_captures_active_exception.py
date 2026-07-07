@@ -9,7 +9,6 @@
 # case = "format_exc_captures_active_exception"
 # subject = "traceback.format_exc"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"
