@@ -14,6 +14,7 @@
 //! object URIs through [`fetch_backup_object`].
 
 mod destination;
+pub mod llm;
 mod policy;
 mod runner;
 #[cfg(feature = "s3")]

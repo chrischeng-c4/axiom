@@ -14,6 +14,7 @@
 
 pub mod controller;
 pub mod lease;
+pub mod llm;
 pub mod render;
 pub mod resize;
 pub mod service;

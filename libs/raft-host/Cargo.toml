@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 raft-core = { path = "../raft-core" }
 h2c = { path = "../h2c" }
+cli-std = { path = "../cli-std", default-features = false }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
