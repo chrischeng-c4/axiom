@@ -94,7 +94,6 @@ flowchart TD
     snap --> k8s([statefulset: POD_NAME / SHARD_COUNT / REPLICAS_PER_SHARD / VOTER_COUNT; single relay image])
     floor --> k8s
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
