@@ -21,6 +21,31 @@ fn pipeline(src: &str) -> MirModule {
     lower_hir_to_mir(&hir, &checker.tcx)
 }
 
+fn body_externs(body: &MirBody) -> Vec<&str> {
+    body.blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .filter_map(|inst| {
+            if let MirInst::CallExtern { name, .. } = inst {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn body_has_extern(body: &MirBody, name: &str) -> bool {
+    body_externs(body).contains(&name)
+}
+
+fn body_extern_count(body: &MirBody, name: &str) -> usize {
+    body_externs(body)
+        .into_iter()
+        .filter(|extern_name| *extern_name == name)
+        .count()
+}
+
 // ── #283: Exception handling ──
 
 #[test]
@@ -1131,45 +1156,43 @@ fn test_async_function_return_is_coroutine_handle() {
 
 #[test]
 fn test_pipeline_method_call_produces_call_method() {
-    // Task 4.1: x.method() should lower to CallExtern("mb_call_method")
-    // Use `.encode()` — not in the str-method fast path (no mb_str_encode
-    // runtime symbol registered), so it falls through to mb_call_method.
+    // Generic method calls now bind the attribute first, then call the bound
+    // method through the spread-call runtime path.
     let mir = pipeline("s: str = \"hello\"\ns.encode()\n");
     let main = &mir.bodies[0];
-    let all_externs: Vec<&str> = main
-        .blocks
-        .iter()
-        .flat_map(|b| &b.stmts)
-        .filter_map(|i| {
-            if let MirInst::CallExtern { name, .. } = i {
-                Some(name.as_str())
-            } else {
-                None
-            }
-        })
-        .collect();
     assert!(
-        all_externs.contains(&"mb_call_method"),
-        "method call should lower to mb_call_method, got: {all_externs:?}"
+        body_has_extern(main, "mb_getattr"),
+        "generic method call should bind with mb_getattr, got: {:?}",
+        body_externs(main)
+    );
+    assert!(
+        body_has_extern(main, "mb_call_spread"),
+        "generic method call should invoke the bound method with mb_call_spread, got: {:?}",
+        body_externs(main)
     );
 }
 
 #[test]
 fn test_pipeline_method_call_packs_args() {
-    // Task 4.1: method args should be packed into a MakeList
-    let mir = pipeline("s: str = \"hello world\"\ns.split(\" \")\n");
+    // Generic method-call arguments are packed into a list for mb_call_spread.
+    let mir = pipeline("s: str = \"hello\"\ns.encode(\"utf-8\")\n");
     let main = &mir.bodies[0];
     let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
-    // Should have MakeList (for args packing) + CallExtern("mb_call_method")
     let has_make_list = all_insts
         .iter()
         .any(|i| matches!(i, MirInst::MakeList { .. }));
-    let has_call_method = all_insts.iter().any(|i| {
-        matches!(i,
-        MirInst::CallExtern { name, .. } if name == "mb_call_method")
-    });
+    let has_getattr = all_insts
+        .iter()
+        .any(|i| matches!(i, MirInst::CallExtern { name, .. } if name == "mb_getattr"));
+    let has_call_spread = all_insts
+        .iter()
+        .any(|i| matches!(i, MirInst::CallExtern { name, .. } if name == "mb_call_spread"));
     assert!(has_make_list, "method args should be packed into a list");
-    assert!(has_call_method, "should call mb_call_method");
+    assert!(has_getattr, "generic method call should resolve the bound method");
+    assert!(
+        has_call_spread,
+        "generic method call should invoke the bound method via mb_call_spread"
+    );
 }
 
 #[test]
@@ -1198,68 +1221,47 @@ fn test_pipeline_index_assignment() {
 
 #[test]
 fn test_pipeline_string_method_call() {
-    // Task 4.2: string methods go through mb_call_method
+    // String methods with direct runtime fast paths bypass generic binding.
     let mir = pipeline("s: str = \"  hello  \"\ns.strip()\n");
     let main = &mir.bodies[0];
-    let externs: Vec<&str> = main
-        .blocks
-        .iter()
-        .flat_map(|b| &b.stmts)
-        .filter_map(|i| {
-            if let MirInst::CallExtern { name, .. } = i {
-                Some(name.as_str())
-            } else {
-                None
-            }
-        })
-        .collect();
     assert!(
-        externs.contains(&"mb_call_method"),
-        "string method should use mb_call_method"
+        body_has_extern(main, "mb_str_strip"),
+        "string strip should use direct mb_str_strip dispatch, got: {:?}",
+        body_externs(main)
     );
 }
 
 #[test]
 fn test_pipeline_list_method_call() {
-    // Task 4.3: list methods go through mb_call_method when no direct
-    // runtime symbol is registered for them. `__sizeof__` has no direct
-    // entry so it stays on the generic dispatch path.
+    // Methods without a list fast path stay on the generic bound-method route.
     let mir = pipeline("lst = [1, 2]\nlst.__sizeof__()\n");
     let main = &mir.bodies[0];
-    let externs: Vec<&str> = main
-        .blocks
-        .iter()
-        .flat_map(|b| &b.stmts)
-        .filter_map(|i| {
-            if let MirInst::CallExtern { name, .. } = i {
-                Some(name.as_str())
-            } else {
-                None
-            }
-        })
-        .collect();
     assert!(
-        externs.contains(&"mb_call_method"),
-        "list method should use mb_call_method"
+        body_has_extern(main, "mb_getattr"),
+        "list method should bind with mb_getattr, got: {:?}",
+        body_externs(main)
+    );
+    assert!(
+        body_has_extern(main, "mb_call_spread"),
+        "list method should invoke via mb_call_spread, got: {:?}",
+        body_externs(main)
     );
 }
 
 #[test]
 fn test_pipeline_chained_method_call() {
-    // Task 4.2: chained methods: s.encode().decode()
-    // Both `encode` and `decode` are outside the str-method fast path,
-    // so each lowers via mb_call_method.
+    // Chained generic methods bind and invoke each step independently.
     let mir = pipeline("s: str = \"hello\"\ns.encode().decode()\n");
     let main = &mir.bodies[0];
-    let call_count = main
-        .blocks
-        .iter()
-        .flat_map(|b| &b.stmts)
-        .filter(|i| matches!(i, MirInst::CallExtern { name, .. } if name == "mb_call_method"))
-        .count();
     assert!(
-        call_count >= 2,
-        "chained methods should produce 2+ mb_call_method calls, got {call_count}"
+        body_extern_count(main, "mb_getattr") >= 2,
+        "chained methods should bind twice, got: {:?}",
+        body_externs(main)
+    );
+    assert!(
+        body_extern_count(main, "mb_call_spread") >= 2,
+        "chained methods should invoke twice, got: {:?}",
+        body_externs(main)
     );
 }
 
@@ -1430,11 +1432,12 @@ fn test_nested_async_function_captures_outer_local() {
     let mir = pipeline(
         "async def outer():\n    xs = []\n    async def inner():\n        xs.append(1)\n    await inner()\n",
     );
-    let has_store_global = mir.bodies.iter().any(|body| {
+    let has_capture_cell_write = mir.bodies.iter().any(|body| {
         body.blocks.iter().any(|b| {
-            b.stmts
-                .iter()
-                .any(|s| matches!(s, MirInst::StoreGlobal { .. }))
+            b.stmts.iter().any(|s| {
+                matches!(s, MirInst::CallExtern { name, .. }
+                    if name == "mb_capture_cell_reset_id" || name == "mb_capture_cell_set_id")
+            })
         })
     });
     let has_load_global = mir.bodies.iter().any(|body| {
@@ -1445,8 +1448,8 @@ fn test_nested_async_function_captures_outer_local() {
         })
     });
     assert!(
-        has_store_global,
-        "outer async body should store captured locals for nested async functions"
+        has_capture_cell_write,
+        "outer async body should write captured locals through capture cells"
     );
     assert!(
         has_load_global,
