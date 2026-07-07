@@ -80,7 +80,6 @@ flowchart TD
     r2[R2 serve replaces relay server] --> projects_relay_tests_http2_transport_rs_against_the_relay_serve_router[projects/relay/tests/http2_transport.rs against the relay serve router]
     r3[R3 build stamp feeds toolinfo] --> toolinfo_is_stamped_test_in_projects_relay_src_bin_relay_rs[toolinfo_is_stamped test in projects/relay/src/bin/relay.rs]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
