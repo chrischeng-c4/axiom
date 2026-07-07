@@ -75,7 +75,6 @@ flowchart TD
     serve -->|SIGTERM| sigterm[start_drain: readyz 503, grace window, close]
     sigterm --> done
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
