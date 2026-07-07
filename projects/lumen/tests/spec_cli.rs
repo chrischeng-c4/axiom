@@ -547,8 +547,12 @@ fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
         "Shared generated-client primitive",
         "spec gen --lang ts|py|rust --out <dir>",
         "GeneratedOutput",
+        "target_concurrency",
+        "max_in_flight_per_origin",
+        "pool_timeout",
         "Shared h2c client primitive",
         "ceil(ln(concurrency))",
+        "max_keepalive_connections",
         "Server boundary",
         "inbound traffic",
     ] {

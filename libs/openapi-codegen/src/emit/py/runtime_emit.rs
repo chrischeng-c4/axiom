@@ -9,6 +9,7 @@ import json as _json
 import socket
 import ssl
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Iterable, Iterator, Mapping, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -37,6 +38,9 @@ _MAX_HEADER_BLOCK = 65536
 _MAX_HEADER_TABLE_SIZE = 4096
 _MAX_FLOW_CONTROL_WINDOW = 0x7FFFFFFF
 _DEFAULT_TIMEOUT = 5.0
+_DEFAULT_MAX_CONNECTIONS = 128
+_DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16
+_DEFAULT_KEEPALIVE_EXPIRY = 5.0
 _DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 _TOKEN_SEPARATORS = set("()<>@,;:\\\"/[]?={}")
 
@@ -61,6 +65,17 @@ class H2CStatusError(H2CError):
     def __init__(self, response: "H2CResponse") -> None:
         self.response = response
         super().__init__(f"HTTP {response.status_code}: {response.text}")
+
+
+def recommended_h2c_connections(concurrency: int, parallelism: Optional[int] = None) -> int:
+    """HTTP/2 connection-count hint: clamp(ceil(ln(concurrency)), 1, parallelism)."""
+    import math
+    import os
+
+    cap = max(1, parallelism or (os.cpu_count() or 1))
+    if concurrency <= 2:
+        return 1
+    return max(1, min(cap, int(math.ceil(math.log(concurrency)))))
 
 
 @dataclass
@@ -548,7 +563,12 @@ class H2CClient:
         self,
         *,
         timeout: Optional[float] = _DEFAULT_TIMEOUT,
-        max_connections_per_origin: int = 1,
+        target_concurrency: Optional[int] = None,
+        max_connections_per_origin: int = _DEFAULT_MAX_CONNECTIONS,
+        max_in_flight_per_origin: Optional[int] = None,
+        max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry: Optional[float] = _DEFAULT_KEEPALIVE_EXPIRY,
+        pool_timeout: Optional[float] = _DEFAULT_TIMEOUT,
         max_response_bytes: Optional[int] = _DEFAULT_MAX_RESPONSE_BYTES,
         ssl_context: Optional[ssl.SSLContext] = None,
         default_headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
@@ -556,14 +576,20 @@ class H2CClient:
     ) -> None:
         if max_response_bytes is not None and max_response_bytes < 0:
             raise ValueError("max_response_bytes must be non-negative or None")
+        target = max(1, target_concurrency or max_connections_per_origin)
         self._timeout = timeout
-        self._max_connections_per_origin = max(1, max_connections_per_origin)
+        self._max_connections_per_origin = max(1, min(max_connections_per_origin, recommended_h2c_connections(target)))
+        self._max_in_flight_per_origin = max(1, max_in_flight_per_origin or target)
+        self._max_keepalive_connections = max(0, max_keepalive_connections)
+        self._keepalive_expiry = keepalive_expiry
+        self._pool_timeout = pool_timeout
         self._max_response_bytes = max_response_bytes
         self._ssl_context = ssl_context
         self._default_headers: dict[str, Any] = dict(_without_none(default_headers))
         if auth_token is not None:
             self._default_headers["Authorization"] = f"Bearer {auth_token}"
         self._connections: dict[tuple[str, str, int], list[H2CConnection]] = {}
+        self._admission: dict[tuple[str, str, int], threading.BoundedSemaphore] = {}
         self._lock = threading.RLock()
         self._closed = False
 
@@ -641,8 +667,17 @@ class H2CClient:
     ) -> "H2CStream":
         full_url = _url_with_params(url, params)
         parsed = urlsplit(full_url)
-        conn = self._connection_for(parsed, self._timeout if timeout is None else timeout)
-        return conn.open_stream(method, full_url, headers=headers, end_stream=end_stream)
+        key = self._origin_key(parsed)
+        release = self._acquire_slot(key)
+        try:
+            conn = self._connection_for(parsed, key, self._timeout if timeout is None else timeout)
+            stream = conn.open_stream(method, full_url, headers=headers, end_stream=end_stream)
+            stream._on_close = release
+            release = None
+            return stream
+        finally:
+            if release is not None:
+                release()
 
     def close(self) -> None:
         with self._lock:
@@ -652,16 +687,55 @@ class H2CClient:
         for conn in conns:
             conn.close()
 
-    def _connection_for(self, parsed: Any, timeout: Optional[float]) -> "H2CConnection":
+    def _origin_key(self, parsed: Any) -> tuple[str, str, int]:
         if parsed.scheme not in {"http", "https"}:
             raise H2CError("HTTP/2 runtime requires an absolute http:// or https:// URL")
         if parsed.hostname is None:
             raise H2CError("absolute http or https URL required")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        key = (parsed.scheme, parsed.hostname, port)
+        return (parsed.scheme, parsed.hostname, port)
+
+    def _acquire_slot(self, key: tuple[str, str, int]) -> Any:
+        with self._lock:
+            sem = self._admission.setdefault(key, threading.BoundedSemaphore(self._max_in_flight_per_origin))
+        acquired = sem.acquire() if self._pool_timeout is None else sem.acquire(timeout=self._pool_timeout)
+        if not acquired:
+            raise H2CTimeout(f"pool timeout after {self._pool_timeout}s waiting for {key[0]}://{key[1]}:{key[2]}")
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                sem.release()
+
+        return release
+
+    def _prune_idle_locked(self, key: tuple[str, str, int], now: float) -> None:
+        group = self._connections.get(key)
+        if not group:
+            return
+        keep = []
+        idle = []
+        for conn in group:
+            if conn.open_stream_count > 0:
+                keep.append(conn)
+            elif self._keepalive_expiry is not None and now - conn.last_used >= self._keepalive_expiry:
+                conn.close()
+            else:
+                idle.append(conn)
+        if len(idle) > self._max_keepalive_connections:
+            idle.sort(key=lambda conn: conn.last_used, reverse=True)
+            for conn in idle[self._max_keepalive_connections:]:
+                conn.close()
+            idle = idle[:self._max_keepalive_connections]
+        self._connections[key] = keep + idle
+
+    def _connection_for(self, parsed: Any, key: tuple[str, str, int], timeout: Optional[float]) -> "H2CConnection":
         with self._lock:
             if self._closed:
                 raise H2CConnectionClosed("client is closed")
+            self._prune_idle_locked(key, time.monotonic())
             group = self._connections.setdefault(key, [])
             for conn in group:
                 if conn.can_open_stream():
@@ -671,7 +745,7 @@ class H2CClient:
             conn = H2CConnection(
                 parsed.scheme,
                 parsed.hostname,
-                port,
+                key[2],
                 timeout=timeout,
                 max_response_bytes=self._max_response_bytes,
                 ssl_context=self._ssl_context,
@@ -710,6 +784,7 @@ class H2CConnection:
         self._max_concurrent_streams = 100
         self._closed = False
         self._goaway_last_stream_id: Optional[int] = None
+        self._last_used = time.monotonic()
         self._lock = threading.RLock()
         self._read_lock = threading.Lock()
         self._send_lock = threading.Lock()
@@ -718,6 +793,11 @@ class H2CConnection:
     def open_stream_count(self) -> int:
         with self._lock:
             return len(self._streams)
+
+    @property
+    def last_used(self) -> float:
+        with self._lock:
+            return self._last_used
 
     def can_open_stream(self) -> bool:
         with self._lock:
@@ -788,6 +868,7 @@ class H2CConnection:
             stream = H2CStream(self, stream_id)
             stream._send_window = self._remote_initial_window
             self._streams[stream_id] = stream
+            self._last_used = time.monotonic()
 
         request_headers = [
             (":method", _validate_method(method)),
@@ -876,6 +957,7 @@ class H2CConnection:
     def remove_stream(self, stream_id: int) -> None:
         with self._lock:
             self._streams.pop(stream_id, None)
+            self._last_used = time.monotonic()
 
     def _send_frame(self, frame_type: int, flags: int, stream_id: int, payload: bytes) -> None:
         frame = _frame_bytes(frame_type, flags, stream_id, payload)
@@ -1099,6 +1181,7 @@ class H2CStream:
         self._error: Optional[BaseException] = None
         self._send_window = 65535
         self.status_code: Optional[int] = None
+        self._on_close: Optional[Any] = None
 
     @property
     def stream_id(self) -> int:
@@ -1118,7 +1201,13 @@ class H2CStream:
         if self._closed:
             return
         self._closed = True
-        self._connection.remove_stream(self._stream_id)
+        try:
+            self._connection.remove_stream(self._stream_id)
+        finally:
+            if self._on_close is not None:
+                release = self._on_close
+                self._on_close = None
+                release()
 
     def send_json(self, value: Any, *, end_stream: bool = False) -> None:
         self.send_data(
@@ -1246,7 +1335,12 @@ class AsyncH2CClient:
         self,
         *,
         timeout: Optional[float] = _DEFAULT_TIMEOUT,
-        max_connections_per_origin: int = 1,
+        target_concurrency: Optional[int] = None,
+        max_connections_per_origin: int = _DEFAULT_MAX_CONNECTIONS,
+        max_in_flight_per_origin: Optional[int] = None,
+        max_keepalive_connections: int = _DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry: Optional[float] = _DEFAULT_KEEPALIVE_EXPIRY,
+        pool_timeout: Optional[float] = _DEFAULT_TIMEOUT,
         max_response_bytes: Optional[int] = _DEFAULT_MAX_RESPONSE_BYTES,
         ssl_context: Optional[ssl.SSLContext] = None,
         default_headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
@@ -1254,14 +1348,20 @@ class AsyncH2CClient:
     ) -> None:
         if max_response_bytes is not None and max_response_bytes < 0:
             raise ValueError("max_response_bytes must be non-negative or None")
+        target = max(1, target_concurrency or max_connections_per_origin)
         self._timeout = timeout
-        self._max_connections_per_origin = max(1, max_connections_per_origin)
+        self._max_connections_per_origin = max(1, min(max_connections_per_origin, recommended_h2c_connections(target)))
+        self._max_in_flight_per_origin = max(1, max_in_flight_per_origin or target)
+        self._max_keepalive_connections = max(0, max_keepalive_connections)
+        self._keepalive_expiry = keepalive_expiry
+        self._pool_timeout = pool_timeout
         self._max_response_bytes = max_response_bytes
         self._ssl_context = ssl_context
         self._default_headers: dict[str, Any] = dict(_without_none(default_headers))
         if auth_token is not None:
             self._default_headers["Authorization"] = f"Bearer {auth_token}"
         self._connections: dict[tuple[str, str, int], list[AsyncH2CConnection]] = {}
+        self._admission: dict[tuple[str, str, int], asyncio.BoundedSemaphore] = {}
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -1339,8 +1439,17 @@ class AsyncH2CClient:
     ) -> "AsyncH2CStream":
         full_url = _url_with_params(url, params)
         parsed = urlsplit(full_url)
-        conn = await self._connection_for(parsed, self._timeout if timeout is None else timeout)
-        return await conn.open_stream(method, full_url, headers=headers, end_stream=end_stream)
+        key = self._origin_key(parsed)
+        release = await self._acquire_slot(key)
+        try:
+            conn = await self._connection_for(parsed, key, self._timeout if timeout is None else timeout)
+            stream = await conn.open_stream(method, full_url, headers=headers, end_stream=end_stream)
+            stream._on_close = release
+            release = None
+            return stream
+        finally:
+            if release is not None:
+                release()
 
     async def aclose(self) -> None:
         async with self._lock:
@@ -1353,16 +1462,56 @@ class AsyncH2CClient:
     async def close(self) -> None:
         await self.aclose()
 
-    async def _connection_for(self, parsed: Any, timeout: Optional[float]) -> "AsyncH2CConnection":
+    def _origin_key(self, parsed: Any) -> tuple[str, str, int]:
         if parsed.scheme not in {"http", "https"}:
             raise H2CError("HTTP/2 runtime requires an absolute http:// or https:// URL")
         if parsed.hostname is None:
             raise H2CError("absolute http or https URL required")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        key = (parsed.scheme, parsed.hostname, port)
+        return (parsed.scheme, parsed.hostname, port)
+
+    async def _acquire_slot(self, key: tuple[str, str, int]) -> Any:
+        async with self._lock:
+            sem = self._admission.setdefault(key, asyncio.BoundedSemaphore(self._max_in_flight_per_origin))
+        try:
+            await _await_with_timeout(sem.acquire(), self._pool_timeout)
+        except asyncio.TimeoutError as exc:
+            raise H2CTimeout(f"pool timeout after {self._pool_timeout}s waiting for {key[0]}://{key[1]}:{key[2]}") from exc
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                sem.release()
+
+        return release
+
+    async def _prune_idle_locked(self, key: tuple[str, str, int], now: float) -> None:
+        group = self._connections.get(key)
+        if not group:
+            return
+        keep = []
+        idle = []
+        for conn in group:
+            if conn.open_stream_count > 0:
+                keep.append(conn)
+            elif self._keepalive_expiry is not None and now - conn.last_used >= self._keepalive_expiry:
+                await conn.close()
+            else:
+                idle.append(conn)
+        if len(idle) > self._max_keepalive_connections:
+            idle.sort(key=lambda conn: conn.last_used, reverse=True)
+            for conn in idle[self._max_keepalive_connections:]:
+                await conn.close()
+            idle = idle[:self._max_keepalive_connections]
+        self._connections[key] = keep + idle
+
+    async def _connection_for(self, parsed: Any, key: tuple[str, str, int], timeout: Optional[float]) -> "AsyncH2CConnection":
         async with self._lock:
             if self._closed:
                 raise H2CConnectionClosed("client is closed")
+            await self._prune_idle_locked(key, time.monotonic())
             group = self._connections.setdefault(key, [])
             for conn in group:
                 if conn.can_open_stream():
@@ -1372,7 +1521,7 @@ class AsyncH2CClient:
             conn = AsyncH2CConnection(
                 parsed.scheme,
                 parsed.hostname,
-                port,
+                key[2],
                 timeout=timeout,
                 max_response_bytes=self._max_response_bytes,
                 ssl_context=self._ssl_context,
@@ -1412,6 +1561,7 @@ class AsyncH2CConnection:
         self._max_concurrent_streams = 100
         self._closed = False
         self._goaway_last_stream_id: Optional[int] = None
+        self._last_used = time.monotonic()
         self._lock = asyncio.Lock()
         self._read_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
@@ -1419,6 +1569,10 @@ class AsyncH2CConnection:
     @property
     def open_stream_count(self) -> int:
         return len(self._streams)
+
+    @property
+    def last_used(self) -> float:
+        return self._last_used
 
     def can_open_stream(self) -> bool:
         return (
@@ -1504,6 +1658,7 @@ class AsyncH2CConnection:
             stream = AsyncH2CStream(self, stream_id)
             stream._send_window = self._remote_initial_window
             self._streams[stream_id] = stream
+            self._last_used = time.monotonic()
 
         request_headers = [
             (":method", _validate_method(method)),
@@ -1592,6 +1747,7 @@ class AsyncH2CConnection:
     async def remove_stream(self, stream_id: int) -> None:
         async with self._lock:
             self._streams.pop(stream_id, None)
+            self._last_used = time.monotonic()
 
     async def _send_frame(self, frame_type: int, flags: int, stream_id: int, payload: bytes) -> None:
         frame = _frame_bytes(frame_type, flags, stream_id, payload)
@@ -1812,6 +1968,7 @@ class AsyncH2CStream:
         self._error: Optional[BaseException] = None
         self._send_window = 65535
         self.status_code: Optional[int] = None
+        self._on_close: Optional[Any] = None
 
     @property
     def stream_id(self) -> int:
@@ -1831,7 +1988,13 @@ class AsyncH2CStream:
         if self._closed:
             return
         self._closed = True
-        await self._connection.remove_stream(self._stream_id)
+        try:
+            await self._connection.remove_stream(self._stream_id)
+        finally:
+            if self._on_close is not None:
+                release = self._on_close
+                self._on_close = None
+                release()
 
     async def close(self) -> None:
         await self.aclose()

@@ -7,6 +7,9 @@
 //!
 //! - **least-loaded dispatch** — each request goes to the healthy connection
 //!   with the fewest in-flight streams (not blind round-robin).
+//! - **bounded admission** — a per-origin semaphore caps requests admitted into
+//!   the transport; bursts queue up to `pool_timeout` instead of creating
+//!   unbounded streams from async task fan-out.
 //! - **adaptive sizing** — grows a new connection when the least-loaded one is
 //!   saturated, up to the `ln(concurrency)`/cores cap; a supervisor shrinks
 //!   connections that sit idle past `idle_timeout` (down to `min_connections`).
@@ -25,23 +28,31 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http::{Method, Request, Response};
-use tokio::sync::RwLock;
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 use tokio::time::MissedTickBehavior;
 
 use crate::conn::{ConnConfig, ManagedConn};
 use crate::error::{H2cError, Result};
-use crate::{cpu_parallelism, recommended_h2c_connections};
+use crate::recommended_h2c_connections;
 
 /// Configuration for an [`H2cManager`].
 #[derive(Clone, Debug)]
 pub struct ManagerConfig {
     /// Connections kept warm at all times (opened eagerly at connect).
     pub min_connections: usize,
-    /// Hard ceiling on connections (adaptive growth stops here).
+    /// Hard ceiling on h2 connections (adaptive growth stops here).
     pub max_connections: usize,
+    /// Idle h2 connections retained after bursts. HTTP/2 normally stays below
+    /// this because connection count is logarithmic in target concurrency.
+    pub max_keepalive_connections: usize,
+    /// Hard cap on requests admitted into this manager at once. Additional
+    /// callers queue until a slot is released or `pool_timeout` elapses.
+    pub max_in_flight_per_origin: usize,
     /// Grow a new connection when the least-loaded healthy one has at least this
     /// many in-flight streams (and we're under `max_connections`).
     pub grow_threshold: usize,
+    /// Deadline for waiting on an admission slot.
+    pub pool_timeout: Duration,
     /// Deadline for a single TCP connect + handshake.
     pub connect_timeout: Duration,
     /// Per-request deadline (`None` disables it).
@@ -62,12 +73,15 @@ impl Default for ManagerConfig {
     fn default() -> Self {
         Self {
             min_connections: 1,
-            max_connections: cpu_parallelism().max(1),
+            max_connections: recommended_h2c_connections(128).max(1),
+            max_keepalive_connections: 16,
+            max_in_flight_per_origin: 128,
             grow_threshold: 32,
+            pool_timeout: Duration::from_secs(5),
             connect_timeout: Duration::from_secs(5),
             request_timeout: Some(Duration::from_secs(30)),
             ping_interval: Duration::from_secs(15),
-            idle_timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_secs(5),
             stream_window: 1024 * 1024,   // 1 MiB
             conn_window: 4 * 1024 * 1024, // 4 MiB
             max_frame: 16 * 1024,         // 16 KiB
@@ -77,10 +91,12 @@ impl Default for ManagerConfig {
 
 impl ManagerConfig {
     /// Cap `max_connections` by the `ln(concurrency)`/cores heuristic for a
-    /// target peak concurrency.
+    /// target peak concurrency, and use the same value as the request-admission
+    /// hard cap.
     pub fn for_concurrency(concurrency: usize) -> Self {
         let mut c = Self::default();
         c.max_connections = recommended_h2c_connections(concurrency).max(c.min_connections);
+        c.max_in_flight_per_origin = concurrency.max(1);
         c
     }
 
@@ -111,6 +127,7 @@ pub struct ManagerStats {
 struct Inner {
     authority: String,
     cfg: ManagerConfig,
+    admission: Arc<Semaphore>,
     conns: RwLock<Vec<Arc<ManagedConn>>>,
     /// Connections-plus-pending-connects, used to enforce `max_connections`
     /// without holding the conns write lock across a (slow) connect. Kept equal
@@ -162,6 +179,7 @@ impl H2cManager {
         let authority = authority_of(endpoint);
         let inner = Arc::new(Inner {
             authority,
+            admission: Arc::new(Semaphore::new(cfg.max_in_flight_per_origin.max(1))),
             cfg,
             conns: RwLock::new(Vec::new()),
             slots: AtomicUsize::new(0),
@@ -261,6 +279,7 @@ impl H2cManager {
     /// as their futures complete). Subsequent requests fail with `Shutdown`.
     pub async fn shutdown(&self) {
         self.inner.shutdown.store(true, Ordering::Release);
+        self.inner.admission.close();
         let drained: Vec<Arc<ManagedConn>> = {
             let mut conns = self.inner.conns.write().await;
             for c in conns.iter() {
@@ -289,6 +308,16 @@ impl H2cManager {
             return Err(H2cError::Shutdown);
         }
         let cfg = &self.inner.cfg;
+        let admission = match tokio::time::timeout(
+            cfg.pool_timeout,
+            self.inner.admission.clone().acquire_owned(),
+        )
+        .await
+        {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(_)) => return Err(H2cError::Shutdown),
+            Err(_) => return Err(H2cError::Timeout(cfg.pool_timeout)),
+        };
         let (best, total) = {
             let conns = self.inner.conns.read().await;
             let best = conns
@@ -320,7 +349,10 @@ impl H2cManager {
         // Reserve the slot now so concurrent acquirers see this connection's load
         // rise — that's what makes adaptive growth track real demand.
         chosen.reserve();
-        Ok(Lease { conn: chosen })
+        Ok(Lease {
+            conn: chosen,
+            _admission: admission,
+        })
     }
 
     /// Open one new connection and add it to the pool (respecting the cap).
@@ -375,6 +407,7 @@ fn retire(inner: &Inner, c: &ManagedConn) {
 /// request and releases the reserved slot on drop (including on cancellation).
 struct Lease {
     conn: Arc<ManagedConn>,
+    _admission: OwnedSemaphorePermit,
 }
 
 impl Drop for Lease {
@@ -416,6 +449,7 @@ async fn supervise(weak: Weak<Inner>) {
         {
             let mut conns = inner.conns.write().await;
             let min = inner.cfg.min_connections;
+            let max_idle = inner.cfg.max_keepalive_connections.max(min);
             conns.retain(|c| {
                 let keep = c.is_healthy();
                 if !keep {
@@ -424,10 +458,10 @@ async fn supervise(weak: Weak<Inner>) {
                 keep
             });
             if conns.len() > min {
-                if let Some(pos) = conns
-                    .iter()
-                    .position(|c| c.in_flight() == 0 && c.idle() >= inner.cfg.idle_timeout)
-                {
+                if let Some(pos) = conns.iter().position(|c| {
+                    c.in_flight() == 0
+                        && (conns.len() > max_idle || c.idle() >= inner.cfg.idle_timeout)
+                }) {
                     let c = conns.remove(pos);
                     retire(&inner, &c);
                     tracing::debug!(conn = c.id, "shrinking idle h2c connection");

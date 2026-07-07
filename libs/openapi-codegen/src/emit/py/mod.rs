@@ -67,9 +67,12 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
     use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     const SPEC: &str = r##"{
       "openapi": "3.0.0",
@@ -166,6 +169,18 @@ mod tests {
             .unwrap()
             .contents
             .as_str()
+    }
+
+    fn unique_temp_dir() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "openapi-codegen-py-{}-{nonce}-{serial}",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -348,6 +363,14 @@ asyncio.run(main())
         assert!(runtime.contains("def get("));
         assert!(runtime.contains("def stream("));
         assert!(runtime.contains("max_connections_per_origin"));
+        assert!(runtime.contains("_DEFAULT_MAX_CONNECTIONS = 128"));
+        assert!(runtime.contains("_DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16"));
+        assert!(runtime.contains("def recommended_h2c_connections("));
+        assert!(runtime.contains("target_concurrency: Optional[int] = None"));
+        assert!(runtime.contains("max_in_flight_per_origin"));
+        assert!(runtime.contains("pool_timeout"));
+        assert!(runtime.contains("threading.BoundedSemaphore"));
+        assert!(runtime.contains("asyncio.BoundedSemaphore"));
         assert!(runtime.contains(
             "default_headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None"
         ));
@@ -531,12 +554,7 @@ must_reject(conn._read_frame)
     #[test]
     fn generated_python_files_compile_when_python3_available() {
         let out = generate(SPEC, &opts()).unwrap();
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("openapi-codegen-py-{}-{nonce}", std::process::id()));
+        let dir = unique_temp_dir();
         fs::create_dir_all(&dir).unwrap();
         for generated in &out.files {
             fs::write(dir.join(&generated.rel_path), &generated.contents).unwrap();
@@ -573,12 +591,7 @@ must_reject(conn._read_frame)
         }
 
         let out = generate(SPEC, &opts()).unwrap();
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("openapi-codegen-py-{}-{nonce}", std::process::id()));
+        let dir = unique_temp_dir();
         let pkg = dir.join("generated_api");
         fs::create_dir_all(&pkg).unwrap();
         for generated in &out.files {
@@ -612,6 +625,62 @@ assert pet.tag == "h2c"
             String::from_utf8_lossy(&output.stderr)
         );
         server_result.expect("h2c smoke server panicked");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generated_python_h2c_runtime_admission_queue_times_out() {
+        let out = generate(SPEC, &opts()).unwrap();
+        let dir = write_generated_python_package(&out);
+        let script = format!(
+            r#"
+import asyncio
+import sys
+sys.path.insert(0, {dir:?} + "/generated_api")
+from h2c_runtime import AsyncH2CClient, H2CClient, H2CTimeout
+
+key = ("http", "example.com", 80)
+client = H2CClient(max_in_flight_per_origin=1, pool_timeout=0.01)
+release = client._acquire_slot(key)
+try:
+    try:
+        client._acquire_slot(key)
+        raise AssertionError("sync admission did not time out")
+    except H2CTimeout:
+        pass
+finally:
+    release()
+client._acquire_slot(key)()
+
+async def main():
+    client = AsyncH2CClient(max_in_flight_per_origin=1, pool_timeout=0.01)
+    release = await client._acquire_slot(key)
+    try:
+        try:
+            await client._acquire_slot(key)
+            raise AssertionError("async admission did not time out")
+        except H2CTimeout:
+            pass
+    finally:
+        release()
+    release_again = await client._acquire_slot(key)
+    release_again()
+
+asyncio.run(main())
+"#,
+            dir = dir.display().to_string(),
+        );
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .expect("run generated Python h2c admission smoke");
+        assert!(
+            output.status.success(),
+            "generated Python h2c admission smoke failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1053,12 +1122,7 @@ assert rest == b"ack:two\n"
     }
 
     fn write_generated_python_package(out: &GeneratedOutput) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("openapi-codegen-py-{}-{nonce}", std::process::id()));
+        let dir = unique_temp_dir();
         let pkg = dir.join("generated_api");
         fs::create_dir_all(&pkg).unwrap();
         for generated in &out.files {

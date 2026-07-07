@@ -92,6 +92,7 @@ members = [
     "projects/lumen",
     "projects/keep",
     "projects/queue/queue",
+    "examples/client-transport-policy",
 ]
 resolver = "2"
 
