@@ -1,3 +1,63 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:4d255551" tracker="pending-tracker" reason="Operator control-plane RBAC fixture: Namespace relay-system, ServiceAccount relay-operator, ClusterRole (relay.dev relays/status/finalizers; apps statefulsets; core services/serviceaccounts; policy poddisruptionbudgets; coordination.k8s.io leases), ClusterRoleBinding — namespace-substituted by `relay k8s operator render --namespace`."
-// TODO: hand-write content for `projects/relay/k8s/operator/rbac.yaml`.
-// HANDWRITE-END
+# The relay operator runs in its own namespace and needs cluster-wide
+# permission to manage the child kinds it renders for every Relay custom
+# resource.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: relay-system
+  labels:
+    app.kubernetes.io/name: relay-operator
+    app.kubernetes.io/part-of: relay
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: relay-operator
+  namespace: relay-system
+  labels:
+    app.kubernetes.io/name: relay-operator
+    app.kubernetes.io/part-of: relay
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: relay-operator
+  labels:
+    app.kubernetes.io/name: relay-operator
+    app.kubernetes.io/part-of: relay
+rules:
+  # The custom resource it owns + its status subresource.
+  - apiGroups: ["relay.dev"]
+    resources: ["relays", "relays/status", "relays/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The durable broker workload.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Serving Service/ServiceAccount.
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Leader-election Lease (HA: only the holder reconciles).
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: relay-operator
+  labels:
+    app.kubernetes.io/name: relay-operator
+    app.kubernetes.io/part-of: relay
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: relay-operator
+subjects:
+  - kind: ServiceAccount
+    name: relay-operator
+    namespace: relay-system
