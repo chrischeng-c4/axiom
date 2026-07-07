@@ -93,6 +93,8 @@ def f() -> int:
         s = s + i
         i = i + 1
     return s
+
+f()
 "#,
     );
     assert_eq!(result, 45);
@@ -108,6 +110,8 @@ def f() -> int:
     for i in range(5):
         total = total + i
     return total
+
+f()
 "#,
     );
     assert_eq!(result, 10);
@@ -133,6 +137,8 @@ def f() -> int:
     for _ in range(iters):
         count = count + 1
     return count
+
+f()
 "#,
     );
     assert_eq!(result, 100);
@@ -148,6 +154,8 @@ def f() -> int:
     for i in range(1, 6):
         product = product * i
     return product
+
+f()
 "#,
     );
     assert_eq!(result, 120);
@@ -168,6 +176,8 @@ def f() -> int:
         a = temp
         n = n - 1
     return a
+
+f()
 "#,
     );
     assert_eq!(result, 55);
@@ -185,6 +195,8 @@ def f() -> int:
     else:
         result = 0
     return result
+
+f()
 "#,
     );
     assert_eq!(result, 42);
@@ -210,6 +222,8 @@ def f() -> int:
         total = total + a
         rep = rep + 1
     return total
+
+f()
 "#,
     );
     assert_eq!(result, 676500);
@@ -228,6 +242,8 @@ def f() -> int:
     if x is y:
         return 1
     return 0
+
+f()
 "#,
     );
     assert_eq!(result, 1);
@@ -244,6 +260,8 @@ def f() -> int:
     if x is y:
         return 1
     return 0
+
+f()
 "#,
     );
     assert_eq!(result, 0);
@@ -260,6 +278,8 @@ def f() -> int:
     if x is not y:
         return 1
     return 0
+
+f()
 "#,
     );
     assert_eq!(result, 1);
@@ -276,6 +296,8 @@ def f() -> int:
     if x is not y:
         return 1
     return 0
+
+f()
 "#,
     );
     assert_eq!(result, 0);

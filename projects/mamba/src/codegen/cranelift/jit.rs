@@ -1630,6 +1630,7 @@ impl CraneliftJitBackend {
         // acceptable because (a) overflow is rare in hot loops, (b) the leak is
         // bounded by the number of overflowing CheckedOps, and (c) keeping
         // raw_ints status enables fast-path chaining for the 99.99% case.
+        vars.raw_ints.insert(*dest);
     }
 
     /// Unbox an inline-int (tag=1) NaN-boxed `MbValue` result back to a raw

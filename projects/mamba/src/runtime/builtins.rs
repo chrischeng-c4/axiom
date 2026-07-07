@@ -250,6 +250,18 @@ pub fn mb_unbox_int_if_boxed(val: MbValue) -> i64 {
     val.to_bits() as i64
 }
 
+/// Unbox only inline tagged ints; keep raw i64 values and boxed BigInt bits
+/// unchanged. Used by the JIT entry-body typed-return path so a top-level
+/// `f()` call still returns raw `42`, but an overflowing `f()` preserves its
+/// boxed BigInt sentinel instead of collapsing to a plain i64.
+pub fn mb_unbox_inline_int_if_boxed(val: MbValue) -> i64 {
+    if let Some(i) = val.as_int() {
+        i
+    } else {
+        val.to_bits() as i64
+    }
+}
+
 /// Unbox a NaN-boxed bool if tagged; otherwise pass through. See
 /// `mb_unbox_int_if_boxed` for the entry-body return-path use case.
 pub fn mb_unbox_bool_if_boxed(val: MbValue) -> i64 {
