@@ -8010,6 +8010,153 @@ impl<'a> AstLowerer<'a> {
                                 });
                             }
                         }
+                        // enumerate(iterable, start=0) with keyword support.
+                        // Without this, `start=` is flattened away and the call
+                        // falls back to the one-arg lowering path, silently
+                        // resetting the counter to 0.
+                        if name == "enumerate"
+                            && args.iter().all(|a| {
+                                matches!(
+                                    a,
+                                    ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                                )
+                            })
+                        {
+                            let positional_count = args
+                                .iter()
+                                .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+                                .count();
+                            if positional_count > 2 {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        format!(
+                                            "enumerate() takes at most 2 arguments ({} given)",
+                                            positional_count
+                                        ),
+                                        str_ty,
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            if let Some(bad_kw) = args.iter().find_map(|a| match a {
+                                ast::CallArg::Keyword { name, .. }
+                                    if name != "iterable" && name != "start" =>
+                                {
+                                    Some(name.clone())
+                                }
+                                _ => None,
+                            }) {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        format!(
+                                            "enumerate() got an unexpected keyword argument '{}'",
+                                            bad_kw
+                                        ),
+                                        str_ty,
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            let has_kw_iterable = args.iter().any(|a| {
+                                matches!(a, ast::CallArg::Keyword { name, .. } if name == "iterable")
+                            });
+                            let has_kw_start = args.iter().any(|a| {
+                                matches!(a, ast::CallArg::Keyword { name, .. } if name == "start")
+                            });
+                            if positional_count >= 1 && has_kw_iterable {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        "enumerate() got multiple values for argument 'iterable'"
+                                            .to_string(),
+                                        str_ty,
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            if positional_count >= 2 && has_kw_start {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        "enumerate() got multiple values for argument 'start'"
+                                            .to_string(),
+                                        str_ty,
+                                    )],
+                                    ty: any_ty,
+                                });
+                            }
+                            let pos: Vec<HirExpr> = args
+                                .iter()
+                                .filter_map(|a| {
+                                    if let ast::CallArg::Positional(e) = a {
+                                        self.lower_expr(e)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            let iterable = pos.first().cloned().or_else(|| {
+                                args.iter().find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "iterable" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                            });
+                            let Some(iterable) = iterable else {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![HirExpr::StrLit(
+                                        "enumerate() missing required argument 'iterable' (pos 1)"
+                                            .to_string(),
+                                        str_ty,
+                                    )],
+                                    ty: any_ty,
+                                });
+                            };
+                            let start = pos.get(1).cloned().or_else(|| {
+                                args.iter().find_map(|a| {
+                                    if let ast::CallArg::Keyword { name: n, value } = a {
+                                        if n == "start" {
+                                            return self.lower_expr(value);
+                                        }
+                                    }
+                                    None
+                                })
+                            });
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_enumerate".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![
+                                    iterable,
+                                    start.unwrap_or_else(|| {
+                                        HirExpr::IntLit(0, self.checker.tcx.int())
+                                    }),
+                                ],
+                                ty: any_ty,
+                            });
+                        }
                         // open(file, mode='r', buffering=-1, encoding=None, ...) →
                         // mb_open_ex(path, mode, encoding, errors). Pull named
                         // kwargs explicitly so the generic path does not flatten
@@ -13213,6 +13360,35 @@ async def main():
         assert!(matches!(&args[0], HirExpr::StrLit(value, _) if value == "bar"));
         assert!(matches!(&args[1], HirExpr::NoneLit(_)));
         assert!(matches!(&args[2], HirExpr::NoneLit(_)));
+    }
+
+    #[test]
+    fn test_lower_enumerate_start_keyword_preserves_start_value() {
+        let hir = helper_lower(vec![sp(Stmt::ExprStmt(sp(Expr::Call {
+            func: Box::new(sp(Expr::Ident("enumerate".to_string()))),
+            args: vec![
+                CallArg::Positional(sp(Expr::ListLit(vec![sp(Expr::StrLit(
+                    "x".to_string(),
+                ))]))),
+                CallArg::Keyword {
+                    name: "start".to_string(),
+                    value: sp(Expr::IntLit(10)),
+                },
+            ],
+        })))]);
+        let HirStmt::Expr {
+            expr: HirExpr::Call { func, args, .. },
+            ..
+        } = &hir.top_level[0]
+        else {
+            panic!("expected lowered enumerate call");
+        };
+        assert!(matches!(
+            func.as_ref(),
+            HirExpr::StrLit(name, _) if name == "mb_enumerate"
+        ));
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[1], HirExpr::IntLit(10, _)));
     }
 
     #[test]
