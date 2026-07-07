@@ -364,6 +364,8 @@ fn register_type_module(name: &str, classes: &[&str]) {
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     register_distutils();
     register_html_entities();
     register_xml_subs();

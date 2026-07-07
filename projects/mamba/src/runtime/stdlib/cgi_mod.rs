@@ -271,6 +271,8 @@ fn next_shell_slot() -> usize {
 }
 
 pub fn register() {
+    NEXT_SHELL_SLOT.with(|c| c.set(0));
+
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
 
     // Real pure-function ports.

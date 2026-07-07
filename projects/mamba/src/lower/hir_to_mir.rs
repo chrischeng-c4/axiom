@@ -13680,9 +13680,9 @@ mod tests {
             .iter()
             .flat_map(|b| b.stmts.iter())
             .collect();
-        let boxed_dest = all_stmts
+        let boxed_dests: HashSet<_> = all_stmts
             .iter()
-            .find_map(|s| match s {
+            .filter_map(|s| match s {
                 MirInst::CallExtern {
                     dest: Some(dest),
                     name,
@@ -13690,11 +13690,15 @@ mod tests {
                 } if name == "mb_box_int" => Some(*dest),
                 _ => None,
             })
-            .expect("int walrus target should be boxed before global store");
+            .collect();
+        assert!(
+            !boxed_dests.is_empty(),
+            "int walrus target should be boxed before global store"
+        );
 
         assert!(all_stmts.iter().any(|s| matches!(
             s,
-            MirInst::StoreGlobal { name, value } if *name == target && *value == boxed_dest
+            MirInst::StoreGlobal { name, value } if *name == target && boxed_dests.contains(value)
         )));
     }
 
