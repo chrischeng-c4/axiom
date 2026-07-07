@@ -13,6 +13,13 @@ use super::super::value::MbValue;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
+fn dict_get_exact_str(
+    map: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>,
+    key: &str,
+) -> Option<MbValue> {
+    super::super::dict_ops::dict_get_exact_str(map, key)
+}
+
 /// Safe wrapper over `from_raw_parts` — returns `&[]` for `nargs == 0`
 /// or null pointer (`from_raw_parts` requires a non-null aligned ptr
 /// even when `len` is 0; calling it with a null ptr is UB and was
@@ -183,16 +190,14 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    let indent = map.get("indent").and_then(|v| v.as_int());
-                    let sort_keys = map
-                        .get("sort_keys")
+                    let indent = dict_get_exact_str(&map, "indent").and_then(|v| v.as_int());
+                    let sort_keys = dict_get_exact_str(&map, "sort_keys")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    let ensure_ascii = map
-                        .get("ensure_ascii")
+                    let ensure_ascii = dict_get_exact_str(&map, "ensure_ascii")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
-                    let separators = map.get("separators");
+                    let separators = dict_get_exact_str(&map, "separators");
 
                     // Sort keys if requested
                     let effective_val = if sort_keys { sort_dict_keys(val) } else { val };
@@ -201,10 +206,13 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                     // unserializable objects via the hook (a JSONEncoder
                     // subclass instance's default(), or a plain default
                     // callable). cls() is instantiated to obtain that method.
-                    let hook = if let Some(d) = map.get("default").copied().filter(|v| !v.is_none())
+                    let hook = if let Some(d) =
+                        dict_get_exact_str(&map, "default").filter(|v| !v.is_none())
                     {
                         d
-                    } else if let Some(c) = map.get("cls").copied().filter(|v| !v.is_none()) {
+                    } else if let Some(c) =
+                        dict_get_exact_str(&map, "cls").filter(|v| !v.is_none())
+                    {
                         super::super::class::mb_call0(c)
                     } else {
                         MbValue::none()
@@ -217,7 +225,7 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                         return mb_json_dumps_pretty(effective_val, MbValue::from_int(n));
                     }
                     // String indent (e.g. indent="\t") passed as a kwarg.
-                    if let Some(s) = map.get("indent").copied().and_then(extract_str_val) {
+                    if let Some(s) = dict_get_exact_str(&map, "indent").and_then(extract_str_val) {
                         return mb_json_dumps_pretty_indent_str(effective_val, &s);
                     }
 
@@ -268,7 +276,7 @@ unsafe extern "C" fn dispatch_dump(args_ptr: *const MbValue, nargs: usize) -> Mb
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(n) = map.get("indent").and_then(|v| v.as_int()) {
+                    if let Some(n) = dict_get_exact_str(&map, "indent").and_then(|v| v.as_int()) {
                         mb_json_dumps_pretty(obj, MbValue::from_int(n))
                     } else {
                         mb_json_dumps(obj)
@@ -308,13 +316,14 @@ unsafe extern "C" fn dispatch_jsonencoder_ctor(args_ptr: *const MbValue, nargs: 
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    if let Some(n) = map.get("indent").and_then(|v| v.as_int()) {
+                    if let Some(n) = dict_get_exact_str(&map, "indent").and_then(|v| v.as_int()) {
                         cfg.indent = Some(n);
                     }
-                    if let Some(b) = map.get("sort_keys").and_then(|v| v.as_bool()) {
+                    if let Some(b) = dict_get_exact_str(&map, "sort_keys").and_then(|v| v.as_bool())
+                    {
                         cfg.sort_keys = b;
                     }
-                    if let Some(sep) = map.get("separators") {
+                    if let Some(sep) = dict_get_exact_str(&map, "separators") {
                         if let Some(sptr) = sep.as_ptr() {
                             if let ObjData::Tuple(ref tup) = (*sptr).data {
                                 if tup.len() == 2 {
@@ -552,7 +561,9 @@ fn sort_dict_keys(val: MbValue) -> MbValue {
                     let mut keys: Vec<String> = map.keys().map(|k| k.to_string()).collect();
                     keys.sort();
                     keys.into_iter()
-                        .filter_map(|k| map.get(k.as_str()).map(|v| (k, sort_dict_keys(*v))))
+                        .filter_map(|k| {
+                            dict_get_exact_str(&map, k.as_str()).map(|v| (k, sort_dict_keys(v)))
+                        })
                         .collect()
                 };
                 let new_dict = MbObject::new_dict_with_capacity(pairs.len());
@@ -1163,8 +1174,8 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*result.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(map.get("a").and_then(|v| v.as_int()), Some(1));
-                assert_eq!(map.get("b").and_then(|v| v.as_int()), Some(2));
+                assert_eq!(dict_get_exact_str(&map, "a").and_then(|v| v.as_int()), Some(1));
+                assert_eq!(dict_get_exact_str(&map, "b").and_then(|v| v.as_int()), Some(2));
             }
         }
     }
@@ -1185,7 +1196,7 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*parsed.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(map.get("age").and_then(|v| v.as_int()), Some(30));
+                assert_eq!(dict_get_exact_str(&map, "age").and_then(|v| v.as_int()), Some(30));
             }
         }
     }
@@ -1216,6 +1227,30 @@ mod tests {
                 assert_eq!(items.len(), 2);
             }
         }
+    }
+
+    #[test]
+    fn test_roundtrip_preserves_nested_equality() {
+        let values = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+        ]));
+        let dict = MbObject::new_dict();
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*dict).data {
+                let mut map = lock.write().unwrap();
+                map.insert("name".into(), s("test"));
+                map.insert("values".into(), values);
+            }
+        }
+        let original = MbValue::from_ptr(dict);
+        let json = mb_json_dumps(sort_dict_keys(original));
+        let parsed = mb_json_loads(json);
+        assert_eq!(
+            crate::runtime::builtins::mb_eq(parsed, original).as_bool(),
+            Some(true)
+        );
     }
 
     // -- Py3.12 conformance --
@@ -1369,8 +1404,8 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*parsed.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(map.get("a").and_then(|v| v.as_int()), Some(1));
-                assert_eq!(map.get("b").and_then(|v| v.as_int()), Some(2));
+                assert_eq!(dict_get_exact_str(&map, "a").and_then(|v| v.as_int()), Some(1));
+                assert_eq!(dict_get_exact_str(&map, "b").and_then(|v| v.as_int()), Some(2));
             } else {
                 panic!("expected dict");
             }
@@ -1515,8 +1550,8 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*decoded.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                assert_eq!(map.get("k").and_then(|v| v.as_int()), Some(99));
-                assert_eq!(get_str(*map.get("name").unwrap()), "mamba");
+                assert_eq!(dict_get_exact_str(&map, "k").and_then(|v| v.as_int()), Some(99));
+                assert_eq!(get_str(dict_get_exact_str(&map, "name").unwrap()), "mamba");
             } else {
                 panic!("expected dict");
             }
