@@ -40,6 +40,7 @@ fn dev_spec() -> LumenSpec {
         log_level: None,
         auth: AuthMode::Off,
         tokens_secret: None,
+        tokens_secret_provider_class: None,
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 1,
@@ -65,6 +66,7 @@ fn prod_spec() -> LumenSpec {
         log_level: Some("warn".into()),
         auth: AuthMode::Required,
         tokens_secret: Some("lumen-tokens".into()),
+        tokens_secret_provider_class: None,
         serving: ServingSpec {
             autoscaling: Autoscaling {
                 min_replicas: 6,
@@ -368,6 +370,76 @@ fn prod_wires_auth_and_observability() {
 }
 
 #[test]
+fn prod_wires_auth_via_csi_secret_provider_class() {
+    let mut spec = prod_spec();
+    spec.tokens_secret = None;
+    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
+    let l = lumen("lumen", spec);
+    let objs = render(&l);
+
+    // auth=required + tokensSecretProviderClass (no tokensSecret) → registry
+    // file env + CSI volume mount, same mount path/readOnly as the Secret path.
+    let dep = find(&objs, "StatefulSet", "lumen");
+    let c = &dep["spec"]["template"]["spec"]["containers"][0];
+    let registry_env = c["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "LUMEN_TOKEN_REGISTRY_FILE")
+        .expect("LUMEN_TOKEN_REGISTRY_FILE env");
+    assert_eq!(
+        registry_env["value"],
+        "/var/run/secrets/lumen/token-registry.json"
+    );
+    let registry_mount = c["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "lumen-token-registry")
+        .expect("token registry mount");
+    assert_eq!(registry_mount["mountPath"], "/var/run/secrets/lumen");
+    assert_eq!(registry_mount["readOnly"], true);
+    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "lumen-token-registry")
+        .expect("token registry volume");
+    assert!(
+        registry_volume["secret"].is_null(),
+        "CSI-sourced volume must not carry a secret key: {registry_volume}"
+    );
+    assert_eq!(registry_volume["csi"]["driver"], "secrets-store.csi.k8s.io");
+    assert_eq!(registry_volume["csi"]["readOnly"], true);
+    assert_eq!(
+        registry_volume["csi"]["volumeAttributes"]["secretProviderClass"],
+        "lumen-tokens-spc"
+    );
+}
+
+#[test]
+fn tokens_secret_wins_over_provider_class_when_both_set() {
+    let mut spec = prod_spec();
+    spec.tokens_secret_provider_class = Some("lumen-tokens-spc".into());
+    let l = lumen("lumen", spec);
+    let objs = render(&l);
+
+    // Both set → tokensSecret wins (backward compatible); no csi key at all.
+    let dep = find(&objs, "StatefulSet", "lumen");
+    let registry_volume = dep["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "lumen-token-registry")
+        .expect("token registry volume");
+    assert_eq!(registry_volume["secret"]["secretName"], "lumen-tokens");
+    assert!(
+        registry_volume["csi"].is_null(),
+        "tokensSecret must win when both fields are set: {registry_volume}"
+    );
+}
+
+#[test]
 fn reshard_status_is_recommendation_only_without_capacity_ceiling() {
     let mut spec = dev_spec();
     spec.reshard_policy.workflow = ReshardWorkflowSpec {
@@ -510,6 +582,9 @@ fn crd_yaml_emits_lumen_definition() {
         "shardMap",
         "reshardPolicy",
         "PrepareSplit",
+        "tokensSecretProviderClass",
+        "SecretProviderClass",
+        "secrets-store.csi.k8s.io",
     ] {
         assert!(
             yaml.contains(needle),
