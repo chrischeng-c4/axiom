@@ -15,7 +15,7 @@ use relay::server_config::RelayServerConfig;
 use relay::wire::{
     from_cbor, to_cbor, AckResponse, LeaseRequest, LeaseResponse, PublishRequest, CBOR,
 };
-use relay::AppendOutcome;
+use relay::{AppendOutcome, DEFAULT_PRIORITY};
 
 async fn start_server() -> SocketAddr {
     let state = AppState::new(RelayServerConfig::ephemeral());
@@ -78,7 +78,7 @@ async fn publish_cbor_fast_path_over_h2c() {
         headers: Default::default(),
         not_before: None,
         delay_ms: None,
-        priority: 0,
+        priority: DEFAULT_PRIORITY,
     });
     let bytes = client
         .post(url(addr, "/v1/s/publish"))

@@ -2,15 +2,15 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-01T13:17:56.310414+00:00"
-digest = "sha256:7fac8e5bbc30ee5f2263745ef3b554e2675c89c7dd6f75bdbb4daac3ab24e217"
-source_digest = "sha256:7fac8e5bbc30ee5f2263745ef3b554e2675c89c7dd6f75bdbb4daac3ab24e217"
-ir_digest = "sha256:8228263edb495d354fdae94b05281e107ff817ddc6f4afbe61e450fe8806b6ae"
+generated_at = "2026-07-06T07:00:34.881667+00:00"
+digest = "sha256:78d681332399c883c3d47e9c4650ee12ade42132dda1398808982d3d74352b5f"
+source_digest = "sha256:78d681332399c883c3d47e9c4650ee12ade42132dda1398808982d3d74352b5f"
+ir_digest = "sha256:d5a981a7b46031499249627b23dd4a56af72979ba37582b615b07ef118bb698b"
 
 [[files]]
 path = "interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md"
-digest = "sha256:8fedfaa698d57a4f84483aed52c2b146e0879b88059f97290ed7ccf11f57bf25"
-ir_digest = "sha256:320d5a9d82852878ee52de774558112ff3fe4d9e4ad43bf8ea7b00df96d010d3"
+digest = "sha256:c61444f8aa2939428688320b76d7f611664e8547c974b5bc817475ce0ccbe881"
+ir_digest = "sha256:80b080f30889c1100e5b3ed7a37a8cf3e2ec4f10d0db9c1db0baa9e5a21781d0"
 section_count = 6
 
 [[files]]
@@ -39,14 +39,14 @@ section_count = 4
 
 [[files]]
 path = "logic/core-durable-log-single-multi-broadcast-delivery-model.md"
-digest = "sha256:68a78573773599143e18a1d685b5cfc3a9f77e09817f39913e84262bb886319f"
-ir_digest = "sha256:16043ec2e8e753d9df3999363974cd6c953566a10947b4e4e479de893238893b"
+digest = "sha256:2c529e192b23166b2dd7ade0c8da103e6458eca13c7d6899360447809eb48cff"
+ir_digest = "sha256:95c9fb03f0f7994c3a0ecd4875d41455d6401be81a2a792689229db7a1f903a6"
 section_count = 5
 
 [[files]]
 path = "logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md"
-digest = "sha256:59948f81413e00d80c09861eddab47ed3c6fd0cfb9d7f07f16abc5c3f52f1275"
-ir_digest = "sha256:8e904c141f4910582db1829a1223ea037ff0c625a10bf264c5b875a472ad7864"
+digest = "sha256:d33f67ed4ccd592ca7ae3145e443f18a470f74f0d39f87d35a8935e1a019d39b"
+ir_digest = "sha256:1858b98a882785b0484d5499c9d3f5138cb679d41b37e3257066d7d618cafd91"
 section_count = 5
 
 [[files]]
@@ -99,6 +99,6 @@ section_count = 3
 
 [[files]]
 path = "logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md"
-digest = "sha256:176fa127b524b2c2f9df3fae2c550cfa1191a7d193e72dc22fac4aa67c3fe61e"
-ir_digest = "sha256:e3d87bc0ac7948bb88171c0186e7212fb2991cf783692f3dee217ab7a150251e"
+digest = "sha256:43ec0559d7dd398369189998dd3f650bda53482f0ac3dc9523c1f5e28dd11021"
+ir_digest = "sha256:c17da182705efb47a7872fa0b29a664d0f925c8ad490283ff5b760831530af4c"
 section_count = 5

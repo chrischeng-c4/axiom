@@ -148,9 +148,10 @@ pub async fn publish(
     let now = Utc::now();
     // Resolve the optional visibility gate: explicit not_before wins, else
     // delay_ms is a countdown from now (delayed / ETA / countdown delivery).
-    let not_before = req
-        .not_before
-        .or_else(|| req.delay_ms.map(|ms| now + chrono::Duration::milliseconds(ms as i64)));
+    let not_before = req.not_before.or_else(|| {
+        req.delay_ms
+            .map(|ms| now + chrono::Duration::milliseconds(ms as i64))
+    });
     let result = st.relay.publish_at(
         &subject,
         &req.message_id,
@@ -188,7 +189,7 @@ pub async fn publish_batch(
     let messages = req
         .messages
         .into_iter()
-        .map(|m| (m.message_id, m.payload, m.headers))
+        .map(|m| (m.message_id, m.payload, m.headers, m.priority))
         .collect();
     match st.relay.publish_batch(&subject, messages, now) {
         Ok(outcomes) => encode_body(cbor, StatusCode::OK, &PublishBatchResponse { outcomes }),

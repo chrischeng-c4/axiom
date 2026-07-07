@@ -21,7 +21,9 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 
 use crate::config::{FsyncPolicy, RelayCoreConfig};
-use crate::types::{AppendOutcome, LogEntry, MessageId, Payload, Seq, ShardId, Subject};
+use crate::types::{
+    AppendOutcome, LogEntry, MessageId, Payload, Seq, ShardId, Subject, DEFAULT_PRIORITY,
+};
 
 /// One on-disk NDJSON segment holding seqs `[base_seq, next segment's base_seq)`.
 struct Segment {
@@ -437,11 +439,11 @@ impl Log {
         headers: BTreeMap<String, String>,
         now: DateTime<Utc>,
     ) -> io::Result<AppendOutcome> {
-        self.append_at(message_id, payload, headers, None, 0, now)
+        self.append_at(message_id, payload, headers, None, DEFAULT_PRIORITY, now)
     }
 
     /// Append with an optional `not_before` work-queue visibility gate (delayed /
-    /// ETA delivery) and a priority band. Idempotent on `message_id`.
+    /// ETA delivery) and a priority. Idempotent on `message_id`.
     ///
     /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
     pub fn append_at(
@@ -495,12 +497,12 @@ impl Log {
     /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
     pub fn append_many(
         &mut self,
-        items: Vec<(String, Payload, BTreeMap<String, String>)>,
+        items: Vec<(String, Payload, BTreeMap<String, String>, u8)>,
         now: DateTime<Utc>,
     ) -> io::Result<Vec<AppendOutcome>> {
         let mut outcomes = Vec::with_capacity(items.len());
         let disk = self.writer.is_some();
-        for (message_id, payload, headers) in items {
+        for (message_id, payload, headers, priority) in items {
             if let Some(&seq) = self.dedupe.get(&message_id) {
                 outcomes.push(AppendOutcome { seq, deduped: true });
                 continue;
@@ -516,7 +518,7 @@ impl Log {
                 headers,
                 appended_at: now,
                 not_before: None,
-                priority: 0,
+                priority,
             };
             self.write_line(&entry)?;
             self.dedupe_insert(message_id, seq);

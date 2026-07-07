@@ -8,13 +8,14 @@ use std::collections::BTreeMap;
 
 use chrono::Utc;
 
-use relay::{FsyncPolicy, Relay, RelayCoreConfig};
+use relay::{FsyncPolicy, Relay, RelayCoreConfig, DEFAULT_PRIORITY};
 
-fn item(id: &str) -> (String, serde_json::Value, BTreeMap<String, String>) {
+fn item(id: &str) -> (String, serde_json::Value, BTreeMap<String, String>, u8) {
     (
         id.to_string(),
         serde_json::json!({ "id": id }),
         BTreeMap::new(),
+        DEFAULT_PRIORITY,
     )
 }
 

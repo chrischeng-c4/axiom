@@ -18,10 +18,10 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::types::{CommittedOffset, Lease, Seq, ShardId};
 
-/// Number of priority bands (0 = lowest / default, `PRIORITY_BANDS-1` = highest).
-/// Small + bounded so `pick` stays O(bands) ≈ O(1). A `priority` is clamped into
-/// `0..PRIORITY_BANDS`.
-const PRIORITY_BANDS: usize = 8;
+/// Number of priority bands (0 = lowest, 255 = highest).
+/// Small + bounded so `pick` stays O(bands) ≈ O(1). Every `u8` value maps to a
+/// distinct band.
+const PRIORITY_BANDS: usize = u8::MAX as usize + 1;
 
 /// One priority band's ready set: never-offered entries in publish (seq) order,
 /// and reclaimed/promoted entries re-offered smallest-seq-first.
@@ -176,7 +176,8 @@ impl WorkQueue {
         }
         self.note_priority(seq, priority);
         if self.delayed_set.insert(seq) {
-            self.delayed.push(Reverse((visible_at.timestamp_millis(), seq)));
+            self.delayed
+                .push(Reverse((visible_at.timestamp_millis(), seq)));
         }
     }
 

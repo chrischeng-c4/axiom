@@ -67,6 +67,7 @@ pub use server_config::RelayServerConfig;
 pub use shard::shard_for;
 pub use types::{
     AppendOutcome, CommittedOffset, Lease, LogEntry, MessageId, Payload, Seq, ShardId, Subject,
+    DEFAULT_PRIORITY,
 };
 pub use workqueue::WorkQueue;
 // HANDWRITE-END

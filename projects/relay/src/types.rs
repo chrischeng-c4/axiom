@@ -12,6 +12,17 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Default work-queue priority for producer requests that omit it.
+///
+/// Priority is an unsigned byte: `0` is lowest, `255` is highest, and higher
+/// values lease before lower values. The default is intentionally low-ish so
+/// most tasks can stay at baseline while urgent tasks have plenty of headroom.
+pub const DEFAULT_PRIORITY: u8 = 10;
+
+pub fn default_priority() -> u8 {
+    DEFAULT_PRIORITY
+}
+
 /// Opaque message body carried by the broker.
 ///
 /// The relay core is payload-agnostic (epic #120: the broker "knows nothing
@@ -59,9 +70,9 @@ pub struct LogEntry {
     /// `None` = leasable at once. Does not affect broadcast replay.
     #[serde(default)]
     pub not_before: Option<DateTime<Utc>>,
-    /// Work-queue priority band (0 = lowest / default; higher leases first).
+    /// Work-queue priority (0 = lowest, 255 = highest; higher leases first).
     /// Does not affect broadcast.
-    #[serde(default)]
+    #[serde(default = "default_priority")]
     pub priority: u8,
 }
 

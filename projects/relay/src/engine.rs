@@ -25,7 +25,9 @@ use chrono::{DateTime, Utc};
 use crate::config::RelayCoreConfig;
 use crate::log::Log;
 use crate::shard::shard_for;
-use crate::types::{AppendOutcome, CommittedOffset, Lease, LogEntry, Payload, Seq, ShardId};
+use crate::types::{
+    AppendOutcome, CommittedOffset, Lease, LogEntry, Payload, Seq, ShardId, DEFAULT_PRIORITY,
+};
 use crate::workqueue::{LeaseOrDead, WorkQueue};
 use tokio::sync::watch;
 
@@ -171,7 +173,15 @@ impl Relay {
         headers: BTreeMap<String, String>,
         now: DateTime<Utc>,
     ) -> io::Result<AppendOutcome> {
-        self.publish_at(subject, message_id, payload, headers, None, 0, now)
+        self.publish_at(
+            subject,
+            message_id,
+            payload,
+            headers,
+            None,
+            DEFAULT_PRIORITY,
+            now,
+        )
     }
 
     /// Publish with an optional `not_before` work-queue visibility gate (short
@@ -220,13 +230,13 @@ impl Relay {
     pub fn publish_batch(
         &self,
         subject: &str,
-        messages: Vec<(String, Payload, BTreeMap<String, String>)>,
+        messages: Vec<(String, Payload, BTreeMap<String, String>, u8)>,
         now: DateTime<Utc>,
     ) -> io::Result<Vec<AppendOutcome>> {
         // Partition by shard, preserving the original index.
         let mut buckets: HashMap<
             ShardId,
-            Vec<(usize, (String, Payload, BTreeMap<String, String>))>,
+            Vec<(usize, (String, Payload, BTreeMap<String, String>, u8))>,
         > = HashMap::new();
         for (i, msg) in messages.into_iter().enumerate() {
             let shard = self.route(&msg.0);
@@ -241,11 +251,16 @@ impl Relay {
             let outcomes = {
                 let mut g = ss.lock().expect("subject mutex");
                 let outcomes = g.log.append_many(msgs, now)?;
-                // Offer each new entry into the work-queue (batch = priority 0,
-                // immediate). Without this the entries would never be leasable.
+                // Offer each new entry into the work-queue using its persisted
+                // priority. Without this the entries would never be leasable.
                 for oc in &outcomes {
                     if !oc.deduped {
-                        g.workqueue.offer_fresh(oc.seq, 0);
+                        let priority = g
+                            .log
+                            .entry(oc.seq)?
+                            .map(|e| e.priority)
+                            .unwrap_or(DEFAULT_PRIORITY);
+                        g.workqueue.offer_fresh(oc.seq, priority);
                     }
                 }
                 outcomes

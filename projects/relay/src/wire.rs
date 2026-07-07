@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::types::{AppendOutcome, Lease, LogEntry, Payload, Seq};
+use crate::types::{default_priority, AppendOutcome, Lease, LogEntry, Payload, Seq};
 
 /// Publish one message to the path's subject.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,8 +33,8 @@ pub struct PublishRequest {
     /// `now + delay_ms`; if both are set, `not_before` wins.
     #[serde(default)]
     pub delay_ms: Option<u64>,
-    /// Work-queue priority band (0 = lowest / default; higher leases first).
-    #[serde(default)]
+    /// Work-queue priority (0 = lowest, 255 = highest; higher leases first).
+    #[serde(default = "default_priority")]
     pub priority: u8,
 }
 
@@ -125,6 +125,9 @@ pub struct PublishBatchItem {
     pub payload: Payload,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// Work-queue priority (0 = lowest, 255 = highest; higher leases first).
+    #[serde(default = "default_priority")]
+    pub priority: u8,
 }
 
 /// Publish many messages in one durable, group-committed call.

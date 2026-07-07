@@ -90,6 +90,12 @@ definitions:
       headers:
         type: object
         additionalProperties: { type: string }
+      priority:
+        type: integer
+        minimum: 0
+        maximum: 255
+        default: 10
+        description: "Work-queue priority (0 = lowest, 255 = highest; higher leases first)."
 
   PublishBatchRequest:
     type: object

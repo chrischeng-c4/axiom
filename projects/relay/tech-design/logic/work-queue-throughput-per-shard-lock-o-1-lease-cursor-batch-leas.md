@@ -245,8 +245,8 @@ nodes:
   a_ackbatch: { kind: terminal, label: "assert acked count + committed_seq advances; stale epoch in batch is skipped" }
   t_concurrency: { kind: process, label: "two subjects driven concurrently from many tasks" }
   a_concurrency: { kind: terminal, label: "assert each subject's messages each delivered exactly once (per-shard lock isolates subjects)" }
-  t_priority: { kind: process, label: "publish across priority bands (a higher band published AFTER a lower one); out-of-range priority" }
-  a_priority: { kind: terminal, label: "assert higher band leases first, same-band order is FIFO, and an out-of-range priority clamps into the top band" }
+  t_priority: { kind: process, label: "publish across u8 priority bands (a higher band published AFTER a lower one); max priority" }
+  a_priority: { kind: terminal, label: "assert higher band leases first, same-band order is FIFO, and u8::MAX is the top band" }
 edges:
   - { from: suite, to: t_order }
   - { from: t_order, to: a_order }
@@ -277,7 +277,7 @@ flowchart TD
     suite --> t_concurrency[two subjects concurrent]
     t_concurrency --> a_concurrency([exactly-once per subject])
     suite --> t_priority[publish across bands]
-    t_priority --> a_priority([higher band first; FIFO; clamp])
+    t_priority --> a_priority([higher band first; FIFO; u8 max])
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -323,7 +323,7 @@ changes:
     action: create
     section: unit-test
     impl_mode: hand-written
-    reason: "Phase 5 tests: higher priority band leases first (even when published later), same-band FIFO, and out-of-range priority clamps into the top band."
+    reason: "Phase 5 tests: higher priority band leases first (even when published later), same-band FIFO, default priority is 10, batch publish preserves per-message priority, and u8::MAX is the top band."
 ```
 
 # Reviews

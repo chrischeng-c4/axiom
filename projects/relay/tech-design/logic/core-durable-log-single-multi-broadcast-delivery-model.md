@@ -179,7 +179,10 @@ definitions:
         description: "Work-queue visibility gate (delayed / ETA / countdown): durably appended at once but not leasable until this time. Null = leasable immediately."
       priority:
         type: integer
-        description: "Work-queue priority band (0 = lowest / default; higher leases first, clamped to the band count)."
+        minimum: 0
+        maximum: 255
+        default: 10
+        description: "Work-queue priority (0 = lowest, 255 = highest; higher leases first)."
 
   AppendOutcome:
     type: object
