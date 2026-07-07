@@ -8,7 +8,7 @@ build:
   debug: as-needed
   release: perf-only
 verify:
-  test: cargo test -p cclab-mamba
+  test: cargo test -p mamba
   perf: required
   perf_baseline: cpython
   perf_threshold: 1.0x
@@ -35,11 +35,11 @@ mode: autopilot
 - Mainthread acts as PM + QA: pick, validate gates, ship. Heavy code/test/spec authorship should go to a subagent (see "When to dispatch a subagent" below). Inline trivial one-liners are fine.
 
 ## Build policy
-- **Debug**: build only when a runtime change requires it (`cargo build -p cclab-mamba` or `mamba-build-debug` skill). Don't build per issue if tests cover the change.
+- **Debug**: build only when a runtime change requires it (`cargo build -p mamba` or `mamba-build-debug` skill). Don't build per issue if tests cover the change.
 - **Release**: only required when running perf benches that need an installed `mamba` binary on PATH. Use `mamba-build-release` skill (it bumps patch, builds, installs, tags). Don't release-build for every issue — batch perf runs where possible.
 
 ## Definition of done — four gates (all must hold)
-1. **Test gate** — `cargo test -p cclab-mamba` passes. For stdlib lib issues, also run the lib's behavior test fixture under `projects/mamba/tests/` or `benches/`.
+1. **Test gate** — `cargo test -p mamba` passes. For stdlib lib issues, also run the lib's behavior test fixture under `projects/mamba/tests/` or `benches/`.
 2. **Axis-1 gate** — `cargo test -p mamba --test conformance_cpython_lib_test` passes under the debug build. **Required on every PR**, including ones that don't touch the runner. If a PR's changes flip a previously-green axis-1 seed to red, the PR cannot merge; the fix lands in the same PR. This enforces epic #3331 discipline rules 3 + 4 (no xfail/Stub/ImportPass; growing-only allowlist) — without it, future iterations can silently regress axis 1. Release-profile runs are reserved for perf and final promotion, not normal runtime development.
 3. **Perf gate** — measured perf ≥ 1.0× CPython wall-time for the relevant workload. **Mamba's primary product is perf+memory > CPython; conformance is secondary.** If the lib can't beat CPython on any reasonable workload, comment on the issue with the numbers and close as `wontfix` or defer to a runtime/JIT followup — don't ship a slower mamba.
 4. **Real-world verification** — typeshed type check passes OR a real-world fixture (one of the `ecosystem_fixture_manifest.toml` entries, or a small idiomatic snippet) runs and produces the expected output.
