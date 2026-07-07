@@ -66,7 +66,11 @@ impl AppState {
 /// per-handler change (the engine already keys by subject string). Pure + tested.
 fn namespaced_path(path: &str, ns: &str) -> Option<String> {
     // only safe namespace chars (path-segment safe, no collision tricks)
-    if ns.is_empty() || !ns.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+    if ns.is_empty()
+        || !ns
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
         return None;
     }
     let rest = path.strip_prefix("/v1/")?;
@@ -77,11 +81,19 @@ fn namespaced_path(path: &str, ns: &str) -> Option<String> {
 /// Middleware: if `X-Relay-Namespace` is set, rewrite the request path to scope
 /// the subject to that namespace.
 async fn namespace_layer(req: Request, next: Next) -> Response {
-    let ns = req.headers().get("x-relay-namespace").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let ns = req
+        .headers()
+        .get("x-relay-namespace")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let mut req = req;
     if let Some(ns) = ns {
         if let Some(new_path) = namespaced_path(req.uri().path(), &ns) {
-            let q = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+            let q = req
+                .uri()
+                .query()
+                .map(|q| format!("?{q}"))
+                .unwrap_or_default();
             if let Ok(pq) = format!("{new_path}{q}").parse() {
                 let mut parts = req.uri().clone().into_parts();
                 parts.path_and_query = Some(pq);
@@ -128,7 +140,9 @@ pub fn router(state: AppState) -> Router {
     // BEFORE routing so the rewritten subject is the one matched + captured. A
     // `.layer` on `app` runs *after* path-param capture, so wrap `app` as the
     // fallback of an outer router whose layer runs first.
-    Router::new().fallback_service(app).layer(middleware::from_fn(namespace_layer))
+    Router::new()
+        .fallback_service(app)
+        .layer(middleware::from_fn(namespace_layer))
 }
 
 #[cfg(test)]

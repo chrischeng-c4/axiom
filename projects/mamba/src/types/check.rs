@@ -119,6 +119,17 @@ fn is_exception_class_name(name: &str) -> bool {
     )
 }
 
+/// Numeric builtin reached by a user class's base chain (#1031). `bool`
+/// cannot be subclassed in Python (`TypeError: type 'bool' is not an
+/// acceptable base type`), so the only reachable roots are `int` and
+/// `float`; kept distinct because int-only contexts (`~`, `<<`, `>>`) must
+/// still reject a `float`-derived class exactly like a bare `float` would.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NumericRoot {
+    Int,
+    Float,
+}
+
 /// Type checker: walks the AST, resolves names, and checks types.
 #[derive(Debug, Clone)]
 pub(crate) struct FunctionParamSig {
@@ -181,6 +192,21 @@ pub struct TypeChecker {
     /// Classes with any base or any method are NOT recorded here, so they are
     /// always skipped — keeping the bare-class rejection false-positive-clean.
     pub(crate) user_bare_classes: std::collections::HashSet<String>,
+    /// User classes whose base chain reaches a numeric builtin (#1031),
+    /// mapped to which builtin (`int` or `float`) they ultimately derive
+    /// from. Lets numeric-only compile checks (unary `-`/`+`/`~`, shifts,
+    /// ...) accept `class P(int): pass; -P(7)` without loosening rejection
+    /// of genuinely non-numeric classes. See [`NumericRoot`] and
+    /// [`TypeChecker::numeric_root`].
+    pub(crate) numeric_derived_classes: std::collections::HashMap<String, NumericRoot>,
+    /// #1041: maps a user class name to the identifier bases it declares
+    /// (`class W(V): pass` -> `"W" -> ["V"]`), letting the unary/shift dunder
+    /// wall (`check_expr.rs::class_defines_dunder`) walk the inheritance
+    /// chain to find a dunder override several levels up, not just on the
+    /// immediate class. Sibling of `numeric_derived_classes` above, which
+    /// only tracks chains reaching `int`/`float`; this map is general-purpose
+    /// and unfiltered (any identifier base, not just numeric ones).
+    pub(crate) class_bases: HashMap<String, Vec<String>>,
     /// Subject type of the enclosing `match` statement, used to propagate type
     /// into capture / star / AS bindings in `check_pattern` (#827).
     pub(crate) current_match_subject_ty: Option<TypeId>,
@@ -209,6 +235,16 @@ pub struct TypeChecker {
     /// `object.__new__(Cls)` or `Cls(...)` where `Cls` is a known imported
     /// stdlib class. Lets `obj.method(arg)` resolve to a `Method` signature.
     pub(crate) instance_origins: HashMap<String, String>,
+    /// #1021: maps a local variable name to the native-class name it aliases
+    /// when the var is assigned a bare *class reference* (not a call) to a
+    /// `NATIVE_CTOR_CLASSES` entry — e.g. `_Queue = queue.Queue` (the
+    /// perf-tier "hoist convention (#2097)" that binds `module.Cls` locally
+    /// to avoid a per-iteration module-attribute lookup before calling it as
+    /// `_Queue()`). Lets `native_ctor_class_call` recognize the *aliased*
+    /// constructor call the same way it recognizes the direct
+    /// `queue.Queue()` form. Cleared on any reassignment to something else,
+    /// mirroring `instance_origins`'s discipline.
+    pub(crate) class_ref_origins: HashMap<String, &'static str>,
     /// Original symbol ids for builtin function names registered during
     /// TypeChecker construction. If the current lookup no longer matches this
     /// id, user code has shadowed the builtin and stdlib signature enforcement
@@ -238,10 +274,13 @@ impl TypeChecker {
             class_unbound_methods: HashMap::new(),
             typed_dict_classes: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
+            numeric_derived_classes: std::collections::HashMap::new(),
+            class_bases: HashMap::new(),
             current_match_subject_ty: None,
             comprehension_depth: 0,
             import_origins: HashMap::new(),
             instance_origins: HashMap::new(),
+            class_ref_origins: HashMap::new(),
             builtin_symbols: HashMap::new(),
         };
         tc.register_builtins();
@@ -460,6 +499,22 @@ impl TypeChecker {
                     // Collect class methods for protocol conformance
                     self.collect_class_methods(name, body);
 
+                    // #1041: record this class's identifier bases (unfiltered,
+                    // not just numeric ones) so `class_defines_dunder`
+                    // (check_expr.rs) can walk the inheritance chain to find
+                    // a unary/shift dunder override declared on an ancestor
+                    // rather than the immediate class.
+                    let base_names: Vec<String> = bases
+                        .iter()
+                        .filter_map(|b| match &b.node {
+                            Expr::Ident(n) => Some(n.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    if !base_names.is_empty() {
+                        self.class_bases.insert(name.clone(), base_names);
+                    }
+
                     // Record a BARE class (no base other than `object`, no
                     // methods): such an instance can satisfy neither a protocol
                     // nor a nominal type, so the ① hook may reject it against a
@@ -474,6 +529,30 @@ impl TypeChecker {
                         decorators.iter().any(|d| is_dataclass_decorator(&d.node));
                     if only_object_base && !has_method && !dataclass_decorated {
                         self.user_bare_classes.insert(name.clone());
+                    }
+
+                    // #1031: record classes whose base chain reaches a
+                    // numeric builtin (`int`/`float`) so numeric-only
+                    // compile checks accept their instances. Python requires
+                    // a base class to already be defined when a `ClassDef`'s
+                    // bases are evaluated, so classes are visited in an order
+                    // where `numeric_derived_classes` already holds any base
+                    // that itself derives a numeric builtin — a single
+                    // forward lookup (no explicit recursion) resolves
+                    // multi-level chains like `class Q(P): pass` where
+                    // `P(int)`.
+                    let numeric_root = bases.iter().find_map(|b| {
+                        let Expr::Ident(n) = &b.node else {
+                            return None;
+                        };
+                        match n.as_str() {
+                            "int" | "bool" => Some(NumericRoot::Int),
+                            "float" => Some(NumericRoot::Float),
+                            _ => self.numeric_derived_classes.get(n).copied(),
+                        }
+                    });
+                    if let Some(root) = numeric_root {
+                        self.numeric_derived_classes.insert(name.clone(), root);
                     }
 
                     // Detect Protocol base class and register
@@ -775,6 +854,12 @@ impl TypeChecker {
                         // parser for introspection): annotations are never
                         // validated as types in CPython — treat as Any.
                         self.tcx.any()
+                    } else if self.allow_runtime_unresolved_names {
+                        // Runtime execution keeps CPython's dynamic behavior:
+                        // an unresolved annotation name must not abort module
+                        // execution during static checking. Defer it to runtime
+                        // annotation consumers and type the slot as Any.
+                        self.tcx.any()
                     } else {
                         self.error(ty.span, format!("unknown type: `{name}`"));
                         self.tcx.error()
@@ -837,6 +922,11 @@ impl TypeChecker {
                             // or `collections.abc.Mapping[K, V]` (#1578):
                             // external/forward generic — treat as Any so
                             // CPython-style annotations type-check.
+                            self.tcx.any()
+                        } else if self.allow_runtime_unresolved_names {
+                            // Same run-mode carve-out as bare names above:
+                            // unresolved generic heads in annotations should
+                            // not fail the whole file before runtime.
                             self.tcx.any()
                         } else {
                             self.error(ty.span, format!("unknown generic type: `{name}`"));

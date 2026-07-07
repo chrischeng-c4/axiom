@@ -83,7 +83,9 @@ fn export_clause(export_type: SvgrExportType) -> String {
     match export_type {
         SvgrExportType::Named => "export { ReactComponent };\n".to_string(),
         SvgrExportType::Default => "export default ReactComponent;\n".to_string(),
-        SvgrExportType::Both => "export { ReactComponent };\nexport default ReactComponent;\n".to_string(),
+        SvgrExportType::Both => {
+            "export { ReactComponent };\nexport default ReactComponent;\n".to_string()
+        }
     }
 }
 
@@ -634,7 +636,10 @@ mod tests {
         let module = transform_svg_to_component(svg, SvgrExportType::Named).unwrap();
         assert!(module.contains("className=\"icon\""), "module:\n{module}");
         assert!(module.contains("className=\"fill\""), "module:\n{module}");
-        assert!(!module.contains(" class="), "should not emit raw class= :\n{module}");
+        assert!(
+            !module.contains(" class="),
+            "should not emit raw class= :\n{module}"
+        );
     }
 
     #[test]

@@ -9,7 +9,6 @@
 # case = "clear_frames_empties_frame_locals"
 # subject = "traceback.clear_frames"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

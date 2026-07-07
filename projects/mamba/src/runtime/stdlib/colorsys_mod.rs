@@ -42,31 +42,14 @@ dispatch_ternary!(dispatch_hls_to_rgb, mb_colorsys_hls_to_rgb);
 dispatch_ternary!(dispatch_rgb_to_yiq, mb_colorsys_rgb_to_yiq);
 dispatch_ternary!(dispatch_yiq_to_rgb, mb_colorsys_yiq_to_rgb);
 
-pub fn register() {
-    let mut attrs = HashMap::new();
-    let dispatchers: Vec<(&str, usize)> = vec![
-        ("rgb_to_hsv", dispatch_rgb_to_hsv as usize),
-        ("hsv_to_rgb", dispatch_hsv_to_rgb as usize),
-        ("rgb_to_hls", dispatch_rgb_to_hls as usize),
-        ("hls_to_rgb", dispatch_hls_to_rgb as usize),
-        ("rgb_to_yiq", dispatch_rgb_to_yiq as usize),
-        ("yiq_to_rgb", dispatch_yiq_to_rgb as usize),
-    ];
-    for (name, addr) in dispatchers {
-        attrs.insert(name.to_string(), MbValue::from_func(addr));
-        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-            s.borrow_mut().insert(addr as u64);
-        });
-    }
-
-    // Module-level constants (undocumented in CPython but part of the
-    // public surface — used by HLS helpers).
-    attrs.insert("ONE_SIXTH".to_string(), MbValue::from_float(1.0 / 6.0));
-    attrs.insert("ONE_THIRD".to_string(), MbValue::from_float(1.0 / 3.0));
-    attrs.insert("TWO_THIRD".to_string(), MbValue::from_float(2.0 / 3.0));
-
-    super::register_module("colorsys", attrs);
-}
+// #868 round 4: de-registered — `colorsys` now resolves to the vendored
+// CPython source (`vendor_lib::VENDORED_MODULES`). A registered native
+// module would be pre-seeded into `MODULES` and permanently shadow the
+// vendored `.py` (mb_import is cache-first), so this is a deliberate no-op;
+// the call site in `stdlib::register_stdlib()` is kept as-is so a revert is
+// a one-line change here rather than a mod.rs edit.
+#[allow(dead_code)]
+pub fn register() {}
 
 // ── Helper ──
 
@@ -355,18 +338,17 @@ mod tests {
         assert!(q.abs() < 1e-9, "q={q}");
     }
 
-    // REQ: REQ-001 (registration smoke-test)
+    // REQ: #868 vendored-source de-registration guard.
     #[test]
-    fn test_register_installs_module() {
-        // Calling register() must not panic.
-        // Because MODULES is thread_local and tests may share the same thread,
-        // we just verify the call completes and the module name is queryable.
+    fn test_register_keeps_module_deregistered() {
+        super::super::super::module::cleanup_all_modules();
         register();
         use super::super::super::module::MODULES;
         let present = MODULES.with(|m| m.borrow().contains_key("colorsys"));
         assert!(
-            present,
-            "colorsys module should be in the registry after register()"
+            !present,
+            "colorsys register() must stay no-op so vendored colorsys.py wins import resolution"
         );
+        super::super::super::module::cleanup_all_modules();
     }
 }

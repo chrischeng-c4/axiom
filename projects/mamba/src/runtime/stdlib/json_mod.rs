@@ -201,7 +201,8 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                     // unserializable objects via the hook (a JSONEncoder
                     // subclass instance's default(), or a plain default
                     // callable). cls() is instantiated to obtain that method.
-                    let hook = if let Some(d) = map.get("default").copied().filter(|v| !v.is_none()) {
+                    let hook = if let Some(d) = map.get("default").copied().filter(|v| !v.is_none())
+                    {
                         d
                     } else if let Some(c) = map.get("cls").copied().filter(|v| !v.is_none()) {
                         super::super::class::mb_call0(c)
@@ -665,10 +666,8 @@ fn mbvalue_to_json_h(val: MbValue, hook: MbValue) -> serde_json::Value {
                 ObjData::Str(s) => serde_json::Value::String(s.clone()),
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> = items
-                        .iter()
-                        .map(|v| mbvalue_to_json_h(*v, hook))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json_h(*v, hook)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Dict(ref lock) => {
@@ -680,10 +679,8 @@ fn mbvalue_to_json_h(val: MbValue, hook: MbValue) -> serde_json::Value {
                     serde_json::Value::Object(obj)
                 }
                 ObjData::Tuple(items) => {
-                    let arr: Vec<serde_json::Value> = items
-                        .iter()
-                        .map(|v| mbvalue_to_json_h(*v, hook))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json_h(*v, hook)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Set(ref lock) => {
@@ -692,10 +689,8 @@ fn mbvalue_to_json_h(val: MbValue, hook: MbValue) -> serde_json::Value {
                         return mbvalue_to_json_h(r, hook);
                     }
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> = items
-                        .iter()
-                        .map(|v| mbvalue_to_json_h(*v, hook))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json_h(*v, hook)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::FrozenSet(items) => {
@@ -703,10 +698,8 @@ fn mbvalue_to_json_h(val: MbValue, hook: MbValue) -> serde_json::Value {
                         let r = call_default_hook(hook, val);
                         return mbvalue_to_json_h(r, hook);
                     }
-                    let arr: Vec<serde_json::Value> = items
-                        .iter()
-                        .map(|v| mbvalue_to_json_h(*v, hook))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json_h(*v, hook)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Bytes(data) => {
@@ -1088,9 +1081,7 @@ pub fn mb_json_loads(val: MbValue) -> MbValue {
                             );
                             m.insert(
                                 "__class__".to_string(),
-                                MbValue::from_ptr(MbObject::new_str(
-                                    "JSONDecodeError".to_string(),
-                                )),
+                                MbValue::from_ptr(MbObject::new_str("JSONDecodeError".to_string())),
                             );
                         }
                     }

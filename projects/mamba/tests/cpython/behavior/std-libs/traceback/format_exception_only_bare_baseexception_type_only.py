@@ -9,7 +9,6 @@
 # case = "format_exception_only_bare_baseexception_type_only"
 # subject = "traceback.format_exception_only"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

@@ -87,6 +87,7 @@ dispatch_unary!(dispatch_unescape, mb_html_unescape);
 /// accepted, since `convert_charrefs` is the only constructor parameter.
 #[allow(non_snake_case)]
 unsafe extern "C" fn dispatch_HTMLParser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let args: &[MbValue] = if nargs == 0 {
         &[]
     } else {
@@ -189,12 +190,10 @@ pub fn register() {
 
     // isinstance(x, HTMLParser) resolves the constructor func through
     // NATIVE_TYPE_NAMES into the registered class (MRO-aware).
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(
-            dispatch_HTMLParser as usize as u64,
-            "HTMLParser".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_HTMLParser as usize as u64,
+        "HTMLParser".to_string(),
+    );
 
     // Re-wire the `parser` attribute on the parent `html` namespace so
     // `from html import parser` (and `import html; html.parser.HTMLParser`)

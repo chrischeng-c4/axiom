@@ -191,6 +191,39 @@ checkpoint. Do not replace this with `replacement_readiness.py` or full Cargo
 conformance runs in the inner loop; those are milestone gates after a batch of
 runtime changes.
 
+Targeted stress suites for issue-local stability checks:
+
+```bash
+python3.12 tests/harness/cpython/tools/stress_suites.py list
+python3.12 tests/harness/cpython/tools/stress_suites.py soak --repeat 8 --rss-ceiling-kib 524288
+python3.12 tests/harness/cpython/tools/stress_suites.py concurrency --repeat 3
+python3.12 tests/harness/cpython/tools/stress_suites.py debug-assertions
+python3.12 tests/harness/cpython/tools/stress_suites.py debug-assertions --full-crash-corpus --json
+python3.12 tests/harness/cpython/tools/panic_boundary_audit.py --json
+python3.12 tests/harness/cpython/tools/differential_fuzz.py list-seeds
+python3.12 tests/harness/cpython/tools/differential_fuzz.py run --max-cases 6 --json
+```
+
+`stress_suites.py` is the bounded runner for three non-corpus slices:
+
+- `soak`: repeat a small deterministic probe under `mamba run`, measure peak
+  RSS per process run, and fail when a configured ceiling is exceeded.
+- `concurrency`: run focused `concurrency/` fixtures repeatedly with the
+  existing one-line `concurrency: PASS|FAIL` protocol plus outer timeouts so a
+  deadlock is observable immediately.
+- `debug-assertions`: run a small crash-corpus lane against the debug mamba
+  binary; nonzero exits on known xfails are surfaced as `XFAIL`, while
+  timeouts, signals, and panic/assertion output are hard failures. The
+  `--full-crash-corpus` lane aggregates both
+  `_regression/core/compiler_resilience/*.py` and `security/core/crashers/*.py`
+  into one nightly-able crash gate.
+- `panic_boundary_audit.py`: grep-driven inventory of `extern "C"` entry points,
+  raw-address JIT callsites, configured panic strategy, and direct
+  `unwrap`/`expect`/`assert` markers that still sit outside `catch_unwind`.
+- `differential_fuzz.py`: deterministic integer-literal mutation over a small
+  fixture-derived seed set, run under CPython 3.12 and mamba, with JSON counts
+  for `MATCH`, `DIVERGE`, and `CRASH`.
+
 CPython source-suite inventory is a separate reference denominator:
 
 ```bash

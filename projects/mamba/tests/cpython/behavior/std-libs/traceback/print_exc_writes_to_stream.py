@@ -9,7 +9,6 @@
 # case = "print_exc_writes_to_stream"
 # subject = "traceback.print_exc"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

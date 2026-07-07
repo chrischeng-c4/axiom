@@ -21,7 +21,12 @@ and reports the ratio. Floor is 1.0x per #1265 Goal 2.
 import time
 
 # Hoist module attributes outside the loop — see CLAUDE.md note + #2097.
+# Fixture repair (#967): the docstring's "all three clock readers" convention
+# names monotonic/perf_counter/wall_time, but `perf_counter` was never
+# hoisted or called, leaving `b` referenced-but-undefined below (NameError).
+# Restore the third reader.
 monotonic = time.monotonic
+perf_counter = time.perf_counter
 wall_time = time.time
 
 ITERS = 10_000
@@ -29,6 +34,7 @@ ITERS = 10_000
 acc = 0.0
 for _ in range(ITERS):
     a = monotonic()
+    b = perf_counter()
     c = wall_time()
     # Touch each result so the loop body cannot be dead-code-eliminated.
     acc = acc + (a - a) + (b - b) + (c - c)

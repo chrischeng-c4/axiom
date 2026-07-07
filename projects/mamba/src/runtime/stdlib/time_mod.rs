@@ -64,9 +64,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::{
-    DateTime, Datelike, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc,
-};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc};
 
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::super::value::MbValue;
@@ -208,12 +206,10 @@ pub fn register() {
 
     // isinstance(tt, time.struct_time): bind the factory func addr to the
     // class name the instance builder stamps.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(
-            d_struct_time as *const () as usize as u64,
-            "struct_time".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        d_struct_time as *const () as usize as u64,
+        "struct_time".to_string(),
+    );
 
     // Integer clock-id constants.
     attrs.insert(
@@ -407,30 +403,26 @@ fn host_tz_snapshot() -> TzSnapshot {
 /// is non-zero iff a DST timezone is defined.
 fn compute_tz_snapshot() -> TzSnapshot {
     match env_lookup("TZ").as_deref().map(str::trim) {
-        Some("UTC") | Some("UTC0") | Some("UTC+0") | Some("GMT") | Some("GMT0") => {
-            TzSnapshot {
-                timezone_west: 0,
-                altzone_west: 0,
-                daylight: 0,
-                standard_name: "UTC".to_string(),
-                daylight_name: String::new(),
-                fixed_local_offset_east: Some(0),
-                fixed_local_zone: "UTC".to_string(),
-                fixed_local_isdst: 0,
-            }
-        }
-        Some(tz) if tz.starts_with("EST+05EDT") => {
-            TzSnapshot {
-                timezone_west: 5 * 60 * 60,
-                altzone_west: 4 * 60 * 60,
-                daylight: 1,
-                standard_name: "EST".to_string(),
-                daylight_name: "EDT".to_string(),
-                fixed_local_offset_east: Some(-5 * 60 * 60),
-                fixed_local_zone: "EST".to_string(),
-                fixed_local_isdst: 0,
-            }
-        }
+        Some("UTC") | Some("UTC0") | Some("UTC+0") | Some("GMT") | Some("GMT0") => TzSnapshot {
+            timezone_west: 0,
+            altzone_west: 0,
+            daylight: 0,
+            standard_name: "UTC".to_string(),
+            daylight_name: String::new(),
+            fixed_local_offset_east: Some(0),
+            fixed_local_zone: "UTC".to_string(),
+            fixed_local_isdst: 0,
+        },
+        Some(tz) if tz.starts_with("EST+05EDT") => TzSnapshot {
+            timezone_west: 5 * 60 * 60,
+            altzone_west: 4 * 60 * 60,
+            daylight: 1,
+            standard_name: "EST".to_string(),
+            daylight_name: "EDT".to_string(),
+            fixed_local_offset_east: Some(-5 * 60 * 60),
+            fixed_local_zone: "EST".to_string(),
+            fixed_local_isdst: 0,
+        },
         _ => host_tz_snapshot(),
     }
 }
@@ -453,7 +445,9 @@ fn tzname_value(tz: &TzSnapshot) -> MbValue {
 fn env_lookup(key: &str) -> Option<String> {
     let from_environ = super::super::module::MODULES.with(|mods| {
         let mods = mods.borrow();
-        let environ = mods.get("os").and_then(|m| m.attrs.get("environ").copied())?;
+        let environ = mods
+            .get("os")
+            .and_then(|m| m.attrs.get("environ").copied())?;
         let ptr = environ.as_ptr()?;
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -471,7 +465,9 @@ fn set_time_module_attr(name: &str, value: MbValue) {
     let attr_name = MbValue::from_ptr(MbObject::new_str(name.to_string()));
     super::super::module::mb_module_setattr(module_name, attr_name, value);
     let cached = super::super::module::MODULES.with(|mods| {
-        mods.borrow().get("time").and_then(|module| module.cached_value)
+        mods.borrow()
+            .get("time")
+            .and_then(|module| module.cached_value)
     });
     if let Some(module_value) = cached {
         super::super::dict_ops::mb_dict_setitem(
@@ -538,7 +534,8 @@ fn new_struct_time_instance(
     wd: i64,
     yd: i64,
     dst: i64,
-    gmtoff: MbValue, zone: MbValue,
+    gmtoff: MbValue,
+    zone: MbValue,
 ) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("tm_year".to_string(), MbValue::from_int(y));
@@ -554,11 +551,20 @@ fn new_struct_time_instance(
     // tuple(), slicing, ==): the 9 sequence fields, in order. tm_gmtoff /
     // tm_zone are named-only extras, NOT part of the comparison tuple.
     let entries = vec![
-        MbValue::from_int(y), MbValue::from_int(mo), MbValue::from_int(d),
-        MbValue::from_int(h), MbValue::from_int(mi), MbValue::from_int(s),
-        MbValue::from_int(wd), MbValue::from_int(yd), MbValue::from_int(dst),
+        MbValue::from_int(y),
+        MbValue::from_int(mo),
+        MbValue::from_int(d),
+        MbValue::from_int(h),
+        MbValue::from_int(mi),
+        MbValue::from_int(s),
+        MbValue::from_int(wd),
+        MbValue::from_int(yd),
+        MbValue::from_int(dst),
     ];
-    fields.insert("_entries".to_string(), MbValue::from_ptr(MbObject::new_list(entries)));
+    fields.insert(
+        "_entries".to_string(),
+        MbValue::from_ptr(MbObject::new_list(entries)),
+    );
     // gmtoff/zone may be borrowed tuple elements (struct_time factory path);
     // retain before storing so they outlive the source.
     unsafe {
@@ -763,7 +769,10 @@ pub fn mb_time_localtime(secs: MbValue) -> MbValue {
         };
         let whole = secs_f.trunc() as i64;
         let frac_ns = ((secs_f - whole as f64) * 1e9) as u32;
-        let utc = Utc.timestamp_opt(whole, frac_ns).single().unwrap_or_else(Utc::now);
+        let utc = Utc
+            .timestamp_opt(whole, frac_ns)
+            .single()
+            .unwrap_or_else(Utc::now);
         let local = utc.naive_utc() + Duration::seconds(offset_east);
         return new_struct_time_instance(
             local.year() as i64,
@@ -906,9 +915,7 @@ pub fn mb_time_clock_settime_ns(_clk_id: MbValue, _value: MbValue) -> MbValue {
 /// object itself is not yet a real type for `isinstance` checks.
 pub fn mb_time_struct_time(seq: MbValue) -> MbValue {
     let items = extract_tuple_items(seq);
-    let get = |i: usize| -> i64 {
-        items.get(i).copied().and_then(extract_int).unwrap_or(0)
-    };
+    let get = |i: usize| -> i64 { items.get(i).copied().and_then(extract_int).unwrap_or(0) };
     // Constructed from a bare 9-tuple, tm_gmtoff/tm_zone are None (CPython);
     // an extended 11-tuple supplies them at positions 9 and 10.
     let gmtoff = items.get(9).copied().unwrap_or_else(MbValue::none);
@@ -973,8 +980,14 @@ fn substitute_wday_directive(fmt: &str, tm_wday: i64) -> String {
     while let Some(c) = chars.next() {
         if c == '%' {
             match chars.peek() {
-                Some('%') => { chars.next(); out.push_str("%%"); }
-                Some('w') => { chars.next(); out.push_str(&w.to_string()); }
+                Some('%') => {
+                    chars.next();
+                    out.push_str("%%");
+                }
+                Some('w') => {
+                    chars.next();
+                    out.push_str(&w.to_string());
+                }
                 _ => out.push('%'),
             }
         } else {
@@ -1006,13 +1019,28 @@ pub fn mb_time_strftime(fmt: MbValue, st: MbValue) -> MbValue {
     }
     let geti = |i: usize| items.get(i).and_then(|v| extract_int(*v)).unwrap_or(0);
     let y = geti(0) as i32;
-    let mo = { let m = geti(1); if m == 0 { 1 } else { m } } as u32;
-    let d = { let dd = geti(2); if dd == 0 { 1 } else { dd } } as u32;
+    let mo = {
+        let m = geti(1);
+        if m == 0 {
+            1
+        } else {
+            m
+        }
+    } as u32;
+    let d = {
+        let dd = geti(2);
+        if dd == 0 {
+            1
+        } else {
+            dd
+        }
+    } as u32;
     let (h, mi, s) = (geti(3) as u32, geti(4) as u32, geti(5) as u32);
-    let naive = match chrono::NaiveDate::from_ymd_opt(y, mo, d).and_then(|nd| nd.and_hms_opt(h, mi, s)) {
-        Some(n) => n,
-        None => return MbValue::from_ptr(MbObject::new_str(String::new())),
-    };
+    let naive =
+        match chrono::NaiveDate::from_ymd_opt(y, mo, d).and_then(|nd| nd.and_hms_opt(h, mi, s)) {
+            Some(n) => n,
+            None => return MbValue::from_ptr(MbObject::new_str(String::new())),
+        };
     let resolved = substitute_wday_directive(&format_str, geti(6));
     let out = naive.format(&resolved).to_string();
     MbValue::from_ptr(MbObject::new_str(out))
@@ -1059,8 +1087,17 @@ pub fn mb_time_strptime(s: MbValue, fmt: MbValue) -> MbValue {
         "%z" => {
             if let Some(off) = parse_utc_offset(&input) {
                 return new_struct_time_instance(
-                    1900, 1, 1, 0, 0, 0, 0, 1, 0,
-                    MbValue::from_int(off), MbValue::none(),
+                    1900,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    MbValue::from_int(off),
+                    MbValue::none(),
                 );
             }
         }

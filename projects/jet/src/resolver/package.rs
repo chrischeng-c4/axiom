@@ -76,10 +76,7 @@ pub struct LibraryEntry {
 /// Wildcard export patterns (keys containing `*`) are skipped — they require
 /// a filesystem glob and are out of scope for the first library-build pass.
 /// @issue #170
-pub fn library_entries(
-    package_json_path: &Path,
-    conditions: &[&str],
-) -> Result<Vec<LibraryEntry>> {
+pub fn library_entries(package_json_path: &Path, conditions: &[&str]) -> Result<Vec<LibraryEntry>> {
     let package = read_package_json(package_json_path)?;
     let mut entries: Vec<LibraryEntry> = Vec::new();
 
@@ -123,7 +120,9 @@ pub fn library_entries(
 /// every key of `dependencies` and `peerDependencies`. `devDependencies`
 /// are intentionally excluded — they are not shipped to consumers.
 /// @issue #170
-pub fn external_package_names(package_json_path: &Path) -> Result<std::collections::HashSet<String>> {
+pub fn external_package_names(
+    package_json_path: &Path,
+) -> Result<std::collections::HashSet<String>> {
     let package = read_package_json(package_json_path)?;
     let mut names = std::collections::HashSet::new();
 

@@ -85,19 +85,17 @@ fn lock_records_direct_and_transitive_deps() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(
-        run(
-            &proj,
-            &[
-                "add",
-                "frozen_demo_pkg==0.1.0",
-                "--index",
-                index.path().to_str().unwrap()
-            ]
-        )
-        .status
-        .success()
-    );
+    assert!(run(
+        &proj,
+        &[
+            "add",
+            "frozen_demo_pkg==0.1.0",
+            "--index",
+            index.path().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
 
     let out = run(&proj, &["lock", "--index", index.path().to_str().unwrap()]);
     assert!(
@@ -132,19 +130,17 @@ fn lock_does_not_create_venv_or_site_packages() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(
-        run(
-            &proj,
-            &[
-                "add",
-                "frozen_demo_pkg==0.1.0",
-                "--index",
-                index.path().to_str().unwrap()
-            ]
-        )
-        .status
-        .success()
-    );
+    assert!(run(
+        &proj,
+        &[
+            "add",
+            "frozen_demo_pkg==0.1.0",
+            "--index",
+            index.path().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status
@@ -236,19 +232,17 @@ fn lock_is_byte_identical_on_replay() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(
-        run(
-            &proj,
-            &[
-                "add",
-                "frozen_demo_pkg==0.1.0",
-                "--index",
-                index.path().to_str().unwrap()
-            ]
-        )
-        .status
-        .success()
-    );
+    assert!(run(
+        &proj,
+        &[
+            "add",
+            "frozen_demo_pkg==0.1.0",
+            "--index",
+            index.path().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status
@@ -271,19 +265,17 @@ fn lock_check_passes_when_lockfile_is_current() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(
-        run(
-            &proj,
-            &[
-                "add",
-                "frozen_demo_pkg==0.1.0",
-                "--index",
-                index.path().to_str().unwrap()
-            ]
-        )
-        .status
-        .success()
-    );
+    assert!(run(
+        &proj,
+        &[
+            "add",
+            "frozen_demo_pkg==0.1.0",
+            "--index",
+            index.path().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status
@@ -316,19 +308,17 @@ fn lock_check_fails_without_mutating_stale_lockfile() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(
-        run(
-            &proj,
-            &[
-                "add",
-                "frozen_demo_pkg==0.1.0",
-                "--index",
-                index.path().to_str().unwrap()
-            ]
-        )
-        .status
-        .success()
-    );
+    assert!(run(
+        &proj,
+        &[
+            "add",
+            "frozen_demo_pkg==0.1.0",
+            "--index",
+            index.path().to_str().unwrap()
+        ]
+    )
+    .status
+    .success());
     assert!(
         run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
             .status

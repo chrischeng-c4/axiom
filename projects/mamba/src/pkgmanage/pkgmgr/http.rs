@@ -19,9 +19,9 @@ use tokio::sync::Semaphore;
 
 use crate::pkgmanage::pkgmgr::{
     cache::{
-        METADATA_TTL_SECS, artifact_path, default_cache_dir, promote_to_content_addressed,
-        read_cached_artifact, read_cached_etag, read_cached_metadata,
-        read_content_addressed_artifact, write_cached_etag, write_cached_metadata,
+        artifact_path, default_cache_dir, promote_to_content_addressed, read_cached_artifact,
+        read_cached_etag, read_cached_metadata, read_content_addressed_artifact, write_cached_etag,
+        write_cached_metadata, METADATA_TTL_SECS,
     },
     json_api::parse_json_metadata,
     simple_api::{parse_simple_html, parse_simple_json},

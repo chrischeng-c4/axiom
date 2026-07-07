@@ -44,6 +44,8 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
     use super::pep695;
     use super::set_ops;
     use super::stdlib::functools_mod;
+    use super::stdlib::queue_mod;
+    use super::stdlib::selectors_mod;
     use super::stdlib::traceback_mod;
     use super::string_ops;
     use super::tokio_exec;
@@ -55,6 +57,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_box_int",
             builtins::mb_box_int as fn(i64) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_box_int_for_compare",
+            builtins::mb_box_int_for_compare as fn(i64) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_cell_handle_raw_is_live",
+            closure::mb_cell_handle_raw_is_live as fn(i64) -> i64,
             [I64],
             I64
         ),
@@ -858,6 +872,15 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64],
             I64
         ),
+        // #979: `s.zfill(width)` call-site specialization callee — newly
+        // exposed as a direct extern (previously only reachable through
+        // `dispatch_str_method`).
+        rt_sym!(
+            "mb_str_zfill",
+            string_ops::mb_str_zfill as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
         rt_sym!(
             "mb_str_contains",
             string_ops::mb_str_contains as fn(super::MbValue, super::MbValue) -> super::MbValue,
@@ -1252,6 +1275,16 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64, I64],
             I64
         ),
+        // #979: 1-arg `d.pop(key)` (raises KeyError on miss) call-site
+        // specialization callee — distinct from `mb_dict_pop` above (which
+        // is the 2-arg default-returning form).
+        rt_sym!(
+            "mb_dict_pop_no_default",
+            dict_ops::mb_dict_pop_no_default
+                as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
         rt_sym!(
             "mb_dict_get",
             dict_ops::mb_dict_get
@@ -1305,6 +1338,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_dict_update",
             dict_ops::mb_dict_update as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_dict_merge_mapping_only",
+            dict_ops::mb_dict_merge_mapping_only as fn(super::MbValue, super::MbValue),
             [I64, I64],
             Void
         ),
@@ -1617,8 +1656,9 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
                     super::MbValue,
                     super::MbValue,
                     super::MbValue,
+                    super::MbValue,
                 ) -> super::MbValue,
-            [I64, I64, I64, I64],
+            [I64, I64, I64, I64, I64],
             I64
         ),
         rt_sym!(
@@ -2074,6 +2114,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_func_default_at",
+            closure::mb_func_default_at as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_traceback_walk_stack_frame",
             traceback_mod::mb_traceback_walk_stack_frame
                 as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue,
@@ -2094,9 +2140,27 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_traceback_set_current_line",
+            traceback_mod::mb_traceback_set_current_line as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_set_current_locals",
+            traceback_mod::mb_traceback_set_current_locals as fn(super::MbValue),
+            [I64],
+            Void
+        ),
+        rt_sym!(
             "mb_traceback_pop_frame",
             traceback_mod::mb_traceback_pop_frame as fn(),
             [],
+            Void
+        ),
+        rt_sym!(
+            "mb_traceback_pop_frame_with_return",
+            traceback_mod::mb_traceback_pop_frame_with_return as fn(super::MbValue),
+            [I64],
             Void
         ),
         rt_sym!(
@@ -2132,6 +2196,22 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64, I64],
             Void
         ),
+        // #1021: direct-dispatch entries for `hir_to_mir.rs`'s
+        // `direct_method_fn` fast path, unlocked now that `queue.Queue()` /
+        // `selectors.DefaultSelector()` infer as a concrete `Ty::Class`
+        // (see `check_expr.rs`'s `native_ctor_class_call`) instead of `Any`.
+        rt_sym!(
+            "mb_queue_qsize",
+            queue_mod::mb_queue_qsize as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
+            "mb_selectors_close",
+            selectors_mod::mb_selectors_close as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
         rt_sym!(
             "mb_fstring_value",
             string_ops::mb_fstring_value as fn(super::MbValue) -> super::MbValue,
@@ -2157,6 +2237,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_deferred_name_read",
+            closure::mb_deferred_name_read as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_global_get_id",
             closure::mb_global_get_id as fn(super::MbValue) -> super::MbValue,
             [I64],
@@ -2178,6 +2264,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             "mb_capture_cell_reset_id",
             closure::mb_capture_cell_reset_id as fn(super::MbValue, super::MbValue),
             [I64, I64],
+            Void
+        ),
+        rt_sym!(
+            "mb_capture_cell_reset_empty_id",
+            closure::mb_capture_cell_reset_empty_id as fn(super::MbValue),
+            [I64],
             Void
         ),
         rt_sym!(
@@ -2743,6 +2835,23 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [],
             I64
         ),
+        // Raw pointer accessors backing the JIT's inline recursion-guard
+        // fast path (#1010) — see `emit_extern_call`'s "mb_recursion_enter"
+        // special case in codegen/cranelift/jit.rs. Return type is `Ptr`
+        // (bare passthrough, no NaN-boxing) since these return real memory
+        // addresses, not Mamba values.
+        rt_sym!(
+            "mb_recursion_depth_ptr",
+            super::stdlib::sys_mod::mb_recursion_depth_ptr as fn() -> i64,
+            [],
+            Ptr
+        ),
+        rt_sym!(
+            "mb_recursion_limit_ptr",
+            super::stdlib::sys_mod::mb_recursion_limit_ptr as fn() -> i64,
+            [],
+            Ptr
+        ),
         rt_sym!(
             "mb_recursion_leave",
             super::stdlib::sys_mod::mb_recursion_leave as fn(),
@@ -2758,8 +2867,8 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!(
             "mb_sys_getframe_with_locals",
             super::stdlib::sys_mod::mb_sys_getframe_with_locals
-                as fn(super::MbValue) -> super::MbValue,
-            [I64],
+                as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
             I64
         ),
         // ── Stdlib: os ──

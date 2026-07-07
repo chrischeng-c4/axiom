@@ -16,7 +16,7 @@
 //   }]
 // }
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -24,7 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::pkgmanage::pkgmgr::pep440;
-use crate::pkgmanage::sync::{LockedPkg, parse_locked_packages};
+use crate::pkgmanage::sync::{parse_locked_packages, LockedPkg};
 
 const LOCKFILE_FILE: &str = "mamba.lock";
 const ADVISORY_DB_ENV: &str = "MAMBA_ADVISORY_DB";

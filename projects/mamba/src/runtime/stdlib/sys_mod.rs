@@ -66,6 +66,19 @@ unsafe extern "C" fn dispatch_settrace(args_ptr: *const MbValue, nargs: usize) -
     mb_sys_settrace(v)
 }
 
+unsafe extern "C" fn dispatch_getprofile(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    mb_sys_getprofile()
+}
+
+unsafe extern "C" fn dispatch_setprofile(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let v = if nargs >= 1 {
+        *args_ptr
+    } else {
+        MbValue::none()
+    };
+    mb_sys_setprofile(v)
+}
+
 unsafe extern "C" fn dispatch_getrefcount(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let v = if nargs >= 1 {
         *args_ptr
@@ -1155,6 +1168,8 @@ pub fn register() {
         ),
         ("gettrace", dispatch_gettrace as *const () as usize),
         ("settrace", dispatch_settrace as *const () as usize),
+        ("getprofile", dispatch_getprofile as *const () as usize),
+        ("setprofile", dispatch_setprofile as *const () as usize),
         ("getrefcount", dispatch_getrefcount as *const () as usize),
         (
             "is_finalizing",
@@ -1344,13 +1359,11 @@ pub fn register() {
         "get_int_max_str_digits",
         "getallocatedblocks",
         "getdlopenflags",
-        "getprofile",
         "getunicodeinternedsize",
         "is_stack_trampoline_active",
         "set_coroutine_origin_tracking_depth",
         "set_int_max_str_digits",
         "setdlopenflags",
-        "setprofile",
     ] {
         attrs.insert(name.into(), MbValue::from_func(stub_fn_addr));
     }
@@ -1421,6 +1434,31 @@ pub fn mb_sys_setrecursionlimit(limit: MbValue) -> MbValue {
         RECURSION_LIMIT.with(|c| c.set(n));
     }
     MbValue::none()
+}
+
+/// Raw address of this thread's recursion-depth counter (#1010).
+///
+/// Exposed so the JIT can inline the load/increment/compare fast path for
+/// the call-prologue recursion guard directly into machine code instead of
+/// paying a full FFI round trip through `mb_recursion_enter` on every call
+/// — the depth check almost never trips the limit, so the common case
+/// should never have to leave JIT-generated code. `mb_recursion_enter`
+/// itself remains the (rare, only-near-the-limit) slow path, unchanged, so
+/// the raise — including the exact message and limit value — stays
+/// byte-identical.
+///
+/// Safe to dereference as a plain (non-atomic) `*mut i64`: `RECURSION_DEPTH`
+/// is thread-local, so only the thread that owns this address ever touches
+/// it, and `Cell::as_ptr` guarantees the returned pointer addresses storage
+/// of the cell's inner `i64`.
+pub fn mb_recursion_depth_ptr() -> i64 {
+    RECURSION_DEPTH.with(|c| c.as_ptr() as i64)
+}
+
+/// Raw address of this thread's recursion-limit cell (#1010). See
+/// `mb_recursion_depth_ptr`.
+pub fn mb_recursion_limit_ptr() -> i64 {
+    RECURSION_LIMIT.with(|c| c.as_ptr() as i64)
 }
 
 pub fn mb_recursion_enter() -> MbValue {
@@ -1505,14 +1543,26 @@ pub fn mb_sys_intern(s: MbValue) -> MbValue {
     s
 }
 
-/// sys.gettrace() → current trace function (None — Mamba has no Python-level tracing).
+/// sys.gettrace() → current trace function for this thread.
 pub fn mb_sys_gettrace() -> MbValue {
-    MbValue::none()
+    super::threading_mod::mb_threading_gettrace()
 }
 
-/// sys.settrace(func) → None. No-op stub — accept but ignore.
-pub fn mb_sys_settrace(_func: MbValue) -> MbValue {
-    MbValue::none()
+/// sys.settrace(func) → None. Stores the current thread's trace hook only;
+/// Python-level event emission is implemented in a later slice.
+pub fn mb_sys_settrace(func: MbValue) -> MbValue {
+    super::threading_mod::mb_threading_settrace(func)
+}
+
+/// sys.getprofile() → current profile function for this thread.
+pub fn mb_sys_getprofile() -> MbValue {
+    super::threading_mod::mb_threading_getprofile()
+}
+
+/// sys.setprofile(func) → None. Stores the current thread's profile hook only;
+/// Python-level event emission is implemented in a later slice.
+pub fn mb_sys_setprofile(func: MbValue) -> MbValue {
+    super::threading_mod::mb_threading_setprofile(func)
 }
 
 /// sys.getrefcount(obj) → int. Mamba uses Arc internally and doesn't expose
@@ -1578,8 +1628,13 @@ pub fn mb_sys_exc_info() -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(vec![type_val, value_val, tb_val]))
 }
 
-pub fn mb_sys_getframe_with_locals(locals: MbValue) -> MbValue {
-    super::inspect_mod::make_current_frame_with_locals(locals)
+/// `sys._getframe(depth)` / `inspect.currentframe()` shared entry point
+/// (#889). `locals` is the real locals snapshot captured at the call site
+/// (hir_to_mir::emit_current_locals_dict) for depth 0; `depth` walks that
+/// many `f_back` hops up the real call-stack chain (traceback_mod's
+/// TRACE_FRAME_STACK). See inspect_mod::frame_at_depth_with_locals.
+pub fn mb_sys_getframe_with_locals(locals: MbValue, depth: MbValue) -> MbValue {
+    super::inspect_mod::frame_at_depth_with_locals(locals, depth)
 }
 
 /// sys.getfilesystemencoding() → 'utf-8'.
@@ -1630,6 +1685,24 @@ mod tests {
     fn test_sys_getsizeof() {
         let size = mb_sys_getsizeof(MbValue::from_int(42));
         assert_eq!(size.as_int(), Some(8));
+    }
+
+    #[test]
+    fn test_sys_settrace_gettrace_roundtrip() {
+        let marker = MbValue::from_func(dispatch_gettrace as *const () as usize);
+        assert!(mb_sys_settrace(marker).is_none());
+        assert_eq!(mb_sys_gettrace().to_bits(), marker.to_bits());
+        assert!(mb_sys_settrace(MbValue::none()).is_none());
+        assert!(mb_sys_gettrace().is_none());
+    }
+
+    #[test]
+    fn test_sys_setprofile_getprofile_roundtrip() {
+        let marker = MbValue::from_func(dispatch_getprofile as *const () as usize);
+        assert!(mb_sys_setprofile(marker).is_none());
+        assert_eq!(mb_sys_getprofile().to_bits(), marker.to_bits());
+        assert!(mb_sys_setprofile(MbValue::none()).is_none());
+        assert!(mb_sys_getprofile().is_none());
     }
 
     // -- Py3.12 conformance --

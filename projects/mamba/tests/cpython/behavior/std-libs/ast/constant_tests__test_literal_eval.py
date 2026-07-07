@@ -9,12 +9,10 @@
 # case = "constant_tests__test_literal_eval"
 # subject = "cpython.test_ast.ConstantTests.test_literal_eval"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import ast
 import builtins
 import dis

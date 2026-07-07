@@ -60,8 +60,16 @@ struct UuidState {
 }
 
 impl UuidState {
-    fn version(&self) -> u8 {
-        (self.bytes[6] >> 4) & 0x0F
+    fn is_rfc_4122_variant(&self) -> bool {
+        self.bytes[8] & 0xC0 == 0x80
+    }
+
+    fn version(&self) -> Option<u8> {
+        if self.is_rfc_4122_variant() {
+            Some((self.bytes[6] >> 4) & 0x0F)
+        } else {
+            None
+        }
     }
 
     fn variant_str(&self) -> &'static str {
@@ -877,7 +885,10 @@ pub fn mb_uuid_time(handle: MbValue) -> MbValue {
 }
 
 pub fn mb_uuid_version_attr(handle: MbValue) -> MbValue {
-    MbValue::from_int(load(handle).version() as i64)
+    match load(handle).version() {
+        Some(version) => MbValue::from_int(version as i64),
+        None => MbValue::none(),
+    }
 }
 
 pub fn mb_uuid_variant_attr(handle: MbValue) -> MbValue {
@@ -990,6 +1001,7 @@ dispatch_binary!(dispatch_uuid5, mb_uuid_uuid5);
 /// non-`None` value among the slots. Forward the first non-`None` arg to
 /// the type-dispatching constructor.
 unsafe extern "C" fn dispatch_UUID(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // `UUID(hexstr, version=N)`: a positional value plus a kwargs dict.
     // Validate the version range BEFORE constructing (CPython raises
@@ -1107,10 +1119,10 @@ pub fn register() {
     // Record its address so `isinstance(u, uuid.UUID)` resolves the target
     // type name to "UUID" (the class.rs isinstance arm then matches it
     // against uuid int handles), mirroring the hmac.HMAC pattern.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(dispatch_UUID as usize as u64, "UUID".to_string());
-    });
+    super::super::module::register_native_type_name(
+        dispatch_UUID as usize as u64,
+        "UUID".to_string(),
+    );
 
     // Well-known namespace UUIDs (RFC 4122 Appendix C). These are
     // handle-bound — callers pass them to `uuid3` / `uuid5`.
@@ -1245,6 +1257,18 @@ mod tests {
         let s = str_of(mb_uuid_str(u));
         assert_eq!(s.chars().nth(14).unwrap(), '1');
         assert_eq!(mb_uuid_version_attr(u).as_int(), Some(1));
+    }
+
+    #[test]
+    fn test_non_rfc_variant_has_no_version() {
+        let u = mb_uuid_UUID(MbValue::from_ptr(MbObject::new_str(
+            "12345678-1234-5678-1234-567812345678".to_string(),
+        )));
+        assert!(mb_uuid_version_attr(u).is_none());
+        assert_eq!(
+            str_of(mb_uuid_variant_attr(u)),
+            "reserved for NCS compatibility"
+        );
     }
 
     #[test]

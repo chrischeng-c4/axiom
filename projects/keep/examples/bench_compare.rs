@@ -173,8 +173,7 @@ async fn bench_keep(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Er
     let n_clients = args.keep_clients.unwrap_or(args.concurrency).max(1);
     // Shared h2c pool: N single-connection clients, round-robin dispatch (#467).
     // The 10s timeout bounds a single request so a stalled stream can't hang the run.
-    let pool =
-        h2c::H2cPool::with_connections_and(n_clients, Some(Duration::from_secs(10)), None)?;
+    let pool = h2c::H2cPool::with_connections_and(n_clients, Some(Duration::from_secs(10)), None)?;
     println!("  (keep over {} HTTP/2 connection(s))", pool.connections());
     for _ in 0..pool.connections() {
         let _ = pool.get(format!("{}/healthz", args.keep_url)).send().await;
@@ -240,8 +239,7 @@ async fn bench_keep(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Er
 async fn bench_keep_noop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let n_clients = args.keep_clients.unwrap_or(args.concurrency).max(1);
     // Shared h2c pool, round-robin dispatch (#467); 10s per-request timeout.
-    let pool =
-        h2c::H2cPool::with_connections_and(n_clients, Some(Duration::from_secs(10)), None)?;
+    let pool = h2c::H2cPool::with_connections_and(n_clients, Some(Duration::from_secs(10)), None)?;
     let url = format!("{}/healthz", args.keep_url);
     for _ in 0..pool.connections() {
         let _ = pool.get(&url).send().await;

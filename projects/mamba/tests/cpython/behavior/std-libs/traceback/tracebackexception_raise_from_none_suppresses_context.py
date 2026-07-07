@@ -9,7 +9,6 @@
 # case = "tracebackexception_raise_from_none_suppresses_context"
 # subject = "traceback.TracebackException"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

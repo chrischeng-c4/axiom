@@ -1,10 +1,13 @@
-# Mamba Coverage Baseline
+# Mamba llvm-cov baseline snapshot
 
 Frozen llvm-cov baseline for `projects/mamba/` — first cut of #1885 child task #1.
+Canonical evidence path for the retired project-root baseline doc.
 
 **Source commit**: `6edea62d5` (project-mamba @ 2026-05-18T14:22:40Z, post-#2422 merge)
 **Tool**: `cargo llvm-cov --package mamba --lib --summary-only`
 **Toolchain**: stable-aarch64-apple-darwin
+**Companion gap ranking**:
+`projects/mamba/validation/evidence/coverage/llvm-cov-gap-ranking-2026-05-18.md`
 
 ## Totals
 
@@ -319,4 +322,6 @@ LLVM_PROFDATA="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n "s/host
 
 - [ ] CI artifact: emit `cargo llvm-cov --json` from GHA, attach as workflow artifact.
 - [ ] PR gate: reject merges that drop total region% by more than 0.5pp (`coverage-allowed-drop` label opt-out).
-- [ ] Untested file enumeration: `projects/mamba/COVERAGE-GAPS.md` — auto-sorted list of files <100% with uncovered line count.
+- [ ] Untested file enumeration:
+      `projects/mamba/validation/evidence/coverage/llvm-cov-gap-ranking-2026-05-18.md`
+      — auto-sorted list of files <100% with uncovered line count.

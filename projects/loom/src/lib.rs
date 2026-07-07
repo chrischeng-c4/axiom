@@ -14,21 +14,21 @@
 //! Payload bytes never traverse loom: it issues keep refs / scoped URLs and the
 //! parties transfer directly (claim-check).
 
-pub mod model;
-pub mod runner;
 pub mod canvas;
-pub mod fairness;
-pub mod scheduler;
-pub mod store;
-pub mod gc;
-pub mod deadline;
-pub mod raft;
 pub mod cluster;
-pub mod relay_client;
-pub mod schema_layer;
+pub mod deadline;
+pub mod fairness;
+pub mod gc;
 pub mod keep_client;
+pub mod model;
+pub mod raft;
+pub mod relay_client;
+pub mod runner;
+pub mod scheduler;
+pub mod schema_layer;
+pub mod store;
 
 pub mod controller;
-pub mod worker;
-pub mod runtask;
 pub mod jobcontroller;
+pub mod runtask;
+pub mod worker;

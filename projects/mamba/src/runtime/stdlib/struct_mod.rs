@@ -150,7 +150,8 @@ fn struct_kwarg_get(dict: MbValue, name: &str) -> Option<MbValue> {
 }
 
 fn is_dict_value(v: MbValue) -> bool {
-    v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
 }
 
 unsafe extern "C" fn dispatch_unpack_from(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -168,8 +169,12 @@ unsafe extern "C" fn dispatch_unpack_from(args_ptr: *const MbValue, nargs: usize
     let mut buffer = positional.first().copied().unwrap_or_else(MbValue::none);
     let mut offset = positional.get(1).copied().unwrap_or_else(MbValue::none);
     if let Some(kw) = kwargs {
-        if let Some(b) = struct_kwarg_get(kw, "buffer") { buffer = b; }
-        if let Some(o) = struct_kwarg_get(kw, "offset") { offset = o; }
+        if let Some(b) = struct_kwarg_get(kw, "buffer") {
+            buffer = b;
+        }
+        if let Some(o) = struct_kwarg_get(kw, "offset") {
+            offset = o;
+        }
     }
     mb_struct_unpack_from(fmt, buffer, offset)
 }

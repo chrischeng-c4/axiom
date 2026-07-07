@@ -1,7 +1,7 @@
 // `mamba package` / `mamba publish` - local package artifact build and
 // publish-request validation.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use flate2::read::GzDecoder;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
@@ -17,14 +17,14 @@ use crate::pkgmanage::pkgmgr::extras_spec::normalize_extra;
 use crate::pkgmanage::pkgmgr::name_normalize::pep503_normalize;
 use crate::pkgmanage::pkgmgr::pep621::{License, ProjectTable, Readme};
 use crate::pkgmanage::pkgmgr::publish::{
-    ArtifactKind, PublishInputs, ResolvedRepository, UploadArtifact, build_upload_multipart,
-    default_pypirc_path, fresh_boundary, parse_pypirc, resolve_repository,
+    build_upload_multipart, default_pypirc_path, fresh_boundary, parse_pypirc, resolve_repository,
+    ArtifactKind, PublishInputs, ResolvedRepository, UploadArtifact,
 };
 use crate::pkgmanage::pkgmgr::requirement_string::Requirement;
 use crate::pkgmanage::pkgmgr::sdist_build::SdistBuilder;
 use crate::pkgmanage::pkgmgr::url_redact::redact_credentials;
 use crate::pkgmanage::pkgmgr::wheel_build::{
-    CoreMetadata, WheelBuilder, WheelMetadata, compose_filename, parse_core_metadata,
+    compose_filename, parse_core_metadata, CoreMetadata, WheelBuilder, WheelMetadata,
 };
 use crate::pkgmanage::pkgmgr::wheel_filename::parse_wheel_filename;
 

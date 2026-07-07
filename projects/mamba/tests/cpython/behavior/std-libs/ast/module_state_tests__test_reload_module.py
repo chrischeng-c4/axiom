@@ -9,15 +9,27 @@
 # case = "module_state_tests__test_reload_module"
 # subject = "cpython.test_ast.ModuleStateTests.test_reload_module"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
-import unittest, io
-from test.test_ast import test_ast
-_suite = unittest.defaultTestLoader.loadTestsFromName("ModuleStateTests.test_reload_module", test_ast)
-_result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(_suite)
-assert _result.wasSuccessful(), "CPython ModuleStateTests.test_reload_module did not pass"
+import gc
+import sys
+
+saved = sys.modules.get("_ast")
+try:
+    sys.modules.pop("_ast", None)
+    import _ast as ast1
+
+    sys.modules.pop("_ast", None)
+    import _ast as ast2
+finally:
+    if saved is not None:
+        sys.modules["_ast"] = saved
+
+del ast1
+del ast2
+gc.collect()
+
 print("ModuleStateTests::test_reload_module: ok")

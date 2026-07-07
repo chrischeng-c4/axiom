@@ -53,36 +53,36 @@ pub fn mb_tuple_new() -> MbValue {
 // Arities mirror `mb_list_new_1..mb_list_new_10`; 1..=8 covers every
 // observed tuple-return shape (rgb_to_hls = 3, UUID.fields = 6, divmod = 2).
 
-macro_rules! retain_ptr_args {
+macro_rules! retain_owned_args {
     ($($arg:ident),*) => {
         unsafe {
-            $( if $arg.is_ptr() { super::rc::retain_if_ptr($arg); } )*
+            $( super::rc::retain_if_ptr($arg); )*
         }
     };
 }
 
 pub fn mb_tuple_new_1(a: MbValue) -> MbValue {
-    retain_ptr_args!(a);
+    retain_owned_args!(a);
     MbValue::from_ptr(MbObject::new_tuple(vec![a]))
 }
 
 pub fn mb_tuple_new_2(a: MbValue, b: MbValue) -> MbValue {
-    retain_ptr_args!(a, b);
+    retain_owned_args!(a, b);
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b]))
 }
 
 pub fn mb_tuple_new_3(a: MbValue, b: MbValue, c: MbValue) -> MbValue {
-    retain_ptr_args!(a, b, c);
+    retain_owned_args!(a, b, c);
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b, c]))
 }
 
 pub fn mb_tuple_new_4(a: MbValue, b: MbValue, c: MbValue, d: MbValue) -> MbValue {
-    retain_ptr_args!(a, b, c, d);
+    retain_owned_args!(a, b, c, d);
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b, c, d]))
 }
 
 pub fn mb_tuple_new_5(a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue) -> MbValue {
-    retain_ptr_args!(a, b, c, d, e);
+    retain_owned_args!(a, b, c, d, e);
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b, c, d, e]))
 }
 
@@ -94,7 +94,7 @@ pub fn mb_tuple_new_6(
     e: MbValue,
     f: MbValue,
 ) -> MbValue {
-    retain_ptr_args!(a, b, c, d, e, f);
+    retain_owned_args!(a, b, c, d, e, f);
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b, c, d, e, f]))
 }
 
@@ -107,7 +107,7 @@ pub fn mb_tuple_new_7(
     f: MbValue,
     g: MbValue,
 ) -> MbValue {
-    retain_ptr_args!(a, b, c, d, e, f, g);
+    retain_owned_args!(a, b, c, d, e, f, g);
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b, c, d, e, f, g]))
 }
 
@@ -121,7 +121,7 @@ pub fn mb_tuple_new_8(
     g: MbValue,
     h: MbValue,
 ) -> MbValue {
-    retain_ptr_args!(a, b, c, d, e, f, g, h);
+    retain_owned_args!(a, b, c, d, e, f, g, h);
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b, c, d, e, f, g, h]))
 }
 
@@ -333,9 +333,7 @@ pub fn mb_tuple_slice_full(tup: MbValue, start: MbValue, stop: MbValue, step: Mb
             if st == 0 {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        "slice step cannot be zero".to_string(),
-                    )),
+                    MbValue::from_ptr(MbObject::new_str("slice step cannot be zero".to_string())),
                 );
                 return mb_tuple_new();
             }

@@ -69,7 +69,11 @@ mod tests {
     use super::*;
 
     fn scope() -> Scope {
-        Scope { r: "run:a:in".into(), w: "run:a:result".into(), exp: 1000 }
+        Scope {
+            r: "run:a:in".into(),
+            w: "run:a:result".into(),
+            exp: 1000,
+        }
     }
 
     #[test]
@@ -82,9 +86,15 @@ mod tests {
     fn rejects_tamper_wrong_key_and_expiry() {
         let t = sign(b"secret", &scope());
         assert!(verify(b"WRONG", &t, 999).is_none(), "wrong secret");
-        assert!(verify(b"secret", &t, 1001).is_none(), "expired (exp=1000, now=1001)");
+        assert!(
+            verify(b"secret", &t, 1001).is_none(),
+            "expired (exp=1000, now=1001)"
+        );
         let tampered = format!("{}.deadbeef", t.split_once('.').unwrap().0);
-        assert!(verify(b"secret", &tampered, 999).is_none(), "tampered signature");
+        assert!(
+            verify(b"secret", &tampered, 999).is_none(),
+            "tampered signature"
+        );
         assert!(verify(b"secret", "no-dot", 999).is_none(), "malformed");
     }
 }

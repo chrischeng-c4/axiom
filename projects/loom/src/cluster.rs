@@ -236,7 +236,9 @@ impl RaftClusterStore {
         let raft_path = dir.join("raft.json");
         let snap_path = dir.join("runs.snapshot.json");
         let membership = auto_membership(n_voters);
-        let node = match std::fs::read(&raft_path).ok().and_then(|b| serde_json::from_slice(&b).ok())
+        let node = match std::fs::read(&raft_path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
         {
             Some(state) => RaftNode::from_persisted(id, &membership, state),
             None => RaftNode::new(id, &membership),
@@ -337,17 +339,28 @@ impl RunStore for RaftClusterStore {
     }
 
     async fn get(&self, id: &WorkflowRunId) -> anyhow::Result<Option<WorkflowRun>> {
-        let sm = self.shared.sm.lock().map_err(|_| anyhow::anyhow!("sm poisoned"))?;
+        let sm = self
+            .shared
+            .sm
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sm poisoned"))?;
         Ok(sm.get(id).cloned())
     }
 
     async fn list(&self) -> anyhow::Result<Vec<WorkflowRunId>> {
-        let sm = self.shared.sm.lock().map_err(|_| anyhow::anyhow!("sm poisoned"))?;
+        let sm = self
+            .shared
+            .sm
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sm poisoned"))?;
         Ok(sm.run_ids())
     }
 }
 
-async fn request_vote(State(s): State<Arc<Shared>>, Json(env): Json<VoteEnvelope>) -> Json<VoteResp> {
+async fn request_vote(
+    State(s): State<Arc<Shared>>,
+    Json(env): Json<VoteEnvelope>,
+) -> Json<VoteResp> {
     let resp = {
         let mut n = s.node.lock().await;
         n.handle(env.from, RaftMsg::Vote(env.req));
@@ -356,7 +369,10 @@ async fn request_vote(State(s): State<Arc<Shared>>, Json(env): Json<VoteEnvelope
     };
     Json(match resp {
         Some(RaftMsg::VoteResp(r)) => r,
-        _ => VoteResp { term: 0, granted: false },
+        _ => VoteResp {
+            term: 0,
+            granted: false,
+        },
     })
 }
 
@@ -373,7 +389,11 @@ async fn append_entries(
     };
     Json(match resp {
         Some(RaftMsg::AppendResp(r)) => r,
-        _ => AppendResp { term: 0, success: false, match_index: 0 },
+        _ => AppendResp {
+            term: 0,
+            success: false,
+            match_index: 0,
+        },
     })
 }
 
@@ -391,14 +411,25 @@ fn take_reply(node: &mut RaftNode, to: NodeId) -> Option<RaftMsg> {
 }
 
 /// POST /raft/propose — the leader accepts a command (a follower's forward target).
-async fn propose(State(s): State<Arc<Shared>>, Json(cmd): Json<Command>) -> axum::response::Response {
+async fn propose(
+    State(s): State<Arc<Shared>>,
+    Json(cmd): Json<Command>,
+) -> axum::response::Response {
     match s.propose_local(cmd).await {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "committed": true }))).into_response(),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "committed": true })),
+        )
+            .into_response(),
         Err(leader) => {
             let leader_url = leader.and_then(|l| s.peers.get(&l).cloned());
             (
                 StatusCode::MISDIRECTED_REQUEST,
-                Json(NotLeader { error: "not-leader", leader, leader_url }),
+                Json(NotLeader {
+                    error: "not-leader",
+                    leader,
+                    leader_url,
+                }),
             )
                 .into_response()
         }

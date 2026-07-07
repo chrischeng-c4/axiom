@@ -4,6 +4,7 @@ use super::super::value::MbValue;
 ///
 /// Provides: TestCase base (assertEqual, assertTrue, assertFalse, assertRaises),
 /// main() test runner, TestResult.
+use regex::Regex;
 use std::collections::HashMap;
 
 /// Set the pending mamba exception of `exc_type` with `message`. Used by the
@@ -31,6 +32,7 @@ unsafe extern "C" fn dispatch_main(_args_ptr: *const MbValue, _nargs: usize) -> 
 }
 
 unsafe extern "C" fn dispatch_testcase(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     // `unittest.TestCase(methodName="runTest")` — build a real TestCase
     // instance (not a bare dict) so the inherited assertion + run-protocol
     // methods dispatch. The optional method name selects the bound test.
@@ -196,6 +198,22 @@ extern "C" fn method_assert_is_none(_self: MbValue, v: MbValue) -> MbValue {
     mb_unittest_assert_is_none(v)
 }
 
+extern "C" fn method_assert_is_instance(
+    _self: MbValue,
+    obj: MbValue,
+    classinfo: MbValue,
+) -> MbValue {
+    mb_unittest_assert_is_instance(obj, classinfo)
+}
+
+extern "C" fn method_assert_not_is_instance(
+    _self: MbValue,
+    obj: MbValue,
+    classinfo: MbValue,
+) -> MbValue {
+    mb_unittest_assert_not_is_instance(obj, classinfo)
+}
+
 extern "C" fn method_assert_in(_self: MbValue, item: MbValue, coll: MbValue) -> MbValue {
     mb_unittest_assert_in(item, coll)
 }
@@ -207,6 +225,16 @@ extern "C" fn method_assert_in(_self: MbValue, item: MbValue, coll: MbValue) -> 
 extern "C" fn method_assert_raises(_self: MbValue, args: MbValue) -> MbValue {
     let items = super::super::builtins::extract_items(args);
     assert_raises_dispatch(&items)
+}
+
+extern "C" fn method_assert_raises_regex(_self: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    assert_raises_regex_dispatch(&items)
+}
+
+extern "C" fn method_assert_warns_regex(_self: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    assert_warns_regex_dispatch(&items)
 }
 
 /// `self.skipTest(reason)` — surface a SKIP signal by raising a catchable
@@ -231,24 +259,21 @@ extern "C" fn method_assert_list_equal(_self: MbValue, a: MbValue, b: MbValue) -
     mb_unittest_assert_equal(a, b)
 }
 
+extern "C" fn method_assert_count_equal(_self: MbValue, a: MbValue, b: MbValue) -> MbValue {
+    mb_unittest_assert_count_equal(a, b)
+}
+
+extern "C" fn method_assert_greater(_self: MbValue, a: MbValue, b: MbValue) -> MbValue {
+    mb_unittest_assert_greater(a, b)
+}
+
 /// `self.addCleanup(fn, *args, **kwargs)` — register a teardown callable.
 /// In the mamba-pytest harness each test runs in its own subprocess; the
 /// OS reclaims everything on exit, so cleanups have nothing meaningful
 /// to undo and we accept the call as a no-op rather than panicking on
 /// signatures we don't yet model (variadic args + kwargs).
 ///
-/// The class method dispatcher (`runtime/class.rs`) selects a positional
-/// signature based on `all_args.len()` from 1..=4 today. We register the
-/// 4-arg shape `(self, fn, arg1, arg2)` which matches the common CPython
-/// test-suite usage `self.addCleanup(setattr, obj, name, value)`. Calls
-/// with a different arity will fall through to the dispatcher's "too
-/// many args" no-op fallback rather than aborting.
-extern "C" fn method_add_cleanup_4(
-    _self: MbValue,
-    _fn: MbValue,
-    _a1: MbValue,
-    _a2: MbValue,
-) -> MbValue {
+extern "C" fn method_add_cleanup(_self: MbValue, _args: MbValue) -> MbValue {
     MbValue::none()
 }
 
@@ -314,6 +339,49 @@ fn borrowed_return(value: MbValue) -> MbValue {
     value
 }
 
+fn trailing_kwargs(args: &[MbValue]) -> Option<super::super::rc::MbDictMap> {
+    args.last().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
+        if let ObjData::Dict(ref lock) = (*p).data {
+            Some(lock.read().unwrap().clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn positional_arg_end(args: &[MbValue]) -> usize {
+    if trailing_kwargs(args).is_some() {
+        args.len().saturating_sub(1)
+    } else {
+        args.len()
+    }
+}
+
+fn kwarg_value(kw: &super::super::rc::MbDictMap, key: &str) -> Option<MbValue> {
+    for (k, v) in kw.iter() {
+        if let super::super::dict_ops::DictKey::Str(ref ks) = k {
+            if ks == key {
+                return Some(*v);
+            }
+        }
+    }
+    None
+}
+
+fn module_dict_attr(module: MbValue, attr: &str) -> Option<MbValue> {
+    module.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let key = super::super::dict_ops::DictKey::Str(attr.to_string());
+            let value = map.get(&key).copied()?;
+            super::super::rc::retain_if_ptr(value);
+            Some(value)
+        } else {
+            None
+        }
+    })
+}
+
 /// Read an instance's runtime class name (the *subclass* the user defined).
 fn inst_class_name(instance: MbValue) -> Option<String> {
     instance.as_ptr().and_then(|ptr| unsafe {
@@ -359,6 +427,18 @@ fn list_field_push(instance: MbValue, name: &str, item: MbValue) {
 fn call_method_n(obj: MbValue, method: &str, args: &[MbValue]) -> MbValue {
     let arg_list = MbValue::from_ptr(MbObject::new_list(args.to_vec()));
     mb_call_method(obj, name_val(method), arg_list)
+}
+
+fn push_unittest_trace_frame(name: &str) {
+    super::traceback_mod::mb_traceback_push_frame(
+        name_val("unittest"),
+        MbValue::from_int(1),
+        name_val(name),
+    );
+}
+
+fn pop_unittest_trace_frame() {
+    super::traceback_mod::mb_traceback_pop_frame();
 }
 
 // ── TestResult ──
@@ -474,6 +554,71 @@ fn make_test_result() -> MbValue {
     obj
 }
 
+// ── TextTestRunner ──
+
+/// `TextTestRunner.__init__(self, stream=None, descriptions=True, verbosity=1, ..)`
+/// — accept the common constructor surface exercised by the CPython fixtures,
+/// storing the options the bounded runtime path can honor.
+extern "C" fn ttr_init(self_obj: MbValue, args: MbValue) -> MbValue {
+    let items = super::super::builtins::extract_items(args);
+    let kw = trailing_kwargs(&items);
+    let positional_end = if kw.is_some() {
+        items.len().saturating_sub(1)
+    } else {
+        items.len()
+    };
+
+    let mut stream = if positional_end >= 1 {
+        items[0]
+    } else {
+        MbValue::none()
+    };
+    let mut verbosity = if positional_end >= 3 {
+        items[2].as_int().unwrap_or(1)
+    } else {
+        1
+    };
+    let mut failfast = false;
+
+    if let Some(ref kwargs) = kw {
+        if let Some(v) = kwarg_value(kwargs, "stream") {
+            stream = v;
+        }
+        if let Some(v) = kwarg_value(kwargs, "verbosity") {
+            verbosity = v.as_int().unwrap_or(verbosity);
+        }
+        if let Some(v) = kwarg_value(kwargs, "failfast") {
+            failfast = v.as_bool().unwrap_or_else(|| v.as_int().unwrap_or(0) != 0);
+        }
+    }
+
+    inst_set_borrowed(self_obj, "stream", stream);
+    inst_set(self_obj, "verbosity", MbValue::from_int(verbosity));
+    inst_set(self_obj, "failfast", MbValue::from_bool(failfast));
+    MbValue::none()
+}
+
+/// `TextTestRunner.run(self, test)` — create a fresh TestResult, bracket the
+/// delegated `test.run(result)` call with start/stopTestRun, and return the
+/// result object.
+extern "C" fn ttr_run(self_obj: MbValue, args: MbValue) -> MbValue {
+    push_unittest_trace_frame("TextTestRunner.run");
+    let items = super::super::builtins::extract_items(args);
+    let test = items.first().copied().unwrap_or_else(MbValue::none);
+    let result = make_test_result();
+    let failfast = inst_get(self_obj, "failfast")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if failfast {
+        inst_set(result, "failfast", MbValue::from_bool(true));
+    }
+    call_method_n(result, "startTestRun", &[]);
+    call_method_n(test, "run", &[result]);
+    call_method_n(result, "stopTestRun", &[]);
+    pop_unittest_trace_frame();
+    result
+}
+
 // ── TestCase run protocol ──
 
 const DEFAULT_TEST_METHOD: &str = "runTest";
@@ -491,8 +636,7 @@ extern "C" fn tc_init(self_obj: MbValue, args: MbValue) -> MbValue {
     // ValueError ("no test method named ..."), except the "runTest" default
     // (which is allowed to be absent).
     if method != DEFAULT_TEST_METHOD {
-        let class_name =
-            inst_class_name(self_obj).unwrap_or_else(|| "TestCase".to_string());
+        let class_name = inst_class_name(self_obj).unwrap_or_else(|| "TestCase".to_string());
         let missing = super::super::class::lookup_method(&class_name, &method).is_none()
             && inst_get(self_obj, &method).is_none();
         if missing {
@@ -632,13 +776,16 @@ extern "C" fn tc_run(self_obj: MbValue, args: MbValue) -> MbValue {
 
     // CPython's run() does `getattr(self, self._testMethodName)` — a bare
     // TestCase() has no `runTest`, so that raises AttributeError (uncaught).
-    let class_name = self_obj.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Instance { ref class_name, .. } = (*p).data {
-            Some(class_name.clone())
-        } else {
-            None
-        }
-    }).unwrap_or_default();
+    let class_name = self_obj
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
     let method_missing = super::super::class::lookup_method(&class_name, &method).is_none()
         && inst_get(self_obj, &method).is_none();
     if method_missing {
@@ -650,6 +797,8 @@ extern "C" fn tc_run(self_obj: MbValue, args: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
+
+    push_unittest_trace_frame("TestCase.run");
 
     // Expose the active result so `subTest()` can record sub-test failures
     // and reset the per-run sub-test bookkeeping.
@@ -716,6 +865,7 @@ extern "C" fn tc_run(self_obj: MbValue, args: MbValue) -> MbValue {
         call_method_n(result, "stopTestRun", &[]);
     }
 
+    pop_unittest_trace_frame();
     result
 }
 
@@ -813,6 +963,7 @@ extern "C" fn ts_count_test_cases(self_obj: MbValue) -> MbValue {
 /// `TestSuite.run(self, result)` — run each member, honouring `shouldStop`
 /// (failfast) by halting the iteration as soon as it is set.
 extern "C" fn ts_run(self_obj: MbValue, args: MbValue) -> MbValue {
+    push_unittest_trace_frame("TestSuite.run");
     let items = super::super::builtins::extract_items(args);
     let result = items.first().copied().unwrap_or_else(MbValue::none);
     if let Some(list) = inst_get(self_obj, "_tests") {
@@ -826,6 +977,7 @@ extern "C" fn ts_run(self_obj: MbValue, args: MbValue) -> MbValue {
             call_method_n(t, "run", &[result]);
         }
     }
+    pop_unittest_trace_frame();
     result
 }
 
@@ -861,14 +1013,37 @@ extern "C" fn tl_init(_self: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// `TestLoader.loadTestsFromName(self, name, module=None)` — for any name we
-/// cannot resolve to a real in-process test (which is every name here, since
-/// the vendored CPython test modules are not importable), CPython 3.12 defers
-/// the failure: it returns a one-test suite that records an error when run.
+/// `TestLoader.loadTestsFromName(self, name, module=None)` — resolve the
+/// CPython-extracted fixture shape `ClassName.test_method` against the supplied
+/// module object. Names outside that bounded shape still defer the load failure
+/// into a `_FailedTest`, matching CPython's runner contract.
 extern "C" fn tl_load_tests_from_name(self_obj: MbValue, args: MbValue) -> MbValue {
     let _ = self_obj;
-    let _ = args;
-    make_test_suite(vec![make_load_error()])
+    let items = super::super::builtins::extract_items(args);
+    let Some(name) = items.first().copied().and_then(extract_str) else {
+        return make_test_suite(vec![make_load_error()]);
+    };
+    let Some(module) = items.get(1).copied() else {
+        return make_test_suite(vec![make_load_error()]);
+    };
+    let mut parts = name.split('.');
+    let (Some(class_attr), Some(method), None) = (parts.next(), parts.next(), parts.next()) else {
+        return make_test_suite(vec![make_load_error()]);
+    };
+    let Some(cls) = module_dict_attr(module, class_attr) else {
+        return make_test_suite(vec![make_load_error()]);
+    };
+    let Some(class_name) = super::super::class::resolve_class_name(cls) else {
+        return make_test_suite(vec![make_load_error()]);
+    };
+    if !super::super::class::class_is_registered(&class_name)
+        || super::super::class::lookup_method(&class_name, method).is_none()
+    {
+        return make_test_suite(vec![make_load_error()]);
+    }
+    let inst = MbValue::from_ptr(MbObject::new_instance(class_name));
+    inst_set(inst, "_testMethodName", name_val(method));
+    make_test_suite(vec![inst])
 }
 
 /// `TestLoader.loadTestsFromNames(self, names, module=None)` — a suite of the
@@ -1010,12 +1185,27 @@ fn register_suite_loader_classes() {
     super::super::class::mb_class_register("TestLoader", Vec::new(), loader_methods);
 }
 
+fn register_text_test_runner_class() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    let variadic = [
+        ("__init__", ttr_init as *const () as usize),
+        ("run", ttr_run as *const () as usize),
+    ];
+    for (name, addr) in variadic {
+        methods.insert(name.to_string(), MbValue::from_func(addr));
+        super::super::module::register_variadic_func(addr as u64);
+    }
+    super::super::class::mb_class_register("TextTestRunner", Vec::new(), methods);
+}
+
 /// Module-level constructor dispatchers (flat-args ABI) for
 /// `unittest.TestResult()`, `unittest.TestSuite()`, `unittest.TestLoader()`.
 unsafe extern "C" fn dispatch_new_test_result(_args: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     make_test_result()
 }
 unsafe extern "C" fn dispatch_new_test_suite(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     // unittest.TestSuite(tests=()) — accept and seed an optional iterable.
     let tests = if nargs >= 1 {
         let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -1026,8 +1216,25 @@ unsafe extern "C" fn dispatch_new_test_suite(args_ptr: *const MbValue, nargs: us
     make_test_suite(tests)
 }
 unsafe extern "C" fn dispatch_new_test_loader(_args: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let obj = MbValue::from_ptr(MbObject::new_instance("TestLoader".to_string()));
     tl_init(obj);
+    obj
+}
+
+unsafe extern "C" fn dispatch_new_text_test_runner(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    crate::icf_guard!();
+    let obj = MbValue::from_ptr(MbObject::new_instance("TextTestRunner".to_string()));
+    let args = if nargs == 0 {
+        MbValue::from_ptr(MbObject::new_list(Vec::new()))
+    } else {
+        let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        MbValue::from_ptr(MbObject::new_list(a.to_vec()))
+    };
+    ttr_init(obj, args);
     obj
 }
 
@@ -1048,13 +1255,25 @@ pub fn register_classes() {
         ("assertFalse", method_assert_false as *const () as usize),
         ("assertIs", method_assert_is as *const () as usize),
         ("assertIsNone", method_assert_is_none as *const () as usize),
+        (
+            "assertIsInstance",
+            method_assert_is_instance as *const () as usize,
+        ),
+        (
+            "assertNotIsInstance",
+            method_assert_not_is_instance as *const () as usize,
+        ),
         ("assertIn", method_assert_in as *const () as usize),
         ("skipTest", method_skip_test as *const () as usize),
         (
             "assertListEqual",
             method_assert_list_equal as *const () as usize,
         ),
-        ("addCleanup", method_add_cleanup_4 as *const () as usize),
+        (
+            "assertCountEqual",
+            method_assert_count_equal as *const () as usize,
+        ),
+        ("assertGreater", method_assert_greater as *const () as usize),
         // Run protocol (see TestCase run-protocol block above).
         ("id", tc_id as *const () as usize),
         ("setUp", tc_set_up as *const () as usize),
@@ -1074,19 +1293,24 @@ pub fn register_classes() {
         methods.insert(name.to_string(), MbValue::from_func(addr));
     }
 
-    // Variadic methods (`self [, args_list]`): `__init__`, `run`, `__call__`,
-    // `fail`, `subTest`, `assertRaises`. Registered with `register_variadic_func`
-    // so the instance dispatcher packs the trailing positional args into a list,
-    // letting optional / variadic parameters (e.g. `run(self, result=None)`,
-    // `subTest(self, msg=..., **params)`, `assertRaises(self, exc[, fn, *args])`)
-    // work.
-    let variadic: [(&str, usize); 6] = [
+    // Variadic methods (`self [, args_list]`) registered with `register_variadic_func`
+    // so the instance dispatcher packs trailing positional args into a list.
+    let variadic: [(&str, usize); 9] = [
         ("__init__", tc_init as *const () as usize),
         ("run", tc_run as *const () as usize),
         ("__call__", tc_call as *const () as usize),
         ("fail", tc_fail as *const () as usize),
         ("subTest", tc_sub_test as *const () as usize),
         ("assertRaises", method_assert_raises as *const () as usize),
+        (
+            "assertRaisesRegex",
+            method_assert_raises_regex as *const () as usize,
+        ),
+        (
+            "assertWarnsRegex",
+            method_assert_warns_regex as *const () as usize,
+        ),
+        ("addCleanup", method_add_cleanup as *const () as usize),
     ];
     for (name, addr) in variadic {
         methods.insert(name.to_string(), MbValue::from_func(addr));
@@ -1104,6 +1328,7 @@ pub fn register_classes() {
     );
     register_test_result_class();
     register_suite_loader_classes();
+    register_text_test_runner_class();
     register_context_manager_classes();
 }
 
@@ -1122,6 +1347,17 @@ fn register_context_manager_classes() {
         MbValue::from_func(arc_exit as *const () as usize),
     );
     super::super::class::mb_class_register("_AssertRaisesCtx", Vec::new(), arc);
+
+    let mut awc: HashMap<String, MbValue> = HashMap::new();
+    awc.insert(
+        "__enter__".into(),
+        MbValue::from_func(awc_enter as *const () as usize),
+    );
+    awc.insert(
+        "__exit__".into(),
+        MbValue::from_func(awc_exit as *const () as usize),
+    );
+    super::super::class::mb_class_register("_AssertWarnsCtx", Vec::new(), awc);
 
     let mut sub: HashMap<String, MbValue> = HashMap::new();
     sub.insert(
@@ -1194,10 +1430,6 @@ pub fn register() {
             dispatch_surface_stub as *const () as usize,
         ),
         (
-            "TextTestRunner",
-            dispatch_surface_stub as *const () as usize,
-        ),
-        (
             "addModuleCleanup",
             dispatch_surface_stub as *const () as usize,
         ),
@@ -1241,6 +1473,10 @@ pub fn register() {
         ("TestResult", dispatch_new_test_result as *const () as usize),
         ("TestSuite", dispatch_new_test_suite as *const () as usize),
         ("TestLoader", dispatch_new_test_loader as *const () as usize),
+        (
+            "TextTestRunner",
+            dispatch_new_text_test_runner as *const () as usize,
+        ),
         // `unittest.SkipTest` — the documented skip exception. Callable so
         // `raise unittest.SkipTest(reason)` works; recorded as a native type.
         ("SkipTest", dispatch_skip_test as *const () as usize),
@@ -1254,16 +1490,13 @@ pub fn register() {
     // Record the constructor pointers as native types so `isinstance(x, T)`
     // resolves the produced instances' class. `TestCase` (its module-level
     // dispatcher) is included so `isinstance(case, unittest.TestCase)` holds.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        for (name, addr) in &ctor_dispatchers {
-            map.insert(*addr as u64, name.to_string());
-        }
-        map.insert(
-            dispatch_testcase as *const () as usize as u64,
-            "TestCase".to_string(),
-        );
-    });
+    for (name, addr) in &ctor_dispatchers {
+        super::super::module::register_native_type_name(*addr as u64, name.to_string());
+    }
+    super::super::module::register_native_type_name(
+        dispatch_testcase as *const () as usize as u64,
+        "TestCase".to_string(),
+    );
     // Model the public class objects as real type-objects so
     // `type(unittest.TestCase).__name__ == "type"` (likewise TestSuite /
     // TestLoader / TestResult). Construction still works: calling a type-object
@@ -1327,6 +1560,17 @@ pub fn register() {
         set.insert(prog_addr as u64);
     });
     super::register_module("unittest.main", main_attrs);
+    // Dotted module registration mirrors CPython's import side effect by
+    // wiring parent.main to the submodule value. Keep that dotted module in
+    // MODULES, but restore the public callable parent attribute so
+    // `unittest.main()` still invokes the runner function.
+    super::super::module::MODULES.with(|mods| {
+        if let Some(unittest_mod) = mods.borrow_mut().get_mut("unittest") {
+            unittest_mod
+                .attrs
+                .insert("main".to_string(), MbValue::from_func(main_addr));
+        }
+    });
 }
 
 fn extract_str(val: MbValue) -> Option<String> {
@@ -1363,6 +1607,41 @@ fn values_equal(a: MbValue, b: MbValue) -> bool {
         .unwrap_or(false)
 }
 
+fn is_count_equal_iterable(val: MbValue) -> bool {
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::List(_)
+                | ObjData::Tuple(_)
+                | ObjData::Set(_)
+                | ObjData::FrozenSet(_)
+                | ObjData::Str(_)
+        )
+    })
+}
+
+fn values_count_equal(a: MbValue, b: MbValue) -> bool {
+    if !is_count_equal_iterable(a) || !is_count_equal_iterable(b) {
+        return values_equal(a, b);
+    }
+    let left = super::super::builtins::extract_items(a);
+    let right = super::super::builtins::extract_items(b);
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut used = vec![false; right.len()];
+    'outer: for item in left {
+        for (idx, candidate) in right.iter().copied().enumerate() {
+            if !used[idx] && values_equal(item, candidate) {
+                used[idx] = true;
+                continue 'outer;
+            }
+        }
+        return false;
+    }
+    true
+}
+
 /// unittest.TestCase() -> test case instance dict
 pub fn mb_unittest_testcase() -> MbValue {
     let dict = MbObject::new_dict();
@@ -1384,6 +1663,33 @@ pub fn mb_unittest_testcase() -> MbValue {
 pub fn mb_unittest_assert_equal(a: MbValue, b: MbValue) -> MbValue {
     if !values_equal(a, b) {
         raise_assertion("values not equal");
+    }
+    MbValue::none()
+}
+
+/// assertCountEqual(a, b) -> None; compare iterable element multiplicities.
+pub fn mb_unittest_assert_count_equal(a: MbValue, b: MbValue) -> MbValue {
+    if !values_count_equal(a, b) {
+        raise_assertion("element counts are not equal");
+    }
+    MbValue::none()
+}
+
+/// assertGreater(a, b) -> None; raises AssertionError unless a > b.
+pub fn mb_unittest_assert_greater(a: MbValue, b: MbValue) -> MbValue {
+    let ok = if let (Some(x), Some(y)) = (a.as_int(), b.as_int()) {
+        x > y
+    } else if let (Some(x), Some(y)) = (a.as_float(), b.as_float()) {
+        x > y
+    } else if let (Some(x), Some(y)) = (a.as_int(), b.as_float()) {
+        (x as f64) > y
+    } else if let (Some(x), Some(y)) = (a.as_float(), b.as_int()) {
+        x > (y as f64)
+    } else {
+        false
+    };
+    if !ok {
+        raise_assertion("first value is not greater than second");
     }
     MbValue::none()
 }
@@ -1426,6 +1732,34 @@ pub fn mb_unittest_assert_is_none(val: MbValue) -> MbValue {
         raise_assertion("expected None");
     }
     MbValue::none()
+}
+
+/// assertIsInstance(obj, classinfo) -> None; raises AssertionError on a false
+/// runtime isinstance result and preserves TypeError from invalid classinfo.
+pub fn mb_unittest_assert_is_instance(obj: MbValue, classinfo: MbValue) -> MbValue {
+    let result = super::super::class::mb_isinstance(obj, classinfo);
+    match result.as_bool() {
+        Some(true) => MbValue::none(),
+        Some(false) => {
+            raise_assertion("object is not an instance of classinfo");
+            MbValue::none()
+        }
+        None => MbValue::none(),
+    }
+}
+
+/// assertNotIsInstance(obj, classinfo) -> None; raises AssertionError when
+/// runtime isinstance is true and preserves TypeError from invalid classinfo.
+pub fn mb_unittest_assert_not_is_instance(obj: MbValue, classinfo: MbValue) -> MbValue {
+    let result = super::super::class::mb_isinstance(obj, classinfo);
+    match result.as_bool() {
+        Some(true) => {
+            raise_assertion("object is an instance of classinfo");
+            MbValue::none()
+        }
+        Some(false) => MbValue::none(),
+        None => MbValue::none(),
+    }
 }
 
 /// assertIn(item, collection) -> None; raises a catchable AssertionError when
@@ -1474,6 +1808,30 @@ pub fn mb_unittest_assert_raises(exc_type: MbValue) -> MbValue {
     cm
 }
 
+pub fn mb_unittest_assert_warns_regex(
+    expected_warning: MbValue,
+    expected_regex: MbValue,
+) -> MbValue {
+    super::warnings_mod::register();
+    let warning_name = failure_type_name(expected_warning).unwrap_or_else(|| "Warning".to_string());
+    let regex_text = extract_str(expected_regex).unwrap_or_else(|| {
+        extract_str(super::super::builtins::mb_str(expected_regex)).unwrap_or_default()
+    });
+    let cm = MbValue::from_ptr(MbObject::new_instance("_AssertWarnsCtx".to_string()));
+    inst_set(cm, "expected", name_val(&warning_name));
+    inst_set(cm, "expected_regex", name_val(&regex_text));
+    inst_set(cm, "warning", MbValue::none());
+    inst_set(cm, "filename", MbValue::none());
+    inst_set(cm, "lineno", MbValue::none());
+    inst_set(cm, "_recorded", MbValue::none());
+    inst_set(
+        cm,
+        "_catch_warnings",
+        super::warnings_mod::catch_warnings_new(true),
+    );
+    cm
+}
+
 /// Shared implementation of `assertRaises(excClass [, callable, *args])`, given
 /// the positional arguments AFTER `self` (so `args[0]` is always `excClass`).
 ///
@@ -1487,8 +1845,9 @@ pub fn mb_unittest_assert_raises(exc_type: MbValue) -> MbValue {
 ///     re-raising the unexpected exception.
 fn assert_raises_dispatch(args: &[MbValue]) -> MbValue {
     let exc_class = args.first().copied().unwrap_or_else(MbValue::none);
+    let positional_end = positional_arg_end(args);
     // Context-manager form: `with self.assertRaises(Exc):`.
-    if args.len() < 2 {
+    if positional_end < 2 {
         return mb_unittest_assert_raises(exc_class);
     }
     // Callable form: `self.assertRaises(Exc, fn, *call_args)`.
@@ -1514,6 +1873,65 @@ fn assert_raises_dispatch(args: &[MbValue]) -> MbValue {
             // A non-matching exception is left pending so it propagates.
         }
     }
+    MbValue::none()
+}
+
+fn assert_raises_regex_dispatch(args: &[MbValue]) -> MbValue {
+    let exc_class = args.first().copied().unwrap_or_else(MbValue::none);
+    if positional_arg_end(args) < 3 {
+        return mb_unittest_assert_raises(exc_class);
+    }
+
+    let mut assert_raises_args = Vec::with_capacity(args.len() - 1);
+    assert_raises_args.push(exc_class);
+    assert_raises_args.extend_from_slice(&args[2..]);
+    assert_raises_dispatch(&assert_raises_args)
+}
+
+fn warning_text(value: MbValue) -> String {
+    extract_str(super::super::builtins::mb_str(value)).unwrap_or_default()
+}
+
+fn recorded_warning_matches(recorded: MbValue, expected: &str, regex: Option<&Regex>) -> bool {
+    let actual = inst_get(recorded, "category")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let category_matches =
+        actual == expected || super::super::exception::is_subclass_of(&actual, expected);
+    if !category_matches {
+        return false;
+    }
+    let message = warning_text(inst_get(recorded, "message").unwrap_or_else(MbValue::none));
+    regex.map(|re| re.is_match(&message)).unwrap_or(true)
+}
+
+fn assert_warns_regex_dispatch(args: &[MbValue]) -> MbValue {
+    let expected_warning = args.first().copied().unwrap_or_else(MbValue::none);
+    let expected_regex = args.get(1).copied().unwrap_or_else(MbValue::none);
+    let positional_end = positional_arg_end(args);
+    let cm = mb_unittest_assert_warns_regex(expected_warning, expected_regex);
+    if positional_end < 3 {
+        return cm;
+    }
+
+    let callable = args[2];
+    let call_args = MbValue::from_ptr(MbObject::new_list(args[3..positional_end].to_vec()));
+    call_method_n(cm, "__enter__", &[]);
+    super::super::exception::mb_clear_exception();
+    super::super::builtins::mb_call_spread(callable, call_args);
+    if super::super::exception::current_exception_type().is_some() {
+        call_method_n(
+            cm,
+            "__exit__",
+            &[MbValue::none(), name_val("raised"), MbValue::none()],
+        );
+        return MbValue::none();
+    }
+    call_method_n(
+        cm,
+        "__exit__",
+        &[MbValue::none(), MbValue::none(), MbValue::none()],
+    );
     MbValue::none()
 }
 
@@ -1560,6 +1978,85 @@ extern "C" fn arc_exit(
         // Different type — let the with machinery re-raise the original.
         MbValue::from_bool(false)
     }
+}
+
+extern "C" fn awc_enter(self_obj: MbValue) -> MbValue {
+    let cw = inst_get(self_obj, "_catch_warnings")
+        .unwrap_or_else(|| super::warnings_mod::catch_warnings_new(true));
+    let recorded = call_method_n(cw, "__enter__", &[]);
+    inst_set_borrowed(self_obj, "_recorded", recorded);
+    super::warnings_mod::mb_warnings_simplefilter(name_val("always"));
+    borrowed_return(self_obj)
+}
+
+extern "C" fn awc_exit(
+    self_obj: MbValue,
+    _exc_type: MbValue,
+    exc_val: MbValue,
+    _exc_tb: MbValue,
+) -> MbValue {
+    if let Some(cw) = inst_get(self_obj, "_catch_warnings") {
+        call_method_n(
+            cw,
+            "__exit__",
+            &[MbValue::none(), MbValue::none(), MbValue::none()],
+        );
+    }
+    if !exc_val.is_none() {
+        return MbValue::from_bool(false);
+    }
+
+    let expected = inst_get(self_obj, "expected")
+        .and_then(extract_str)
+        .unwrap_or_else(|| "Warning".to_string());
+    let pattern = inst_get(self_obj, "expected_regex")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let compiled = Regex::new(&pattern).ok();
+    let recorded = inst_get(self_obj, "_recorded").unwrap_or_else(MbValue::none);
+    let warnings = recorded
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                Some(lock.read().unwrap().to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    let mut first_message = None;
+    for warning in warnings {
+        let message = warning_text(inst_get(warning, "message").unwrap_or_else(MbValue::none));
+        if first_message.is_none() && !message.is_empty() {
+            first_message = Some(message.clone());
+        }
+        if recorded_warning_matches(warning, &expected, compiled.as_ref()) {
+            inst_set_borrowed(
+                self_obj,
+                "warning",
+                inst_get(warning, "message").unwrap_or_else(MbValue::none),
+            );
+            inst_set_borrowed(
+                self_obj,
+                "filename",
+                inst_get(warning, "filename").unwrap_or_else(MbValue::none),
+            );
+            inst_set_borrowed(
+                self_obj,
+                "lineno",
+                inst_get(warning, "lineno").unwrap_or_else(MbValue::none),
+            );
+            return MbValue::from_bool(false);
+        }
+    }
+
+    if let Some(message) = first_message {
+        raise_assertion(&format!("\"{pattern}\" does not match \"{message}\""));
+    } else {
+        raise_assertion(&format!("{expected} not triggered"));
+    }
+    MbValue::from_bool(false)
 }
 
 /// `_SubTestCtx` — the object returned by `TestCase.subTest()`. It records the
@@ -1804,6 +2301,43 @@ mod tests {
         });
     }
 
+    // --- assert_is_instance ---
+    #[test]
+    fn test_assert_is_instance_primitive_pass() {
+        mb_unittest_assert_is_instance(MbValue::from_int(42), name_val("int"));
+    }
+
+    #[test]
+    fn test_assert_is_instance_primitive_fails() {
+        assert_raised_assertion(|| {
+            mb_unittest_assert_is_instance(MbValue::from_int(42), name_val("str"));
+        });
+    }
+
+    #[test]
+    fn test_assert_not_is_instance_primitive_pass() {
+        mb_unittest_assert_not_is_instance(MbValue::from_int(42), name_val("str"));
+    }
+
+    #[test]
+    fn test_assert_not_is_instance_primitive_fails() {
+        assert_raised_assertion(|| {
+            mb_unittest_assert_not_is_instance(MbValue::from_int(42), name_val("int"));
+        });
+    }
+
+    #[test]
+    fn test_assert_greater_int_pass() {
+        mb_unittest_assert_greater(MbValue::from_int(6), MbValue::from_int(5));
+    }
+
+    #[test]
+    fn test_assert_greater_int_fails() {
+        assert_raised_assertion(|| {
+            mb_unittest_assert_greater(MbValue::from_int(5), MbValue::from_int(6));
+        });
+    }
+
     // --- assert_in ---
     #[test]
     fn test_assert_in_list_found() {
@@ -1891,6 +2425,81 @@ mod tests {
         super::super::super::exception::mb_clear_exception();
     }
 
+    #[test]
+    fn test_assert_raises_dispatch_ignores_trailing_msg_kwargs_for_context_manager_form() {
+        let exc_type = MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string()));
+        let kwargs = MbValue::from_ptr(MbObject::new_dict());
+        crate::runtime::dict_ops::mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("msg".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "source code string cannot contain null bytes".to_string(),
+            )),
+        );
+
+        let cm = assert_raises_dispatch(&[exc_type, kwargs]);
+        assert_eq!(inst_class_name(cm).as_deref(), Some("_AssertRaisesCtx"));
+        assert_eq!(
+            inst_get(cm, "expected").and_then(extract_str).as_deref(),
+            Some("SyntaxError")
+        );
+    }
+
+    #[test]
+    fn test_assert_warns_regex_dispatch_returns_context_manager_for_msg_kwargs_form() {
+        register_classes();
+        super::super::warnings_mod::register();
+        let warning_type = name_val("DeprecationWarning");
+        let regex = name_val(r"ast\.(Num|Str) is deprecated");
+        let kwargs = MbValue::from_ptr(MbObject::new_dict());
+        crate::runtime::dict_ops::mb_dict_setitem(
+            kwargs,
+            name_val("msg"),
+            name_val("deprecated alias should warn"),
+        );
+
+        let cm = assert_warns_regex_dispatch(&[warning_type, regex, kwargs]);
+        assert_eq!(inst_class_name(cm).as_deref(), Some("_AssertWarnsCtx"));
+        assert_eq!(
+            inst_get(cm, "expected").and_then(extract_str).as_deref(),
+            Some("DeprecationWarning")
+        );
+    }
+
+    #[test]
+    fn test_assert_warns_regex_context_manager_records_matching_warning() {
+        register_classes();
+        super::super::warnings_mod::register();
+        super::super::warnings_mod::mb_warnings_resetwarnings();
+        super::super::super::exception::mb_clear_exception();
+
+        let cm = mb_unittest_assert_warns_regex(
+            name_val("DeprecationWarning"),
+            name_val(r"ast\.(Num|Str) is deprecated"),
+        );
+        let entered = call_method_n(cm, "__enter__", &[]);
+        assert_eq!(inst_class_name(entered).as_deref(), Some("_AssertWarnsCtx"));
+
+        super::super::warnings_mod::mb_warnings_warn(
+            name_val("ast.Num is deprecated"),
+            name_val("DeprecationWarning"),
+        );
+        call_method_n(
+            cm,
+            "__exit__",
+            &[MbValue::none(), MbValue::none(), MbValue::none()],
+        );
+
+        assert!(
+            super::super::super::exception::current_exception_type().is_none(),
+            "matching warning should satisfy assertWarnsRegex"
+        );
+        assert_eq!(
+            warning_text(inst_get(cm, "warning").unwrap_or_else(MbValue::none)),
+            "ast.Num is deprecated"
+        );
+    }
+
     // --- testcase ---
     #[test]
     fn test_testcase_structure() {
@@ -1914,6 +2523,26 @@ mod tests {
     fn test_main_returns_none() {
         let result = mb_unittest_main();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_register_keeps_unittest_main_callable_after_submodule_registration() {
+        register();
+        super::super::super::module::MODULES.with(|mods| {
+            let modules = mods.borrow();
+            assert!(
+                modules.contains_key("unittest.main"),
+                "dotted unittest.main module should stay registered"
+            );
+            let main = modules
+                .get("unittest")
+                .and_then(|m| m.attrs.get("main").copied())
+                .expect("unittest.main parent attr");
+            assert!(
+                main.as_func().is_some(),
+                "unittest.main parent attr should remain callable"
+            );
+        });
     }
 
     // --- skip-decorator dispatchers (#1684) ---
@@ -1941,5 +2570,43 @@ mod tests {
         // The returned MbValue should be the identity decorator's address
         // wrapped as a function — applying it to a wrapped fn returns it.
         assert!(!r.is_none());
+    }
+
+    extern "C" fn loader_dummy_test(_self: MbValue) -> MbValue {
+        MbValue::none()
+    }
+
+    #[test]
+    fn test_load_tests_from_name_resolves_class_method_from_module() {
+        register_classes();
+        let class_name = "UnittestLoaderDummyCase";
+        let mut methods = HashMap::new();
+        methods.insert(
+            "test_ok".to_string(),
+            MbValue::from_func(loader_dummy_test as *const () as usize),
+        );
+        crate::runtime::class::mb_class_register(class_name, vec!["TestCase".to_string()], methods);
+
+        let module = MbValue::from_ptr(MbObject::new_dict());
+        let key = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+        let value = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+        crate::runtime::dict_ops::mb_dict_setitem(module, key, value);
+
+        let loader = unsafe { dispatch_new_test_loader(std::ptr::null(), 0) };
+        let name = MbValue::from_ptr(MbObject::new_str(format!("{class_name}.test_ok")));
+        let suite_args = MbValue::from_ptr(MbObject::new_list(vec![name, module]));
+        let suite = tl_load_tests_from_name(loader, suite_args);
+        let runner = unsafe { dispatch_new_text_test_runner(std::ptr::null(), 0) };
+        let result = call_method_n(runner, "run", &[suite]);
+
+        assert_eq!(inst_class_name(result).as_deref(), Some("TestResult"));
+        assert_eq!(
+            inst_get(result, "testsRun").and_then(|v| v.as_int()),
+            Some(1)
+        );
+        assert_eq!(
+            call_method_n(result, "wasSuccessful", &[]).as_bool(),
+            Some(true)
+        );
     }
 }

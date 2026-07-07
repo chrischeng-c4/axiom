@@ -9,7 +9,7 @@
 //! lib   = "abc"
 //! fixture = "tests/cpython/std-libs/abc/bench/get_cache_token_hot.py"
 //! floor   = 1.0
-//! mem_floor = 1.0
+//! mem_floor = 1.0      # applies to workload RSS after the fixed runtime floor
 //! samples = 1            # 1 = single shot; N>=3 = median-of-N
 //! prereq_imports = []    # e.g. ["aiofiles", "google.protobuf"]
 //! timeout_secs = 120      # optional; per-pin override (default 120s, #964)
@@ -51,6 +51,13 @@ use common::{
 /// not wedge the whole perf-pin gate with an orphaned 100%-CPU grandchild.
 /// Overridable per-pin via the `timeout_secs` TOML field.
 const DEFAULT_PIN_TIMEOUT_SECS: u64 = 120;
+/// #1024: ship-profile mamba carries a fixed runtime RSS floor of about 26 MB
+/// before a fixture's own allocation pattern shows up. Small perf pins like
+/// `argparse_1442`, `googleapis_common_protos_1512`, and `grpclib_1514`
+/// structurally fail a raw `cpython_rss / mamba_rss` gate even when mamba's
+/// workload-attributed RSS is below CPython's, so the mem gate subtracts this
+/// fixed allowance from mamba before applying each pin's `mem_floor`.
+const MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES: u64 = 26_000_000;
 
 /// Put a spawned child in its own process group before exec, so a timeout
 /// kill can `killpg` the whole spawn tree. Mirrors `runner.rs`'s
@@ -100,6 +107,13 @@ struct Measurement {
     peak_rss_bytes: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MemGateEvaluation {
+    raw_ratio: f64,
+    adjusted_ratio: f64,
+    effective_mamba_rss_bytes: u64,
+}
+
 #[derive(Debug, Deserialize)]
 struct CpythonPerfBaseline {
     pin_path: String,
@@ -113,6 +127,32 @@ struct CpythonPerfBaseline {
     peak_rss_bytes: Option<u64>,
     python: String,
     captured_at_unix: u64,
+    /// Recording host (#966, `platform.node()`), used only to warn — never to
+    /// fail — when gating against a baseline recorded on a different host,
+    /// since CPU/RSS ratios aren't portable across machines. `#[serde(default)]`
+    /// so pre-#966 baseline rows (column added via `ALTER TABLE`, NULL on old
+    /// rows) still deserialize.
+    #[serde(default)]
+    host: Option<String>,
+}
+
+/// Best-effort local hostname (#966), compared against a loaded baseline's
+/// `host` to warn on cross-host gating. Mirrors Python's `platform.node()`
+/// closely enough for an equality check (both ultimately `gethostname(2)`).
+#[cfg(unix)]
+fn local_hostname() -> Option<String> {
+    let mut buf = vec![0u8; 256];
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8(buf[..len].to_vec()).ok()
+}
+
+#[cfg(not(unix))]
+fn local_hostname() -> Option<String> {
+    None
 }
 
 fn manifest_dir() -> PathBuf {
@@ -397,6 +437,21 @@ fn cpython_measurement_from_baseline(baseline: &CpythonPerfBaseline) -> Measurem
     }
 }
 
+fn evaluate_mem_gate(cpython_rss_bytes: u64, mamba_rss_bytes: u64) -> MemGateEvaluation {
+    let effective_mamba_rss_bytes =
+        mamba_rss_bytes.saturating_sub(MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES);
+    let adjusted_ratio = if effective_mamba_rss_bytes == 0 {
+        f64::INFINITY
+    } else {
+        cpython_rss_bytes as f64 / effective_mamba_rss_bytes as f64
+    };
+    MemGateEvaluation {
+        raw_ratio: cpython_rss_bytes as f64 / mamba_rss_bytes as f64,
+        adjusted_ratio,
+        effective_mamba_rss_bytes,
+    }
+}
+
 fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     let raw = std::fs::read_to_string(toml_path)?;
     let pin: Pin = toml::from_str(&raw)?;
@@ -444,6 +499,22 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
             baseline.cpu_time_ns,
             baseline.peak_rss_bytes
         );
+        // #966: warn (never fail) when the loaded baseline was recorded on a
+        // different host than the one running this gate — CPU/RSS ratios
+        // aren't portable across machines.
+        let local_host = local_hostname();
+        if let (Some(baseline_host), Some(local_host)) =
+            (baseline.host.as_deref(), local_host.as_deref())
+        {
+            if baseline_host != local_host {
+                eprintln!(
+                    "WARNING: #{} {} CPython perf baseline was recorded on host `{}` \
+                     but this gate is running on host `{}`; CPU/RSS ratios may not be \
+                     comparable across machines.",
+                    pin.issue, pin.lib, baseline_host, local_host
+                );
+            }
+        }
     } else {
         eprintln!(
             "#{} {} CPython perf baseline missing; falling back to live python3 measurement",
@@ -482,6 +553,56 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
         format!("median-of-{samples}")
     };
 
+    // OPTIONAL peak-RSS gate. A pin without `mem_floor` behaves exactly as
+    // before (no assertion). When present, assert mem_ratio = cpython_rss /
+    // max(mamba_rss - fixed_runtime_floor, 0) >= mem_floor. This keeps the
+    // per-pin `mem_floor` semantics intact while accounting for mamba's fixed
+    // ship-profile runtime RSS floor (#1024) instead of weakening individual
+    // pins. The CPython side comes from the SQLite baseline when present;
+    // otherwise it is measured live as the compatibility fallback.
+    if let Some(mem_floor) = pin.mem_floor {
+        match (cpy.peak_rss_bytes, mb.peak_rss_bytes) {
+            (Some(cpy_b), Some(mb_b)) if mb_b > 0 => {
+                let evaluation = evaluate_mem_gate(cpy_b, mb_b);
+                eprintln!(
+                    "#{} {} mem gate: raw cpython/mamba peak-RSS ratio = {:.3}x; \
+                     fixed-floor-adjusted ratio = {:.3}x using {} B fixed runtime RSS allowance \
+                     (effective mamba workload RSS {} B; mamba total {} B vs cpython {} B)",
+                    pin.issue,
+                    pin.lib,
+                    evaluation.raw_ratio,
+                    evaluation.adjusted_ratio,
+                    MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES,
+                    evaluation.effective_mamba_rss_bytes,
+                    mb_b,
+                    cpy_b
+                );
+                assert!(
+                    evaluation.adjusted_ratio >= mem_floor,
+                    "#{} {} mem gate FAIL: fixed-floor-adjusted cpython/mamba workload-RSS ratio = \
+                     {:.2}x below floor of {:.2}x after applying {} B fixed runtime RSS allowance \
+                     (raw ratio {:.2}x; effective mamba workload RSS {} B; mamba total {} B vs cpython {} B)",
+                    pin.issue,
+                    pin.lib,
+                    evaluation.adjusted_ratio,
+                    mem_floor,
+                    MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES,
+                    evaluation.raw_ratio,
+                    evaluation.effective_mamba_rss_bytes,
+                    mb_b,
+                    cpy_b,
+                );
+            }
+            _ => {
+                eprintln!(
+                    "#{} {} mem gate skipped: peak-RSS measurement unavailable \
+                     (cpython={:?}, mamba={:?}); mem_floor={:.2}x left unenforced",
+                    pin.issue, pin.lib, cpy.peak_rss_bytes, mb.peak_rss_bytes, mem_floor
+                );
+            }
+        }
+    }
+
     // D5.2: the gate is the EXTERNAL CPU-time ratio (getrusage / /usr/bin/time),
     // not a fixture-emitted self-timing marker. Process-startup cost is
     // included; warmup/median (samples) damps it. See PRODUCTION-GATE.md D5.2.
@@ -511,43 +632,6 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
                  (cpython={:?}, mamba={:?})",
                 pin.issue, pin.lib, cpy.cpu_time_ns, mb.cpu_time_ns
             );
-        }
-    }
-
-    // OPTIONAL peak-RSS gate. A pin without `mem_floor` behaves exactly as
-    // before (no assertion). When present, assert mem_ratio = cpython_rss /
-    // mamba_rss >= mem_floor (mamba uses no more peak memory than CPython at
-    // floor 1.0x — matches cross_runtime.rs FLOOR semantics). The CPython side
-    // comes from the SQLite baseline when present; otherwise it is measured
-    // live as the compatibility fallback.
-    if let Some(mem_floor) = pin.mem_floor {
-        match (cpy.peak_rss_bytes, mb.peak_rss_bytes) {
-            (Some(cpy_b), Some(mb_b)) if mb_b > 0 => {
-                let mem_ratio = cpy_b as f64 / mb_b as f64;
-                eprintln!(
-                    "#{} {} mem gate: cpython/mamba peak-RSS ratio = {:.3}x \
-                     (mamba {} B vs cpython {} B)",
-                    pin.issue, pin.lib, mem_ratio, mb_b, cpy_b
-                );
-                assert!(
-                    mem_ratio >= mem_floor,
-                    "#{} {} mem gate FAIL: cpython/mamba peak-RSS ratio = \
-                     {:.2}x below floor of {:.2}x (mamba {} B vs cpython {} B)",
-                    pin.issue,
-                    pin.lib,
-                    mem_ratio,
-                    mem_floor,
-                    mb_b,
-                    cpy_b,
-                );
-            }
-            _ => {
-                eprintln!(
-                    "#{} {} mem gate skipped: peak-RSS measurement unavailable \
-                     (cpython={:?}, mamba={:?}); mem_floor={:.2}x left unenforced",
-                    pin.issue, pin.lib, cpy.peak_rss_bytes, mb.peak_rss_bytes, mem_floor
-                );
-            }
         }
     }
     Ok(())

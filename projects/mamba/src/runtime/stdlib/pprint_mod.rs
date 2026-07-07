@@ -142,10 +142,7 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(ctor as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(ctor as u64, "PrettyPrinter".to_string());
-    });
+    super::super::module::register_native_type_name(ctor as u64, "PrettyPrinter".to_string());
 
     super::register_module("pprint", attrs);
 }
@@ -228,6 +225,7 @@ fn load_cfg(inst: MbValue) -> Config {
 /// free functions). All test fixtures pass these by keyword anyway, so the
 /// trailing-kwargs-dict path carries the real config.
 unsafe extern "C" fn dispatch_pretty_printer(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (positional, kwargs) = match a.last().and_then(|v| dict_as_kwargs(*v)) {
         Some(kw) => (&a[..a.len() - 1], Some(kw)),
@@ -544,7 +542,8 @@ fn dict_entries(val: MbValue, sort: bool) -> Option<Vec<(MbValue, MbValue)>> {
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
-            let mut entries: Vec<(MbValue, MbValue)> = map.iter()
+            let mut entries: Vec<(MbValue, MbValue)> = map
+                .iter()
                 .map(|(k, v)| (super::super::dict_ops::dict_key_to_mbvalue(k), *v))
                 .collect();
             drop(map);
@@ -562,7 +561,8 @@ fn counter_entries(val: MbValue) -> Option<Vec<(MbValue, MbValue)>> {
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
-            let mut entries: Vec<(MbValue, MbValue, usize)> = map.iter()
+            let mut entries: Vec<(MbValue, MbValue, usize)> = map
+                .iter()
                 .enumerate()
                 .map(|(i, (k, v))| (super::super::dict_ops::dict_key_to_mbvalue(k), *v, i))
                 .collect();
@@ -590,7 +590,11 @@ fn safe_repr_projected_instance(
 
     let ptr = val.as_ptr()?;
     unsafe {
-        let ObjData::Instance { ref class_name, ref fields } = (*ptr).data else {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        else {
             return None;
         };
         match class_name.as_str() {
@@ -636,7 +640,11 @@ fn safe_repr_projected_instance(
 fn namespace_repr_parts(val: MbValue) -> Option<(String, Vec<String>)> {
     let ptr = val.as_ptr()?;
     unsafe {
-        let ObjData::Instance { class_name, ref fields } = &(*ptr).data else {
+        let ObjData::Instance {
+            class_name,
+            ref fields,
+        } = &(*ptr).data
+        else {
             return None;
         };
         if class_name != "SimpleNamespace"
@@ -1334,10 +1342,7 @@ fn format_obj(
             if !parts.is_empty() {
                 out.push_str(&prefix);
                 out.push('(');
-                out.push_str(&parts.join(&format!(
-                    ",\n{}",
-                    " ".repeat(indent + prefix.len() + 1)
-                )));
+                out.push_str(&parts.join(&format!(",\n{}", " ".repeat(indent + prefix.len() + 1))));
                 out.push(')');
                 return;
             }

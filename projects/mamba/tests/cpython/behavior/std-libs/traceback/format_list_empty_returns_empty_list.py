@@ -9,7 +9,6 @@
 # case = "format_list_empty_returns_empty_list"
 # subject = "traceback.format_list"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

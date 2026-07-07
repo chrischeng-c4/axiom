@@ -9,7 +9,6 @@
 # case = "walk_tb_yields_one_pair_per_level"
 # subject = "traceback.walk_tb"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

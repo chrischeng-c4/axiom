@@ -21,7 +21,7 @@
 //
 // No partial state on failure: lockfile is never rewritten by sync.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};

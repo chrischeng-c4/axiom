@@ -9,12 +9,10 @@
 # case = "limit_tests__test_format_exception"
 # subject = "cpython.test_traceback.LimitTests.test_format_exception"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::LimitTests::test_format_exception
 """Auto-ported test: LimitTests::test_format_exception (CPython 3.12 oracle)."""
 

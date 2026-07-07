@@ -29,6 +29,7 @@ use std::os::raw::c_int;
 macro_rules! disp_variadic {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = if nargs == 0 || args_ptr.is_null() {
                 &[]
             } else {
@@ -317,7 +318,13 @@ fn mb_select(args: &[MbValue]) -> MbValue {
         fd_index.insert(p.fd, i);
     }
 
-    let rc = unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, timeout_ms) };
+    let rc = unsafe {
+        libc::poll(
+            pollfds.as_mut_ptr(),
+            pollfds.len() as libc::nfds_t,
+            timeout_ms,
+        )
+    };
     if rc < 0 {
         return select_errno();
     }
@@ -596,7 +603,13 @@ unsafe extern "C" fn pe_poll(self_v: MbValue, args: MbValue) -> MbValue {
             })
         })
         .collect();
-    let rc = unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, timeout_ms) };
+    let rc = unsafe {
+        libc::poll(
+            pollfds.as_mut_ptr(),
+            pollfds.len() as libc::nfds_t,
+            timeout_ms,
+        )
+    };
     if rc < 0 {
         return select_errno();
     }
@@ -908,11 +921,14 @@ mod kq {
         });
         super::super::super::class::mb_class_register("kqueue", Vec::new(), map);
         super::super::super::class::mb_class_register("kevent", Vec::new(), HashMap::new());
-        super::super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            let mut tn = m.borrow_mut();
-            tn.insert(super::d_kqueue_new as usize as u64, "kqueue".to_string());
-            tn.insert(super::d_kevent_new as usize as u64, "kevent".to_string());
-        });
+        super::super::super::module::register_native_type_name(
+            super::d_kqueue_new as usize as u64,
+            "kqueue".to_string(),
+        );
+        super::super::super::module::register_native_type_name(
+            super::d_kevent_new as usize as u64,
+            "kevent".to_string(),
+        );
     }
 }
 
@@ -991,17 +1007,26 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut tn = m.borrow_mut();
-        tn.insert(d_poll_new as usize as u64, "poll".to_string());
-        tn.insert(d_devpoll_new as usize as u64, "devpoll".to_string());
-        tn.insert(d_epoll_new as usize as u64, "epoll".to_string());
-    });
+    super::super::module::register_native_type_name(d_poll_new as usize as u64, "poll".to_string());
+    super::super::module::register_native_type_name(
+        d_devpoll_new as usize as u64,
+        "devpoll".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        d_epoll_new as usize as u64,
+        "epoll".to_string(),
+    );
 
     #[cfg(target_os = "macos")]
     {
-        attrs.insert("kqueue".to_string(), MbValue::from_func(d_kqueue_new as usize));
-        attrs.insert("kevent".to_string(), MbValue::from_func(d_kevent_new as usize));
+        attrs.insert(
+            "kqueue".to_string(),
+            MbValue::from_func(d_kqueue_new as usize),
+        );
+        attrs.insert(
+            "kevent".to_string(),
+            MbValue::from_func(d_kevent_new as usize),
+        );
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             let mut set = s.borrow_mut();
             set.insert(d_kqueue_new as usize as u64);
@@ -1201,9 +1226,8 @@ mod tests {
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
         let p = poll_engine_new_poll(&[]);
         unsafe {
-            let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(
-                fds[0] as i64,
-            )]));
+            let args =
+                MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(fds[0] as i64)]));
             pe_register(p, args);
             let byte = [1u8];
             assert_eq!(

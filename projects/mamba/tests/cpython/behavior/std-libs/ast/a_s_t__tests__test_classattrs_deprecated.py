@@ -9,12 +9,11 @@
 # case = "a_s_t__tests__test_classattrs_deprecated"
 # subject = "cpython.test_ast.AST_Tests.test_classattrs_deprecated"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_ast/test_ast.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import unittest, io
 from test.test_ast import test_ast
 _suite = unittest.defaultTestLoader.loadTestsFromName("AST_Tests.test_classattrs_deprecated", test_ast)

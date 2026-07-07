@@ -669,6 +669,7 @@ fn make_handle(typecode: char) -> MbValue {
 macro_rules! dispatch_binary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(
                 a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -688,9 +689,7 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(addr as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(addr as u64, "array".to_string());
-    });
+    super::super::module::register_native_type_name(addr as u64, "array".to_string());
     // typecodes constant — eagerly evaluated as str (CPython exposes this
     // as a plain str under py<3.15, tuple under >=3.15). Mamba targets 3.12.
     attrs.insert(

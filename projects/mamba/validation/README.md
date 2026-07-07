@@ -15,6 +15,8 @@ working source of truth for the validation inventory shape and profile grouping.
 
 - `mvp.toml` defines the top-level MVP profiles and references the current
   project-local manifests.
+- `evidence/coverage/` holds canonical coverage evidence and producer-command
+  breadcrumbs for the retired project-root coverage docs.
 - Existing manifests outside this directory remain authoritative until they are
   migrated or included here:
   - `../tests/cpython/lib_test_seeds/` — folder-based contract (#3729);

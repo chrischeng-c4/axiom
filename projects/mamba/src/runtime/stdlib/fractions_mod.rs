@@ -236,7 +236,10 @@ fn coerce(val: MbValue) -> FractionState {
     if let Some((num, den)) = rational_components(val) {
         let n = coerce(num);
         let d = coerce(den);
-        let component = n.component_class.clone().or_else(|| d.component_class.clone());
+        let component = n
+            .component_class
+            .clone()
+            .or_else(|| d.component_class.clone());
         return FractionState::new_with_component(
             n.num.saturating_mul(d.den),
             n.den.saturating_mul(d.num),
@@ -541,7 +544,10 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
     // (a_n / a_d) / (b_n / b_d)  =  a_n * b_d / (a_d * b_n)
     let n = a.num.saturating_mul(b.den);
     let d = a.den.saturating_mul(b.num);
-    let component = a.component_class.clone().or_else(|| b.component_class.clone());
+    let component = a
+        .component_class
+        .clone()
+        .or_else(|| b.component_class.clone());
     make_handle(FractionState::new_with_component(n, d, component))
 }
 
@@ -1041,6 +1047,7 @@ macro_rules! dispatch_unary {
 macro_rules! dispatch_binary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(
                 a.first().copied().unwrap_or_else(MbValue::none),
@@ -1255,13 +1262,10 @@ pub fn register() {
     // the CLASS_REGISTRY table mb_class_register populates below). Without both
     // the mapping and the class registration, `callable(Fraction.is_integer)` is
     // False even though the integer-handle dispatch already implements them.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_Fraction as *const () as usize as u64,
-            "Fraction".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_Fraction as *const () as usize as u64,
+        "Fraction".to_string(),
+    );
 
     // Register the Fraction class method table so the class-attribute method
     // bridge above can validate + resolve `Fraction.<method>`. These mirror the

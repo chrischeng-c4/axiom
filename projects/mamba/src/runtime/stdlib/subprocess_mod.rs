@@ -74,6 +74,7 @@ use std::sync::atomic::AtomicU32;
 macro_rules! disp_variadic {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
         }
@@ -86,6 +87,7 @@ macro_rules! disp_variadic {
 macro_rules! disp_variadic_all {
     ($disp:ident, $fn:path) => {
         unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            crate::icf_guard!();
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(a)
         }
@@ -177,12 +179,9 @@ pub fn register() {
             dispatch_subprocess_error as *const () as usize,
         ),
     ];
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        for (name, addr) in &class_dispatchers {
-            map.insert(*addr as u64, name.to_string());
-        }
-    });
+    for (name, addr) in &class_dispatchers {
+        super::super::module::register_native_type_name(*addr as u64, name.to_string());
+    }
 
     // Register the "Popen" instance-method class so `p.wait()` dispatches
     // through the normal MRO path (mirrors configparser's

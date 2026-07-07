@@ -84,12 +84,14 @@ unsafe extern "C" fn d_noop(_args_ptr: *const MbValue, _nargs: usize) -> MbValue
 /// class name, enabling the structural `__subclasshook__` in `mb_issubclass`.
 #[inline(never)]
 unsafe extern "C" fn d_abstract_cm(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let _ = std::hint::black_box("AbstractContextManager");
     MbValue::none()
 }
 
 #[inline(never)]
 unsafe extern "C" fn d_abstract_async_cm(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let _ = std::hint::black_box("AbstractAsyncContextManager");
     MbValue::none()
 }
@@ -198,6 +200,12 @@ fn make_callback_entry(callable: MbValue, args: Vec<MbValue>, kwargs: MbValue) -
     MbValue::from_ptr(MbObject::new_tuple(vec![kind_v, callable, args_v, kwargs]))
 }
 
+fn bound_exit_callback(obj: MbValue) -> Option<MbValue> {
+    let exit_name = MbValue::from_ptr(MbObject::new_str("__exit__".to_string()));
+    let bound = super::super::class::mb_getattr_default(obj, exit_name, MbValue::none());
+    (!bound.is_none()).then_some(bound)
+}
+
 /// Run every registered callback in LIFO order. `pending` is the in-flight
 /// exception value (or None). Returns true if the exception was suppressed by
 /// one of the exit callbacks. New exceptions raised by callbacks become the
@@ -233,11 +241,7 @@ fn exit_stack_unwind(self_v: MbValue, mut pending: MbValue) -> bool {
             "cb" => {
                 // Plain callback — invoked regardless of exception state.
                 let args_list = MbValue::from_ptr(MbObject::new_list(args));
-                let _ = super::super::builtins::mb_call_spread_kwargs(
-                    callable,
-                    args_list,
-                    kwargs,
-                );
+                let _ = super::super::builtins::mb_call_spread_kwargs(callable, args_list, kwargs);
                 // A callback that itself raises becomes the new pending exc.
                 if super::super::exception::mb_has_exception().as_bool() == Some(true) {
                     pending = super::super::exception::mb_get_exception();
@@ -367,7 +371,8 @@ pub fn mb_exitstack_method(self_v: MbValue, name: &str, args: MbValue) -> MbValu
         }
         "push" => {
             let exitfn = items.first().copied().unwrap_or_else(MbValue::none);
-            let entry = make_entry("exit", exitfn, vec![]);
+            let registered = bound_exit_callback(exitfn).unwrap_or(exitfn);
+            let entry = make_entry("exit", registered, vec![]);
             super::super::list_ops::mb_list_append(exit_stack_callbacks(self_v), entry);
             unsafe {
                 super::super::rc::retain_if_ptr(exitfn);
@@ -618,6 +623,18 @@ fn exc_type_and_msg(exc: MbValue) -> (String, String) {
     (ty, msg)
 }
 
+fn same_exc_type_and_msg(lhs: MbValue, rhs: MbValue) -> bool {
+    exc_type_and_msg(lhs) == exc_type_and_msg(rhs)
+}
+
+fn pending_runtimeerror_wraps_same_stopiteration(exc: MbValue) -> bool {
+    let current = super::super::exception::mb_get_exception();
+    if current.is_none() {
+        return false;
+    }
+    inst_field(current, "__cause__").is_some_and(|cause| same_exc_type_and_msg(cause, exc))
+}
+
 /// `@contextmanager` __enter__ for a generator handle: advance to the first
 /// `yield` and return the yielded value. If the generator never yields (body
 /// returns immediately) CPython raises `RuntimeError("generator didn't
@@ -713,6 +730,15 @@ pub fn cm_gen_exit(
             // Body caught the exception → suppress it.
             super::super::exception::clear_current_exception();
             MbValue::from_bool(true)
+        }
+        Some("RuntimeError")
+            if ty == "StopIteration" && pending_runtimeerror_wraps_same_stopiteration(exc_type) =>
+        {
+            // PEP 479 wraps `generator.throw(StopIteration)` in RuntimeError,
+            // but contextlib.contextmanager must still re-raise the original
+            // with-body StopIteration unchanged.
+            super::super::exception::clear_current_exception();
+            MbValue::from_bool(false)
         }
         Some(other) if other == ty => {
             // Re-raised the same exception type. CPython compares identity;
@@ -1012,17 +1038,14 @@ pub fn register() {
 
     // Map the AbstractContextManager type-object pointers to their class names
     // so `resolve_class_name` (and thus `issubclass`) recognizes them.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            d_abstract_cm as usize as u64,
-            "AbstractContextManager".into(),
-        );
-        map.insert(
-            d_abstract_async_cm as usize as u64,
-            "AbstractAsyncContextManager".into(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        d_abstract_cm as usize as u64,
+        "AbstractContextManager".into(),
+    );
+    super::super::module::register_native_type_name(
+        d_abstract_async_cm as usize as u64,
+        "AbstractAsyncContextManager".into(),
+    );
 
     super::register_module("contextlib", attrs);
 }
@@ -1079,7 +1102,9 @@ pub fn mb_contextlib_nullcontext(value: MbValue) -> MbValue {
 /// contextlib.contextmanager(func) -> factory object.
 pub fn mb_contextlib_contextmanager(func: MbValue) -> MbValue {
     let inst = MbValue::from_ptr(MbObject::new_instance("contextlib._cm_factory".to_string()));
-    unsafe { super::super::rc::retain_if_ptr(func); }
+    unsafe {
+        super::super::rc::retain_if_ptr(func);
+    }
     set_inst_field(inst, "_func", func);
     inst
 }
@@ -1087,6 +1112,39 @@ pub fn mb_contextlib_contextmanager(func: MbValue) -> MbValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{class, exception, list_ops};
+    use std::sync::Once;
+
+    fn str_val(s: &str) -> MbValue {
+        MbValue::from_ptr(MbObject::new_str(s.to_string()))
+    }
+
+    extern "C" fn test_exitstack_push_cm_exit(
+        self_v: MbValue,
+        _exc_type: MbValue,
+        _exc_val: MbValue,
+        _exc_tb: MbValue,
+    ) -> MbValue {
+        let log = inst_field(self_v, "_log").expect("missing _log");
+        list_ops::mb_list_append(log, str_val("exit"));
+        MbValue::from_bool(false)
+    }
+
+    fn register_test_exitstack_cm() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let mut methods = HashMap::new();
+            methods.insert(
+                "__exit__".to_string(),
+                MbValue::from_func(test_exitstack_push_cm_exit as usize),
+            );
+            class::mb_class_register(
+                "contextlib._test_exitstack_push_cm",
+                vec!["object".to_string()],
+                methods,
+            );
+        });
+    }
 
     #[test]
     fn test_suppress_creates_dict() {
@@ -1120,5 +1178,59 @@ mod tests {
     fn test_nullcontext_default_none() {
         let result = mb_contextlib_nullcontext(MbValue::none());
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_pending_runtimeerror_wraps_same_stopiteration() {
+        class::clear_last_raised_instance();
+        exception::clear_current_exception();
+
+        let stop = exception::mb_exception_new_with_args(
+            str_val("StopIteration"),
+            MbValue::from_ptr(MbObject::new_list(vec![str_val("spam")])),
+        );
+        exception::mb_raise_from(
+            str_val("RuntimeError"),
+            str_val("generator raised StopIteration"),
+            stop,
+        );
+
+        assert!(pending_runtimeerror_wraps_same_stopiteration(stop));
+
+        class::clear_last_raised_instance();
+        exception::clear_current_exception();
+    }
+
+    #[test]
+    fn test_exitstack_push_cm_instance_calls_exit_on_unwind() {
+        register_test_exitstack_cm();
+
+        let stack = new_exit_stack("contextlib.ExitStack");
+        let cm = MbValue::from_ptr(MbObject::new_instance(
+            "contextlib._test_exitstack_push_cm".to_string(),
+        ));
+        let log = MbValue::from_ptr(MbObject::new_list(vec![]));
+        set_inst_field(cm, "_log", log);
+
+        let pushed = mb_exitstack_method(
+            stack,
+            "push",
+            MbValue::from_ptr(MbObject::new_list(vec![cm])),
+        );
+        assert_eq!(pushed, cm);
+
+        list_ops::mb_list_append(log, str_val("body"));
+        let suppressed = mb_exitstack_method(
+            stack,
+            "__exit__",
+            MbValue::from_ptr(MbObject::new_list(vec![MbValue::none()])),
+        );
+
+        assert_eq!(suppressed.as_bool(), Some(false));
+        let events: Vec<String> = items_of(log)
+            .into_iter()
+            .map(|item| extract_str(item).expect("expected string log entry"))
+            .collect();
+        assert_eq!(events, vec!["body".to_string(), "exit".to_string()]);
     }
 }

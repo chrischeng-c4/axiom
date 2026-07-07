@@ -10,12 +10,84 @@ use std::collections::HashMap;
 
 // ── Dispatch wrappers: native ABI (args_ptr, nargs) to match mb_call_spread ──
 
-/// Generic dict-returning shim used as a callable class shell for
-/// http.client / http.server surface stubs. Mamba doesn't host a real
-/// HTTP stack; calling the class returns an empty dict instance so
-/// probe-time code (`HTTPConnection('example.com')`) doesn't crash.
-unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+// #1040 follow-up: this file's `dispatch_class_shell` used to be handed out
+// as the SAME function address to every class-shell name registered here,
+// across every `register_*` call in this file. Because FUNC_NAMES/
+// NATIVE_FUNC_ADDRS are address-keyed, whichever name registered last (in
+// HashMap iteration order, which is nondeterministic per process) won
+// `X.__name__` for every other class sharing that address -- the same
+// #962/#954 symptom. The fix: give every class-shell name a genuinely
+// distinct function pointer, drawn from a pool of `SHELL_POOL_SIZE`
+// individually fold-immune trivial stub functions, indexed via a
+// thread-local "next free slot" counter (`next_shell_slot`) so every call
+// site simply draws a fresh slot per name -- no manual per-call `pool_start`
+// bookkeeping required, since `register()` runs registration sequentially
+// on a single thread at module-init time.
+//
+// IMPORTANT: this pool does NOT use `icf_guard!()` directly. That macro
+// derives its fingerprint from `module_path!()`/`line!()`/`column!()`, which
+// are resolved at the span of the *macro definition's* literal tokens -- for
+// a single `macro_rules!` invocation that expands a `$(...)* ` repetition
+// into N functions, every repetition shares that ONE span, so
+// `line!()`/`column!()` come back IDENTICAL for all N and `icf_guard!()`
+// silently fails to discriminate them. LLVM then folds all "distinct"
+// shells back onto a single address, reproducing the exact bug one level
+// down. The fix here instead fingerprints on `stringify!($name)`, which DOES
+// vary per repetition (driven by the captured `$name` token's text, not by
+// span), giving every pool slot a genuinely distinct compiled body.
+const SHELL_POOL_SIZE: usize = 72;
+type ShellFn = unsafe extern "C" fn(*const MbValue, usize) -> MbValue;
+
+macro_rules! def_shell_pool {
+    ($($name:ident),* $(,)?) => {
+        $(
+            unsafe extern "C" fn $name(_a: *const MbValue, _n: usize) -> MbValue {
+                ::std::hint::black_box(crate::runtime::module::icf_fingerprint(concat!(
+                    module_path!(),
+                    "::",
+                    stringify!($name)
+                )));
+                MbValue::from_ptr(MbObject::new_dict())
+            }
+        )*
+        const SHELL_POOL: [ShellFn; SHELL_POOL_SIZE] = [$($name),*];
+    };
+}
+def_shell_pool!(
+    shell_00, shell_01, shell_02, shell_03, shell_04, shell_05, shell_06, shell_07, shell_08,
+    shell_09, shell_10, shell_11, shell_12, shell_13, shell_14, shell_15, shell_16, shell_17,
+    shell_18, shell_19, shell_20, shell_21, shell_22, shell_23, shell_24, shell_25, shell_26,
+    shell_27, shell_28, shell_29, shell_30, shell_31, shell_32, shell_33, shell_34, shell_35,
+    shell_36, shell_37, shell_38, shell_39, shell_40, shell_41, shell_42, shell_43, shell_44,
+    shell_45, shell_46, shell_47, shell_48, shell_49, shell_50, shell_51, shell_52, shell_53,
+    shell_54, shell_55, shell_56, shell_57, shell_58, shell_59, shell_60, shell_61, shell_62,
+    shell_63, shell_64, shell_65, shell_66, shell_67, shell_68, shell_69, shell_70, shell_71,
+);
+
+/// Pool slot at `idx` as a raw function-pointer address.
+fn shell_addr(idx: usize) -> usize {
+    SHELL_POOL[idx] as usize
+}
+
+thread_local! {
+    static NEXT_SHELL_SLOT: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+/// Draw the next unused pool slot index. `register()` runs sequentially on
+/// a single thread at module-init time, so a simple monotonic counter gives
+/// every class-shell name a fresh, non-overlapping slot with no manual
+/// per-call range bookkeeping.
+fn next_shell_slot() -> usize {
+    NEXT_SHELL_SLOT.with(|c| {
+        let v = c.get();
+        assert!(
+            v < SHELL_POOL_SIZE,
+            "shell pool exhausted (SHELL_POOL_SIZE={}); bump it",
+            SHELL_POOL_SIZE
+        );
+        c.set(v + 1);
+        v
+    })
 }
 
 unsafe extern "C" fn dispatch_empty_str(_a: *const MbValue, _n: usize) -> MbValue {
@@ -32,9 +104,15 @@ unsafe extern "C" fn dispatch_quote(args_ptr: *const MbValue, nargs: usize) -> M
     let mut encoding = pos.get(2).copied().unwrap_or_else(MbValue::none);
     let mut errors = pos.get(3).copied().unwrap_or_else(MbValue::none);
     if let Some(kw) = kw {
-        if let Some(v) = dict_kw_get(kw, "safe") { safe = v; }
-        if let Some(v) = dict_kw_get(kw, "encoding") { encoding = v; }
-        if let Some(v) = dict_kw_get(kw, "errors") { errors = v; }
+        if let Some(v) = dict_kw_get(kw, "safe") {
+            safe = v;
+        }
+        if let Some(v) = dict_kw_get(kw, "encoding") {
+            encoding = v;
+        }
+        if let Some(v) = dict_kw_get(kw, "errors") {
+            errors = v;
+        }
     }
     mb_urllib_quote_full(
         pos.get(0).copied().unwrap_or_else(MbValue::none),
@@ -68,8 +146,12 @@ unsafe extern "C" fn dispatch_unquote(args_ptr: *const MbValue, nargs: usize) ->
     let mut encoding = pos.get(1).copied().unwrap_or_else(MbValue::none);
     let mut errors = pos.get(2).copied().unwrap_or_else(MbValue::none);
     if let Some(kw) = kw {
-        if let Some(v) = dict_kw_get(kw, "encoding") { encoding = v; }
-        if let Some(v) = dict_kw_get(kw, "errors") { errors = v; }
+        if let Some(v) = dict_kw_get(kw, "encoding") {
+            encoding = v;
+        }
+        if let Some(v) = dict_kw_get(kw, "errors") {
+            errors = v;
+        }
     }
     mb_urllib_unquote_full(
         pos.get(0).copied().unwrap_or_else(MbValue::none),
@@ -129,12 +211,20 @@ unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) 
         if let Some(v) = get("quote_via") {
             quote_via = v;
         }
-        if let Some(v) = get("encoding") { encoding = v; }
-        if let Some(v) = get("errors") { errors = v; }
+        if let Some(v) = get("encoding") {
+            encoding = v;
+        }
+        if let Some(v) = get("errors") {
+            errors = v;
+        }
     }
     mb_urllib_urlencode_codec(
         a.first().copied().unwrap_or_else(MbValue::none),
-        doseq, &safe, quote_via, encoding, errors,
+        doseq,
+        &safe,
+        quote_via,
+        encoding,
+        errors,
     )
 }
 
@@ -374,11 +464,7 @@ pub fn register() {
         "DefragResultBytes",
     ];
     for n in parse_classes {
-        add_dispatch(
-            &mut parse_attrs,
-            n,
-            dispatch_class_shell as *const () as usize,
-        );
+        add_dispatch(&mut parse_attrs, n, shell_addr(next_shell_slot()));
     }
 
     // Register quote function's default parameters
@@ -396,7 +482,7 @@ pub fn register() {
             MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
             MbValue::from_int(1), // has_default
             MbValue::from_ptr(MbObject::new_str("/".to_string())),
-            MbValue::none(),      // annotation
+            MbValue::none(), // annotation
         ])),
         MbValue::from_ptr(MbObject::new_tuple(vec![
             MbValue::from_ptr(MbObject::new_str("encoding".to_string())),
@@ -523,8 +609,8 @@ pub fn register() {
     for (n, a) in request_dispatchers {
         add_dispatch(&mut request_attrs, n, *a);
     }
-    let req_shell = dispatch_class_shell as *const () as usize;
     let req_str = dispatch_empty_str as *const () as usize;
+    let mut req_shell_addrs: Vec<usize> = Vec::new();
     let req_class_shells: &[&str] = &[
         "Request",
         "OpenerDirector",
@@ -557,7 +643,9 @@ pub fn register() {
         "HTTPErrorProcessor",
     ];
     for name in req_class_shells {
-        request_attrs.insert((*name).into(), MbValue::from_func(req_shell));
+        let f = shell_addr(next_shell_slot());
+        req_shell_addrs.push(f);
+        request_attrs.insert((*name).into(), MbValue::from_func(f));
     }
     // `urllib.request.HTTPHandler` must satisfy `type(HTTPHandler).__name__ ==
     // "type"` (it is a real class in CPython). The plain func-shell above makes
@@ -579,11 +667,15 @@ pub fn register() {
         dispatch_url2pathname as *const () as usize,
     );
     // urlretrieve returns ("filename", HTTPMessage()); shim returns ("", {}).
-    request_attrs.insert("urlretrieve".into(), MbValue::from_func(req_shell));
+    let urlretrieve_addr = shell_addr(next_shell_slot());
+    req_shell_addrs.push(urlretrieve_addr);
+    request_attrs.insert("urlretrieve".into(), MbValue::from_func(urlretrieve_addr));
     request_attrs.insert("urlcleanup".into(), MbValue::from_func(req_str));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
-        set.insert(req_shell as u64);
+        for a in &req_shell_addrs {
+            set.insert(*a as u64);
+        }
         set.insert(req_str as u64);
     });
     // Real Request object (#24 prerequisite) — overwrites the dict shell.
@@ -592,18 +684,23 @@ pub fn register() {
 
     // urllib.response — callable class shells matching CPython's documented surface.
     let mut response_attrs = HashMap::new();
-    let resp_shell = dispatch_class_shell as *const () as usize;
+    let mut resp_shell_addrs: Vec<usize> = Vec::new();
     for name in &["addbase", "addclosehook", "addinfo", "addinfourl"] {
-        response_attrs.insert((*name).to_string(), MbValue::from_func(resp_shell));
+        let f = shell_addr(next_shell_slot());
+        resp_shell_addrs.push(f);
+        response_attrs.insert((*name).to_string(), MbValue::from_func(f));
     }
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(resp_shell as u64);
+        let mut set = s.borrow_mut();
+        for a in &resp_shell_addrs {
+            set.insert(*a as u64);
+        }
     });
     super::register_module("urllib.response", response_attrs);
 
     // urllib.robotparser — single class (RobotFileParser) + the can_fetch surface.
     let mut robot_attrs = HashMap::new();
-    let robot_shell = dispatch_class_shell as *const () as usize;
+    let robot_shell = shell_addr(next_shell_slot());
     robot_attrs.insert("RobotFileParser".into(), MbValue::from_func(robot_shell));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(robot_shell as u64);
@@ -688,7 +785,7 @@ pub fn register() {
     // must be True. Register it as a callable class-shell sentinel (a func
     // stub) rather than an Instance, mirroring the http.client/http.server
     // class shells below. Surface fixtures only require existence/callability.
-    let http_method_addr = dispatch_class_shell as *const () as usize;
+    let http_method_addr = shell_addr(next_shell_slot());
     http_attrs.insert("HTTPMethod".into(), MbValue::from_func(http_method_addr));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(http_method_addr as u64);
@@ -701,7 +798,7 @@ pub fn register() {
     // import / probe time; surface-only conformance keeps the probe
     // chain alive without a real network stack.
     let mut client_attrs = HashMap::new();
-    let client_addr = dispatch_class_shell as *const () as usize;
+    let mut client_shell_addrs: Vec<usize> = Vec::new();
     for name in &[
         "HTTPConnection",
         "HTTPSConnection",
@@ -724,15 +821,21 @@ pub fn register() {
         // `error` is CPython's module-level alias for `HTTPException` (a class);
         // `parse_headers` is a module-level function. Both must be callable for
         // the surface fixtures (`hasattr(...,"error")`,
-        // `callable(...parse_headers)`), so register them as func stubs that
-        // resolve through `client_addr` (already in NATIVE_FUNC_ADDRS).
+        // `callable(...parse_headers)`), so register them as func stubs, each
+        // now drawing its own distinct pool slot (registered into
+        // NATIVE_FUNC_ADDRS below).
         "error",
         "parse_headers",
     ] {
-        client_attrs.insert(name.to_string(), MbValue::from_func(client_addr));
+        let f = shell_addr(next_shell_slot());
+        client_shell_addrs.push(f);
+        client_attrs.insert(name.to_string(), MbValue::from_func(f));
     }
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(client_addr as u64);
+        let mut set = s.borrow_mut();
+        for a in &client_shell_addrs {
+            set.insert(*a as u64);
+        }
     });
     // Exception classes: register the real hierarchy (rooted at HTTPException ⊂
     // Exception) so issubclass / `except` work. Registered parent-first so each
@@ -751,7 +854,10 @@ pub fn register() {
         ("ResponseNotReady", &["ImproperConnectionState"]),
         ("BadStatusLine", &["HTTPException"]),
         ("LineTooLong", &["BadStatusLine"]),
-        ("RemoteDisconnected", &["ConnectionResetError", "BadStatusLine"]),
+        (
+            "RemoteDisconnected",
+            &["ConnectionResetError", "BadStatusLine"],
+        ),
     ];
     for (name, bases) in http_exc_tree {
         super::super::class::mb_class_register(
@@ -774,9 +880,10 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(ir_addr as u64);
         });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(ir_addr as u64, "IncompleteRead".to_string());
-        });
+        super::super::module::register_native_type_name(
+            ir_addr as u64,
+            "IncompleteRead".to_string(),
+        );
     }
     // HTTPMessage (case-insensitive header container) + parse_headers().
     {
@@ -818,7 +925,7 @@ pub fn register() {
 
     // http.server — same callable-shell treatment.
     let mut server_attrs = HashMap::new();
-    let server_addr = dispatch_class_shell as *const () as usize;
+    let mut server_shell_addrs: Vec<usize> = Vec::new();
     for name in &[
         "HTTPServer",
         "BaseHTTPRequestHandler",
@@ -826,10 +933,15 @@ pub fn register() {
         "CGIHTTPRequestHandler",
         "ThreadingHTTPServer",
     ] {
-        server_attrs.insert(name.to_string(), MbValue::from_func(server_addr));
+        let f = shell_addr(next_shell_slot());
+        server_shell_addrs.push(f);
+        server_attrs.insert(name.to_string(), MbValue::from_func(f));
     }
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(server_addr as u64);
+        let mut set = s.borrow_mut();
+        for a in &server_shell_addrs {
+            set.insert(*a as u64);
+        }
     });
     // `http.server.BaseHTTPRequestHandler` carries class-level *data* attributes
     // (`protocol_version`, `server_version`, `responses`) that surface fixtures
@@ -867,12 +979,15 @@ pub fn register() {
         // method dispatch resolves through the class registry by class name.
         let mut handler_methods: HashMap<String, MbValue> = HashMap::new();
         for (name, addr) in [
-            ("parse_request",      bh_parse_request      as *const () as usize),
-            ("send_response_only", bh_send_response_only as *const () as usize),
-            ("send_response",      bh_send_response      as *const () as usize),
-            ("send_header",        bh_send_header        as *const () as usize),
-            ("end_headers",        bh_end_headers        as *const () as usize),
-            ("send_error",         bh_send_error         as *const () as usize),
+            ("parse_request", bh_parse_request as *const () as usize),
+            (
+                "send_response_only",
+                bh_send_response_only as *const () as usize,
+            ),
+            ("send_response", bh_send_response as *const () as usize),
+            ("send_header", bh_send_header as *const () as usize),
+            ("end_headers", bh_end_headers as *const () as usize),
+            ("send_error", bh_send_error as *const () as usize),
         ] {
             super::super::module::register_variadic_func(addr as u64);
             handler_methods.insert(name.to_string(), MbValue::from_func(addr));
@@ -1111,7 +1226,8 @@ fn extract_safe_bytes(safe: MbValue, default: &[u8]) -> Vec<u8> {
 /// dict, so a trailing Dict unambiguously names the kwargs.
 fn split_trailing_kwargs(a: &[MbValue]) -> (&[MbValue], Option<MbValue>) {
     if let Some(&last) = a.last() {
-        let is_dict = last.as_ptr()
+        let is_dict = last
+            .as_ptr()
             .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
             .unwrap_or(false);
         if is_dict {
@@ -1129,7 +1245,11 @@ fn dict_kw_get(kw: MbValue, name: &str) -> Option<MbValue> {
         MbValue::from_ptr(MbObject::new_str(name.to_string())),
         sentinel,
     );
-    if v.to_bits() == u64::MAX { None } else { Some(v) }
+    if v.to_bits() == u64::MAX {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 /// Encode `s` to bytes under `encoding` honoring the `errors` handler, as
@@ -1278,9 +1398,7 @@ pub fn mb_urllib_quote_full(
     let bytes = match extract_bytes_like(val) {
         Some(b) => {
             if enc.is_some() {
-                return raise_type_error(
-                    "quote() doesn't support 'encoding' for bytes",
-                );
+                return raise_type_error("quote() doesn't support 'encoding' for bytes");
             }
             b
         }
@@ -1386,7 +1504,14 @@ pub fn mb_urllib_urlencode_with(
     safe: &str,
     quote_via: MbValue,
 ) -> MbValue {
-    mb_urllib_urlencode_codec(params, doseq, safe, quote_via, MbValue::none(), MbValue::none())
+    mb_urllib_urlencode_codec(
+        params,
+        doseq,
+        safe,
+        quote_via,
+        MbValue::none(),
+        MbValue::none(),
+    )
 }
 
 /// urlencode honoring doseq / safe= / quote_via= plus encoding= / errors=
@@ -1479,7 +1604,11 @@ fn dict_key_elements(mapping: MbValue) -> Option<Vec<MbValue>> {
     unsafe {
         if let ObjData::Dict(ref lock) = &(*ptr).data {
             let map = lock.read().unwrap();
-            Some(map.keys().map(super::super::dict_ops::dict_key_to_mbvalue).collect())
+            Some(
+                map.keys()
+                    .map(super::super::dict_ops::dict_key_to_mbvalue)
+                    .collect(),
+            )
         } else {
             None
         }
@@ -2484,15 +2613,17 @@ fn bytes_or_str(v: MbValue) -> String {
     if let Some(s) = extract_str(v) {
         return s;
     }
-    v.as_ptr().map(|p| unsafe {
-        match &(*p).data {
-            ObjData::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
-            ObjData::ByteArray(lock) => {
-                String::from_utf8_lossy(&lock.read().unwrap()).into_owned()
+    v.as_ptr()
+        .map(|p| unsafe {
+            match &(*p).data {
+                ObjData::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+                ObjData::ByteArray(lock) => {
+                    String::from_utf8_lossy(&lock.read().unwrap()).into_owned()
+                }
+                _ => String::new(),
             }
-            _ => String::new(),
-        }
-    }).unwrap_or_default()
+        })
+        .unwrap_or_default()
 }
 
 /// BaseHTTPRequestHandler.parse_request() -> bool. Parses `self.raw_requestline`
@@ -2503,8 +2634,11 @@ unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValu
     let raw = req_field(self_v, "raw_requestline").unwrap_or_else(MbValue::none);
     let line = bytes_or_str(raw);
     let trimmed = line.trim_end_matches(['\r', '\n']);
-    set_inst_field(self_v, "requestline",
-        MbValue::from_ptr(MbObject::new_str(trimmed.to_string())));
+    set_inst_field(
+        self_v,
+        "requestline",
+        MbValue::from_ptr(MbObject::new_str(trimmed.to_string())),
+    );
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     // Reject like CPython BaseHTTPRequestHandler.parse_request: write an error
     // page via send_error and return False. An empty line is silently dropped.
@@ -2529,13 +2663,18 @@ unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValu
             let mut it = b.split('.');
             let major = it.next()?.parse::<i64>().ok()?;
             let minor = it.next()?.parse::<i64>().ok()?;
-            if it.next().is_some() { return None; }
+            if it.next().is_some() {
+                return None;
+            }
             Some((major, minor))
         });
         match nums {
             None => return send_err(400, format!("Bad request version ({v:?})")),
             Some((major, _)) if major >= 2 => {
-                return send_err(505, format!("Invalid HTTP version ({})", base.unwrap_or("")));
+                return send_err(
+                    505,
+                    format!("Invalid HTTP version ({})", base.unwrap_or("")),
+                );
             }
             Some(_) => v,
         }
@@ -2546,12 +2685,21 @@ unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValu
         return send_err(400, format!("Bad request syntax ({trimmed:?})"));
     }
     let (command, path) = (parts[0], parts[1]);
-    set_inst_field(self_v, "command",
-        MbValue::from_ptr(MbObject::new_str(command.to_string())));
-    set_inst_field(self_v, "path",
-        MbValue::from_ptr(MbObject::new_str(path.to_string())));
-    set_inst_field(self_v, "request_version",
-        MbValue::from_ptr(MbObject::new_str(version.to_string())));
+    set_inst_field(
+        self_v,
+        "command",
+        MbValue::from_ptr(MbObject::new_str(command.to_string())),
+    );
+    set_inst_field(
+        self_v,
+        "path",
+        MbValue::from_ptr(MbObject::new_str(path.to_string())),
+    );
+    set_inst_field(
+        self_v,
+        "request_version",
+        MbValue::from_ptr(MbObject::new_str(version.to_string())),
+    );
     MbValue::from_bool(true)
 }
 
@@ -2559,20 +2707,36 @@ unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValu
 /// the common codes); empty string for unknown codes.
 fn status_phrase(code: i64) -> &'static str {
     match code {
-        200 => "OK", 201 => "Created", 202 => "Accepted", 204 => "No Content",
-        301 => "Moved Permanently", 302 => "Found", 303 => "See Other",
-        304 => "Not Modified", 307 => "Temporary Redirect", 308 => "Permanent Redirect",
-        400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
-        404 => "Not Found", 405 => "Method Not Allowed", 406 => "Not Acceptable",
-        408 => "Request Timeout", 409 => "Conflict", 410 => "Gone",
-        500 => "Internal Server Error", 501 => "Not Implemented",
-        502 => "Bad Gateway", 503 => "Service Unavailable",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        406 => "Not Acceptable",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        410 => "Gone",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
         _ => "",
     }
 }
 
 fn status_code_arg(v: MbValue) -> Option<i64> {
-    v.as_int().or_else(|| http_status_member_value(v).and_then(|value| value.as_int()))
+    v.as_int()
+        .or_else(|| http_status_member_value(v).and_then(|value| value.as_int()))
 }
 
 /// `self.protocol_version` (instance or inherited class attr), default HTTP/1.0.
@@ -2626,7 +2790,10 @@ fn handler_wfile_write(self_v: MbValue, data: Vec<u8>) {
 unsafe extern "C" fn bh_send_response_only(self_v: MbValue, args: MbValue) -> MbValue {
     let pos = req_args_vec(args);
     let code = pos.first().and_then(|v| status_code_arg(*v)).unwrap_or(0);
-    let msg = pos.get(1).copied().and_then(extract_str)
+    let msg = pos
+        .get(1)
+        .copied()
+        .and_then(extract_str)
         .unwrap_or_else(|| status_phrase(code).to_string());
     let proto = handler_proto(self_v);
     if proto != "HTTP/0.9" {
@@ -2647,7 +2814,10 @@ unsafe extern "C" fn bh_send_header(self_v: MbValue, args: MbValue) -> MbValue {
     // CPython's send_header reads `self.request_version`; on a handler built via
     // __new__ (no parse_request / send_response yet) that attribute is absent,
     // raising AttributeError.
-    if req_field(self_v, "request_version").filter(|v| !v.is_none()).is_none() {
+    if req_field(self_v, "request_version")
+        .filter(|v| !v.is_none())
+        .is_none()
+    {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(
@@ -2657,8 +2827,16 @@ unsafe extern "C" fn bh_send_header(self_v: MbValue, args: MbValue) -> MbValue {
         return MbValue::none();
     }
     let pos = req_args_vec(args);
-    let key = pos.first().copied().and_then(extract_str).unwrap_or_default();
-    let val = pos.get(1).copied().and_then(extract_str).unwrap_or_default();
+    let key = pos
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let val = pos
+        .get(1)
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     handler_buffer_append(self_v, format!("{key}: {val}\r\n").into_bytes());
     MbValue::none()
 }
@@ -2693,20 +2871,28 @@ unsafe extern "C" fn bh_send_error(self_v: MbValue, args: MbValue) -> MbValue {
     let pos = req_args_vec(args);
     let code = pos.first().and_then(|v| status_code_arg(*v)).unwrap_or(0);
     let phrase = status_phrase(code);
-    let message = pos.get(1).copied().and_then(extract_str)
+    let message = pos
+        .get(1)
+        .copied()
+        .and_then(extract_str)
         .unwrap_or_else(|| phrase.to_string());
     // Status line + minimal header block, flushed immediately.
     let proto = handler_proto(self_v);
     handler_buffer_append(self_v, format!("{proto} {code} {message}\r\n").into_bytes());
-    handler_buffer_append(self_v, b"Content-Type: text/html;charset=utf-8\r\n".to_vec());
+    handler_buffer_append(
+        self_v,
+        b"Content-Type: text/html;charset=utf-8\r\n".to_vec(),
+    );
     let body = format!(
         "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        \
          <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    \
          <body>\n        <h1>Error response</h1>\n        \
          <p>Error code: {code}</p>\n        <p>Message: {message}.</p>\n    </body>\n</html>\n"
     );
-    handler_buffer_append(self_v,
-        format!("Content-Length: {}\r\n", body.len()).into_bytes());
+    handler_buffer_append(
+        self_v,
+        format!("Content-Length: {}\r\n", body.len()).into_bytes(),
+    );
     bh_end_headers(self_v, MbValue::none());
     handler_wfile_write(self_v, body.into_bytes());
     MbValue::none()
@@ -2728,7 +2914,11 @@ fn request_url_fields(url: &str) -> (String, String, String, String, MbValue) {
     let (scheme, host, path) = split_url(url);
     let selector = {
         let p = path.split('#').next().unwrap_or("");
-        if p.is_empty() { "/".to_string() } else { p.to_string() }
+        if p.is_empty() {
+            "/".to_string()
+        } else {
+            p.to_string()
+        }
     };
     let fragment = match url.split_once('#') {
         Some((_, frag)) => MbValue::from_ptr(MbObject::new_str(frag.to_string())),
@@ -2739,10 +2929,18 @@ fn request_url_fields(url: &str) -> (String, String, String, String, MbValue) {
 
 fn assign_request_url_fields(self_v: MbValue, url: &str) {
     let (scheme, host, selector, full_url, fragment) = request_url_fields(url);
-    set_inst_field(self_v, "full_url", MbValue::from_ptr(MbObject::new_str(full_url)));
+    set_inst_field(
+        self_v,
+        "full_url",
+        MbValue::from_ptr(MbObject::new_str(full_url)),
+    );
     set_inst_field(self_v, "host", MbValue::from_ptr(MbObject::new_str(host)));
     set_inst_field(self_v, "type", MbValue::from_ptr(MbObject::new_str(scheme)));
-    set_inst_field(self_v, "selector", MbValue::from_ptr(MbObject::new_str(selector)));
+    set_inst_field(
+        self_v,
+        "selector",
+        MbValue::from_ptr(MbObject::new_str(selector)),
+    );
     set_inst_field(self_v, "fragment", fragment);
 }
 
@@ -2753,9 +2951,7 @@ pub fn request_setattr(self_v: MbValue, attr_s: &str, value: MbValue) -> bool {
     let Some(url) = extract_str(value) else {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "full_url must be a string".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("full_url must be a string".to_string())),
         );
         return true;
     };
@@ -2774,31 +2970,51 @@ pub fn request_setattr(self_v: MbValue, attr_s: &str, value: MbValue) -> bool {
 /// Read an HTTPMessage's ordered (key, value) header pairs.
 fn http_message_pairs(self_v: MbValue) -> Vec<(String, String)> {
     let headers = req_field(self_v, "_headers").unwrap_or_else(MbValue::none);
-    let items: Vec<MbValue> = headers.as_ptr().map(|p| unsafe {
-        if let ObjData::List(ref lock) = (*p).data { lock.read().unwrap().to_vec() } else { Vec::new() }
-    }).unwrap_or_default();
-    items.iter().filter_map(|pair| {
-        let elems: Vec<MbValue> = pair.as_ptr().and_then(|p| unsafe {
-            if let ObjData::Tuple(ref t) = (*p).data { Some(t.clone()) } else { None }
-        })?;
-        Some((extract_str(*elems.first()?)?, extract_str(*elems.get(1)?)?))
-    }).collect()
+    let items: Vec<MbValue> = headers
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read().unwrap().to_vec()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+    items
+        .iter()
+        .filter_map(|pair| {
+            let elems: Vec<MbValue> = pair.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Tuple(ref t) = (*p).data {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            })?;
+            Some((extract_str(*elems.first()?)?, extract_str(*elems.get(1)?)?))
+        })
+        .collect()
 }
 
 /// HTTPMessage.keys() — header names in order.
 unsafe extern "C" fn hm_keys(self_v: MbValue, _args: MbValue) -> MbValue {
-    let keys: Vec<MbValue> = http_message_pairs(self_v).into_iter()
-        .map(|(k, _)| MbValue::from_ptr(MbObject::new_str(k))).collect();
+    let keys: Vec<MbValue> = http_message_pairs(self_v)
+        .into_iter()
+        .map(|(k, _)| MbValue::from_ptr(MbObject::new_str(k)))
+        .collect();
     MbValue::from_ptr(MbObject::new_list(keys))
 }
 
 /// HTTPMessage.items() — (name, value) pairs in order.
 unsafe extern "C" fn hm_items(self_v: MbValue, _args: MbValue) -> MbValue {
-    let items: Vec<MbValue> = http_message_pairs(self_v).into_iter()
-        .map(|(k, v)| MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_ptr(MbObject::new_str(k)),
-            MbValue::from_ptr(MbObject::new_str(v)),
-        ]))).collect();
+    let items: Vec<MbValue> = http_message_pairs(self_v)
+        .into_iter()
+        .map(|(k, v)| {
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str(k)),
+                MbValue::from_ptr(MbObject::new_str(v)),
+            ]))
+        })
+        .collect();
     MbValue::from_ptr(MbObject::new_list(items))
 }
 
@@ -2810,7 +3026,8 @@ unsafe extern "C" fn hm_len(self_v: MbValue, _args: MbValue) -> MbValue {
 /// Case-insensitive header lookup (RFC 822 field names are case-insensitive).
 fn http_message_lookup(self_v: MbValue, name: &str) -> Option<String> {
     let lname = name.to_ascii_lowercase();
-    http_message_pairs(self_v).into_iter()
+    http_message_pairs(self_v)
+        .into_iter()
         .find(|(k, _)| k.to_ascii_lowercase() == lname)
         .map(|(_, v)| v)
 }
@@ -2818,7 +3035,11 @@ fn http_message_lookup(self_v: MbValue, name: &str) -> Option<String> {
 /// HTTPMessage.get(name, default=None).
 unsafe extern "C" fn hm_get(self_v: MbValue, args: MbValue) -> MbValue {
     let pos = req_args_vec(args);
-    let name = pos.first().copied().and_then(extract_str).unwrap_or_default();
+    let name = pos
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     match http_message_lookup(self_v, &name) {
         Some(v) => MbValue::from_ptr(MbObject::new_str(v)),
         None => pos.get(1).copied().unwrap_or_else(MbValue::none),
@@ -2827,7 +3048,11 @@ unsafe extern "C" fn hm_get(self_v: MbValue, args: MbValue) -> MbValue {
 
 /// HTTPMessage.__getitem__(name) — None for a missing header (email.Message).
 unsafe extern "C" fn hm_getitem(self_v: MbValue, args: MbValue) -> MbValue {
-    let name = req_args_vec(args).first().copied().and_then(extract_str).unwrap_or_default();
+    let name = req_args_vec(args)
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     match http_message_lookup(self_v, &name) {
         Some(v) => MbValue::from_ptr(MbObject::new_str(v)),
         None => MbValue::none(),
@@ -2868,8 +3093,10 @@ unsafe extern "C" fn dispatch_parse_headers(args_ptr: *const MbValue, nargs: usi
     }
     let inst = MbObject::new_instance("HTTPMessage".to_string());
     if let ObjData::Instance { ref fields, .. } = (*inst).data {
-        fields.write().unwrap().insert("_headers".into(),
-            MbValue::from_ptr(MbObject::new_list(pairs)));
+        fields.write().unwrap().insert(
+            "_headers".into(),
+            MbValue::from_ptr(MbObject::new_list(pairs)),
+        );
     }
     MbValue::from_ptr(inst)
 }
@@ -2877,6 +3104,7 @@ unsafe extern "C" fn dispatch_parse_headers(args_ptr: *const MbValue, nargs: usi
 /// http.client.IncompleteRead(partial, expected=None) — an HTTPException
 /// carrying the bytes read so far (`partial`) and the expected length.
 unsafe extern "C" fn d_incomplete_read(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = if nargs == 0 || args_ptr.is_null() {
         &[][..]
     } else {
@@ -2891,13 +3119,16 @@ unsafe extern "C" fn d_incomplete_read(args_ptr: *const MbValue, nargs: usize) -
         let mut f = fields.write().unwrap();
         f.insert("partial".into(), partial);
         f.insert("expected".into(), expected);
-        f.insert("args".into(),
-            MbValue::from_ptr(MbObject::new_tuple(vec![partial, expected])));
+        f.insert(
+            "args".into(),
+            MbValue::from_ptr(MbObject::new_tuple(vec![partial, expected])),
+        );
     }
     MbValue::from_ptr(inst)
 }
 
 unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let raw: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
         &[]
     } else {
@@ -2913,13 +3144,15 @@ unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> Mb
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
                 return !map.is_empty()
-                    && map.keys().all(|k| matches!(
-                        k,
-                        super::super::dict_ops::DictKey::Str(s)
-                            if matches!(s.as_str(),
-                                "data" | "headers" | "origin_req_host"
-                                    | "unverifiable" | "method")
-                    ));
+                    && map.keys().all(|k| {
+                        matches!(
+                            k,
+                            super::super::dict_ops::DictKey::Str(s)
+                                if matches!(s.as_str(),
+                                    "data" | "headers" | "origin_req_host"
+                                        | "unverifiable" | "method")
+                        )
+                    });
             }
         }
         false
@@ -2962,10 +3195,16 @@ unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> Mb
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut f = fields.write().unwrap();
             let (scheme, host, selector, full_url, fragment) = request_url_fields(&url);
-            f.insert("full_url".into(), MbValue::from_ptr(MbObject::new_str(full_url)));
+            f.insert(
+                "full_url".into(),
+                MbValue::from_ptr(MbObject::new_str(full_url)),
+            );
             f.insert("host".into(), MbValue::from_ptr(MbObject::new_str(host)));
             f.insert("type".into(), MbValue::from_ptr(MbObject::new_str(scheme)));
-            f.insert("selector".into(), MbValue::from_ptr(MbObject::new_str(selector)));
+            f.insert(
+                "selector".into(),
+                MbValue::from_ptr(MbObject::new_str(selector)),
+            );
             f.insert("fragment".into(), fragment);
             f.insert("data".into(), data);
             f.insert("method".into(), method);
@@ -3050,9 +3289,7 @@ unsafe extern "C" fn rm_has_header(self_v: MbValue, args: MbValue) -> MbValue {
             if let ObjData::Dict(ref lock) = (*hd).data {
                 // CPython has_header is an EXACT membership test; only
                 // add_header capitalizes (on store). No query capitalization.
-                return MbValue::from_bool(
-                    lock.read().unwrap().contains_key(name.as_str()),
-                );
+                return MbValue::from_bool(lock.read().unwrap().contains_key(name.as_str()));
             }
         }
     }
@@ -3095,6 +3332,7 @@ unsafe extern "C" fn rm_header_items(self_v: MbValue, _args: MbValue) -> MbValue
 const HTTPCONN_CLASS: &str = "http.client.HTTPConnection";
 
 unsafe extern "C" fn d_httpconnection_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = if nargs == 0 || args_ptr.is_null() {
         &[][..]
     } else {
@@ -3107,8 +3345,10 @@ unsafe extern "C" fn d_httpconnection_new(args_ptr: *const MbValue, nargs: usize
             let host = a.first().copied().unwrap_or_else(MbValue::none);
             f.insert("host".into(), host);
             // request state: "idle" until putrequest starts a request.
-            f.insert("_HTTPConnection__state".into(),
-                MbValue::from_ptr(MbObject::new_str("Idle".to_string())));
+            f.insert(
+                "_HTTPConnection__state".into(),
+                MbValue::from_ptr(MbObject::new_str("Idle".to_string())),
+            );
         }
     }
     MbValue::from_ptr(inst)
@@ -3121,18 +3361,26 @@ unsafe extern "C" fn hc_putrequest(self_v: MbValue, args: MbValue) -> MbValue {
     // CPython rejects control characters in the method (ValueError) and the
     // URL (http.client.InvalidURL).
     if method.contains(['\n', '\r', '\t', ' ']) {
-        raise("ValueError", "method can't contain control characters".to_string());
+        raise(
+            "ValueError",
+            "method can't contain control characters".to_string(),
+        );
         return MbValue::none();
     }
     if url.contains(['\n', '\r']) {
-        raise("InvalidURL", "URL can't contain control characters".to_string());
+        raise(
+            "InvalidURL",
+            "URL can't contain control characters".to_string(),
+        );
         return MbValue::none();
     }
     if let Some(p) = self_v.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*p).data {
-                fields.write().unwrap().insert("_HTTPConnection__state".into(),
-                    MbValue::from_ptr(MbObject::new_str("Request-started".to_string())));
+                fields.write().unwrap().insert(
+                    "_HTTPConnection__state".into(),
+                    MbValue::from_ptr(MbObject::new_str("Request-started".to_string())),
+                );
             }
         }
     }
@@ -3140,11 +3388,21 @@ unsafe extern "C" fn hc_putrequest(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn hc_putheader(self_v: MbValue, _args: MbValue) -> MbValue {
-    let state = self_v.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*p).data {
-            fields.read().unwrap().get("_HTTPConnection__state").copied().and_then(extract_str)
-        } else { None }
-    }).unwrap_or_default();
+    let state = self_v
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_HTTPConnection__state")
+                    .copied()
+                    .and_then(extract_str)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
     if state != "Request-started" {
         raise("CannotSendHeader", "Cannot send header".to_string());
     }
@@ -3160,22 +3418,30 @@ fn register_httpconnection_class(attrs: &mut HashMap<String, MbValue>) {
         MbValue::from_func(addr)
     };
     let mut map: Map<String, MbValue> = Map::new();
-    map.insert("putrequest".into(), var(hc_putrequest as *const () as usize));
+    map.insert(
+        "putrequest".into(),
+        var(hc_putrequest as *const () as usize),
+    );
     map.insert("putheader".into(), var(hc_putheader as *const () as usize));
     super::super::class::mb_class_register(HTTPCONN_CLASS, vec!["object".to_string()], map);
-    attrs.insert("HTTPConnection".to_string(),
-        MbValue::from_func(d_httpconnection_new as *const () as usize));
+    attrs.insert(
+        "HTTPConnection".to_string(),
+        MbValue::from_func(d_httpconnection_new as *const () as usize),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(d_httpconnection_new as *const () as u64);
+        s.borrow_mut()
+            .insert(d_httpconnection_new as *const () as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(d_httpconnection_new as *const () as u64, HTTPCONN_CLASS.to_string());
-    });
+    super::super::module::register_native_type_name(
+        d_httpconnection_new as *const () as u64,
+        HTTPCONN_CLASS.to_string(),
+    );
 }
 
 /// OpenerDirector() / build_opener(*handlers) -> an OpenerDirector instance.
 /// Handlers are accepted and ignored; the surface only checks the type.
 unsafe extern "C" fn d_opener_director_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let args = if nargs == 0 || args_ptr.is_null() {
         &[]
     } else {
@@ -3190,10 +3456,7 @@ unsafe extern "C" fn d_opener_director_new(args_ptr: *const MbValue, nargs: usiz
         if primitive_or_none {
             let type_name = extract_str(super::super::builtins::mb_type(*arg))
                 .unwrap_or_else(|| "object".to_string());
-            return raise_type_error(&format!(
-                "expected BaseHandler instance, got {}",
-                type_name
-            ));
+            return raise_type_error(&format!("expected BaseHandler instance, got {}", type_name));
         }
     }
     MbValue::from_ptr(MbObject::new_instance("OpenerDirector".to_string()))
@@ -3231,10 +3494,10 @@ pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(d_request_new as *const () as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(d_request_new as *const () as u64, REQUEST_CLASS.to_string());
-    });
+    super::super::module::register_native_type_name(
+        d_request_new as *const () as u64,
+        REQUEST_CLASS.to_string(),
+    );
 
     // OpenerDirector — a real class so `isinstance(build_opener(),
     // OpenerDirector)` and `type(...).__name__ == "OpenerDirector"` hold.
@@ -3250,7 +3513,5 @@ pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(od as u64);
     });
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(od as u64, "OpenerDirector".to_string());
-    });
+    super::super::module::register_native_type_name(od as u64, "OpenerDirector".to_string());
 }

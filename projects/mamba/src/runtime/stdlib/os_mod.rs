@@ -132,6 +132,7 @@ dispatch_varargs!(dispatch_access_v, mb_os_access_v);
 const DIRENTRY_CLASS: &str = "os.DirEntry";
 
 unsafe extern "C" fn dispatch_DirEntry(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     raise(
         "TypeError",
         "cannot create 'os.DirEntry' instances".to_string(),
@@ -141,6 +142,7 @@ unsafe extern "C" fn dispatch_DirEntry(_args_ptr: *const MbValue, _nargs: usize)
 // os.PathLike() — abstract; callable so `callable(os.PathLike)` is True and
 // presence checks pass. Instantiation raises TypeError (it is an ABC).
 unsafe extern "C" fn dispatch_PathLike(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     raise(
         "TypeError",
         "Can't instantiate abstract class PathLike".to_string(),
@@ -783,16 +785,14 @@ pub fn register() {
         });
     }
     // os.DirEntry / os.PathLike resolve as types for isinstance().
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(
-            dispatch_DirEntry as *const () as usize as u64,
-            DIRENTRY_CLASS.to_string(),
-        );
-        m.borrow_mut().insert(
-            dispatch_PathLike as *const () as usize as u64,
-            "os.PathLike".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_DirEntry as *const () as usize as u64,
+        DIRENTRY_CLASS.to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_PathLike as *const () as usize as u64,
+        "os.PathLike".to_string(),
+    );
 
     // Register the os.DirEntry runtime class so scandir-produced instances
     // dispatch is_file()/is_dir()/stat()/inode()/__fspath__() through the
@@ -2510,6 +2510,37 @@ struct OsFdFile {
     path: String,
 }
 
+fn new_str_value(s: impl Into<String>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.into()))
+}
+
+fn build_os_error_instance(exc: &str, errno: i64, detail: &str) -> MbValue {
+    let inst = super::super::exception::mb_exception_new_with_args(
+        new_str_value(exc),
+        MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(errno),
+            new_str_value(detail),
+        ])),
+    );
+    set_instance_field(inst, "errno", MbValue::from_int(errno));
+    set_instance_field(inst, "strerror", new_str_value(detail));
+    set_instance_field(
+        inst,
+        "message",
+        new_str_value(format!("[Errno {errno}] {detail}")),
+    );
+    inst
+}
+
+fn raise_bad_file_descriptor() -> MbValue {
+    super::super::class::mb_raise_instance(build_os_error_instance(
+        "OSError",
+        9,
+        "Bad file descriptor",
+    ));
+    MbValue::none()
+}
+
 pub fn mb_os_fd_path(fd: i64) -> Option<String> {
     FD_TABLE.with(|t| t.borrow().get(&fd).map(|entry| entry.path.clone()))
 }
@@ -2608,9 +2639,9 @@ fn mb_os_write_fd(args: &[MbValue]) -> MbValue {
     });
     match n {
         Some(w) => MbValue::from_int(w),
-        // Unknown fd (e.g. stdout=1): report the byte count without erroring,
-        // so code that writes to fd 1/2 doesn't blow up.
-        None => MbValue::from_int(bytes.len() as i64),
+        // Preserve the stdout/stderr passthrough for raw fd 1/2 writes.
+        None if fd == 1 || fd == 2 => MbValue::from_int(bytes.len() as i64),
+        None => raise_bad_file_descriptor(),
     }
 }
 
@@ -2633,7 +2664,7 @@ fn mb_os_read_fd(args: &[MbValue]) -> MbValue {
     });
     match out {
         Some(buf) => MbValue::from_ptr(MbObject::new_bytes(buf)),
-        None => MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+        None => raise_bad_file_descriptor(),
     }
 }
 
@@ -2662,8 +2693,12 @@ fn mb_os_lseek_fd(args: &[MbValue]) -> MbValue {
 
 /// os.close(fd) — drop the file handle (flushing writes).
 fn mb_os_close_fd(args: &[MbValue]) -> MbValue {
-    if let Some(fd) = args.first().and_then(|v| v.as_int()) {
-        FD_TABLE.with(|t| t.borrow_mut().remove(&fd));
+    let Some(fd) = args.first().and_then(|v| v.as_int()) else {
+        return raise("TypeError", "an integer is required".to_string());
+    };
+    let removed = FD_TABLE.with(|t| t.borrow_mut().remove(&fd).is_some());
+    if !removed {
+        return raise_bad_file_descriptor();
     }
     MbValue::none()
 }
@@ -3116,5 +3151,79 @@ mod tests {
         // stat on a nonexistent path raises FileNotFoundError (returns None
         // after raising); the key contract is "no panic".
         let _ = mb_os_stat_v(&[s("/no/such/path/mb_os_unit_xyzzy")]);
+    }
+
+    #[test]
+    fn test_fd_ops_raise_ebadf_after_close() {
+        let path = std::env::temp_dir().join(format!("mb-os-fd-ebadf-{}", std::process::id()));
+        std::fs::write(&path, b"hello").unwrap();
+
+        let fd = mb_os_open_fd(&[s(path.to_str().unwrap()), MbValue::from_int(0)])
+            .as_int()
+            .expect("open should return fd");
+        assert!(mb_os_close_fd(&[MbValue::from_int(fd)]).is_none());
+
+        let read_result = mb_os_read_fd(&[MbValue::from_int(fd), MbValue::from_int(1)]);
+        assert!(read_result.is_none());
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("OSError"),
+        );
+        super::super::super::exception::mb_clear_exception();
+
+        let write_result = mb_os_write_fd(&[
+            MbValue::from_int(fd),
+            MbValue::from_ptr(MbObject::new_bytes(vec![1])),
+        ]);
+        assert!(write_result.is_none());
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("OSError"),
+        );
+        super::super::super::exception::mb_clear_exception();
+
+        let close_result = mb_os_close_fd(&[MbValue::from_int(fd)]);
+        assert!(close_result.is_none());
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("OSError"),
+        );
+        super::super::super::exception::mb_clear_exception();
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_build_os_error_instance_sets_errno_fields() {
+        let inst = build_os_error_instance("OSError", 9, "Bad file descriptor");
+        assert_eq!(
+            direntry_field_value(inst, "errno").and_then(|v| v.as_int()),
+            Some(9)
+        );
+        assert_eq!(
+            direntry_field_value(inst, "strerror")
+                .map(get_str)
+                .as_deref(),
+            Some("Bad file descriptor")
+        );
+        assert_eq!(
+            direntry_field_value(inst, "message")
+                .map(get_str)
+                .as_deref(),
+            Some("[Errno 9] Bad file descriptor")
+        );
+    }
+
+    #[test]
+    fn test_os_write_fd_preserves_stdout_stderr_passthrough() {
+        let out = mb_os_write_fd(&[
+            MbValue::from_int(1),
+            MbValue::from_ptr(MbObject::new_bytes(b"ok".to_vec())),
+        ]);
+        assert_eq!(out.as_int(), Some(2));
+        assert_eq!(
+            super::super::super::exception::current_exception_type(),
+            None,
+        );
     }
 }

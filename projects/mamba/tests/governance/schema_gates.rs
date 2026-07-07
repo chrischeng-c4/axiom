@@ -38,6 +38,15 @@ mod cpython_lib_test_minimal_unittest_dispatch_fixture_2545;
 #[path = "schema_gates/ecosystem_fixture_manifest_smoke.rs"]
 mod ecosystem_fixture_manifest_smoke;
 
+#[path = "schema_gates/c_api_feasibility_spike_1121.rs"]
+mod c_api_feasibility_spike_1121;
+
+#[path = "schema_gates/braid_landing_plan_1102.rs"]
+mod braid_landing_plan_1102;
+
+#[path = "schema_gates/py313_py314_oracle_strategy_1115.rs"]
+mod py313_py314_oracle_strategy_1115;
+
 #[path = "schema_gates/fail_new_ignore_without_work_item_fixture_2603.rs"]
 mod fail_new_ignore_without_work_item_fixture_2603;
 
@@ -289,6 +298,9 @@ mod stdlib_tempfile_shutil_glob_fixture_2630;
 
 #[path = "schema_gates/stdlib_urllib_parse_email_fixture_2637.rs"]
 mod stdlib_urllib_parse_email_fixture_2637;
+
+#[path = "schema_gates/stdlib_tier1_scope_1104.rs"]
+mod stdlib_tier1_scope_1104;
 
 #[path = "schema_gates/third_party_attrs_class_fixture_2642.rs"]
 mod third_party_attrs_class_fixture_2642;

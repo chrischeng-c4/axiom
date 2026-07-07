@@ -181,6 +181,54 @@ pub unsafe fn mb_int_mul(a: MbValue, b: MbValue) -> MbValue {
     normalize_bigint(ba * bb)
 }
 
+// ── Bitwise operations (AND / OR / XOR) ─────────────────────────────────────
+
+/// Bitwise AND for integer MbValues (inline or BigInt). Python semantics
+/// (infinite two's-complement). The inline fast path is safe without a
+/// `fits_inline` re-check: both operands' sign-extension bits [47..63] are
+/// each uniform (all 0s or all 1s), so ANDing them keeps the result's
+/// sign-extension bits uniform too — the result can never escape the
+/// 48-bit inline range.
+///
+/// # Safety
+/// Both `a` and `b` must be valid integer MbValues (inline or BigInt).
+pub unsafe fn mb_int_and(a: MbValue, b: MbValue) -> MbValue {
+    if let (Some(ia), Some(ib)) = (a.as_int(), b.as_int()) {
+        return MbValue::from_int(ia & ib);
+    }
+    let ba = to_bigint(a).unwrap_or_else(BigInt::zero);
+    let bb = to_bigint(b).unwrap_or_else(BigInt::zero);
+    normalize_bigint(ba & bb)
+}
+
+/// Bitwise OR for integer MbValues (inline or BigInt). See `mb_int_and` for
+/// why the inline fast path never needs a range re-check.
+///
+/// # Safety
+/// Both `a` and `b` must be valid integer MbValues (inline or BigInt).
+pub unsafe fn mb_int_or(a: MbValue, b: MbValue) -> MbValue {
+    if let (Some(ia), Some(ib)) = (a.as_int(), b.as_int()) {
+        return MbValue::from_int(ia | ib);
+    }
+    let ba = to_bigint(a).unwrap_or_else(BigInt::zero);
+    let bb = to_bigint(b).unwrap_or_else(BigInt::zero);
+    normalize_bigint(ba | bb)
+}
+
+/// Bitwise XOR for integer MbValues (inline or BigInt). See `mb_int_and` for
+/// why the inline fast path never needs a range re-check.
+///
+/// # Safety
+/// Both `a` and `b` must be valid integer MbValues (inline or BigInt).
+pub unsafe fn mb_int_xor(a: MbValue, b: MbValue) -> MbValue {
+    if let (Some(ia), Some(ib)) = (a.as_int(), b.as_int()) {
+        return MbValue::from_int(ia ^ ib);
+    }
+    let ba = to_bigint(a).unwrap_or_else(BigInt::zero);
+    let bb = to_bigint(b).unwrap_or_else(BigInt::zero);
+    normalize_bigint(ba ^ bb)
+}
+
 // ── Floor division / modulo / divmod / pow ──────────────────────────────────
 
 /// Floor-division quotient and remainder for big integers, with Python sign
@@ -373,27 +421,19 @@ pub unsafe fn mb_int_hash(val: MbValue) -> i64 {
 ///
 /// After CheckedAdd/Sub/Mul, a register may hold either:
 /// - A raw i64 (small int, from inline unbox path) → box as inline int
-/// - NaN-boxed BigInt pointer bits (from overflow path) → use directly
+/// - NaN-boxed runtime bits from a prior slow path → use directly
 ///
-/// Distinction: NaN-boxed values have NaN prefix AND tag ∈ {0,1,2,3}.
-/// Raw negative i64 values also have the NaN prefix pattern, but their
-/// tag bits (48-50) are 7 (not a valid NaN-box tag).
+/// This helper deliberately shares `mb_box_int_for_compare`'s safe predicate
+/// shape (#1136): pointer/int/bool/None tags pass through, but a raw large i64
+/// that only *aliases* one of those tag prefixes (notably `-2**51` at the
+/// negative-canonical-NaN slot) must promote to BigInt instead of being
+/// mis-read as already boxed.
 fn reg_to_mbvalue(bits: u64) -> MbValue {
-    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-    if bits & NAN_PREFIX == NAN_PREFIX {
-        let tag = (bits >> 48) & 7;
-        if tag <= 3 {
-            // Valid NaN-boxed value (inline int, BigInt pointer, bool, or None)
-            return MbValue::from_bits(bits);
-        }
-    }
-    // Raw i64 — box as inline int
     let raw = bits as i64;
-    if fits_inline(raw) {
-        MbValue::from_int(raw)
-    } else {
-        bigint_from_i128(raw as i128)
+    if let Some(candidate) = super::builtins::passthrough_boxed_int_candidate(raw, false) {
+        return candidate;
     }
+    super::builtins::box_raw_i64_or_bigint(raw)
 }
 
 /// JIT extern: add two integer register values, returning raw i64 result.
@@ -402,6 +442,16 @@ fn reg_to_mbvalue(bits: u64) -> MbValue {
 /// Fast path: if both inputs are raw i64 (no NaN-box tag), use checked_add
 /// and return raw i64. This avoids reg_to_mbvalue + boxing overhead (~60ns)
 /// for the common case (no overflow, no BigInt).
+///
+/// #961/#2129 guard: a `fractions.Fraction` / `decimal.Decimal` value is an
+/// integer HANDLE (a NaN-boxed inline int ≥ 2^40/2^46), so it never takes
+/// the raw-i64 fast path above (handles always carry the NaN-box prefix).
+/// Once we fall to the boxed slow path below, check the handle protocol
+/// BEFORE `mb_int_add` — otherwise `Fraction(1,3) + Fraction(1,6)` would add
+/// the opaque handle ids as plain ints instead of dispatching the dunder.
+/// This costs one cheap range-compare per operand (see `is_*_handle`) on the
+/// boxed path only; the native/raw_ints fast path (e.g. `fib`) never reaches
+/// here at all, so it is unaffected.
 #[no_mangle]
 pub extern "C" fn mb_bigint_add(a_bits: u64, b_bits: u64) -> u64 {
     // Fast path: both are raw i64 (MSBs not set to NaN-box prefix)
@@ -421,10 +471,16 @@ pub extern "C" fn mb_bigint_add(a_bits: u64, b_bits: u64) -> u64 {
     }
     let a = reg_to_mbvalue(a_bits);
     let b = reg_to_mbvalue(b_bits);
+    if let Some(result) = super::builtins::numeric_handle_binop("+", a, b) {
+        return result.to_bits();
+    }
     unsafe { mb_int_add(a, b) }.to_bits()
 }
 
 /// JIT extern: subtract two integer register values.
+///
+/// See the `mb_bigint_add` guard note — the numeric-handle check runs on
+/// the boxed slow path only, so the raw-int fast path is untouched.
 #[no_mangle]
 pub extern "C" fn mb_bigint_sub(a_bits: u64, b_bits: u64) -> u64 {
     const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
@@ -439,10 +495,16 @@ pub extern "C" fn mb_bigint_sub(a_bits: u64, b_bits: u64) -> u64 {
     }
     let a = reg_to_mbvalue(a_bits);
     let b = reg_to_mbvalue(b_bits);
+    if let Some(result) = super::builtins::numeric_handle_binop("-", a, b) {
+        return result.to_bits();
+    }
     unsafe { mb_int_sub(a, b) }.to_bits()
 }
 
 /// JIT extern: multiply two integer register values.
+///
+/// See the `mb_bigint_add` guard note — the numeric-handle check runs on
+/// the boxed slow path only, so the raw-int fast path is untouched.
 #[no_mangle]
 pub extern "C" fn mb_bigint_mul(a_bits: u64, b_bits: u64) -> u64 {
     const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
@@ -457,6 +519,9 @@ pub extern "C" fn mb_bigint_mul(a_bits: u64, b_bits: u64) -> u64 {
     }
     let a = reg_to_mbvalue(a_bits);
     let b = reg_to_mbvalue(b_bits);
+    if let Some(result) = super::builtins::numeric_handle_binop("*", a, b) {
+        return result.to_bits();
+    }
     unsafe { mb_int_mul(a, b) }.to_bits()
 }
 
@@ -525,6 +590,17 @@ mod tests {
 
     fn inline(i: i64) -> MbValue {
         MbValue::from_int(i)
+    }
+
+    fn assert_bigint_bits_eq(bits: u64, expected: i128) {
+        let value = MbValue::from_bits(bits);
+        let big = unsafe { extract_bigint(value) }.expect("expected BigInt");
+        assert_eq!(big.to_string(), expected.to_string());
+        if let Some(ptr) = value.as_ptr() {
+            unsafe {
+                mb_release(ptr);
+            }
+        }
     }
 
     #[test]
@@ -716,5 +792,50 @@ mod tests {
         let c = MbValue::from_int(100).to_bits();
         assert_eq!(mb_bigint_eq(a, b), 1);
         assert_eq!(mb_bigint_eq(a, c), 0);
+    }
+
+    #[test]
+    fn test_abi_add_promotes_alias_boundaries() {
+        assert_bigint_bits_eq(mb_bigint_add((-(1i64 << 50)) as u64, 0), -(1i128 << 50));
+        assert_bigint_bits_eq(mb_bigint_add((-(1i64 << 51)) as u64, 0), -(1i128 << 51));
+        assert_bigint_bits_eq(
+            mb_bigint_add((-(1i64 << 51) + 1) as u64, 0),
+            -(1i128 << 51) + 1,
+        );
+        assert_bigint_bits_eq(
+            mb_bigint_add((-(1i64 << 51) + 16) as u64, 0),
+            -(1i128 << 51) + 16,
+        );
+        assert_bigint_bits_eq(mb_bigint_add((1i64 << 50) as u64, 0), 1i128 << 50);
+    }
+
+    #[test]
+    fn test_abi_sub_promotes_alias_boundaries() {
+        assert_bigint_bits_eq(mb_bigint_sub((-(1i64 << 50)) as u64, 0), -(1i128 << 50));
+        assert_bigint_bits_eq(mb_bigint_sub((-(1i64 << 51)) as u64, 0), -(1i128 << 51));
+        assert_bigint_bits_eq(
+            mb_bigint_sub((-(1i64 << 51) + 1) as u64, 0),
+            -(1i128 << 51) + 1,
+        );
+        assert_bigint_bits_eq(
+            mb_bigint_sub((-(1i64 << 51) + 16) as u64, 0),
+            -(1i128 << 51) + 16,
+        );
+        assert_bigint_bits_eq(mb_bigint_sub((1i64 << 50) as u64, 0), 1i128 << 50);
+    }
+
+    #[test]
+    fn test_abi_mul_promotes_alias_boundaries() {
+        assert_bigint_bits_eq(mb_bigint_mul((-(1i64 << 50)) as u64, 1), -(1i128 << 50));
+        assert_bigint_bits_eq(mb_bigint_mul((-(1i64 << 51)) as u64, 1), -(1i128 << 51));
+        assert_bigint_bits_eq(
+            mb_bigint_mul((-(1i64 << 51) + 1) as u64, 1),
+            -(1i128 << 51) + 1,
+        );
+        assert_bigint_bits_eq(
+            mb_bigint_mul((-(1i64 << 51) + 16) as u64, 1),
+            -(1i128 << 51) + 16,
+        );
+        assert_bigint_bits_eq(mb_bigint_mul((1i64 << 50) as u64, 1), 1i128 << 50);
     }
 }

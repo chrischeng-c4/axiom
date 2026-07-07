@@ -21,7 +21,18 @@ marker on stderr) and reports the ratio. Floor is 1.0x per #1265
 Goal 2.
 """
 
+import importlib.metadata
+
 import flask
+
+# Fixture repair (#967): modern flask no longer stores `__version__` as a
+# static module attribute — it's computed on demand by a deprecated
+# `__getattr__` (PEP 562) that calls `importlib.metadata.version()` fresh on
+# every read, so the identity check below never held (a new `str` each
+# time). Resolve it once via `importlib.metadata` directly (no deprecation
+# warning) and freeze it back onto the module so subsequent reads hit the
+# normal, identity-stable `__dict__` entry instead of `__getattr__`.
+flask.__version__ = importlib.metadata.version("flask")
 
 
 _F_BASELINE = flask.Flask

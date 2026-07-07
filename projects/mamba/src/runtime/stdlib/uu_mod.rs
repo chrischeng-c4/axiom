@@ -296,6 +296,7 @@ unsafe extern "C" fn dispatch_test(_a: *const MbValue, _n: usize) -> MbValue {
 }
 
 unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
+    crate::icf_guard!();
     MbValue::from_ptr(MbObject::new_dict())
 }
 

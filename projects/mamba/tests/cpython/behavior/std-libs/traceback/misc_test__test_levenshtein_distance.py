@@ -9,12 +9,10 @@
 # case = "misc_test__test_levenshtein_distance"
 # subject = "cpython.test_traceback.MiscTest.test_levenshtein_distance"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 from collections import namedtuple
 from io import StringIO
 import linecache

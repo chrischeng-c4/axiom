@@ -9,12 +9,11 @@
 # case = "limit_tests__test_extract_stack"
 # subject = "cpython.test_traceback.LimitTests.test_extract_stack"
 # kind = "semantic"
-# xfail = "auto-extracted CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-extracted CPython test; mamba promotion pending
 import unittest, io
 from test import test_traceback
 _suite = unittest.defaultTestLoader.loadTestsFromName("LimitTests.test_extract_stack", test_traceback)

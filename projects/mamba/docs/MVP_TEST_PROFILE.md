@@ -109,8 +109,9 @@ A mem-regression failure under G3 is one of:
 - **Subset B** — `MbObject` 104-byte header × N iters (fix: runtime
   layout change, deferred).
 
-See parent #2096 + the runtime layout notes in
-`NOTES-NEXT.md` before touching either.
+See parent #2096 + the archived runtime layout notes in
+`projects/mamba/docs/notes/archive/autonomous-loop-scratchpad.md`
+before touching either.
 
 ---
 

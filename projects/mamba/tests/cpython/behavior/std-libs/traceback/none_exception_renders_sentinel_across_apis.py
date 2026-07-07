@@ -9,7 +9,6 @@
 # case = "none_exception_renders_sentinel_across_apis"
 # subject = "traceback.format_exception"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

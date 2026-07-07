@@ -218,10 +218,23 @@ fn raise_set_changed_size_error() {
 fn dict_current_len(source: MbValue) -> Option<usize> {
     let ptr = source.as_ptr()?;
     unsafe {
-        if let ObjData::Dict(ref lock) = (*ptr).data {
-            Some(lock.read().unwrap().len())
-        } else {
-            None
+        match &(*ptr).data {
+            ObjData::Dict(ref lock) => Some(lock.read().unwrap().len()),
+            // Instance `__dict__` proxy (#1036): not a real `ObjData::Dict`,
+            // so this always missed and `dict_iter_changed`'s
+            // `map_or(true, ..)` treated every dict-view iteration
+            // (`d.keys()`/`.values()`/`.items()`, whose `_data` is the live
+            // proxy) as "changed", raising a spurious "dictionary changed
+            // size during iteration". Delegate to the same `mb_dict_len`
+            // the write paths (#969) use — this also gives correct,
+            // *live* mutation detection (CPython's check is itself a size
+            // comparison), not just a one-time snapshot.
+            ObjData::Instance { ref class_name, .. } if class_name == "__instance_dict_proxy__" => {
+                super::dict_ops::mb_dict_len(source)
+                    .as_int()
+                    .map(|n| n as usize)
+            }
+            _ => None,
         }
     }
 }
@@ -287,7 +300,11 @@ fn reversed_list_remaining_len(source: MbValue, original_len: usize, consumed: u
     }
 }
 
-fn reversed_list_next(source: MbValue, original_len: usize, consumed: &mut usize) -> Option<MbValue> {
+fn reversed_list_next(
+    source: MbValue,
+    original_len: usize,
+    consumed: &mut usize,
+) -> Option<MbValue> {
     let cursor = reversed_list_cursor(original_len, *consumed)?;
     if !list_current_len(source).is_some_and(|len| len > cursor) {
         return None;
@@ -433,8 +450,7 @@ pub fn check_and_clear_stop() -> bool {
 }
 
 fn has_non_stop_exception() -> bool {
-    super::exception::current_exception_type()
-        .is_some_and(|t| t != "StopIteration")
+    super::exception::current_exception_type().is_some_and(|t| t != "StopIteration")
 }
 
 fn alloc_iter_id() -> u64 {
@@ -855,6 +871,19 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                 } => {
                     if let Some(data) = super::dict_ops::mappingproxy_mapping(obj) {
                         return mb_iter(data);
+                    } else if class_name == "__instance_dict_proxy__" {
+                        // `for k in obj.__dict__:` / `iter(obj.__dict__)`
+                        // (#1036): the proxy has no registered `__iter__`,
+                        // so this previously fell through to the "not
+                        // iterable" TypeError below. Snapshot the live
+                        // fields into a real dict (same helper the #969
+                        // write paths and `unwrap_dictlike_data` use) and
+                        // iterate that, matching the read-only dict-shaped
+                        // treatment `==`/`in`/`len` already give the proxy.
+                        return match super::dict_ops::instance_dict_proxy_snapshot(obj) {
+                            Some(snapshot) => mb_iter(snapshot),
+                            None => MbValue::none(),
+                        };
                     } else if let Some(members) =
                         super::stdlib::enum_class::class_canonical_members_for_value(obj)
                     {
@@ -2815,7 +2844,17 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
                         return peeked;
                     }
                     let val = advance_iter(iter);
-                    if iter.exhausted {
+                    // `advance_iter` marks the iterator `exhausted` both on
+                    // genuine exhaustion AND when it detects a dict/set
+                    // mutation mid-iteration (raising a pending RuntimeError
+                    // via `raise_dict_changed_size_error`/`raise_set_changed_size_error`
+                    // and setting `exhausted = true` so the iterator doesn't
+                    // keep re-raising). Unconditionally overwriting the
+                    // current exception with StopIteration here would
+                    // swallow that pending RuntimeError — check for it first
+                    // and let it propagate, matching the for-loop path which
+                    // never touches the exception state on this branch.
+                    if iter.exhausted && !has_non_stop_exception() {
                         super::exception::set_current_exception(
                             super::exception::MbException::new("StopIteration", ""),
                         );
@@ -3244,8 +3283,8 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
                     .get(&(id as u64))
                     .map(|it| {
                         matches!(
-                        it.kind,
-                        IterKind::GroupByOuter { .. } | IterKind::GroupByGroup { .. }
+                            it.kind,
+                            IterKind::GroupByOuter { .. } | IterKind::GroupByGroup { .. }
                         )
                     })
                     .unwrap_or(false)
@@ -4179,7 +4218,7 @@ fn advance_groupby_if_applicable(id: u64) -> Option<MbValue> {
         let iter = iters.get_mut(&id)?;
         if iter.exhausted {
             return None;
-            }
+        }
         match &mut iter.kind {
             IterKind::GroupByOuter { state } => Some(Info::Outer {
                 state: Rc::clone(state),

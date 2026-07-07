@@ -154,6 +154,7 @@ unsafe extern "C" fn dispatch_text_calendar(args_ptr: *const MbValue, nargs: usi
 }
 
 unsafe extern "C" fn dispatch_html_calendar(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let all = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_calendar_class_new("HTMLCalendar", ctor_firstweekday(all), None)
 }
@@ -172,6 +173,7 @@ unsafe extern "C" fn dispatch_locale_html_calendar(
     args_ptr: *const MbValue,
     nargs: usize,
 ) -> MbValue {
+    crate::icf_guard!();
     let all = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, _kw) = split_args(all);
     let locale = pos.get(1).copied().unwrap_or_else(MbValue::none);
@@ -255,9 +257,7 @@ pub fn register() {
         ("HTMLCalendar", dispatch_html_calendar as usize),
         ("LocaleHTMLCalendar", dispatch_locale_html_calendar as usize),
     ] {
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut().insert(addr as u64, cls.to_string());
-        });
+        super::super::module::register_native_type_name(addr as u64, cls.to_string());
         // mb_class_set_class_attr only writes to registered classes.
         super::super::class::mb_class_register(cls, vec![], std::collections::HashMap::new());
         let str_list = |xs: &[&str]| {
@@ -576,8 +576,7 @@ fn zeller_weekday(y: i64, m: i64, d: i64) -> i64 {
     // Zeller's congruence assumes floor division; for a negative century `j`
     // (proleptic years, e.g. monthrange(-1, …)) truncating `j / 4` is wrong, so
     // use div_euclid. (For non-negative k/j it equals plain integer division.)
-    let h = (d + (13 * (am + 1)) / 5 + k + k.div_euclid(4) + j.div_euclid(4) + 5 * j)
-        .rem_euclid(7);
+    let h = (d + (13 * (am + 1)) / 5 + k + k.div_euclid(4) + j.div_euclid(4) + 5 * j).rem_euclid(7);
     (h + 5).rem_euclid(7)
 }
 

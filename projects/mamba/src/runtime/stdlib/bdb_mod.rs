@@ -24,6 +24,7 @@ use std::collections::HashMap;
 const BDB_CLASS: &str = "Bdb";
 
 unsafe extern "C" fn dispatch_bdb(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let inst = MbObject::new_instance(BDB_CLASS.to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
@@ -52,6 +53,19 @@ fn field_set(recv: MbValue, name: &str, val: MbValue) {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 fields.write().unwrap().insert(name.to_string(), val);
+            }
+        }
+    }
+}
+
+fn inst_field_set(obj: MbValue, name: &str, value: MbValue) {
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(value);
+                if let Some(prev) = fields.write().unwrap().insert(name.to_string(), value) {
+                    super::super::rc::release_if_ptr(prev);
+                }
             }
         }
     }
@@ -105,6 +119,55 @@ fn raise_value_error(msg: String) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(msg)),
     );
     MbValue::none()
+}
+
+fn best_effort_code_object(func: MbValue) -> MbValue {
+    let code = super::super::class::mb_getattr(func, new_str("__code__".to_string()));
+    if !code.is_none() {
+        return code;
+    }
+
+    let name = extract_str(super::super::closure::mb_func_get_name(func))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "<callable>".to_string());
+    let filename = super::super::closure::func_file(func).unwrap_or_else(|| "<string>".to_string());
+    let firstlineno = super::super::closure::func_line(func).unwrap_or(1);
+
+    let code = MbValue::from_ptr(MbObject::new_instance("code".to_string()));
+    inst_field_set(
+        code,
+        "co_name",
+        MbValue::from_ptr(MbObject::new_str(name.clone())),
+    );
+    inst_field_set(
+        code,
+        "co_qualname",
+        MbValue::from_ptr(MbObject::new_str(name)),
+    );
+    inst_field_set(
+        code,
+        "co_filename",
+        MbValue::from_ptr(MbObject::new_str(filename)),
+    );
+    inst_field_set(code, "co_firstlineno", MbValue::from_int(firstlineno));
+    code
+}
+
+fn best_effort_frame_for_callable(func: MbValue) -> MbValue {
+    let frame = MbValue::from_ptr(MbObject::new_instance("frame".to_string()));
+    inst_field_set(frame, "f_code", best_effort_code_object(func));
+    inst_field_set(frame, "f_locals", MbValue::from_ptr(MbObject::new_dict()));
+    inst_field_set(frame, "f_globals", MbValue::from_ptr(MbObject::new_dict()));
+    inst_field_set(frame, "f_builtins", MbValue::from_ptr(MbObject::new_dict()));
+    inst_field_set(
+        frame,
+        "f_lineno",
+        MbValue::from_int(super::super::closure::func_line(func).unwrap_or(1)),
+    );
+    inst_field_set(frame, "f_lasti", MbValue::from_int(0));
+    inst_field_set(frame, "f_back", MbValue::none());
+    inst_field_set(frame, "f_trace", MbValue::none());
+    frame
 }
 
 /// Call a user-overridable hook (user_line / user_return) on the receiver
@@ -249,13 +312,14 @@ unsafe extern "C" fn m_runcall(self_v: MbValue, args: MbValue) -> MbValue {
     // aborting (CPython swallows BdbQuit and returns None), then run the
     // function for real and fire user_return with its result.
     field_set(self_v, "quitting", MbValue::from_bool(false));
-    call_user_hook(self_v, "user_line", vec![MbValue::none()]);
+    let frame = best_effort_frame_for_callable(func);
+    call_user_hook(self_v, "user_line", vec![frame]);
     if field_get(self_v, "quitting").and_then(|v| v.as_bool()) == Some(true) {
         return MbValue::none();
     }
     let rest = MbValue::from_ptr(MbObject::new_list(items[1..].to_vec()));
     let result = super::super::builtins::mb_call_spread(func, rest);
-    call_user_hook(self_v, "user_return", vec![MbValue::none(), result]);
+    call_user_hook(self_v, "user_return", vec![frame, result]);
     result
 }
 
@@ -365,13 +429,10 @@ pub fn register() {
     // unbound method via mb_getattr's func->native-class method bridge (which
     // looks the func addr up in NATIVE_TYPE_NAMES, then lookup_method in the
     // table mb_class_register populates below).
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(addr_b as u64, BDB_CLASS.to_string());
-        // Breakpoint as a class symbol: `Breakpoint.bplist` resolves through
-        // the registered class attr below.
-        map.insert(addr_br as u64, "Breakpoint".to_string());
-    });
+    super::super::module::register_native_type_name(addr_b as u64, BDB_CLASS.to_string());
+    // Breakpoint as a class symbol: `Breakpoint.bplist` resolves through
+    // the registered class attr below.
+    super::super::module::register_native_type_name(addr_br as u64, "Breakpoint".to_string());
 
     // Breakpoint.bplist — class-level registry, an empty dict before any
     // breakpoint exists.
@@ -449,4 +510,93 @@ pub fn register() {
         super::super::module::register_variadic_func(stub as u64);
     }
     super::super::class::mb_class_register(BDB_CLASS, vec![], methods);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::{class, closure, module};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static TEST_HOOK_EVENTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn clear_test_hook_events() {
+        TEST_HOOK_EVENTS.with(|events| events.borrow_mut().clear());
+    }
+
+    fn take_test_hook_events() -> Vec<String> {
+        TEST_HOOK_EVENTS.with(|events| events.borrow().clone())
+    }
+
+    fn hook_frame_name(args: MbValue) -> String {
+        let frame = seq_items(args)
+            .first()
+            .copied()
+            .unwrap_or_else(MbValue::none);
+        field_get(frame, "f_code")
+            .and_then(|code| field_get(code, "co_name"))
+            .and_then(extract_str)
+            .unwrap_or_default()
+    }
+
+    unsafe extern "C" fn test_target(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+        crate::icf_guard!();
+        let _ = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        MbValue::from_int(99)
+    }
+
+    unsafe extern "C" fn test_user_line(_self_v: MbValue, args: MbValue) -> MbValue {
+        TEST_HOOK_EVENTS.with(|events| {
+            events
+                .borrow_mut()
+                .push(format!("line:{}", hook_frame_name(args)));
+        });
+        MbValue::none()
+    }
+
+    unsafe extern "C" fn test_user_return(_self_v: MbValue, args: MbValue) -> MbValue {
+        TEST_HOOK_EVENTS.with(|events| {
+            events
+                .borrow_mut()
+                .push(format!("return:{}", hook_frame_name(args)));
+        });
+        MbValue::none()
+    }
+
+    #[test]
+    fn test_runcall_passes_target_frame_to_user_hooks() {
+        clear_test_hook_events();
+
+        let target_addr = test_target as *const () as usize;
+        module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(target_addr as u64);
+        });
+        let func = MbValue::from_func(target_addr);
+        closure::mb_func_set_name(func, new_str("f".to_string()));
+        closure::mb_func_set_srcinfo(func, MbValue::from_int(7), new_str("probe.py".to_string()));
+
+        let mut methods = HashMap::new();
+        methods.insert(
+            "user_line".to_string(),
+            MbValue::from_func(test_user_line as usize),
+        );
+        methods.insert(
+            "user_return".to_string(),
+            MbValue::from_func(test_user_return as usize),
+        );
+        module::register_variadic_func(test_user_line as usize as u64);
+        module::register_variadic_func(test_user_return as usize as u64);
+        class::mb_class_register("TestBdbHook", vec![], methods);
+
+        let db = MbValue::from_ptr(MbObject::new_instance("TestBdbHook".to_string()));
+        let result = unsafe { m_runcall(db, MbValue::from_ptr(MbObject::new_list(vec![func]))) };
+
+        assert_eq!(result.as_int(), Some(99));
+        assert_eq!(
+            take_test_hook_events(),
+            vec!["line:f".to_string(), "return:f".to_string()]
+        );
+    }
 }

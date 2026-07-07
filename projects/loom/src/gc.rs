@@ -47,7 +47,10 @@ fn now_secs() -> u64 {
 pub async fn gc_loop(store: Arc<dyn RunStore>, retention_secs: u64) {
     let interval = Duration::from_secs((retention_secs / 4).clamp(5, 300));
     let mut seen: BTreeMap<WorkflowRunId, u64> = BTreeMap::new();
-    eprintln!("loom: completed-DAG GC on (retention {retention_secs}s, sweep {}s)", interval.as_secs());
+    eprintln!(
+        "loom: completed-DAG GC on (retention {retention_secs}s, sweep {}s)",
+        interval.as_secs()
+    );
     loop {
         tokio::time::sleep(interval).await;
         let ids = match store.list().await {

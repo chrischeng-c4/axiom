@@ -157,7 +157,10 @@ pub fn run_llm(matches: &ArgMatches) -> Result<()> {
         .map(String::as_str)
         .unwrap_or("outline");
     let format = cli_std::llm::Format::parse(
-        matches.get_one::<String>("format").map(String::as_str).unwrap_or("md"),
+        matches
+            .get_one::<String>("format")
+            .map(String::as_str)
+            .unwrap_or("md"),
     );
     let out = cli_std::llm::render(TOOL.project, TOOL.version, TOPICS, topic, format)?;
     println!("{out}");
@@ -185,14 +188,17 @@ pub async fn run_report_issue(matches: &ArgMatches) -> Result<()> {
         .get_many::<String>("message")
         .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
         .unwrap_or_default();
-    let title = matches.get_one::<String>("title").cloned().unwrap_or_else(|| {
-        if msg.trim().is_empty() {
-            "jet: issue report".to_string()
-        } else {
-            let head: String = msg.lines().next().unwrap_or("").chars().take(72).collect();
-            format!("jet: {head}")
-        }
-    });
+    let title = matches
+        .get_one::<String>("title")
+        .cloned()
+        .unwrap_or_else(|| {
+            if msg.trim().is_empty() {
+                "jet: issue report".to_string()
+            } else {
+                let head: String = msg.lines().next().unwrap_or("").chars().take(72).collect();
+                format!("jet: {head}")
+            }
+        });
     let message = (!msg.trim().is_empty()).then_some(msg);
 
     cli_std::report_issue::run(

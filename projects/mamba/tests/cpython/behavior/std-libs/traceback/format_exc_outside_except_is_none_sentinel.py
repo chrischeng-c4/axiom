@@ -9,7 +9,6 @@
 # case = "format_exc_outside_except_is_none_sentinel"
 # subject = "traceback.format_exc"
 # kind = "semantic"
-# xfail = ""
 # mem_carveout = ""
 # source = ""
 # status = "filled"

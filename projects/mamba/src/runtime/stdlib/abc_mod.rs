@@ -26,23 +26,26 @@
 //! - `update_abstractmethods(cls)` returns the cls argument unchanged
 //!   (no-op shim — CPython mutates `__abstractmethods__` frozenset
 //!   on the class).
-//! - `get_cache_token()` returns a real monotonically-increasing int
-//!   via a thread-local `AtomicU64` counter, matching CPython's
-//!   "opaque, monotonic" contract. This is the perf-microbench target.
+//! - `get_cache_token()` returns the current opaque invalidation token.
+//!   Because Mamba's `ABCMeta.register()` / cache-invalidation plumbing is
+//!   still a stub, the token is currently stable across repeated reads,
+//!   which matches CPython far better than minting a fresh int on every call.
+//!   This is the perf-microbench target.
 
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Monotonic cache-token counter. Mirrors CPython's
-/// `_abc_invalidation_counter` — opaque to callers; only equality /
-/// strict-monotonic ordering is contractual.
+/// Current ABC cache token. Mirrors CPython's `_abc_invalidation_counter`:
+/// callers treat it as an opaque equality token, and it only changes when
+/// virtual-subclass cache invalidation happens.
 static CACHE_TOKEN: AtomicU64 = AtomicU64::new(0);
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+            crate::icf_guard!();
             $fn()
         }
     };
@@ -76,6 +79,7 @@ fn raise_type_error(message: impl Into<String>) -> MbValue {
 }
 
 unsafe extern "C" fn dispatch_abcmeta(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { native_args(args_ptr, nargs) };
     match a {
         [] => mb_abc_ABCMeta(),
@@ -166,17 +170,14 @@ pub fn register() {
     }
     super::super::class::mb_class_register("ABCMeta", Vec::new(), methods);
 
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_abc_cls as *const () as usize as u64,
-            "ABC".to_string(),
-        );
-        map.insert(
-            dispatch_abcmeta as *const () as usize as u64,
-            "ABCMeta".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_abc_cls as *const () as usize as u64,
+        "ABC".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_abcmeta as *const () as usize as u64,
+        "ABCMeta".to_string(),
+    );
 }
 
 // ── Runtime functions ──
@@ -247,19 +248,18 @@ pub fn mb_abc_abstractproperty(func: MbValue) -> MbValue {
 
 /// abc.get_cache_token() -> int.
 ///
-/// Returns a monotonically-increasing opaque integer. CPython contract
+/// Returns the current opaque cache token. CPython contract
 /// (per `Lib/abc.py`): "Returns the current ABC cache token. The token
 /// is an opaque object (supporting equality testing) identifying the
-/// current version of the ABC cache for virtual subclasses." Mamba's
-/// implementation is a bare `AtomicU64::fetch_add(1)` — incrementing
-/// on each call gives strict monotonicity (a stricter-than-required
-/// guarantee — CPython only bumps on `ABCMeta.register()`).
+/// current version of the ABC cache for virtual subclasses." CPython
+/// bumps it only when virtual-subclass caches are invalidated, not on
+/// every read, so Mamba must not mint a fresh token for every call.
 ///
 /// This is the #1447 Gate-2 hot-loop target — pure native dispatch,
-/// no allocation, contrast vs CPython's pure-Python `_abc_get_cache_token`
-/// which goes through a C-API call frame per iter.
+/// no per-call token allocation, contrast vs CPython's pure-Python
+/// `_abc_get_cache_token` which goes through a C-API call frame per iter.
 pub fn mb_abc_get_cache_token() -> MbValue {
-    let tok = CACHE_TOKEN.fetch_add(1, Ordering::Relaxed);
+    let tok = CACHE_TOKEN.load(Ordering::Relaxed);
     // Clamp into i64 range — opaque per contract; only equality / ordering
     // matters and we'd overflow well after the heat-death of the bench.
     MbValue::from_int(tok as i64)
@@ -380,10 +380,10 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cache_token_returns_int_and_monotonic() {
+    fn test_get_cache_token_returns_stable_int_without_invalidation() {
         let a = mb_abc_get_cache_token().as_int().unwrap();
         let b = mb_abc_get_cache_token().as_int().unwrap();
-        assert!(b > a, "cache token must be strictly monotonic: {a} -> {b}");
+        assert_eq!(a, b, "cache token should stay stable without invalidation");
     }
 
     #[test]

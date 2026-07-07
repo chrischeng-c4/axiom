@@ -21,7 +21,7 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 
 /// Global lock to serialize JIT compilation + execution across test threads.
@@ -105,6 +105,10 @@ pub struct CraneliftJitBackend {
     internal_funcs: HashMap<u32, FuncId>,
     /// Declared return TypeId per internal function for NaN-boxing promotion
     internal_return_tys: HashMap<u32, TypeId>,
+    /// Bodies whose non-None returns are native bool producers even when the
+    /// MIR-level `return_ty` remains Int-shaped. This lets the JIT preserve
+    /// bool semantics across internal calls without widening the ABI.
+    internal_native_bool_returns: HashSet<u32>,
     /// Declared parameter count per internal function. Captured at
     /// `declare_internal` time from `body.params.len()` and used as a
     /// defensive arity guard in `emit_internal_call` so a call site whose
@@ -208,6 +212,7 @@ impl CraneliftJitBackend {
             extern_addrs,
             internal_funcs: HashMap::new(),
             internal_return_tys: HashMap::new(),
+            internal_native_bool_returns: HashSet::new(),
             internal_param_counts: HashMap::new(),
             compile_time_objects: Vec::new(),
             internal_code_sizes: HashMap::new(),
@@ -216,6 +221,64 @@ impl CraneliftJitBackend {
 
     fn module(&mut self) -> &mut JITModule {
         self.module.as_mut().expect("module already consumed")
+    }
+
+    fn body_returns_native_bool(body: &MirBody, tcx: &TypeContext) -> bool {
+        let mut bool_vregs = HashSet::new();
+        let mut none_vregs = HashSet::new();
+        for block in &body.blocks {
+            for inst in &block.stmts {
+                match inst {
+                    MirInst::LoadConst {
+                        dest,
+                        value: MirConst::Bool(_),
+                        ..
+                    } => {
+                        bool_vregs.insert(*dest);
+                    }
+                    MirInst::LoadConst {
+                        dest,
+                        value: MirConst::None,
+                        ..
+                    } => {
+                        none_vregs.insert(*dest);
+                    }
+                    MirInst::BinOp { dest, ty, .. }
+                    | MirInst::UnaryOp { dest, ty, .. }
+                    | MirInst::CallExtern {
+                        dest: Some(dest),
+                        ty,
+                        ..
+                    }
+                    | MirInst::Call {
+                        dest: Some(dest),
+                        ty,
+                        ..
+                    } if matches!(tcx.get(*ty), Ty::Bool) => {
+                        bool_vregs.insert(*dest);
+                    }
+                    MirInst::Copy { dest, source } if bool_vregs.contains(source) => {
+                        bool_vregs.insert(*dest);
+                    }
+                    MirInst::Copy { dest, source } if none_vregs.contains(source) => {
+                        none_vregs.insert(*dest);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut saw_bool_return = false;
+        for block in &body.blocks {
+            if let crate::mir::Terminator::Return(Some(vreg)) = &block.terminator {
+                if bool_vregs.contains(vreg) {
+                    saw_bool_return = true;
+                } else if !none_vregs.contains(vreg) {
+                    return false;
+                }
+            }
+        }
+        saw_bool_return
     }
 
     /// Get the finalized function pointer for an internal function by SymbolId (#1190).
@@ -340,6 +403,9 @@ impl CraneliftJitBackend {
             .map_err(|e| crate::error::MambaError::codegen(format!("declare: {e}")))?;
         self.internal_funcs.insert(body.name.0, func_id);
         self.internal_return_tys.insert(body.name.0, body.return_ty);
+        if Self::body_returns_native_bool(body, tcx) {
+            self.internal_native_bool_returns.insert(body.name.0);
+        }
         self.internal_param_counts
             .insert(body.name.0, body.params.len());
         Ok(func_id)
@@ -367,13 +433,11 @@ impl CraneliftJitBackend {
         let mut fb_ctx = cranelift_frontend::FunctionBuilderContext::new();
         let mut builder = cranelift_frontend::FunctionBuilder::new(&mut func, &mut fb_ctx);
         let mut vars = VarAlloc::new();
-        // #959: per-block "may already be assigned" VReg sets, consumed by
-        // `emit_terminator`'s Return epilogue via `vars.live_filter` to skip
-        // releasing VRegs that are provably unassigned on every path
-        // reaching that terminator (see `compute_may_assign` for the
-        // soundness argument — this never skips a release for a value a
-        // live path actually assigned).
-        let may_assign = super::compute_may_assign(body);
+        // Per-block "definitely assigned on all incoming paths" VReg sets,
+        // consumed by `emit_terminator`'s Return epilogue via
+        // `vars.live_filter` so large branch-local release sets do not force
+        // Cranelift to synthesize enormous SSA block-param lists.
+        let must_assign = super::compute_must_assign(body);
 
         // Map MIR BlockIds to Cranelift blocks by ID (not by array index).
         let mut cl_blocks: std::collections::HashMap<u32, cranelift_codegen::ir::Block> =
@@ -431,18 +495,71 @@ impl CraneliftJitBackend {
             None
         };
 
+        // #1013 / #2111 (Subset A iteration-retention amplifier): pre-seed
+        // VRegs written inside a loop body with a harmless `MbValue::none()`
+        // sentinel before the loop's own blocks compile. This makes
+        // `VarAlloc::is_declared_i64` true from the start, so `emit_inst`'s
+        // existing release-before-overwrite gate (see its doc comment,
+        // below) now fires on every dynamic loop iteration instead of never
+        // — the single-static-write-site shape that previously defeated it.
+        // See `compute_loop_carried_vregs` for the full rationale, the
+        // back-edge/natural-loop discovery, and why Int/Bool/Float/None/
+        // Never VRegs are excluded (they're never heap-backed in this JIT
+        // and pre-seeding them would only tax numeric hot loops). Emitted
+        // while `entry_cl` is still open (not yet terminated) — safe to
+        // append instructions here before the main block-emission loop
+        // switches blocks and starts appending terminators.
+        if EMIT_REFCOUNT_CALLS {
+            let loop_carried = super::compute_loop_carried_vregs(body, tcx);
+            if !loop_carried.is_empty() {
+                let none_bits = MbValue::none().to_bits() as i64;
+                for vreg in loop_carried {
+                    if !crate::runtime::rc::should_preseed_loop_owner_slot(
+                        param_vregs.contains(&vreg),
+                    ) {
+                        // Never override a caller-borrowed param's original
+                        // value (#1018) — a param VReg is already handled
+                        // by the params loop above.
+                        continue;
+                    }
+                    let dv = vars.get(vreg, &mut builder, cl_types::I64);
+                    let sentinel = builder.ins().iconst(cl_types::I64, none_bits);
+                    builder.def_var(dv, sentinel);
+                }
+            }
+        }
+
         for (block_idx, block) in body.blocks.iter().enumerate() {
             if block_idx > 0 {
                 builder.switch_to_block(cl_blocks[&block.id.0]);
             }
             for inst in &block.stmts {
-                self.emit_inst(inst, tcx, externs, &mut builder, &mut vars);
+                self.emit_inst(inst, tcx, externs, &mut builder, &mut vars, &param_vregs);
             }
-            // #959: scope the Return epilogue's release loop to VRegs that
-            // may actually be assigned by the time control reaches THIS
-            // block's terminator (empty/missing entry ⇒ no filtering, same
-            // as before this pass existed).
-            vars.live_filter = may_assign.get(&block.id.0).cloned();
+            // Scope the Return epilogue's release loop to VRegs that are
+            // definitely assigned on every path reaching THIS terminator
+            // (empty/missing entry => no filtering, same as before).
+            vars.live_filter = must_assign.get(&block.id.0).cloned();
+            if std::env::var("MAMBA_TRACE_RETURN_RELEASES").is_ok() {
+                let release_count = match &block.terminator {
+                    crate::mir::Terminator::Return(Some(vreg)) => {
+                        vars.releasable_i64_vregs(&param_vregs, Some(*vreg)).len()
+                    }
+                    crate::mir::Terminator::Return(None) => {
+                        vars.releasable_i64_vregs(&param_vregs, None).len()
+                    }
+                    _ => 0,
+                };
+                if release_count > 0 {
+                    eprintln!(
+                        "[return-release body={} block={} candidates={} vars={}]",
+                        body.name.0,
+                        block.id.0,
+                        release_count,
+                        vars.map.len()
+                    );
+                }
+            }
             emit_terminator(
                 &block.terminator,
                 &cl_blocks,
@@ -512,6 +629,7 @@ impl CraneliftJitBackend {
         externs: &[MirExtern],
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
+        param_vregs: &std::collections::HashSet<VReg>,
     ) {
         // Release old dest value before overwriting (#1129 R2).
         // Every instruction that writes to a dest VReg must release
@@ -570,7 +688,30 @@ impl CraneliftJitBackend {
                 // Skip raw_ints — the previous value is a raw i64, not a
                 // heap pointer, so mb_release_value's as_ptr check would
                 // bail out anyway.
-                if vars.is_declared_i64(dest) && !vars.raw_ints.contains(&dest) {
+                // #1018: also skip parameter VRegs. Parameters are borrowed
+                // from the caller (see the `param_vregs` construction above,
+                // and `emit_terminator`'s Return epilogue, which excludes
+                // them from its release sweep for the same reason) — the
+                // callee must never release a param's ORIGINAL value, even
+                // when reassigning the param's own VReg (e.g. `args =
+                // args[1:]`, or a tuple-unpack target that reuses the
+                // param's VReg via `sym_to_vreg`). Without this check, the
+                // first such reassignment released the caller's live
+                // reference out from under it, causing a double free once
+                // the caller (or callee's own later cleanup) released the
+                // same object again — surfacing as nondeterministic heap
+                // corruption (SIGSEGV/SIGBUS/SIGTRAP/capacity-overflow/
+                // wrong-value, depending on what reused the freed memory).
+                if crate::runtime::rc::should_release_local_slot(
+                    crate::runtime::rc::LocalSlotReleaseRule {
+                        declared_i64: vars.is_declared_i64(dest),
+                        raw_value: vars.raw_ints.contains(&dest),
+                        native_bool: vars.native_bools.contains(&dest),
+                        assigned_on_path: true,
+                        borrowed_param: param_vregs.contains(&dest),
+                        return_value: false,
+                    },
+                ) {
                     if let Some(&release_id) = self.extern_funcs.get("mb_release_value") {
                         let release_ref =
                             self.module().declare_func_in_func(release_id, builder.func);
@@ -755,6 +896,69 @@ impl CraneliftJitBackend {
                         let zero = builder.ins().iconst(cl_types::I64, 0);
                         vars.def_var_cast(*dest, builder, zero, cl_types::I64);
                     }
+                } else if matches!(op, MirBinOp::BitAnd | MirBinOp::BitOr | MirBinOp::BitXor)
+                    && matches!(resolved_ty, Ty::Int)
+                {
+                    // Bitwise AND/OR/XOR of two *genuinely* raw (non-NaN-boxed)
+                    // i64 operands is provably safe to compute natively (the
+                    // redundant sign/tag bits never force BigInt promotion —
+                    // bitwise ops never grow beyond the operands' own width).
+                    // BUT `vars.raw_ints` is not a strict "fits in 48 bits"
+                    // guarantee: it's also set for call-results/params from a
+                    // statically Ty::Int callee (jit.rs `emit_internal_call`,
+                    // ~line 2089) *unconditionally* on the static type, even
+                    // when that callee's *actual* returned bit pattern is a
+                    // NaN-boxed BigInt heap pointer (produced by its own
+                    // internal CheckedAdd/Sub/Mul slow path once a literal
+                    // exceeds the 48-bit inline threshold — e.g. `return
+                    // 9_000_000_000_000_000_000 + i`). CheckedAdd/Sub/Mul
+                    // tolerate that mistagging because their *native op result*
+                    // gets an explicit overflow/fits-check that (empirically)
+                    // always reroutes a garbage computation to the BigInt-aware
+                    // runtime, whose `mb_box_int`/`reg_to_mbvalue` tag-detection
+                    // then self-corrects. Bitwise AND/OR/XOR have no analogous
+                    // "does this look wrong" signal — any bit pattern is a
+                    // "valid" result — so a raw_ints-gated *native* band/bor/bxor
+                    // has no safety net and silently corrupts a mistagged
+                    // NaN-boxed pointer's bits (confirmed via a `total ^=
+                    // f(i)` repro with `f` returning a promoted-to-BigInt Int).
+                    // Route unconditionally through the runtime instead: v1
+                    // per #1090's own guidance ("routing through CallExtern
+                    // unconditionally is acceptable v1 if pin-neutral,
+                    // measure") — `mb_box_int` is idempotent/tag-aware on
+                    // already-boxed input, so this is correct for every case.
+                    let helper_name = match op {
+                        MirBinOp::BitAnd => "mb_bitand",
+                        MirBinOp::BitOr => "mb_bitor",
+                        _ => "mb_bitxor",
+                    };
+                    self.emit_checked_bitwise_op(dest, lhs, rhs, helper_name, builder, vars);
+                } else if matches!(op, MirBinOp::LShift) && matches!(resolved_ty, Ty::Int) {
+                    // Left shift can promote to BigInt even when BOTH operands
+                    // are already proven inline (`1 << 64`) — unlike AND/OR/XOR/
+                    // RSHIFT above/below (which dropped their raw_ints-gated
+                    // native fast path entirely, see those arms' comments), an
+                    // operand-tag check alone is not enough here; this needs an
+                    // overflow-checked fast path (#1090).
+                    if vars.raw_ints.contains(lhs) && vars.raw_ints.contains(rhs) {
+                        self.emit_raw_lshift_with_overflow_check(dest, lhs, rhs, builder, vars);
+                    } else {
+                        self.emit_checked_bitwise_op(dest, lhs, rhs, "mb_lshift", builder, vars);
+                    }
+                } else if matches!(op, MirBinOp::RShift) && matches!(resolved_ty, Ty::Int) {
+                    // Right shift of a *genuinely* raw inline base always stays
+                    // inline (magnitude only shrinks toward zero) — but same
+                    // hazard as AND/OR/XOR above: `raw_ints` doesn't guarantee
+                    // the operand isn't a mistagged NaN-boxed BigInt pointer
+                    // from a promoted call-result/param, and `sshr` has no
+                    // overflow-style check to catch that after the fact
+                    // (confirmed via repro: `total >>= 1` after XORing in a
+                    // promoted-to-BigInt call result produced garbage/a raw
+                    // function pointer leaking into output). Route
+                    // unconditionally through the BigInt-aware runtime
+                    // (#1085) — `mb_box_int` is idempotent/tag-aware so this
+                    // is correct for every case.
+                    self.emit_checked_bitwise_op(dest, lhs, rhs, "mb_rshift", builder, vars);
                 } else if matches!(op, MirBinOp::Pow) && matches!(resolved_ty, Ty::Int) {
                     // Integer power → call mb_pow_int runtime function
                     if let Some(&func_id) = self.extern_funcs.get("mb_pow_int") {
@@ -802,6 +1006,32 @@ impl CraneliftJitBackend {
                         let zero = builder.ins().iconst(cl_types::I64, 0);
                         vars.def_var_cast(*dest, builder, zero, cl_types::I64);
                     }
+                } else if matches!(
+                    op,
+                    MirBinOp::Eq
+                        | MirBinOp::NotEq
+                        | MirBinOp::Lt
+                        | MirBinOp::Gt
+                        | MirBinOp::LtEq
+                        | MirBinOp::GtEq
+                ) {
+                    // #1131: rich comparisons of Int/Bool-typed operands do
+                    // NOT get pre-dispatched to a boxed CallExtern at
+                    // lowering time the way Float/Str comparisons do (those
+                    // never reach a MIR BinOp at all — confirmed via MIR
+                    // dump). Instead lowering unboxes both operands (e.g.
+                    // `mb_unbox_int_if_boxed`) and emits a raw BinOp here —
+                    // whose `ty` field is always the *result* type (Bool),
+                    // never useful for gating. Comparing the raw i64 bits
+                    // directly (the old behavior) is wrong whenever an
+                    // operand is secretly a NaN-boxed BigInt: either a
+                    // genuine large int that unboxing left boxed (the
+                    // unbox helper's fallback literally returns
+                    // `val.to_bits() as i64` — the *same* NaN-boxed bits,
+                    // just relabeled), or a mistagged call-result (#1090:
+                    // "raw_ints tags LIE for call-results; comparisons have
+                    // no self-check signal").
+                    self.emit_checked_int_compare(dest, lhs, rhs, op, builder, vars);
                 } else if use_primitive {
                     let cl_type = Self::mamba_to_cl_type(resolved_ty);
                     // use_as handles I64→F64 bitcast when operand came from runtime call
@@ -924,7 +1154,52 @@ impl CraneliftJitBackend {
                             };
                             super::emit_logical_not(builder, truth_value)
                         }
-                        crate::mir::MirUnaryOp::BitNot => builder.ins().bnot(val),
+                        crate::mir::MirUnaryOp::BitNot => {
+                            if matches!(resolved_ty, Ty::Int) {
+                                // Always route through the BigInt-aware dunder
+                                // dispatch (op_code 3 = `__invert__`) for
+                                // Ty::Int — same mistagging hazard as the
+                                // AND/OR/XOR/RSHIFT `BinOp` arms above:
+                                // `vars.raw_ints` doesn't guarantee `operand`
+                                // isn't a mistagged NaN-boxed BigInt pointer
+                                // (from a promoted call-result/param whose
+                                // static type is Int but whose actual runtime
+                                // value overflowed 48 bits internally), and a
+                                // raw `bnot` has no overflow-style check to
+                                // catch that after the fact. Box first
+                                // (`mb_box_int` is idempotent/tag-aware on
+                                // already-boxed input) so the dispatch always
+                                // receives a properly NaN-boxed MbValue
+                                // regardless of whether `operand` was
+                                // genuinely raw or mistagged (#1090).
+                                let boxed_val = if let Some(&box_id) =
+                                    self.extern_funcs.get("mb_box_int")
+                                {
+                                    let box_ref =
+                                        self.module().declare_func_in_func(box_id, builder.func);
+                                    let call = builder.ins().call(box_ref, &[val]);
+                                    builder.inst_results(call)[0]
+                                } else {
+                                    val
+                                };
+                                if let Some(&func_id) = self.extern_funcs.get("mb_dispatch_unaryop")
+                                {
+                                    let func_ref =
+                                        self.module().declare_func_in_func(func_id, builder.func);
+                                    let opcode =
+                                        builder.ins().iconst(cl_types::I64, op.to_opcode());
+                                    let call = builder.ins().call(func_ref, &[opcode, boxed_val]);
+                                    builder.inst_results(call)[0]
+                                } else {
+                                    builder.ins().bnot(val)
+                                }
+                            } else {
+                                // Bool/Float operand: `!x` of any inline value
+                                // always stays inline (never at BigInt-
+                                // promotion risk), so the native op is exact.
+                                builder.ins().bnot(val)
+                            }
+                        }
                     };
                     builder.def_var(dv, result);
                     // Not always produces raw 0/1 — mark for direct branching
@@ -1357,6 +1632,337 @@ impl CraneliftJitBackend {
         // raw_ints status enables fast-path chaining for the 99.99% case.
     }
 
+    /// Unbox an inline-int (tag=1) NaN-boxed `MbValue` result back to a raw
+    /// sign-extended i64; pass a BigInt heap pointer (tag=0) through
+    /// unchanged. Shared by the bitwise runtime call sites below — factors
+    /// the tag-check-and-sign-extend sequence duplicated inline at the
+    /// FloorDiv/Mod call site and in `emit_checked_int_op` above (#1090).
+    fn unbox_if_inline(
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        result_bits: cranelift_codegen::ir::Value,
+    ) -> cranelift_codegen::ir::Value {
+        use cranelift_codegen::ir::InstBuilder;
+
+        const PAYLOAD_MASK: i64 = 0x0000_FFFF_FFFF_FFFFi64;
+        const TAG_INT_VAL: i64 = 1i64;
+
+        let tag_raw = builder.ins().ushr_imm(result_bits, 48);
+        let tag = builder.ins().band_imm(tag_raw, 7);
+        let tag_int_const = builder.ins().iconst(cl_types::I64, TAG_INT_VAL);
+        let is_inline = builder.ins().icmp(
+            cranelift_codegen::ir::condcodes::IntCC::Equal,
+            tag,
+            tag_int_const,
+        );
+        let pm = builder.ins().iconst(cl_types::I64, PAYLOAD_MASK);
+        let result_payload = builder.ins().band(result_bits, pm);
+        let shifted = builder.ins().ishl_imm(result_payload, 16);
+        let unboxed = builder.ins().sshr_imm(shifted, 16);
+        builder.ins().select(is_inline, unboxed, result_bits)
+    }
+
+    /// Emit a BigInt-aware bitwise binop (`mb_bitand`/`mb_bitor`/`mb_bitxor`/
+    /// `mb_lshift`/`mb_rshift`) for a statically Ty::Int operand pair where
+    /// at least one operand may be NaN-boxed (inline int or BigInt heap
+    /// pointer) — the slow path reached when the both-operands-provably-raw
+    /// fast path in `emit_inst`'s `MirInst::BinOp` arm doesn't apply (#1090).
+    ///
+    /// Boxes both operands via `mb_box_int` first (a no-op on an already
+    /// NaN-boxed value — see `mb_box_int`'s own idempotency guard), calls
+    /// `func_name`, then unboxes an inline-int result back to raw i64 so
+    /// downstream primitive ops keep working — mirrors the FloorDiv/Mod
+    /// box + inline-unbox convention in `emit_inst` above.
+    fn emit_checked_bitwise_op(
+        &mut self,
+        dest: &crate::mir::VReg,
+        lhs: &crate::mir::VReg,
+        rhs: &crate::mir::VReg,
+        func_name: &str,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        use cranelift_codegen::ir::InstBuilder;
+
+        let l = vars.use_as_i64(*lhs, builder);
+        let r = vars.use_as_i64(*rhs, builder);
+        let box_id = self.extern_funcs.get("mb_box_int").copied();
+        let (l_boxed, r_boxed) = if let Some(bid) = box_id {
+            let fref = self.module().declare_func_in_func(bid, builder.func);
+            let lc = builder.ins().call(fref, &[l]);
+            let rc = builder.ins().call(fref, &[r]);
+            (builder.inst_results(lc)[0], builder.inst_results(rc)[0])
+        } else {
+            (l, r)
+        };
+
+        if let Some(&func_id) = self.extern_funcs.get(func_name) {
+            let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
+            let result_bits = builder.inst_results(call)[0];
+            let result = Self::unbox_if_inline(builder, result_bits);
+            vars.def_var_cast(*dest, builder, result, cl_types::I64);
+        } else {
+            let zero = builder.ins().iconst(cl_types::I64, 0);
+            vars.def_var_cast(*dest, builder, zero, cl_types::I64);
+        }
+    }
+
+    /// Emit `LShift` for a statically Ty::Int, both-operands-raw_ints-tagged
+    /// pair with overflow detection, mirroring
+    /// `emit_raw_int_op_with_overflow_check`'s CheckedMul-style fast/slow
+    /// branch (#1090). A raw INT48 base and a raw (small) shift count can
+    /// still promote to BigInt — even `1 << 64` starts from two operands
+    /// that individually fit inline — so this needs an actual overflow
+    /// check, not just a tag check (unlike AND/OR/XOR/RSHIFT above, which
+    /// dropped their raw_ints-gated native fast path entirely: those ops
+    /// have no analogous "does the result look wrong" signal to fall back
+    /// on if `raw_ints` mistakenly tags a promoted-to-BigInt call-result/
+    /// param as raw — see the AND/OR/XOR branch's comment above for the
+    /// repro. This overflow check (the `(x<<n)>>n==x` shift-invertibility
+    /// identity + the 48-bit fits-check) gives LShift's fast path the same
+    /// kind of safety net CheckedAdd/Sub/Mul already rely on for that same
+    /// mistagging risk: a garbage/mistagged operand's native shift result
+    /// essentially never coincidentally survives both checks, so it
+    /// reroutes to the tag-aware runtime slow path below.
+    fn emit_raw_lshift_with_overflow_check(
+        &mut self,
+        dest: &crate::mir::VReg,
+        lhs: &crate::mir::VReg,
+        rhs: &crate::mir::VReg,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        use cranelift_codegen::ir::condcodes::IntCC;
+        use cranelift_codegen::ir::InstBuilder;
+
+        let l = vars.use_as_i64(*lhs, builder);
+        let r = vars.use_as_i64(*rhs, builder);
+
+        // Native `ishl`/`sshr` mask their shift-count operand to the
+        // register width (hardware SHL/SAR semantics), so a count >= 64 (or
+        // negative, which looks huge as unsigned) makes the raw computation
+        // below meaningless — route those to the runtime unconditionally.
+        let sixty_four = builder.ins().iconst(cl_types::I64, 64);
+        let r_in_range = builder.ins().icmp(IntCC::UnsignedLessThan, r, sixty_four);
+
+        let raw_result = builder.ins().ishl(l, r);
+        // Overflow check #1 (64-bit): shifting the raw result back right by
+        // the same count must recover `l` exactly, or high bits were lost
+        // off the top of the 64-bit register — the standard
+        // `(x << n) >> n == x` shift-overflow identity, the shift analogue
+        // of `emit_raw_int_op_with_overflow_check`'s `smulhi` check.
+        let restored = builder.ins().sshr(raw_result, r);
+        let no_64_overflow = builder.ins().icmp(IntCC::Equal, restored, l);
+        // Overflow check #2 (48-bit inline range): same fits-check
+        // CheckedAdd/Sub/Mul use above.
+        let shifted16 = builder.ins().ishl_imm(raw_result, 16);
+        let restored16 = builder.ins().sshr_imm(shifted16, 16);
+        let fits_48 = builder.ins().icmp(IntCC::Equal, raw_result, restored16);
+        let no_overflow_1 = builder.ins().band(r_in_range, no_64_overflow);
+        let no_overflow = builder.ins().band(no_overflow_1, fits_48);
+
+        let fast_block = builder.create_block();
+        let slow_block = builder.create_block();
+        let merge_block = builder.create_block();
+        let merged_param = builder.append_block_param(merge_block, cl_types::I64);
+
+        builder
+            .ins()
+            .brif(no_overflow, fast_block, &[], slow_block, &[]);
+
+        // Fast block: pass the native shift result through.
+        builder.switch_to_block(fast_block);
+        builder.seal_block(fast_block);
+        builder.ins().jump(merge_block, &[raw_result.into()]);
+
+        // Slow block: box operands, call `mb_lshift` (handles arbitrary-
+        // precision promotion, e.g. `1 << 64` → BigInt 2**64), unbox an
+        // inline-int result.
+        builder.switch_to_block(slow_block);
+        builder.seal_block(slow_block);
+        let slow_value = if let Some(&func_id) = self.extern_funcs.get("mb_lshift") {
+            let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            let box_id = self.extern_funcs.get("mb_box_int").copied();
+            let (l_boxed, r_boxed) = if let Some(bid) = box_id {
+                let fref = self.module().declare_func_in_func(bid, builder.func);
+                let lc = builder.ins().call(fref, &[l]);
+                let rc = builder.ins().call(fref, &[r]);
+                (builder.inst_results(lc)[0], builder.inst_results(rc)[0])
+            } else {
+                (l, r)
+            };
+            let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
+            let result_bits = builder.inst_results(call)[0];
+            Self::unbox_if_inline(builder, result_bits)
+        } else {
+            builder.ins().iconst(cl_types::I64, 0)
+        };
+        builder.ins().jump(merge_block, &[slow_value.into()]);
+
+        // Merge block: phi the chosen value into dest. `dest` is
+        // intentionally NOT marked raw_ints — the slow path may return a
+        // NaN-boxed BigInt pointer (same convention as CheckedAdd/Sub/Mul).
+        builder.switch_to_block(merge_block);
+        builder.seal_block(merge_block);
+        let dv = vars.get(*dest, builder, cl_types::I64);
+        builder.def_var(dv, merged_param);
+    }
+
+    /// #1131: runtime-tag-tested rich comparison for Int/Bool-typed operands.
+    ///
+    /// `l`/`r` arrive here as whatever bits lowering already produced for
+    /// this BinOp's lhs/rhs (typically the output of `mb_unbox_int_if_boxed`,
+    /// which passes genuine small ints and i64-exact BigInts through as a
+    /// real raw i64 — but for a BigInt too large even for i64 falls back to
+    /// `val.to_bits() as i64`, i.e. the *same* NaN-boxed bit pattern,
+    /// unchanged, just relabeled as if it were raw). A native icmp on that
+    /// bit pattern is nonsense (e.g. compares pointer/tag bits, or treats a
+    /// NaN-boxed value's sign bit as a huge negative number).
+    ///
+    /// Fast path (native icmp): the `(x << 16) >>s 16 == x` identity — the
+    /// same one `mb_box_int`'s Fire-51 inline path and
+    /// `emit_raw_lshift_with_overflow_check` use — is true iff `x` is a
+    /// genuine sign-extended 48-bit-range i64. It is *never* true for a
+    /// NaN-boxed bit pattern of any tag (NAN_PREFIX forces the top 13 bits
+    /// to 1, which can only equal 16 copies of bit 47 if tag==7 *and*
+    /// payload's MSB is set — Ellipsis's payload is always 0, so this never
+    /// happens in practice). So `both_fit` true guarantees neither operand
+    /// is secretly NaN-boxed, and a native signed icmp is exact.
+    ///
+    /// Slow path: box both operands via `mb_box_int_for_compare` (idempotent —
+    /// a genuinely raw i64 outside 48 bits gets freshly BigInt-promoted; bits
+    /// that are already a valid NaN-boxed pointer/int/bool/None, including the
+    /// `mb_unbox_int_if_boxed` fallback case above, are passed through
+    /// unchanged) and route through the existing BigInt-aware `mb_eq`/`mb_ne`/
+    /// `mb_lt`/`mb_gt`/`mb_le`/`mb_ge` runtime comparators (already
+    /// implemented, already registered as externs — only this call-site
+    /// wiring was missing).
+    ///
+    /// Uses the comparison-scoped `mb_box_int_for_compare`, NOT the generic
+    /// `mb_box_int` (#1133): `mb_box_int`'s `tag<=4` acceptance test lets a
+    /// raw i64 that merely *aliases* TAG_FUNC(4) (e.g. `-2**50`) or
+    /// TAG_PTR(0) (e.g. `-2**51`) pass through unchanged instead of being
+    /// promoted to BigInt, corrupting the comparison. A comparison operand
+    /// can never legitimately be a real function value, so the accepted tag
+    /// set is narrowed at this consuming site instead of loosening the
+    /// shared `mb_box_int` (which other callers, e.g. #1084's decorator
+    /// passthrough, still need the wider set for).
+    fn emit_checked_int_compare(
+        &mut self,
+        dest: &crate::mir::VReg,
+        lhs: &crate::mir::VReg,
+        rhs: &crate::mir::VReg,
+        op: &MirBinOp,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        vars: &mut VarAlloc,
+    ) {
+        use cranelift_codegen::ir::condcodes::IntCC;
+        use cranelift_codegen::ir::InstBuilder;
+
+        let l = vars.use_as_i64(*lhs, builder);
+        let r = vars.use_as_i64(*rhs, builder);
+
+        let l_shifted = builder.ins().ishl_imm(l, 16);
+        let l_restored = builder.ins().sshr_imm(l_shifted, 16);
+        let l_fits_48 = builder.ins().icmp(IntCC::Equal, l, l_restored);
+        let r_shifted = builder.ins().ishl_imm(r, 16);
+        let r_restored = builder.ins().sshr_imm(r_shifted, 16);
+        let r_fits_48 = builder.ins().icmp(IntCC::Equal, r, r_restored);
+        let both_fit = builder.ins().band(l_fits_48, r_fits_48);
+
+        let maybe_fast_block = builder.create_block();
+        let fast_block = builder.create_block();
+        let slow_block = builder.create_block();
+        let merge_block = builder.create_block();
+        let merged_param = builder.append_block_param(merge_block, cl_types::I64);
+
+        builder
+            .ins()
+            .brif(both_fit, maybe_fast_block, &[], slow_block, &[]);
+
+        // Raw i64 cell handles are small positive ints, so they satisfy the
+        // native-int fast-path range check above. But Python cell comparison is
+        // by contents, not by handle id (#896), so live cell handles must route
+        // through the runtime rich comparator.
+        builder.switch_to_block(maybe_fast_block);
+        builder.seal_block(maybe_fast_block);
+        if vars.raw_ints.contains(lhs) && vars.raw_ints.contains(rhs) {
+            builder.ins().jump(fast_block, &[]);
+        } else if let Some(&cell_id) = self.extern_funcs.get("mb_cell_handle_raw_is_live") {
+            let cell_ref = self.module().declare_func_in_func(cell_id, builder.func);
+            let lc = builder.ins().call(cell_ref, &[l]);
+            let l_cell_raw = builder.inst_results(lc)[0];
+            let rc = builder.ins().call(cell_ref, &[r]);
+            let r_cell_raw = builder.inst_results(rc)[0];
+            let zero = builder.ins().iconst(cl_types::I64, 0);
+            let l_is_cell = builder.ins().icmp(IntCC::NotEqual, l_cell_raw, zero);
+            let r_is_cell = builder.ins().icmp(IntCC::NotEqual, r_cell_raw, zero);
+            let either_cell = builder.ins().bor(l_is_cell, r_is_cell);
+            builder
+                .ins()
+                .brif(either_cell, slow_block, &[], fast_block, &[]);
+        } else {
+            builder.ins().jump(fast_block, &[]);
+        }
+
+        // Fast: neither operand is NaN-boxed — native signed icmp is exact.
+        builder.switch_to_block(fast_block);
+        builder.seal_block(fast_block);
+        let cc = match op {
+            MirBinOp::Eq => IntCC::Equal,
+            MirBinOp::NotEq => IntCC::NotEqual,
+            MirBinOp::Lt => IntCC::SignedLessThan,
+            MirBinOp::Gt => IntCC::SignedGreaterThan,
+            MirBinOp::LtEq => IntCC::SignedLessThanOrEqual,
+            MirBinOp::GtEq => IntCC::SignedGreaterThanOrEqual,
+            _ => unreachable!("emit_checked_int_compare only called for rich comparisons"),
+        };
+        let cmp = builder.ins().icmp(cc, l, r);
+        let fast_result = builder.ins().uextend(cl_types::I64, cmp);
+        builder.ins().jump(merge_block, &[fast_result.into()]);
+
+        // Slow: box both (idempotent/tag-aware) and call the BigInt-aware
+        // runtime comparator; unbox its NaN-boxed bool result (the bool
+        // value lives in bit 0, see `MbValue::from_bool`) back to a raw 0/1
+        // so downstream consumers (branch terminators, `mb_box_bool`
+        // inserted at lowering time for StoreGlobal/print) see the same
+        // raw-bool convention as the fast path.
+        builder.switch_to_block(slow_block);
+        builder.seal_block(slow_block);
+        let helper_name = match op {
+            MirBinOp::Eq => "mb_eq",
+            MirBinOp::NotEq => "mb_ne",
+            MirBinOp::Lt => "mb_lt",
+            MirBinOp::Gt => "mb_gt",
+            MirBinOp::LtEq => "mb_le",
+            MirBinOp::GtEq => "mb_ge",
+            _ => unreachable!("emit_checked_int_compare only called for rich comparisons"),
+        };
+        let slow_value = if let (Some(&box_id), Some(&func_id)) = (
+            self.extern_funcs.get("mb_box_int_for_compare"),
+            self.extern_funcs.get(helper_name),
+        ) {
+            let box_ref = self.module().declare_func_in_func(box_id, builder.func);
+            let lc = builder.ins().call(box_ref, &[l]);
+            let l_boxed = builder.inst_results(lc)[0];
+            let rc = builder.ins().call(box_ref, &[r]);
+            let r_boxed = builder.inst_results(rc)[0];
+            let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+            let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
+            let result_bits = builder.inst_results(call)[0];
+            builder.ins().band_imm(result_bits, 1)
+        } else {
+            builder.ins().iconst(cl_types::I64, 0)
+        };
+        builder.ins().jump(merge_block, &[slow_value.into()]);
+
+        builder.switch_to_block(merge_block);
+        builder.seal_block(merge_block);
+        let dv = vars.get(*dest, builder, cl_types::I64);
+        builder.def_var(dv, merged_param);
+        vars.native_bools.insert(*dest);
+    }
+
     // ── Object operation FFI calls ──
 
     fn emit_getattr(
@@ -1688,6 +2294,33 @@ impl CraneliftJitBackend {
         }
     }
 
+    fn emit_inline_box_bool(
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        raw: cranelift_codegen::ir::Value,
+    ) -> cranelift_codegen::ir::Value {
+        use cranelift_codegen::ir::condcodes::IntCC;
+        use cranelift_codegen::ir::InstBuilder;
+
+        const NAN_PREFIX_MASK: i64 = 0xFFF8_0000_0000_0000_u64 as i64;
+        const TAG_MASK: i64 = 0x0007_0000_0000_0000;
+        const BOOL_TAG_BITS: i64 = 0x0002_0000_0000_0000;
+        const BOX_BOOL_FALSE: i64 = 0xFFFA_0000_0000_0000_u64 as i64;
+
+        let prefix_bits = builder.ins().band_imm(raw, NAN_PREFIX_MASK);
+        let has_prefix = builder
+            .ins()
+            .icmp_imm(IntCC::Equal, prefix_bits, NAN_PREFIX_MASK);
+        let tag_bits = builder.ins().band_imm(raw, TAG_MASK);
+        let is_bool_tag = builder
+            .ins()
+            .icmp_imm(IntCC::Equal, tag_bits, BOOL_TAG_BITS);
+        let is_boxed_bool = builder.ins().band(has_prefix, is_bool_tag);
+        let truthy = builder.ins().icmp_imm(IntCC::NotEqual, raw, 0);
+        let truthy_i64 = builder.ins().uextend(cl_types::I64, truthy);
+        let boxed = builder.ins().bor_imm(truthy_i64, BOX_BOOL_FALSE);
+        builder.ins().select(is_boxed_bool, raw, boxed)
+    }
+
     fn emit_internal_call(
         &mut self,
         dest: &Option<crate::mir::VReg>,
@@ -1729,8 +2362,11 @@ impl CraneliftJitBackend {
                 // the call-site expects a non-primitive (Dynamic/Any) value.
                 let boxed = if let Some(&callee_ty_id) = self.internal_return_tys.get(&sym_id) {
                     let callee_ty = tcx.get(callee_ty_id);
+                    let callee_native_bool = self.internal_native_bool_returns.contains(&sym_id);
                     let callsite_ty = tcx.get(*ty);
-                    let callee_is_primitive = matches!(callee_ty, Ty::Int | Ty::Bool | Ty::Float);
+                    let callee_is_bool = callee_native_bool || matches!(callee_ty, Ty::Bool);
+                    let callee_is_primitive =
+                        callee_is_bool || matches!(callee_ty, Ty::Int | Ty::Float);
                     let callsite_is_nonprimitive =
                         !matches!(callsite_ty, Ty::Int | Ty::Bool | Ty::Float);
                     if callee_is_primitive && callsite_is_nonprimitive {
@@ -1738,11 +2374,10 @@ impl CraneliftJitBackend {
                         // Int/Bool: raw value in I64, needs boxing to MbValue.
                         if matches!(callee_ty, Ty::Float) {
                             result
+                        } else if callee_is_bool {
+                            Self::emit_inline_box_bool(builder, result)
                         } else {
-                            let box_fn_name = match callee_ty {
-                                Ty::Bool => "mb_box_bool",
-                                _ => "mb_box_int",
-                            };
+                            let box_fn_name = "mb_box_int";
                             if let Some(&box_func_id) = self.extern_funcs.get(box_fn_name) {
                                 let box_ref = self
                                     .module()
@@ -1773,8 +2408,13 @@ impl CraneliftJitBackend {
                 // CheckedAdd/Sub/Mul fast path without re-unboxing.
                 if let Some(&callee_ty_id) = self.internal_return_tys.get(&sym_id) {
                     let callee_ty = tcx.get(callee_ty_id);
+                    let callee_native_bool = self.internal_native_bool_returns.contains(&sym_id);
+                    let callee_is_bool = callee_native_bool || matches!(callee_ty, Ty::Bool);
                     let callsite_ty = tcx.get(*ty);
-                    if matches!(callee_ty, Ty::Int | Ty::Bool)
+                    if callee_is_bool && matches!(callsite_ty, Ty::Int | Ty::Bool) {
+                        vars.raw_ints.insert(*dest_vreg);
+                        vars.native_bools.insert(*dest_vreg);
+                    } else if matches!(callee_ty, Ty::Int)
                         && matches!(callsite_ty, Ty::Int | Ty::Bool)
                     {
                         vars.raw_ints.insert(*dest_vreg);
@@ -1814,6 +2454,25 @@ impl CraneliftJitBackend {
         // value.rs::TAG_STOP_ITER=6: NAN_PREFIX(0xFFF8…) | (6 << 48) =
         // 0xFFFE_0000_0000_0000. `mb_is_stop_iter` remains registered as a
         // runtime symbol so non-JIT paths (AOT, debug) still link.
+        //
+        // #1073 bounded slice: inline `mb_box_bool` in the common compare /
+        // truthiness boxing path. Preserve `mb_box_bool`'s one special case
+        // (already-boxed bool stays bit-identical) and otherwise synthesize
+        // `MbValue::from_bool(raw != 0)` directly in IR. This removes one
+        // extern thunk from typed-bool producer chains without changing the
+        // broader call ABI.
+        if name == "mb_box_bool" && args.len() == 1 {
+            if let Some(dest_vreg) = dest {
+                let raw = vars.use_as_i64(args[0], builder);
+                let result = Self::emit_inline_box_bool(builder, raw);
+
+                vars.raw_ints.remove(dest_vreg);
+                vars.native_bools.remove(dest_vreg);
+                vars.def_var_cast(*dest_vreg, builder, result, cl_types::I64);
+                return;
+            }
+        }
+
         // Fire 51: inline `mb_box_int` for raw_int args. The fast path is a
         // single bor: when the arg is a genuine raw INT48 (no NAN_PREFIX
         // set), boxing is `(arg & PAYLOAD_MASK) | (NAN_PREFIX | TAG_INT<<48)`
@@ -1825,6 +2484,14 @@ impl CraneliftJitBackend {
         // bodies that yield typed-int locals.
         if name == "mb_box_int" && args.len() == 1 {
             if let Some(dest_vreg) = dest {
+                if vars.native_bools.contains(&args[0]) {
+                    let raw = vars.use_as_i64(args[0], builder);
+                    let result = Self::emit_inline_box_bool(builder, raw);
+                    vars.raw_ints.remove(dest_vreg);
+                    vars.native_bools.remove(dest_vreg);
+                    vars.def_var_cast(*dest_vreg, builder, result, cl_types::I64);
+                    return;
+                }
                 if vars.raw_ints.contains(&args[0]) {
                     use cranelift_codegen::ir::condcodes::IntCC;
                     use cranelift_codegen::ir::InstBuilder;
@@ -1883,6 +2550,92 @@ impl CraneliftJitBackend {
                     builder.def_var(dv, merged_param);
                     return;
                 }
+            }
+        }
+
+        // #1010: inline the recursion-depth guard's fast path.
+        // `mb_recursion_enter` is emitted once at the top of every function
+        // body (hir_to_mir's prologue) and, together with the
+        // `mb_has_exception` check that used to follow it, was the dominant
+        // remaining per-call overhead after #959's rc-elision work. Fetch
+        // this thread's depth/limit cell addresses via two trivial
+        // leaf-function calls (no branching, no closures — see
+        // `mb_recursion_depth_ptr`/`mb_recursion_limit_ptr`), then do the
+        // actual load+increment+compare inline; only fall back to the real
+        // `mb_recursion_enter` FFI call (unchanged, so the raise — exact
+        // message and limit value — stays byte-identical) on the rare,
+        // near-the-limit slow path. Dest is marked native_bool/raw_int so
+        // downstream consumers (the exception-propagate branch this feeds)
+        // read the 0/1 result directly.
+        if name == "mb_recursion_enter" && args.is_empty() {
+            if let (Some(dest_vreg), Some(&depth_ptr_id), Some(&limit_ptr_id), Some(&enter_id)) = (
+                dest,
+                self.extern_funcs.get("mb_recursion_depth_ptr"),
+                self.extern_funcs.get("mb_recursion_limit_ptr"),
+                self.extern_funcs.get("mb_recursion_enter"),
+            ) {
+                use cranelift_codegen::ir::condcodes::IntCC;
+                use cranelift_codegen::ir::InstBuilder;
+
+                let depth_ptr_ref = self
+                    .module()
+                    .declare_func_in_func(depth_ptr_id, builder.func);
+                let depth_ptr_call = builder.ins().call(depth_ptr_ref, &[]);
+                let depth_ptr = builder.inst_results(depth_ptr_call)[0];
+
+                let limit_ptr_ref = self
+                    .module()
+                    .declare_func_in_func(limit_ptr_id, builder.func);
+                let limit_ptr_call = builder.ins().call(limit_ptr_ref, &[]);
+                let limit_ptr = builder.inst_results(limit_ptr_call)[0];
+
+                let mem_flags = MemFlags::trusted();
+                let current = builder.ins().load(cl_types::I64, mem_flags, depth_ptr, 0);
+                let limit = builder.ins().load(cl_types::I64, mem_flags, limit_ptr, 0);
+                let next = builder.ins().iadd_imm(current, 1);
+                let exceeded = builder.ins().icmp(IntCC::SignedGreaterThan, next, limit);
+
+                let fast_block = builder.create_block();
+                let slow_block = builder.create_block();
+                let merge_block = builder.create_block();
+                let merge_param = builder.append_block_param(merge_block, cl_types::I8);
+
+                builder
+                    .ins()
+                    .brif(exceeded, slow_block, &[], fast_block, &[]);
+
+                // Fast: depth has headroom — commit the increment inline
+                // and report ok. This is the overwhelming common case; it
+                // never leaves JIT-generated code beyond the two pointer
+                // fetches above.
+                builder.switch_to_block(fast_block);
+                builder.seal_block(fast_block);
+                builder.ins().store(mem_flags, next, depth_ptr, 0);
+                let ok_true = builder.ins().iconst(cl_types::I8, 1);
+                builder.ins().jump(merge_block, &[ok_true.into()]);
+
+                // Slow: would exceed the limit — defer entirely to
+                // `mb_recursion_enter` itself. We never wrote `next` on
+                // this path, so there is no double count; it reloads
+                // current/limit fresh, finds the same over-limit condition,
+                // raises RecursionError exactly as before, and returns the
+                // (false) ok flag.
+                builder.switch_to_block(slow_block);
+                builder.seal_block(slow_block);
+                let enter_ref = self.module().declare_func_in_func(enter_id, builder.func);
+                let slow_call = builder.ins().call(enter_ref, &[]);
+                let slow_raw = builder.inst_results(slow_call)[0];
+                let slow_bit = builder.ins().band_imm(slow_raw, 1);
+                let slow_ok = builder.ins().ireduce(cl_types::I8, slow_bit);
+                builder.ins().jump(merge_block, &[slow_ok.into()]);
+
+                builder.switch_to_block(merge_block);
+                builder.seal_block(merge_block);
+                let dv = vars.get(*dest_vreg, builder, cl_types::I8);
+                builder.def_var(dv, merge_param);
+                vars.raw_ints.insert(*dest_vreg);
+                vars.native_bools.insert(*dest_vreg);
+                return;
             }
         }
 
@@ -1971,6 +2724,8 @@ impl CraneliftJitBackend {
             }
             let call = builder.ins().call(func_ref, &arg_vals);
             if let Some(dest_vreg) = dest {
+                vars.raw_ints.remove(dest_vreg);
+                vars.native_bools.remove(dest_vreg);
                 let cl_type = Self::mamba_to_cl_type(tcx.get(*ty));
                 // Use actual declared type if variable already exists (may be F64 from earlier assignment)
                 let actual_dest_type = vars.declared_type(*dest_vreg).unwrap_or(cl_type);
@@ -2012,8 +2767,16 @@ impl CraneliftJitBackend {
                         builder.def_var(var, none_bits);
                     }
                 }
+                if name == "mb_unbox_int_if_boxed" || name == "mb_unbox_bool_if_boxed" {
+                    vars.raw_ints.insert(*dest_vreg);
+                    if name == "mb_unbox_bool_if_boxed" {
+                        vars.native_bools.insert(*dest_vreg);
+                    }
+                }
             }
         } else if let Some(dest_vreg) = dest {
+            vars.raw_ints.remove(dest_vreg);
+            vars.native_bools.remove(dest_vreg);
             let cl_type = Self::mamba_to_cl_type(tcx.get(*ty));
             let actual_dest_type = vars.declared_type(*dest_vreg).unwrap_or(cl_type);
             let var = vars.get(*dest_vreg, builder, actual_dest_type);
@@ -2385,6 +3148,134 @@ mod tests {
                     func()
                 };
                 assert_eq!(result, 42);
+            }
+            _ => panic!("expected Jit output"),
+        }
+    }
+
+    #[test]
+    fn test_codegen_internal_bool_return_boxes_to_any() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let bool_ty = tcx.bool();
+        let any_ty = tcx.any();
+        let mir = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(0),
+                    params: vec![],
+                    return_ty: bool_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![MirInst::LoadConst {
+                            dest: VReg(0),
+                            value: MirConst::Bool(true),
+                            ty: bool_ty,
+                        }],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                MirBody {
+                    name: SymbolId(1),
+                    params: vec![],
+                    return_ty: any_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![MirInst::Call {
+                            dest: Some(VReg(0)),
+                            func: SymbolId(0),
+                            args: vec![],
+                            ty: any_ty,
+                        }],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+            ],
+            externs: vec![],
+        };
+        let mut backend = CraneliftJitBackend::new().unwrap();
+        let output = backend.codegen(&mir, &tcx).unwrap();
+        match output {
+            crate::codegen::CodegenOutput::Jit { entry } => {
+                let result = unsafe {
+                    let func: extern "C" fn() -> i64 = std::mem::transmute(entry);
+                    func()
+                };
+                assert_eq!(result, MbValue::from_bool(true).to_bits() as i64);
+            }
+            _ => panic!("expected Jit output"),
+        }
+    }
+
+    #[test]
+    fn test_codegen_internal_native_bool_return_boxes_through_mb_box_int() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let bool_ty = tcx.bool();
+        let int_ty = tcx.int();
+        let any_ty = tcx.any();
+        let mir = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(0),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![
+                        BasicBlock {
+                            id: BlockId(0),
+                            stmts: vec![MirInst::LoadConst {
+                                dest: VReg(0),
+                                value: MirConst::Bool(true),
+                                ty: bool_ty,
+                            }],
+                            terminator: Terminator::Return(Some(VReg(0))),
+                        },
+                        BasicBlock {
+                            id: BlockId(1),
+                            stmts: vec![MirInst::LoadConst {
+                                dest: VReg(1),
+                                value: MirConst::None,
+                                ty: any_ty,
+                            }],
+                            terminator: Terminator::Return(Some(VReg(1))),
+                        },
+                    ],
+                },
+                MirBody {
+                    name: SymbolId(1),
+                    params: vec![],
+                    return_ty: any_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![
+                            MirInst::Call {
+                                dest: Some(VReg(0)),
+                                func: SymbolId(0),
+                                args: vec![],
+                                ty: int_ty,
+                            },
+                            MirInst::CallExtern {
+                                dest: Some(VReg(1)),
+                                name: "mb_box_int".to_string(),
+                                args: vec![VReg(0)],
+                                ty: any_ty,
+                            },
+                        ],
+                        terminator: Terminator::Return(Some(VReg(1))),
+                    }],
+                },
+            ],
+            externs: vec![],
+        };
+        let mut backend = CraneliftJitBackend::new().unwrap();
+        let output = backend.codegen(&mir, &tcx).unwrap();
+        match output {
+            crate::codegen::CodegenOutput::Jit { entry } => {
+                let result = unsafe {
+                    let func: extern "C" fn() -> i64 = std::mem::transmute(entry);
+                    func()
+                };
+                assert_eq!(result, MbValue::from_bool(true).to_bits() as i64);
             }
             _ => panic!("expected Jit output"),
         }

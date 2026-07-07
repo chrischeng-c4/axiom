@@ -1,6 +1,6 @@
 // `mamba auth` — plaintext credential store for package indexes.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use serde::{Deserialize, Serialize};
 use std::fs;

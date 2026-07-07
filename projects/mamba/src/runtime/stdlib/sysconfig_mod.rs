@@ -13,8 +13,7 @@ unsafe extern "C" fn dispatch_get_python_version(_a: *const MbValue, _n: usize) 
 }
 
 unsafe extern "C" fn dispatch_get_platform(_a: *const MbValue, _n: usize) -> MbValue {
-    let plat = std::env::consts::OS;
-    MbValue::from_ptr(MbObject::new_str(plat.to_string()))
+    MbValue::from_ptr(MbObject::new_str(compute_platform()))
 }
 
 unsafe extern "C" fn dispatch_get_default_scheme(_a: *const MbValue, _n: usize) -> MbValue {
@@ -104,6 +103,66 @@ unsafe extern "C" fn dispatch_get_config_h_filename(_a: *const MbValue, _n: usiz
     MbValue::from_ptr(MbObject::new_str("pyconfig.h".to_string()))
 }
 
+/// Run a helper binary and return trimmed stdout, or `None` on any failure
+/// (missing binary, non-UTF8 output, empty output). Mirrors platform_mod's
+/// `run_cmd` helper.
+fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
+    std::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// `os.uname().machine` equivalent (e.g. "arm64", "x86_64").
+fn machine() -> String {
+    run_cmd("uname", &["-m"]).unwrap_or_else(|| std::env::consts::ARCH.to_string())
+}
+
+/// macOS product version truncated to "major.minor" — the same derivation
+/// CPython's `_osx_support._get_system_version()` uses (reads
+/// `ProductUserVisibleVersion` from `SystemVersion.plist`, i.e. `sw_vers
+/// -productVersion`). A real CPython *build* bakes a MACOSX_DEPLOYMENT_TARGET
+/// into its Makefile at compile time and `_osx_support.get_platform_osx`
+/// prefers that over the live system version; mamba has no compiled-in
+/// deployment target, so this reproduces CPython's OWN fallback branch for an
+/// empty MACOSX_DEPLOYMENT_TARGET (`macver = macver or macrelease`) rather
+/// than inventing a new format. Values legitimately diverge from a CPython
+/// install whose Makefile pins a different (older) deployment target.
+fn macos_release() -> String {
+    let full = run_cmd("sw_vers", &["-productVersion"]).unwrap_or_default();
+    let mut parts = full.split('.');
+    match (parts.next(), parts.next()) {
+        (Some(maj), Some(min)) => format!("{maj}.{min}"),
+        _ if !full.is_empty() => full,
+        _ => "0.0".to_string(),
+    }
+}
+
+/// `sysconfig.get_platform()` — CPython's `{osname}-{release}-{machine}`
+/// contract on darwin, `{osname}-{machine}` on linux (Lib/sysconfig.py
+/// `get_platform()` + `_osx_support.get_platform_osx()`). Cached per-process
+/// (mirrors platform_mod's `uname_parts` cache) since it shells out.
+fn compute_platform() -> String {
+    thread_local! {
+        static CACHE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    }
+    CACHE.with(|c| {
+        if let Some(v) = c.borrow().as_ref() {
+            return v.clone();
+        }
+        let m = machine();
+        let computed = match std::env::consts::OS {
+            "macos" => format!("macosx-{}-{}", macos_release(), m),
+            "linux" => format!("linux-{m}"),
+            other => format!("{other}-{m}"),
+        };
+        *c.borrow_mut() = Some(computed.clone());
+        computed
+    })
+}
+
 fn build_paths_dict() -> MbValue {
     let dict = MbObject::new_dict();
     unsafe {
@@ -166,9 +225,20 @@ fn build_config_vars() -> MbValue {
                 "exec_prefix".into(),
                 MbValue::from_ptr(MbObject::new_str("".to_string())),
             );
+            // Py_DEBUG: real CPython config var, int 0/1 (mamba ships no
+            // debug build).
+            map.insert("Py_DEBUG".into(), MbValue::from_int(0));
+            // LIBDIR-ish: no on-disk build tree to point at (mamba is a
+            // single native binary), so keep it consistent with the
+            // prefix/exec_prefix "" placeholders above rather than inventing
+            // a path that doesn't exist.
+            map.insert(
+                "LIBDIR".into(),
+                MbValue::from_ptr(MbObject::new_str("".to_string())),
+            );
             map.insert(
                 "platform".into(),
-                MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string())),
+                MbValue::from_ptr(MbObject::new_str(compute_platform())),
             );
         }
     }

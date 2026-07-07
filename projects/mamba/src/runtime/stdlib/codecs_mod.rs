@@ -2349,16 +2349,21 @@ pub fn mb_codecs_getincrementaldecoder_real(encoding: MbValue) -> MbValue {
 
 /// True for the rot-13 text-transform codec (under its common spellings).
 fn is_rot13_codec(mode: &str) -> bool {
-    matches!(mode.to_ascii_lowercase().replace('_', "-").as_str(), "rot-13" | "rot13")
+    matches!(
+        mode.to_ascii_lowercase().replace('_', "-").as_str(),
+        "rot-13" | "rot13"
+    )
 }
 
 /// Apply the ROT-13 cipher to ASCII letters; other characters pass through.
 fn rot13_transform(s: &str) -> String {
-    s.chars().map(|c| match c {
-        'a'..='z' => (((c as u8 - b'a' + 13) % 26) + b'a') as char,
-        'A'..='Z' => (((c as u8 - b'A' + 13) % 26) + b'A') as char,
-        _ => c,
-    }).collect()
+    s.chars()
+        .map(|c| match c {
+            'a'..='z' => (((c as u8 - b'a' + 13) % 26) + b'a') as char,
+            'A'..='Z' => (((c as u8 - b'A' + 13) % 26) + b'A') as char,
+            _ => c,
+        })
+        .collect()
 }
 
 pub fn mb_codecs_getincrementalencoder_real(encoding: MbValue) -> MbValue {

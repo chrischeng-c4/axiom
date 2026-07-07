@@ -13,7 +13,7 @@
 /// attribute calls (see `os_mod.rs`/`time_mod.rs`); the `fn(MbValue) ->
 /// MbValue` packed-list convention seen in `posix_mod.rs` does not receive
 /// arguments correctly for `mod.func(arg)`-style calls.
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind, MbRwLock};
+use super::super::rc::{MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
 use super::super::value::MbValue;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;

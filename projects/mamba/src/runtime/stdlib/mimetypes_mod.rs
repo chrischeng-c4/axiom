@@ -349,7 +349,9 @@ fn lookup_type(suffix: &str, strict: bool) -> Option<MbValue> {
             // lookup; strict entries are visible to both.
             .find(|(ext, _, entry_strict)| ext == suffix && (*entry_strict || !strict))
             .map(|(_, ty, _)| {
-                unsafe { super::super::rc::retain_if_ptr(*ty); }
+                unsafe {
+                    super::super::rc::retain_if_ptr(*ty);
+                }
                 *ty
             })
     });
@@ -592,7 +594,9 @@ pub fn mb_mimetypes_add_type(type_val: MbValue, ext_val: MbValue, strict: MbValu
     // CPython accepts any type object (not just str); store it verbatim. An
     // empty extension or a None type is a no-op.
     if !ext_s.is_empty() && !type_val.is_none() {
-        unsafe { super::super::rc::retain_if_ptr(type_val); }
+        unsafe {
+            super::super::rc::retain_if_ptr(type_val);
+        }
         USER_TYPES.with(|t| {
             t.borrow_mut().push((ext_s, type_val, strict_flag));
         });
@@ -664,7 +668,9 @@ pub fn mb_mimetypes_init(_files: MbValue) -> MbValue {
     USER_TYPES.with(|t| {
         let mut v = t.borrow_mut();
         for (_, ty, _) in v.iter() {
-            unsafe { super::super::rc::release_if_ptr(*ty); }
+            unsafe {
+                super::super::rc::release_if_ptr(*ty);
+            }
         }
         v.clear();
     });
@@ -830,7 +836,9 @@ fn str_value(s: &str) -> MbValue {
 fn set_module_map(attr: &str, value: MbValue) {
     super::super::module::mb_module_setattr(str_value("mimetypes"), str_value(attr), value);
     let cached = super::super::module::MODULES.with(|mods| {
-        mods.borrow().get("mimetypes").and_then(|module| module.cached_value)
+        mods.borrow()
+            .get("mimetypes")
+            .and_then(|module| module.cached_value)
     });
     if let Some(module_value) = cached {
         super::super::dict_ops::mb_dict_setitem(module_value, str_value(attr), value);

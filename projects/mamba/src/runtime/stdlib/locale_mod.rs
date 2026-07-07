@@ -95,7 +95,10 @@ unsafe extern "C" fn dispatch_locale_stub(_args_ptr: *const MbValue, _nargs: usi
 /// CPython returns the current locale's codec name; mamba runs UTF-8, and
 /// "UTF-8" round-trips through codecs.lookup. The optional do_setlocale arg
 /// (getpreferredencoding) is accepted and ignored.
-unsafe extern "C" fn dispatch_locale_getencoding(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_locale_getencoding(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_str("UTF-8".to_string()))
 }
 
@@ -106,11 +109,13 @@ unsafe extern "C" fn dispatch_parse_localename(args_ptr: *const MbValue, nargs: 
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let name = a.first().copied().and_then(extract_str).unwrap_or_default();
     let s = |t: &str| MbValue::from_ptr(MbObject::new_str(t.to_string()));
-    let tup = |lang: MbValue, enc: MbValue| {
-        MbValue::from_ptr(MbObject::new_tuple(vec![lang, enc]))
-    };
+    let tup = |lang: MbValue, enc: MbValue| MbValue::from_ptr(MbObject::new_tuple(vec![lang, enc]));
     if let Some((lang, enc)) = name.split_once('.') {
-        let lang_v = if lang.is_empty() { MbValue::none() } else { s(lang) };
+        let lang_v = if lang.is_empty() {
+            MbValue::none()
+        } else {
+            s(lang)
+        };
         return tup(lang_v, s(enc));
     }
     if name == "C" {

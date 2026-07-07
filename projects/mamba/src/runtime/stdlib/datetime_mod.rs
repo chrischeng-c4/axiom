@@ -2,7 +2,6 @@ use super::super::dict_ops::DictKey;
 use super::super::rc::{MbObject, ObjData};
 use super::super::value::MbValue;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
-use indexmap::IndexMap;
 use rustc_hash::FxHashMap;
 /// datetime module for Mamba — backed by `chrono` crate.
 ///
@@ -138,7 +137,11 @@ fn tzinfo_field(val: MbValue) -> Option<MbValue> {
 fn zoneinfo_key(tz: MbValue) -> Option<String> {
     let ptr = tz.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             if class_name == "ZoneInfo" {
                 let k = fields.read().ok()?.get("key").copied()?;
                 if let ObjData::Str(ref s) = (*k.as_ptr()?).data {
@@ -231,18 +234,25 @@ fn build_timezone_instance(offset_seconds: i64, name: Option<String>) -> MbValue
 }
 
 pub(crate) fn timezone_from_offset(offset: MbValue, name: Option<String>) -> MbValue {
-    let (days, secs) = offset.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-            if class_name == "datetime.timedelta" {
-                let f = fields.read().ok()?;
-                return Some((
-                    f.get("days").and_then(|v| v.as_int()).unwrap_or(0),
-                    f.get("seconds").and_then(|v| v.as_int()).unwrap_or(0),
-                ));
+    let (days, secs) = offset
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                if class_name == "datetime.timedelta" {
+                    let f = fields.read().ok()?;
+                    return Some((
+                        f.get("days").and_then(|v| v.as_int()).unwrap_or(0),
+                        f.get("seconds").and_then(|v| v.as_int()).unwrap_or(0),
+                    ));
+                }
             }
-        }
-        None
-    }).unwrap_or((0, 0));
+            None
+        })
+        .unwrap_or((0, 0));
     let total_seconds = days * 86_400 + secs;
     if total_seconds <= -86_400 || total_seconds >= 86_400 {
         return raise_value_error(
@@ -259,6 +269,7 @@ unsafe extern "C" fn dispatch_now(_args_ptr: *const MbValue, _nargs: usize) -> M
 }
 
 unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // mb_datetime_new expects a list wrapper — pack positional args into one.
     let args_list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
@@ -275,6 +286,7 @@ unsafe extern "C" fn dispatch_today(_args_ptr: *const MbValue, _nargs: usize) ->
 }
 
 unsafe extern "C" fn dispatch_timedelta(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let args_list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
     mb_timedelta_new(args_list)
@@ -358,6 +370,7 @@ unsafe extern "C" fn dispatch_combine(args_ptr: *const MbValue, nargs: usize) ->
 /// is out of bounds. Keyword args arrive as a trailing dict positional in
 /// mamba's current call lowering; ranges-only validation is performed here.
 pub unsafe extern "C" fn dispatch_time(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // Read positional ints, skipping any trailing kwargs dict.
     let pos: Vec<i64> = a.iter().filter_map(|v| v.as_int()).collect();
@@ -420,6 +433,7 @@ pub unsafe extern "C" fn dispatch_time(args_ptr: *const MbValue, nargs: usize) -
 /// `datetime.timezone(offset, name=None)` where `offset` is a `timedelta`.
 /// CPython requires `-timedelta(hours=24) < offset < timedelta(hours=24)`.
 unsafe extern "C" fn dispatch_timezone(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let offset = a.first().copied().unwrap_or_else(MbValue::none);
     let name = a.get(1).copied().and_then(extract_str);
@@ -431,6 +445,7 @@ unsafe extern "C" fn dispatch_timezone(args_ptr: *const MbValue, nargs: usize) -
 /// `class.rs`. Here we only need a constructible callable so `tzinfo()` and
 /// `class X(datetime.tzinfo)` resolve.
 unsafe extern "C" fn dispatch_tzinfo(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let fields = FxHashMap::default();
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
@@ -661,12 +676,88 @@ fn zone_from_utc(key: &str, naive_utc: NaiveDateTime) -> Option<(NaiveDateTime, 
     Some((dt.naive_local(), total, off.to_string()))
 }
 
+/// (total_utc_offset_secs, dst_secs, abbrev) for a `zoneinfo.ZoneInfo.from_file`
+/// instance (#876): such instances carry no chrono-tz key, only a parsed
+/// `_tzif_periods` field (`[(start_epoch_secs, utoff, isdst, abbrev), ...]`,
+/// ascending by `start`). `None` when `tz` isn't such an instance.
+fn zone_tzif_offset(tz: MbValue, naive: NaiveDateTime) -> Option<(i64, i64, String)> {
+    let ptr = tz.as_ptr()?;
+    let periods_val = unsafe {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
+            if class_name != "ZoneInfo" {
+                return None;
+            }
+            fields.read().ok()?.get("_tzif_periods").copied()?
+        } else {
+            return None;
+        }
+    };
+    let list_ptr = periods_val.as_ptr()?;
+    let items: Vec<MbValue> = unsafe {
+        if let ObjData::List(ref lock) = (*list_ptr).data {
+            lock.read().ok()?.to_vec()
+        } else {
+            return None;
+        }
+    };
+    // Approximate the query instant as naive-wall-clock-as-UTC-epoch-seconds:
+    // close enough away from transition boundaries, and consistent with the
+    // rest of this offset model (mamba doesn't model true local<->UTC fold
+    // resolution for zoneinfo).
+    let approx_epoch = naive.and_utc().timestamp();
+    let mut best: Option<(i64, bool, String)> = None; // (utoff, isdst, abbrev)
+    let mut last_std_utoff: i64 = 0;
+    for item in &items {
+        let Some(p) = item.as_ptr() else { continue };
+        let parsed = unsafe {
+            if let ObjData::Tuple(ref elems) = (*p).data {
+                let start = elems.first().and_then(|v| v.as_int()).unwrap_or(i64::MIN);
+                let utoff = elems.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+                let isdst = elems.get(2).and_then(|v| v.as_bool()).unwrap_or(false);
+                let abbrev = elems
+                    .get(3)
+                    .and_then(|v| v.as_ptr())
+                    .and_then(|sp| {
+                        if let ObjData::Str(ref s) = (*sp).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+                Some((start, utoff, isdst, abbrev))
+            } else {
+                None
+            }
+        };
+        let Some((start, utoff, isdst, abbrev)) = parsed else {
+            continue;
+        };
+        if start > approx_epoch {
+            break;
+        }
+        if !isdst {
+            last_std_utoff = utoff;
+        }
+        best = Some((utoff, isdst, abbrev));
+    }
+    let (utoff, isdst, abbrev) = best?;
+    let dst = if isdst { utoff - last_std_utoff } else { 0 };
+    Some((utoff, dst, abbrev))
+}
+
 /// Total UTC offset (seconds) of an aware datetime `self_`, resolving ZoneInfo
 /// zones via chrono-tz at self's wall-clock time. `None` if naive/unresolvable.
 fn dt_total_offset_secs(self_: MbValue) -> Option<i64> {
     let tz = tzinfo_field(self_)?;
     if let Some(key) = zoneinfo_key(tz) {
-        if key == "UTC" { return Some(0); }
+        if key == "UTC" {
+            return Some(0);
+        }
         let naive = instance_to_naive(self_)?;
         return zone_local_offset(&key, naive).map(|(t, _, _)| t);
     }
@@ -676,13 +767,20 @@ fn dt_total_offset_secs(self_: MbValue) -> Option<i64> {
 /// `datetime.utcoffset()` — `None` when naive, else the tzinfo's offset at
 /// self's instant (DST-aware for ZoneInfo zones via chrono-tz).
 unsafe extern "C" fn dt_method_utcoffset(self_: MbValue) -> MbValue {
-    let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
+    let Some(tz) = tzinfo_field(self_) else {
+        return MbValue::none();
+    };
     if let Some(key) = zoneinfo_key(tz) {
-        if key == "UTC" { return timedelta_from_us(0); }
+        if key == "UTC" {
+            return timedelta_from_us(0);
+        }
         return match instance_to_naive(self_).and_then(|n| zone_local_offset(&key, n)) {
             Some((total, _, _)) => timedelta_from_us(total as i128 * 1_000_000),
             None => MbValue::none(),
         };
+    }
+    if let Some((total, _, _)) = instance_to_naive(self_).and_then(|n| zone_tzif_offset(tz, n)) {
+        return timedelta_from_us(total as i128 * 1_000_000);
     }
     match inst_offset_checked(self_) {
         Ok(Some(secs)) => timedelta_from_us(secs as i128 * 1_000_000),
@@ -692,13 +790,20 @@ unsafe extern "C" fn dt_method_utcoffset(self_: MbValue) -> MbValue {
 
 /// `datetime.dst()` — `None` when naive, else `tzinfo.dst(self)`.
 unsafe extern "C" fn dt_method_dst(self_: MbValue) -> MbValue {
-    let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
+    let Some(tz) = tzinfo_field(self_) else {
+        return MbValue::none();
+    };
     if let Some(key) = zoneinfo_key(tz) {
-        if key == "UTC" { return timedelta_from_us(0); }
+        if key == "UTC" {
+            return timedelta_from_us(0);
+        }
         return match instance_to_naive(self_).and_then(|n| zone_local_offset(&key, n)) {
             Some((_, dst, _)) => timedelta_from_us(dst as i128 * 1_000_000),
             None => MbValue::none(),
         };
+    }
+    if let Some((_, dst, _)) = instance_to_naive(self_).and_then(|n| zone_tzif_offset(tz, n)) {
+        return timedelta_from_us(dst as i128 * 1_000_000);
     }
     let method = MbValue::from_ptr(MbObject::new_str("dst".to_string()));
     let args = MbValue::from_ptr(MbObject::new_list(vec![self_]));
@@ -707,7 +812,9 @@ unsafe extern "C" fn dt_method_dst(self_: MbValue) -> MbValue {
 
 /// `datetime.tzname()` — `None` when naive, else `tzinfo.tzname(self)`.
 unsafe extern "C" fn dt_method_tzname(self_: MbValue) -> MbValue {
-    let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
+    let Some(tz) = tzinfo_field(self_) else {
+        return MbValue::none();
+    };
     if let Some(key) = zoneinfo_key(tz) {
         if key == "UTC" {
             return MbValue::from_ptr(MbObject::new_str("UTC".to_string()));
@@ -716,6 +823,9 @@ unsafe extern "C" fn dt_method_tzname(self_: MbValue) -> MbValue {
             Some((_, _, abbr)) => MbValue::from_ptr(MbObject::new_str(abbr)),
             None => MbValue::none(),
         };
+    }
+    if let Some((_, _, abbr)) = instance_to_naive(self_).and_then(|n| zone_tzif_offset(tz, n)) {
+        return MbValue::from_ptr(MbObject::new_str(abbr));
     }
     let method = MbValue::from_ptr(MbObject::new_str("tzname".to_string()));
     let args = MbValue::from_ptr(MbObject::new_list(vec![self_]));
@@ -737,7 +847,9 @@ unsafe fn dt_set_field(inst: MbValue, key: &str, val: MbValue) {
 /// `datetime.astimezone(tz)` — re-express self's instant in zone `target`.
 /// Self must be aware (fixtures always pass an aware source).
 unsafe extern "C" fn dt_method_astimezone(self_: MbValue, target: MbValue) -> MbValue {
-    let Some(naive) = instance_to_naive(self_) else { return MbValue::none() };
+    let Some(naive) = instance_to_naive(self_) else {
+        return MbValue::none();
+    };
     let self_off = dt_total_offset_secs(self_).unwrap_or(0);
     let utc_naive = naive - chrono::Duration::seconds(self_off);
     // datetime.timezone.utc (and a bare timezone.utc target) — wall clock == UTC.
@@ -940,33 +1052,30 @@ pub fn register() {
     // The unqualified class names "date"/"datetime" do not collide with the
     // fully-qualified "datetime.datetime"/"datetime.timedelta" instance
     // dispatch in class.rs.
-    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        let mut map = m.borrow_mut();
-        map.insert(
-            dispatch_date as *const () as usize as u64,
-            "date".to_string(),
-        );
-        map.insert(
-            dispatch_new as *const () as usize as u64,
-            "datetime".to_string(),
-        );
-        map.insert(
-            dispatch_timedelta as *const () as usize as u64,
-            "datetime.timedelta".to_string(),
-        );
-        map.insert(
-            dispatch_time as *const () as usize as u64,
-            "datetime.time".to_string(),
-        );
-        map.insert(
-            dispatch_timezone as *const () as usize as u64,
-            "datetime.timezone".to_string(),
-        );
-        map.insert(
-            dispatch_tzinfo as *const () as usize as u64,
-            "datetime.tzinfo".to_string(),
-        );
-    });
+    super::super::module::register_native_type_name(
+        dispatch_date as *const () as usize as u64,
+        "date".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_new as *const () as usize as u64,
+        "datetime".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_timedelta as *const () as usize as u64,
+        "datetime.timedelta".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_time as *const () as usize as u64,
+        "datetime.time".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_timezone as *const () as usize as u64,
+        "datetime.timezone".to_string(),
+    );
+    super::super::module::register_native_type_name(
+        dispatch_tzinfo as *const () as usize as u64,
+        "datetime.tzinfo".to_string(),
+    );
     // `date` classmethods: today(), fromisoformat(), fromtimestamp(),
     // fromordinal(). `datetime` inherits date's plus now()/combine()/strptime().
     {
@@ -1291,6 +1400,7 @@ pub fn register() {
 /// such as `isoformat()` distinguish a pure date from a full datetime, tag the
 /// constructed value with a private `_is_date` marker field.
 pub unsafe extern "C" fn dispatch_date(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let args_list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
     let val = mb_datetime_new(args_list);
@@ -1896,7 +2006,7 @@ pub(crate) fn build_datetime_dict(dt: NaiveDateTime) -> MbValue {
 
 /// Extract datetime fields from a dict into NaiveDateTime.
 #[allow(dead_code)]
-fn dict_to_naive(map: &IndexMap<DictKey, MbValue>) -> Option<NaiveDateTime> {
+fn dict_to_naive(map: &super::super::rc::MbDictMap) -> Option<NaiveDateTime> {
     let year = map.get("year").and_then(|v| v.as_int()).unwrap_or(1970) as i32;
     let month = map.get("month").and_then(|v| v.as_int()).unwrap_or(1) as u32;
     let day = map.get("day").and_then(|v| v.as_int()).unwrap_or(1) as u32;

@@ -16,7 +16,7 @@
 //   - Repeating an install at the same version is an idempotent
 //     no-op that emits `no_op` to stderr.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::fs;
 use std::io::Write as _;

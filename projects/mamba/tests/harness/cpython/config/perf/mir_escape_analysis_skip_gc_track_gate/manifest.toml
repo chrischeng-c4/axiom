@@ -2,7 +2,7 @@
 # umbrella #2458 (also a sibling of #1260 the MVP perf 10×
 # umbrella). Targets short-lived list/dict literals that pay
 # gc_track + gc_untrack per iteration without ever escaping
-# scope (NOTES-NEXT.md §0(a)).
+# scope (docs/notes/archive/autonomous-loop-scratchpad.md §0(a)).
 #
 # The gate is GREEN only when:
 #

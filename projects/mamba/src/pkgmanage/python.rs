@@ -1,6 +1,6 @@
 // `mamba python` — local Python discovery and .python-version pinning.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
@@ -15,11 +15,11 @@ use crate::pkgmanage::pkgmgr::pbs_host::detect_host_target;
 use crate::pkgmanage::pkgmgr::pbs_url::PbsArtifact;
 use crate::pkgmanage::pkgmgr::shell::Shell;
 use crate::pkgmanage::pkgmgr::toolchain::{
-    PythonRequest, PythonVersion, discover_system_pythons, probe_python_version, read_python_pin,
-    select_python, write_python_pin,
+    discover_system_pythons, probe_python_version, read_python_pin, select_python,
+    write_python_pin, PythonRequest, PythonVersion,
 };
 use crate::pkgmanage::pkgmgr::url_redact::redact_credentials;
-use crate::pkgmanage::pkgmgr::uv_dirs::{EnvLookup, Platform, resolve_dirs};
+use crate::pkgmanage::pkgmgr::uv_dirs::{resolve_dirs, EnvLookup, Platform};
 
 pub fn cmd_python(sub: &ArgMatches) -> Result<()> {
     match sub.subcommand() {

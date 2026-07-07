@@ -9,12 +9,10 @@
 # case = "traceback_cases__test_print_traceback_at_exit"
 # subject = "cpython.test_traceback.TracebackCases.test_print_traceback_at_exit"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
 # mem_carveout = ""
 # source = "Lib/test/test_traceback.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_traceback.py::TracebackCases::test_print_traceback_at_exit
 """Auto-ported test: TracebackCases::test_print_traceback_at_exit (CPython 3.12 oracle)."""
 
