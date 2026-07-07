@@ -193,6 +193,34 @@ async fn concurrency_grows_the_pool_least_loaded() {
 }
 
 #[tokio::test]
+async fn admission_queue_times_out_when_in_flight_cap_is_full() {
+    let server = TestServer::start().await;
+    let mut config = cfg(1, 1, 128);
+    config.max_in_flight_per_origin = 1;
+    config.pool_timeout = Duration::from_millis(20);
+    let mgr = H2cManager::with_config(&server.authority(), config)
+        .await
+        .unwrap();
+
+    let first = {
+        let mgr = mgr.clone();
+        tokio::spawn(async move { mgr.get("/slow").await })
+    };
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    match mgr.get("/slow").await {
+        Err(H2cError::Timeout(_)) => {}
+        other => {
+            panic!("expected admission timeout while first request holds the slot, got {other:?}")
+        }
+    }
+    assert_eq!(first.await.unwrap().unwrap().status(), 200);
+
+    mgr.shutdown().await;
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn reconnects_after_connections_die() {
     let server = TestServer::start().await;
     let addr = server.addr;

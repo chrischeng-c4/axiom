@@ -36,11 +36,22 @@ e2e_tests:
     claim_id: lumen-spec-schema-openapi-json-yaml-json-schema-offline
     contract_id: spec-gen-generated-clients-public-api-journey
     category: behavior
-    command: "PATH=$HOME/.pyenv/shims:$PATH cargo test -p lumen --test spec_gen_e2e generated_client_live_h2c_public_api_journey -- --exact --ignored --nocapture"
+    command: "cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture"
     assertions:
       - "lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document."
-      - "generated clients drive health, readiness, version, collection creation, indexing, search, duplicates, stats, and forced drop against a live h2c Lumen service."
-      - "the generated Python client validates recursive pydantic QueryNode union shapes while using the bundled h2c runtime."
+      - "generated Python, TypeScript, and Rust clients compile or import as real downstream consumers."
+      - "each generated client drives create collection, index, search, stats, delete indexed id, and forced drop against a real Lumen service."
+      - "the generated Python client uses the bundled h2c runtime; the TypeScript and Rust clients exercise the same public API over their native HTTP runtimes."
+  - id: lumen-cli-interface-protocol-transport
+    capability_id: cli-interface
+    claim_id: lumen-spec-schema-openapi-json-yaml-json-schema-offline
+    contract_id: service-listener-http1-and-h2c
+    category: behavior
+    command: "cargo test -p lumen --test protocol_transport_e2e -- --nocapture"
+    assertions:
+      - "the Lumen service entrypoint accepts HTTP/1.1 and h2c prior-knowledge HTTP/2 on the same listener."
+      - "HTTP/1.1 and h2c clients both receive the same JSON public API response for GET /collections."
+      - "the observed response protocol versions are HTTP/1.1 for an HTTP/1-only client and HTTP/2 for the h2c client."
   - id: lumen-cli-interface-llm-playbook
     capability_id: cli-interface
     claim_id: lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes

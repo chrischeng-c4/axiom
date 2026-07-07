@@ -25,6 +25,24 @@ CLI helper.
 - Python emits pydantic models plus sync/async HTTP/2-capable runtime clients.
 - Rust emits serde models plus a reqwest client.
 
+Generated clients expose the same protocol-neutral transport policy in
+TypeScript, Python, and Rust:
+
+```text
+target_concurrency        sizing hint for expected per-origin concurrency
+max_connections           default 128 abstract client-side cap
+max_keepalive_connections default 16 idle connection cap
+max_in_flight_per_origin  hard admission cap; excess requests wait client-side
+pool_timeout              default 5s queue wait before pool timeout
+```
+
+HTTP/2-capable runtimes map `target_concurrency` to
+`ceil(ln(concurrency))` physical connections where the runtime controls the
+pool. HTTP/1.1 runtimes keep the same knobs but need more sockets. The peer
+server still determines practical request concurrency; the generated client
+only bounds the application's in-flight queue and prevents unbounded async
+fan-out.
+
 Services own authentication headers, base URL defaults, command naming, and
 which generated files are considered public artifacts.
 "#,
@@ -45,5 +63,8 @@ mod tests {
             .body
             .contains("spec gen --lang ts|py|rust --out <dir>"));
         assert!(topic.body.contains("GeneratedOutput"));
+        assert!(topic.body.contains("target_concurrency"));
+        assert!(topic.body.contains("max_in_flight_per_origin"));
+        assert!(topic.body.contains("pool_timeout"));
     }
 }
