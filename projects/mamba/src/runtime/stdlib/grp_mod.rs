@@ -144,7 +144,7 @@ unsafe fn build_gr_mem(mut members: *mut *mut std::os::raw::c_char) -> MbValue {
     let mut out: Vec<MbValue> = Vec::new();
     if !members.is_null() {
         loop {
-            let entry = *members;
+            let entry = std::ptr::read_unaligned(members);
             if entry.is_null() {
                 break;
             }
@@ -380,7 +380,9 @@ mod tests {
     // REQ: R2
     #[test]
     fn test_getgrgid_missing_raises_keyerror() {
-        let _ = mb_grp_getgrgid(&[MbValue::from_int(i64::MAX - 1)]);
+        let _ = mb_grp_getgrgid(&[super::super::super::bigint_ops::int_from_i64(
+            i64::MAX - 1,
+        )]);
         let exc_type = super::super::super::exception::current_exception_type();
         assert_eq!(exc_type.as_deref(), Some("KeyError"));
         super::super::super::exception::clear_current_exception();
