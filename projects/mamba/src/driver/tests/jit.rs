@@ -813,8 +813,12 @@ fn decode_mbvalue_int(raw: i64) -> i64 {
 ///
 /// Recursive `fib(n: int) -> int` with typed annotations exercises the path
 /// where `emit_internal_call` captures a raw i64 from a callee with `Ty::Int`
-/// return. Without the fix, `mb_dispatch_binop` receives raw ints → returns 0.
+/// return. Without the fix, `mb_dispatch_binop` receives raw ints -> returns 0.
 /// With the fix, the result is NaN-boxed before being stored in the dest VReg.
+///
+/// Keep the input well below the explicit perf-suite recursion workloads:
+/// JIT calls now pay traceback/cProfile hooks plus refcount bookkeeping on
+/// every frame, so `fib(25)+` is no longer unit-test sized.
 #[test]
 fn test_jit_recursive_fib() {
     let raw = jit_run(
@@ -827,7 +831,7 @@ def fib(n: int) -> int:
     return fib(n - 1) + fib(n - 2)
 
 def f() -> int:
-    return fib(30)
+    return fib(20)
 
 f()
 "#,
@@ -835,8 +839,8 @@ f()
     // Result may be raw i64 (typed path) or NaN-boxed i64 (dynamic dispatch path).
     let result = decode_mbvalue_int(raw);
     assert_eq!(
-        result, 832040,
-        "fib(30) should be 832040 (got raw={raw:#x})"
+        result, 6765,
+        "fib(20) should be 6765 (got raw={raw:#x})"
     );
 }
 
