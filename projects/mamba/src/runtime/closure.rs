@@ -11,6 +11,7 @@ use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 
 const CLOSURE_HANDLE_BASE: i64 = 1i64 << 39;
+const CELL_ID_BASE: i64 = 1i64 << 38;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ScopedSymbolKey {
@@ -1180,11 +1181,18 @@ pub fn func_file(func: MbValue) -> Option<String> {
 }
 
 // ── Cell Variables (for nonlocal/closure mutable capture) ──
-// Vec-indexed by cell ID for O(1) lookup (#1199). ID N maps to index N-1.
+// Vec-indexed by cell slot for O(1) lookup (#1199). Raw handles are stored as
+// `CELL_ID_BASE + slot_index` so ordinary small ints never alias a live cell.
 
 thread_local! {
     static CELLS: std::cell::RefCell<Vec<Option<MbValue>>> =
         std::cell::RefCell::new(Vec::new());
+}
+
+fn cell_slot_index(raw: i64, len: usize) -> Option<usize> {
+    let slot = raw.checked_sub(CELL_ID_BASE)?;
+    let idx = usize::try_from(slot).ok()?;
+    (idx < len).then_some(idx)
 }
 
 /// Create a new cell variable initialized with a value.
@@ -1198,9 +1206,9 @@ pub fn mb_cell_new(value: MbValue) -> MbValue {
     }
     CELLS.with(|cells| {
         let mut vec = cells.borrow_mut();
-        let id = (vec.len() + 1) as u64; // IDs start at 1
+        let id = CELL_ID_BASE + vec.len() as i64;
         vec.push(Some(value));
-        MbValue::from_int(id as i64)
+        MbValue::from_int(id)
     })
 }
 
@@ -1212,9 +1220,9 @@ pub fn mb_cell_new(value: MbValue) -> MbValue {
 pub fn mb_cell_new_empty() -> MbValue {
     CELLS.with(|cells| {
         let mut vec = cells.borrow_mut();
-        let id = (vec.len() + 1) as u64; // IDs start at 1
+        let id = CELL_ID_BASE + vec.len() as i64;
         vec.push(None);
-        MbValue::from_int(id as i64)
+        MbValue::from_int(id)
     })
 }
 
@@ -1223,7 +1231,9 @@ pub fn mb_cell_get(cell_handle: MbValue) -> MbValue {
     if let Some(id) = cell_handle.as_int() {
         CELLS.with(|cells| {
             let vec = cells.borrow();
-            let idx = (id as u64).wrapping_sub(1) as usize;
+            let Some(idx) = cell_slot_index(id, vec.len()) else {
+                return MbValue::none();
+            };
             let val = vec
                 .get(idx)
                 .and_then(|slot| *slot)
@@ -1268,7 +1278,9 @@ pub(crate) fn mb_cell_compare_value(cell_handle: MbValue) -> CellCompareValue {
     };
     CELLS.with(|cells| {
         let vec = cells.borrow();
-        let idx = (id as u64).wrapping_sub(1) as usize;
+        let Some(idx) = cell_slot_index(id, vec.len()) else {
+            return CellCompareValue::NotACell;
+        };
         match vec.get(idx) {
             None => CellCompareValue::NotACell,
             Some(None) => CellCompareValue::Empty,
@@ -1278,13 +1290,7 @@ pub(crate) fn mb_cell_compare_value(cell_handle: MbValue) -> CellCompareValue {
 }
 
 pub fn mb_cell_handle_raw_is_live(raw: i64) -> i64 {
-    if raw <= 0 {
-        return 0;
-    }
-    CELLS.with(|cells| {
-        let idx = (raw as u64).wrapping_sub(1) as usize;
-        i64::from(idx < cells.borrow().len())
-    })
+    CELLS.with(|cells| i64::from(cell_slot_index(raw, cells.borrow().len()).is_some()))
 }
 
 /// Checked `cell_contents` read used by the `.cell_contents` attribute
@@ -1313,8 +1319,7 @@ pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
         }
         CELLS.with(|cells| {
             let mut vec = cells.borrow_mut();
-            let idx = (id as u64).wrapping_sub(1) as usize;
-            if idx < vec.len() {
+            if let Some(idx) = cell_slot_index(id, vec.len()) {
                 // Release the old cell value being overwritten.
                 if let Some(prev) = vec[idx] {
                     unsafe {
@@ -1331,8 +1336,7 @@ pub fn mb_cell_clear(cell_handle: MbValue) {
     if let Some(id) = cell_handle.as_int() {
         CELLS.with(|cells| {
             let mut vec = cells.borrow_mut();
-            let idx = (id as u64).wrapping_sub(1) as usize;
-            if idx < vec.len() {
+            if let Some(idx) = cell_slot_index(id, vec.len()) {
                 if let Some(prev) = vec[idx] {
                     unsafe {
                         super::rc::release_if_ptr(prev);
@@ -2419,6 +2423,34 @@ mod tests {
         assert_eq!(builtins::mb_gt(truthy, empty_a).as_bool(), Some(true));
         assert_eq!(builtins::mb_lt(empty_b, saturday).as_bool(), Some(true));
         assert_eq!(builtins::mb_eq(empty_a, empty_b).as_bool(), Some(true));
+
+        cleanup_all_closures();
+    }
+
+    #[test]
+    fn test_cell_handles_do_not_alias_plain_ints() {
+        cleanup_all_closures();
+
+        let one = mb_cell_new(MbValue::from_int(10));
+        let two = mb_cell_new(MbValue::from_int(20));
+        let three = mb_cell_new_empty();
+
+        assert_eq!(mb_cell_handle_raw_is_live(1), 0);
+        assert_eq!(mb_cell_handle_raw_is_live(2), 0);
+        assert_eq!(mb_cell_handle_raw_is_live(3), 0);
+
+        assert_eq!(mb_cell_handle_raw_is_live(one.as_int().unwrap()), 1);
+        assert_eq!(mb_cell_handle_raw_is_live(two.as_int().unwrap()), 1);
+        assert_eq!(mb_cell_handle_raw_is_live(three.as_int().unwrap()), 1);
+
+        assert_eq!(
+            builtins::mb_lt(MbValue::from_int(1), MbValue::from_int(2)).as_bool(),
+            Some(true),
+        );
+        assert_eq!(
+            builtins::mb_gt(MbValue::from_int(3), MbValue::from_int(2)).as_bool(),
+            Some(true),
+        );
 
         cleanup_all_closures();
     }
