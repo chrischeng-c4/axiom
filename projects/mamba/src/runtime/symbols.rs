@@ -125,6 +125,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_unbox_inline_int_if_boxed",
+            builtins::mb_unbox_inline_int_if_boxed as fn(super::MbValue) -> i64,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_unbox_bool_if_boxed",
             builtins::mb_unbox_bool_if_boxed as fn(super::MbValue) -> i64,
             [I64],

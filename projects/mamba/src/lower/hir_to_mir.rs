@@ -3329,7 +3329,7 @@ impl<'a> HirToMir<'a> {
         };
         if let (Some(vreg), Some(ty)) = (last_expr_vreg, last_expr_ty) {
             let unbox_name = match self.tcx.get(ty) {
-                Ty::Int => Some("mb_unbox_int_if_boxed"),
+                Ty::Int => Some("mb_unbox_inline_int_if_boxed"),
                 Ty::Bool => Some("mb_unbox_bool_if_boxed"),
                 Ty::Float => Some("mb_unbox_float_if_boxed"),
                 _ => None,
