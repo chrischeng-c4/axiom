@@ -8,6 +8,7 @@ use super::value::MbValue;
 use rustc_hash::FxHashMap;
 
 mod assertions;
+mod async_iteration;
 mod boxing;
 mod breakpoint;
 mod eval_exec;
@@ -16,6 +17,7 @@ mod set_constructors;
 mod type_objects;
 
 pub use assertions::{mb_assertion_error, mb_assertion_error_no_msg};
+pub use async_iteration::{mb_aiter, mb_anext, mb_anext_default};
 use boxing::format_bytes_inner;
 pub(crate) use boxing::{box_raw_i64_or_bigint, passthrough_boxed_int_candidate};
 pub use boxing::{
@@ -7429,92 +7431,6 @@ pub fn mb_chr(val: MbValue) -> MbValue {
     }
     raise_not_integer(val);
     MbValue::none()
-}
-
-fn completed_coroutine(name: &str, value: MbValue) -> MbValue {
-    let coro = super::async_rt::mb_coroutine_new(
-        MbValue::from_ptr(MbObject::new_str(name.to_string())),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())),
-    );
-    super::async_rt::mb_coroutine_complete(coro, value);
-    coro
-}
-
-fn call_dunder_zero(obj: MbValue, name: &str) -> MbValue {
-    super::class::mb_call_method(
-        obj,
-        MbValue::from_ptr(MbObject::new_str(name.to_string())),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())),
-    )
-}
-
-/// aiter(async_iterable) — drive the async-iteration protocol.
-pub fn mb_aiter(iterable: MbValue) -> MbValue {
-    if super::class::mb_lookup_dunder(
-        iterable,
-        MbValue::from_ptr(MbObject::new_str("__aiter__".to_string())),
-    )
-    .is_none()
-    {
-        raise_type_error(format!(
-            "aiter() requires an async iterable, got '{}'",
-            value_type_name(iterable)
-        ));
-        return MbValue::none();
-    }
-    let async_iter = call_dunder_zero(iterable, "__aiter__");
-    if super::exception::current_exception_type().is_some() {
-        return MbValue::none();
-    }
-    if super::class::mb_lookup_dunder(
-        async_iter,
-        MbValue::from_ptr(MbObject::new_str("__anext__".to_string())),
-    )
-    .is_none()
-    {
-        raise_type_error(format!(
-            "aiter() returned an object without __anext__ (got '{}')",
-            value_type_name(async_iter)
-        ));
-        return MbValue::none();
-    }
-    async_iter
-}
-
-/// anext(async_iterator) — return the iterator's next awaitable.
-pub fn mb_anext(async_iter: MbValue) -> MbValue {
-    if super::class::mb_lookup_dunder(
-        async_iter,
-        MbValue::from_ptr(MbObject::new_str("__anext__".to_string())),
-    )
-    .is_none()
-    {
-        raise_type_error(format!(
-            "anext() requires an async iterator, got '{}'",
-            value_type_name(async_iter)
-        ));
-        return MbValue::none();
-    }
-    call_dunder_zero(async_iter, "__anext__")
-}
-
-/// anext(async_iterator, default) — await one step now, map exhaustion to default,
-/// then return a completed coroutine so `await anext(it, default)` still sees an
-/// awaitable value.
-pub fn mb_anext_default(async_iter: MbValue, default: MbValue) -> MbValue {
-    let awaitable = mb_anext(async_iter);
-    if super::exception::current_exception_type().is_some() {
-        return MbValue::none();
-    }
-    let value = super::async_task::mb_await(awaitable);
-    if super::exception::current_exception_type().as_deref() == Some("StopAsyncIteration") {
-        super::exception::mb_clear_exception();
-        return completed_coroutine("__anext_default__", default);
-    }
-    if super::exception::current_exception_type().is_some() {
-        return MbValue::none();
-    }
-    completed_coroutine("__anext_value__", value)
 }
 
 /// ord(c) — return Unicode code point for a single character.
