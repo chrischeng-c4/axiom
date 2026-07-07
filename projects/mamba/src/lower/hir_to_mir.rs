@@ -6647,18 +6647,19 @@ impl<'a> HirToMir<'a> {
             self.in_module_scope = false;
         }
         self.start_block(body_block);
+        let (bound_next, bound_ty) = self.coerce_loop_binding_value(var, next_val);
         let var_vreg = if let Some(&orig) = self.sym_to_vreg.get(&var) {
             self.current_stmts.push(MirInst::Copy {
                 dest: orig,
-                source: next_val,
+                source: bound_next,
             });
             orig
         } else {
-            self.sym_to_vreg.insert(var, next_val);
-            next_val
+            self.sym_to_vreg.insert(var, bound_next);
+            bound_next
         };
         if !was_module_scope {
-            self.mirror_loop_binding_to_shared_storage(var, var_vreg, self.tcx.any());
+            self.mirror_loop_binding_to_shared_storage(var, var_vreg, bound_ty);
         }
         // The loop variable itself is rebound via a raw Copy/vreg-insert
         // above (not through the general Assign/Let lowering path that
@@ -6666,9 +6667,10 @@ impl<'a> HirToMir<'a> {
         // needs its own explicit per-iteration StoreGlobal whenever a
         // closure could be reading it (#952 R1).
         if was_module_scope && self.module_has_closures {
+            let global_value = self.box_operand(var_vreg, bound_ty);
             self.current_stmts.push(MirInst::StoreGlobal {
                 name: var,
-                value: var_vreg,
+                value: global_value,
             });
         }
         for s in body {
@@ -6755,19 +6757,20 @@ impl<'a> HirToMir<'a> {
         let was_module_scope = self.in_module_scope;
         self.in_module_scope = false;
         self.start_block(body_block);
+        let (bound_next, bound_ty) = self.coerce_loop_binding_value(var, next_val);
         if let Some(&orig) = self.sym_to_vreg.get(&var) {
             self.current_stmts.push(MirInst::Copy {
                 dest: orig,
-                source: next_val,
+                source: bound_next,
             });
         } else {
-            self.sym_to_vreg.insert(var, next_val);
+            self.sym_to_vreg.insert(var, bound_next);
         }
         let current_vreg = *self
             .sym_to_vreg
             .get(&var)
             .expect("async-for loop binding should exist");
-        self.mirror_loop_binding_to_shared_storage(var, current_vreg, self.tcx.any());
+        self.mirror_loop_binding_to_shared_storage(var, current_vreg, bound_ty);
         for s in body {
             self.lower_stmt(s);
         }
@@ -6785,6 +6788,32 @@ impl<'a> HirToMir<'a> {
         }
 
         self.start_block(cleanup_block);
+    }
+
+    fn coerce_loop_binding_value(&mut self, sym: SymbolId, value: VReg) -> (VReg, TypeId) {
+        let ty = self
+            .sym_types
+            .get(&sym)
+            .copied()
+            .unwrap_or_else(|| self.tcx.any());
+        let unbox_name = match self.tcx.get(ty) {
+            crate::types::Ty::Int => Some("mb_unbox_int_if_boxed"),
+            crate::types::Ty::Bool => Some("mb_unbox_bool_if_boxed"),
+            crate::types::Ty::Float => Some("mb_unbox_float_if_boxed"),
+            _ => None,
+        };
+        if let Some(name) = unbox_name {
+            let unboxed = self.fresh_vreg();
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: Some(unboxed),
+                name: name.to_string(),
+                args: vec![value],
+                ty,
+            });
+            (unboxed, ty)
+        } else {
+            (value, ty)
+        }
     }
 
     fn mirror_loop_binding_to_shared_storage(
