@@ -8,6 +8,4 @@
 fn main() {
     build_stamp::stamp("RELAY");
 }
-
-<!-- marker: missing-generator:logic:eeba4423 path: projects/relay/build.rs reason: Delegate to build_stamp::stamp('RELAY') so RELAY_GIT_SHA/RELAY_BUILT_AT/RELAY_TARGET feed ToolInfo — no hand-rolled git/timestamp logic. -->
 // HANDWRITE-END
