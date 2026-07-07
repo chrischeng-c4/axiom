@@ -2,15 +2,21 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T12:56:35.697468+00:00"
-digest = "sha256:582797d5af0b26bdbbbc7de65060eae9e4542dcce3ce94be26bca17e2719b1c6"
-source_digest = "sha256:582797d5af0b26bdbbbc7de65060eae9e4542dcce3ce94be26bca17e2719b1c6"
-ir_digest = "sha256:11daf08d7c96288a53128a95321b56074204b3d878de0f19d65675cd6beb3c55"
+generated_at = "2026-07-07T13:23:19.392192+00:00"
+digest = "sha256:13513c7281937231e02e67b83c95346c0fe6a0cbdf8f8384a6210abc6388043b"
+source_digest = "sha256:13513c7281937231e02e67b83c95346c0fe6a0cbdf8f8384a6210abc6388043b"
+ir_digest = "sha256:f6ad8edd4f608c2c992ba76b63c595dbd1a001bcc444ceb7300079fc4a2a6836"
 
 [[files]]
 path = "interfaces/cli/unify-relay-cli-single-relay-bin-with-cli-std-llm-upgrade-issue.md"
 digest = "sha256:13cc09a152d8f8d3c89184762f7b54e5324ac4ed591c8bf2d1161276935a260d"
 ir_digest = "sha256:8528515be5a3f84efb1b102d762ea649c5ecfa51ffcd034d9d0f2860996a1090"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/adopt-service-auth-role-map-bearer-contract-relay-auth-token-reg.md"
+digest = "sha256:28c24b39e57179ab6966d25f6148680e38c4684a2d6a1b50e21db409801b5a84"
+ir_digest = "sha256:a455b7c03b26fb5c1aed3144b335c3f7d2b6bcfb1903250436e1baea02d9740e"
 section_count = 3
 
 [[files]]
