@@ -174,7 +174,6 @@ flowchart TD
     r5[R5 raft core sim kept honest] --> tests_raft_core_rs_relay_engines_converge_across_failover[tests/raft_core.rs::relay_engines_converge_across_failover]
     r6[R6 llm operations auto mode] --> src_llm_rs_operations_topic_body_relay_llm_operations[src/llm.rs operations topic body (relay llm operations)]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
