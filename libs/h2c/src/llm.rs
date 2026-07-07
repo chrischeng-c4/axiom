@@ -16,6 +16,22 @@ concurrency. Size the outbound pool from target peak concurrency:
 connections = clamp(ceil(ln(concurrency)), 1, cpu_parallelism)
 ```
 
+`target_concurrency` is a sizing hint, not a throughput promise. The peer
+server decides usable request concurrency through stream limits, latency, and
+work capacity. Keep agent-facing config protocol-neutral:
+
+```text
+max_connections = 128
+max_keepalive_connections = 16
+max_in_flight_per_origin = target_concurrency or 128
+pool_timeout = 5s
+```
+
+HTTP/2 runtimes map the target to logarithmic connection count; HTTP/1.1
+runtimes use the same abstract knobs but need more sockets. Both modes should
+admit only `max_in_flight_per_origin` requests per origin and queue excess work
+until `pool_timeout` instead of spawning unbounded client concurrency.
+
 Rust callers can use:
 
 ```rust
@@ -51,6 +67,8 @@ mod tests {
         let topic = super::topic();
         assert_eq!(topic.id, "h2c");
         assert!(topic.body.contains("ceil(ln(concurrency))"));
+        assert!(topic.body.contains("max_in_flight_per_origin"));
+        assert!(topic.body.contains("pool_timeout"));
         assert!(topic.body.contains("H2cPool::for_concurrency"));
     }
 }

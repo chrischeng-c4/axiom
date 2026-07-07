@@ -1173,6 +1173,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "axiom-client-transport-policy-example"
+version = "0.4.3"
+dependencies = [
+ "anyhow",
+ "cclab-openapi-codegen",
+ "h2c",
+ "lumen",
+ "reqwest 0.12.28",
+ "service-http",
+ "tokio",
+]
+
+[[package]]
 name = "axum"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
