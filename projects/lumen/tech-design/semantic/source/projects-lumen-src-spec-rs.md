@@ -310,6 +310,10 @@ The Lumen CRD field `spec.tokensSecret` names a Kubernetes Secret containing a
 `token-registry.json` key. The operator mounts that key at
 `/var/run/secrets/lumen/token-registry.json` and sets
 `LUMEN_TOKEN_REGISTRY_FILE` for serving pods when `auth: required`.
+Alternatively, `spec.tokensSecretProviderClass` names an existing
+`SecretProviderClass` mounted via the Secrets Store CSI driver at that same
+path, so the registry content never becomes a Secret or ConfigMap object at
+all; `tokensSecret` wins when both are set.
 
 On GKE, keep GCP Secret Manager as the source of truth and materialize the file
 through External Secrets Operator, Secret Store CSI, or a platform-approved

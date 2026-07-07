@@ -41,6 +41,7 @@ spec:
   logLevel: warn
   auth: required
   tokensSecret: lumen-tokens
+  # tokensSecretProviderClass: lumen-tokens-spc  # CSI alternative to tokensSecret (mutually exclusive; tokensSecret wins if both set)
   serving:
     autoscaling:
       minReplicas: 6

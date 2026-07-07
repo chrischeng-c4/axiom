@@ -27,7 +27,7 @@ Public API manifest for `projects/lumen/src/operator/render.rs` generated from A
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `render` | projects/lumen/src/operator/render.rs | function | pub | 94 | render(lumen: &Lumen) -> Vec<Value> |
+| `render` | projects/lumen/src/operator/render.rs | function | pub | 109 | render(lumen: &Lumen) -> Vec<Value> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -108,12 +108,27 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
-fn token_registry_secret(lumen: &Lumen) -> Option<&str> {
-    if matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
-        lumen.spec.tokens_secret.as_deref()
-    } else {
-        None
+/// Which source (if any) supplies the token registry file. `tokensSecret`
+/// wins over `tokensSecretProviderClass` when both are set (backward
+/// compatible; documented as precedence, not schema-enforced mutual
+/// exclusion). `None` when `auth: off` or neither is set.
+enum TokenRegistrySource<'a> {
+    Secret(&'a str),
+    Csi(&'a str),
+}
+
+fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
+    if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
+        return None;
     }
+    if let Some(secret) = lumen.spec.tokens_secret.as_deref() {
+        return Some(TokenRegistrySource::Secret(secret));
+    }
+    lumen
+        .spec
+        .tokens_secret_provider_class
+        .as_deref()
+        .map(TokenRegistrySource::Csi)
 }
 
 /// Render every child object for `lumen`, in dependency order (namespace-scoped
@@ -137,9 +152,10 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ];
-    if lumen.spec.replicas_per_shard <= 1 {
-        // Single member, no raft consensus: HPA owns the live replica count
-        // (unchanged from the pre-StatefulSet-unconditional Deployment path).
+    if lumen.spec.replicas_per_shard <= 1 && lumen.spec.shard_count <= 1 {
+        // Single shard, no raft consensus: keep the legacy dev HPA path.
+        // Multi-shard storage ownership is fixed by shardCount and is never
+        // changed by HPA.
         out.push(serving_hpa(lumen, &cx));
     }
     // raft-HA (`replicasPerShard > 1`): no HPA — raft needs a fixed membership.
@@ -230,19 +246,29 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
     let res = render::guaranteed_resources(&s.cpu, &s.memory);
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
-    if let Some(secret) = token_registry_secret(lumen) {
+    if let Some(source) = token_registry_source(lumen) {
         volume_mounts.push(json!({
             "name": TOKEN_REGISTRY_VOLUME,
             "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
             "readOnly": true,
         }));
-        volumes.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "secret": {
-                "secretName": secret,
-                "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
-            },
-        }));
+        let mut volume = json!({ "name": TOKEN_REGISTRY_VOLUME });
+        match source {
+            TokenRegistrySource::Secret(secret) => {
+                volume["secret"] = json!({
+                    "secretName": secret,
+                    "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
+                });
+            }
+            TokenRegistrySource::Csi(provider_class) => {
+                volume["csi"] = json!({
+                    "driver": "secrets-store.csi.k8s.io",
+                    "readOnly": true,
+                    "volumeAttributes": { "secretProviderClass": provider_class },
+                });
+            }
+        }
+        volumes.push(volume);
     }
     let spread = |key: &str| {
         json!({
@@ -332,7 +358,12 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
     });
     if lumen.spec.replicas_per_shard <= 1 {
         if let Some(spec) = sts["spec"].as_object_mut() {
-            spec.insert("replicas".into(), json!(s.autoscaling.min_replicas));
+            let replicas = if lumen.spec.shard_count > 1 {
+                lumen.spec.shard_count as i32
+            } else {
+                s.autoscaling.min_replicas
+            };
+            spec.insert("replicas".into(), json!(replicas));
         }
         if let Some(env) = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut() {
             env.retain(|value| {
@@ -366,12 +397,24 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
     if lumen.spec.log_level.is_some() {
         env.push(from_cfg("LUMEN_LOG_LEVEL"));
     }
-    // Strict auth: the registry is mounted from a Secret/SecretManager projection.
-    if token_registry_secret(lumen).is_some() {
+    // Strict auth: the registry is mounted from a Secret or CSI-provided projection.
+    if token_registry_source(lumen).is_some() {
         env.push(json!({
             "name": "LUMEN_TOKEN_REGISTRY_FILE",
             "value": TOKEN_REGISTRY_FILE,
         }));
+    }
+    if let Some(bootstrap) = &lumen.spec.serving.bootstrap {
+        env.push(json!({
+            "name": "LUMEN_BOOTSTRAP_SEED_URI",
+            "value": bootstrap.seed_uri,
+        }));
+        if let Some(limit) = bootstrap.max_bytes_per_sec {
+            env.push(json!({
+                "name": "LUMEN_BOOTSTRAP_MAX_BYTES_PER_SEC",
+                "value": limit.to_string(),
+            }));
+        }
     }
     env
 }
@@ -380,10 +423,22 @@ fn serving_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
     let name = format!("{}-config", cx.name);
     let mut data = json!({
         "SHARD_COUNT": lumen.spec.shard_count.to_string(),
+        "SHARD_MAP_VERSION": lumen.spec.shard_map.version.to_string(),
+        "VIRTUAL_BUCKET_COUNT": lumen.spec.shard_map.virtual_bucket_count.to_string(),
         "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
         "LUMEN_PORT": CLIENT_PORT.to_string(),
         "LUMEN_AUTH": lumen.spec.auth.as_env(),
     });
+    if !lumen.spec.shard_map.assignments.is_empty() {
+        data["SHARD_MAP_ASSIGNMENTS"] = json!(lumen
+            .spec
+            .shard_map
+            .assignments
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(","));
+    }
     if let Some(level) = &lumen.spec.log_level {
         data["LUMEN_LOG_LEVEL"] = json!(level);
     }
@@ -463,7 +518,6 @@ fn prometheus_rule(cx: &RenderCtx<'_>) -> Value {
     })
 }
 // CODEGEN-END
-
 ````
 
 ## Changes
