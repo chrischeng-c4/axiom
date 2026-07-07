@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-07-07T13:23:19.392192+00:00"
-digest = "sha256:13513c7281937231e02e67b83c95346c0fe6a0cbdf8f8384a6210abc6388043b"
-source_digest = "sha256:13513c7281937231e02e67b83c95346c0fe6a0cbdf8f8384a6210abc6388043b"
-ir_digest = "sha256:f6ad8edd4f608c2c992ba76b63c595dbd1a001bcc444ceb7300079fc4a2a6836"
+generated_at = "2026-07-07T13:53:58.886885+00:00"
+digest = "sha256:930e4480979ade5710b6807ce4d259802cc2981a7411d6095c6f43e3680de950"
+source_digest = "sha256:930e4480979ade5710b6807ce4d259802cc2981a7411d6095c6f43e3680de950"
+ir_digest = "sha256:ce8d1e1b1ae3dcaa81d2ca4d9c2f4204fa44ae9876162081a0a8f692d9575c09"
 
 [[files]]
 path = "interfaces/cli/unify-relay-cli-single-relay-bin-with-cli-std-llm-upgrade-issue.md"
@@ -42,6 +42,12 @@ path = "interfaces/rest/work-queue-api-lease-ack-heartbeat.md"
 digest = "sha256:0087bef459dde8785642e66e27aaa718c057e3cf337cc06a350314073b787b93"
 ir_digest = "sha256:f5bd17fc3780fb4798cc329b1db786cff81c77481e6a83b255e61ca990b609c6"
 section_count = 5
+
+[[files]]
+path = "logic/adopt-raft-host-relaystatemachine-auto-mode-ha-drop-hand-rolled.md"
+digest = "sha256:e9e531ba56fa32023c2ffc2e1b83ae062a1c7b98651b893a726a80eed16d556b"
+ir_digest = "sha256:abc8daeff3b579fc7185a24d6c8ea0d2280a62f279bea196e2a8c52c9f5a613f"
+section_count = 3
 
 [[files]]
 path = "logic/bounded-ram-durable-log-entry-eviction-offset-index-disk-backed.md"
