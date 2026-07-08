@@ -136,6 +136,39 @@ disp_typevar_ctor!(d_typevar_ctor, 0);
 disp_typevar_ctor!(d_typevartuple_ctor, 1);
 disp_typevar_ctor!(d_paramspec_ctor, 2);
 
+unsafe extern "C" fn d_type_alias_type_ctor(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let kwargs = a.last().copied().filter(|v| type_alias_kwargs_like(*v));
+    let positional_len = if kwargs.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+
+    let name_v = type_alias_kw_value(kwargs, "name")
+        .or_else(|| a.get(0).copied().filter(|_| positional_len >= 1))
+        .unwrap_or_else(MbValue::none);
+    let value = type_alias_kw_value(kwargs, "value")
+        .or_else(|| a.get(1).copied().filter(|_| positional_len >= 2))
+        .unwrap_or_else(MbValue::none);
+    let type_params = type_alias_kw_value(kwargs, "type_params")
+        .or_else(|| a.get(2).copied().filter(|_| positional_len >= 3))
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_tuple(Vec::new())));
+    let name = extract_str(name_v).unwrap_or_default();
+
+    let inst = MbValue::from_ptr(MbObject::new_instance("TypeAliasType".to_string()));
+    super::super::pep695::instance_field_set_pub(inst, "__name__", new_str_v(&name));
+    super::super::pep695::instance_field_set_pub(inst, "__value__", value);
+    super::super::pep695::instance_field_set_pub(inst, "__type_params__", type_params);
+    super::super::pep695::instance_field_set_pub(
+        inst,
+        "__module__",
+        new_str_v(&super::super::closure::caller_active_module_name()),
+    );
+    inst
+}
+
 disp_binary!(d_cast, mb_typing_cast);
 disp_unary!(d_get_origin, mb_typing_get_origin);
 disp_unary!(d_get_args, mb_typing_get_args);
@@ -355,13 +388,17 @@ pub fn register() {
         attrs.insert(name.to_string(), special_form(name));
     }
 
-    // TypeVar / ParamSpec / TypeVarTuple: real constructors building PEP 695
-    // runtime instances, with their addresses registered as nominal type
-    // names so `isinstance(x, TypeVar)` works.
+    // TypeVar / ParamSpec / TypeVarTuple / TypeAliasType: real constructors
+    // building PEP 695 runtime instances, with their addresses registered as
+    // nominal type names so `isinstance(x, TypeVar)` works.
     for (name, addr) in [
         ("TypeVar", d_typevar_ctor as *const () as usize),
         ("TypeVarTuple", d_typevartuple_ctor as *const () as usize),
         ("ParamSpec", d_paramspec_ctor as *const () as usize),
+        (
+            "TypeAliasType",
+            d_type_alias_type_ctor as *const () as usize,
+        ),
     ] {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
@@ -527,7 +564,6 @@ pub fn register() {
         "T_co",
         "T_contra",
         "TextIO",
-        "TypeAliasType",
         "VT",
         "VT_co",
         "V_co",
@@ -606,6 +642,30 @@ fn extract_str(val: MbValue) -> Option<String> {
             _ => None,
         }
     })
+}
+
+fn type_alias_kw_value(kwargs: Option<MbValue>, name: &str) -> Option<MbValue> {
+    let kwargs = kwargs?;
+    kwargs.as_ptr().and_then(|ptr| unsafe {
+        if let super::super::rc::ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .get(&super::super::dict_ops::DictKey::Str(name.to_string()))
+                .copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn type_alias_kwargs_like(value: MbValue) -> bool {
+    value
+        .as_ptr()
+        .map(|ptr| unsafe { matches!(&(*ptr).data, super::super::rc::ObjData::Dict(_)) })
+        .unwrap_or(false)
+        && (type_alias_kw_value(Some(value), "name").is_some()
+            || type_alias_kw_value(Some(value), "value").is_some()
+            || type_alias_kw_value(Some(value), "type_params").is_some())
 }
 
 fn instance_with(class_name: &str, fields: rustc_hash::FxHashMap<String, MbValue>) -> MbValue {
@@ -1871,8 +1931,53 @@ mod tests {
             d_typevar_ctor as *const () as u64,
             d_typevartuple_ctor as *const () as u64,
             d_paramspec_ctor as *const () as u64,
+            d_type_alias_type_ctor as *const () as u64,
         ] {
             assert!(super::super::super::module::is_kwargs_func(addr));
+        }
+    }
+
+    #[test]
+    fn test_type_alias_type_ctor_accepts_keyword_name_value() {
+        use super::super::super::dict_ops::mb_dict_new;
+        use super::super::super::dict_ops::mb_dict_setitem;
+        use super::super::super::rc::ObjData;
+
+        super::super::super::closure::push_active_module_name("__main__".to_string());
+        super::super::super::closure::push_active_module_name("typing".to_string());
+        let kwargs = mb_dict_new();
+        let value = MbValue::from_int(695);
+        mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("name".to_string())),
+            MbValue::from_ptr(MbObject::new_str("TA".to_string())),
+        );
+        mb_dict_setitem(
+            kwargs,
+            MbValue::from_ptr(MbObject::new_str("value".to_string())),
+            value,
+        );
+        let args = [kwargs];
+        let alias = unsafe { d_type_alias_type_ctor(args.as_ptr(), args.len()) };
+        super::super::super::closure::pop_active_module_name();
+        super::super::super::closure::pop_active_module_name();
+
+        assert_eq!(instance_class_of(alias).as_deref(), Some("TypeAliasType"));
+        assert_eq!(
+            extract_str(instance_field_of(alias, "__name__").expect("__name__")).as_deref(),
+            Some("TA")
+        );
+        assert_eq!(instance_field_of(alias, "__value__"), Some(value));
+        assert_eq!(
+            extract_str(instance_field_of(alias, "__module__").expect("__module__")).as_deref(),
+            Some("__main__")
+        );
+        let params = instance_field_of(alias, "__type_params__").expect("__type_params__");
+        unsafe {
+            match &(*params.as_ptr().expect("tuple")).data {
+                ObjData::Tuple(items) => assert!(items.is_empty()),
+                _ => panic!("expected tuple"),
+            }
         }
     }
 
