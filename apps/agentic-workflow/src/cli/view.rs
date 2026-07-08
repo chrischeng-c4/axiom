@@ -2599,7 +2599,7 @@ aliases = ["d"]
 path = "projects/demo"
 td_path = "projects/demo/tech-design"
 cap_path = "projects/demo/CAPABILITIES.md"
-label = "project:demo"
+label = "app:demo"
 "#,
         )
         .unwrap();

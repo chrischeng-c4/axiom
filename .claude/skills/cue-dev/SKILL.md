@@ -91,6 +91,6 @@ the first viewport and the affected workflow. Save Playwright screenshots under
 - Preserve the `project list / chat / on-demand right pane` Artifact Studio shape unless the user explicitly changes it.
 - Keep chat available for app owners, but make WorkItem/artifact state the durable center of the UI.
 - Use same-origin `/api` calls from the frontend and configure Vite proxy via `CUE_ARTIFACT_STUDIO_API_BASE_URL`.
-- If Vite works and Jet does not, keep Cue moving on Vite and open/link a `project:jet` or `crate:jet` issue with the exact repro.
-- If CPython works and Mamba does not, keep the temporary bridge thin and open/link a `project:mamba` or `crate:mamba` issue before landing broader backend work.
+- If Vite works and Jet does not, keep Cue moving on Vite and open/link a `app:jet` or `crate:jet` issue with the exact repro.
+- If CPython works and Mamba does not, keep the temporary bridge thin and open/link a `app:mamba` or `crate:mamba` issue before landing broader backend work.
 - Before closing substantial Cue work, update the relevant docs, TD files, and issues so the architecture decision is not left only in chat.

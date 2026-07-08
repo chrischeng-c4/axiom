@@ -236,7 +236,7 @@ A jet release is **green on accname** iff:
    with all required fields populated.
 3. Every entry's `gate_outcome` is `pass`.
 4. Every `KNOWN-FAIL` entry's `tracking_issue` is an open issue
-   labelled `type:bug` and `project:jet`.
+   labelled `type:bug` and `app:jet`.
 5. Every `SKIP` entry whose `reason` matches the canonical
    `role not in scope of #2158 mapping; revisit on emitter
    extension` string has a corresponding entry in the
@@ -426,7 +426,7 @@ corresponding row here.
 To prevent KNOWN-FAIL rot:
 
 1. Every `KNOWN-FAIL` entry must carry a `tracking_issue` pointing
-   to an open issue labelled `type:bug` and `project:jet`.
+   to an open issue labelled `type:bug` and `app:jet`.
 2. The parity gate (#2144) validates the tracking issue is open
    against the GitHub backend. Closed tracking issue → gate fails
    with `stale_known_fail` (the verdict must be re-evaluated).

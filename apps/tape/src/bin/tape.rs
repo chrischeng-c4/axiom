@@ -150,7 +150,7 @@ struct IssueArgs {
 
 #[derive(Subcommand)]
 enum IssueCommand {
-    /// Search Tape issues (`project:tape`); omit query to list recent.
+    /// Search Tape issues (`app:tape`); omit query to list recent.
     Search(IssueSearchArgs),
     /// Print one issue by number.
     View(IssueViewArgs),
@@ -364,7 +364,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
                     message,
                     url: args.url,
                     repo: args.repo,
-                    label: std::iter::once("project:tape".to_string())
+                    label: std::iter::once("app:tape".to_string())
                         .chain(args.label)
                         .collect(),
                     dry_run: args.dry_run,

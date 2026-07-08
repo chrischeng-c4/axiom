@@ -65,7 +65,7 @@ name = "agentic-workflow"
 #                outside the project tree. Hooks route override TD files
 #                by longest-prefix match on `td_path` directly.
 #   • label    — GitHub label SDD attaches to the issue
-#                (`project:<name>`). One-issue-one-project except
+#                (`app:<name>`). One-issue-one-project except
 #                epics (R12). Hooks grep this label to map issue →
 #                project.
 #
@@ -82,7 +82,7 @@ name = "agentic-workflow"
 # Branch naming today is project-less (`issue-<slug>` / `td-<slug>` /
 # `cb-<slug>`) per Phase C, so there is no `td_prefix` / `cb_prefix`
 # field. Hooks that need branch → project lookup go through the
-# issue's `project:*` label, not branch syntax.
+# issue's `app/lib` label, not branch syntax.
 #
 # Why hand-written: hooks need to read this without spawning the
 # aw binary. `aw sync` only manages the AW SYNC block below —
@@ -100,7 +100,7 @@ aliases = ["aw"]
 path = "apps/agentic-workflow"
 td_path = "apps/agentic-workflow/tech-design"
 cap_path = "apps/agentic-workflow/CAPABILITIES.md"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [[projects.workspaces]]
 name = "agentic-workflow"
@@ -115,7 +115,7 @@ codegen.profile = "rust/score-crate"
 name = "cap"
 path = "projects/cap"
 td_path = "projects/cap/tech-design"
-label = "project:cap"
+label = "app:cap"
 
 [[projects.workspaces]]
 name = "cap"
@@ -131,7 +131,7 @@ name = "vat"
 path = "projects/vat"
 td_path = "projects/vat/tech-design"
 cap_path = "projects/vat/README.md"
-label = "project:vat"
+label = "app:vat"
 
 [[projects.workspaces]]
 name = "vat"
@@ -146,7 +146,7 @@ name = "loom"
 path = "projects/loom"
 td_path = "projects/loom/tech-design"
 cap_path = "projects/loom/README.md"
-label = "project:loom"
+label = "app:loom"
 
 [[projects.workspaces]]
 name = "loom"
@@ -161,7 +161,7 @@ name = "preview"
 path = "projects/preview"
 td_path = "projects/preview/tech-design"
 cap_path = "projects/preview/README.md"
-label = "project:preview"
+label = "app:preview"
 
 [[projects.workspaces]]
 name = "preview"
@@ -176,7 +176,7 @@ name = "tape"
 path = "apps/tape"
 td_path = "apps/tape/tech-design"
 cap_path = "apps/tape/README.md"
-label = "project:tape"
+label = "app:tape"
 
 [[projects.workspaces]]
 name = "tape"
@@ -191,7 +191,7 @@ name = "defer"
 path = "apps/defer"
 td_path = "projects/defer/tech-design"
 cap_path = "apps/defer/README.md"
-label = "project:defer"
+label = "app:defer"
 
 [[projects.workspaces]]
 name = "defer"
@@ -204,7 +204,7 @@ name = "cube"
 path = "projects/cube"
 td_path = "projects/cube/tech-design"
 cap_path = "projects/cube/README.md"
-label = "project:cube"
+label = "app:cube"
 
 [[projects.workspaces]]
 name = "cube"
@@ -217,7 +217,7 @@ name = "beam"
 path = "projects/beam"
 td_path = "projects/beam/tech-design"
 cap_path = "projects/beam/README.md"
-label = "project:beam"
+label = "app:beam"
 
 [[projects.workspaces]]
 name = "beam"
@@ -231,7 +231,7 @@ name = "arena"
 path = "projects/arena"
 td_path = "projects/arena/tech-design"
 cap_path = "projects/arena/README.md"
-label = "project:arena"
+label = "app:arena"
 
 [[projects.workspaces]]
 name = "arena"
@@ -247,7 +247,7 @@ name = "guard"
 path = "projects/guard"
 td_path = "projects/guard/tech-design"
 cap_path = "projects/guard/README.md"
-label = "project:guard"
+label = "app:guard"
 
 [[projects.workspaces]]
 name = "guard"
@@ -263,7 +263,7 @@ name = "rig"
 path = "projects/rig"
 td_path = "projects/rig/tech-design"
 cap_path = "projects/rig/README.md"
-label = "project:rig"
+label = "app:rig"
 
 [[projects.workspaces]]
 name = "rig"
@@ -278,7 +278,7 @@ codegen.profile = "rust/score-crate"
 name = "mamba"
 path = "projects/mamba"
 td_path = "projects/mamba/tech-design"
-label = "project:mamba"
+label = "app:mamba"
 
 [[projects.workspaces]]
 name = "mamba"
@@ -292,7 +292,7 @@ name = "lumen"
 path = "projects/lumen"
 td_path = "projects/lumen/tech-design"
 cap_path = "projects/lumen/README.md"
-label = "project:lumen"
+label = "app:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
 # dispatches each bound dimension to its external tool; unbound categories
 # (e.g. behavior, security) fall back to the manifest command.
@@ -317,7 +317,7 @@ name = "pg"
 path = "projects/mamba/mambalibs/pgkit"
 td_path = "projects/mamba/mambalibs/pgkit/tech-design"
 cap_path = "projects/mamba/mambalibs/pgkit/pg/README.md"
-label = "project:pg"
+label = "lib:pg"
 
 [[projects.workspaces]]
 name = "pg"
@@ -342,7 +342,7 @@ test_cmd = "cargo test -p pgkit-binding"
 name = "agentkit"
 path = "projects/mamba/mambalibs/agentkit"
 td_path = "projects/mamba/mambalibs/agentkit/tech-design"
-label = "project:agentkit"
+label = "lib:agentkit"
 
 [[projects.workspaces]]
 name = "agentkit-core"
@@ -392,7 +392,7 @@ name = "jet"
 path = "projects/jet"
 td_path = "projects/jet/tech-design"
 cap_path = "projects/jet/README.md"
-label = "project:jet"
+label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet"
@@ -407,7 +407,7 @@ name = "relay"
 path = "apps/relay"
 td_path = "apps/relay/tech-design"
 cap_path = "apps/relay/README.md"
-label = "project:relay"
+label = "app:relay"
 # Relay EC dispatch is vat-isolated; meter owns performance evidence and guard
 # owns security evidence. Legacy arena comparison remains advisory dogfood until
 # native broker adapters are promoted to required EC.
@@ -427,7 +427,7 @@ name = "keep"
 path = "apps/keep"
 td_path = ".aw/tech-design/projects/keep"
 cap_path = "apps/keep/README.md"
-label = "project:keep"
+label = "app:keep"
 ec.efficiency = { tool = "meter", meter = "apps/keep", command = "cd apps/keep && ../../target/debug/vat run meter-efficiency" }
 ec.security = { tool = "guard", dir = "apps/keep", command = "cd apps/keep && ../../target/debug/vat run guard-security" }
 

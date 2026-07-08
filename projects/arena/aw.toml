@@ -1,7 +1,7 @@
 [project]
 name = "arena"
 cap_path = "README.md"
-label = "project:arena"
+label = "app:arena"
 
 [[workspaces]]
 name = "arena"

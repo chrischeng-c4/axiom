@@ -205,7 +205,7 @@ pub struct UpgradeArgs {
 /// @spec projects/cap/tech-design/interfaces/cli/adopt-cli-convention-llm-upgrade-report-issue-via-cclab-cli-std.md
 #[derive(Subcommand, Debug)]
 pub enum IssueCmd {
-    /// Search cap issues; omit the query to list recent open project:cap issues.
+    /// Search cap issues; omit the query to list recent open app:cap issues.
     Search(IssueSearchArgs),
     /// Print a single issue by number.
     View(IssueViewArgs),
@@ -430,7 +430,7 @@ fn issue_create_options(args: IssueCreateArgs) -> cli_std::issue::CreateOptions 
         message,
         url: None,
         repo: None,
-        label: vec!["project:cap".to_string()],
+        label: vec!["app:cap".to_string()],
         dry_run: args.dry_run,
         yes: true,
     }
@@ -443,7 +443,7 @@ fn report_issue_options(args: ReportIssueArgs) -> cli_std::report_issue::Options
         message,
         url: None,
         repo: None,
-        label: vec!["project:cap".to_string()],
+        label: vec!["app:cap".to_string()],
         dry_run: args.dry_run,
         yes: true,
     }
@@ -805,7 +805,7 @@ mod tests {
         });
         assert_eq!(opts.title, "cap: queue barrier");
         assert_eq!(opts.message.as_deref(), Some("queue barrier"));
-        assert_eq!(opts.label, vec!["project:cap"]);
+        assert_eq!(opts.label, vec!["app:cap"]);
         assert!(opts.dry_run);
     }
 
@@ -818,7 +818,7 @@ mod tests {
         });
         assert_eq!(opts.title, "custom");
         assert_eq!(opts.message.as_deref(), Some("details"));
-        assert_eq!(opts.label, vec!["project:cap"]);
+        assert_eq!(opts.label, vec!["app:cap"]);
         assert!(opts.dry_run);
     }
 }

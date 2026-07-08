@@ -1490,10 +1490,14 @@ pub(crate) fn build_create_label_vec(
     out
 }
 
+fn is_tracker_routing_label(label: &str) -> bool {
+    label.starts_with("app:") || label.starts_with("lib:")
+}
+
 // Pure: returns warning messages for `labels` that violate either
 ///
 // 1. the one-issue-one-project count rule (epics excepted), or
-// 2. the project-label-must-match-`[[projects]]` value rule.
+// 2. the tracker-label-must-match-`[[projects]]` value rule.
 ///
 // Rule 2 is skipped when `known_labels` is empty — that means config
 // declares no managed projects, so there is nothing authoritative to
@@ -1509,35 +1513,35 @@ fn project_label_warnings(
     slug: &str,
     known_labels: &[String],
 ) -> Vec<String> {
-    let project_labels: Vec<&String> = labels
+    let routing_labels: Vec<&String> = labels
         .iter()
-        .filter(|l| l.starts_with("project:"))
+        .filter(|l| is_tracker_routing_label(l))
         .collect();
 
     let mut warnings = Vec::new();
 
     // Rule 1: count.
-    match (issue_type, project_labels.len()) {
+    match (issue_type, routing_labels.len()) {
         (IssueType::Epic, _) => {} // epics may have any count, including 0
         (_, 1) => {}                // canonical case
         (_, 0) => warnings.push(format!(
-            "issue '{}' has no project:* label (non-epic issues should have exactly 1)",
+            "issue '{}' has no app/lib label (non-epic issues should have exactly 1)",
             slug
         )),
         (_, n) => warnings.push(format!(
-            "issue '{}' has {} project:* labels {:?} (non-epic issues should have exactly 1; only epics may span multiple)",
-            slug, n, project_labels
+            "issue '{}' has {} app/lib labels {:?} (non-epic issues should have exactly 1; only epics may span multiple)",
+            slug, n, routing_labels
         )),
     }
 
-    // Rule 2: vocabulary. Each project:* label must appear in
+    // Rule 2: vocabulary. Each app/lib label must appear in
     // `[[projects]].label`. Applies to epics too — a typo'd project name
     // is still a typo regardless of issue type.
     if !known_labels.is_empty() {
-        for label in &project_labels {
+        for label in &routing_labels {
             if !known_labels.iter().any(|k| k == *label) {
                 warnings.push(format!(
-                    "issue '{}' has project label '{}' not declared in [[projects]] in aw.toml (known: {:?})",
+                    "issue '{}' has tracker label '{}' not declared in [[projects]] in aw.toml (known: {:?})",
                     slug, label, known_labels
                 ));
             }
@@ -5854,7 +5858,7 @@ async fn run_validate(mut args: ValidateArgs) -> Result<()> {
         None => anyhow::bail!("Issue '{}' not found", requested_slug),
     };
 
-    // Soft check on every validate: warn if project:* label count doesn't
+    // Soft check on every validate: warn if app/lib label count doesn't
     // match the one-issue-one-project convention (epics excepted).
     check_project_labels(&project_root, &issue.labels, issue.issue_type, &issue.slug);
 
@@ -6259,7 +6263,7 @@ mod tests {
             gitlab_id: None,
             url: None,
             author: None,
-            labels: vec!["type:bug".to_string(), "project:agentic-workflow".to_string()],
+            labels: vec!["type:bug".to_string(), "app:agentic-workflow".to_string()],
             created_at: None,
             updated_at: None,
             slug: "1234".to_string(),
@@ -6307,7 +6311,7 @@ mod tests {
         );
         issue.labels = vec![
             format!("type:{}", issue_type.as_str()),
-            "project:agentic-workflow".to_string(),
+            "app:agentic-workflow".to_string(),
         ];
         if let Some(priority) = priority {
             issue.labels.push(format!("priority:{}", priority));
@@ -6654,7 +6658,7 @@ Generator ownership is complete; package-manager roadmap remains open.
                 reference: "#3779".to_string(),
                 status: "closed".to_string(),
                 title: "jet package manager readiness".to_string(),
-                labels: "project:jet, type:epic".to_string(),
+                labels: "app:jet, type:epic".to_string(),
                 url: "https://github.example/issues/3779".to_string(),
             },
         );
@@ -6692,7 +6696,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("## Existing WI Refs Not In Open Inventory"));
         assert!(body.contains("| Package Manager | package-manager-readiness | #3779 | #3779: closed - jet package manager readiness |"));
         assert!(body.contains("## Tracker WI Ref Lookups"));
-        assert!(body.contains("| #3779 | closed | jet package manager readiness | project:jet, type:epic | https://github.example/issues/3779 |"));
+        assert!(body.contains("| #3779 | closed | jet package manager readiness | app:jet, type:epic | https://github.example/issues/3779 |"));
         assert!(!body.contains("## Candidate WI Drafts"));
         assert!(body.contains(
             "Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref"
@@ -6867,13 +6871,13 @@ Generator ownership is complete; package-manager roadmap remains open.
 name = "jet"
 aliases = ["j"]
 path = "projects/jet"
-label = "project:jet"
+label = "app:jet"
 
 [[projects]]
 name = "score"
 path = "projects/score"
 cap_path = "docs/score-cap.md"
-label = "project:score"
+label = "app:score"
 "#,
         )
         .unwrap();
@@ -7092,7 +7096,7 @@ label = "project:score"
 
     #[test]
     fn project_label_warnings_non_epic_with_one_label_passes() {
-        let labels = vec!["type:bug".into(), "project:cclab-agent".into()];
+        let labels = vec!["type:bug".into(), "app:cclab-agent".into()];
         assert!(project_label_warnings(&labels, IssueType::Bug, "demo", &[]).is_empty());
     }
 
@@ -7102,7 +7106,7 @@ label = "project:score"
         let warnings = project_label_warnings(&labels, IssueType::Enhancement, "demo", &[]);
         assert_eq!(warnings.len(), 1);
         let msg = &warnings[0];
-        assert!(msg.contains("no project:*"), "msg was: {}", msg);
+        assert!(msg.contains("no app/lib"), "msg was: {}", msg);
         assert!(msg.contains("demo"), "msg should name the slug: {}", msg);
     }
 
@@ -7110,13 +7114,13 @@ label = "project:score"
     fn project_label_warnings_non_epic_with_multiple_labels_warns() {
         let labels = vec![
             "type:refactor".into(),
-            "project:cclab-agent".into(),
-            "project:agentic-workflow".into(),
+            "app:cclab-agent".into(),
+            "app:agentic-workflow".into(),
         ];
         let warnings = project_label_warnings(&labels, IssueType::Refactor, "demo", &[]);
         assert_eq!(warnings.len(), 1);
         let msg = &warnings[0];
-        assert!(msg.contains("2 project:*"), "msg should count: {}", msg);
+        assert!(msg.contains("2 app/lib"), "msg should count: {}", msg);
         assert!(
             msg.contains("only epics may span"),
             "msg should explain epic exception: {}",
@@ -7134,30 +7138,24 @@ label = "project:score"
     fn project_label_warnings_epic_with_multiple_labels_passes() {
         let labels = vec![
             "type:epic".into(),
-            "project:cclab-agent".into(),
-            "project:agentic-workflow".into(),
-            "project:conductor".into(),
+            "app:cclab-agent".into(),
+            "app:agentic-workflow".into(),
+            "app:conductor".into(),
         ];
         assert!(project_label_warnings(&labels, IssueType::Epic, "demo", &[]).is_empty());
     }
 
     #[test]
     fn project_label_warnings_known_label_passes() {
-        let labels = vec!["type:bug".into(), "project:agentic-workflow".into()];
-        let known = vec![
-            "project:agentic-workflow".into(),
-            "project:agentic-workflow".into(),
-        ];
+        let labels = vec!["type:bug".into(), "app:agentic-workflow".into()];
+        let known = vec!["app:agentic-workflow".into(), "app:agentic-workflow".into()];
         assert!(project_label_warnings(&labels, IssueType::Bug, "demo", &known).is_empty());
     }
 
     #[test]
     fn project_label_warnings_unknown_label_warns_against_known_set() {
-        let labels = vec!["type:bug".into(), "project:typo".into()];
-        let known = vec![
-            "project:agentic-workflow".into(),
-            "project:agentic-workflow".into(),
-        ];
+        let labels = vec!["type:bug".into(), "app:typo".into()];
+        let known = vec!["app:agentic-workflow".into(), "app:agentic-workflow".into()];
         let warnings = project_label_warnings(&labels, IssueType::Bug, "demo", &known);
         assert_eq!(
             warnings.len(),
@@ -7167,13 +7165,13 @@ label = "project:score"
         );
         let msg = &warnings[0];
         assert!(
-            msg.contains("project:typo"),
+            msg.contains("app:typo"),
             "msg should name the bad label: {}",
             msg
         );
         assert!(msg.contains("not declared"), "msg should explain: {}", msg);
         assert!(
-            msg.contains("project:agentic-workflow"),
+            msg.contains("app:agentic-workflow"),
             "msg should list known labels: {}",
             msg
         );
@@ -7181,7 +7179,7 @@ label = "project:score"
 
     #[test]
     fn project_label_warnings_unknown_label_with_empty_known_skips_value_check() {
-        let labels = vec!["type:bug".into(), "project:typo".into()];
+        let labels = vec!["type:bug".into(), "app:typo".into()];
         // Empty known => degrade gracefully, only the count rule fires (and
         // here count=1 is canonical, so no warnings at all).
         assert!(project_label_warnings(&labels, IssueType::Bug, "demo", &[]).is_empty());
@@ -7189,11 +7187,11 @@ label = "project:score"
 
     #[test]
     fn project_label_warnings_unknown_label_on_epic_still_warns() {
-        let labels = vec!["type:epic".into(), "project:typo".into()];
-        let known = vec!["project:agentic-workflow".into()];
+        let labels = vec!["type:epic".into(), "app:typo".into()];
+        let known = vec!["app:agentic-workflow".into()];
         let warnings = project_label_warnings(&labels, IssueType::Epic, "demo", &known);
         assert_eq!(warnings.len(), 1, "epic with bad label should still warn");
-        assert!(warnings[0].contains("project:typo"));
+        assert!(warnings[0].contains("app:typo"));
     }
 
     #[test]
@@ -7201,10 +7199,10 @@ label = "project:score"
         // Two unknown labels => one count warning + two value warnings.
         let labels = vec![
             "type:refactor".into(),
-            "project:typo-a".into(),
-            "project:typo-b".into(),
+            "app:typo-a".into(),
+            "app:typo-b".into(),
         ];
-        let known = vec!["project:agentic-workflow".into()];
+        let known = vec!["app:agentic-workflow".into()];
         let warnings = project_label_warnings(&labels, IssueType::Refactor, "demo", &known);
         assert_eq!(
             warnings.len(),
@@ -7241,12 +7239,12 @@ label = "project:score"
 [[projects]]
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [[projects]]
 name = "agentic-workflow"
 path = "apps/agentic-workflow"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [[projects]]
 name = "no-label"
@@ -7255,7 +7253,7 @@ path = "crates/no-label"
         )
         .unwrap();
         let labels = read_known_project_labels(tmp.path());
-        assert_eq!(labels, vec!["project:agentic-workflow", "project:no-label"]);
+        assert_eq!(labels, vec!["app:agentic-workflow", "app:no-label"]);
     }
 
     // -- score-wi-cli-redesign: typed-flag tests ----------------------------
@@ -7269,11 +7267,11 @@ path = "crates/no-label"
     const CONFIG_WITH_PROJECTS_AND_AGENTS: &str = r#"
 [[projects]]
 name = "mamba"
-label = "project:mamba"
+label = "app:mamba"
 
 [[projects]]
 name = "agentic-workflow"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 
 [[agents]]
 name = "claude-code"
@@ -7289,7 +7287,7 @@ label = "agent::codex"
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), CONFIG_WITH_PROJECTS_AND_AGENTS);
         let label = resolve_project_label(tmp.path(), "agentic-workflow").unwrap();
-        assert_eq!(label, "project:agentic-workflow");
+        assert_eq!(label, "app:agentic-workflow");
     }
 
     #[test]
@@ -7301,11 +7299,11 @@ label = "agent::codex"
 [[projects]]
 name = "agentic-workflow"
 aliases = ["aw"]
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 "#,
         );
         let label = resolve_project_label(tmp.path(), "aw").unwrap();
-        assert_eq!(label, "project:agentic-workflow");
+        assert_eq!(label, "app:agentic-workflow");
     }
 
     #[test]
@@ -7348,7 +7346,7 @@ label = "agent::claude-code"
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), CONFIG_WITH_PROJECTS_AND_AGENTS);
         let label = resolve_list_label_filter(tmp.path(), None, Some("agentic-workflow")).unwrap();
-        assert_eq!(label.as_deref(), Some("project:agentic-workflow"));
+        assert_eq!(label.as_deref(), Some("app:agentic-workflow"));
     }
 
     #[test]
@@ -7357,7 +7355,7 @@ label = "agent::claude-code"
         write_config(tmp.path(), CONFIG_WITH_PROJECTS_AND_AGENTS);
         let err = resolve_list_label_filter(
             tmp.path(),
-            Some("project:agentic-workflow"),
+            Some("app:agentic-workflow"),
             Some("agentic-workflow"),
         )
         .unwrap_err();
@@ -7382,7 +7380,7 @@ label = "agent::claude-code"
 [[projects]]
 name = "agentic-workflow"
 aliases = ["aw"]
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 "#,
         );
         let project = infer_project_name_from_branch(tmp.path(), "project-aw").unwrap();
@@ -7398,7 +7396,7 @@ label = "project:agentic-workflow"
 [[projects]]
 name = "agentic-workflow"
 aliases = ["aw"]
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 "#,
         );
         let project = infer_project_name_from_branch(tmp.path(), "project-aw-wi-foo").unwrap();
@@ -7449,7 +7447,7 @@ label = "project:agentic-workflow"
             author: None,
             labels: vec![
                 "type:enhancement".to_string(),
-                "project:agentic-workflow".to_string(),
+                "app:agentic-workflow".to_string(),
             ],
             created_at: Some("2026-05-13T00:00:00Z".to_string()),
             updated_at: Some("2026-05-13T00:00:00Z".to_string()),
@@ -7481,7 +7479,7 @@ label = "project:agentic-workflow"
         assert!(rendered.contains("draft: true"));
         assert!(rendered.contains("tmp_id: 'wi-demo'"));
         assert!(rendered.contains("project: 'agentic-workflow'"));
-        assert!(rendered.contains("- 'project:agentic-workflow'"));
+        assert!(rendered.contains("- 'app:agentic-workflow'"));
         assert!(rendered.contains("## Problem"));
     }
 
@@ -7500,7 +7498,7 @@ title: 'demo draft'\n\
 state: draft\n\
 labels:\n\
 - 'type:enhancement'\n\
-- 'project:agentic-workflow'\n\
+- 'app:agentic-workflow'\n\
 ---\n\n\
 ## Problem\n\nDemo\n",
         )
@@ -7534,7 +7532,7 @@ labels:\n\
             gitlab_id: None,
             url: None,
             author: None,
-            labels: vec!["type:enhancement".to_string(), "project:agentic-workflow".to_string()],
+            labels: vec!["type:enhancement".to_string(), "app:agentic-workflow".to_string()],
             created_at: None,
             updated_at: None,
             slug: "wi-demo".to_string(),
@@ -7754,7 +7752,7 @@ labels:\n\
             author: None,
             labels: vec![
                 "type:enhancement".to_string(),
-                "project:agentic-workflow".to_string(),
+                "app:agentic-workflow".to_string(),
             ],
             created_at: None,
             updated_at: None,
@@ -7865,7 +7863,7 @@ labels:\n\
     fn build_create_label_vec_orders_type_project_priority_agent() {
         let labels = build_create_label_vec(
             "type:bug",
-            &["project:agentic-workflow".into()],
+            &["app:agentic-workflow".into()],
             Some("priority:p1"),
             Some("agent::claude-code"),
         );
@@ -7873,7 +7871,7 @@ labels:\n\
             labels,
             vec![
                 "type:bug",
-                "project:agentic-workflow",
+                "app:agentic-workflow",
                 "priority:p1",
                 "agent::claude-code"
             ]
@@ -7884,38 +7882,35 @@ labels:\n\
     fn build_create_label_vec_skips_optional_when_absent() {
         let labels = build_create_label_vec(
             "type:enhancement",
-            &["project:agentic-workflow".into()],
+            &["app:agentic-workflow".into()],
             None,
             None,
         );
-        assert_eq!(labels, vec!["type:enhancement", "project:agentic-workflow"]);
+        assert_eq!(labels, vec!["type:enhancement", "app:agentic-workflow"]);
     }
 
     #[test]
     fn build_create_label_vec_dedupes_preserving_first_seen_order() {
         let labels = build_create_label_vec(
             "type:epic",
-            &[
-                "project:agentic-workflow".into(),
-                "project:agentic-workflow".into(),
-            ],
+            &["app:agentic-workflow".into(), "app:agentic-workflow".into()],
             None,
             None,
         );
-        assert_eq!(labels, vec!["type:epic", "project:agentic-workflow"]);
+        assert_eq!(labels, vec!["type:epic", "app:agentic-workflow"]);
     }
 
     #[test]
     fn build_create_label_vec_epic_multi_project_ordered() {
         let labels = build_create_label_vec(
             "type:epic",
-            &["project:agentic-workflow".into(), "project:mamba".into()],
+            &["app:agentic-workflow".into(), "app:mamba".into()],
             None,
             None,
         );
         assert_eq!(
             labels,
-            vec!["type:epic", "project:agentic-workflow", "project:mamba"]
+            vec!["type:epic", "app:agentic-workflow", "app:mamba"]
         );
     }
 
@@ -7983,7 +7978,7 @@ labels:\n\
             r#"
 [[projects]]
 name = "agentic-workflow"
-label = "project:agentic-workflow"
+label = "app:agentic-workflow"
 "#,
         );
         let pairs = read_known_agent_name_label_pairs(tmp.path());

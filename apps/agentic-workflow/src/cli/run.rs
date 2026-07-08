@@ -2203,7 +2203,8 @@ fn issue_cli_ref(issue: &Issue) -> String {
 fn project_from_labels(issue: &Issue) -> Option<String> {
     issue.labels.iter().find_map(|label| {
         label
-            .strip_prefix("project:")
+            .strip_prefix("app:")
+            .or_else(|| label.strip_prefix("lib:"))
             .map(|project| project.to_string())
     })
 }
@@ -2434,7 +2435,7 @@ mod tests {
             updated_at: None,
             slug: number.to_string(),
             body: String::new(),
-            labels: vec!["project:jet".to_string()],
+            labels: vec!["app:jet".to_string()],
             related: Vec::new(),
             implements: Vec::new(),
             phase: None,
@@ -2587,7 +2588,7 @@ mod tests {
         assert_eq!(goal.payload_path, "/tmp/aw/goals/aw-run-project-demo.md");
         assert!(goal.goal_prompt.is_some());
         let payload = std::fs::read_to_string(&goal.payload_path).unwrap();
-        assert!(payload.contains("Drive the Agentic Workflow root `project:demo`"));
+        assert!(payload.contains("Drive the Agentic Workflow root `app:demo`"));
         assert!(payload.contains("aw run --project demo"));
     }
 
@@ -2701,7 +2702,7 @@ cap_path = "projects/jet/README.md"
             updated_at: None,
             slug: "4100".to_string(),
             body: String::new(),
-            labels: vec!["project:mamba".to_string()],
+            labels: vec!["app:mamba".to_string()],
             related: Vec::new(),
             implements: Vec::new(),
             phase: None,
@@ -3374,7 +3375,7 @@ review_status: pending
             updated_at: None,
             slug: "4102".to_string(),
             body: String::new(),
-            labels: vec!["project:mamba".to_string()],
+            labels: vec!["app:mamba".to_string()],
             related: vec!["parent #4101".to_string()],
             implements: Vec::new(),
             phase: None,
@@ -3420,7 +3421,7 @@ review_status: pending
             updated_at: None,
             slug: "4041".to_string(),
             body: String::new(),
-            labels: vec!["project:jet".to_string()],
+            labels: vec!["app:jet".to_string()],
             related: Vec::new(),
             implements: Vec::new(),
             phase: None,

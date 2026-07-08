@@ -114,8 +114,8 @@ enum Command {
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-upgrade-self-update-cli-from-github-releases.md
     Upgrade(UpgradeArgs),
     /// Search, view, and file Lumen issues on the axiom tracker.
-    /// `search` and `view` read existing `project:lumen` issues; `create`
-    /// files a diagnostics-rich issue tagged `project:lumen`.
+    /// `search` and `view` read existing `app:lumen` issues; `create`
+    /// files a diagnostics-rich issue tagged `app:lumen`.
     // @spec projects/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md
     Issue(IssueArgs),
     /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
@@ -314,7 +314,7 @@ struct IssueArgs {
 
 #[derive(Subcommand)]
 enum IssueCommand {
-    /// Search Lumen issues (project:lumen); omit the query to list recent.
+    /// Search Lumen issues (app:lumen); omit the query to list recent.
     Search(IssueSearchArgs),
     /// Print one issue by number.
     View(IssueViewArgs),
@@ -810,7 +810,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
                     repo: args.repo,
                     // Always tag with the project label so reports route
                     // automatically (CLI convention); keep any user labels too.
-                    label: std::iter::once("project:lumen".to_string())
+                    label: std::iter::once("app:lumen".to_string())
                         .chain(args.label)
                         .collect(),
                     dry_run: args.dry_run,

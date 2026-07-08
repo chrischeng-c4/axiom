@@ -215,7 +215,7 @@ impl From<LlmFormat> for cli_std::llm::Format {
 
 #[derive(Subcommand)]
 enum IssueCmd {
-    /// Search vat's issues (project:vat); omit the query to list recent.
+    /// Search vat's issues (app:vat); omit the query to list recent.
     Search {
         /// Search text (omit to list recent issues).
         #[arg(num_args = 0..)]
@@ -232,7 +232,7 @@ enum IssueCmd {
         /// Issue number.
         number: u64,
     },
-    /// File a structured issue (auto-tagged project:vat).
+    /// File a structured issue (auto-tagged app:vat).
     Create {
         /// Issue title (default: derived from the message).
         #[arg(long)]
@@ -457,7 +457,7 @@ fn upgrade_cmd(
 }
 
 /// `vat issue <search|view|create>` → `cli_std::issue` on a tokio runtime,
-/// always scoped to the `project:vat` tracker label.
+/// always scoped to the `app:vat` tracker label.
 #[cfg(feature = "issue")]
 fn issue_cmd(cmd: IssueCmd) -> Result<ExitCode> {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -509,7 +509,7 @@ fn issue_cmd(cmd: IssueCmd) -> Result<ExitCode> {
                         message,
                         url: None,
                         repo: None,
-                        label: vec!["project:vat".to_string()],
+                        label: vec!["app:vat".to_string()],
                         dry_run,
                         yes: true,
                     },

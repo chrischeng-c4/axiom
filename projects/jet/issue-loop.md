@@ -1,7 +1,7 @@
 ---
 project: jet
 branch: project-jet
-label: "project:jet"
+label: "app:jet"
 repo: chrischeng-c4/axiom
 pick_order: oldest-first
 build: skip
@@ -43,5 +43,5 @@ pr:
 - Perf gate output OR an explicit "perf N/A because …" line.
 
 ## Loop exit
-- Stop when `gh issue list --label project:jet --state open` returns 0.
+- Stop when `gh issue list --label app:jet --state open` returns 0.
 - If a single issue can't be closed (blocked by another issue, needs human decision, fails perf), comment on it explaining the block and move to the next. Don't loop on a stuck issue.

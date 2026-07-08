@@ -1,7 +1,7 @@
 [project]
 name = "rig"
 cap_path = "README.md"
-label = "project:rig"
+label = "app:rig"
 
 [[workspaces]]
 name = "rig"

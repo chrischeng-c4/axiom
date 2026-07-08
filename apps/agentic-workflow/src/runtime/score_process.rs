@@ -736,7 +736,7 @@ mod tests {
             &stored_issue(
                 "open-jet",
                 StoredIssueState::Open,
-                vec!["project:jet", "priority:p1"],
+                vec!["app:jet", "priority:p1"],
             ),
         )
         .await;
@@ -745,7 +745,7 @@ mod tests {
             &stored_issue(
                 "draft-jet",
                 StoredIssueState::Draft,
-                vec!["project:jet", "priority:p1"],
+                vec!["app:jet", "priority:p1"],
             ),
         )
         .await;
@@ -754,13 +754,13 @@ mod tests {
             &stored_issue(
                 "closed-jet",
                 StoredIssueState::Closed,
-                vec!["project:jet", "priority:p1"],
+                vec!["app:jet", "priority:p1"],
             ),
         )
         .await;
         write_stored_issue(
             tmp.path(),
-            &stored_issue("open-other", StoredIssueState::Open, vec!["project:jet"]),
+            &stored_issue("open-other", StoredIssueState::Open, vec!["app:jet"]),
         )
         .await;
 
@@ -768,7 +768,7 @@ mod tests {
         let refs = backend
             .list(&ListFilter {
                 state: RuntimeIssueState::Open,
-                labels: vec!["project:jet".into(), "priority:p1".into()],
+                labels: vec!["app:jet".into(), "priority:p1".into()],
             })
             .await
             .unwrap();
@@ -780,11 +780,7 @@ mod tests {
     #[tokio::test]
     async fn local_issue_backend_reads_body_and_frontmatter() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let mut issue = stored_issue(
-            "enhancement-read",
-            StoredIssueState::Open,
-            vec!["project:jet"],
-        );
+        let mut issue = stored_issue("enhancement-read", StoredIssueState::Open, vec!["app:jet"]);
         issue.phase = Some("reviewed".into());
         issue.review_count = Some(1);
         write_stored_issue(tmp.path(), &issue).await;

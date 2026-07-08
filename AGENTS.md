@@ -353,8 +353,8 @@ structured parameters (topic/title/version/tag/state) are flags.
 - `issue search [query]` · `view <n>` · `create [--title <t>] [message...]` —
   read **and** write the tool's issues via `cli_std::issue::{search,view,create}`.
   `search`/`view` are read-only (tokenless on public repos), filtered to
-  `project:<name>`; `create` files a structured issue (diagnostics + the
-  `project:<name>` label). Named `issue` (not `report`), leaving domain `report`
+  `app:<name>`; `create` files a structured issue (diagnostics + the
+  `app:<name>` label). Named `issue` (not `report`), leaving domain `report`
   verbs (`jet report` = HTML test reports) untouched.
 
 Full spec: **`CONTRIBUTING.md` → "CLI convention: every CLI ships `llm`,

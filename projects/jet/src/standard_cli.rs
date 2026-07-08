@@ -288,7 +288,7 @@ pub fn issue_command() -> Command {
         .arg_required_else_help(true)
         .subcommand(
             Command::new("search")
-                .about("Search jet's issues (project:jet); omit the query to list recent")
+                .about("Search jet's issues (app:jet); omit the query to list recent")
                 .arg(
                     Arg::new("query")
                         .num_args(0..)
@@ -321,7 +321,7 @@ pub fn issue_command() -> Command {
         )
         .subcommand(
             Command::new("create")
-                .about("File a structured issue (auto-tagged project:jet)")
+                .about("File a structured issue (auto-tagged app:jet)")
                 .arg(
                     Arg::new("title")
                         .long("title")
@@ -400,7 +400,7 @@ pub async fn run_upgrade(matches: &ArgMatches) -> Result<()> {
 }
 
 /// `jet issue <verb>` — dispatch search/view/create/comment to cli-std.
-/// `create` always tags `project:jet`; `search` defaults to jet's own issues.
+/// `create` always tags `app:jet`; `search` defaults to jet's own issues.
 pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("search", m)) => {
@@ -446,7 +446,7 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
                     message,
                     url: None,
                     repo: None,
-                    label: vec!["project:jet".to_string()],
+                    label: vec!["app:jet".to_string()],
                     dry_run: m.get_flag("dry-run"),
                     yes: true,
                 },

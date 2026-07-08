@@ -50,7 +50,7 @@ edges:
   - { from: clap_dispatch, to: domain, label: "run/status/config/init/hook/etc." }
   - { from: llm, to: terminal, label: "offline topic output" }
   - { from: upgrade, to: terminal, label: "release check/update path" }
-  - { from: issue, to: terminal, label: "project:cap issue operations" }
+  - { from: issue, to: terminal, label: "app:cap issue operations" }
   - { from: legacy_alias, to: terminal, label: "deprecated dry-run/create compatibility" }
   - { from: domain, to: terminal, label: "existing cap semantics preserved" }
 ---
@@ -95,7 +95,7 @@ requirements:
     verify: test
   issue_create:
     id: CLI-STD-UT-3
-    text: "cap issue create --dry-run builds a diagnostics-rich issue body tagged project:cap without network submission."
+    text: "cap issue create --dry-run builds a diagnostics-rich issue body tagged app:cap without network submission."
     kind: functional
     risk: high
     verify: test

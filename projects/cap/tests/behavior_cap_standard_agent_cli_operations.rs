@@ -14,7 +14,7 @@
 // Contract: installed cap frontend delegates standard commands through the cap-full sibling
 // Contract: installed cap frontend preserves the caller environment for cap-full passthrough commands
 // Contract: cap llm renders cap-specific offline docs through cli-std
-// Contract: cap issue create and report-issue dry-run payloads carry project:cap diagnostics
+// Contract: cap issue create and report-issue dry-run payloads carry app:cap diagnostics
 // Contract: release-feature builds enable cli-std online paths
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

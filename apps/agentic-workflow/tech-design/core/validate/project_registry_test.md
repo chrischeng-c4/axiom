@@ -221,7 +221,7 @@ tests:
       name = "agentic-workflow"
       path = "apps/agentic-workflow"
       td_path = "apps/agentic-workflow/tech-design/core"
-      label = "project:agentic-workflow"
+      label = "app:agentic-workflow"
       
       [[projects.workspaces]]
       paths = ["apps/agentic-workflow/**"]

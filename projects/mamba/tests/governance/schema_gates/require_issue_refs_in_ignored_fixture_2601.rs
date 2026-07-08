@@ -136,7 +136,7 @@ fn reference_rule_pins_nearby_window_and_allowed_kinds() {
     assert_eq!(
         r.get("project_mamba_label_required")
             .and_then(|v| v.as_str()),
-        Some("project:mamba")
+        Some("app:mamba")
     );
     assert_eq!(
         r.get("forbid_external_repository_references")

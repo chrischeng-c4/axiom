@@ -1,7 +1,7 @@
 ---
 project: mamba
 branch: project-mamba
-label: "project:mamba"
+label: "app:mamba"
 repo: chrischeng-c4/axiom
 pick_order: oldest-first
 build:
@@ -74,6 +74,6 @@ mode: autopilot
 - If shipped as handwritten temp, link the codegen-conversion followup issue.
 
 ## Loop exit
-- Stop when `gh issue list --label project:mamba --state open` returns 0.
+- Stop when `gh issue list --label app:mamba --state open` returns 0.
 - Defer issues blocked by the pre-existing SIGABRT/UAF runtime bugs to a tracker; don't loop on them.
 - Defer issues whose lib cannot beat CPython on any reasonable workload (close as `wontfix` with numbers, or leave for a runtime-JIT improvement to revisit).
