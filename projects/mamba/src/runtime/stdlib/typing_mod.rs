@@ -1982,6 +1982,100 @@ mod tests {
     }
 
     #[test]
+    fn test_direct_typevar_family_ctor_repr_matches_cpython() {
+        let typevar_args = [MbValue::from_ptr(MbObject::new_str("T".to_string()))];
+        let typevartuple_args = [MbValue::from_ptr(MbObject::new_str("Ts".to_string()))];
+        let paramspec_args = [MbValue::from_ptr(MbObject::new_str("P".to_string()))];
+
+        let cases = [
+            (
+                unsafe { d_typevar_ctor(typevar_args.as_ptr(), typevar_args.len()) },
+                "~T",
+                "(~T,)",
+            ),
+            (
+                unsafe {
+                    d_typevartuple_ctor(typevartuple_args.as_ptr(), typevartuple_args.len())
+                },
+                "Ts",
+                "(Ts,)",
+            ),
+            (
+                unsafe { d_paramspec_ctor(paramspec_args.as_ptr(), paramspec_args.len()) },
+                "~P",
+                "(~P,)",
+            ),
+        ];
+
+        for (value, expected, tuple_expected) in cases {
+            let repr = super::super::super::builtins::mb_repr(value);
+            let text = super::super::super::builtins::mb_str(value);
+            let tuple_repr = super::super::super::builtins::mb_repr(MbValue::from_ptr(
+                MbObject::new_tuple(vec![value]),
+            ));
+
+            unsafe {
+                match &(*repr.as_ptr().expect("repr")).data {
+                    super::super::super::rc::ObjData::Str(s) => assert_eq!(s, expected),
+                    _ => panic!("expected repr string"),
+                }
+                match &(*text.as_ptr().expect("str")).data {
+                    super::super::super::rc::ObjData::Str(s) => assert_eq!(s, expected),
+                    _ => panic!("expected str string"),
+                }
+                match &(*tuple_repr.as_ptr().expect("tuple repr")).data {
+                    super::super::super::rc::ObjData::Str(s) => assert_eq!(s, tuple_expected),
+                    _ => panic!("expected tuple repr string"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_type_alias_type_ctor_preserves_direct_typevar_display_in_value_and_type_params() {
+        let typevar_args = [MbValue::from_ptr(MbObject::new_str("T".to_string()))];
+        let tv = unsafe { d_typevar_ctor(typevar_args.as_ptr(), typevar_args.len()) };
+        let value = pep585_subscript(
+            super::super::super::builtins::make_type_object("list"),
+            tv,
+        );
+
+        super::super::super::closure::push_active_module_name("__main__".to_string());
+        super::super::super::closure::push_active_module_name("typing".to_string());
+        let alias_args = [
+            MbValue::from_ptr(MbObject::new_str("TA".to_string())),
+            value,
+            MbValue::from_ptr(MbObject::new_tuple(vec![tv])),
+        ];
+        let alias = unsafe { d_type_alias_type_ctor(alias_args.as_ptr(), alias_args.len()) };
+        super::super::super::closure::pop_active_module_name();
+        super::super::super::closure::pop_active_module_name();
+
+        let alias_repr = super::super::super::builtins::mb_repr(alias);
+        let value_repr = super::super::super::builtins::mb_repr(
+            instance_field_of(alias, "__value__").expect("__value__"),
+        );
+        let params_repr = super::super::super::builtins::mb_repr(
+            instance_field_of(alias, "__type_params__").expect("__type_params__"),
+        );
+
+        unsafe {
+            match &(*alias_repr.as_ptr().expect("alias repr")).data {
+                super::super::super::rc::ObjData::Str(s) => assert_eq!(s, "TA"),
+                _ => panic!("expected alias repr string"),
+            }
+            match &(*value_repr.as_ptr().expect("value repr")).data {
+                super::super::super::rc::ObjData::Str(s) => assert_eq!(s, "list[~T]"),
+                _ => panic!("expected value repr string"),
+            }
+            match &(*params_repr.as_ptr().expect("params repr")).data {
+                super::super::super::rc::ObjData::Str(s) => assert_eq!(s, "(~T,)"),
+                _ => panic!("expected type_params repr string"),
+            }
+        }
+    }
+
+    #[test]
     fn test_user_generic_alias_repr_qualifies_origin_module() {
         let origin = super::super::super::builtins::make_type_object("TypingBox1116");
         super::super::super::builtins::set_type_object_attr(

@@ -127,6 +127,9 @@ pub fn make_typevar_instance(
     instance_field_set(inst, "__infer_variance__", MbValue::from_bool(false));
     instance_field_set(inst, "__covariant__", MbValue::from_bool(false));
     instance_field_set(inst, "__contravariant__", MbValue::from_bool(false));
+    // Direct typing constructors keep CPython's display prefixes (~T / ~P)
+    // distinct from PEP 695 syntax-introduced parameters.
+    instance_field_set(inst, "__typing_ctor__", MbValue::from_bool(true));
     instance_field_set(inst, "__bound__", MbValue::none());
     instance_field_set(
         inst,
