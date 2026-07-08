@@ -1,4 +1,5 @@
 //! Server-side h2c transport (behind the `server` feature): serve **HTTP/1.1
+//! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //! and HTTP/2 cleartext (h2c, prior-knowledge) on one socket** via hyper-util's
 //! auto builder, with connection-level graceful shutdown.
 //!
@@ -16,6 +17,22 @@ use hyper_util::server::graceful::GracefulShutdown;
 use tokio::net::TcpListener;
 use tower::ServiceExt;
 
+/// @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerOptions {
+    pub max_concurrent_streams: u32,
+    pub drain_timeout: Duration,
+}
+
+impl Default for ServerOptions {
+    fn default() -> Self {
+        Self {
+            max_concurrent_streams: 4096,
+            drain_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
 /// Accept loop serving HTTP/1.1 + h2c on `listener`, dispatching every request
 /// through the axum `app`. `shutdown` resolves to stop accepting (e.g. on
 /// SIGTERM after the readiness-drain window); in-flight connections then get a
@@ -25,6 +42,17 @@ pub async fn serve(
     app: axum::Router,
     shutdown: impl std::future::Future<Output = ()>,
 ) {
+    serve_with_options(listener, app, ServerOptions::default(), shutdown).await;
+}
+
+/// Like [`serve`], with tunable HTTP/2 stream and drain settings.
+pub async fn serve_with_options(
+    listener: TcpListener,
+    app: axum::Router,
+    options: ServerOptions,
+    shutdown: impl std::future::Future<Output = ()>,
+) {
+    // @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // Lift the per-connection concurrent-stream ceiling: clients open
     // ~ln(concurrency) connections and multiplex many streams over each (see
@@ -33,7 +61,9 @@ pub async fn serve(
     // control windows stay at hyper defaults — on a low-RTT link the workload is
     // CPU-bound (framing + JSON), not window-bound, so enlarging them is a
     // WAN-only tuning with no local benefit.
-    builder.http2().max_concurrent_streams(4096);
+    builder
+        .http2()
+        .max_concurrent_streams(options.max_concurrent_streams);
 
     let graceful = GracefulShutdown::new();
     let mut shutdown = std::pin::pin!(shutdown);
@@ -71,7 +101,7 @@ pub async fn serve(
     // Bound the in-flight wait so a stuck client can't block process exit.
     tokio::select! {
         _ = graceful.shutdown() => tracing::info!("all connections drained"),
-        _ = tokio::time::sleep(Duration::from_secs(5)) => {
+        _ = tokio::time::sleep(options.drain_timeout) => {
             tracing::warn!("drain timeout — forcing shutdown")
         }
     }

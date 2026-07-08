@@ -45,7 +45,7 @@ pub use manager::{H2cManager, ManagerConfig, ManagerStats};
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
-pub use server::serve;
+pub use server::{serve, serve_with_options, ServerOptions};
 
 /// Recommended number of h2c connections for a target peak `concurrency`, using
 /// the available CPU parallelism as the upper cap.

@@ -1,0 +1,18 @@
+[package]
+name = "http-server"
+version = "0.1.0"
+edition = "2021"
+description = "Shared HTTP server runtime built on server-core/tcp-server: HTTP/1.1 + h2c serve, request tracing, and common hooks for service-http and Jet-style dev servers."
+
+[lib]
+name = "http_server"
+path = "src/lib.rs"
+
+[dependencies]
+server-core = { path = "../server-core" }
+tcp-server = { path = "../tcp-server" }
+h2c = { path = "../h2c", features = ["server"] }
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true, features = ["trace"] }
+tracing = { workspace = true }

@@ -5581,6 +5581,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-server"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "h2c",
+ "server-core",
+ "tcp-server",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11975,6 +11988,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "server-core"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "service-auth"
 version = "0.1.0"
 dependencies = [
@@ -12008,8 +12030,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
- "h2c",
  "http-body-util",
+ "http-server",
  "serde",
  "serde_json",
  "tokio",
@@ -12889,6 +12911,17 @@ name = "target-triple"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "591ef38edfb78ca4771ee32cf494cb8771944bee237a9b91fc9c1424ac4b777b"
+
+[[package]]
+name = "tcp-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "server-core",
+ "socket2 0.6.3",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "tcp-stream"
