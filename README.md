@@ -14,7 +14,7 @@ details.
 | [vat](projects/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
 | [loom](projects/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
 | [preview](projects/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
-| [tape](projects/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
+| [tape](apps/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
 | [defer](projects/defer/README.md) | Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack. |
 | [cube](projects/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
 | [beam](projects/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
@@ -84,7 +84,7 @@ an installer yet are marked _coming soon_.
 | [preview](projects/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/preview/install.sh \| sh` |
 | [relay](apps/relay/README.md) | `relay` | _coming soon_ |
 | [rig](projects/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/rig/install.sh \| sh` |
-| [tape](projects/tape/README.md) | `tape` | _coming soon_ |
+| [tape](apps/tape/README.md) | `tape` | _coming soon_ |
 | [vat](projects/vat/README.md) | `vat` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/vat/install.sh \| sh` |
 
 ## Runtime Evidence Loop

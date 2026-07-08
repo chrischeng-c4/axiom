@@ -494,6 +494,7 @@ fn normalize_project_local_path(project_path: &str, value: &str) -> String {
     if trimmed.is_empty()
         || trimmed.starts_with('/')
         || trimmed.starts_with("projects/")
+        || trimmed.starts_with("apps/")
         || trimmed.starts_with("crates/")
         || trimmed.starts_with("packages/")
         || trimmed.starts_with(".aw/")

@@ -12105,6 +12105,7 @@ fn looks_like_verification_inventory_reference(value: &str) -> bool {
         || lower.starts_with("http://")
         || lower.starts_with("https://")
         || lower.starts_with("projects/")
+        || lower.starts_with("apps/")
         || lower.starts_with("crates/")
         || lower.starts_with("examples/")
         || lower.starts_with("tests/")

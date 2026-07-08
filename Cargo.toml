@@ -3,7 +3,7 @@ members = [
     "apps/relay",
     "projects/defer",
     "projects/loom",
-    "projects/tape",
+    "apps/tape",
     "projects/preview",
     "projects/mamba/mambalibs/mongokit",
     "projects/mamba/mambalibs/mongokit/binding",
