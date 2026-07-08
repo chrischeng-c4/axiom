@@ -25,30 +25,35 @@ const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
 
 /// jet's agent-facing `llm` topics — the single in-code source of truth. The
 /// `outline` topic + standard-command footer are rendered by `cli-std`.
+const TOPIC_HELP: &str = "Topic to print: outline (default), workflow, quickstart, stories, browser, build-publish, test-e2e, debug-oracle, recipes";
+
 const TOPICS: &[cli_std::llm::Topic] = &[
     cli_std::llm::Topic {
         id: "workflow",
-        summary: "mental model: install → dev → build → test",
+        summary: "mental model: package, develop, stories, prove, publish",
         body: "\
 # jet workflow
 
-jet is a Rust-native build tool + package manager for JavaScript/TypeScript
-(bun/vite/npm in one binary). The mental model:
+jet is a Rust-native JavaScript/TypeScript toolchain. Treat it as one binary
+covering package management, dev serving, production builds, Storybook-like
+stories, browser proof, tests, publish, and diagnostics.
 
-1. `jet init`              scaffold a new project
-2. `jet install`          resolve + install deps from package.json → jet-lock.yaml
-3. `jet add <pkg>`        add a dependency (`-D` for devDependencies)
-4. `jet dev`              dev server with hot module reload (HMR)
-5. `jet build`            production build (app, or a library with `--lib`)
-6. `jet test` / `jet e2e` native unit/component tests and product-flow E2E
-7. `jet check`            TypeScript type-check
+1. `jet install` / `jet add` manage dependencies and `jet-lock.yaml`.
+2. `jet dev` serves an app with HMR.
+3. `jet stories` serves CSF stories with a Storybook-compatible manager/preview
+   contract for component review.
+4. `jet bb` and `jet browser` provide agent-first browser control for real
+   screenshots, clicks, console errors, and visual proof.
+5. `jet build` builds apps or libraries; `jet check` type-checks.
+6. `jet test` and `jet e2e` prove unit/component/product flows.
+7. `jet pack` / `jet publish` package libraries for npm-compatible registries.
 
 Packages live in a global content-addressed store (`jet store`). The lockfile is
 `jet-lock.yaml`; configuration is `jet.toml` (inspect with `jet config`).",
     },
     cli_std::llm::Topic {
         id: "quickstart",
-        summary: "copy-paste create → dev → build",
+        summary: "copy-paste app, library, and stories startup",
         body: "\
 # jet quickstart
 
@@ -56,13 +61,155 @@ Packages live in a global content-addressed store (`jet store`). The lockfile is
     cd my-app
     jet install
     jet dev            # serves with HMR
+    jet stories        # component workbench / Storybook-compatible review
     # ...edit src...
     jet build          # production bundle in dist/
-    jet test           # run the native test runner",
+    jet test           # native test runner",
+    },
+    cli_std::llm::Topic {
+        id: "stories",
+        summary: "Storybook-compatible component workbench",
+        body: "\
+# jet stories
+
+Use `jet stories` when the task is component review, CSF parity, Controls, docs,
+or Storybook migration.
+
+Core commands:
+
+    jet stories --host 127.0.0.1 --port 6134
+    jet build --stories
+
+Agent workflow:
+
+1. Start official Storybook and Jet on different ports when comparing parity.
+2. Compare `/index.json` first; mismatched story IDs usually explain bad manager
+   routing before pixels matter.
+3. Validate iframe output with screenshots for representative stories.
+4. Click real controls/components in the browser; do not rely on shell success.
+5. Inspect console/page errors and network 404s before calling parity good.
+
+Current stories mode aims to match the official Storybook manager/preview
+contract while keeping Jet's fast native server path. It handles CSF stories,
+Controls, docs canvas rendering, Storybook channel events, preview iframe
+routes, and optimized heavy dependency loading for common component-library deps.",
+    },
+    cli_std::llm::Topic {
+        id: "browser",
+        summary: "Browser Bridge and real interaction proof",
+        body: "\
+# jet browser
+
+Use browser proof for UI tasks, stories parity, visual regressions, and e2e
+debugging. A passing build is not enough when the requested behavior is visual
+or interactive.
+
+Core commands:
+
+    jet bb --help
+    jet browser --help
+
+Agent workflow:
+
+1. Open the local target with Browser Bridge or Playwright.
+2. Wait for the expected UI state, not just page load.
+3. Capture screenshots for desktop/mobile or relevant component frames.
+4. Click representative controls and assert visible text/state changed.
+5. Record console errors, page exceptions, failed requests, and timing.
+
+For Storybook parity, prefer an oracle that checks official Storybook and Jet
+side by side: manager shell, iframe pixels, story contract, and real click
+smoke. Use screenshots as the debugging baseline when shell output looks right
+but the UI looks wrong.",
+    },
+    cli_std::llm::Topic {
+        id: "build-publish",
+        summary: "production builds, pack, publish, and issue #1240 guardrail",
+        body: "\
+# jet build-publish
+
+Build apps with `jet build`; build libraries with `jet build --lib`. Use
+`jet pack` to inspect the tarball locally before publishing. Use `jet publish`
+only when the registry result is verified.
+
+Core commands:
+
+    jet build
+    jet build --lib
+    jet pack
+    jet publish --dry-run
+    jet publish
+
+Publish guardrail:
+
+#1240 is the regression case for npm installability: a real `jet publish` must
+write npm version metadata under `versions[version].dist`, not only upload the
+tarball attachment. Standard npm-compatible clients install from
+`dist.tarball`, then verify `dist.shasum` and `dist.integrity`.
+
+After any real publish to a registry, verify the published version metadata
+explicitly:
+
+    npm view <pkg>@<version> dist --registry <registry>
+    curl -s <registry-url>/<encoded-pkg> | jq '.versions[\"<version>\"].dist'
+
+Do not treat exit code 0 from `jet publish` as sufficient installability proof
+for registry-facing releases. The registry manifest must contain `dist.tarball`,
+`dist.shasum`, and `dist.integrity`.",
+    },
+    cli_std::llm::Topic {
+        id: "test-e2e",
+        summary: "native tests and product-flow e2e",
+        body: "\
+# jet test-e2e
+
+Use `jet test` for native unit/component/integration-style tests and `jet e2e`
+for product-flow validation.
+
+Core commands:
+
+    jet test
+    jet test --help
+    jet e2e run
+    jet e2e --help
+    jet report --help
+
+Agent workflow:
+
+1. Run the narrowest test that covers the changed behavior.
+2. For UI behavior, pair automated tests with browser screenshots/click smoke.
+3. Save or inspect HTML reports with `jet report` when debugging failures.
+4. Use real services where the repo contract requires them; do not replace
+   service-backed behavior with mocks unless the contract says SaaS-only mock.",
+    },
+    cli_std::llm::Topic {
+        id: "debug-oracle",
+        summary: "parity debugging with screenshots, index data, and issues",
+        body: "\
+# jet debug-oracle
+
+When Jet is replacing an existing frontend tool path, debug against the external
+oracle before changing assumptions.
+
+Useful checks:
+
+1. Compare official output and Jet output from the same project and story IDs.
+2. Check route contracts (`/index.json`, iframe URLs, static assets, websocket
+   events) before chasing CSS.
+3. Use screenshots or perceptual diffs for visual claims.
+4. Click a small but representative set of components.
+5. Inspect console errors, page exceptions, and failed network requests.
+6. Use `jet issue view <n>` or `jet issue search <query>` to pull live tracker
+   context, then update issues with `jet issue comment <n> ...` when evidence
+   changes.
+
+For publish or registry bugs, reproduce against a disposable local registry
+such as Verdaccio first, then prove the published package is installable with a
+standard npm-compatible client.",
     },
     cli_std::llm::Topic {
         id: "recipes",
-        summary: "task → command cheat-sheet",
+        summary: "task -> command cheat-sheet",
         body: "\
 # jet recipes
 
@@ -75,7 +222,12 @@ Packages live in a global content-addressed store (`jet store`). The lockfile is
 | run a one-off binary (npx) | `jet jtx cowsay hi`           |
 | type-check                 | `jet check`                   |
 | build a library            | `jet build --lib`             |
+| pack a library             | `jet pack`                    |
+| dry-run publish            | `jet publish --dry-run`       |
+| real publish               | verify issue #1240 guardrail  |
 | start the dev server       | `jet dev`                     |
+| start stories workbench    | `jet stories`                 |
+| compare UI in browser      | `jet bb --help`               |
 | run e2e flows              | `jet e2e run`                 |
 | inspect / lint config      | `jet config lint`             |
 | update this tool           | `jet upgrade`                 |
@@ -99,7 +251,7 @@ pub fn llm_command() -> Command {
                 .long("topic")
                 .value_name("topic")
                 .default_value("outline")
-                .help("Topic to print: outline (default), workflow, quickstart, recipes"),
+                .help(TOPIC_HELP),
         )
         .arg(
             Arg::new("format")
@@ -326,6 +478,75 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn llm_outline_lists_modern_topics() {
+        let out = cli_std::llm::render(
+            TOOL.project,
+            TOOL.version,
+            TOPICS,
+            "outline",
+            cli_std::llm::Format::Md,
+        )
+        .expect("render llm outline");
+        for topic in [
+            "stories",
+            "browser",
+            "build-publish",
+            "test-e2e",
+            "debug-oracle",
+        ] {
+            assert!(
+                out.contains(topic),
+                "outline should include {topic}, got:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn llm_publish_topic_mentions_issue_1240_dist_metadata() {
+        let out = cli_std::llm::render(
+            TOOL.project,
+            TOOL.version,
+            TOPICS,
+            "build-publish",
+            cli_std::llm::Format::Md,
+        )
+        .expect("render build-publish topic");
+        assert!(
+            out.contains("#1240"),
+            "publish topic should mention issue #1240"
+        );
+        assert!(
+            out.contains("dist.tarball"),
+            "publish topic should mention dist.tarball"
+        );
+        assert!(
+            out.contains("dist.integrity"),
+            "publish topic should mention dist.integrity"
+        );
+    }
+
+    #[test]
+    fn llm_help_lists_modern_topics() {
+        let mut help = Vec::new();
+        llm_command()
+            .write_long_help(&mut help)
+            .expect("render llm help");
+        let help = String::from_utf8(help).expect("help is UTF-8");
+        for topic in [
+            "stories",
+            "browser",
+            "build-publish",
+            "test-e2e",
+            "debug-oracle",
+        ] {
+            assert!(
+                help.contains(topic),
+                "llm help should include {topic}, got:\n{help}"
+            );
+        }
+    }
 
     #[test]
     fn issue_help_lists_comment() {

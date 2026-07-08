@@ -63,6 +63,8 @@ struct Published {
     auth_header: Option<String>,
     /// The tarball file name the publisher used inside `_attachments`.
     tarball_file: String,
+    /// The version manifest exactly as the publisher PUT it under `versions[v]`.
+    version_manifest: serde_json::Value,
 }
 
 /// Shared mock state: package name → what was published.
@@ -200,6 +202,14 @@ fn store_put(
                 published.tarball = base64_decode(data);
             }
         }
+    }
+
+    if let Some(version) = published.dist_tags.values().next() {
+        published.version_manifest = body
+            .get("versions")
+            .and_then(|v| v.get(version))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
     }
 
     store.lock().unwrap().insert(name, published);
@@ -449,7 +459,7 @@ async fn publish_dry_run_previews_without_uploading_to_registry() {
         "dry-run must resolve scoped registry to the mock URL, got {}",
         preview.registry
     );
-    assert_eq!(preview.tarball_file, "@acme/dry-run-2.0.0.tgz");
+    assert_eq!(preview.tarball_file, "dry-run-2.0.0.tgz");
     assert!(
         preview.tarball_bytes > 0,
         "dry-run must create tarball bytes for preview"
@@ -635,6 +645,35 @@ export function makeWidget(n: number): Widget {
         published.dist_tags.get("latest").map(String::as_str),
         Some("1.0.0"),
         "publish must record dist-tags latest=1.0.0"
+    );
+
+    // 5c. GH #1240: the publish PUT itself must carry npm's version-level
+    //     `dist` metadata. A registry accepting only the attachment is not
+    //     enough; standard clients install from `versions[v].dist.tarball`.
+    assert_eq!(
+        published.tarball_file, "widget-1.0.0.tgz",
+        "scoped publish attachment file must be slash-free and npm-compatible"
+    );
+    let dist = &published.version_manifest["dist"];
+    assert_eq!(
+        dist["tarball"].as_str(),
+        Some(format!("{base_url}/@acme/widget/-/widget-1.0.0.tgz").as_str()),
+        "publish body must include a resolvable dist.tarball URL: {}",
+        published.version_manifest
+    );
+    assert!(
+        dist["shasum"]
+            .as_str()
+            .is_some_and(|v| v.len() == 40 && v.chars().all(|ch| ch.is_ascii_hexdigit())),
+        "publish body must include npm SHA-1 dist.shasum: {}",
+        published.version_manifest
+    );
+    assert!(
+        dist["integrity"]
+            .as_str()
+            .is_some_and(|v| v.starts_with("sha512-") && v.len() > "sha512-".len()),
+        "publish body must include SRI dist.integrity: {}",
+        published.version_manifest
     );
 
     // 5c. The tarball contains the freshly-built dist files (ESM + CJS + .d.ts)

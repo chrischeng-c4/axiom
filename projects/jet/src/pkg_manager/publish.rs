@@ -4,6 +4,9 @@ use anyhow::{Context, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use sha1::{Digest as Sha1Digest, Sha1};
+use sha2::Sha512;
+
 use super::npmrc::NpmrcConfig;
 use super::workspace::WorkspaceManager;
 
@@ -231,12 +234,25 @@ impl Publisher {
         let client = reqwest::Client::new();
 
         let encoded = base64_encode(&prepared.tarball_bytes);
+        let mut version_manifest = prepared.pkg.clone();
+        if let Some(obj) = version_manifest.as_object_mut() {
+            obj.insert(
+                "dist".to_string(),
+                publish_dist_metadata(
+                    &prepared.registry,
+                    name,
+                    version,
+                    &prepared.tarball_file,
+                    &prepared.tarball_bytes,
+                ),
+            );
+        }
         let publish_body = serde_json::json!({
             "name": name,
             "description": prepared.pkg.get("description").and_then(|v| v.as_str()).unwrap_or(""),
             "dist-tags": { prepared.tag.as_str(): version },
             "versions": {
-                version: prepared.pkg
+                version: version_manifest
             },
             "access": prepared.access,
             "_attachments": {
@@ -303,7 +319,7 @@ impl Publisher {
             )
         })?;
         let tarball_bytes = self.create_tarball_bytes(&pkg)?;
-        let tarball_file = format!("{}-{}.tgz", name, version);
+        let tarball_file = npm_publish_tarball_file(&name, &version);
 
         Ok(PreparedPublish {
             pkg,
@@ -721,6 +737,79 @@ fn publish_config_registry(pkg: &serde_json::Value) -> Option<&str> {
         .filter(|v| !v.is_empty())
 }
 
+/// Build the tarball filename npm-compatible registries expose for a published
+/// version. Scoped package URLs keep the scope in the path (`@scope/pkg/-/...`),
+/// but the attachment filename itself is the package leaf (`pkg-1.0.0.tgz`).
+/// @issue #1240
+fn npm_publish_tarball_file(name: &str, version: &str) -> String {
+    let leaf = name
+        .rsplit('/')
+        .next()
+        .unwrap_or(name)
+        .trim_start_matches('@');
+    format!("{leaf}-{version}.tgz")
+}
+
+/// npm clients require `versions[version].dist` in the publish document. The
+/// attachment alone is not enough: clients resolve `dist.tarball`, then verify
+/// `shasum` / `integrity` before unpacking.
+/// @issue #1240
+fn publish_dist_metadata(
+    registry: &str,
+    name: &str,
+    version: &str,
+    tarball_file: &str,
+    tarball_bytes: &[u8],
+) -> serde_json::Value {
+    serde_json::json!({
+        "tarball": publish_tarball_url(registry, name, tarball_file),
+        "shasum": sha1_hex(tarball_bytes),
+        "integrity": sha512_integrity(tarball_bytes),
+        "fileCount": tarball_entry_paths_from_bytes(tarball_bytes).map(|v| v.len()).unwrap_or(0),
+        "unpackedSize": tarball_unpacked_size(tarball_bytes).unwrap_or(0),
+        "name": name,
+        "version": version,
+    })
+}
+
+fn publish_tarball_url(registry: &str, name: &str, tarball_file: &str) -> String {
+    format!(
+        "{}/{}/-/{}",
+        registry.trim_end_matches('/'),
+        name,
+        tarball_file
+    )
+}
+
+fn sha1_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn sha512_integrity(bytes: &[u8]) -> String {
+    let mut hasher = Sha512::new();
+    hasher.update(bytes);
+    format!("sha512-{}", base64_encode(&hasher.finalize()))
+}
+
+fn tarball_unpacked_size(tarball_bytes: &[u8]) -> Result<u64> {
+    use flate2::read::GzDecoder;
+
+    let gz = GzDecoder::new(tarball_bytes);
+    let mut archive = tar::Archive::new(gz);
+    let mut size = 0u64;
+    for entry in archive.entries()? {
+        let entry = entry?;
+        size = size.saturating_add(entry.header().size().unwrap_or(0));
+    }
+    Ok(size)
+}
+
 /// @issue #172 — auto-fill absent `main`/`module`/`types` package.json fields
 /// from a fresh library build's output. Only *missing* fields are filled — an
 /// already-declared field is left untouched so an author's explicit choice
@@ -939,6 +1028,47 @@ mod tests {
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(b"ab"), "YWI=");
+    }
+
+    #[test]
+    fn gh1240_publish_tarball_file_uses_scoped_package_leaf() {
+        assert_eq!(
+            npm_publish_tarball_file("@tw-tech/jet-publish-repro", "1.0.0"),
+            "jet-publish-repro-1.0.0.tgz"
+        );
+        assert_eq!(
+            publish_tarball_url(
+                "http://localhost:4873/",
+                "@tw-tech/jet-publish-repro",
+                "jet-publish-repro-1.0.0.tgz",
+            ),
+            "http://localhost:4873/@tw-tech/jet-publish-repro/-/jet-publish-repro-1.0.0.tgz"
+        );
+    }
+
+    #[test]
+    fn gh1240_publish_dist_metadata_has_tarball_shasum_and_integrity() {
+        let dist = publish_dist_metadata(
+            "http://localhost:4873/",
+            "@tw-tech/jet-publish-repro",
+            "1.0.0",
+            "jet-publish-repro-1.0.0.tgz",
+            b"hello",
+        );
+        assert_eq!(
+            dist["tarball"].as_str(),
+            Some("http://localhost:4873/@tw-tech/jet-publish-repro/-/jet-publish-repro-1.0.0.tgz")
+        );
+        assert_eq!(
+            dist["shasum"].as_str(),
+            Some("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
+        );
+        assert!(
+            dist["integrity"]
+                .as_str()
+                .is_some_and(|v| v.starts_with("sha512-") && v.len() > "sha512-".len()),
+            "dist.integrity must be a sha512 SRI string: {dist}"
+        );
     }
 
     #[test]

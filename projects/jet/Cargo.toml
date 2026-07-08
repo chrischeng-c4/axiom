@@ -59,6 +59,7 @@ regex = { workspace = true }
 image = { workspace = true }
 
 # Hashing
+sha1 = "0.10"
 sha2 = "0.10"
 
 # Graph dependencies
