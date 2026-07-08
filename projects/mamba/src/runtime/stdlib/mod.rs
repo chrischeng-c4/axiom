@@ -175,6 +175,7 @@ pub mod psycopg_mod;
 pub mod pwd_mod;
 pub mod pydantic_core_mod;
 pub mod pydantic_mod;
+pub mod profiling_sampling_mod;
 pub mod pyopenssl_mod;
 pub mod pytest_asyncio_mod;
 pub mod pytest_mod;
@@ -248,6 +249,7 @@ pub fn register_stdlib() {
     copy_mod::register();
     copyreg_mod::register();
     cprofile_mod::register();
+    profiling_sampling_mod::register();
     operator_mod::register();
     weakref_mod::register();
     traceback_mod::register();
