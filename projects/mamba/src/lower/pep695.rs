@@ -1207,6 +1207,16 @@ fn desugar_block(
                 let _ = desugar_block(body, false, &[], None, None);
                 if tps.is_empty() {
                     out.push(st);
+                    if in_class {
+                        hoist_up.after.push(AfterItem {
+                            tv_assigns: Vec::new(),
+                            path: vec![name],
+                            attrs: vec![("__type_params__".to_string(), Vec::new())],
+                            span,
+                        });
+                    } else {
+                        out.push(attr_tuple_assign(&[name], "__type_params__", &[], span));
+                    }
                 } else {
                     let tv_assigns: Vec<Spanned<Stmt>> =
                         tps.iter().map(|p| typevar_assign(p, span)).collect();
@@ -1495,6 +1505,23 @@ mod tests {
     }
 
     #[test]
+    fn plain_fn_explicitly_resets_empty_type_params() {
+        let m = desugared("def f():\n    pass\n");
+        assert_eq!(m.stmts.len(), 2);
+        assert!(matches!(&m.stmts[0].node, Stmt::FnDef { .. }));
+        match &m.stmts[1].node {
+            Stmt::Assign { target, value } => {
+                assert!(matches!(
+                    &target.node,
+                    Expr::Attr { attr, .. } if attr == "__type_params__"
+                ));
+                assert!(matches!(&value.node, Expr::TupleLit(items) if items.is_empty()));
+            }
+            other => panic!("expected __type_params__ reset assignment, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn generic_class_injects_parameters_too() {
         let m = desugared("class C[T]:\n    pass\n");
         assert_eq!(m.stmts.len(), 5);
@@ -1519,7 +1546,13 @@ mod tests {
     #[test]
     fn generic_class_keeps_type_param_used_by_runtime_body() {
         let m = desugared("class C[T]:\n    def f(self):\n        return T\n");
-        assert_eq!(m.stmts.len(), 4);
+        assert_eq!(m.stmts.len(), 5);
+        assert!(m.stmts.iter().any(|stmt| matches!(
+            &stmt.node,
+            Stmt::Assign { target, value }
+                if matches!(&target.node, Expr::Attr { attr, .. } if attr == "__type_params__")
+                    && matches!(&value.node, Expr::TupleLit(items) if items.is_empty())
+        )));
         assert!(m
             .stmts
             .iter()
