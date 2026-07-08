@@ -950,12 +950,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         (engine, Some(persistence))
     };
 
-    let cluster = keep::ClusterConfig::new(
-        args.node_id,
-        args.node_count,
-        args.shard_count,
-        args.peers.clone(),
-    );
+    let cluster = derive_cluster_config(&args)?;
     info!(
         node_id = cluster.node_id,
         node_count = cluster.node_count,
@@ -1035,10 +1030,112 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
+fn derive_cluster_config(args: &ServeArgs) -> Result<keep::ClusterConfig> {
+    if let Some(cluster) = local_topology_override(args) {
+        return Ok(cluster);
+    }
+    if !has_downward_api_topology() {
+        return Ok(keep::ClusterConfig::new(
+            args.node_id,
+            args.node_count,
+            args.shard_count,
+            args.peers.clone(),
+        ));
+    }
+
+    let headless = std::env::var("KEEP_HEADLESS_SERVICE")
+        .unwrap_or_else(|_| "keep-headless".to_string());
+    let dims = raft_host::ClusterDims::from_env()?;
+    let topo = raft_host::ClusterTopology::from_env("keep", &headless, args.port, "KEEP_PEERS")?;
+    let node_count = topo.replicas_per_shard.max(1) as usize;
+    let mut peers = vec![String::new(); node_count];
+    for (node, url) in topo.peers {
+        if let Some(slot) = peers.get_mut(node as usize) {
+            *slot = url;
+        }
+    }
+    Ok(keep::ClusterConfig::from_shared_topology(
+        topo.node_id as usize,
+        node_count,
+        dims.shard_count,
+        peers,
+    ))
+}
+
+fn local_topology_override(args: &ServeArgs) -> Option<keep::ClusterConfig> {
+    let has_override = std::env::var_os("KEEP_NODE_ID").is_some()
+        || std::env::var_os("KEEP_PEERS").is_some()
+        || args.node_id != 0
+        || !args.peers.is_empty();
+    if !has_override {
+        return None;
+    }
+    let node_id = env_parse("KEEP_NODE_ID").unwrap_or(args.node_id);
+    let node_count = env_parse("KEEP_NODE_COUNT")
+        .unwrap_or(args.node_count)
+        .max(node_id + 1);
+    let shard_count = env_parse("KEEP_SHARD_COUNT").unwrap_or(args.shard_count);
+    let peers = std::env::var("KEEP_PEERS")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_else(|| args.peers.clone());
+    Some(keep::ClusterConfig::new(
+        node_id,
+        node_count,
+        shard_count,
+        peers,
+    ))
+}
+
+fn env_parse<T>(key: &str) -> Option<T>
+where
+    T: std::str::FromStr,
+{
+    std::env::var(key).ok()?.parse().ok()
+}
+
+fn has_downward_api_topology() -> bool {
+    ["POD_NAME", "SHARD_COUNT", "REPLICAS_PER_SHARD", "VOTER_COUNT"]
+        .iter()
+        .all(|key| std::env::var_os(key).is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const TOPOLOGY_ENV: &[&str] = &[
+        "POD_NAME",
+        "SHARD_COUNT",
+        "REPLICAS_PER_SHARD",
+        "VOTER_COUNT",
+        "KEEP_HEADLESS_SERVICE",
+        "KEEP_NODE_ID",
+        "KEEP_NODE_COUNT",
+        "KEEP_SHARD_COUNT",
+        "KEEP_PEERS",
+    ];
+
+    fn clear_topology_env() {
+        for key in TOPOLOGY_ENV {
+            std::env::remove_var(key);
+        }
+    }
+
+    fn serve_args(extra: &[&str]) -> ServeArgs {
+        let mut argv = vec!["keep"];
+        argv.extend_from_slice(extra);
+        Cli::try_parse_from(argv).expect("serve args parse").serve
+    }
 
     /// The clap derive surface is internally consistent (catches conflicting
     /// args / bad value parsers at test time, not at runtime).
@@ -1101,6 +1198,63 @@ mod tests {
     #[test]
     fn report_issue_command_is_gone() {
         assert!(Cli::try_parse_from(["keep", "report-issue", "--title", "x"]).is_err());
+    }
+
+    #[test]
+    fn cluster_topology_defaults_to_single_node() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_topology_env();
+
+        let cluster = derive_cluster_config(&serve_args(&[])).unwrap();
+
+        assert_eq!(cluster.node_id, 0);
+        assert_eq!(cluster.node_count, 1);
+        assert_eq!(cluster.shard_count, 1);
+        assert!(cluster.peers.is_empty());
+    }
+
+    #[test]
+    fn cluster_topology_keeps_local_override_precedence() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_topology_env();
+        std::env::set_var("POD_NAME", "keep-2");
+        std::env::set_var("SHARD_COUNT", "1");
+        std::env::set_var("REPLICAS_PER_SHARD", "3");
+        std::env::set_var("VOTER_COUNT", "3");
+        std::env::set_var("KEEP_NODE_ID", "1");
+        std::env::set_var("KEEP_PEERS", "127.0.0.1:7117,127.0.0.1:7118");
+
+        let cluster = derive_cluster_config(&serve_args(&[])).unwrap();
+
+        assert_eq!(cluster.node_id, 1);
+        assert_eq!(cluster.node_count, 2);
+        assert_eq!(cluster.shard_count, 2);
+        assert_eq!(
+            cluster.peers,
+            vec!["127.0.0.1:7117".to_string(), "127.0.0.1:7118".to_string()]
+        );
+        clear_topology_env();
+    }
+
+    #[test]
+    fn cluster_topology_uses_downward_api_when_no_local_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_topology_env();
+        std::env::set_var("POD_NAME", "keep-2");
+        std::env::set_var("SHARD_COUNT", "1");
+        std::env::set_var("REPLICAS_PER_SHARD", "3");
+        std::env::set_var("VOTER_COUNT", "3");
+        std::env::set_var("KEEP_HEADLESS_SERVICE", "keep-headless");
+
+        let cluster = derive_cluster_config(&serve_args(&[])).unwrap();
+
+        assert_eq!(cluster.node_id, 2);
+        assert_eq!(cluster.node_count, 3);
+        assert_eq!(cluster.shard_count, 1);
+        assert_eq!(cluster.peers[0], "http://keep-0.keep-headless:7117");
+        assert_eq!(cluster.peers[1], "http://keep-1.keep-headless:7117");
+        assert_eq!(cluster.peers[2], "");
+        clear_topology_env();
     }
 
     /// `keep k8s crd/operator/instance` verbs parse with their convention flags
