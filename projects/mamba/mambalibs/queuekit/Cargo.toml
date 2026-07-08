@@ -52,7 +52,7 @@ reqwest = { workspace = true, optional = true }
 jsonwebtoken = { workspace = true, optional = true }
 
 # Ion backend — keep over HTTP (migrated off the retired raw-TCP cclab-kv client).
-keep = { path = "../../../../projects/keep", features = ["client"], optional = true }
+keep = { path = "../../../../apps/keep", features = ["client"], optional = true }
 
 # Push receiver auth (HMAC-SHA256 for K8s, OIDC JWT for Cloud Scheduler)
 hmac = { version = "0.12", optional = true }

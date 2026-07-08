@@ -25,7 +25,7 @@ details.
 | [lumen](projects/lumen/README.md) | A K8s-native, log-replicated search specialist. |
 | [jet](projects/jet/README.md) | Jet is a Rust-native frontend toolchain. |
 | [relay](apps/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
-| [keep](projects/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
+| [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [cgdb](projects/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
 | [httpkit-demo](projects/httpkit-demo/README.md) | httpkit-demo is a generated demo consumer of the `mambalibs.http` framework. |
 | [meter](projects/meter/README.md) | Local resource measurement for agent-driven Rust development. |
@@ -76,7 +76,7 @@ an installer yet are marked _coming soon_.
 | [beam](projects/beam/README.md) | `beam` | _coming soon_ |
 | [cube](projects/cube/README.md) | `cube` | _coming soon_ |
 | [defer](projects/defer/README.md) | `defer` | _coming soon_ |
-| [keep](projects/keep/README.md) | `keep` | _coming soon_ |
+| [keep](apps/keep/README.md) | `keep` | _coming soon_ |
 | [loom](projects/loom/README.md) | `loom` | _coming soon_ |
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
