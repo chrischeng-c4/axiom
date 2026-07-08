@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/h2c/tech-design/semantic/source/libs-h2c-src-llm-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! LLM topic provider for the shared h2c client/server transport contract.
 
 /// Agent-facing topic describing h2c outbound client pools and server boundary.
@@ -56,6 +58,7 @@ outbound caller manage its own pool.
 };
 
 /// Return the shared h2c topic for CLI composition.
+/// @spec libs/h2c/tech-design/semantic/source/libs-h2c-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }
@@ -72,3 +75,4 @@ mod tests {
         assert!(topic.body.contains("H2cPool::for_concurrency"));
     }
 }
+// CODEGEN-END

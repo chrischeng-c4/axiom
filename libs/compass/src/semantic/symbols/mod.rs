@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Unified Symbol Table for cross-language semantic analysis
 //!
 //! Provides a common symbol representation for Python, TypeScript, and Rust.
@@ -26,10 +28,12 @@ use std::collections::HashMap;
 
 /// Unique identifier for a symbol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 pub struct SymbolId(pub usize);
 
 /// Kind of symbol (cross-language)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 pub enum SymbolKind {
     // Common
     Variable,
@@ -67,6 +71,7 @@ pub enum SymbolKind {
     Template,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 impl SymbolKind {
     /// Get LSP symbol kind for hover display
     pub fn display_name(&self) -> &'static str {
@@ -102,6 +107,7 @@ impl SymbolKind {
 
 /// Type information (basic)
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 pub enum TypeInfo {
     /// Primitive types (int, str, bool, etc.)
     Primitive(String),
@@ -133,6 +139,7 @@ pub enum TypeInfo {
     Error,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 impl TypeInfo {
     /// Format type for display
     pub fn display(&self) -> String {
@@ -290,6 +297,7 @@ impl TypeInfo {
 
 /// A symbol in the symbol table
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 pub struct Symbol {
     pub id: SymbolId,
     pub name: String,
@@ -300,6 +308,7 @@ pub struct Symbol {
     pub scope_id: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 impl Symbol {
     /// Generate hover content for this symbol
     pub fn hover_content(&self, language: Language) -> String {
@@ -385,6 +394,7 @@ impl Symbol {
 
 /// Reference to a symbol
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 pub struct SymbolReference {
     pub symbol_id: SymbolId,
     pub location: Range,
@@ -393,6 +403,7 @@ pub struct SymbolReference {
 
 /// Symbol table for a file
 #[derive(Debug, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 pub struct SymbolTable {
     symbols: Vec<Symbol>,
     by_name: HashMap<String, Vec<SymbolId>>,
@@ -400,6 +411,7 @@ pub struct SymbolTable {
     next_id: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 impl SymbolTable {
     pub fn new() -> Self {
         Self::default()
@@ -531,6 +543,7 @@ impl SymbolTable {
 }
 
 /// Build symbol table from parsed file
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 pub struct SymbolTableBuilder {
     pub(crate) table: SymbolTable,
     pub(crate) current_scope: usize,
@@ -538,6 +551,7 @@ pub struct SymbolTableBuilder {
     pub(crate) next_scope: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 impl SymbolTableBuilder {
     pub fn new() -> Self {
         Self {
@@ -654,6 +668,7 @@ impl SymbolTableBuilder {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-mod-rs.md#source
 impl Default for SymbolTableBuilder {
     fn default() -> Self {
         Self::new()
@@ -735,3 +750,4 @@ mod tests {
         assert_eq!(ty.display(), "Result<String, Error>");
     }
 }
+// CODEGEN-END

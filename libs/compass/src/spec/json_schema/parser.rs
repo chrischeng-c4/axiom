@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-json-schema-parser-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! JSON Schema to SpecIR parser
 //!
 //! Converts JSON Schema definitions into DataModelSpec.
@@ -14,6 +16,7 @@ use crate::type_inference::Type;
 
 /// Error type for JSON Schema parsing
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-json-schema-parser-rs.md#source
 pub enum JsonSchemaError {
     /// Invalid JSON
     InvalidJson(String),
@@ -27,6 +30,7 @@ pub enum JsonSchemaError {
     InvalidRef(String),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-json-schema-parser-rs.md#source
 impl std::fmt::Display for JsonSchemaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -39,9 +43,11 @@ impl std::fmt::Display for JsonSchemaError {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-json-schema-parser-rs.md#source
 impl std::error::Error for JsonSchemaError {}
 
 /// JSON Schema parser
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-json-schema-parser-rs.md#source
 pub struct JsonSchemaParser {
     /// Resolved definitions (for $ref handling)
     definitions: HashMap<String, Value>,
@@ -49,6 +55,7 @@ pub struct JsonSchemaParser {
     root: Option<Value>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-json-schema-parser-rs.md#source
 impl JsonSchemaParser {
     pub fn new() -> Self {
         Self {
@@ -523,6 +530,7 @@ impl JsonSchemaParser {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-json-schema-parser-rs.md#source
 impl Default for JsonSchemaParser {
     fn default() -> Self {
         Self::new()
@@ -777,3 +785,4 @@ mod tests {
         assert_eq!(to_snake_case("user-name"), "user_name");
     }
 }
+// CODEGEN-END

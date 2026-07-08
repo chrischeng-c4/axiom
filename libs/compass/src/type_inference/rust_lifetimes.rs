@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Rust lifetime analysis
 //!
 //! This module provides lifetime analysis for Rust code, including:
@@ -15,6 +17,7 @@ use super::rust_types::{Lifetime, LifetimeId, RustType};
 
 /// A lifetime constraint representing 'a: 'b (a outlives b)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 pub struct LifetimeConstraint {
     /// The longer lifetime (must outlive `shorter`)
     pub longer: LifetimeId,
@@ -26,6 +29,7 @@ pub struct LifetimeConstraint {
 
 /// A borrow of a value
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 pub struct Borrow {
     /// Unique identifier for this borrow
     pub id: BorrowId,
@@ -41,6 +45,7 @@ pub struct Borrow {
 
 /// Unique identifier for borrows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 pub struct BorrowId(pub usize);
 
 // ============================================================================
@@ -49,6 +54,7 @@ pub struct BorrowId(pub usize);
 
 /// Lifetime-related error
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 pub struct LifetimeError {
     /// Error message
     pub message: String,
@@ -62,6 +68,7 @@ pub struct LifetimeError {
 
 /// Kind of lifetime error
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 pub enum LifetimeErrorKind {
     /// Lifetime does not live long enough
     DoesNotLiveLongEnough,
@@ -85,6 +92,7 @@ pub enum LifetimeErrorKind {
 
 /// Tracks active borrows in a scope
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 pub struct BorrowState {
     /// Active borrows by path
     borrows: HashMap<String, Vec<Borrow>>,
@@ -94,6 +102,7 @@ pub struct BorrowState {
     next_borrow_id: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 impl BorrowState {
     /// Create a new borrow state
     pub fn new() -> Self {
@@ -224,6 +233,7 @@ impl BorrowState {
 // ============================================================================
 
 /// Analyzes lifetimes and borrow checking
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 pub struct LifetimeAnalyzer {
     /// Lifetime constraints collected during analysis
     constraints: Vec<LifetimeConstraint>,
@@ -238,6 +248,7 @@ pub struct LifetimeAnalyzer {
     next_lifetime_id: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 impl LifetimeAnalyzer {
     /// Create a new lifetime analyzer
     pub fn new() -> Self {
@@ -437,6 +448,7 @@ impl LifetimeAnalyzer {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md#source
 impl Default for LifetimeAnalyzer {
     fn default() -> Self {
         Self::new()
@@ -567,3 +579,4 @@ mod tests {
         assert!(id.is_some());
     }
 }
+// CODEGEN-END

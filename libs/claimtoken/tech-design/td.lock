@@ -1,0 +1,19 @@
+version = 2
+project = "claimtoken"
+ir_kind = "td"
+td_path = "libs/claimtoken/tech-design"
+generated_at = "2026-07-07T15:58:23.614432+00:00"
+digest = "sha256:b94f8f4851d15fad6195186dcec58a41e4cb394fa3a351fee7807bc2e8288338"
+source_digest = "sha256:b94f8f4851d15fad6195186dcec58a41e4cb394fa3a351fee7807bc2e8288338"
+ir_digest = "sha256:cbf5f7685e0949dbd2b5f1f9fd0db5d210c27f6060833aa4a14150e0cf728d09"
+
+[[files]]
+path = "semantic/claimtoken-libs-claimtoken.md"
+digest = "sha256:a38511e08fb534f1421cf17a6e64ba93b87f00db9dd4ea54fa863256eb80f85a"
+parse_error = "schema:15-56: section 'schema' at lines 15..56: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-claimtoken-src-lib-rs.md"
+digest = "sha256:f0976722be55c166ade506b142a6b70ae9c962a049204626be0e0d568dc46da1"
+ir_digest = "sha256:d4267bae46cc5b69d12e60929c71d525a83f58b6d03e6c82dcdad88143316d80"
+section_count = 3

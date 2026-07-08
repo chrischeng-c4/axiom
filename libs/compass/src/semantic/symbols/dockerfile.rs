@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-dockerfile-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Dockerfile symbol extraction (line-based)
 //!
 //! Extracts symbols from Dockerfile source without tree-sitter:
@@ -11,6 +13,7 @@ use crate::diagnostic::{Position, Range};
 
 use super::{SymbolKind, SymbolTableBuilder};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-dockerfile-rs.md#source
 impl SymbolTableBuilder {
     /// Parse Dockerfile source line-by-line to extract symbols
     pub(crate) fn visit_dockerfile_lines(&mut self, source: &str) {
@@ -247,3 +250,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

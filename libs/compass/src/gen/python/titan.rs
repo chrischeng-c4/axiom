@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-titan-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! cclab.titan code generator
 //!
 //! Generates PostgreSQL ORM models using cclab.titan.
@@ -10,8 +12,10 @@ use crate::spec::ir::{
 use crate::type_inference::Type;
 
 /// Titan (PostgreSQL ORM) code generator
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-titan-rs.md#source
 pub struct TitanGenerator;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-titan-rs.md#source
 impl TitanGenerator {
     pub fn new() -> Self {
         Self
@@ -294,12 +298,14 @@ impl TitanGenerator {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-titan-rs.md#source
 impl Default for TitanGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-titan-rs.md#source
 impl CodeGenerator for TitanGenerator {
     fn name(&self) -> &str {
         "titan"
@@ -389,3 +395,4 @@ mod tests {
         assert_eq!(to_snake_case("user"), "user");
     }
 }
+// CODEGEN-END

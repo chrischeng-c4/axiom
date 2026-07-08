@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-tests-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tests for type definitions
 
 use super::*;
@@ -393,3 +395,4 @@ fn test_typeis_helpers() {
     // Non-TypeIs returns false
     assert!(!Type::Str.is_type_is());
 }
+// CODEGEN-END

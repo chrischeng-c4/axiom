@@ -7883,7 +7883,7 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
     if is_rust_source(path) {
         return Some(Lang::Rust);
     }
-    if section == Some("text-source-unit") && is_shell_source(path) {
+    if section == Some("text-source-unit") && (is_shell_source(path) || is_cargo_toml(path)) {
         return Some(Lang::Toml);
     }
     if supports_source_backed_replay_path(path, section) {

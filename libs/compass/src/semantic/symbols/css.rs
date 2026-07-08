@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-css-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! CSS symbol extraction (tree-sitter)
 //!
 //! Extracts symbols from CSS stylesheets:
@@ -11,6 +13,7 @@ use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::Range;
 use crate::syntax::ParsedFile;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-css-rs.md#source
 impl SymbolTableBuilder {
     /// Walk CSS AST to extract symbols
     pub(crate) fn visit_css_node(&mut self, node: &tree_sitter::Node<'_>, file: &ParsedFile) {
@@ -253,3 +256,4 @@ mod tests {
         assert!(vars.contains(&"--font-size"), "got: {:?}", vars);
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-check-pipeline-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Check pipeline with cross-file type propagation (R4, R5, R10).
 //!
 //! Wires `PropagationPipeline` into the analysis flow so that:
@@ -23,6 +25,7 @@ use crate::type_inference::{
 
 /// Result of a `type_at` query.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-check-pipeline-rs.md#source
 pub struct TypeAtResult {
     /// The resolved type.
     pub ty: Type,
@@ -39,6 +42,7 @@ pub struct TypeAtResult {
 ///
 /// If the symbol was propagated from another file, returns the resolved type
 /// from the source module.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-check-pipeline-rs.md#source
 pub fn type_at(inferencer: &DeepTypeInferencer, file: &Path, symbol: &str) -> Option<TypeAtResult> {
     let file_buf = file.to_path_buf();
     let fa = inferencer.file_analysis(&file_buf)?;
@@ -58,6 +62,7 @@ pub fn type_at(inferencer: &DeepTypeInferencer, file: &Path, symbol: &str) -> Op
 
 /// Result of a `hover` query.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-check-pipeline-rs.md#source
 pub struct HoverResult {
     /// Human-readable type signature string.
     pub type_signature: String,
@@ -69,6 +74,7 @@ pub struct HoverResult {
 
 /// Query hover information for a symbol, returning the propagated type
 /// signature for imported symbols (R5).
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-check-pipeline-rs.md#source
 pub fn hover(inferencer: &DeepTypeInferencer, file: &Path, symbol: &str) -> Option<HoverResult> {
     let file_buf = file.to_path_buf();
     let fa = inferencer.file_analysis(&file_buf)?;
@@ -94,6 +100,7 @@ pub fn hover(inferencer: &DeepTypeInferencer, file: &Path, symbol: &str) -> Opti
 ///
 /// This is meant to be called *after* per-file inference has populated
 /// `FileAnalysis` entries in the inferencer.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-check-pipeline-rs.md#source
 pub fn run_check_pipeline(
     files: &[PathBuf],
     inferencer: &mut DeepTypeInferencer,
@@ -111,6 +118,7 @@ pub fn run_check_pipeline(
 ///
 /// Invalidates propagated types from the changed file and re-propagates
 /// through reverse import edges.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-check-pipeline-rs.md#source
 pub fn recheck_after_change(
     changed_file: &Path,
     inferencer: &mut DeepTypeInferencer,
@@ -229,3 +237,4 @@ mod tests {
         assert_eq!(result.stats.symbols_propagated, 0);
     }
 }
+// CODEGEN-END

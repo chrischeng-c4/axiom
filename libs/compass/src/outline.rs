@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-outline-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Code outline: enumerate the functions/methods a source file defines.
 //!
 //! This is a language-agnostic code-intelligence primitive — "what callable
@@ -17,6 +19,7 @@ use serde::{Deserialize, Serialize};
 /// Whether a definition is a free function or a method the grammar distinguishes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-outline-rs.md#source
 pub enum FunctionKind {
     /// Free function (Rust `fn`, Python `def`, TS/JS `function`, Go `func`).
     /// Rust methods are reported as `Function` because tree-sitter-rust models
@@ -29,6 +32,7 @@ pub enum FunctionKind {
 
 /// A single callable definition discovered in a source file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-outline-rs.md#source
 pub struct FunctionDef {
     /// Definition name (`<anonymous>` when the grammar node has no `name` field).
     pub name: String,
@@ -64,6 +68,7 @@ fn function_kinds(language: Language) -> &'static [(&'static str, FunctionKind)]
 ///
 /// Pure (no parsing/IO); returns the definitions ordered by `start_line`. Use
 /// this when you already hold a [`ParsedFile`]; otherwise see [`outline`].
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-outline-rs.md#source
 pub fn outline_parsed(parsed: &ParsedFile) -> Vec<FunctionDef> {
     let kinds = function_kinds(parsed.language);
     if kinds.is_empty() {
@@ -96,6 +101,7 @@ pub fn outline_parsed(parsed: &ParsedFile) -> Vec<FunctionDef> {
 ///
 /// Convenience over [`outline_parsed`] that owns the parse. Errors if the
 /// parser cannot initialize or the grammar produces no tree.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-outline-rs.md#source
 pub fn outline(source: &str, language: Language) -> Result<Vec<FunctionDef>> {
     let mut parser = MultiParser::new()?;
     let parsed = parser.parse(source, language).ok_or_else(|| {
@@ -157,3 +163,4 @@ mod tests {
         assert_eq!(by_name.get("m"), Some(&FunctionKind::Method));
     }
 }
+// CODEGEN-END

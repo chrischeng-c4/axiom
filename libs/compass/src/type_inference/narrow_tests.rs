@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-tests-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tests for type narrowing
 
 use super::*;
@@ -257,3 +259,4 @@ fn test_isinstance_tuple_narrowing() {
         _ => panic!("Expected Union type, got {:?}", narrowed),
     }
 }
+// CODEGEN-END

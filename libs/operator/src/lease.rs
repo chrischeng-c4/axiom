@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/operator/tech-design/semantic/source/libs-operator-src-lease-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Minimal Lease-based leader election (coordination.k8s.io/v1).
 //!
 //! kube-rs 0.98 ships no built-in elector, so this is a small hand-rolled one:
@@ -27,11 +29,13 @@ const RENEW_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Shared leadership flag, flipped by the background election task and read by
 /// the reconcile loop.
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-lease-rs.md#source
 pub struct Election {
     pub is_leader: AtomicBool,
     pub identity: String,
 }
 
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-lease-rs.md#source
 impl Election {
     pub fn new(identity: String) -> Arc<Self> {
         Arc::new(Self {
@@ -111,6 +115,7 @@ async fn acquire_or_renew(api: &Api<Lease>, lease_name: &str, identity: &str) ->
 /// Spawn the background election loop. The returned [`Election`] is shared with
 /// the reconcile context; its `is_leader` flag tracks whether this replica
 /// currently holds the `lease_name` Lease (in `namespace`).
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-lease-rs.md#source
 pub fn spawn(client: Client, namespace: String, lease_name: String, election: Arc<Election>) {
     tokio::spawn(async move {
         let api: Api<Lease> = Api::namespaced(client, &namespace);
@@ -160,3 +165,4 @@ mod tests {
         assert!(may_acquire(Some("other"), None, 15, "me", 1000));
     }
 }
+// CODEGEN-END

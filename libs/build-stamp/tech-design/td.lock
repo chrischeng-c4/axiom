@@ -1,0 +1,20 @@
+version = 2
+project = "build-stamp"
+ir_kind = "td"
+td_path = "libs/build-stamp/tech-design"
+generated_at = "2026-07-07T15:51:16.715352+00:00"
+digest = "sha256:242496f49575b04cb4a4c572bf7f950fd746b377243748578d99d643993c9967"
+source_digest = "sha256:242496f49575b04cb4a4c572bf7f950fd746b377243748578d99d643993c9967"
+ir_digest = "sha256:8a794a940f19f3e1b1868a84c6170e585c65cab033b59d23162bb35a9da2855b"
+
+[[files]]
+path = "semantic/build-stamp-libs-build-stamp.md"
+digest = "sha256:77b1b5fe2baa46b6d6b95aca6000d0b988cefb5db6f86c72c1b14a113910eb6f"
+ir_digest = "sha256:c9cdc193baa1f8c737aba18a3af0da445e2cc5464b947b2db11f782ff7874fc3"
+section_count = 2
+
+[[files]]
+path = "semantic/source/libs-build-stamp-src-lib-rs.md"
+digest = "sha256:09dcdcde6707c751cce9951e26c5815ac5b523570896ef3d756424d7f5a2377a"
+ir_digest = "sha256:b48edbede529c6d1faab578ed81ed06c2785cabf7521922ff96784fdef133f62"
+section_count = 3

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! File-level caching for incremental analysis
 //!
 //! This module provides:
@@ -16,8 +18,10 @@ use super::imports::ModuleInfo;
 
 /// A content hash for change detection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#source
 pub struct ContentHash(pub(crate) u64);
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#source
 impl ContentHash {
     /// Compute hash from file content
     pub fn from_content(content: &str) -> Self {
@@ -37,6 +41,7 @@ impl ContentHash {
 
 /// Cached module entry
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#source
 pub struct CacheEntry {
     /// Module name
     pub module_name: String,
@@ -56,6 +61,7 @@ pub struct CacheEntry {
     pub propagation_valid: bool,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#source
 impl CacheEntry {
     pub fn new(
         module_name: String,
@@ -110,6 +116,7 @@ impl CacheEntry {
 
 /// Module analysis cache
 #[derive(Debug, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#source
 pub struct AnalysisCache {
     /// Cached entries by module name
     entries: HashMap<String, CacheEntry>,
@@ -117,6 +124,7 @@ pub struct AnalysisCache {
     reverse_deps: HashMap<String, HashSet<String>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#source
 impl AnalysisCache {
     pub fn new() -> Self {
         Self {
@@ -244,6 +252,7 @@ impl AnalysisCache {
 
 /// Cache statistics
 #[derive(Debug, Clone, Copy)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-cache-rs.md#source
 pub struct CacheStats {
     pub total_entries: usize,
     pub stale_entries: usize,
@@ -542,3 +551,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-mdx-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! MDX lint checker (Markdown + JSX)
 
 use super::markdown::line_range;
@@ -7,10 +9,12 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity};
 use crate::syntax::{Language, ParsedFile};
 
 /// MDX checker — runs all Markdown rules then adds JSX-specific checks.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mdx-rs.md#source
 pub struct MdxChecker {
     md: MarkdownChecker,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mdx-rs.md#source
 impl MdxChecker {
     pub fn new() -> Self {
         Self {
@@ -160,12 +164,14 @@ impl MdxChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mdx-rs.md#source
 impl Default for MdxChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mdx-rs.md#source
 impl Checker for MdxChecker {
     fn language(&self) -> Language {
         Language::Mdx
@@ -299,3 +305,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

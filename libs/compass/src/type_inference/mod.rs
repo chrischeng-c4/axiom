@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Type system for Argus
 //!
 //! This module provides type inference and checking for Python, TypeScript, and Rust.
@@ -132,3 +134,4 @@ pub use ts_types::{
     TsEnumValue, TsInterface, TsMappedType, TsProperty, TsTemplateLiteralType, TsTypeAlias,
     TsTypeContext, TsTypeParam, Visibility,
 };
+// CODEGEN-END

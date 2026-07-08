@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:surface-snapshot" tracker="pending-tracker" reason="Tests for deterministic serialized semantic surface snapshots."
+// SPEC-MANAGED: libs/surface/tech-design/semantic/source/libs-surface-tests-snapshot-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use cclab_surface::{Element, Props, SurfaceRect};
 
 #[test]
@@ -45,4 +46,4 @@ fn snapshot_serializes_stable_structural_tree() {
     assert_eq!(json["nodes"][2]["name"], "aw");
     assert_eq!(json["nodes"][2]["bounds"]["w"], 120.0);
 }
-// HANDWRITE-END
+// CODEGEN-END

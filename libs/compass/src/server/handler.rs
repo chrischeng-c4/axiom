@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Request handlers for Argus daemon
 
 use std::collections::HashMap;
@@ -33,6 +35,7 @@ struct FileAnalysis {
 }
 
 /// Request handler with caching
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 pub struct RequestHandler {
     /// Root directory being analyzed
     root: PathBuf,
@@ -53,6 +56,7 @@ pub struct RequestHandler {
     disk_cache: Arc<DiskCache>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 impl RequestHandler {
     pub fn new(root: PathBuf) -> Result<Self, String> {
         let parser = MultiParser::new().map_err(|e| format!("Failed to create parser: {}", e))?;
@@ -1064,6 +1068,7 @@ impl RequestHandler {
 }
 
 // Implement TryFrom for param types
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 impl TryFrom<serde_json::Value> for CheckParams {
     type Error = serde_json::Error;
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
@@ -1071,6 +1076,7 @@ impl TryFrom<serde_json::Value> for CheckParams {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 impl TryFrom<serde_json::Value> for TypeAtParams {
     type Error = serde_json::Error;
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
@@ -1078,6 +1084,7 @@ impl TryFrom<serde_json::Value> for TypeAtParams {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 impl TryFrom<serde_json::Value> for SymbolsParams {
     type Error = serde_json::Error;
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
@@ -1085,6 +1092,7 @@ impl TryFrom<serde_json::Value> for SymbolsParams {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 impl TryFrom<serde_json::Value> for HoverParams {
     type Error = serde_json::Error;
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
@@ -1092,6 +1100,7 @@ impl TryFrom<serde_json::Value> for HoverParams {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 impl TryFrom<serde_json::Value> for DefinitionParams {
     type Error = serde_json::Error;
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
@@ -1099,6 +1108,7 @@ impl TryFrom<serde_json::Value> for DefinitionParams {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-handler-rs.md#source
 impl TryFrom<serde_json::Value> for ReferencesParams {
     type Error = serde_json::Error;
     fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
@@ -1166,3 +1176,4 @@ fn format_unix_timestamp(secs: u64) -> String {
 fn is_leap(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
+// CODEGEN-END

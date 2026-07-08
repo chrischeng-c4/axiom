@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-proto-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Protocol Buffer (proto3) lint checker (line-based)
 //!
 //! Rules: PB001-PB007
@@ -8,8 +10,10 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Posi
 use crate::syntax::{Language, ParsedFile};
 use std::collections::{HashMap, HashSet};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-proto-rs.md#source
 pub struct ProtoChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-proto-rs.md#source
 impl ProtoChecker {
     pub fn new() -> Self {
         Self
@@ -448,6 +452,7 @@ impl ProtoChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-proto-rs.md#source
 impl Default for ProtoChecker {
     fn default() -> Self {
         Self::new()
@@ -516,6 +521,7 @@ fn is_snake_case(s: &str) -> bool {
         && !s.contains("__")
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-proto-rs.md#source
 impl Checker for ProtoChecker {
     fn language(&self) -> Language {
         Language::Proto
@@ -636,3 +642,4 @@ mod tests {
         assert!(!is_snake_case("MyField"));
     }
 }
+// CODEGEN-END

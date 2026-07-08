@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/build-stamp/tech-design/semantic/source/libs-build-stamp-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Shared `build.rs` stamping: git short-sha, built-at epoch, and target
 //! triple as `cargo:rustc-env=<PREFIX>_*` directives.
 //!
@@ -16,6 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 ///
 /// `prefix` is the caller's env-var prefix, e.g. `"LUMEN"` for
 /// `LUMEN_GIT_SHA` / `LUMEN_BUILT_AT` / `LUMEN_TARGET`.
+/// @spec libs/build-stamp/tech-design/semantic/source/libs-build-stamp-src-lib-rs.md#source
 pub fn stamp(prefix: &str) {
     // Re-run when HEAD moves so the stamped sha stays current. The workspace
     // `.git` lives 2 levels up from the calling crate's build.rs (e.g.
@@ -156,3 +159,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+// CODEGEN-END

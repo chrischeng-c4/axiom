@@ -1,0 +1,33 @@
+[project]
+name = "raft-core"
+cap_path = "README.md"
+label = "project:raft-core"
+
+[[workspaces]]
+name = "raft-core"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p raft-core"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "raft-core"
+generated_from_td_digest = "sha256:2f5f6cd24f3c319c266957f8a2387f0ad721b5d6016dbd2cc67fd7160ac8f69f"
+
+[[aw.ec.generated.cases]]
+id = "step-driven-raft-consensus-core-contract"
+capability_id = "step-driven-raft-consensus-core"
+claim_id = "step-driven-raft-consensus-core-contract"
+contract_id = "step-driven-raft-consensus-core-contract"
+category = "behavior"
+td_ref = "libs/raft-core/external-contracts/behavior/step-driven-raft-consensus-core-contract.md#step-driven-raft-consensus-core-contract"
+test_path = "libs/raft-core/tests/behavior_step_driven_raft_consensus_core_contract.rs"
+command = "cargo test -p raft-core"
+required_for_production = true
+assertions = [
+    "Step-Driven Raft Consensus Core public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

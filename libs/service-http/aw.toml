@@ -1,0 +1,33 @@
+[project]
+name = "service-http"
+cap_path = "README.md"
+label = "project:service-http"
+
+[[workspaces]]
+name = "service-http"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p service-http"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "service-http"
+generated_from_td_digest = "sha256:a67166bdf9d2e6792a3b5c536d782024b7f77e16f7b5f06e605896b4609ac77d"
+
+[[aw.ec.generated.cases]]
+id = "shared-http-service-scaffold-contract"
+capability_id = "shared-http-service-scaffold"
+claim_id = "shared-http-service-scaffold-contract"
+contract_id = "shared-http-service-scaffold-contract"
+category = "behavior"
+td_ref = "libs/service-http/external-contracts/behavior/shared-http-service-scaffold-contract.md#shared-http-service-scaffold-contract"
+test_path = "libs/service-http/tests/behavior_shared_http_service_scaffold_contract.rs"
+command = "cargo test -p service-http"
+required_for_production = true
+assertions = [
+    "Shared HTTP Service Scaffold public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

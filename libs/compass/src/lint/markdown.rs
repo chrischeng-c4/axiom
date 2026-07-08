@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Markdown lint checker (R4)
 //!
 //! Provides 10 built-in Markdown lint rules (MD001–MD010) plus:
@@ -28,6 +30,7 @@ use crate::syntax::{Language, ParsedFile};
 
 /// A symbol extracted from a Markdown / MDX document.
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 pub enum MarkdownSymbol {
     /// ATX heading (`# Title`)
     Heading {
@@ -61,8 +64,10 @@ pub enum MarkdownSymbol {
 /// This provides the same information that `tree-sitter-md` would give through
 /// its AST — headings, links, code fences, MDX components, and front-matter
 /// fields — without requiring the grammar crate.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 pub struct MarkdownSymbolExtractor;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 impl MarkdownSymbolExtractor {
     /// Extract all symbols from a raw Markdown/MDX source string.
     pub fn extract(source: &str) -> Vec<MarkdownSymbol> {
@@ -189,11 +194,13 @@ impl MarkdownSymbolExtractor {
 // ============================================================================
 
 /// Markdown checker (structural analysis with 10 built-in rules + MD011)
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 pub struct MarkdownChecker {
     /// Optional workspace root for broken-link checks (MD011).
     workspace_root: Option<PathBuf>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 impl MarkdownChecker {
     /// Create a new checker (no workspace root — MD011 disabled).
     pub fn new() -> Self {
@@ -433,6 +440,7 @@ impl MarkdownChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 impl Default for MarkdownChecker {
     fn default() -> Self {
         Self::new()
@@ -440,6 +448,7 @@ impl Default for MarkdownChecker {
 }
 
 /// Build a single-line Range for a given 0-indexed line number.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 pub(crate) fn line_range(line_num: u32) -> Range {
     Range::new(
         Position::new(line_num, 0),
@@ -447,6 +456,7 @@ pub(crate) fn line_range(line_num: u32) -> Range {
     )
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-markdown-rs.md#source
 impl Checker for MarkdownChecker {
     fn language(&self) -> Language {
         Language::Markdown
@@ -860,3 +870,4 @@ mod tests {
         assert!(fields.contains(&("author", "Bob")));
     }
 }
+// CODEGEN-END

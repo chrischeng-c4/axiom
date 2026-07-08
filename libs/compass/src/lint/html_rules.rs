@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rules-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Extended HTML lint rules (HTML006 - HTML011)
 //!
 //! Split from html.rs to keep files under 500 lines.
@@ -8,6 +10,7 @@ use std::collections::HashMap;
 
 use super::html::HtmlChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-html-rules-rs.md#source
 impl HtmlChecker {
     /// HTML006: Missing `<meta charset>` in `<head>`
     ///
@@ -206,3 +209,4 @@ fn strip_quotes(s: &str) -> &str {
         s
     }
 }
+// CODEGEN-END

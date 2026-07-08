@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Identifier casing and collision-safe naming for generated TypeScript.
 
 use std::collections::BTreeSet;
@@ -36,6 +38,7 @@ fn capitalize(word: &str) -> String {
 
 /// PascalCase a spec key (`pet_category` -> `PetCategory`). Falls back to a
 /// leading underscore when the result would not start with a letter.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 pub fn to_pascal(input: &str) -> String {
     let mut s: String = words(input).iter().map(|w| capitalize(w)).collect();
     if s.is_empty() {
@@ -48,6 +51,7 @@ pub fn to_pascal(input: &str) -> String {
 }
 
 /// camelCase a spec key (`PetCategory` -> `petCategory`).
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 pub fn to_camel(input: &str) -> String {
     let pascal = to_pascal(input);
     let mut chars = pascal.chars();
@@ -60,6 +64,7 @@ pub fn to_camel(input: &str) -> String {
 /// snake_case a spec key (`PetCategory` -> `pet_category`). Used for Python and
 /// Rust function/parameter identifiers. Falls back to a leading underscore when
 /// the result would not start with a letter or underscore.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 pub fn to_snake(input: &str) -> String {
     let s = words(input)
         .iter()
@@ -81,6 +86,7 @@ pub fn to_snake(input: &str) -> String {
 }
 
 /// True when `s` is a valid bare TypeScript object-property / identifier.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 pub fn is_ident(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
@@ -91,6 +97,7 @@ pub fn is_ident(s: &str) -> bool {
 }
 
 /// Object-literal property key: bare when a valid identifier, else quoted.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 pub fn prop_key(key: &str) -> String {
     if is_ident(key) {
         key.to_string()
@@ -101,6 +108,7 @@ pub fn prop_key(key: &str) -> String {
 
 /// Member access against a `params` object: dotted for identifiers, bracketed
 /// (string-keyed) otherwise.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 pub fn param_access(name: &str) -> String {
     if is_ident(name) {
         format!("params.{name}")
@@ -114,10 +122,12 @@ pub fn param_access(name: &str) -> String {
 
 /// Allocates unique names, suffixing `_2`, `_3`, ... on collision.
 #[derive(Debug, Default)]
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 pub struct NameRegistry {
     used: BTreeSet<String>,
 }
 
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-names-rs.md#source
 impl NameRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -172,3 +182,4 @@ mod tests {
         assert_eq!(prop_key("petId"), "petId");
     }
 }
+// CODEGEN-END

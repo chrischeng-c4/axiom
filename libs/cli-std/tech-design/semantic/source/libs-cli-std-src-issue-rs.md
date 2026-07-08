@@ -1,0 +1,731 @@
+---
+id: libs-cli-std-src-issue-rs
+summary: Lossless rust-source-unit coverage for `libs/cli-std/src/issue.rs`.
+capability_refs:
+  - id: standard-agent-cli-commands
+    role: primary
+    claim: standard-agent-cli-commands-contract
+    coverage: full
+    rationale: "The source, tests, and manifest implement the Cli Std library contract."
+fill_sections: [overview, source, changes]
+---
+
+# Standardized libs/cli-std/src/issue.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `libs/cli-std/src/issue.rs` captured during libs codegen standardization.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `CreateOptions` | libs/cli-std/src/issue.rs | struct | pub | 26 | pub struct CreateOptions { |
+| `CommentOptions` | libs/cli-std/src/issue.rs | struct | pub | 40 | pub struct CommentOptions { |
+| `render_diagnostics` | libs/cli-std/src/issue.rs | function | pub | 55 | pub fn render_diagnostics(tool: &ToolInfo, node: Option<&str>) -> String { |
+| `assemble_body` | libs/cli-std/src/issue.rs | function | pub | 74 | pub fn assemble_body(message: Option<&str>, diagnostics: &str) -> String { |
+| `resolve_repo` | libs/cli-std/src/issue.rs | function | pub | 82 | pub fn resolve_repo<'a>(tool: &'a ToolInfo, repo: Option<&'a str>) -> &'a str { |
+| `issue_payload` | libs/cli-std/src/issue.rs | function | pub | 87 | pub fn issue_payload(title: &str, body: &str, labels: &[String]) -> serde_json::Value { |
+| `comment_payload` | libs/cli-std/src/issue.rs | function | pub | 106 | pub fn comment_payload(body: &str) -> serde_json::Value { |
+| `followup_comment_body` | libs/cli-std/src/issue.rs | function | pub | 113 | pub fn followup_comment_body(tool: &ToolInfo, message: Option<&str>) -> String { |
+| `prefilled_url` | libs/cli-std/src/issue.rs | function | pub | 124 | pub fn prefilled_url(repo: &str, title: &str, body: &str, labels: &[String]) -> String { |
+| `create` | libs/cli-std/src/issue.rs | function | pub | 241 | pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> { |
+| `comment` | libs/cli-std/src/issue.rs | function | pub | 300 | pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> { |
+| `SearchOptions` | libs/cli-std/src/issue.rs | struct | pub | 357 | pub struct SearchOptions { |
+| `search` | libs/cli-std/src/issue.rs | function | pub | 378 | pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> { |
+| `view` | libs/cli-std/src/issue.rs | function | pub | 430 | pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> { |
+
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
+//! `<tool> issue <verb>` — the shared issue interface every CLI ships.
+//!
+//! - [`search`] — find this tool's issues on the tracker (filtered to the
+//!   `project:<name>` label), optionally by free text. Read-only.
+//! - [`view`] — print a single issue by number. Read-only.
+//! - [`create`] — assemble a diagnostics block + the operator's description and
+//!   file a GitHub issue (`POST /repos/{repo}/issues` via `GITHUB_TOKEN`), or
+//!   print a pre-filled `issues/new` URL when no token is available.
+//!   `--dry-run` prints without submitting.
+//! - [`comment`] — add a diagnostics-rich follow-up comment and ensure the
+//!   issue is open first, for downstream/user verification failures after
+//!   closure.
+//!
+//! Body assembly / URL pre-fill / repo resolution / payload shaping are pure and
+//! unit-tested; everything network-facing lives behind the `online` feature.
+
+use crate::ToolInfo;
+use anyhow::Result;
+
+// ---------------------------------------------------------------------------
+// create
+// ---------------------------------------------------------------------------
+
+/// Flags for `issue create`.
+#[derive(Clone, Debug, Default)]
+pub struct CreateOptions {
+    pub title: String,
+    pub message: Option<String>,
+    /// Optional running node to enrich the report from (`/version`+`/healthz`).
+    pub url: Option<String>,
+    /// Override the target repo (`owner/name`); defaults to `tool.repo`.
+    pub repo: Option<String>,
+    pub label: Vec<String>,
+    pub dry_run: bool,
+    pub yes: bool,
+}
+
+/// Flags for `issue comment`.
+#[derive(Clone, Debug, Default)]
+pub struct CommentOptions {
+    /// Issue number to comment on.
+    pub number: u64,
+    /// Optional operator/user verification note. When empty, a standard
+    /// "verification failed after closure" note is used.
+    pub message: Option<String>,
+    /// Override the target repo (`owner/name`); defaults to `tool.repo`.
+    pub repo: Option<String>,
+    /// Print the comment request without changing GitHub state.
+    pub dry_run: bool,
+    /// Skip the confirmation prompt.
+    pub yes: bool,
+}
+
+/// Render the diagnostics block from the tool identity (+ optional node line).
+pub fn render_diagnostics(tool: &ToolInfo, node: Option<&str>) -> String {
+    let mut s = String::from("## Diagnostics\n");
+    s.push_str(&format!("- {} version: {}\n", tool.project, tool.version));
+    s.push_str(&format!("- target: {}\n", tool.target));
+    s.push_str(&format!("- git sha: {}\n", tool.git_sha));
+    s.push_str(&format!("- built at: {}\n", tool.built_at));
+    s.push_str(&format!(
+        "- os/arch: {}/{}\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+    if let Some(node) = node {
+        s.push_str(&format!("- node: {node}\n"));
+    }
+    s
+}
+
+/// Assemble the issue body: message first (when non-empty), separator, then the
+/// diagnostics block.
+pub fn assemble_body(message: Option<&str>, diagnostics: &str) -> String {
+    match message {
+        Some(m) if !m.trim().is_empty() => format!("{}\n\n---\n{diagnostics}", m.trim()),
+        _ => diagnostics.to_string(),
+    }
+}
+
+/// The repo to file against: `--repo` else the tool's default.
+pub fn resolve_repo<'a>(tool: &'a ToolInfo, repo: Option<&'a str>) -> &'a str {
+    repo.unwrap_or(tool.repo)
+}
+
+/// The GitHub issue-creation JSON payload (`labels` omitted when empty).
+pub fn issue_payload(title: &str, body: &str, labels: &[String]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("title".into(), title.into());
+    map.insert("body".into(), body.into());
+    if !labels.is_empty() {
+        map.insert("labels".into(), labels.iter().cloned().collect());
+    }
+    serde_json::Value::Object(map)
+}
+
+/// The GitHub issue update payload for reopening an issue.
+#[cfg(feature = "online")]
+fn reopen_payload() -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("state".into(), "open".into());
+    serde_json::Value::Object(map)
+}
+
+/// The GitHub issue-comment JSON payload.
+pub fn comment_payload(body: &str) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("body".into(), body.into());
+    serde_json::Value::Object(map)
+}
+
+/// Assemble the follow-up comment used by `issue comment`.
+pub fn followup_comment_body(tool: &ToolInfo, message: Option<&str>) -> String {
+    let message = message
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("User-side verification failed after closure; reopening for follow-up.");
+    assemble_body(Some(message), &render_diagnostics(tool, None))
+}
+
+/// A browser-openable pre-filled `issues/new` URL (title + body + labels
+/// percent-encoded). Labels are comma-joined into the `labels` query param so
+/// the convention's `project:<name>` tag survives the no-token fallback path.
+pub fn prefilled_url(repo: &str, title: &str, body: &str, labels: &[String]) -> String {
+    let mut url = format!(
+        "https://github.com/{repo}/issues/new?title={}&body={}",
+        percent_encode_query(title),
+        percent_encode_query(body),
+    );
+    if !labels.is_empty() {
+        url.push_str(&format!(
+            "&labels={}",
+            percent_encode_query(&labels.join(","))
+        ));
+    }
+    url
+}
+
+fn percent_encode_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn print_preview(repo: &str, title: &str, body: &str, labels: &[String]) {
+    println!("repo:  {repo}");
+    println!("title: {title}");
+    if !labels.is_empty() {
+        println!("labels: {}", labels.join(", "));
+    }
+    println!("---");
+    println!("{body}");
+    println!("next: done");
+}
+
+/// Print the pre-filled-issue URL plus the title/body so the user can file by
+/// hand. The preceding diagnostic note (why we fell back) is the caller's
+/// responsibility — the "no credential" and "offline build" conditions are
+/// distinct and must not be conflated.
+fn print_fallback(repo: &str, title: &str, body: &str, labels: &[String]) {
+    println!("{}", prefilled_url(repo, title, body, labels));
+    println!("next: done");
+    eprintln!("\n--- title ---\n{title}\n--- body ---\n{body}");
+}
+
+fn issue_url(repo: &str, number: u64) -> String {
+    format!("https://github.com/{repo}/issues/{number}")
+}
+
+fn print_comment_preview(repo: &str, number: u64, body: &str) {
+    println!("repo:  {repo}");
+    println!("issue: #{number}");
+    println!("state: open");
+    println!("---");
+    println!("{body}");
+    println!("next: done");
+}
+
+fn print_comment_fallback(repo: &str, number: u64, body: &str) {
+    println!("{}", issue_url(repo, number));
+    println!("next: done");
+    eprintln!("\n--- comment ---\n{body}");
+}
+
+fn validate_issue_number(number: u64) -> Result<()> {
+    if number == 0 {
+        anyhow::bail!("issue number must be positive");
+    }
+    Ok(())
+}
+
+/// Online build, but no GitHub credential was found anywhere.
+#[cfg(feature = "online")]
+fn note_no_credential() {
+    eprintln!(
+        "note: no GitHub credential found (checked $GH_TOKEN, $GITHUB_TOKEN, and `gh auth token`). \
+         Run `gh auth login` or set GITHUB_TOKEN to file directly. \
+         Meanwhile, open this pre-filled issue:"
+    );
+}
+
+/// Online build, but no GitHub credential was found for a state-changing comment.
+#[cfg(feature = "online")]
+fn note_no_credential_comment() {
+    eprintln!(
+        "note: no GitHub credential found (checked $GH_TOKEN, $GITHUB_TOKEN, and `gh auth token`). \
+         Run `gh auth login` or set GITHUB_TOKEN to comment and reopen directly. \
+         Meanwhile, open this issue, reopen it if closed, and add the comment below:"
+    );
+}
+
+/// This binary was built without the `online` feature, so it cannot do network
+/// I/O at all — independent of whether a credential exists.
+#[cfg(not(feature = "online"))]
+fn note_offline_build() {
+    eprintln!(
+        "note: this build has no `online` feature; it cannot file directly. \
+         Open this pre-filled issue:"
+    );
+}
+
+/// This binary was built without the `online` feature, so it cannot comment or
+/// reopen via the GitHub API.
+#[cfg(not(feature = "online"))]
+fn note_offline_comment_build() {
+    eprintln!(
+        "note: this build has no `online` feature; it cannot comment or reopen directly. \
+         Open this issue, reopen it if closed, and add the comment below:"
+    );
+}
+
+/// `issue create` — file (or preview) a structured issue.
+#[cfg(feature = "online")]
+pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
+    let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let client = http_client(tool)?;
+
+    let node = match opts.url.as_deref() {
+        Some(url) => Some(fetch_node_status(&client, url).await),
+        None => None,
+    };
+    let body = assemble_body(
+        opts.message.as_deref(),
+        &render_diagnostics(tool, node.as_deref()),
+    );
+
+    if opts.dry_run {
+        print_preview(&repo, &opts.title, &body, &opts.label);
+        return Ok(());
+    }
+
+    match crate::resolve_github_token() {
+        Some(token) => {
+            if !opts.yes && !crate::confirm(&format!("file this issue to {repo}?"))? {
+                println!("aborted");
+                println!("next: done");
+                return Ok(());
+            }
+            let url = submit_issue(
+                &client,
+                &repo,
+                &token,
+                &issue_payload(&opts.title, &body, &opts.label),
+            )
+            .await?;
+            println!("filed: {url}");
+            println!("next: done");
+        }
+        None => {
+            note_no_credential();
+            print_fallback(&repo, &opts.title, &body, &opts.label);
+        }
+    }
+    Ok(())
+}
+
+/// Offline build: assemble + print (`--dry-run`) or the browser fallback.
+#[cfg(not(feature = "online"))]
+pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
+    let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let body = assemble_body(opts.message.as_deref(), &render_diagnostics(tool, None));
+    if opts.dry_run {
+        print_preview(&repo, &opts.title, &body, &opts.label);
+    } else {
+        note_offline_build();
+        print_fallback(&repo, &opts.title, &body, &opts.label);
+    }
+    Ok(())
+}
+
+/// `issue comment` — ensure an issue is open and attach a verification-failed note.
+#[cfg(feature = "online")]
+pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
+    validate_issue_number(opts.number)?;
+    let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let body = followup_comment_body(tool, opts.message.as_deref());
+
+    if opts.dry_run {
+        print_comment_preview(&repo, opts.number, &body);
+        return Ok(());
+    }
+
+    let Some(token) = crate::resolve_github_token() else {
+        note_no_credential_comment();
+        print_comment_fallback(&repo, opts.number, &body);
+        return Ok(());
+    };
+
+    if !opts.yes
+        && !crate::confirm(&format!(
+            "comment on issue #{} in {repo} and ensure it is open?",
+            opts.number
+        ))?
+    {
+        println!("aborted");
+        println!("next: done");
+        return Ok(());
+    }
+
+    let client = http_client(tool)?;
+    let url = reopen_issue(&client, &repo, opts.number, &token).await?;
+    println!("issue: {url}");
+    let comment_url = post_issue_comment(&client, &repo, opts.number, &token, &body).await?;
+    println!("commented: {comment_url}");
+    println!("next: done");
+    Ok(())
+}
+
+/// Offline build: print the issue URL and the comment to paste after reopening.
+#[cfg(not(feature = "online"))]
+pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
+    validate_issue_number(opts.number)?;
+    let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
+    let body = followup_comment_body(tool, opts.message.as_deref());
+    if opts.dry_run {
+        print_comment_preview(&repo, opts.number, &body);
+    } else {
+        note_offline_comment_build();
+        print_comment_fallback(&repo, opts.number, &body);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// search (read)
+// ---------------------------------------------------------------------------
+
+/// Flags for `issue search`.
+#[derive(Clone, Debug)]
+pub struct SearchOptions {
+    /// Free-text query; `None`/empty lists recent issues for this tool.
+    pub query: Option<String>,
+    /// `open` (default), `closed`, or `all`.
+    pub state: String,
+    /// Max results.
+    pub limit: u32,
+}
+
+impl Default for SearchOptions {
+    fn default() -> Self {
+        Self {
+            query: None,
+            state: "open".to_string(),
+            limit: 20,
+        }
+    }
+}
+
+/// `issue search` — list/search this tool's issues (filtered to `project:<name>`).
+#[cfg(feature = "online")]
+pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
+    use anyhow::Context;
+    let label = format!("project:{}", tool.project);
+    let mut q = format!("repo:{} is:issue label:\"{}\"", tool.repo, label);
+    if opts.state != "all" {
+        q.push_str(&format!(" state:{}", opts.state));
+    }
+    if let Some(text) = opts.query.as_deref() {
+        if !text.trim().is_empty() {
+            q.push(' ');
+            q.push_str(text.trim());
+        }
+    }
+    let url = format!(
+        "https://api.github.com/search/issues?q={}&per_page={}",
+        percent_encode_query(&q),
+        opts.limit
+    );
+    let client = http_client(tool)?;
+    let v: serde_json::Value = crate::github_get(&client, &url)
+        .await?
+        .json()
+        .await
+        .context("parse issue search response")?;
+
+    let items = v.get("items").and_then(|i| i.as_array());
+    match items {
+        Some(items) if !items.is_empty() => {
+            for it in items {
+                let num = it.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+                let state = it.get("state").and_then(|s| s.as_str()).unwrap_or("?");
+                let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                println!("#{num} [{state}] {title}");
+            }
+        }
+        _ => println!("no {label} issues match"),
+    }
+    println!("next: done");
+    Ok(())
+}
+
+#[cfg(not(feature = "online"))]
+pub async fn search(_tool: &ToolInfo, _opts: SearchOptions) -> Result<()> {
+    anyhow::bail!("this build has no `online` feature — `issue search` needs network access")
+}
+
+// ---------------------------------------------------------------------------
+// view (read)
+// ---------------------------------------------------------------------------
+
+/// `issue view` — print a single issue by number.
+#[cfg(feature = "online")]
+pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
+    use anyhow::Context;
+    let url = format!(
+        "https://api.github.com/repos/{}/issues/{}",
+        tool.repo, number
+    );
+    let client = http_client(tool)?;
+    let v: serde_json::Value = crate::github_get(&client, &url)
+        .await?
+        .json()
+        .await
+        .context("parse issue response")?;
+
+    let state = v.get("state").and_then(|s| s.as_str()).unwrap_or("?");
+    let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("");
+    let html = v.get("html_url").and_then(|u| u.as_str()).unwrap_or("");
+    let body = v.get("body").and_then(|b| b.as_str()).unwrap_or("");
+    println!("#{number} [{state}] {title}");
+    if !html.is_empty() {
+        println!("{html}");
+    }
+    println!("---");
+    println!(
+        "{}",
+        if body.trim().is_empty() {
+            "(no description)"
+        } else {
+            body
+        }
+    );
+    println!("next: done");
+    Ok(())
+}
+
+#[cfg(not(feature = "online"))]
+pub async fn view(_tool: &ToolInfo, _number: u64) -> Result<()> {
+    anyhow::bail!("this build has no `online` feature — `issue view` needs network access")
+}
+
+// ---------------------------------------------------------------------------
+// shared online helpers
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "online")]
+fn http_client(tool: &ToolInfo) -> Result<reqwest::Client> {
+    use anyhow::Context;
+    reqwest::Client::builder()
+        .user_agent(format!("{}-issue/{}", tool.project, tool.version))
+        .build()
+        .context("build HTTP client")
+}
+
+#[cfg(feature = "online")]
+async fn fetch_node_status(client: &reqwest::Client, url: &str) -> String {
+    let base = url.trim_end_matches('/');
+    match client
+        .get(format!("{base}/version"))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => {
+            let body = resp.text().await.unwrap_or_default();
+            let health = client
+                .get(format!("{base}/healthz"))
+                .send()
+                .await
+                .map(|r| r.status().as_u16().to_string())
+                .unwrap_or_else(|_| "?".to_string());
+            format!("{base} → version={} healthz={health}", body.trim())
+        }
+        Err(_) => format!("unreachable ({base})"),
+    }
+}
+
+#[cfg(feature = "online")]
+async fn submit_issue(
+    client: &reqwest::Client,
+    repo: &str,
+    token: &str,
+    payload: &serde_json::Value,
+) -> Result<String> {
+    use anyhow::{bail, Context};
+    let url = format!("https://api.github.com/repos/{repo}/issues");
+    let resp = client
+        .post(&url)
+        .header("Accept", "application/vnd.github+json")
+        .bearer_auth(token)
+        .json(payload)
+        .send()
+        .await
+        .context("POST issue")?;
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.context("parse issue response")?;
+    if !status.is_success() {
+        let msg = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        bail!("GitHub returned {status}: {msg}");
+    }
+    Ok(value
+        .get("html_url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("(issue created)")
+        .to_string())
+}
+
+#[cfg(feature = "online")]
+async fn reopen_issue(
+    client: &reqwest::Client,
+    repo: &str,
+    number: u64,
+    token: &str,
+) -> Result<String> {
+    use anyhow::{bail, Context};
+    let url = format!("https://api.github.com/repos/{repo}/issues/{number}");
+    let resp = client
+        .patch(&url)
+        .header("Accept", "application/vnd.github+json")
+        .bearer_auth(token)
+        .json(&reopen_payload())
+        .send()
+        .await
+        .context("PATCH issue")?;
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.context("parse issue response")?;
+    if !status.is_success() {
+        let msg = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        bail!("GitHub returned {status}: {msg}");
+    }
+    Ok(value
+        .get("html_url")
+        .and_then(|u| u.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| issue_url(repo, number)))
+}
+
+#[cfg(feature = "online")]
+async fn post_issue_comment(
+    client: &reqwest::Client,
+    repo: &str,
+    number: u64,
+    token: &str,
+    body: &str,
+) -> Result<String> {
+    use anyhow::{bail, Context};
+    let url = format!("https://api.github.com/repos/{repo}/issues/{number}/comments");
+    let resp = client
+        .post(&url)
+        .header("Accept", "application/vnd.github+json")
+        .bearer_auth(token)
+        .json(&comment_payload(body))
+        .send()
+        .await
+        .context("POST issue comment")?;
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.context("parse comment response")?;
+    if !status.is_success() {
+        let msg = value
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        bail!("GitHub returned {status}: {msg}");
+    }
+    Ok(value
+        .get("html_url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("(comment created)")
+        .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TOOL: ToolInfo = ToolInfo {
+        project: "lumen",
+        repo: "chrischeng-c4/axiom",
+        target: "aarch64-apple-darwin",
+        version: "0.4.3",
+        git_sha: "abc1234",
+        built_at: "1700000000",
+    };
+
+    #[test]
+    fn diagnostics_and_body() {
+        let d = render_diagnostics(&TOOL, None);
+        for n in ["lumen version: 0.4.3", "aarch64-apple-darwin", "abc1234"] {
+            assert!(d.contains(n), "missing {n}");
+        }
+        let b = assemble_body(Some("boom"), &d);
+        assert!(b.find("boom").unwrap() < b.find("## Diagnostics").unwrap());
+        assert!(assemble_body(None, &d).starts_with("## Diagnostics"));
+    }
+
+    #[test]
+    fn url_and_repo_and_payload() {
+        let u = prefilled_url("o/n", "a b&c", "x\ny", &[]);
+        assert!(u.starts_with("https://github.com/o/n/issues/new?title="));
+        assert!(u.contains("a%20b%26c") && u.contains("x%0Ay") && !u.contains(' '));
+        assert!(!u.contains("labels="));
+        // Labels survive the no-token URL fallback (convention `project:<name>`).
+        let ul = prefilled_url("o/n", "t", "b", &["project:jet".into(), "bug".into()]);
+        assert!(ul.contains("&labels=project%3Ajet%2Cbug"));
+        assert_eq!(resolve_repo(&TOOL, None), "chrischeng-c4/axiom");
+        assert_eq!(resolve_repo(&TOOL, Some("o/n")), "o/n");
+
+        let p = issue_payload("t", "b", &["bug".into()]);
+        assert_eq!(p["title"], "t");
+        assert_eq!(p["labels"], serde_json::json!(["bug"]));
+        assert!(issue_payload("t", "b", &[]).get("labels").is_none());
+    }
+
+    #[test]
+    fn comment_payload_and_followup_body() {
+        #[cfg(feature = "online")]
+        assert_eq!(reopen_payload()["state"], "open");
+        assert_eq!(comment_payload("still failing")["body"], "still failing");
+
+        let body = followup_comment_body(&TOOL, Some("user verification still fails"));
+        assert!(body.contains("user verification still fails"));
+        assert!(body.contains("## Diagnostics"));
+        assert!(body.contains("lumen version: 0.4.3"));
+
+        let default_body = followup_comment_body(&TOOL, Some("  "));
+        assert!(default_body.contains("User-side verification failed after closure"));
+    }
+
+    #[test]
+    fn representative_issue_outputs_are_chainable() {
+        for output in [
+            "repo:  chrischeng-c4/axiom\ntitle: lumen: bug\n---\nbody\nnext: done\n",
+            "#1142 [open] lumen: add lightweight chainable output\nnext: done\n",
+            "#1142 [open] lumen: add lightweight chainable output\nhttps://github.com/chrischeng-c4/axiom/issues/1142\n---\nbody\nnext: done\n",
+        ] {
+            crate::chainable::assert_chainable(output)
+                .expect("shared issue outputs should satisfy the lightweight chainable contract");
+        }
+    }
+}
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "libs/cli-std/src/issue.rs"
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `libs/cli-std/src/issue.rs` captured during libs codegen standardization.
+```

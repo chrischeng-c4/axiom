@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! CSS code checker
 
 use crate::checker::LintConfig;
@@ -6,8 +8,10 @@ use crate::syntax::{Language, ParsedFile};
 use std::collections::HashMap;
 
 /// CSS checker
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rs.md#source
 pub struct CssChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rs.md#source
 impl CssChecker {
     pub fn new() -> Self {
         Self
@@ -516,12 +520,14 @@ impl CssChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rs.md#source
 impl Default for CssChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rs.md#source
 impl super::Checker for CssChecker {
     fn language(&self) -> Language {
         Language::Css
@@ -586,3 +592,4 @@ impl super::Checker for CssChecker {
         ]
     }
 }
+// CODEGEN-END

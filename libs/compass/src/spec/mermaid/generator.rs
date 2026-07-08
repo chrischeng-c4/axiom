@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-generator-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Mermaid diagram generator
 //!
 //! Generates Mermaid diagrams from SpecIR structures.
@@ -8,8 +10,10 @@ use crate::spec::ir::{
 };
 
 /// Mermaid diagram generator
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-generator-rs.md#source
 pub struct MermaidGenerator;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-generator-rs.md#source
 impl MermaidGenerator {
     pub fn new() -> Self {
         Self
@@ -279,6 +283,7 @@ impl MermaidGenerator {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-generator-rs.md#source
 impl Default for MermaidGenerator {
     fn default() -> Self {
         Self::new()
@@ -512,3 +517,4 @@ mod tests {
         assert!(result.contains("Server-->>Client: 200 OK"));
     }
 }
+// CODEGEN-END

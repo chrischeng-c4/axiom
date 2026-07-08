@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-terraform-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Terraform/HCL symbol extraction via tree-sitter-hcl
 //!
 //! Extracts symbols from HCL ASTs:
@@ -13,6 +15,7 @@ use crate::syntax::ParsedFile;
 
 use super::{SymbolKind, SymbolTableBuilder};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-terraform-rs.md#source
 impl SymbolTableBuilder {
     /// Walk HCL AST to extract Terraform symbols
     pub(crate) fn visit_hcl_node(&mut self, node: &tree_sitter::Node<'_>, file: &ParsedFile) {
@@ -274,3 +277,4 @@ module "vpc" {
         );
     }
 }
+// CODEGEN-END

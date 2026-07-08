@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-host/tech-design/semantic/source/libs-raft-host-src-llm-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! LLM topic provider for the shared raft-host contract.
 
 /// Agent-facing topic describing raft-host topology and service boundaries.
@@ -51,6 +53,7 @@ hosted here; the snapshot payload remains service-owned.
 };
 
 /// Return the shared raft topic for CLI composition.
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }
@@ -65,3 +68,4 @@ mod tests {
         assert!(topic.body.contains("REPLICAS_PER_SHARD > 1"));
     }
 }
+// CODEGEN-END

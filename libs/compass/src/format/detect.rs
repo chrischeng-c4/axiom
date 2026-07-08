@@ -1,8 +1,11 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-format-detect-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Binary detection for formatters
 
 use std::path::PathBuf;
 
 /// Find a binary on PATH using `which`
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-format-detect-rs.md#source
 pub fn find_binary(name: &str) -> Option<PathBuf> {
     let output = std::process::Command::new("which")
         .arg(name)
@@ -38,3 +41,4 @@ mod tests {
         assert!(result.is_none(), "nonexistent binary should return None");
     }
 }
+// CODEGEN-END

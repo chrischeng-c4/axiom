@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The [`ManagedService`] trait a service implements + the shared CRD fragments.
 
 use std::collections::HashMap;
@@ -10,6 +12,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// A workload to poll for `.status.readyReplicas` during reconcile.
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
 pub struct ReadinessTarget {
     pub kind: &'static str,
     pub name: String,
@@ -17,10 +20,12 @@ pub struct ReadinessTarget {
 
 /// Observed readiness handed to [`ManagedService::status_patch`]
 /// (workload name → `readyReplicas`).
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
 pub struct ReadyFacts {
     pub ready: HashMap<String, i64>,
 }
 
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
 impl ReadyFacts {
     /// Ready replicas for `name`, or 0 if the workload was absent.
     pub fn get(&self, name: &str) -> i64 {
@@ -31,6 +36,7 @@ impl ReadyFacts {
 /// One service's contribution to the shared operator. Implemented on the CRD
 /// root type (e.g. lumen's `Lumen`). The [`crate::controller`] is generic over
 /// `S`, so the watch/apply/lease loop is written once.
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
 pub trait ManagedService:
     Resource<DynamicType = (), Scope = NamespaceResourceScope>
     + CustomResourceExt
@@ -60,6 +66,7 @@ pub trait ManagedService:
 /// `#[serde(flatten)] pub cluster: operator::ClusterSpec`.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
 pub struct ClusterSpec {
     pub image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -77,6 +84,7 @@ pub struct ClusterSpec {
 /// CPU/memory request==limit (Guaranteed QoS).
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
 pub struct ResourceSpec {
     #[serde(default)]
     pub cpu: String,
@@ -87,3 +95,4 @@ pub struct ResourceSpec {
 fn one() -> u32 {
     1
 }
+// CODEGEN-END

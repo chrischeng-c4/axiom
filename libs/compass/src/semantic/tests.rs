@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-tests-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tests for error recovery in semantic analysis
 //!
 //! These tests verify that:
@@ -272,3 +274,4 @@ def valid():
     // Just test that parsing doesn't crash
     assert!(parsed.is_some());
 }
+// CODEGEN-END

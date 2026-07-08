@@ -1,9 +1,12 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! JSON-RPC protocol definitions for Argus daemon
 
 use serde::{Deserialize, Serialize};
 
 /// JSON-RPC request
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct Request {
     pub jsonrpc: String,
     pub id: RequestId,
@@ -12,6 +15,7 @@ pub struct Request {
     pub params: Option<serde_json::Value>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 impl Request {
     pub fn new(id: impl Into<RequestId>, method: &str, params: Option<serde_json::Value>) -> Self {
         Self {
@@ -25,6 +29,7 @@ impl Request {
 
 /// JSON-RPC response
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct Response {
     pub jsonrpc: String,
     pub id: RequestId,
@@ -34,6 +39,7 @@ pub struct Response {
     pub error: Option<RpcError>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 impl Response {
     pub fn success(id: RequestId, result: serde_json::Value) -> Self {
         Self {
@@ -56,6 +62,7 @@ impl Response {
 
 /// JSON-RPC error
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct RpcError {
     pub code: i32,
     pub message: String,
@@ -63,6 +70,7 @@ pub struct RpcError {
     pub data: Option<serde_json::Value>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 impl RpcError {
     pub fn parse_error(msg: impl Into<String>) -> Self {
         Self {
@@ -108,23 +116,27 @@ impl RpcError {
 /// Request ID (can be string or number)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(untagged)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub enum RequestId {
     Number(i64),
     String(String),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 impl From<i64> for RequestId {
     fn from(n: i64) -> Self {
         RequestId::Number(n)
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 impl From<&str> for RequestId {
     fn from(s: &str) -> Self {
         RequestId::String(s.to_string())
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 impl From<String> for RequestId {
     fn from(s: String) -> Self {
         RequestId::String(s)
@@ -137,12 +149,14 @@ impl From<String> for RequestId {
 
 /// Parameters for check method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct CheckParams {
     pub path: String,
 }
 
 /// Parameters for type_at method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct TypeAtParams {
     pub file: String,
     pub line: u32,
@@ -151,12 +165,14 @@ pub struct TypeAtParams {
 
 /// Parameters for symbols method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct SymbolsParams {
     pub file: String,
 }
 
 /// Parameters for diagnostics method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct DiagnosticsParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
@@ -164,6 +180,7 @@ pub struct DiagnosticsParams {
 
 /// Parameters for hover method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct HoverParams {
     pub file: String,
     pub line: u32,
@@ -172,6 +189,7 @@ pub struct HoverParams {
 
 /// Parameters for definition method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct DefinitionParams {
     pub file: String,
     pub line: u32,
@@ -180,6 +198,7 @@ pub struct DefinitionParams {
 
 /// Parameters for references method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct ReferencesParams {
     pub file: String,
     pub line: u32,
@@ -194,6 +213,7 @@ pub struct ReferencesParams {
 
 /// Diagnostic information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct DiagnosticInfo {
     pub file: String,
     pub line: u32,
@@ -207,6 +227,7 @@ pub struct DiagnosticInfo {
 
 /// Symbol information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct SymbolInfo {
     pub name: String,
     pub kind: String,
@@ -218,6 +239,7 @@ pub struct SymbolInfo {
 
 /// Location information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct LocationInfo {
     pub file: String,
     pub line: u32,
@@ -228,6 +250,7 @@ pub struct LocationInfo {
 
 /// Index status response
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct IndexStatus {
     pub indexed_files: usize,
     pub total_symbols: usize,
@@ -237,6 +260,7 @@ pub struct IndexStatus {
 
 /// Check result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct CheckResult {
     pub diagnostics: Vec<DiagnosticInfo>,
     pub files_checked: usize,
@@ -250,6 +274,7 @@ pub struct CheckResult {
 
 /// Parameters for pdg method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct PdgParams {
     pub file: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,6 +283,7 @@ pub struct PdgParams {
 
 /// Parameters for slice method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct SliceParams {
     pub file: String,
     /// Line number (0-indexed)
@@ -268,6 +294,7 @@ pub struct SliceParams {
 
 /// Parameters for impact method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct ImpactParams {
     pub file: String,
     pub changed_lines: Vec<usize>,
@@ -275,6 +302,7 @@ pub struct ImpactParams {
 
 /// Parameters for taint method
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct TaintParams {
     pub file: String,
     /// Optional explicit source lines; if empty, auto-detects from code patterns
@@ -287,6 +315,7 @@ pub struct TaintParams {
 
 /// A slice node (statement) in the result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct SliceNodeInfo {
     pub line: usize,
     pub text: String,
@@ -295,6 +324,7 @@ pub struct SliceNodeInfo {
 
 /// Slice result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct SliceResult {
     pub direction: String,
     pub criterion_line: usize,
@@ -304,6 +334,7 @@ pub struct SliceResult {
 
 /// A node in the impact dependency tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct ImpactNode {
     pub line: usize,
     pub text: String,
@@ -319,6 +350,7 @@ pub struct ImpactNode {
 
 /// Impact analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct ImpactResult {
     pub changed_lines: Vec<usize>,
     /// Flat list of affected lines
@@ -330,6 +362,7 @@ pub struct ImpactResult {
 
 /// A taint path from source to sink
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct TaintPathInfo {
     pub source_line: usize,
     pub source_text: String,
@@ -342,6 +375,7 @@ pub struct TaintPathInfo {
 
 /// Taint analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-protocol-rs.md#source
 pub struct TaintResult {
     pub source_lines: Vec<usize>,
     pub sink_lines: Vec<usize>,
@@ -349,3 +383,4 @@ pub struct TaintResult {
     pub has_vulnerabilities: bool,
     pub auto_detected: bool,
 }
+// CODEGEN-END

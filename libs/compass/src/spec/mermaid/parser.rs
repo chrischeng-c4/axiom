@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Mermaid diagram parser
 //!
 //! Parses Mermaid diagrams into SpecIR structures.
@@ -11,6 +13,7 @@ use crate::type_inference::Type;
 
 /// Error type for Mermaid parsing
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 pub enum MermaidError {
     /// Unknown diagram type
     UnknownDiagramType(String),
@@ -22,6 +25,7 @@ pub enum MermaidError {
     Other(String),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 impl std::fmt::Display for MermaidError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -33,10 +37,12 @@ impl std::fmt::Display for MermaidError {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 impl std::error::Error for MermaidError {}
 
 /// Detected diagram type
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 pub enum DiagramType {
     ClassDiagram,
     SequenceDiagram,
@@ -47,6 +53,7 @@ pub enum DiagramType {
 
 /// Parsed Mermaid result
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 pub enum MermaidSpec {
     DataModel(DataModelSpec),
     StateMachine(StateMachineSpec),
@@ -54,8 +61,10 @@ pub enum MermaidSpec {
 }
 
 /// Mermaid diagram parser
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 pub struct MermaidParser;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 impl MermaidParser {
     pub fn new() -> Self {
         Self
@@ -751,6 +760,7 @@ impl MermaidParser {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-mermaid-parser-rs.md#source
 impl Default for MermaidParser {
     fn default() -> Self {
         Self::new()
@@ -916,3 +926,4 @@ erDiagram
         );
     }
 }
+// CODEGEN-END

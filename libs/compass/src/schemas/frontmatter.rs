@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-schemas-frontmatter-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Frontmatter schema definitions for Hugo, Jekyll, Docusaurus, and Generic.
 //!
 //! Provides JSON Schema validators for YAML frontmatter used in static site
@@ -9,6 +11,7 @@ use std::sync::OnceLock;
 
 /// Frontmatter framework type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-schemas-frontmatter-rs.md#source
 pub enum FrontmatterFramework {
     Hugo,
     Jekyll,
@@ -17,6 +20,7 @@ pub enum FrontmatterFramework {
 }
 
 /// Get the frontmatter validator for a framework
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-schemas-frontmatter-rs.md#source
 pub fn frontmatter_validator(framework: FrontmatterFramework) -> &'static Validator {
     match framework {
         FrontmatterFramework::Hugo => hugo_validator(),
@@ -220,6 +224,7 @@ fn generic_schema() -> Value {
 /// 2. Jekyll — `_config.yml`, `_config.yaml`
 /// 3. Docusaurus — `docusaurus.config.js`, `docusaurus.config.ts`
 /// 4. Generic — fallback
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-schemas-frontmatter-rs.md#source
 pub fn detect_framework(project_root: &std::path::Path) -> FrontmatterFramework {
     // Hugo
     if project_root.join("hugo.toml").exists()
@@ -346,3 +351,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

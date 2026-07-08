@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Framework support (Sprint 6 - Track 1)
 //!
 //! Provides type inference for popular Python frameworks:
@@ -20,6 +22,7 @@ use crate::type_inference::ty::Type;
 
 /// Detected framework in a project.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub enum Framework {
     Django,
     Flask,
@@ -32,6 +35,7 @@ pub enum Framework {
 
 /// Framework detection result.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct FrameworkDetection {
     /// Detected frameworks
     pub frameworks: Vec<Framework>,
@@ -41,6 +45,7 @@ pub struct FrameworkDetection {
     pub confidence: HashMap<Framework, f64>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl FrameworkDetection {
     /// Create empty detection.
     pub fn empty() -> Self {
@@ -77,11 +82,13 @@ impl FrameworkDetection {
 }
 
 /// Detect frameworks in a project.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct FrameworkDetector {
     /// Project root
     root: PathBuf,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl FrameworkDetector {
     /// Create a new detector.
     pub fn new(root: PathBuf) -> Self {
@@ -400,6 +407,7 @@ impl FrameworkDetector {
 // ============================================================================
 
 /// Provides framework-specific type information.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub trait FrameworkTypeProvider {
     /// Get types for a symbol.
     fn get_type(&self, symbol: &str, context: &TypeContext) -> Option<Type>;
@@ -416,6 +424,7 @@ pub trait FrameworkTypeProvider {
 
 /// Method type with parameters and return.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct MethodType {
     /// Parameter types
     pub params: Vec<(String, Type)>,
@@ -430,6 +439,7 @@ pub struct MethodType {
 // ============================================================================
 
 /// Django type provider.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct DjangoTypeProvider {
     /// Model definitions
     models: HashMap<String, DjangoModel>,
@@ -437,6 +447,7 @@ pub struct DjangoTypeProvider {
 
 /// Django model definition.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct DjangoModel {
     /// Model name
     pub name: String,
@@ -448,6 +459,7 @@ pub struct DjangoModel {
 
 /// Django field.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct DjangoField {
     /// Field name
     pub name: String,
@@ -461,6 +473,7 @@ pub struct DjangoField {
 
 /// Django field type.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub enum DjangoFieldType {
     CharField,
     TextField,
@@ -477,6 +490,7 @@ pub enum DjangoFieldType {
 
 /// Django relation.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct DjangoRelation {
     /// Relation name
     pub name: String,
@@ -488,12 +502,14 @@ pub struct DjangoRelation {
 
 /// Django relation type.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub enum DjangoRelationType {
     ForeignKey,
     OneToOne,
     ManyToMany,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl DjangoTypeProvider {
     /// Create a new provider.
     pub fn new() -> Self {
@@ -513,12 +529,14 @@ impl DjangoTypeProvider {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl Default for DjangoTypeProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl FrameworkTypeProvider for DjangoTypeProvider {
     fn get_type(&self, symbol: &str, _context: &TypeContext) -> Option<Type> {
         // Check if symbol is a model
@@ -717,6 +735,7 @@ impl FrameworkTypeProvider for DjangoTypeProvider {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl DjangoTypeProvider {
     fn field_type_to_type(&self, field_type: &DjangoFieldType) -> Type {
         match field_type {
@@ -945,6 +964,7 @@ impl DjangoTypeProvider {
 // ============================================================================
 
 /// FastAPI type provider.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct FastAPITypeProvider {
     /// Registered endpoints
     endpoints: HashMap<String, FastAPIEndpoint>,
@@ -954,6 +974,7 @@ pub struct FastAPITypeProvider {
 
 /// FastAPI endpoint.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct FastAPIEndpoint {
     /// Path
     pub path: String,
@@ -967,6 +988,7 @@ pub struct FastAPIEndpoint {
     pub dependencies: Vec<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl FastAPITypeProvider {
     /// Create a new provider.
     pub fn new() -> Self {
@@ -987,12 +1009,14 @@ impl FastAPITypeProvider {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl Default for FastAPITypeProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl FrameworkTypeProvider for FastAPITypeProvider {
     fn get_type(&self, symbol: &str, _context: &TypeContext) -> Option<Type> {
         self.dependencies.get(symbol).cloned()
@@ -1169,6 +1193,7 @@ impl FrameworkTypeProvider for FastAPITypeProvider {
 // ============================================================================
 
 /// Pydantic type provider.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct PydanticTypeProvider {
     /// Registered models
     models: HashMap<String, PydanticModel>,
@@ -1176,6 +1201,7 @@ pub struct PydanticTypeProvider {
 
 /// Pydantic model.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct PydanticModel {
     /// Model name
     pub name: String,
@@ -1189,6 +1215,7 @@ pub struct PydanticModel {
 
 /// Pydantic field.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct PydanticField {
     /// Field name
     pub name: String,
@@ -1204,6 +1231,7 @@ pub struct PydanticField {
 
 /// Pydantic config.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct PydanticConfig {
     /// Allow extra fields
     pub extra: PydanticExtra,
@@ -1215,12 +1243,14 @@ pub struct PydanticConfig {
 
 /// Pydantic extra handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub enum PydanticExtra {
     Allow,
     Forbid,
     Ignore,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl PydanticTypeProvider {
     /// Create a new provider.
     pub fn new() -> Self {
@@ -1240,12 +1270,14 @@ impl PydanticTypeProvider {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl Default for PydanticTypeProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl FrameworkTypeProvider for PydanticTypeProvider {
     fn get_type(&self, symbol: &str, _context: &TypeContext) -> Option<Type> {
         if self.models.contains_key(symbol) {
@@ -1419,11 +1451,13 @@ impl FrameworkTypeProvider for PydanticTypeProvider {
 // ============================================================================
 
 /// Registry of framework type providers.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 pub struct FrameworkRegistry {
     /// Registered providers
     providers: Vec<Box<dyn FrameworkTypeProvider + Send + Sync>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl FrameworkRegistry {
     /// Create a new registry.
     pub fn new() -> Self {
@@ -1468,6 +1502,7 @@ impl FrameworkRegistry {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-frameworks-rs.md#source
 impl Default for FrameworkRegistry {
     fn default() -> Self {
         Self::new()
@@ -1656,3 +1691,4 @@ mod tests {
         assert!(matches!(sig.return_type, Type::Optional(..)));
     }
 }
+// CODEGEN-END

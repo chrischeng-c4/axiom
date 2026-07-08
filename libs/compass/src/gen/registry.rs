@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-registry-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Generator registry — dispatches SpecIR to the correct generator.
 //!
 //! Instead of ad-hoc generator selection, consumers call
@@ -10,10 +12,12 @@
 use super::traits::{CodeGenerator, GenContext, GenError, GenResult, GeneratedCode};
 
 /// Registry holding all registered [`CodeGenerator`] implementations.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-registry-rs.md#source
 pub struct GeneratorRegistry {
     generators: Vec<Box<dyn CodeGenerator>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-registry-rs.md#source
 impl GeneratorRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
@@ -74,6 +78,7 @@ impl GeneratorRegistry {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-registry-rs.md#source
 impl Default for GeneratorRegistry {
     fn default() -> Self {
         Self::new()
@@ -155,3 +160,4 @@ mod tests {
         assert_eq!(registry.len(), 1);
     }
 }
+// CODEGEN-END

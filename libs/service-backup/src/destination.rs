@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use anyhow::{bail, ensure, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -5,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Backup destination declared by a service CR or runner config.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#source
 pub enum BackupDestination {
     /// Local filesystem path, primarily for dev/tests and PVC-backed local runs.
     Local {
@@ -39,6 +42,7 @@ pub enum BackupDestination {
     },
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#source
 impl BackupDestination {
     /// Parse the common URI spellings used by operators and CLIs.
     /// `gs://bucket/prefix` remains schema-compatible so configs can validate
@@ -137,3 +141,4 @@ mod tests {
         assert!(BackupDestination::from_uri("gs://").is_err());
     }
 }
+// CODEGEN-END

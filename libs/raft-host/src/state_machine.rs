@@ -1,9 +1,12 @@
+// SPEC-MANAGED: libs/raft-host/tech-design/semantic/source/libs-raft-host-src-state-machine-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The `RaftStateMachine` a consumer supplies to [`crate::RaftHost`].
 
 use raft_core::Index;
 
 /// Opaque committed-entry bytes (raft_core's `RaftEntry.command`). The host never
 /// looks inside — the state machine encodes/decodes its own commands.
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-state-machine-rs.md#source
 pub type Command = Vec<u8>;
 
 /// The consumer's replicated state machine. The host owns the **only** applier:
@@ -14,6 +17,7 @@ pub type Command = Vec<u8>;
 ///
 /// Implementors are `&self` interior-mutable (engines are `Arc<_>` with internal
 /// locks); the host holds an `Arc<dyn RaftStateMachine>`.
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-state-machine-rs.md#source
 pub trait RaftStateMachine: Send + Sync + 'static {
     /// Apply one committed command at `index` (1-based, strictly increasing, once
     /// per entry). `index` equals the raft log index (for lumen, the WAL seq).
@@ -35,3 +39,4 @@ pub trait RaftStateMachine: Send + Sync + 'static {
     /// Drives the host's commit-wait (read-your-write) and the idempotency floor.
     fn applied_index(&self) -> Index;
 }
+// CODEGEN-END

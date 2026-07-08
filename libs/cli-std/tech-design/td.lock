@@ -1,0 +1,49 @@
+version = 2
+project = "cli-std"
+ir_kind = "td"
+td_path = "libs/cli-std/tech-design"
+generated_at = "2026-07-07T15:58:23.682203+00:00"
+digest = "sha256:0b6909ef965e709c27cf525938e3f28dd266320681f903e6f2bfcbeefb435695"
+source_digest = "sha256:0b6909ef965e709c27cf525938e3f28dd266320681f903e6f2bfcbeefb435695"
+ir_digest = "sha256:71a5136b0d794a510f960935c5293f080f63fa0d7e2db0a3411f9bd729cd9f14"
+
+[[files]]
+path = "semantic/cli-std-libs-cli-std.md"
+digest = "sha256:37178ea9d04831b0a62067f15d1e0e97c5f136aa07d6b29592ef6f2fd82e6733"
+parse_error = "schema:15-106: section 'schema' at lines 15..106: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-cli-std-src-chainable-rs.md"
+digest = "sha256:4f8e50822a7aa5a45ae9d24c07a5ae99a3d0fa112426e5da6f9cd6dc69f52eaf"
+ir_digest = "sha256:59e618af638ca0e42659c2fe9527b3dedeee07ebda73913c1c26d040f1a79557"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-cli-std-src-issue-rs.md"
+digest = "sha256:0b05af387784141be7d57aad555ca954ae8bd3d0e4c60fc53f5f4442a5233bf5"
+ir_digest = "sha256:1a098e48a3158cb278975cb4bd1569a94bc494bc51aab84b2e3170926a65688a"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-cli-std-src-lib-rs.md"
+digest = "sha256:92ecbac0be971143396da923dd5416d065cfeedbe56606ce6efa2fb1edb93c0b"
+ir_digest = "sha256:9eed2736874e3a8779d50a80e03898267162747ee91e81c58596e56e400ad60d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-cli-std-src-llm-rs.md"
+digest = "sha256:377793beaa554623ad825321e0edf9c38dd56b23a997526f594a685c9dff1e93"
+ir_digest = "sha256:02ecec3e5bb5889e62fc56965b5b861edca2e1e6e8c1dff61414e6f0d933ec8a"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-cli-std-src-report-issue-rs.md"
+digest = "sha256:c4831c7bfcd08d5bd9b5257c56eb4b8c45aea5db06e8c124cea56b452a59f956"
+ir_digest = "sha256:ee69bab2cb1297e0b7a9fa498f74b65078e0f39185793f6130cf9074a6bf26bb"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-cli-std-src-upgrade-rs.md"
+digest = "sha256:111c6841dcb1146cd9ed94484a61679cce4351dadcf760c209c5d3a4b572212b"
+ir_digest = "sha256:d514701138eb77df7d9f4634e4ba1b384cdd9fa112f4808a0b5e60a70d84875e"
+section_count = 3

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Emit pydantic v2 models for the spec's component schemas.
 
 use crate::emit::py::pymap;
@@ -15,6 +17,7 @@ const PY_KEYWORDS: &[&str] = &[
 ];
 
 /// True when `s` is a usable bare Python identifier (and not a keyword).
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md#source
 pub fn is_py_ident(s: &str) -> bool {
     let mut c = s.chars();
     match c.next() {
@@ -24,10 +27,11 @@ pub fn is_py_ident(s: &str) -> bool {
     c.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') && !PY_KEYWORDS.contains(&s)
 }
 
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md#source
 pub fn emit(spec: &Spec, tm: &TypeMap) -> String {
     let mut out = String::from(HEADER);
     out.push_str("from __future__ import annotations\n");
-    out.push_str("from typing import Any, Literal, Optional\n");
+    out.push_str("from typing import Any, Literal, Optional, Union\n");
     out.push_str("from pydantic import BaseModel, Field, RootModel\n");
 
     let blocks: Vec<String> = spec
@@ -98,8 +102,8 @@ fn emit_root_union_model(name: &str, schema: &Schema, tm: &TypeMap) -> String {
         }
     }
     blocks.push(format!(
-        "class {name}(RootModel[{}]):\n    pass\n",
-        variant_names.join(" | ")
+        "class {name}(RootModel[Union[{}]]):\n    pass\n",
+        variant_names.join(", ")
     ));
     blocks.join("\n\n")
 }
@@ -156,3 +160,4 @@ fn sanitize(key: &str) -> String {
 fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
+// CODEGEN-END

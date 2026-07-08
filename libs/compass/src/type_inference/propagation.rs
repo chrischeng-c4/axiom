@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-propagation-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Cross-file type propagation pipeline.
 //!
 //! Orchestrates propagation of type bindings across import edges in topological
@@ -30,6 +32,7 @@ use crate::graph::ImportGraph;
 /// Request describing which files to propagate and whether the run is
 /// incremental (only changed files) or full.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-propagation-rs.md#source
 pub struct PropagationRequest {
     /// All files in the project that should participate in propagation.
     pub files: Vec<PathBuf>,
@@ -40,6 +43,7 @@ pub struct PropagationRequest {
 
 /// A single type binding that was propagated from a source file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-propagation-rs.md#source
 pub struct PropagatedType {
     /// Symbol name as imported.
     pub symbol: String,
@@ -55,6 +59,7 @@ pub struct PropagatedType {
 
 /// Result of running the propagation pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-propagation-rs.md#source
 pub struct PropagationResult {
     /// Map of target file → list of propagated types received.
     pub propagated: HashMap<PathBuf, Vec<PropagatedType>>,
@@ -66,6 +71,7 @@ pub struct PropagationResult {
 
 /// Aggregate statistics for the propagation run.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-propagation-rs.md#source
 pub struct PropagationStats {
     pub files_analyzed: usize,
     pub symbols_propagated: usize,
@@ -84,8 +90,10 @@ pub struct PropagationStats {
 /// ```ignore
 /// let result = PropagationPipeline::run(&files, &mut inferencer, &file_import_graph);
 /// ```
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-propagation-rs.md#source
 pub struct PropagationPipeline;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-propagation-rs.md#source
 impl PropagationPipeline {
     /// Run full or incremental propagation.
     ///
@@ -821,3 +829,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

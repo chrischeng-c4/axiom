@@ -1,0 +1,31 @@
+version = 1
+project = "claimtoken"
+ir_kind = "ec"
+ec_path = "libs/claimtoken/external-contracts"
+inventory_path = "libs/claimtoken/aw.toml"
+generated_at = "2026-07-07T14:12:33.370475+00:00"
+ir_digest = "sha256:64a6f68bf7029539f6b54b47be67e097d8078f7cfc38ab8dc83d0d95b996cddc"
+source_digest = "sha256:21ef76e2e2e49de4300e9018d7a27e377fd4d54a03c61702e64d0a916df3cd84"
+tool_contracts = []
+
+[[sources]]
+path = "libs/claimtoken/external-contracts/behavior/scoped-claim-tokens-contract.md"
+digest = "sha256:edd66e49934eec81abb11434b414d3fc1058403a42fc39261dfcb888267d325f"
+
+[[cases]]
+id = "scoped-claim-tokens-contract"
+capability_id = "scoped-claim-tokens"
+claim_id = "scoped-claim-tokens-contract"
+contract_id = "scoped-claim-tokens-contract"
+dimension = "behavior"
+source_ref = "libs/claimtoken/external-contracts/behavior/scoped-claim-tokens-contract.md#scoped-claim-tokens-contract"
+test_path = "libs/claimtoken/tests/behavior_scoped_claim_tokens_contract.rs"
+command = "cargo test -p claimtoken"
+required_for_production = true
+assertions = [
+    "Scoped Claim Tokens public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:75ab6c4f045ab8165c6cb64b847c60506e686055132ed4e02b5c3231ffaa2577"

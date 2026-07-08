@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-tests-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tests for the Argus daemon server
 //!
 //! These tests cover:
@@ -308,3 +310,4 @@ fn build_python_model(code: &str) -> SemanticModel {
     let parsed = parser.parse(code, Language::Python).unwrap();
     build_semantic_model(&parsed, code, PathBuf::from("test.py"))
 }
+// CODEGEN-END

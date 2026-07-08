@@ -1,0 +1,49 @@
+version = 2
+project = "service-auth"
+ir_kind = "td"
+td_path = "libs/service-auth/tech-design"
+generated_at = "2026-07-07T15:58:25.472970+00:00"
+digest = "sha256:34d9407bef17ac9f70226ae73e8a835dde791a16447b895be494eba732a6c647"
+source_digest = "sha256:34d9407bef17ac9f70226ae73e8a835dde791a16447b895be494eba732a6c647"
+ir_digest = "sha256:6bb880114bdb391296c5aa0021e631161d066f180589ad0f92a0c7548bcf66be"
+
+[[files]]
+path = "semantic/service-auth-libs-service-auth.md"
+digest = "sha256:6545974621e9218104ccb22bc5003ea36e4518e37a0de7e61b588b09e7297443"
+parse_error = "schema:15-106: section 'schema' at lines 15..106: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-service-auth-src-error-rs.md"
+digest = "sha256:28021c2518e829b30c59ac3dd0f58cba5ae4794fd804c61a0ff0a8f45d4f1733"
+ir_digest = "sha256:eac5ad2df83b715468899f7011c53728fbb3654682dd4fbdb6cd1165a343c7d9"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-auth-src-lib-rs.md"
+digest = "sha256:8185bda6c90e9a29fcb732947473dc138b10e3a500fbd09f824fd81dd57d50d5"
+ir_digest = "sha256:c5d79a17ff7a45cba6cb1f850629291be587eb70a00ff65f4f16a169c5566f6b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-auth-src-llm-rs.md"
+digest = "sha256:ec231b8468fe0d275ef5aa61554bdb631f604a478ef021164698e7c04f115259"
+ir_digest = "sha256:084ae192f13a1e897cce98f65d5dff3e7ef8a232f2f0a45e5dc09d4dc3355a8c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-auth-src-middleware-rs.md"
+digest = "sha256:982bccee9d3995713fad816366bd4c244b32033fe6ebd1600c87f97ba2b67442"
+ir_digest = "sha256:e41bdf7f3736d8196d14cc71b40293a4ba5512bd9ac3da3b5259ea1ba0a27c96"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-auth-src-role-map-rs.md"
+digest = "sha256:00d8205548e5c69577f6adcd208ce612e379cfa9081a110db70dacaf7324a86c"
+ir_digest = "sha256:f2f81066e85bc92aad1e0a9cf0a1c1c625f136a30736a2ccab08157d0b359139"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-auth-src-verifier-rs.md"
+digest = "sha256:93db7d0f8b0c1df2d3a8c24e70a03bd8b676d17142ab9ecdbc3998bd3d1b9f21"
+ir_digest = "sha256:4feef4fdc64943ac35c79234e0945b8e598c22e1b67f36629ae4e9381991346d"
+section_count = 3

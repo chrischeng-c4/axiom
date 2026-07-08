@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-core-index-config-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Index server configuration — scoped toolchain binding (#1127)
 //!
 //! Supports auto-discovery of project roots from marker files
@@ -11,6 +13,7 @@ use std::path::PathBuf;
 ///
 /// Deserialized from `[index]` section in `.aw/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-index-config-rs.md#source
 pub struct IndexConfig {
     /// Auto-discover scopes from marker files (default: true)
     #[serde(default = "default_true")]
@@ -23,6 +26,7 @@ pub struct IndexConfig {
 
 /// Per-scope configuration for a project within the monorepo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-index-config-rs.md#source
 pub struct ScopeConfig {
     /// Unique scope identifier (e.g., "rust-workspace", "py-conductor")
     pub id: String,
@@ -51,6 +55,7 @@ pub struct ScopeConfig {
 /// Supported scope languages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-index-config-rs.md#source
 pub enum ScopeLang {
     Rust,
     Python,
@@ -61,6 +66,7 @@ pub enum ScopeLang {
     Go,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-index-config-rs.md#source
 impl std::fmt::Display for ScopeLang {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -119,3 +125,4 @@ root = "."
         assert_eq!(ScopeLang::Typescript.to_string(), "typescript");
     }
 }
+// CODEGEN-END

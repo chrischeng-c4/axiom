@@ -1,0 +1,31 @@
+version = 1
+project = "raft-host"
+ir_kind = "ec"
+ec_path = "libs/raft-host/external-contracts"
+inventory_path = "libs/raft-host/aw.toml"
+generated_at = "2026-07-07T14:12:33.754602+00:00"
+ir_digest = "sha256:6afb556a7e70d5ca773e6ba0a1282e7b6e3f1d990d38b5e169c3a0849da3be2c"
+source_digest = "sha256:ebc606c138e3127692f331c697ed47a77bc2446e5a80ec947a056bbed238a8aa"
+tool_contracts = []
+
+[[sources]]
+path = "libs/raft-host/external-contracts/behavior/shared-raft-host-driver-contract.md"
+digest = "sha256:17c0f177cfc5a53d75e23db5ab929ee9f6846dc413883a8c725925e288e38a79"
+
+[[cases]]
+id = "shared-raft-host-driver-contract"
+capability_id = "shared-raft-host-driver"
+claim_id = "shared-raft-host-driver-contract"
+contract_id = "shared-raft-host-driver-contract"
+dimension = "behavior"
+source_ref = "libs/raft-host/external-contracts/behavior/shared-raft-host-driver-contract.md#shared-raft-host-driver-contract"
+test_path = "libs/raft-host/tests/behavior_shared_raft_host_driver_contract.rs"
+command = "cargo test -p raft-host"
+required_for_production = true
+assertions = [
+    "Shared Raft Host Driver public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e96f8ab020190102b8bd65f3f1e2bf6b3d5de7950465fb96ac6a3897c869939b"

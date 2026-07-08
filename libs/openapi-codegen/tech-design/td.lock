@@ -1,0 +1,151 @@
+version = 2
+project = "openapi-codegen"
+ir_kind = "td"
+td_path = "libs/openapi-codegen/tech-design"
+generated_at = "2026-07-07T16:46:17.671248+00:00"
+digest = "sha256:b91845e5ff8f04be741de7f964496e15194c443fd17224d2638f8908f4f93cc0"
+source_digest = "sha256:b91845e5ff8f04be741de7f964496e15194c443fd17224d2638f8908f4f93cc0"
+ir_digest = "sha256:5ce2dbaad7bfa846524a021fb2f14c2f277f1c18d34bed49dc86196a8863775a"
+
+[[files]]
+path = "semantic/openapi-codegen-libs-openapi-codegen.md"
+digest = "sha256:98095f0b1eef310e7c883ae9a0508543b8fb86c16995c4f183c99fcbe6aca70a"
+parse_error = "schema:15-276: section 'schema' at lines 15..276: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-mod-rs.md"
+digest = "sha256:2b067a99e5fd11d677e7b2bed3320f3e382440d412903bb8fa70255b98eff8fe"
+ir_digest = "sha256:1b4c60a89e409d376ab5ff56dbc6651a07452384403e1081969729700b85a7a3"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-py-client-emit-rs.md"
+digest = "sha256:cdef9d312507bd462009e59973ea16518ebcf5455bffe39368cd2d434f70a7c8"
+ir_digest = "sha256:533fccecab61a1e501adc606fed86ab0b57d086b0dc41fefc00ec899a5c2a91a"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-py-mod-rs.md"
+digest = "sha256:687d72b88814b3b799f682d31eff604a9cbb6032cf032bd6172825b09415dc90"
+ir_digest = "sha256:21a2a9d8bb786c090c102decb42bcd174010e07e824d871805774e33d99c56d2"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-py-models-emit-rs.md"
+digest = "sha256:db8d1119cc9c71b168b6c54831ebb598ccab76a8b7d9f91d72d1256bb3a29e6c"
+ir_digest = "sha256:9e73f9c568fea0ee5eccecf9d727b2d2c6bd6d4f0dca00fb302813d329dd2d91"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md"
+digest = "sha256:12361b2895921279620459276a200fa4be4fbc1bbd700abddde769153dd7c703"
+ir_digest = "sha256:9494fc2a866e8baa05d025a4d6fb8c1702280d52a4cef37389b8b5df8a93b91e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-py-runtime-emit-rs.md"
+digest = "sha256:1b0edde4e92579d968f6decdd71a38410f375b17ebba8f6803d2ec7eb88517b7"
+ir_digest = "sha256:035f52be04109a7da34eeb5688783a1f76e4ec28f85555fa1eaf861b8ad88dae"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-rust-client-emit-rs.md"
+digest = "sha256:952f3277f7e44a8cae6058f5f33657f2a3250c69940584f2507523d0a23db032"
+ir_digest = "sha256:ba09a78b83dfc7dd805f10b686f104ef89948ac33f937975fcdf8df96c0e0424"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-rust-mod-rs.md"
+digest = "sha256:4fa91f412376d6f590b4129ed66744d303d33616d836400a603c2cf3ddebcae3"
+ir_digest = "sha256:83edd1cfe79bc28c3949e887c3cd5eb1fb59b1721ed7af23c5355901e25b8ecc"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-rust-models-emit-rs.md"
+digest = "sha256:804f4ee586eae96c47a727901700244224e8e402f57824d7425e0ddbcb437cf7"
+ir_digest = "sha256:1ae11943f60c37b1076ec9936b2ebde537b727c5a915d0b5a2f5a03199f5bea9"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-rust-rsmap-rs.md"
+digest = "sha256:cf9fa9356b225ef6bf916bb1dc1fee29fd7be50d04d7ec1637356cbf23066a06"
+ir_digest = "sha256:23aa48a372e6226a49be0c1afbd4ea5418ad333e1b5b20b9038f39ceea71ce20"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-ts-client-emit-rs.md"
+digest = "sha256:cad0d252f2402f8ad85d4f10d4b7d4a11b4eccc5d26e54841c19d82bc4ef1b17"
+ir_digest = "sha256:041bcac5ab7c4c7f81aa09825d7256e133b161253cddbc5ec01811a9a18da3c4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-ts-hooks-emit-rs.md"
+digest = "sha256:03a58a6c994ecdcf4b9e751c81f7cbbf2adea5af02dd1f1de7086bf161651d9f"
+ir_digest = "sha256:c0a3ed5c63eae5f9dfe872fbdcb47c05df6da92dfedaef2f3748b1b0bd8f0fc5"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-ts-mod-rs.md"
+digest = "sha256:6fa7efd55d4a74e0890caf1ced4e5c2181b80d891ea4db259d18ec677193b144"
+ir_digest = "sha256:5845494defbd0e7d3f07576246a98c7408cbee8a6fa6a24d97ceee48589915aa"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-ts-plan-rs.md"
+digest = "sha256:a7d1a2fb293a23ec0fbbe321f5cc5ce4754d5f057bfd4ad32a0a0ef038c3cea9"
+ir_digest = "sha256:f16746f032d3ee37237bb4a92aa1af750f211ab0bc486d77dda94384a27ccdcf"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-ts-tsmap-rs.md"
+digest = "sha256:e0af45f6078f3ec0427e1f60a6d4eacb3b768ce72d604a59e801ea9bb23dce9e"
+ir_digest = "sha256:6e1229e6a93323ae58faee2eaeb70cf91d82df03913509c78b3410643b384ada"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-emit-ts-types-emit-rs.md"
+digest = "sha256:57e52a362e691f2ed20418daedf5ef5b2dc3cbed0366ebeaf788def0ae75197f"
+ir_digest = "sha256:03241d79ab71517cba45d564db8b8b22a7edf5ca847ff128d05ae1839b04c7ae"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-ir-mod-rs.md"
+digest = "sha256:ddb726d3eaed8e9f3e1d918897a79648e49bdd49ee6100e12a873eb7cb4e5277"
+ir_digest = "sha256:0d0615ff015a10980474f3e178973bd85e287f6f9d79a3b577e7f5956c6c9946"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-ir-names-rs.md"
+digest = "sha256:274534f77e9b194d208ea199c7814ed29bdbbf8fed9c8b994c545abc2a8207a0"
+ir_digest = "sha256:cec53000096cd4fc030473807ee875cca32733c7040b9532b1689a36824a96af"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-ir-openapi-rs.md"
+digest = "sha256:c92ed41dc38cc5bd1acf66117c135dc74ea67f9bd56952e657cce449190fef8b"
+ir_digest = "sha256:ed1cf87f64d4180404dbd9d6fd21b301e89b5eebd766aa3645b6a9c162d6d699"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-ir-operations-rs.md"
+digest = "sha256:b4116f3fc8b992ad66ff3da8237d40faad54e292430c1de3953a51d6b24197e8"
+ir_digest = "sha256:968d522a88d5ff4f2245d5e9cea63b2bb84c20dbc97a5288c66902ac5317db38"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-ir-typemap-rs.md"
+digest = "sha256:1c597e0ddb07fffccd385492696ef31b0b5523e6eb03a10380cef18ef5997c68"
+ir_digest = "sha256:7ba598e30b5bc7c4895f62346738a1ed95f61f08d4428b0b6e3e1f775c5b26d2"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-lib-rs.md"
+digest = "sha256:1c04e65067c0291faf8cd6ffba5f21b1477ede41fc6fe49d7c1af29c6ba5516d"
+ir_digest = "sha256:7f8ea80b85820634c1ed21f7aa5bd13d3c6a111ea342afd2c193b1c056c691e3"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-openapi-codegen-src-llm-rs.md"
+digest = "sha256:be3c7a8b9ab63cca248e5f606c14a07f60ff1ba96984a6083686acad3f7ea227"
+ir_digest = "sha256:9315e6766afd5699784042102ba314e96e4e46d0749b4a4b38603cb8b7b9687b"
+section_count = 3

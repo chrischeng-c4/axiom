@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-graph-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Cross-file import graph for project-wide dependency analysis
 //!
 //! Builds a directed graph where nodes are source files and edges are import
@@ -13,6 +15,7 @@ use resolve::{extract_imports, resolve_import};
 
 /// A node in the import graph (represents a file)
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-mod-rs.md#source
 pub struct GraphNode {
     pub path: PathBuf,
     pub imports: Vec<ImportEdge>,
@@ -20,6 +23,7 @@ pub struct GraphNode {
 
 /// An edge in the import graph (an import statement)
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-mod-rs.md#source
 pub struct ImportEdge {
     /// The raw import path as written in source
     pub import_path: String,
@@ -30,17 +34,20 @@ pub struct ImportEdge {
 }
 
 /// Project-wide import dependency graph
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-mod-rs.md#source
 pub struct ImportGraph {
     nodes: HashMap<PathBuf, GraphNode>,
     entry_points: Vec<PathBuf>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-mod-rs.md#source
 impl Default for ImportGraph {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-graph-mod-rs.md#source
 impl ImportGraph {
     pub fn new() -> Self {
         Self {
@@ -377,3 +384,4 @@ mod tests {
         assert!(g.dependencies(&a).is_empty());
     }
 }
+// CODEGEN-END

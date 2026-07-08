@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-probes-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The five standard probe/admin endpoints every k8s-native service ships
 //! (CONTRIBUTING.md "standard endpoints"): `/healthz`, `/readyz`, `/metrics`,
 //! `/openapi.json`, `/docs`.
@@ -43,6 +45,7 @@ struct ProbeState {
 /// The returned router has **no auth layer and no body limit**; a service
 /// `.merge`s its data plane (which carries those) onto it. `openapi` is a fn
 /// pointer to the service's generated-doc accessor (e.g. `lumen::api::openapi`).
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-probes-rs.md#source
 pub fn standard_probe_routes<R: ReadinessHook + 'static>(
     readiness: Arc<R>,
     metrics: Option<Arc<dyn MetricsProvider>>,
@@ -231,3 +234,4 @@ mod tests {
         assert!(body.contains("/openapi.json"));
     }
 }
+// CODEGEN-END

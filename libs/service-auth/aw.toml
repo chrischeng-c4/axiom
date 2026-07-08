@@ -1,0 +1,33 @@
+[project]
+name = "service-auth"
+cap_path = "README.md"
+label = "project:service-auth"
+
+[[workspaces]]
+name = "service-auth"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p service-auth"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "service-auth"
+generated_from_td_digest = "sha256:41414fa3e73992f9312c5f3f518700f6a56de2ce0602d5a26e8eefa21a579438"
+
+[[aw.ec.generated.cases]]
+id = "shared-http-request-auth-middleware-contract"
+capability_id = "shared-http-request-auth-middleware"
+claim_id = "shared-http-request-auth-middleware-contract"
+contract_id = "shared-http-request-auth-middleware-contract"
+category = "behavior"
+td_ref = "libs/service-auth/external-contracts/behavior/shared-http-request-auth-middleware-contract.md#shared-http-request-auth-middleware-contract"
+test_path = "libs/service-auth/tests/behavior_shared_http_request_auth_middleware_contract.rs"
+command = "cargo test -p service-auth"
+required_for_production = true
+assertions = [
+    "Shared HTTP Request Auth Middleware public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

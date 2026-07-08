@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! k8s-native cluster topology + auto-mode for the raft host.
 //!
 //! Every raft_core service derives the same thing from the StatefulSet downward
@@ -15,6 +17,7 @@ use crate::{Membership, NodeId};
 /// `REPLICAS_PER_SHARD > 1`. A single replica — or no cluster context (the env
 /// unset, e.g. local dev) — is single-node. This is the **auto-mode** switch: a
 /// service defaults to single-node and turns on raft only when k8s scales it out.
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#source
 pub fn replica_mode() -> bool {
     std::env::var("REPLICAS_PER_SHARD")
         .ok()
@@ -29,6 +32,7 @@ pub fn replica_mode() -> bool {
 /// needs the scalars, not peer URLs (e.g. lumen's `ClusterConfig`, which
 /// stays compiled outside the `raft-wal` feature; #1002).
 #[derive(Debug, Clone)]
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#source
 pub struct ClusterDims {
     pub shard_count: u32,
     pub replicas_per_shard: u32,
@@ -36,6 +40,7 @@ pub struct ClusterDims {
     pub pod_name: String,
 }
 
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#source
 impl ClusterDims {
     /// Read the standard downward-API quartet.
     pub fn from_env() -> Result<Self> {
@@ -80,6 +85,7 @@ impl ClusterDims {
 /// (`replica * shard_count + shard_index`) — the peer-DNS math shared by
 /// every peer enumeration: [`ClusterTopology::from_env`]'s peer URLs and a
 /// caller's own richer per-peer record (e.g. lumen's `RaftGroup`/`PeerAddr`).
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#source
 pub fn peer_ordinal(shard_count: u32, shard_index: u32, replica: u32) -> u32 {
     replica * shard_count + shard_index
 }
@@ -89,6 +95,7 @@ pub fn peer_ordinal(shard_count: u32, shard_index: u32, replica: u32) -> u32 {
 /// Empty when `env_var` is unset — callers then use the DNS-derived
 /// addresses unmodified. Shared by [`ClusterTopology::from_env`] and any
 /// caller enumerating its own peer records with the same override contract.
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#source
 pub fn parse_peer_overrides(env_var: &str) -> Vec<String> {
     std::env::var(env_var)
         .ok()
@@ -103,6 +110,7 @@ pub fn parse_peer_overrides(env_var: &str) -> Vec<String> {
 
 /// One raft group's topology, derived from the StatefulSet downward API.
 #[derive(Debug, Clone)]
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#source
 pub struct ClusterTopology {
     /// This node's id within its shard's group = the replica index.
     pub node_id: NodeId,
@@ -114,6 +122,7 @@ pub struct ClusterTopology {
     pub shard_index: u32,
 }
 
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-cluster-rs.md#source
 impl ClusterTopology {
     /// Build from the standard downward-API env (`POD_NAME`, `SHARD_COUNT`,
     /// `REPLICAS_PER_SHARD`, `VOTER_COUNT`) and a peer-DNS template
@@ -275,3 +284,4 @@ mod tests {
         std::env::remove_var("TEST_PEERS");
     }
 }
+// CODEGEN-END

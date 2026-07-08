@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-output-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Output formatters for analysis results.
 //!
 //! Post lens-dissolution location for output modules.
@@ -11,3 +13,4 @@ pub mod reporter;
 pub use agent::AgentOutputBuilder;
 pub use agent_types::{AgentIssue, AgentOutput, AgentStats, SymbolDef};
 pub use reporter::{OutputFormat, Reporter};
+// CODEGEN-END

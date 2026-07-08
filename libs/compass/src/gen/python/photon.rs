@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-photon-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! cclab.photon HTTP client generator
 //!
 //! Generates async HTTP client classes from OpenAPI specs.
@@ -7,8 +9,10 @@ use crate::gen::traits::{CodeGenerator, GenContext, GenResult, GeneratedCode, La
 use crate::spec::ir::{DataModelSpec, EndpointDef, HttpMethod, RestApiSpec};
 
 /// Photon (HTTP client) code generator
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-photon-rs.md#source
 pub struct PhotonGenerator;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-photon-rs.md#source
 impl PhotonGenerator {
     pub fn new() -> Self {
         Self
@@ -280,12 +284,14 @@ impl PhotonGenerator {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-photon-rs.md#source
 impl Default for PhotonGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-photon-rs.md#source
 impl CodeGenerator for PhotonGenerator {
     fn name(&self) -> &str {
         "photon"
@@ -447,3 +453,4 @@ mod tests {
         assert!(code.contains("petId: str"));
     }
 }
+// CODEGEN-END

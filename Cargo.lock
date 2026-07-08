@@ -7380,6 +7380,7 @@ dependencies = [
  "serde_yaml",
  "service-auth",
  "service-backup",
+ "service-durability",
  "service-http",
  "service-metrics",
  "service-tls",
@@ -10481,6 +10482,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "service-durability",
  "tokio",
  "tracing",
 ]
@@ -12021,7 +12023,17 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "service-durability",
  "tokio",
+]
+
+[[package]]
+name = "service-durability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crc32fast",
+ "tempfile",
 ]
 
 [[package]]

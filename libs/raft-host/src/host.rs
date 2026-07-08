@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-host/tech-design/semantic/source/libs-raft-host-src-host-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `RaftHost` — drives a [`raft_core::RaftNode`] for a [`RaftStateMachine`] over
 //! an h2c peer transport, with read-your-write `propose` and snapshot/compaction.
 //!
@@ -76,6 +78,7 @@ struct Shared {
     cfg: HostConfig,
 }
 
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-host-rs.md#source
 impl Shared {
     fn persist(&self, node: &RaftNode) {
         let _ = self.store.save(&node.persisted());
@@ -232,12 +235,14 @@ impl Shared {
 }
 
 /// A running raft group host. Cheap to hold; aborts its tasks on drop.
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-host-rs.md#source
 pub struct RaftHost {
     shared: Arc<Shared>,
     tick: JoinHandle<()>,
     pump: JoinHandle<()>,
 }
 
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-host-rs.md#source
 impl Drop for RaftHost {
     fn drop(&mut self) {
         self.tick.abort();
@@ -245,6 +250,7 @@ impl Drop for RaftHost {
     }
 }
 
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-host-rs.md#source
 impl RaftHost {
     /// Build a host for node `id`, recovering persisted state + replaying the
     /// resident committed log into the state machine, and start the tick + pump.
@@ -540,3 +546,4 @@ enum Route {
     Remote(String),
     Unknown,
 }
+// CODEGEN-END

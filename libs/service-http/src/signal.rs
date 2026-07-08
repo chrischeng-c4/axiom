@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-signal-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! SIGTERM-aware graceful-drain shutdown.
 //!
 //! The drain dance every k8s-native service in the ecosystem repeats: on
@@ -11,6 +13,7 @@ use std::time::Duration;
 ///
 /// On non-unix targets only SIGINT is wired; the SIGTERM arm is a pending
 /// future, matching the service binaries.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-signal-rs.md#source
 pub async fn wait_shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -43,6 +46,7 @@ pub async fn wait_shutdown_signal() {
 /// A closure (not a `ReadinessHook`) is used for `start_drain` because the
 /// readiness hook is read-only; the drain trigger is a separate, write-side
 /// concern the binary owns (e.g. `engine.start_drain()`).
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-signal-rs.md#source
 pub async fn shutdown_with_drain(start_drain: impl FnOnce() + Send, grace: Duration) {
     wait_shutdown_signal().await;
     start_drain();
@@ -50,3 +54,4 @@ pub async fn shutdown_with_drain(start_drain: impl FnOnce() + Send, grace: Durat
     tokio::time::sleep(grace).await;
     tracing::info!("grace expired — shutting down");
 }
+// CODEGEN-END

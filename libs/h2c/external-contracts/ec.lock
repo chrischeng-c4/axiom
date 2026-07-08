@@ -1,0 +1,31 @@
+version = 1
+project = "h2c"
+ir_kind = "ec"
+ec_path = "libs/h2c/external-contracts"
+inventory_path = "libs/h2c/aw.toml"
+generated_at = "2026-07-07T14:12:33.497055+00:00"
+ir_digest = "sha256:2f43033fb34376cb31aba1d7b40333cce6c95c0c20d9d8748d4bc9849df10ed6"
+source_digest = "sha256:4a7531891e74cddd609ec9820bd42ae60ef6e7fbd97e75a4d830664db4c523c6"
+tool_contracts = []
+
+[[sources]]
+path = "libs/h2c/external-contracts/behavior/http2-cleartext-client-helpers-contract.md"
+digest = "sha256:01dec8838d01ba366a9dec0344197d2edaabd43051edc89ebb2156d857e2d704"
+
+[[cases]]
+id = "http2-cleartext-client-helpers-contract"
+capability_id = "http2-cleartext-client-helpers"
+claim_id = "http2-cleartext-client-helpers-contract"
+contract_id = "http2-cleartext-client-helpers-contract"
+dimension = "behavior"
+source_ref = "libs/h2c/external-contracts/behavior/http2-cleartext-client-helpers-contract.md#http2-cleartext-client-helpers-contract"
+test_path = "libs/h2c/tests/behavior_http2_cleartext_client_helpers_contract.rs"
+command = "cargo test -p h2c"
+required_for_production = true
+assertions = [
+    "HTTP/2 Cleartext Client Helpers public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:bcd2401fbfe951a04e8f832c588cee502a832c62d528247901ae3e697814e291"

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-error-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The shared HTTP error envelope every k8s-native service in the
 //! ecosystem renders for its error responses. lumen established this shape
 //! first (a `StorageError` → status/kind classification over a
@@ -24,6 +26,7 @@ use utoipa::ToSchema;
 /// (`"not_found"`, `"bad_request"`, ...); `message` is the human-readable
 /// detail.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-error-rs.md#source
 pub struct ErrorEnvelope {
     pub error: String,
     pub message: String,
@@ -32,12 +35,14 @@ pub struct ErrorEnvelope {
 /// Status-code + `kind` classification wrapper. Build one with
 /// [`ApiErr::new`] from a domain-error match arm; `.into_response()` renders
 /// it as [`ErrorEnvelope`] JSON paired with the status code.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-error-rs.md#source
 pub struct ApiErr {
     status: StatusCode,
     kind: &'static str,
     message: String,
 }
 
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-error-rs.md#source
 impl ApiErr {
     /// HTTP status + short machine-stable `kind` + human-readable `message`.
     pub fn new(status: StatusCode, kind: &'static str, message: impl Into<String>) -> Self {
@@ -49,6 +54,7 @@ impl ApiErr {
     }
 }
 
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-error-rs.md#source
 impl IntoResponse for ApiErr {
     fn into_response(self) -> Response {
         (
@@ -100,3 +106,4 @@ mod tests {
         assert_eq!(env.message, "tombstoned");
     }
 }
+// CODEGEN-END

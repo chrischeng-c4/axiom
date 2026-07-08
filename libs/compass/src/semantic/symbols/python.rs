@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-python-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Python symbol extraction visitor methods
 
 use crate::diagnostic::Range;
@@ -5,6 +7,7 @@ use crate::syntax::ParsedFile;
 
 use super::{SymbolKind, SymbolTableBuilder, TypeInfo};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-python-rs.md#source
 impl SymbolTableBuilder {
     pub(crate) fn visit_python_node(&mut self, node: &tree_sitter::Node<'_>, file: &ParsedFile) {
         // Error recovery: skip ERROR nodes but continue processing siblings
@@ -210,3 +213,4 @@ impl SymbolTableBuilder {
         None
     }
 }
+// CODEGEN-END

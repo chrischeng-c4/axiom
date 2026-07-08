@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Configuration for Argus
 //!
 //! Parses cclab_lens.toml configuration files.
@@ -8,6 +10,7 @@ use std::path::Path;
 
 /// Top-level Argus configuration
 #[derive(Debug, Clone, Default, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct ArgusConfig {
     #[serde(default)]
     pub cclab_lens: ArgusSettings,
@@ -15,6 +18,7 @@ pub struct ArgusConfig {
 
 /// Main settings under [cclab_lens]
 #[derive(Debug, Clone, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct ArgusSettings {
     /// Languages to analyze
     #[serde(default)]
@@ -37,6 +41,7 @@ pub struct ArgusSettings {
     pub rust: RustConfig,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 impl Default for ArgusSettings {
     fn default() -> Self {
         Self {
@@ -51,6 +56,7 @@ impl Default for ArgusSettings {
 
 /// Python configuration
 #[derive(Debug, Clone, Default, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct PythonConfig {
     /// Target Python version (e.g., "3.11")
     #[serde(default)]
@@ -71,6 +77,7 @@ pub struct PythonConfig {
 
 /// TypeScript configuration
 #[derive(Debug, Clone, Default, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct TypeScriptConfig {
     /// Whether TypeScript checking is enabled
     #[serde(default = "default_true")]
@@ -87,6 +94,7 @@ pub struct TypeScriptConfig {
 
 /// Rust configuration
 #[derive(Debug, Clone, Default, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct RustConfig {
     /// Whether Rust checking is enabled
     #[serde(default = "default_true")]
@@ -103,6 +111,7 @@ pub struct RustConfig {
 
 /// Lint configuration (shared across languages)
 #[derive(Debug, Clone, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct LintConfig {
     /// Whether linting is enabled
     #[serde(default = "default_true")]
@@ -117,6 +126,7 @@ pub struct LintConfig {
     pub ignore: Vec<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 impl Default for LintConfig {
     fn default() -> Self {
         Self {
@@ -129,6 +139,7 @@ impl Default for LintConfig {
 
 /// Language-agnostic lint config used by checkers
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct LanguageConfig {
     /// Rules to ignore
     pub ignore_rules: HashSet<String>,
@@ -136,6 +147,7 @@ pub struct LanguageConfig {
     pub select_prefixes: Vec<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 impl LanguageConfig {
     /// Check if a rule is enabled
     pub fn is_rule_enabled(&self, rule_id: &str) -> bool {
@@ -156,6 +168,7 @@ impl LanguageConfig {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 impl From<&LintConfig> for LanguageConfig {
     fn from(config: &LintConfig) -> Self {
         Self {
@@ -167,6 +180,7 @@ impl From<&LintConfig> for LanguageConfig {
 
 /// isort-like configuration
 #[derive(Debug, Clone, Default, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub struct IsortConfig {
     /// Whether isort is enabled
     #[serde(default = "default_true")]
@@ -193,6 +207,7 @@ fn default_lsp_port() -> u16 {
     5007
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 impl ArgusConfig {
     /// Load configuration from a file
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
@@ -239,11 +254,13 @@ impl ArgusConfig {
 
 /// Configuration errors
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 pub enum ConfigError {
     Io(std::io::Error),
     Parse(toml::de::Error),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -253,6 +270,7 @@ impl std::fmt::Display for ConfigError {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-core-config-rs.md#source
 impl std::error::Error for ConfigError {}
 
 #[cfg(test)]
@@ -356,3 +374,4 @@ enabled = true
         assert!(!config.is_rule_enabled("PY103"));
     }
 }
+// CODEGEN-END

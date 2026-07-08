@@ -1,0 +1,61 @@
+version = 2
+project = "service-backup"
+ir_kind = "td"
+td_path = "libs/service-backup/tech-design"
+generated_at = "2026-07-08T05:29:44.711017+00:00"
+digest = "sha256:95086e982656d0946e6039b2693de52752b1995a2d3ff22b9eb500a530bd2c3b"
+source_digest = "sha256:95086e982656d0946e6039b2693de52752b1995a2d3ff22b9eb500a530bd2c3b"
+ir_digest = "sha256:c46e440a54fe8abb5a5fdf71e997acbd8b4d9c007bde29b9409776652fcbe2a3"
+
+[[files]]
+path = "semantic/service-backup-libs-service-backup.md"
+digest = "sha256:b2d874bf6a46192cc84de8dc95288b08eab4069303e41d2354e923d4c6e4176e"
+parse_error = "schema:15-126: section 'schema' at lines 15..126: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-destination-rs.md"
+digest = "sha256:22eee340b5e2578ef25aff3c74f76c48b96eadcbeeb2a925ef10c7d361883ff9"
+ir_digest = "sha256:b14d011c3529d1b1e67377f63483ce3373d266749d71e8d154ad85edf33e6a78"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-lib-rs.md"
+digest = "sha256:945fd5e1d0f4a1f048dcff74ec930760e5d37af4049ab2626d635ffe3a02f3f5"
+ir_digest = "sha256:868b02174bdde661f27787db240817c53fc510b86ba8a72d3c0426e81da3c966"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-llm-rs.md"
+digest = "sha256:9c0870f02f7ac7c157679e9affa58789fea4f369e2b12b22f446fc5c465a29e0"
+ir_digest = "sha256:460a0ee6508e08ee4f8adcd824bd7b0b0441fad55b5df6c9b6fd38f2f85ddfe3"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-policy-rs.md"
+digest = "sha256:cf102bf1869f15bfd08ad911b613540d0d61259fb1d974299a5f46bed6973e70"
+ir_digest = "sha256:551343e562a71a18ff9c34f9cb3abde76fd868ba7e824bfcd5775d39b82322fe"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-runner-rs.md"
+digest = "sha256:df9957c1632032573774ede8d16cb5ae6d5c5aaf4c595a931b4ae7a520e0fcf8"
+ir_digest = "sha256:9e944377e86bb7195c52db21b0aa8071562a4ea2a91c9ed3290e56a8df0f6843"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-s3-rs.md"
+digest = "sha256:0b6838b5a71471d7a369bcd0fadb63b7b44112c1fab604884b4ed743b10e7434"
+ir_digest = "sha256:0e5d9e2d1e26457e998886a3dc1e5a14f83fd91b4ffb699a4be5a359ae6e74b2"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-sink-rs.md"
+digest = "sha256:18bef2dfdf4dd70097fe43700211368baece27ed5b343068023bbb7fd33dc97c"
+ir_digest = "sha256:799115f231fa49df5d70a0959411168adbf6e9fe416f67c20c67f7e40a9a1e48"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-backup-src-source-rs.md"
+digest = "sha256:3d9f359d9ebd24a8859a23a2bc99d02e56260728e58a9d13fb645c1828e7233b"
+ir_digest = "sha256:2b8fbd7e170ec73b8162d65adf756425f7d9d310fc8f28ffc0c070481471b9b5"
+section_count = 3

@@ -1,0 +1,67 @@
+version = 2
+project = "service-http"
+ir_kind = "td"
+td_path = "libs/service-http/tech-design"
+generated_at = "2026-07-07T15:58:25.583739+00:00"
+digest = "sha256:732748481daf8083bf82ab6650aca7245fba5da66b7e902b981b74dcfe6a1521"
+source_digest = "sha256:732748481daf8083bf82ab6650aca7245fba5da66b7e902b981b74dcfe6a1521"
+ir_digest = "sha256:858a6951a92674aeffa3a5f6f88b7016467e86493fd684293071f85aa2e91a89"
+
+[[files]]
+path = "semantic/service-http-libs-service-http.md"
+digest = "sha256:bcdbf4b55fce582f5c6561b803f8d356158ea82fb5ca326f89b5dadd6d9aff1c"
+parse_error = "schema:15-136: section 'schema' at lines 15..136: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-service-http-src-config-rs.md"
+digest = "sha256:20ad154c37fe83a705548d69aceda9476263862181e70381083677d09602a175"
+ir_digest = "sha256:a24db62aed4e23e1905a1d9bc54ba3384825cf15ada7ede7f58942009a17f8b3"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-error-rs.md"
+digest = "sha256:4fb6c8873288312f3910430d6c7362ec604dce58cf586b2ec0896d0250b8e67a"
+ir_digest = "sha256:30bc86aa6c85e6628c1626dcd29bc49af57db8b205f04675699ebec17673668b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-lib-rs.md"
+digest = "sha256:36d28caba0f9282d40c30d225dce2ae0b6c0c87ac533a66eab01424d87abd1c2"
+ir_digest = "sha256:6f5782645a7ed1cdb086deb42509a16082131d2edc2654d001db98b3497896f6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-logging-rs.md"
+digest = "sha256:c2569ec7f7c1af68bd104391b1089216c499ad98ec5cf381ce0fcffa914797e9"
+ir_digest = "sha256:816ac3934e494bb6228397f96adf91608fbb3566b36db3b7238bf66664b23f0d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-metrics-rs.md"
+digest = "sha256:a711660c36fc0359f7ef4079881d86af5b484f3b9d73bee77b39ffb6f82989cb"
+ir_digest = "sha256:e6768c983638df9ff31220ab58baa75d00a5d9f481d454cc77345fc897a19c11"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-probes-rs.md"
+digest = "sha256:a1d84d440b874dfab6b7d20861bb1d60875b6ab1867a984ad6e0bc4c844df6c6"
+ir_digest = "sha256:7c0a515358cae829ed218a77666c329bfb5c5fad10109b02b82fb1dbf8f24a99"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-readiness-rs.md"
+digest = "sha256:4e669d769e6dc5129e730581fff3d2fcbb98e87735d594fb9608d141c1f45e20"
+ir_digest = "sha256:1a2b8734ad03d99cb7122dd5c45e5c851d9efe0d34da1e756e6d05d0ffa48f21"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-signal-rs.md"
+digest = "sha256:c7294ec2dbdb7e45820599047eea59c12cfca4217ae7636ad0a0f6581dcfbaf8"
+ir_digest = "sha256:f0b3783c10d32f51e1c8cac25a5a9826172d84d3bea4c9a18f199fd7f097366e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-src-transport-rs.md"
+digest = "sha256:db53d3f7817e43e150c0af9518c19c901bec2444e36991e4253ec8f4781a1e4e"
+ir_digest = "sha256:16b07b712ff9fcf8fe8a2b4c1559ecc7b0c229b41aa3bedff4705be60db34d27"
+section_count = 3

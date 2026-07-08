@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-tls/tech-design/semantic/source/libs-service-tls-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Shared peer-mTLS material loading for the ecosystem's mutually
 //! authenticated peer/replication ports.
 //!
@@ -21,6 +23,7 @@ use std::sync::{Arc, Once};
 use anyhow::{anyhow, Context, Result};
 
 #[derive(Debug, Clone)]
+/// @spec libs/service-tls/tech-design/semantic/source/libs-service-tls-src-lib-rs.md#source
 pub struct PeerTlsConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -28,6 +31,7 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
+/// @spec libs/service-tls/tech-design/semantic/source/libs-service-tls-src-lib-rs.md#source
 impl PeerTlsConfig {
     /// Load from env, deriving `<prefix>_TLS_CERT` / `<prefix>_TLS_KEY` /
     /// `<prefix>_TLS_CA` / `<prefix>_MTLS` from `prefix` (lumen passes
@@ -106,6 +110,7 @@ impl PeerTlsConfig {
     }
 }
 
+/// @spec libs/service-tls/tech-design/semantic/source/libs-service-tls-src-lib-rs.md#source
 pub fn install_default_crypto_provider() {
     static INSTALL: Once = Once::new();
     INSTALL.call_once(|| {
@@ -284,3 +289,4 @@ LkjT2UdpFBDZGWHwqDRhXX8k
         std::fs::remove_dir_all(cfg.cert.parent().unwrap()).ok();
     }
 }
+// CODEGEN-END

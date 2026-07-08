@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-dominator-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Dominator and Post-Dominator Tree Analysis
 //!
 //! Implements dominator tree construction for control dependency analysis.
@@ -8,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Dominator tree for a CFG
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-dominator-rs.md#source
 pub struct DominatorTree {
     /// Immediate dominator for each block
     pub idom: HashMap<BlockId, BlockId>,
@@ -19,6 +22,7 @@ pub struct DominatorTree {
     pub root: BlockId,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-dominator-rs.md#source
 impl DominatorTree {
     /// Compute dominator tree from CFG
     pub fn compute(cfg: &ControlFlowGraph) -> Self {
@@ -294,6 +298,7 @@ impl DominatorTree {
 
 /// Control dependencies derived from post-dominator tree
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-dominator-rs.md#source
 pub struct ControlDependencies {
     /// Control dependencies: block -> blocks it's control-dependent on
     pub dependencies: HashMap<BlockId, HashSet<BlockId>>,
@@ -301,6 +306,7 @@ pub struct ControlDependencies {
     pub dependents: HashMap<BlockId, HashSet<BlockId>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-dominator-rs.md#source
 impl ControlDependencies {
     /// Compute control dependencies from CFG using the Ferrante algorithm
     ///
@@ -478,3 +484,4 @@ mod tests {
         let _ = deps.dependencies.len();
     }
 }
+// CODEGEN-END

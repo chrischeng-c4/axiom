@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `<tool> issue <verb>` — the shared issue interface every CLI ships.
 //!
 //! - [`search`] — find this tool's issues on the tracker (filtered to the
@@ -23,6 +25,7 @@ use anyhow::Result;
 
 /// Flags for `issue create`.
 #[derive(Clone, Debug, Default)]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub struct CreateOptions {
     pub title: String,
     pub message: Option<String>,
@@ -37,6 +40,7 @@ pub struct CreateOptions {
 
 /// Flags for `issue comment`.
 #[derive(Clone, Debug, Default)]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub struct CommentOptions {
     /// Issue number to comment on.
     pub number: u64,
@@ -52,6 +56,7 @@ pub struct CommentOptions {
 }
 
 /// Render the diagnostics block from the tool identity (+ optional node line).
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub fn render_diagnostics(tool: &ToolInfo, node: Option<&str>) -> String {
     let mut s = String::from("## Diagnostics\n");
     s.push_str(&format!("- {} version: {}\n", tool.project, tool.version));
@@ -71,6 +76,7 @@ pub fn render_diagnostics(tool: &ToolInfo, node: Option<&str>) -> String {
 
 /// Assemble the issue body: message first (when non-empty), separator, then the
 /// diagnostics block.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub fn assemble_body(message: Option<&str>, diagnostics: &str) -> String {
     match message {
         Some(m) if !m.trim().is_empty() => format!("{}\n\n---\n{diagnostics}", m.trim()),
@@ -79,11 +85,13 @@ pub fn assemble_body(message: Option<&str>, diagnostics: &str) -> String {
 }
 
 /// The repo to file against: `--repo` else the tool's default.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub fn resolve_repo<'a>(tool: &'a ToolInfo, repo: Option<&'a str>) -> &'a str {
     repo.unwrap_or(tool.repo)
 }
 
 /// The GitHub issue-creation JSON payload (`labels` omitted when empty).
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub fn issue_payload(title: &str, body: &str, labels: &[String]) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("title".into(), title.into());
@@ -103,6 +111,7 @@ fn reopen_payload() -> serde_json::Value {
 }
 
 /// The GitHub issue-comment JSON payload.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub fn comment_payload(body: &str) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("body".into(), body.into());
@@ -110,6 +119,7 @@ pub fn comment_payload(body: &str) -> serde_json::Value {
 }
 
 /// Assemble the follow-up comment used by `issue comment`.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub fn followup_comment_body(tool: &ToolInfo, message: Option<&str>) -> String {
     let message = message
         .map(str::trim)
@@ -121,6 +131,7 @@ pub fn followup_comment_body(tool: &ToolInfo, message: Option<&str>) -> String {
 /// A browser-openable pre-filled `issues/new` URL (title + body + labels
 /// percent-encoded). Labels are comma-joined into the `labels` query param so
 /// the convention's `app:<name>` tag survives the no-token fallback path.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub fn prefilled_url(repo: &str, title: &str, body: &str, labels: &[String]) -> String {
     let mut url = format!(
         "https://github.com/{repo}/issues/new?title={}&body={}",
@@ -238,6 +249,7 @@ fn note_offline_comment_build() {
 
 /// `issue create` — file (or preview) a structured issue.
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
     let client = http_client(tool)?;
@@ -283,6 +295,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
 
 /// Offline build: assemble + print (`--dry-run`) or the browser fallback.
 #[cfg(not(feature = "online"))]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
     let body = assemble_body(opts.message.as_deref(), &render_diagnostics(tool, None));
@@ -297,6 +310,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
 
 /// `issue comment` — ensure an issue is open and attach a verification-failed note.
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
     validate_issue_number(opts.number)?;
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
@@ -335,6 +349,7 @@ pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
 
 /// Offline build: print the issue URL and the comment to paste after reopening.
 #[cfg(not(feature = "online"))]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
     validate_issue_number(opts.number)?;
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
@@ -354,6 +369,7 @@ pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
 
 /// Flags for `issue search`.
 #[derive(Clone, Debug)]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub struct SearchOptions {
     /// Free-text query; `None`/empty lists recent issues for this tool.
     pub query: Option<String>,
@@ -363,6 +379,7 @@ pub struct SearchOptions {
     pub limit: u32,
 }
 
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 impl Default for SearchOptions {
     fn default() -> Self {
         Self {
@@ -375,6 +392,7 @@ impl Default for SearchOptions {
 
 /// `issue search` — list/search this tool's issues (filtered to `app:<name>`).
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
     use anyhow::Context;
     let label = tool.issue_label();
@@ -417,6 +435,7 @@ pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
 }
 
 #[cfg(not(feature = "online"))]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn search(_tool: &ToolInfo, _opts: SearchOptions) -> Result<()> {
     anyhow::bail!("this build has no `online` feature — `issue search` needs network access")
 }
@@ -427,6 +446,7 @@ pub async fn search(_tool: &ToolInfo, _opts: SearchOptions) -> Result<()> {
 
 /// `issue view` — print a single issue by number.
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
     use anyhow::Context;
     let url = format!(
@@ -462,6 +482,7 @@ pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
 }
 
 #[cfg(not(feature = "online"))]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
 pub async fn view(_tool: &ToolInfo, _number: u64) -> Result<()> {
     anyhow::bail!("this build has no `online` feature — `issue view` needs network access")
 }
@@ -671,3 +692,4 @@ mod tests {
         }
     }
 }
+// CODEGEN-END

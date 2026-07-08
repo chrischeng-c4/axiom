@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Advanced code analysis
 
 pub mod pdg;
@@ -43,3 +45,4 @@ pub use scope::{Symbol as ScopeSymbol, SymbolKind as ScopeSymbolKind};
 pub use symbols::{
     Symbol, SymbolId, SymbolKind, SymbolReference, SymbolTable, SymbolTableBuilder, TypeInfo,
 };
+// CODEGEN-END

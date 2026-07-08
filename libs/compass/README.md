@@ -17,10 +17,10 @@ on semantic TD and traceability closure.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Codebase Check And Lint Pipeline | - | implemented | verified | smoke | not_ready | parser, checker, diagnostic, and output smoke gate passes |
-| Semantic Navigation Search And Refactoring | - | implemented | verified | smoke | not_ready | symbol, type, search, PDG, and refactoring smoke gate passes |
-| Spec Parsing And Code Generation | - | implemented | verified | smoke | not_ready | parser/generator smoke gate passes |
-| Daemon Watch And Incremental Analysis | - | implemented | verified | smoke | not_ready | daemon, watch, and incremental analysis smoke gate passes |
+| Codebase Check And Lint Pipeline | - | implemented | verified | smoke | ready | parser, checker, diagnostic, and output smoke gate passes |
+| Semantic Navigation Search And Refactoring | - | implemented | verified | smoke | ready | symbol, type, search, PDG, and refactoring smoke gate passes |
+| Spec Parsing And Code Generation | - | implemented | verified | smoke | ready | parser/generator smoke gate passes |
+| Daemon Watch And Incremental Analysis | - | implemented | verified | smoke | ready | daemon, watch, and incremental analysis smoke gate passes |
 
 ### Codebase Check And Lint Pipeline
 

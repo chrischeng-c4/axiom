@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Mutable AST with persistent data structures (Sprint 2 - Track 2)
 //!
 //! Provides a mutable AST implementation for efficient code transformations:
@@ -15,10 +17,12 @@ use std::sync::Arc;
 
 /// Unique identifier for AST nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub struct NodeId(pub usize);
 
 /// A reference to a node that may be borrowed or owned.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub enum NodeRef {
     /// Direct reference by ID
     Direct(NodeId),
@@ -32,6 +36,7 @@ pub enum NodeRef {
 
 /// A mutable AST node with copy-on-write semantics.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub struct MutableNode {
     /// Unique node ID
     pub id: NodeId,
@@ -49,6 +54,7 @@ pub struct MutableNode {
 
 /// Span in source code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub struct Span {
     /// Start byte offset
     pub start: usize,
@@ -64,6 +70,7 @@ pub struct Span {
     pub end_col: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 impl Span {
     /// Create a new span.
     pub fn new(start: usize, end: usize) -> Self {
@@ -109,6 +116,7 @@ impl Span {
 
 /// Metadata attached to nodes.
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub struct NodeMetadata {
     /// Type annotation (if any)
     pub type_annotation: Option<String>,
@@ -118,6 +126,7 @@ pub struct NodeMetadata {
     pub attributes: HashMap<String, String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 impl MutableNode {
     /// Create a new mutable node.
     pub fn new(id: NodeId, kind: impl Into<String>, span: Span) -> Self {
@@ -275,6 +284,7 @@ impl MutableNode {
 // ============================================================================
 
 /// A mutable AST with snapshot support.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub struct MutableAst {
     /// Root node
     root: MutableNode,
@@ -288,6 +298,7 @@ pub struct MutableAst {
     max_snapshots: usize,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 impl MutableAst {
     /// Create a new mutable AST.
     pub fn new(root: MutableNode) -> Self {
@@ -496,6 +507,7 @@ impl MutableAst {
 
 /// An edit operation on the AST.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub enum AstEdit {
     /// Replace a node with a new one
     Replace {
@@ -520,11 +532,13 @@ pub enum AstEdit {
 
 /// A diff between two AST trees.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 pub struct TreeDiff {
     /// Edit operations to transform old tree to new tree
     pub edits: Vec<AstEdit>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md#source
 impl TreeDiff {
     /// Compute diff between two trees.
     pub fn compute(old: &MutableNode, new: &MutableNode) -> Self {
@@ -659,3 +673,4 @@ mod tests {
         assert_eq!(diff.len(), 1);
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Go type inference: structs, interfaces, channels, generics, composite
 //! literals, and type assertion tracking.
 
@@ -6,6 +8,7 @@ use std::collections::HashMap;
 
 /// Direction of a Go channel
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 pub enum ChannelDirection {
     Send,
     Receive,
@@ -14,6 +17,7 @@ pub enum ChannelDirection {
 
 /// A Go type representation
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 pub enum GoType {
     /// Primitive types: int, string, bool, etc.
     Primitive(String),
@@ -49,6 +53,7 @@ pub enum GoType {
 
 /// A generic type parameter (Go 1.18+)
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 pub struct GenericParam {
     pub name: String,
     pub constraint: Option<String>,
@@ -56,6 +61,7 @@ pub struct GenericParam {
 
 /// Information about a method defined on a type
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 pub struct MethodInfo {
     pub name: String,
     pub receiver_type: String,
@@ -64,6 +70,7 @@ pub struct MethodInfo {
 
 /// A recorded type assertion (x.(Type))
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 pub struct TypeAssertion {
     pub variable: String,
     pub asserted_type: String,
@@ -73,6 +80,7 @@ pub struct TypeAssertion {
 /// Go type inference engine: walks a parsed Go file and extracts type
 /// information (generics, method sets, channels, composite literals, assertions).
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 pub struct GoTypeInference {
     /// All discovered types: type name -> GoType
     pub types: HashMap<String, GoType>,
@@ -86,6 +94,7 @@ pub struct GoTypeInference {
     pub composite_literals: HashMap<String, String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 impl GoTypeInference {
     pub fn new() -> Self {
         Self {
@@ -440,6 +449,7 @@ impl GoTypeInference {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-rs.md#source
 impl Default for GoTypeInference {
     fn default() -> Self {
         Self::new()
@@ -455,3 +465,4 @@ fn parse_primitive_or_named(type_str: &str) -> GoType {
         _ => GoType::Named(type_str.to_string()),
     }
 }
+// CODEGEN-END
