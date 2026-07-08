@@ -144,7 +144,6 @@ repo_taxonomy_migration:
         - projects/defer/tech-design
         - historical text that explicitly names the retired source root
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
