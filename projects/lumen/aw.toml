@@ -1,7 +1,7 @@
 [project]
 name = "lumen"
 cap_path = "README.md"
-label = "project:lumen"
+label = "app:lumen"
 
 [ec.efficiency]
 tool = "meter"

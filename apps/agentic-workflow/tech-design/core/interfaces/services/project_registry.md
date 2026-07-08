@@ -56,7 +56,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::models::project::{EcBinding, Project, Workspace};
+use crate::models::app::{EcBinding, Project, Workspace};
 use crate::services::project_discovery::discover_projects;
 use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, SYNC_END_MARKER};
 
@@ -169,9 +169,14 @@ impl ProjectConfigRow {
     }
 
     pub fn label_or_default(&self) -> String {
-        self.label
-            .clone()
-            .unwrap_or_else(|| format!("project:{}", self.name))
+        self.label.clone().unwrap_or_else(|| {
+            let prefix = if self.path.starts_with("libs/") || self.path.contains("/mambalibs/") {
+                "lib"
+            } else {
+                "app"
+            };
+            format!("{prefix}:{}", self.name)
+        })
     }
 }
 
@@ -695,7 +700,7 @@ fn build_diff(old: &str, new: &str, label: &str) -> String {
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 mod tests {
     use super::*;
-    use crate::models::project::{Project, Workspace};
+    use crate::models::app::{Project, Workspace};
     use crate::models::tech_stack::Language;
     use std::fs;
     use std::path::PathBuf;
@@ -895,7 +900,7 @@ mod tests {
 name = "jet"
 path = "projects/jet"
 td_path = ".aw/tech-design/projects/jet"
-label = "project:jet"
+label = "app:jet"
 
 [[projects.workspaces]]
 name = "jet-full"
@@ -918,7 +923,7 @@ test_cmd = "cargo test -p jet"
         let rows = load_project_config_rows(tmp.path()).unwrap();
         let jet = rows.iter().find(|row| row.name == "jet").unwrap();
         assert_eq!(jet.td_path.as_deref(), Some(".aw/tech-design/projects/jet"));
-        assert_eq!(jet.label.as_deref(), Some("project:jet"));
+        assert_eq!(jet.label.as_deref(), Some("app:jet"));
 
         let projects = load_projects(tmp.path()).unwrap();
         let jet = projects

@@ -65,6 +65,11 @@ pub struct ToolInfo {
 }
 
 impl ToolInfo {
+    /// Default tracker label for this tool's issue surface.
+    pub fn issue_label(&self) -> String {
+        format!("app:{}", self.project)
+    }
+
     /// Release-tag prefix, e.g. `lumen@`.
     pub fn tag_prefix(&self) -> String {
         format!("{}@", self.project)

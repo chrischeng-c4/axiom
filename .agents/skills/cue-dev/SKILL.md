@@ -117,5 +117,5 @@ the first viewport and the affected workflow. Save Playwright screenshots under
 - Keep chat available for app owners, but make WorkItem/artifact state the durable center of the UI.
 - Use same-origin `/api` calls from Jet frontends and configure the Jet proxy via `CUE_ARTIFACT_STUDIO_API_BASE_URL`.
 - Use Jet as the Cue frontend substrate. Vite is only a minimal repro path when isolating a Jet blocker.
-- Use Mamba as the Cue backend target. CPython bridge mode is explicit fallback only, and any bridge-backed product slice needs a linked `project:mamba` or `crate:mamba` issue before it lands.
+- Use Mamba as the Cue backend target. CPython bridge mode is explicit fallback only, and any bridge-backed product slice needs a linked `app:mamba` or `crate:mamba` issue before it lands.
 - Before closing substantial Cue work, update the relevant docs, TD files, and issues so the architecture decision is not left only in chat.

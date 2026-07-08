@@ -29,7 +29,7 @@ nodes:
   parse:       { kind: process,  label: "clap parses top-level command surface from projects/beam/src/main.rs" }
   llm:         { kind: terminal, label: "llm [--topic outline|boundaries|operations] [--format md|json] -> cli_std::llm::render(beam topics)" }
   upgrade:     { kind: terminal, label: "upgrade [--version TAG] [--check] -> cli_std::upgrade with ToolInfo{name=beam, release_prefix=beam@}" }
-  issue:       { kind: terminal, label: "issue <search|view|create> -> cli_std::issue scoped to project:beam" }
+  issue:       { kind: terminal, label: "issue <search|view|create> -> cli_std::issue scoped to app:beam" }
   serve:       { kind: terminal, label: "serve placeholder exits with tracked 'not implemented yet: HTTP service shell' diagnostic" }
   collections: { kind: terminal, label: "collections placeholder exits with tracked 'not implemented yet: collection lifecycle' diagnostic" }
   index:       { kind: terminal, label: "index placeholder exits with tracked 'not implemented yet: index lifecycle' diagnostic" }
@@ -56,7 +56,7 @@ flowchart TD
     start([beam CLI]) --> parse[Parse top-level subcommand]
     parse -->|llm| llm[Render offline agent topics via cli_std::llm]
     parse -->|upgrade| upgrade[Delegate self-update/check to cli_std::upgrade]
-    parse -->|issue| issue[Delegate issue search/view/create to cli_std::issue project:beam]
+    parse -->|issue| issue[Delegate issue search/view/create to cli_std::issue app:beam]
     parse -->|serve| serve[Placeholder: service shell not implemented]
     parse -->|collections| collections[Placeholder: collection lifecycle not implemented]
     parse -->|index| index[Placeholder: index lifecycle not implemented]
@@ -100,7 +100,7 @@ requirements:
     verify: test
   issue_scope:
     id: R5
-    text: "`beam issue` delegates to cli_std issue handling with tool project `beam`, so tracker operations carry the project:beam scope."
+    text: "`beam issue` delegates to cli_std issue handling with tool project `beam`, so tracker operations carry the app:beam scope."
     kind: functional
     risk: medium
     verify: test

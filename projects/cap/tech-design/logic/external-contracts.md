@@ -53,7 +53,7 @@ e2e_tests:
       - "installed cap frontend delegates standard commands through the cap-full sibling"
       - "installed cap frontend preserves the caller environment for cap-full passthrough commands"
       - "cap llm renders cap-specific offline docs through cli-std"
-      - "cap issue create and report-issue dry-run payloads carry project:cap diagnostics"
+      - "cap issue create and report-issue dry-run payloads carry app:cap diagnostics"
       - "release-feature builds enable cli-std online paths"
 ```
 

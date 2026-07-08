@@ -3630,7 +3630,7 @@ changes:
 [[projects]]
 name = "tool"
 path = "projects/tool"
-label = "project:tool"
+label = "app:tool"
 
 [[projects.workspaces]]
 name = "tool"
@@ -4182,7 +4182,7 @@ pub fn signature_only() -> Result<()>
             "[[projects]]\n\
              name = \"tool\"\n\
              path = \"projects/tool\"\n\
-             label = \"project:tool\"\n\
+             label = \"app:tool\"\n\
              \n\
              [[projects.workspaces]]\n\
              name = \"tool\"\n\
@@ -4700,14 +4700,17 @@ fn resolve_slug_spec_paths(
     rels.into_iter().map(|r| project_root.join(r)).collect()
 }
 
-/// Resolve the owning project name from an issue's `project:<name>` label,
+/// Resolve the owning project name from an issue's `app:<name>` or `lib:<name>` label,
 /// the same convention `aw wi create --project` and the standardize/health
 /// surfaces use. Deliberately a small local duplicate of `td.rs`'s
 /// equivalent helper rather than widening that module's visibility — this
 /// is the only consumer in `cb.rs`.
 fn project_label_for_wi(issue: &crate::issues::Issue) -> Option<&str> {
     issue.labels.iter().find_map(|label| {
-        let project = label.strip_prefix("project:")?.trim();
+        let project = label
+            .strip_prefix("app:")
+            .or_else(|| label.strip_prefix("lib:"))?
+            .trim();
         (!project.is_empty()).then_some(project)
     })
 }
@@ -4731,7 +4734,7 @@ fn project_label_for_wi(issue: &crate::issues::Issue) -> Option<&str> {
 /// debt this WI didn't create.
 ///
 /// Vacuous-passes (returns `None`, no stderr warning) when: the issue
-/// carries no `project:<name>` label (nothing configured to check against
+/// carries no `app:<name>` label (nothing configured to check against
 /// — every pre-#932 WI fixture and any WI created outside `aw wi create
 /// --project` falls here); the touched-file set is empty (docs-only WI, or
 /// unresolvable branch diff — same rationale as the marker gate's vacuous

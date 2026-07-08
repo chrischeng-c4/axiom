@@ -584,7 +584,7 @@ unambiguous as the surface grows.
 |------------|-----------|----------|
 | `llm` | `<cli> llm [--topic <topic>] [--format md\|json]` | Offline (no server/network) docs that teach an agent to drive the tool. Topic via `--topic` (not positional); default `outline` (a topic map); per-tool topics follow its domain. Markdown default, `--format json` for machine-readable. |
 | `upgrade` | `<cli> upgrade [--version <tag>] [--check]` | Self-update to the latest `<project>@*` GitHub release. `--check` = report whether newer exists, no install; `--version` = pin a tag. |
-| `issue` | `<cli> issue search [query]` · `view <n>` · `create [--title <t>] [msg…]` | Read **and** write the tool's issues on the tracker. `search` finds this tool's issues (filtered to `project:<name>`; omit the query to list recent), `view <n>` prints one, `create` files a structured issue (auto-attaching `--version` + OS/arch + context, tagged with the `project:<name>` label). |
+| `issue` | `<cli> issue search [query]` · `view <n>` · `create [--title <t>] [msg…]` | Read **and** write the tool's issues on the tracker. `search` finds this tool's issues (filtered to `app:<name>`; omit the query to list recent), `view <n>` prints one, `create` files a structured issue (auto-attaching `--version` + OS/arch + context, tagged with the `app:<name>` label). |
 
 `llm` is a **cross-scope agent index**, not a feature-local doc page. It must
 teach the smallest command/topic an agent should read across the tool's real
@@ -651,7 +651,7 @@ builds. Reference adopters: `projects/jet` and `projects/lumen`.
 - **`issue`** — `cli_std::issue::{search, view, create}`. `search`/`view` are
   read-only GitHub API GETs (tokenless on public repos); `create` submits via the
   API when `GITHUB_TOKEN` is set, else prints a pre-filled `issues/new` URL. Pass
-  the tracker's `project:<name>` label in `CreateOptions.label` so it is applied
+  the tracker's `app:<name>` label in `CreateOptions.label` so it is applied
   on submit **and** carried into the URL fallback's `&labels=`; `search` filters
   to that same label. The group is named `issue` (**not** `report`), leaving
   domain `report` verbs (`jet report` = HTML **test** reports) untouched.

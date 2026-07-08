@@ -243,7 +243,7 @@ mode = "in_place"
          title: demo project branch flow\n\
          state: open\n\
          type: enhancement\n\
-         labels: [\"project:agentic-workflow\"]\n\
+         labels: [\"app:agentic-workflow\"]\n\
          review_count: 1\n\
          flagged_sections: [scope]\n\
          fill_retry_count: 1\n\
@@ -325,7 +325,7 @@ fn td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file() {
          state: open\n\
          type: bug\n\
          github_id: 1887\n\
-         labels: [\"type:bug\", \"project:agentic-workflow\"]\n\
+         labels: [\"type:bug\", \"app:agentic-workflow\"]\n\
          ---\n\n# Body\n",
     );
     write_issue_fixture(root, legacy_slug, issue_body);
@@ -395,7 +395,7 @@ fn td_create_records_spec_path_in_issue_implements() {
          title: demo 939 implements flow\n\
          state: open\n\
          type: enhancement\n\
-         labels: [\"project:agentic-workflow\"]\n\
+         labels: [\"app:agentic-workflow\"]\n\
          ---\n\n# Body\n",
     );
     write_issue_fixture(root, slug, issue_body);
@@ -465,7 +465,7 @@ fn td_create_does_not_duplicate_existing_implements_entry() {
          title: demo 939 implements idempotency\n\
          state: open\n\
          type: enhancement\n\
-         labels: [\"project:agentic-workflow\"]\n\
+         labels: [\"app:agentic-workflow\"]\n\
          implements: [\"{spec_path}\"]\n\
          ---\n\n# Body\n",
     );
@@ -595,7 +595,7 @@ fn wi_validate_accepts_apply_dirty_issue_file_on_issue_branch() {
              type: enhancement\n\
              title: demo\n\
              state: open\n\
-             labels: [\"type:enhancement\", \"project:agentic-workflow\"]\n\
+             labels: [\"type:enhancement\", \"app:agentic-workflow\"]\n\
              phase: created\n\
              ---\n\n\
              ## Problem\n\n\
@@ -629,7 +629,7 @@ fn wi_validate_accepts_apply_dirty_issue_file_on_issue_branch() {
              type: enhancement\n\
              title: demo\n\
              state: open\n\
-             labels: [\"type:enhancement\", \"project:agentic-workflow\"]\n\
+             labels: [\"type:enhancement\", \"app:agentic-workflow\"]\n\
              phase: created\n\
              ---\n\n\
              ## Problem\n\n\

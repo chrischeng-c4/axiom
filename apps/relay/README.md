@@ -85,7 +85,7 @@ Gate Inventory:
 
 ID: cli-standard-surface
 Type: RuntimeTool
-Surfaces: CLI: `relay llm` - offline agent self-doc topics (outline, http-api, operations) required by the ecosystem CLI convention.; CLI: `relay upgrade` - shared self-update and `--check` surface through `cli-std`.; CLI: `relay issue search`, `relay issue view`, `relay issue create` - shared tracker read/write surface scoped to `project:relay`.
+Surfaces: CLI: `relay llm` - offline agent self-doc topics (outline, http-api, operations) required by the ecosystem CLI convention.; CLI: `relay upgrade` - shared self-update and `--check` surface through `cli-std`.; CLI: `relay issue search`, `relay issue view`, `relay issue create` - shared tracker read/write surface scoped to `app:relay`.
 EC Dimensions: behavior: `cargo test -p relay --test spec_cli` - the llm topic surface documents every shipped serve/deploy/backup knob through the compiled binary
 Root WI: 1204
 Status: auditing

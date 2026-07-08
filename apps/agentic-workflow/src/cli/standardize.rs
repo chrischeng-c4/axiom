@@ -7111,7 +7111,7 @@ name = "demo"
 path = "."
 td_path = "tech-design/demo"
 cap_path = "README.md"
-label = "project:demo"
+label = "app:demo"
 
 [[projects.workspaces]]
 name = "demo"
@@ -7338,7 +7338,7 @@ changes:
 [[projects]]
 name = "tool"
 path = "projects/tool"
-label = "project:tool"
+label = "app:tool"
 
 [[projects.workspaces]]
 name = "tool"
@@ -7400,7 +7400,7 @@ name = "tool"
 path = "projects/tool"
 td_path = "projects/tool/tech-design"
 cap_path = "projects/tool/README.md"
-label = "project:tool"
+label = "app:tool"
 
 [[projects.workspaces]]
 name = "tool"
@@ -7485,7 +7485,7 @@ test_cmd = "cargo test -p tool"
 [[projects]]
 name = "tool"
 path = "projects/tool"
-label = "project:tool"
+label = "app:tool"
 
 [[projects.workspaces]]
 name = "tool"
@@ -7529,7 +7529,7 @@ test_cmd = "true"
 name = "tool"
 path = "projects/tool"
 td_path = "projects/tool/tech-design"
-label = "project:tool"
+label = "app:tool"
 
 [[projects.workspaces]]
 name = "tool"
@@ -7560,7 +7560,7 @@ test_cmd = "true"
 [[projects]]
 name = "tool"
 path = "projects/tool"
-label = "project:tool"
+label = "app:tool"
 
 [[projects.workspaces]]
 name = "tool"
