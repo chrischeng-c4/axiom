@@ -478,6 +478,7 @@ struct ExecContext {
     type_param_reuse_once: std::collections::HashSet<String>,
     functions: FxHashMap<String, ExecFunction>,
     frames: Vec<FxHashMap<String, MbValue>>,
+    generic_class_body_depth: usize,
     globals: Option<MbValue>,
     locals: Option<MbValue>,
 }
@@ -592,6 +593,78 @@ fn exec_base_is_object(base: &crate::parser::ast::Expr) -> bool {
     matches!(eval_dotted_path(base).as_deref(), Some([name]) if name == "object")
 }
 
+fn exec_expr_contains_comprehension_expr(expr: &crate::parser::ast::Expr) -> bool {
+    use crate::parser::ast::{CallArg, Expr};
+    match expr {
+        Expr::GeneratorExpr { .. }
+        | Expr::ListComp { .. }
+        | Expr::SetComp { .. }
+        | Expr::DictComp { .. } => true,
+        Expr::Call { func, args } => {
+            exec_expr_contains_comprehension_expr(&func.node)
+                || args.iter().any(|arg| match arg {
+                    CallArg::Positional(expr)
+                    | CallArg::Keyword { value: expr, .. }
+                    | CallArg::StarArg(expr)
+                    | CallArg::DoubleStarArg(expr) => {
+                        exec_expr_contains_comprehension_expr(&expr.node)
+                    }
+                })
+        }
+        Expr::Index { object, index } => {
+            exec_expr_contains_comprehension_expr(&object.node)
+                || exec_expr_contains_comprehension_expr(&index.node)
+        }
+        Expr::Attr { object, .. } => exec_expr_contains_comprehension_expr(&object.node),
+        Expr::TupleLit(items) | Expr::ListLit(items) | Expr::SetLit(items) => items
+            .iter()
+            .any(|item| exec_expr_contains_comprehension_expr(&item.node)),
+        Expr::DictLit(entries) => entries.iter().any(|(key, value)| {
+            key.as_ref()
+                .is_some_and(|key| exec_expr_contains_comprehension_expr(&key.node))
+                || exec_expr_contains_comprehension_expr(&value.node)
+        }),
+        Expr::BinOp { lhs, rhs, .. } => {
+            exec_expr_contains_comprehension_expr(&lhs.node)
+                || exec_expr_contains_comprehension_expr(&rhs.node)
+        }
+        Expr::UnaryOp { operand: expr, .. }
+        | Expr::Await(expr)
+        | Expr::Yield(Some(expr))
+        | Expr::YieldFrom(expr)
+        | Expr::Starred(expr) => exec_expr_contains_comprehension_expr(&expr.node),
+        Expr::IfExpr {
+            body,
+            condition,
+            else_body,
+        } => {
+            exec_expr_contains_comprehension_expr(&body.node)
+                || exec_expr_contains_comprehension_expr(&condition.node)
+                || exec_expr_contains_comprehension_expr(&else_body.node)
+        }
+        Expr::Lambda { body, .. } => exec_expr_contains_comprehension_expr(&body.node),
+        Expr::Walrus { value, .. } => exec_expr_contains_comprehension_expr(&value.node),
+        Expr::Slice { start, stop, step } => start
+            .iter()
+            .chain(stop.iter())
+            .chain(step.iter())
+            .any(|expr| exec_expr_contains_comprehension_expr(&expr.node)),
+        Expr::ChainedCompare { operands, .. } => operands
+            .iter()
+            .any(|operand| exec_expr_contains_comprehension_expr(&operand.node)),
+        _ => false,
+    }
+}
+
+fn exec_raise_pep695_class_annotation_comprehension_syntax_error() {
+    crate::runtime::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "Cannot use comprehension in annotation scope within class scope".to_string(),
+        )),
+    );
+}
+
 fn exec_collect_index_idents(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) {
     use crate::parser::ast::Expr;
     match expr {
@@ -662,6 +735,15 @@ fn exec_validate_pep695_class_bases(
             "Cannot create a consistent method resolution order (MRO) for bases object, Generic"
                 .to_string(),
         );
+        return;
+    }
+
+    if ctx.generic_class_body_depth > 0
+        && bases
+            .iter()
+            .any(|base| exec_expr_contains_comprehension_expr(&base.node))
+    {
+        exec_raise_pep695_class_annotation_comprehension_syntax_error();
         return;
     }
 
@@ -1450,10 +1532,6 @@ fn exec_eval_generator_element(
     exec_eval_expr(ctx, element)
 }
 
-fn exec_restore_comprehension_targets(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
-    exec_restore_temporary_names(ctx, bindings);
-}
-
 fn exec_bind_comprehension_targets(
     ctx: &mut ExecContext,
     targets: &[String],
@@ -1476,58 +1554,110 @@ fn exec_bind_comprehension_targets(
     bindings
 }
 
+fn exec_visit_comprehension<F>(
+    ctx: &mut ExecContext,
+    generators: &[crate::parser::ast::Comprehension],
+    index: usize,
+    emit: &mut F,
+) -> bool
+where
+    F: FnMut(&mut ExecContext) -> bool,
+{
+    if index >= generators.len() {
+        return emit(ctx);
+    }
+
+    let generator = &generators[index];
+    let iter_value = exec_eval_expr(ctx, &generator.iter.node);
+    if exec_has_pending_exception() {
+        return false;
+    }
+    for item in extract_items(iter_value) {
+        let masked = exec_bind_comprehension_targets(ctx, &generator.targets, item);
+        let mut include = true;
+        for condition in &generator.conditions {
+            let condition_value = exec_eval_expr(ctx, &condition.node);
+            if exec_has_pending_exception() {
+                exec_restore_temporary_names(ctx, masked);
+                return false;
+            }
+            if !exec_truthy(condition_value) {
+                include = false;
+                break;
+            }
+        }
+        if include && !exec_visit_comprehension(ctx, generators, index + 1, emit) {
+            exec_restore_temporary_names(ctx, masked);
+            return false;
+        }
+        exec_restore_temporary_names(ctx, masked);
+    }
+    true
+}
+
 fn exec_eval_generator_expr(
     ctx: &mut ExecContext,
     element: &crate::source::span::Spanned<crate::parser::ast::Expr>,
     generators: &[crate::parser::ast::Comprehension],
 ) -> MbValue {
-    fn visit(
-        ctx: &mut ExecContext,
-        element: &crate::source::span::Spanned<crate::parser::ast::Expr>,
-        generators: &[crate::parser::ast::Comprehension],
-        index: usize,
-        out: &mut Vec<MbValue>,
-    ) -> bool {
-        if index >= generators.len() {
-            let value = exec_eval_generator_element(ctx, &element.node);
-            if exec_has_pending_exception() {
-                return false;
-            }
-            out.push(value);
-            return true;
-        }
-
-        let generator = &generators[index];
-        let iter_value = exec_eval_expr(ctx, &generator.iter.node);
+    let mut values = Vec::new();
+    let mut emit = |ctx: &mut ExecContext| {
+        let value = exec_eval_generator_element(ctx, &element.node);
         if exec_has_pending_exception() {
             return false;
         }
-        for item in extract_items(iter_value) {
-            let masked = exec_bind_comprehension_targets(ctx, &generator.targets, item);
-            let mut include = true;
-            for condition in &generator.conditions {
-                let condition_value = exec_eval_expr(ctx, &condition.node);
-                if exec_has_pending_exception() {
-                    exec_restore_comprehension_targets(ctx, masked);
-                    return false;
-                }
-                if !exec_truthy(condition_value) {
-                    include = false;
-                    break;
-                }
-            }
-            if include && !visit(ctx, element, generators, index + 1, out) {
-                exec_restore_comprehension_targets(ctx, masked);
-                return false;
-            }
-            exec_restore_comprehension_targets(ctx, masked);
-        }
+        values.push(value);
         true
-    }
-
-    let mut values = Vec::new();
-    if visit(ctx, element, generators, 0, &mut values) {
+    };
+    if exec_visit_comprehension(ctx, generators, 0, &mut emit) {
         MbValue::from_ptr(MbObject::new_list(values))
+    } else {
+        MbValue::none()
+    }
+}
+
+fn exec_eval_list_comp(
+    ctx: &mut ExecContext,
+    element: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+    generators: &[crate::parser::ast::Comprehension],
+) -> MbValue {
+    exec_eval_generator_expr(ctx, element, generators)
+}
+
+fn exec_eval_set_comp(
+    ctx: &mut ExecContext,
+    element: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+    generators: &[crate::parser::ast::Comprehension],
+) -> MbValue {
+    let values = exec_eval_list_comp(ctx, element, generators);
+    if exec_has_pending_exception() {
+        MbValue::none()
+    } else {
+        crate::runtime::set_ops::mb_set_from_list(values)
+    }
+}
+
+fn exec_eval_dict_comp(
+    ctx: &mut ExecContext,
+    key: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+    value: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+    generators: &[crate::parser::ast::Comprehension],
+) -> MbValue {
+    let dict = crate::runtime::dict_ops::mb_dict_new();
+    let mut emit = |ctx: &mut ExecContext| {
+        let key = exec_eval_generator_element(ctx, &key.node);
+        if exec_has_pending_exception() {
+            return false;
+        }
+        let value = exec_eval_generator_element(ctx, &value.node);
+        if exec_has_pending_exception() {
+            return false;
+        }
+        crate::runtime::dict_ops::mb_dict_setitem(dict, key, value);
+        true
+    };
+    if exec_visit_comprehension(ctx, generators, 0, &mut emit) {
+        dict
     } else {
         MbValue::none()
     }
@@ -1566,10 +1696,17 @@ fn exec_call_function(ctx: &mut ExecContext, func: &ExecFunction, args: &[MbValu
 fn exec_class_body_namespace(
     ctx: &mut ExecContext,
     body: &[crate::source::span::Spanned<crate::parser::ast::Stmt>],
+    in_generic_class_body: bool,
 ) -> Option<FxHashMap<String, MbValue>> {
+    if in_generic_class_body {
+        ctx.generic_class_body_depth += 1;
+    }
     ctx.frames.push(FxHashMap::default());
     let flow = exec_block_flow(ctx, body);
     let frame = ctx.frames.pop().unwrap_or_default();
+    if in_generic_class_body {
+        ctx.generic_class_body_depth = ctx.generic_class_body_depth.saturating_sub(1);
+    }
     if exec_has_pending_exception() || !matches!(flow, ExecFlow::Normal) {
         return None;
     }
@@ -1718,6 +1855,19 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
             element,
             generators,
         } => exec_eval_generator_expr(ctx, element, generators),
+        Expr::ListComp {
+            element,
+            generators,
+        } => exec_eval_list_comp(ctx, element, generators),
+        Expr::SetComp {
+            element,
+            generators,
+        } => exec_eval_set_comp(ctx, element, generators),
+        Expr::DictComp {
+            key,
+            value,
+            generators,
+        } => exec_eval_dict_comp(ctx, key, value, generators),
         Expr::DictLit(entries) => {
             let dict = crate::runtime::dict_ops::mb_dict_new();
             for (key, value) in entries {
@@ -2287,7 +2437,9 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             if let Some(match_args) = match_args {
                 crate::runtime::class::mb_class_set_match_args(class_name, match_args);
             }
-            if let Some(namespace) = exec_class_body_namespace(ctx, body) {
+            if let Some(namespace) =
+                exec_class_body_namespace(ctx, body, !type_params.is_empty())
+            {
                 for (attr, value) in namespace {
                     crate::runtime::class::mb_class_set_class_attr(
                         class_name,
