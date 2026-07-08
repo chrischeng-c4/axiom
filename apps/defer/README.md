@@ -42,7 +42,7 @@ FIFO by task creation order.
 | Security Hardening | #766 | planned | planned | none | not_ready | target signing, authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #766 | planned | planned | none | not_ready | Cloud Tasks/Celery/Sidekiq-style delayed task feature matrix |
 | Competitor Performance | #766 | planned | planned | none | not_ready | pinned schedule/dispatch baseline, rerun only on scope change |
-| Defer App Source Root Taxonomy | #1217 | planned | planned | none | not_ready | move source-root routing from `projects/defer` to `apps/defer` while keeping project identity |
+| Defer App Source Root Taxonomy | #1217 | implemented | verified | smoke | ready | source-root routing uses `apps/defer` while preserving legacy TD identity |
 
 ### Defer App Source Root Taxonomy
 
@@ -58,11 +58,14 @@ Defer's app-facing source root resolves through `apps/defer` without changing
 the GitHub label, AW project name, persistent branch convention, or TD bucket
 identity.
 Gate Inventory:
-- pending: projects/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md
+- verified: projects/defer/tech-design/logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md
+- verified: `aw capability check --project defer`
+- verified: `aw wi list --project defer --state open`
+- verified: stale source-root scan permits only preserved TD-bucket references
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| defer-app-source-root-taxonomy | change | #1217 | planned | planned | none | pending source-root migration gate |
+| defer-app-source-root-taxonomy | change | #1217 | implemented | verified | smoke | TD merged; source-root migration smoke checks passed |
 
 ### CLI Interface
 
@@ -77,7 +80,7 @@ Promise:
 Defer ships an agent-drivable CLI for delayed task lifecycle, queue control,
 and admin workflows while following the repository-wide CLI convention.
 Gate Inventory:
-- pending: projects/defer/tests/cli_contract.rs
+- pending: apps/defer/tests/cli_contract.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -115,7 +118,7 @@ Promise:
 Defer protects task control and target dispatch with explicit authorization,
 signed delivery, auditability, network policy, and managed secret rotation.
 Gate Inventory:
-- pending: projects/defer/tests/security_hardening.rs
+- pending: apps/defer/tests/security_hardening.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -134,7 +137,7 @@ Promise:
 Defer keeps an explicit delayed-task feature matrix against established task
 dispatch systems, with comparison scope changed only when product requirements change.
 Gate Inventory:
-- pending: projects/defer/benchmark/competitor-feature-matrix.md
+- pending: apps/defer/benchmark/competitor-feature-matrix.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -153,8 +156,8 @@ Promise:
 Defer maintains a pinned competitor performance baseline and reruns external
 benchmarks only when the comparison scope changes or a human explicitly asks.
 Gate Inventory:
-- pending: projects/defer/benchmark/competitor-performance-baseline.md
-- pending: projects/defer/meter-defer-dispatch.toml
+- pending: apps/defer/benchmark/competitor-performance-baseline.md
+- pending: apps/defer/meter-defer-dispatch.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -233,7 +236,7 @@ Promise:
 Defer exposes a compact h2c/OpenAPI API list for queue/task lifecycle and
 operator workflows.
 Gate Inventory:
-- pending: projects/defer/tests/http_api.rs
+- pending: apps/defer/tests/http_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -252,7 +255,7 @@ Promise:
 Defer runs as a dedicated k8s-native task dispatch service with operator-managed
 queues, rate limits, storage, backup policy, and lifecycle.
 Gate Inventory:
-- pending: projects/defer/k8s
+- pending: apps/defer/k8s
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -271,7 +274,7 @@ Promise:
 Defer replicates task state and timer ownership through raft so failover
 preserves scheduled tasks and terminal outcomes.
 Gate Inventory:
-- pending: projects/defer/tests/raft_scheduler.rs
+- pending: apps/defer/tests/raft_scheduler.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
