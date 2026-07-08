@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/h2c/tech-design/semantic/source/libs-h2c-src-server-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Server-side h2c transport (behind the `server` feature): serve **HTTP/1.1
 //! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //! and HTTP/2 cleartext (h2c, prior-knowledge) on one socket** via hyper-util's
@@ -37,6 +39,7 @@ impl Default for ServerOptions {
 /// through the axum `app`. `shutdown` resolves to stop accepting (e.g. on
 /// SIGTERM after the readiness-drain window); in-flight connections then get a
 /// bounded grace period before the process is allowed to exit.
+/// @spec libs/h2c/tech-design/semantic/source/libs-h2c-src-server-rs.md#source
 pub async fn serve(
     listener: TcpListener,
     app: axum::Router,
@@ -106,3 +109,4 @@ pub async fn serve_with_options(
         }
     }
 }
+// CODEGEN-END

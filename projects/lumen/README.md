@@ -26,7 +26,8 @@ concept, only the caller's `external_id` is.
   it into its own index. Lossable but rebuildable from the log + the
   caller.
 - **Client API on `:7373`** (HTTP/1.1 + HTTP/2 cleartext — REST clients
-  need nothing special; see [HTTP](#http--clients)).
+  need nothing special; high-throughput clients should use HTTP/2 multiplexing;
+  see [HTTP](#http--clients)).
 - **Sharded**: `hash(collection_id, routing_key || external_id)` selects a
   virtual bucket, and a versioned operator-owned shard map assigns buckets to
   physical storage shards. `shardCount` controls storage ownership,
@@ -177,7 +178,10 @@ Status: verified
 Required Verification: conformance, dogfood
 Promise:
 Keep lumen's speed and footprint claims tied to ratcheted tests and competitor
-comparisons against Postgres/OpenSearch/MongoDB instead of local-only anecdotes.
+comparisons against Postgres/OpenSearch/MongoDB in the regime it is built for:
+large corpora, high QPS, and HTTP/2 multiplexed search/index traffic. Low-QPS
+rows stay useful as smoke and regression diagnostics, not as the product win
+condition.
 Gate Inventory:
 - projects/lumen/tests/perf_gate.rs; projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json; projects/lumen/src/bin/lumen-bench.rs; projects/lumen/tests/rig/cases/load/data_table_browse.toml; projects/lumen/scripts/bench_vs_db.py; projects/arena/examples/lumen-vs-pg.toml; projects/arena/examples/lumen-vs-opensearch.toml
 
@@ -238,7 +242,7 @@ Gate Inventory:
 | role-based-authz-matrix-per-route | epic | - | implemented | passing | conformance | projects/lumen/tests/authz_matrix_e2e.rs |
 | adversarial-query-safety | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
 | score-confidentiality | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
-| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen tls`<br>projects/lumen/src/tls.rs |
+| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>projects/lumen/src/tls.rs |
 
 ### HTTP/2 API List
 
@@ -495,16 +499,21 @@ Gate Inventory:
 
 ID: backup-restore
 Type: Service
-Surfaces: CLI: `lumen serve` - snapshot restore and periodic snapshot loop.; Rust API: `LocalFsRdbStore` - local snapshot sink implementation.; Admin/backup path: external snapshot bytes written through service-backup sinks for cold DR seed.
+Surfaces: CLI: `lumen serve` - snapshot restore and periodic object-snapshot loop.; Rust API: `LocalFsRdbStore` - local-dev snapshot sink wrapper over `libs/service-durability` atomic snapshot files.; Admin/backup path: external snapshot bytes written through service-backup object-store sinks for cold DR seed.
 EC Dimensions: behavior: `cargo test -p lumen --test backup_restore_e2e` - snapshot/restore conformance
 Root WI: -
 Status: verified
 Required Verification: conformance
 Promise:
-Write RDB snapshots to a pluggable sink as a cold-start and disaster-recovery
-baseline. Live replicas synchronize through raft log/snapshot mechanics; backup
-artifacts seed cold restore and future empty-PVC bootstrap, not normal replica
-replication.
+Keep Lumen durable-only in production: accepted writes land in durable
+WAL/raft-backed state before success, while scheduled SnapshotV1 backups are
+written to object storage for cold-start and disaster-recovery. Live replicas
+synchronize through raft log/snapshot mechanics; backup artifacts seed cold
+restore and future empty-PVC bootstrap, not normal replica replication.
+Local RDB/AOF durability composes `libs/service-durability` for fsync policy,
+atomic snapshot replacement, CRC-framed AOF records, torn-tail recovery, and
+compaction; Lumen keeps only the `SnapshotV1`/`WalRecord` codecs and engine
+restore semantics locally.
 Gate Inventory:
 - projects/lumen/tests/backup_restore_e2e.rs
 
@@ -618,17 +627,25 @@ thresholds live in **`tests/perf-baseline.json`**; full methodology, per-tier
 numbers, resource columns, and reproduction live in
 **[`docs/benchmarks-scale.md`](docs/benchmarks-scale.md)**.
 
+The product target is **not** "win the tiny loopback request." Lumen is built for
+large index state and sustained request volume over HTTP/2 multiplexed
+connections. Low-QPS rows remain in the matrix because they catch regressions
+early and explain fixed overhead, but the release-relevant performance claim is
+high-QPS / large-corpus stability: throughput, p99, RSS, footprint, and peer
+comparison under enough concurrency for HTTP/2 pooling to matter.
+
 How the comparison stays honest (separate metrics, never conflated):
 
-- **End-to-end, single-client** is the gated metric — lumen and OpenSearch share
-  HTTP/JSON so the transport tax cancels. pg's binary wire beats HTTP/JSON on
-  cheap btree point/range lookups on loopback, so those cells are **HTTP-EXEMPT**
-  (annotated) and gated instead through a **native prepared-binary** path (Rust
-  wire over Unix socket) — the cheap predicates still carry a hard floor.
+- **End-to-end, single-client** is a smoke/regression metric — lumen and
+  OpenSearch share HTTP/JSON so the transport tax is visible. pg's binary wire
+  beats HTTP/JSON on cheap btree point/range lookups on loopback, so those cells
+  are **HTTP-EXEMPT** (annotated) and gated instead through a **native
+  prepared-binary** path (Rust wire over Unix socket) — the cheap predicates
+  still carry a hard floor.
 - **Concurrent qps (10/100/1000)** and **write-path qps** are report-only by
   default; `LUMEN_GATE_COMPARE_PEERS=1 LUMEN_PERF_STRICT=1` strict-gates the peer
   rows recorded in `perf-baseline.json`. Co-located CI keeps them report-only
-  until CPU isolation; isolated-host repeats are the release-stable bar.
+  until CPU isolation; isolated-host high-QPS repeats are the release-stable bar.
 
 Each cell carries a threshold in `perf-baseline.json`: a **WIN cell** must hold
 `max(1.0, 0.8 × recorded margin)` — a **ratchet**, so improving a cell locks the
@@ -975,7 +992,9 @@ monitoring, `/metrics` carries the same numbers as gauges.
 The client API speaks **HTTP/1.1 and HTTP/2 cleartext (h2c) on the same
 port** (`auto`) — the server accepts both, no flag needed. **HTTP/2 is the
 recommended connection for serving**: one connection multiplexes many concurrent
-streams, which is how lumen sustains its high-QPS search/index throughput. The
+streams, which is how lumen sustains its high-QPS search/index throughput. Small
+HTTP/1.1 calls are compatibility and smoke paths; production performance claims
+are about pooled HTTP/2 traffic at volume. The
 three setups, in order of preference:
 
 - **Production (behind TLS) — HTTP/2 by default, for free.** An ingress / mesh
@@ -1129,6 +1148,7 @@ Bootstrap modes are intentionally distinct. A restarted pod with its PVC
 replays local raft state, snapshots, and logs. A new empty-PVC replica can catch
 up through leader snapshot install and AppendEntries today, but the production
 path is to seed from object-store/shard snapshot first and then catch up the
-raft delta, with operator-visible progress and rate limits. External backup is
-the cold disaster-recovery and seed surface; it is not the normal live replica
-synchronization path.
+raft delta, with operator-visible progress and rate limits. Production Lumen
+CRs must configure scheduled object snapshots; local filesystem snapshots are
+local-dev or break-glass only. External backup is the cold disaster-recovery
+and seed surface; it is not the normal live replica synchronization path.

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-openapi-parser-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! OpenAPI 3.x to RestApiSpec parser
 //!
 //! Parses OpenAPI 3.0.x and 3.1.x specifications.
@@ -15,6 +17,7 @@ use crate::type_inference::Type;
 
 /// Error type for OpenAPI parsing
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-openapi-parser-rs.md#source
 pub enum OpenApiError {
     /// Invalid JSON/YAML
     ParseError(String),
@@ -28,6 +31,7 @@ pub enum OpenApiError {
     Other(String),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-openapi-parser-rs.md#source
 impl std::fmt::Display for OpenApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -40,14 +44,17 @@ impl std::fmt::Display for OpenApiError {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-openapi-parser-rs.md#source
 impl std::error::Error for OpenApiError {}
 
 /// OpenAPI parser
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-openapi-parser-rs.md#source
 pub struct OpenApiParser {
     /// Parsed components for reference resolution
     components: HashMap<String, Value>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-openapi-parser-rs.md#source
 impl OpenApiParser {
     pub fn new() -> Self {
         Self {
@@ -679,6 +686,7 @@ impl OpenApiParser {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-openapi-parser-rs.md#source
 impl Default for OpenApiParser {
     fn default() -> Self {
         Self::new()
@@ -920,3 +928,4 @@ components:
         );
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! # cclab-compass
 //!
 //! Code intelligence arsenal for the cclab ecosystem. Compass gives developers
@@ -54,3 +56,4 @@ pub use output::reporter::{OutputFormat, Reporter};
 pub use server::{ArgusDaemon, DaemonClient, DaemonConfig, RequestHandler};
 pub use syntax::{Language, MultiParser, ParsedFile};
 pub use watch::{FileWatcher, WatchConfig, WatchEvent};
+// CODEGEN-END

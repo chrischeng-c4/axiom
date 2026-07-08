@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Rust code generators
 //!
 //! Generators for:
@@ -20,6 +22,7 @@ use crate::spec::ir::StringFormat;
 use crate::type_inference::Type;
 
 /// Convert Type IR to Rust type string
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-mod-rs.md#source
 pub fn type_to_rust(ty: &Type) -> String {
     match ty {
         Type::Never => "!".to_string(),
@@ -76,6 +79,7 @@ pub fn type_to_rust(ty: &Type) -> String {
 }
 
 /// Convert StringFormat to Rust type
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-rust-mod-rs.md#source
 pub fn format_to_rust_type(format: &StringFormat) -> &'static str {
     match format {
         StringFormat::Uuid => "uuid::Uuid",
@@ -87,3 +91,4 @@ pub fn format_to_rust_type(format: &StringFormat) -> &'static str {
         _ => "String",
     }
 }
+// CODEGEN-END

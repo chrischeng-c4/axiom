@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Python code generators for cclab ecosystem
 //!
 //! Generators for:
@@ -33,6 +35,7 @@ use crate::spec::ir::StringFormat;
 use crate::type_inference::Type;
 
 /// Convert Type IR to Python type annotation string
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-mod-rs.md#source
 pub fn type_to_python(ty: &Type) -> String {
     match ty {
         Type::Never => "Never".to_string(),
@@ -96,6 +99,7 @@ pub fn type_to_python(ty: &Type) -> String {
 }
 
 /// Convert StringFormat to Python type hint
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-mod-rs.md#source
 pub fn format_to_python_type(format: &StringFormat) -> &'static str {
     match format {
         StringFormat::Email => "EmailStr",
@@ -109,6 +113,7 @@ pub fn format_to_python_type(format: &StringFormat) -> &'static str {
 }
 
 /// Get imports needed for a type
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-mod-rs.md#source
 pub fn get_type_imports(ty: &Type) -> Vec<&'static str> {
     let mut imports = Vec::new();
 
@@ -140,3 +145,4 @@ pub fn get_type_imports(ty: &Type) -> Vec<&'static str> {
 
     imports
 }
+// CODEGEN-END

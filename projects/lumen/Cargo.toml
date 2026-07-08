@@ -2,7 +2,7 @@
 name = "lumen"
 # lumen owns its version and releases independently (see CONTRIBUTING.md
 # "Releasing"); it no longer inherits the shared workspace version.
-version = "0.4.16"
+version = "0.4.17"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -58,6 +58,9 @@ service-http = { path = "../../libs/service-http" }
 # Shared backup destination/policy/sink/runner contract. Lumen still owns
 # producing a consistent engine snapshot; this lib owns where/how bytes are kept.
 service-backup = { path = "../../libs/service-backup" }
+# Shared durable local storage primitives: fsync policy, atomic snapshot replace,
+# and CRC-framed append logs. Lumen owns the domain codecs layered on top.
+service-durability = { path = "../../libs/service-durability" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }

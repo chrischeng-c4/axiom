@@ -39,8 +39,8 @@ Public API manifest for `projects/lumen/src/wal.rs` generated from AST during Sc
 //!
 //! lumen's write path is "turn the database inside out": a write is published
 //! to an ordered log and then folded into each serving node's materialized
-//! index. The log may be in-process (`MemWal`), externally owned (`RelayWal` /
-//! legacy `NatsWal`), or Lumen-owned primary/replica replication.
+//! index. The log may be in-process (`MemWal`), legacy externally owned
+//! (`NatsWal`), or Lumen-owned primary/replica replication.
 //!
 //! This mirrors Redis's AOF (the op log) + replication stream, with the
 //! "master" role dissolved into "the log owner":
@@ -50,13 +50,11 @@ Public API manifest for `projects/lumen/src/wal.rs` generated from AST during Sc
 //!   with the log sequence they correspond to, so a fresh node loads a
 //!   baseline then tails the log from there.
 //!
-//! Three backends implement [`WalLog`]:
+//! Two local/external WAL backends implement [`WalLog`]:
 //!
 //! - [`MemWal`] — in-process, in-memory. Unit tests + the simplest
 //!   single-node dev runs. Publish applies synchronously from the
 //!   caller's perspective (the subscriber sees it immediately).
-//! - `RelayWal` (in `wal_relay`) — explicit Relay broadcast broker mode. Each
-//!   serving node has an independent subscriber id reading the full stream.
 //! - `NatsWal` (in `wal_nats`) — legacy NATS JetStream backend retained for
 //!   compatibility/tests.
 //!
@@ -88,7 +86,7 @@ const WAL_VALUE_STRING_LIST: u8 = 4;
 /// One durable, ordered mutation in the log. The sequence number is
 /// **not** part of the record — it is assigned by the log on publish
 /// and delivered alongside the record on subscribe (`MemWal` uses the append
-/// index; broker or primary/replica backends own sequence assignment).
+/// index; external-log or primary/replica backends own sequence assignment).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 pub struct WalRecord {
@@ -762,7 +760,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

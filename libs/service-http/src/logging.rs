@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tracing init: one shared `tracing-subscriber` registry built from
 //! [`HttpConfig`].
 //!
@@ -24,6 +26,7 @@ use crate::config::{HttpConfig, LogFormat};
 /// `// TODO(otlp)` below. Pulling the opentelemetry/otlp dep tree is a separate
 /// follow-up; a service that needs trace export today keeps its own `otel`
 /// feature-gated init (as lumen does) and uses this for the plain-log path.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#source
 pub fn init_tracing(cfg: &HttpConfig) -> anyhow::Result<()> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.log_level.clone()));
@@ -60,3 +63,4 @@ pub fn init_tracing(cfg: &HttpConfig) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("install tracing subscriber: {e}"))?;
     Ok(())
 }
+// CODEGEN-END

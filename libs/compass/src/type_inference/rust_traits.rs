@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-traits-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Rust trait resolution
 //!
 //! This module provides trait resolution functionality for Rust code,
@@ -14,6 +16,7 @@ use super::rust_types::*;
 
 /// Trait resolver for finding implementations
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-traits-rs.md#source
 pub struct TraitResolver {
     /// All known trait implementations
     impls: Vec<Arc<ImplBlock>>,
@@ -21,6 +24,7 @@ pub struct TraitResolver {
     trait_defs: HashMap<TraitId, Arc<TraitDef>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-traits-rs.md#source
 impl TraitResolver {
     /// Create a new trait resolver
     pub fn new() -> Self {
@@ -214,6 +218,7 @@ impl TraitResolver {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-traits-rs.md#source
 impl Default for TraitResolver {
     fn default() -> Self {
         Self::new()
@@ -222,6 +227,7 @@ impl Default for TraitResolver {
 
 /// Result of resolving a method call
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-traits-rs.md#source
 pub struct MethodResolution {
     /// The resolved method
     pub method: ImplMethod,
@@ -283,3 +289,4 @@ mod tests {
         assert!(not_found.is_empty());
     }
 }
+// CODEGEN-END

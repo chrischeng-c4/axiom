@@ -523,6 +523,9 @@ fn llm_workflow_covers_the_integration_model() {
         "Per-field / per-clause boost",
         "Document TTL / expiry",
         ":7373", // connection
+        "compatibility/smoke path",
+        "high-QPS",
+        "pooled HTTP/2 streams",
         "Authorization: Bearer",
         "LUMEN_TOKEN_REGISTRY_FILE",
         "Do NOT", // non-goals

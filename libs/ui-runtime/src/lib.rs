@@ -1,4 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:ui-runtime-core" tracker="pending-tracker" reason="Shared component runtime extracted from jet-wasm for desktop/WASM renderer reuse."
+// SPEC-MANAGED: libs/ui-runtime/tech-design/semantic/source/libs-ui-runtime-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Renderer-neutral component runtime: fiber tree + hooks + mount/flush loop.
 //!
 //! The runtime owns React-like authoring semantics without depending on React
@@ -73,6 +74,7 @@ pub(crate) enum HookSlot {
 /// into `u64` at the call site so the slot doesn't need to carry
 /// arbitrary types. The transpiler emits `hash_dep(x)` for each
 /// dep the TSX source passes.
+/// @spec libs/ui-runtime/tech-design/semantic/source/libs-ui-runtime-src-lib-rs.md#source
 pub type MemoDepHash = u64;
 
 // ── Thread-local scheduler / runtime ────────────────────────────────────────
@@ -688,4 +690,4 @@ fn render_fiber(fiber_id: FiberId, component: Component) -> Element {
     RUNTIME.with(|r| r.borrow_mut().end_render());
     tree
 }
-// HANDWRITE-END
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-infer-tests-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tests for type inference
 
 use std::collections::HashMap;
@@ -468,3 +470,4 @@ class Circle:
     assert!(area_type.is_some());
     assert_eq!(*area_type.unwrap(), Type::Float);
 }
+// CODEGEN-END

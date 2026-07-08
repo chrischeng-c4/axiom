@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-kubernetes-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Kubernetes YAML lint checker (source-line analysis)
 
 use super::kubernetes_rules;
@@ -6,8 +8,10 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Posi
 use crate::syntax::{Language, ParsedFile};
 
 /// Kubernetes manifest checker — uses source-line analysis on YAML
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-kubernetes-rs.md#source
 pub struct KubernetesChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-kubernetes-rs.md#source
 impl KubernetesChecker {
     pub fn new() -> Self {
         Self
@@ -259,12 +263,14 @@ impl KubernetesChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-kubernetes-rs.md#source
 impl Default for KubernetesChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-kubernetes-rs.md#source
 impl super::Checker for KubernetesChecker {
     fn language(&self) -> Language {
         Language::Yaml
@@ -343,3 +349,4 @@ mod tests {
         assert!(!KubernetesChecker::has_pod_containers(&lines));
     }
 }
+// CODEGEN-END

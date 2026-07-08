@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-mermaid-plus-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Mermaid+ generator
 //!
 //! Generates Mermaid+ output from validated state machine definitions.
@@ -12,6 +14,7 @@ use std::collections::HashMap;
 
 /// Mermaid+ output structure
 #[derive(Debug, Clone, Serialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-mermaid-plus-rs.md#source
 pub struct MermaidPlusOutput {
     /// YAML frontmatter content (without --- markers)
     pub frontmatter: String,
@@ -24,8 +27,10 @@ pub struct MermaidPlusOutput {
 }
 
 /// Mermaid+ generator
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-mermaid-plus-rs.md#source
 pub struct MermaidPlusGenerator;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-mermaid-plus-rs.md#source
 impl MermaidPlusGenerator {
     pub fn new() -> Self {
         Self
@@ -298,6 +303,7 @@ impl MermaidPlusGenerator {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-statemachine-mermaid-plus-rs.md#source
 impl Default for MermaidPlusGenerator {
     fn default() -> Self {
         Self::new()
@@ -745,3 +751,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

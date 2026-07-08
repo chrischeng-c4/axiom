@@ -1,0 +1,1111 @@
+version = 2
+project = "compass"
+ir_kind = "td"
+td_path = "libs/compass/tech-design"
+generated_at = "2026-07-07T15:58:25.035126+00:00"
+digest = "sha256:fe5eec0adf98ff49906e384f542ee5ea92cd127bd359638fb7ec2d527bce5dcd"
+source_digest = "sha256:fe5eec0adf98ff49906e384f542ee5ea92cd127bd359638fb7ec2d527bce5dcd"
+ir_digest = "sha256:5c5cb206196076eeef34a81aefb83c5a5d5dade2c598dedabcd602d78ddbbf6e"
+
+[[files]]
+path = "semantic/compass-libs-compass.md"
+digest = "sha256:6e7455a8281b5245ebea61e47a6dd85a68192ee7370d63743454ecdf5a43a48d"
+parse_error = "schema:64-1925: section 'schema' at lines 64..1925: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-compass-src-check-pipeline-rs.md"
+digest = "sha256:87a813c68cee02f26964ddce9533d25f58d312ccdff13f27b4e448c2584c6584"
+ir_digest = "sha256:aa1139560d063e97c5738ac09a9cbdd3b853c929bf7abc78ff00b879bbfb29a9"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-checker-rs.md"
+digest = "sha256:2d57ef8ee3f58380d1a563d5edbfc8dceaaf5f273b07022c7e3fd32092059f46"
+ir_digest = "sha256:891639b18b859167d7373d8ad0d00522e966e52731c24564c704d57a8bc74a6f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-core-config-rs.md"
+digest = "sha256:f492481a675bafbc88f53ebf2a7beeab13bd06f67d06047c1e25510cd3ce1f05"
+ir_digest = "sha256:d6e04c555765a39a458d0db9f61dd15c08a5619cde29f1290277e93265277109"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-core-index-config-rs.md"
+digest = "sha256:01ff7cafa96319e2dfc73bed211f458568c286c92e404ad2a519720a92e4b3d9"
+ir_digest = "sha256:4ec1091498f1065afba3e0ca995ccb65a1e70aed17b0c0677c947bbd3efddd2d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-core-mod-rs.md"
+digest = "sha256:656eec9246265fa932a5798114f6c6319ca75608980927ee65c4bf0b29cfdd8d"
+ir_digest = "sha256:fa2bf34a7d479807d801f261a0a34b90e1f71fda9cdbf9696744ba8f3d3b5b9e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-diagnostic-rs.md"
+digest = "sha256:be69663e1f23aa093e8b53f0532aa98f1d7b81281bc25a2cc4ddd2528e37f207"
+ir_digest = "sha256:f25ab0a6ad9006c648cda8b49cf5444594ea8984ba4e6dbffa1971d91613e239"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-format-detect-rs.md"
+digest = "sha256:2182008c1c426d12457ccae4534699d37cb4c5238838a98191fcb32dd2622d93"
+ir_digest = "sha256:dc6cf83a85282723ce588d525aba0e082e831eb5d17dc16bd84d2fdd417dd182"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-format-mod-rs.md"
+digest = "sha256:c8e25878fe8985ec0cd0dde5430a9e1298080244a1b0b8c1630014101d5cc770"
+ir_digest = "sha256:8b1fd47926e75a35aca3365108a089710ee73681de7b2e47021c5490e240eacd"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-mod-rs.md"
+digest = "sha256:39a4746de8c5aa439fb5c40df540fea0bcf8c7a4d5e3fc2f3d1096450b0f11c8"
+ir_digest = "sha256:ca98580243f34169823eebdd548fc5510fe48188c1d6654be1d90482068dc661"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-meteor-rs.md"
+digest = "sha256:52368eb91dfcc40f8443604cff895b64f2df34783af8f5eb67b8064f3f264167"
+ir_digest = "sha256:bde1dd52c6efebeb5a10a94b66a29d5b05124577711d36513f41edf0891e5c3a"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-mod-rs.md"
+digest = "sha256:c92efcd67bd9c6b4209977d102e0ff8e98d988b583771302ff1f0b3b879ea2da"
+ir_digest = "sha256:1f41cebe813b6787493054acec02e1102acbb3bba5a530a9f7be14e30968b071"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-nebula-rs.md"
+digest = "sha256:7aae69c6e0170890b03e045a49b28acf812ab3e7a76496b2e425bf8bd3653397"
+ir_digest = "sha256:f811c562a7dd8efab75abb5cf98e62130782fdb0893445d1989c5f0c90f4f97b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-photon-rs.md"
+digest = "sha256:a2906e55b69a1bb8b62b359c4f256a747b55d7070670e9a66fb0e970dd651339"
+ir_digest = "sha256:ddd9662b291ddebde76ab131704690414a1a06f8a31402e04e8a094114df6c4e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-quasar-rs.md"
+digest = "sha256:6d39d6d02684f309948e28f549398acaadcb3cdda92b014e3643257cd698c115"
+ir_digest = "sha256:dadc2012ef500ab46bd56b99d74ade887c3cd40033681555c3bf19c1ddc0cc6f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-rust-scanner-rs.md"
+digest = "sha256:fb735b26bd27cea8fee065caac4bc173bd354f1e6458e1c441409b2c21d1e95c"
+ir_digest = "sha256:4c889fe5680542c109fe04b83f0932a0357d4abbb5df6b039546ad26ee276978"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-shield-rs.md"
+digest = "sha256:bed89f7e41401bbf84a04db017a1bdcebcac31b1a513f4cce147ec9ac93d4bed"
+ir_digest = "sha256:ac9b1073c3cf2149740c0bf5c8cf3d1101e3fe41dd325325a63e0150e7a246bd"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-test-extractor-rs.md"
+digest = "sha256:5e2f83d9d243c4db4a58b97fa86a9ba0cf2412d1653411ca0e74066591a291fc"
+ir_digest = "sha256:0ef93e74e5d41c1fd252599cb89498582d4eb153f3d7625a6291d99b17c4087f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-python-titan-rs.md"
+digest = "sha256:e17ca1fe97d2cb9a0e146d72e27cfecf51fd2169f9c350458582f2126c85150c"
+ir_digest = "sha256:38a462b3625b94083a0892e4bc47f4acb727173416c30b1f850d65b3e37d4686"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-registry-rs.md"
+digest = "sha256:2f0f84ab02ae7062ed5c9f1ac277d020ff6b74a8c1fed52dd78f6d1645271360"
+ir_digest = "sha256:a79cb3a1d12854623b4d947e73214e784702cac3e34b52ef89cbd9aba6e8a319"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-rust-axum-rs.md"
+digest = "sha256:54e9ead9ed254f41c69649f27b9a37e64f00983806d3d7eeb066b3bd2e903223"
+ir_digest = "sha256:a499ac5934ed72ecca89c9eeede454b386fc51deb6da18c7216e8f209ae0075d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-rust-mod-rs.md"
+digest = "sha256:bc2306178b1df1adf407c8d2f3d48f1c0e36a4526a20f4203f50ba77f5b7324f"
+ir_digest = "sha256:67c67f91f5b096741c1bb404d47fc2bbb0e1ec3bad0064b2ce35e0ece80b3ecd"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-rust-reqwest-rs.md"
+digest = "sha256:105e92e2ef17198409859bc44bddafb4951f76d16760640d9ec437d9a127b7b7"
+ir_digest = "sha256:96c3bad6257cfdb76781dffa55e0e256b2a42c114f84637fd12c6920e2be625b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-rust-serde-rs.md"
+digest = "sha256:4539409514c3c81c59143701303a2bb16b25d1bbb534fb09a8de033ee50edf17"
+ir_digest = "sha256:faebb697398949e5d6890b4a6c863d352d729bd5e0670c2b0b865abaa33cd55c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-rust-sqlx-rs.md"
+digest = "sha256:907a7eb26743ee125f069a8fd5c88bad3488bd197843793090e356c3bbf4cddc"
+ir_digest = "sha256:3c69583cc7894565078ae882d7c19f5152e89855877ded05b3a2c7c1b90d6770"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-gen-traits-rs.md"
+digest = "sha256:01476546adb3f8344f49441143ab0725a5121b2ca6f5e818abadb32ee056c63c"
+ir_digest = "sha256:149ced0e49ab9268f94455370402037d270a0b8ab52c79de740d37ecb4ebe109"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-graph-mod-rs.md"
+digest = "sha256:56dcac5a6e47182a9c17025927a52a5de12909f0c35988900bf33a70ffa96898"
+ir_digest = "sha256:94a768e0fe9a47056e58ff43860266c4a4c5eeae93d42029416e0597b4b1caa7"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-graph-resolve-rs.md"
+digest = "sha256:81987f3169e0cde5256ca943377a79f08f8b0fb7655cd9246056230fc0459f58"
+ir_digest = "sha256:6c8d5b361c9c60a15655b2a83e5a61defade45cc998882f95471a50dda8317ae"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lens-error-rs.md"
+digest = "sha256:b553b023ab8192f453bf751439511ba7177618b25c31830c8c39be6885cbdafa"
+ir_digest = "sha256:29373f3e7939b01e68ef16603d3bb5bea55dc85580903cc74a6b98e1ce771c3c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lib-rs.md"
+digest = "sha256:d74b0e18c8e56ec6e0363615f8714979c137d54cbf604d32ab0f36d82b88dcdd"
+ir_digest = "sha256:671a2d666f0772e055a9abbfd9730d4120d80869613b2c1a331351516bf6c40e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-asyncapi-rs.md"
+digest = "sha256:2f0679c4717975cb44a12e9243d0fc45e3af4033943137c1711e6cae64de7d84"
+ir_digest = "sha256:5045bbbdd2eaba89ea4d9f00ccf44b5d47481a5a197f84ca185f2b6b8886d64c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-autofix-rs.md"
+digest = "sha256:361236a16131e570fdf2405be96019678b181f7573ef5a0bc3f144114f0fc6b6"
+ir_digest = "sha256:12a295f2fc1c90bb21471200111bc823d7ead623b469371ea634daf0555c4382"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-css-rs.md"
+digest = "sha256:bc7ef6db14775d67e34f14916622f28cb390ff7ad758ab39c3926f397b916ba8"
+ir_digest = "sha256:5696461156ce3e7af6df0428a1e7b769c09a09a47019bceb8a2cfe9e05bdc391"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-css-rules-rs.md"
+digest = "sha256:cf6e9e62df8add246de0299ec4b0f2107d3a3e0c1a2c887d9a1bb60288e8439e"
+ir_digest = "sha256:7d550aa0ab0fefaf09c295fc04cb29d429aa9052100e1372f77d8f3ad1a2e1dd"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-custom-rs.md"
+digest = "sha256:24a81d09e974e8b3c7992b6b46587f08136c1c7f202f179d84fc9db10df82f10"
+ir_digest = "sha256:54c917ffad7fd31ed81e59cacef6164f12019d40ea125f4289ceeead06da74df"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-dockerfile-rs.md"
+digest = "sha256:9a43ae2f71059f09b2307affdd84613f1ccff33b75470476b719ab782881e326"
+ir_digest = "sha256:b40016c70cc71fa977c7a7fc40578f2af9561d9cb4060abf7a37e35d17a30643"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-embedded-markdown-rs.md"
+digest = "sha256:6c7fd6883687799cda258e0dc73c14774614cb6c772438c542df1fae7a4956bf"
+ir_digest = "sha256:638d5b7cf7971ae8c62f672f41f8cd453f8f26f76959a3f587e7819530f019e8"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-gitlab-ci-rs.md"
+digest = "sha256:0b643a32d6096dab932471f8a38c0cb91eba1671a568bc1dae10676ea53ce928"
+ir_digest = "sha256:3c883c126efa1d695546cf62fd5fa64ae9ea567557ca6197cfda55dd9fcafc79"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-gitlab-ci-rules-rs.md"
+digest = "sha256:0cc9f6d9d2c82b404e4a87bd6644715e7ea0037a960210b512782aef3a9e7cb3"
+ir_digest = "sha256:f0e268543bfb9274e189660aec4a41045efa3d9b185054015b200ad63187c622"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-go-rs.md"
+digest = "sha256:c42dc211738643294036ff28eca25a449285a528f57d14046a9c1b96cd38b394"
+ir_digest = "sha256:18193744c90ab1b937133e9f2ea6b3cfdb791efdcb01c124a31954bfd7e1239c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-graphql-rs.md"
+digest = "sha256:9b89aa550c9fc973519d4e88d25386b7420e377f9a6fdce4c2e3dfd857bedd7a"
+ir_digest = "sha256:cda7685ffea2d5814709a3bfb1b4c1c2456e1bd3b5e5eeb05e11044872841fd2"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-html-rs.md"
+digest = "sha256:bc14af2fd025c01346d8e48444c85a5d38359baa8be9b93c442ffb35b5f662bb"
+ir_digest = "sha256:ff1db6b37583ad0c63de8ede1756ed2843bddf64e47843daad4b4785d1d996c0"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-html-rules-rs.md"
+digest = "sha256:0fa3d7d83efcc42a36a52b96bd1101514a245b29ee6f57214ae98c79e8101ec3"
+ir_digest = "sha256:908fb06cbc509cd3a41214c828a8c3f6c8f54758c4c5f40cd366f320608da4a6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-javascript-rs.md"
+digest = "sha256:e1744e8b83f13501081097f74c5bb9952f9c61dbd045c33b87fc732bb1b4886e"
+ir_digest = "sha256:800b331121ed15cdaed082b3474b3158110dac5a99c0463e5d07ad9865853013"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-kubernetes-rs.md"
+digest = "sha256:b522c2a1924ad33e8bc8f68f0bf739867625ba3b1d4fe6d710b868b0cc239bce"
+ir_digest = "sha256:4862880a2d461b100f26d7a07b9518f8bf5d259d7bdf0ed7a23105c075d61bc2"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-kubernetes-rules-rs.md"
+digest = "sha256:5eed7868c0b9e521474ff303dc2f038f4c1a11639cae193246d45d5100469c80"
+ir_digest = "sha256:69e7b966238a364cd8d327eb908698fe049c1138f18285e8fd46eeb2a407e090"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-markdown-rs.md"
+digest = "sha256:6ea8e76b0c473af71bf905adbe3ab068c381d89d0942bbfa70e2dae6e8678be6"
+ir_digest = "sha256:2b5d3db2fcc20693ac768fe468917a2efdc8a8c6b946a3343acf68f6f8488ffa"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-mdx-rs.md"
+digest = "sha256:aed02612461aa27e903350930640f0cc35c68dfba486609181edd24df9a8e845"
+ir_digest = "sha256:70f4ef7108f023662acb6528976c6d13c1085306a9eb01d95bae1a7f2117189f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-mermaid-rs.md"
+digest = "sha256:2e5cdf058893c27dff82639248d3c9a6f163f97b2673d4238dcb4a1563bb1195"
+ir_digest = "sha256:4a662297a585d7485569b860bd2de3c62c24b32dd30a2b3cbae2710f4a7f73e7"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-mod-rs.md"
+digest = "sha256:458e06587bc169f7805b27a43a82fef79d1e87e7b3066103d5016f2257bdb6ff"
+ir_digest = "sha256:a9b1d47716362671ef78498388fca75d2e5137ae2c1e7813fd906c6a81a473e0"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-openapi-rs.md"
+digest = "sha256:6ebec9f50d4cc285254d70a63495ea69b9ac52139a9e882e080bede36da71c41"
+ir_digest = "sha256:d1e67d68bb116c15e915db055c2b9ad66478ccde44c52a53fb33b10fb1120e7f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-openrpc-rs.md"
+digest = "sha256:d0a859ec4e7b80565d17e989d038cf8adf0e779cecdf58a0639519281dcaa1a9"
+ir_digest = "sha256:3e1159656a5f8e8d32f085d058217cfb2b77ef22e754a539b0f4189ac0dcc8c4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-proto-rs.md"
+digest = "sha256:a362e7a23fa845178cfa8989d26a99ea9e9ea761c1ec5213b80c2ecff5b1f71b"
+ir_digest = "sha256:ebcb3e46ed23403a7c91eb41328b9166c33b178af406982ef7c73c509ad23b87"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-python-rs.md"
+digest = "sha256:97442900507ca44873c322803fe9015fa31c975b47e3d7b8adf17e14f94b4dac"
+ir_digest = "sha256:c7ff2624c285b6c2dcf95fb003177e17bda26bd39d381bce637d39749f662376"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-python-security-rs.md"
+digest = "sha256:95c55a5f6e3f776fa31fccb76a658c7981cbc3f299c0f81f4f240047375311cb"
+ir_digest = "sha256:7c7aeea74bef46b15e803d256ad5d24dcdcdc593bdd35ecad1b0f4020ed974e8"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-rust-checker-rs.md"
+digest = "sha256:38ac8b18cc2cb5555cef5db8d6efbd64499b82dd65527e278b8e8cb8f3a85334"
+ir_digest = "sha256:7e971cf1f9974c6856e0c810a9ecbb31aa14fa784af9ffc0cdd58427bdd76ff5"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-sql-rs.md"
+digest = "sha256:b00355af9278cd46906fdefb28a48ddf5a43698c3656fa6cd706eed557b0b55b"
+ir_digest = "sha256:4af0fdb993b2de20ed939e89129f34a94c0fc242569c97906fa9e6137f771c05"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-terraform-rs.md"
+digest = "sha256:1aa7a403c6b24c4fe8afb316df092459cb8b8522c441da069ee87a7eb112b9aa"
+ir_digest = "sha256:2a193ce7dbb04a66a82489b8df0e95022f86a5711311404d222e3ffb1ea5f684"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-terraform-rules-rs.md"
+digest = "sha256:2f802b8db5fd3fecef028e5d5b952cbc67139a00a52d4c9d803be38626807a8b"
+ir_digest = "sha256:fdb5f63c18b0fd06a5bb7912e3b9d08c44ee92528d0b4c47995345f197aa7fa5"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-toml-checker-rs.md"
+digest = "sha256:4277498b698ed9178ef9c61d96e28094c61c475513d0ce7f106979b8b980135e"
+ir_digest = "sha256:b03aee9bf12cd9e4c70ac4c428436a067313abe2e382332ab361ba282eff703e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-typescript-rs.md"
+digest = "sha256:b4eba451bb4b5b8817a05804743b689782c806c7add8a8617399be293ef23002"
+ir_digest = "sha256:64e1a9db31dd7ee7bfc289da58d2cd496392d7af945748eabed8b5bf4e20eb90"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lint-yaml-dispatch-rs.md"
+digest = "sha256:6728c1244d8834176776e92bbbd03ac84277601ac872176677c84140f24924eb"
+ir_digest = "sha256:b6f2276758a64aef25e28672051e3062ad606b5a8dc337a2f01165a8b275673e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lsp-mod-rs.md"
+digest = "sha256:d0e60e867220524ae63c5f6d75d513d84c7581530dc56f8d1d53b568fd5b8637"
+ir_digest = "sha256:2aa21c68c07f5cb2352bdc4942fe8ac22c74707738da3a1606b688b5022124b6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-lsp-server-rs.md"
+digest = "sha256:d26519fec84df4a8d25efc39f5094f542f37b9237b6ffd5231d7047d6f1b2658"
+ir_digest = "sha256:2f4857786a30de2bba509f980f4aac39d9778adb6d5a2492bd8dec2b5b80e50d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-outline-rs.md"
+digest = "sha256:5169ee4e73207392956810b3dfe6ddd296333f7083e7314b5657a2b256efddfe"
+ir_digest = "sha256:69c58a4c535fcd4c74efe4186fbe482288269e6a918054ea99f703f84462c79f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-output-agent-rs.md"
+digest = "sha256:8f7ca4bc1a813bfdd5fc8aec9424d7c176b22eeee986a928623b4d8b8acb6623"
+ir_digest = "sha256:63ebf5379bd45dfc96ecc8934217df9435a6cc1676001b3c8d8a865ab1157072"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-output-agent-types-rs.md"
+digest = "sha256:3c03c1f39ebd06384406bd63a3b0c39ed0b65c27783dad107f47396e948417ac"
+ir_digest = "sha256:9ecd84de1f981c2febf89a6c9a4434cf889b47665b835622ea83786045cd26e1"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-output-mod-rs.md"
+digest = "sha256:9a686e827f679390508ec8cad010b3dcd7f3fee2333e7615cb6eeb32e29614d0"
+ir_digest = "sha256:8fd8612889180574393a37efb551185042550fcfbe882977a8d09907aa905e93"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-output-reporter-rs.md"
+digest = "sha256:288571a44b57aec9b5942f7297eb629a2474800e3e6b07bc0d5b4b0d01a9a448"
+ir_digest = "sha256:b6f11cd85bfd7e9f701419033c38866e42edcdefdd09c10aed16f322549fb900"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-extract-helpers-rs.md"
+digest = "sha256:e2c5a778eaaf8c95e8904b540fb746e505223c4f5ae4608bbb5145102c8082d1"
+ir_digest = "sha256:93a7672f1ec264fbb30d042aad9c01fc50896ee0873ad775f78e1e21b10a684d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-extract-rs.md"
+digest = "sha256:0aacc30e15332133cb7982ee712551cb4d67282cc941d6585443fe8d18088772"
+ir_digest = "sha256:8b27ad6a499908ece2837ae92be05c80aa5b605eb962dac833a8ec0a9cd9a1db"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-inline-rs.md"
+digest = "sha256:729ec8463cea0ed636c4b69f2ad074540cc8a39507297bcbbbcdd216e5a1735c"
+ir_digest = "sha256:4516320bb07282b32f6e84d2af64d4ab208c478da93d8fc8d631287c722592af"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-mod-rs.md"
+digest = "sha256:558788d282bdb50041d8164076458ec6fd57b8a5728d1c2b7dd505af99b9eca1"
+ir_digest = "sha256:5645eba92bc970958d47c5193beb6246ef7611de5b69f2cb31f7369e0de4b845"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-move-def-rs.md"
+digest = "sha256:a6e5e6d972642aa325897864bc5bf30fd28d98a568dd9e59e8f0bf9f494bff41"
+ir_digest = "sha256:ba40efeb613a2248f285c71cf10b33993d18fd872b3b7bb0f5628991be8b831f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-rename-rs.md"
+digest = "sha256:169d75f00659eafbcad19da6e7eee62a401287dcdbd4573781e9fa99b4bb95d8"
+ir_digest = "sha256:6f53e4cfd7ad181e39782176753e225f386ae0c0926d6ddd1a79a03ebca33887"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-signature-helpers-rs.md"
+digest = "sha256:a55ef3208848c5a3217d357f7839d1e09e4e46a9620920cd508edf6d2fe72c15"
+ir_digest = "sha256:206a42f242a5795d79ce6f46d18d61e55041bf239a6b2698c3c88fd403c84ca0"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-refactoring-signature-rs.md"
+digest = "sha256:f935b36fda9513af85af8577dc4f046a53b9dcb10546210721e2c0e815251272"
+ir_digest = "sha256:90942f932b05952b756af0bde51f301ea168eb1c0dd34fdc114a59409d1cb546"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-schemas-frontmatter-rs.md"
+digest = "sha256:ffbcdcbc61cb13c74f92dae63950b566858e9c90e87320a5f368c036e2fdebfc"
+ir_digest = "sha256:296a7bce83f6b60a39e1aa5d44f19843e1bdb496efe227b5246732c70e3ae555"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-schemas-gitlab-rs.md"
+digest = "sha256:c8033015d6d14f485e9dc5e25ffa6c976d716cdde971b937b3a11f1757aa375b"
+ir_digest = "sha256:39979ba02ae1853fa3e5407350ee62075dbfad1468ad5f9428c4f443ac26b901"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-schemas-k8s-rs.md"
+digest = "sha256:6a2962dd42d61248adb943715bbcf23ae7f15eeb8cfbfcdb8919d7442857c7dc"
+ir_digest = "sha256:c59ca6feb610fc568643a05bbae8d1b22646c8dc6b731354f14cfc08496ca907"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-schemas-mod-rs.md"
+digest = "sha256:92de4a2d811185b0da8560082110e25b81ffb09e85a2343041f6e3b260256552"
+ir_digest = "sha256:b6f6f5dbf528da4f78a856e95432f395ba08605347def178d292a1330d8479fc"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-search-index-rs.md"
+digest = "sha256:e2948fe13baede31eb6e08fb14e9b35826e67e06e83ac4f7190b9bdba33d9d91"
+ir_digest = "sha256:04841fe3568e81e3b6e2c6c566c1a6480e432e14bd3784b90a418c52a600fb2d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-search-mod-rs.md"
+digest = "sha256:a07d6b24d8050d2d0101592dd79300a58c647f3174942c04e4a043a3d1ed6c6f"
+ir_digest = "sha256:04fb45d1c4c75712548b38b90335ef84b56159860d6d30e7284bc65164c96352"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-search-query-rs.md"
+digest = "sha256:004a0c8be03de0b92814c80666a50d01a82586c387d9e713d34ded55112e340c"
+ir_digest = "sha256:05c27d90751a4a4d0c73fa9abbfcf3b0271e6975fa40734dc362c0294a43e98b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-mod-rs.md"
+digest = "sha256:ae22d450dc01d0cb719b8d10e20ec12316972f2efdf18c014a33c007dc100747"
+ir_digest = "sha256:b658f2551070ca21c3965a6f8fa6b28948c5ae7aaae46bc4a45fcb10a5d6a01b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-pdg-cfg-rs.md"
+digest = "sha256:3112ed7200f4864a880995c2ac50d9cb52bcaacbf4c2a25a28f5d106088e566c"
+ir_digest = "sha256:fac05579d1dc0146d7f5a450cda1ce88184b8043b14b125737dd701e1e8168b0"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md"
+digest = "sha256:5841f19c5b0da351809a7eea783f0f3dd9453dba0031c497e67dfdf241c8c47e"
+ir_digest = "sha256:2113c9da8d42016db6cd5f06e0ab5b12afc5c97d0962c1fffb31fe43828da74e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-pdg-dominator-rs.md"
+digest = "sha256:5861869651ef00ebc802f07630d95238844b5a450e1e966052029bece0596399"
+ir_digest = "sha256:36e0df9012f26dfdecccd7d6fd943300bd96b1e3c776077bbc5f6883503502c1"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-pdg-mod-rs.md"
+digest = "sha256:9eb12ab0ab25cade580c7058056782780b70a34f7feb9ac42777a56ab5d44a36"
+ir_digest = "sha256:03e86502fcac504273323d01f36428bbf7247df606b6f37afd89ac4afa128443"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-scope-rs.md"
+digest = "sha256:ab8f81d5a423504495666e6f5d2dffc90c4f4fa76e5e93d99394821235b008a7"
+ir_digest = "sha256:bbbaf9730b9eb700217d6078fbc74fc5c57d956d8b650db0cc0dfc8e4bc9070b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-css-rs.md"
+digest = "sha256:66bc37b25cce62a64505dcf92d79d07e4459dd929edd062b9a3eb1f24bd27266"
+ir_digest = "sha256:99d8e35d204a58e2522a58d72f197349bc055227b564b3fba61831c8b421c3ad"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-dockerfile-rs.md"
+digest = "sha256:e44f26ea8ac3b4be43d40ac66e16db5e873f424a5a81eb4bec6e77f61612c065"
+ir_digest = "sha256:2458d3a2cbeda6e66b9fa4d3aa20c83267ef18658310e63e0bc210d4e028418e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-gitlab-ci-rs.md"
+digest = "sha256:a6b84a6bcd95dd20212da12b812ebc0eb49f1859033fef6b21f50e904f0a9a10"
+ir_digest = "sha256:5d26a91fce333ad245fd62c74ef435859153de5d127d07876b1ff6d574e18d8a"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-go-rs.md"
+digest = "sha256:eb2cfec41d7476059915c3e7b5d30e111d11bd93ce1b8034096971c65139f6c0"
+ir_digest = "sha256:feeee0025eccdc956eb3e457364213b74a4f38ac356065f3fe8e81c91225cfc8"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-graphql-sym-rs.md"
+digest = "sha256:47e6f81117ee2985c35a0cfde17796594c245fc6d3c99269f8e88075a82bc181"
+ir_digest = "sha256:38e9bb4b6de4ee59a118a0c102e37f4bd5589c8c7fbf5143dce08c2a65e971a6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-html-rs.md"
+digest = "sha256:8b2f239d2c9f38bbd4338c69c9c3d7f97ec0214d13b5742b5208efa7fb7f5f20"
+ir_digest = "sha256:725ba7fd73dc164048bc8b7b731360aab8d4f9abf26ce596de8d1b6bf53879da"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-javascript-rs.md"
+digest = "sha256:91f08390775cf23033fb40425b6653e4443e0dd2e8b7d7513c3da619326706cc"
+ir_digest = "sha256:40039857b49470da0a843c45330c38b2e57bf5bbe2883809f21573b148151f38"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-kubernetes-rs.md"
+digest = "sha256:4ef2109a8be107e038063818aae1b9782627a27657d932dce0df86c65789176a"
+ir_digest = "sha256:1362168570377fde0943eb369a7c1b45ccf790e16baa5f95dda1d6df1c803eb1"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-markdown-rs.md"
+digest = "sha256:e1ae7ecf05c1e05b118fa219df0d88d223499bd37c7c1998c6bd6aa2ac31ad3a"
+ir_digest = "sha256:39e9db0fb04d5f583871c7b5b8b357c2f809490f123934d2a731f91d20937516"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-mermaid-rs.md"
+digest = "sha256:034bf70f2044ccef016b4aca2ab43037924c642678da0f524e18edcc468a7559"
+ir_digest = "sha256:95086de959cfc10d47881bc722d90067213491a2c287c6f4fd2527029b85189d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-mod-rs.md"
+digest = "sha256:7c0e906aa3ab2f89d3266e73e111faed3d013ebc8fc3f2f4622e4e7f7a435c05"
+ir_digest = "sha256:09ab5385e8b1364d41ac48cde9b7c727e5696ae6b95afd2ed7518ab7b9ab8518"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-proto-sym-rs.md"
+digest = "sha256:f1a8defe31f817938217c56c26ee7ceec0ebfeace74fb0fabf9a4804458d64bf"
+ir_digest = "sha256:15c817558bad34b4b86202c8ef942369eb742ac5ff0e1a22b07dd27581a6d506"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-python-rs.md"
+digest = "sha256:8c5646a9b4f75df932d83e8733895edb7e3fff5ff53a7873955c3405db12954c"
+ir_digest = "sha256:687bf1cba6c8d6eeb77e27b8d294c699592eda6de75f895dea613b890cf0d1e9"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-rust-rs.md"
+digest = "sha256:77dae6a4295f9246d34bca68213dece9ae87d61b7364b90c9b87b367b631e398"
+ir_digest = "sha256:32211008a7f0707d95fe0b1af4ca8a110a6081e3d1ed2bae4a07865ab66fb2e1"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-sql-sym-rs.md"
+digest = "sha256:14f780252c26d86fee32f5550ec167a770ffe72fd417eb3a59382b6dcfb093b4"
+ir_digest = "sha256:26141bd1bb77a5e71fc2972493753c4590f9a55374c834c3834591c71fcd412f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-terraform-rs.md"
+digest = "sha256:c2a1ce1db5faa1dc53cfd2190fe3835541aa0c07bf5a37011b43d8becb2cd9fc"
+ir_digest = "sha256:c2a150190e812a9caa6eeeddbfba3299bd730cc83ab244c0fe00c29b4c31a94f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-toml-sym-rs.md"
+digest = "sha256:77a7f43c6b495a41adcae8fbb4cbb314e4bacca7773272a606cb4b11f40e8f66"
+ir_digest = "sha256:166bb1db70915cd9e83b8cc60f323be0fa1a85386895d0cde6816c4c90ae81e8"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-symbols-typescript-rs.md"
+digest = "sha256:28f390e908a68dbe3cf5e63382d1ec8a29d15a66aef78468f4ee29d40d5b3116"
+ir_digest = "sha256:72d6763111d26092c2bc4071b96b884e389d4aa085cdc4342fd9f8f86a7f14d6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-tests-rs.md"
+digest = "sha256:6593a7b66d8a28755c60b606081f540cf75e8380953223ec5ed3ccb603c6d60b"
+ir_digest = "sha256:3312be633a53b5f517a09b595b1a5671a481880d197573faf712b8c3aa31b162"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-types-go-advanced-rs.md"
+digest = "sha256:c81fe8e17952439feff0f735d84a5284c7cdc5aefa410a3721f82d761e35ef4a"
+ir_digest = "sha256:1f14749a3041985506b56f52d40fa9e2953883b21f21190f88b0e788a93ca9c7"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-types-go-rs.md"
+digest = "sha256:3a0775409eb67b6f9f268cbb83d953a86b70b79e3c5dc1e690f9512e7268852a"
+ir_digest = "sha256:779a130bfd5b12e39ea1bf75b50463c937d6ade803603e260e8cd53a3d8e7dc9"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-types-go-tests-rs.md"
+digest = "sha256:076e747b22d78b9fe46b359ef7e75925088be4db943cc5154ac3831228005bdf"
+ir_digest = "sha256:fb1855b65aa17e733dd7bbbb780a874ee516eb6d3d3b7d1323b9ef2ea630f678"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-semantic-types-mod-rs.md"
+digest = "sha256:d6f27522d3b3694aa2aaf14ee0fd96a4baa495b3584b9fd53c62e94b3f361a80"
+ir_digest = "sha256:8e6f98f6d43143078050da97db3679a3843881a8630685d6c65626a99ca723ad"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-auto-discover-rs.md"
+digest = "sha256:947adb7446e08dce5dc2cbb7cffaab0a9c947af8a6f966a2d5d00049980ecbe1"
+ir_digest = "sha256:a8088a9dbe0ee5b7d11cc7fbafb8f39f77c2d5c13345b43fb129e41d51e2d911"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-daemon-rs.md"
+digest = "sha256:8f1d28b7e8c745242f2ddcde23c2d4f35fcc7a5b4f5b2878a87e0f862c5884ea"
+ir_digest = "sha256:3ccb29c53411076e7efdf800e07dfe1445eee2287ba8049c1311618d1800930b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-disk-cache-rs.md"
+digest = "sha256:44e1f9cfeee1a4bd2c910127631eb1884fd7d3dc3696599559bb40c94526358c"
+ir_digest = "sha256:de48e26a0cefaf85834daed3ec9ed80386681825a510f47887191a32167f2d07"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-handler-rs.md"
+digest = "sha256:10e3e6a94ca38898ae84091ddb61ff525eced79a520f5e741ae1c79f9e46ea89"
+ir_digest = "sha256:303887d5ad0ba9f854b1cbadc056ef1c0c848d6e8fc03a8462cf0020fe7e07c4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-incremental-rs.md"
+digest = "sha256:58819c1433a626c75a274494b5fe5dc60c40f701ed38efa415b8c4089dde9663"
+ir_digest = "sha256:48f4612b0a918b156916d34b8fd65a086258fbd49b0218fc5e8b4caca546d884"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-mod-rs.md"
+digest = "sha256:5cf466875e38ea9877ea4e46a3035f5ac87cabb0c13bcce1b31326eaf1357e0b"
+ir_digest = "sha256:5162312a4909e14c5f95c923eba3fb8fb4280f15297011c019e2024a57d203f6"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-protocol-rs.md"
+digest = "sha256:c111927b1c292292ee5de3403fdca2e7ff5d227d54957647082bbee18133999e"
+ir_digest = "sha256:e6420f6b8fde15bae7f596f0eb3dddc15efab8208277c73912110e3b14b93172"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-tests-rs.md"
+digest = "sha256:3432c07b1a3ab1abdb351672ef2d6ae110bba31796ac94d35d6de9c698908b70"
+ir_digest = "sha256:0b7683d0691283ae667d61184ad769ea4133786e191bdc9b0ca97790675dd0fe"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-server-watch-bridge-rs.md"
+digest = "sha256:f5d5e4def0d88cdc42e1a76ddc3a6dc29bdd01fde6573a97937441d04078f733"
+ir_digest = "sha256:f967a5983a5d41983e9abf3cc6e5a4d233efa40c1410336687db420b278c0e50"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-asyncapi-mod-rs.md"
+digest = "sha256:55ee2bd6fdde9137417adb48281b89f5739447f1c42e6445da103bc2629e9807"
+ir_digest = "sha256:2950f495cba0745f72b457c5763fc621fb16de8a7bb8946f1b1c0a9233a8ddb5"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-asyncapi-parser-rs.md"
+digest = "sha256:18e71ac6b1a64ecf1016cb5ef643211f99e205f425e428b99f261c83cf0210f6"
+ir_digest = "sha256:a13a998e42d2b68c1f44b3a25ff641ac16e6918114b2a87099a82f3edecc2d62"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-ir-rs.md"
+digest = "sha256:78fc20d8f985373925b004a333c6d99bf469b3a02524289529b1f3a94f5af047"
+ir_digest = "sha256:6166f841f586610d41d5b1a6f89e81bb6c9a7ce5653b3996990db55123cb5adc"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-json-schema-mod-rs.md"
+digest = "sha256:691d12d23cf0531ce68bc9c58b6d2601ba2bd607c94b513ca6c0a55b4833ebe2"
+ir_digest = "sha256:d08774860e68efcc44c271cd9eeb52cbbdb330eb4435a6375b458e1bb1c9c7a5"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-json-schema-parser-rs.md"
+digest = "sha256:e57452ce532ca0968263632483c0714d397d5fe0304f6c045ccc60313183561d"
+ir_digest = "sha256:ab3c88fdbea0325b032f2f7c8a10ce77a27c206cff5c9549e390ffbd90891c4a"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-mermaid-generator-rs.md"
+digest = "sha256:2f4e0d2e344b5c9a45926b705cb4df1508b563ab0b1e4794b4c0a452ea1b2488"
+ir_digest = "sha256:535615cafc2540300e40f21f0c55e62b8d35a4c7378370a8264372d58f6e83f2"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-mermaid-mod-rs.md"
+digest = "sha256:62e1672d7cb838eda238378ede05f61c227ddba005810d4721fdc5e062468318"
+ir_digest = "sha256:6df7cb7bede36a234a6674556e392f6bca8413596b3aaa8949c7fde375c33518"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-mermaid-parser-rs.md"
+digest = "sha256:54a96b7429a1e1dfed05179b55c914d7b6ecec75d3d6ac870cf539b3f0a3da74"
+ir_digest = "sha256:298a2ad1ab7e78d60132e93f6d6137a96c29c959b5d0619a657888f229cbbd8f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-mod-rs.md"
+digest = "sha256:baa4d6619b72e38387f12a775499cf0e761612dc193e90627d935abf2dfc81b9"
+ir_digest = "sha256:b661ac2961fd09a3fc916a91181a8f2929be6978f653e27a36df5659d693660d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-openapi-mod-rs.md"
+digest = "sha256:44c73294c345be550c28d1364336f610dfc7922673bcebc5e6da3b36a16998f5"
+ir_digest = "sha256:374f012fba61ea1d900010aa01f7331f86987f2a84aeacc968769e658eee4772"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-openapi-parser-rs.md"
+digest = "sha256:2b43e7677ce8d5b7d36a2ccc4fe390f6327eb2c77525d6b3b5fce61bb542318d"
+ir_digest = "sha256:e93c6fab06efd51791718284dbbf583d5810f490c28f31a1ba737708ac43ad9c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-statemachine-mermaid-plus-rs.md"
+digest = "sha256:0e09f8873bf1eddf39583cc606aee3ad796cfdfc0134ae77c3f57ea0fbd52ce8"
+ir_digest = "sha256:df0a16e4066b2a368c3345a5c9091b9bea8fc8af2144b53f60992ce1d492e746"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-statemachine-mod-rs.md"
+digest = "sha256:b1e21eb0c5ec4adeb25853404b74b81a40c29859ccd843001c329fd5df9bfa6a"
+ir_digest = "sha256:916d79ca6834d2258398ab0ee553273fab02f610476981af19910f222a23fee2"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-statemachine-schema-rs.md"
+digest = "sha256:5938b6bdb3249763351c11671f9079ed7db0ef55d4edf3306c2640045e77ba04"
+ir_digest = "sha256:0045d59370450878f3f25265d907c5ae37f2e22f30aef9576a61263f9374696c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-spec-statemachine-validator-rs.md"
+digest = "sha256:c334839e1f8969fbee9e899938267779d97f0c0cf25b700f733cecda7717ae50"
+ir_digest = "sha256:bd5176209857acecc29f48121bcca001cc15d7900a50ceec55272f82307c73fe"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-storage-rs.md"
+digest = "sha256:6b142599f3168f072422c45176d59069180daab4aa8cd7eb340d54caa060cedc"
+ir_digest = "sha256:d23eacf2c01b865a21b71ff5664802543460e4f8d9a3c8488c3584b5cec3ae1b"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-syntax-mod-rs.md"
+digest = "sha256:eaca1e8caaca592f64ebbb13ad2b3dc8f4159aa3ccf70512379bb659c8957448"
+ir_digest = "sha256:a1fac06143084cab472750ff438e3eac7a16b2a520f457c41fd893655e29ed35"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-syntax-parser-rs.md"
+digest = "sha256:8cb5c1b2ad53fb9c2704409f0270a12588bcb4d959226bec8771ec0acbbafb7f"
+ir_digest = "sha256:65ecfa8f37d9502956fe437dca54fd1675adb86fe387e805bdd2bc0e8e969614"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-annotation-rs.md"
+digest = "sha256:9a9fa79015de2c03c54cc377932784a3ccee33956cb6ae5160b71f11671b7ab9"
+ir_digest = "sha256:5c1133c32c8ea4027efceb0b06c02b7b3dba2085529a79deac153468480b6042"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-builtins-rs.md"
+digest = "sha256:a8fb737339af982deea3451e52f3e89e4029fadc8a72f9cfa8960b2458835f49"
+ir_digest = "sha256:ecd22ec17bd273e75a068512c08edf13b645d0aa11334efd854336ba30bc3309"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-cache-rs.md"
+digest = "sha256:5715e7663e84a13715feebe2b5be3584738fbd0200d9d51c6af487917f6639bf"
+ir_digest = "sha256:e3fc2f50da2d578742615e87ce974ccf0ed1168fbce5311600bb9a5a88a873cc"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-cfg-narrow-rs.md"
+digest = "sha256:211baf430030bc9acbe99ac2d5348780972486c579a163b0aada47a63c098547"
+ir_digest = "sha256:e107ae0d6dc41829ffeb34c6df88ff1da3b6a0c5cbea2e3aebd752db2b581ff4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-check-rs.md"
+digest = "sha256:2fb398e2d3516efdddf344930adee8878fd9097355fdb48d7d2c52b0fb110e1d"
+ir_digest = "sha256:4808428769de0a1c31eb8af31ca9fce74e51c5af19c0f2e27a50077e3ebe2a31"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-check-tests-rs.md"
+digest = "sha256:a1d00e42be867022f9d287f42f0e5e97ad846fefa1690a6d816183d8f0febb65"
+ir_digest = "sha256:ab82102756a75f222d83e31e4099dfe512d443b0c5ae2621cb956355da01d84f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-class-info-rs.md"
+digest = "sha256:bda5312c8fd088cd0a536f1516d278cf31e1f73b67e9a35409ffd5f7fe14f159"
+ir_digest = "sha256:a4c9057f5606d1fda36e0a7fc7e03235e03ceff3847c3ac54ec634e4949e33a4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-codegen-rs.md"
+digest = "sha256:f69b02a77f7385c893717a568770332d35f3c0ba8e65778069a90a45f7893f03"
+ir_digest = "sha256:98950370194ca10d3a112e94ff360bd0a2f44a9c7bba042fce6e070cf615a163"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-config-rs.md"
+digest = "sha256:6b45228501f46af740c62f30eaafe6b2bec18fe64ff21722d28c1b8c92b007b8"
+ir_digest = "sha256:2d5c26abea04e9597845601061b342166a3f13d687d52ce94e2601e200c36702"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-deep-inference-rs.md"
+digest = "sha256:e3b9e6fb54c02fa8ed8326282bf8826fd98d24dd1c1a9d651af5efdd7af56691"
+ir_digest = "sha256:a1bb4e52837829b6547889bdd69cabb8b25910f5af233f78c8ec56b022b251df"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-env-rs.md"
+digest = "sha256:d7aee9a888c9fd341d9e055f3d557cffcfaffeae0855302ef46cf5d80e1747c3"
+ir_digest = "sha256:6cdfc26c7594b453ee09e6c7dfb170077e6f4acb24e0d521178da507dbc254a5"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-frameworks-rs.md"
+digest = "sha256:da7f2f2072e34cc6bcccb58157a5b46bd0175edea0eceb8c2f9fa27262a5ffc4"
+ir_digest = "sha256:2021eafd969922aa48103e018d66d249d795a4c90dcc800ad6213d1c080d3900"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-imports-rs.md"
+digest = "sha256:66f5ce3c4e139a7a43b985b72b0f42912bce72dd6f3c8f5fda292901f82cd332"
+ir_digest = "sha256:ce716ec2bd3ba33c2fa8817ccab2aa2b54c676c6e25ea44f137877acbde2eac1"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-incremental-rs.md"
+digest = "sha256:c47863df0ffde2344a94abd1e8fcc158dfee3ae991d40915504569f021b09b30"
+ir_digest = "sha256:700406c521c9db794f23922834e2b2a93c68cc693217c442589b845b5f77d73c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-infer-rs.md"
+digest = "sha256:54dce9aea6c2000578b1beed53497bb315bcd9d83fb6f5e14bad7283bf06f0f4"
+ir_digest = "sha256:544e9dcd07bdae3214c91c69f87493430ca64fdb8a2caf1e09b69bb9e75dd292"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-infer-tests-rs.md"
+digest = "sha256:9b6fc2f84bb843150ca8123587cf9eff5243902e70878d6e1ecd7c0260746aa4"
+ir_digest = "sha256:743e336e98e784cce8fe3808ef7095a505c5d334937f0ba44e6eb0e936b05fcf"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-mod-rs.md"
+digest = "sha256:a2b5ef46aed421b159d7bbea9a782925a9e9735068362616d9322249fbab4058"
+ir_digest = "sha256:9348b352dde7266010afd289c4587da6c604f7f2fc408c7c1a9141a60793b4b4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-model-rs.md"
+digest = "sha256:a74c9d25281d5839c4c20ed20ac3446172882c26047221c4bacb54341531b986"
+ir_digest = "sha256:a1fb82d14a05081a233ca9794582c11318500d85bb61349c7108d163985e28c4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-modules-rs.md"
+digest = "sha256:2a949f1dde2c57bbd9ed29eafe882e9eaa59ac9f2802e9e664a5546eab3e0304"
+ir_digest = "sha256:00c6eeea284b91f1e6f071bfc0877a936687f6eb3358f8eaab2c49151ef89407"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-mutable-ast-rs.md"
+digest = "sha256:46d598efe618ccc4c1e33facdf20b74d2ea28da4d56d8da1a38f78c98ec0a254"
+ir_digest = "sha256:f62f613ad048adeb1d2cee29495483bbe2d525a168b4abda2c514c8419daefe0"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-narrow-rs.md"
+digest = "sha256:ed2648f4173d3e5a008191a3f283d91323a30ebe69ad608855ff0c18f254db6f"
+ir_digest = "sha256:b50a4d9ea7906d4a2e81d440d70d9c0a681e88e288843c03692ec71380a0b904"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-narrow-tests-rs.md"
+digest = "sha256:2baf000f0ddec776c8481d9c77cc62d95787d37b05c71f032945bff04c44f60c"
+ir_digest = "sha256:f2ecf73b2350818c5055fcb479f9f3cadaf6a399ebfbf4e1cf6871f314f74281"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-package-managers-rs.md"
+digest = "sha256:b931d6be003e47b3ae1f74fcdced6dbda6378441b001b3abdf8789bf2ed52da6"
+ir_digest = "sha256:92ca7415823f281e16c0368a9a06f964aff44bd9a483dd38c8caad974364f7b4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-project-rs.md"
+digest = "sha256:91f1bbba94eb429cbe625d1636e60692dc32e1b236de69f076147587baab412b"
+ir_digest = "sha256:e107af963d6cd3ccf946ee24e589a2a401c6896c8182677b550514110a045e05"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-propagation-rs.md"
+digest = "sha256:53d3c111c566a4fe0c0e94fd05df8a9adc72793ccbebdc11cdc19b0db5280e30"
+ir_digest = "sha256:423286d3242bd7c1d649d8c891c39e9d33737ab061f110c61e11287266d68fa4"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-refactoring-multilang-rs.md"
+digest = "sha256:d9a5ffdc8ea1bd7bd60358928190b020634397c1cd71e6b940b98427c9c2a007"
+ir_digest = "sha256:71a1f5a7cdb69be19b24ba514bcf89346bcba090d00488c487d297eaa1842c3d"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-refactoring-rs.md"
+digest = "sha256:4b8a1fe1ebba5e7cef91991bf65a1c4e0b1b615bbfb074093fe34f50be4f947a"
+ir_digest = "sha256:50a7cbcef3986e99972e2f4011999d318e855444a5b9bde45bd068918c0c0358"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-rust-advanced-rs.md"
+digest = "sha256:d8f12a4c174e460ce080cc9728d1f777c60163498e9781361d8d2dce232c9cb2"
+ir_digest = "sha256:32336144bb639c299c265c7d9d4d8abafa98821ba9f3cf9e585c06ea616e9d35"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-rust-infer-rs.md"
+digest = "sha256:4baf6fb9bb84c855c11c717d82b45070310c14f6f2c27ba454e1ac6243c4d3f8"
+ir_digest = "sha256:dd62139e051222a7b96cae46f558fb5c8a132e1bdf197dfd17ba00cde16696da"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-rust-lifetimes-rs.md"
+digest = "sha256:26c5d89f819383107b03cea04e0db8abed69c03875660174228e3ddcb4e5592b"
+ir_digest = "sha256:74c14fc4df071ef058ee5331a08c0006750caedae38959aa6999f0111711290a"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-rust-symbols-rs.md"
+digest = "sha256:e0270cacb1621e4a8f042a87f232b38cb905e677594029ae89918d5207949fb2"
+ir_digest = "sha256:62c9251005a7a79dae2d4a1320ad514d853cd33a9874e20db5330fcf38af2e1e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-rust-traits-rs.md"
+digest = "sha256:8f7086a61c60403dd93c6232c07f5dcd82aaa016d7124106194b522049baad16"
+ir_digest = "sha256:012b9d1e588b44d306c9c9ce45aefeaab1650ee3e9cb1bf0a1dcacb511b22257"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-rust-types-rs.md"
+digest = "sha256:d98df77bcf8c395aef49a7df9b509421151ba1f3893b9e3f2208c5051ae84827"
+ir_digest = "sha256:1830321f523284c79c74904c2a2eab06304ef165310d32f7adf1ffd87a02f1fb"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-semantic-search-rs.md"
+digest = "sha256:4d86cf56fce3637dff62969d4acfcb748ca5221249faf1503693a844e366d853"
+ir_digest = "sha256:e7da93e5fce5e23790ce54608bd4d9ddcf045bf56831960be2c8fa715bc23514"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-semantic-search-rust-rs.md"
+digest = "sha256:721c91669fbe567984c27188af55d9fb933e354af1896c2128087bbcf3686858"
+ir_digest = "sha256:6d30b63916234a9dc6bc7737251037e16031ff5cd7586d06d6fdb0fae0e36773"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-stubs-rs.md"
+digest = "sha256:7d1f664fdc1f8a17dfdf68de31c84fc3d7d5cf19e148d6d844716d662cc5695d"
+ir_digest = "sha256:a96d4132fb8e2efc47194735691cdbf6ca7ec6be485589a53ed896c04628b596"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-ts-advanced-rs.md"
+digest = "sha256:439f436af97c4bbbad62d7651a515434c862b52f4392f2d4f5b6e0893cfd1b10"
+ir_digest = "sha256:304f39c8890f353617e21a6c4c2869391a53f1b57341093d6b4baa81d8344d10"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-ts-infer-rs.md"
+digest = "sha256:030c689a8fbb879cec9cee70fcd20476220831b2040dd3294f434559ff3b6621"
+ir_digest = "sha256:e48b18698c97c762f7be0c33ea4e18b7106740960c7fd0bf04ef1b836ed0b8a7"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-ts-types-rs.md"
+digest = "sha256:40a6d1a726c178b38fb3db0468c66cc14b0a9f6529c63300f329cac75f1f1a01"
+ir_digest = "sha256:97810e49c022413144e37c3a5da1c8c10b479f3722ed3fc9df8cee6fb519e211"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-ty-rs.md"
+digest = "sha256:f6f99d60d8132147de4514b580153cfbd36d6e9fd1c205466d23c6be443b0de4"
+ir_digest = "sha256:4f0e880045f3ee6203c401d7743b951a1cc42cbf96cd4c697ac048de5e6e935e"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-ty-tests-rs.md"
+digest = "sha256:33e226edbde4b096ff0b81f7aea9ac97391b9327d896eead58c5b60bdf1c52cd"
+ir_digest = "sha256:356701b51a360b8e13c46c212fa87041459485310fab5d64fbed95ab41aeee24"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-type-env-rs.md"
+digest = "sha256:565229d4be6d61f3a89944b05d30353400f04c641fd35ecf2bf567d96c36d3b8"
+ir_digest = "sha256:2499192ce46f8e3f9c6e28572bc16bb27e9d991856808486d6c627436e53b3d0"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-type-inference-typeshed-rs.md"
+digest = "sha256:bfff5eec93dcc90d3f8dbd3a2b0a53e82e5ed49ea4c8b2dd16c58f5939169070"
+ir_digest = "sha256:912f3762c17757644aa947a8722b8017c6ccf30e542206ab26879d1388780f50"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-compass-src-watch-rs.md"
+digest = "sha256:3243e043c763a178012d1b1b2b05589328332ad0135b21e2a92c6f76c3d12bea"
+ir_digest = "sha256:2694981bc225f4462e676f2dde303fa4ed5007f657b0575e323ddc882c1858c0"
+section_count = 3

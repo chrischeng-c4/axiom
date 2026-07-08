@@ -200,16 +200,17 @@ fn issue_create_comment_and_upgrade_check_outputs_are_chainable() {
     assert!(commented.contains("next: done"));
 
     let checked = run_lumen_chainable(&["upgrade", "--check"]);
-    for expected in [
-        "current:",
-        "latest:  unavailable (this build has no `online` feature)",
-        "next: done",
-    ] {
+    for expected in ["current:", "latest:", "next: done"] {
         assert!(
             checked.contains(expected),
             "missing `{expected}` in upgrade check:\n{checked}"
         );
     }
+    assert!(
+        checked.contains("latest:  unavailable (this build has no `online` feature)")
+            || checked.contains("(lumen@"),
+        "upgrade check latest line is neither offline fallback nor online release result:\n{checked}"
+    );
 }
 
 #[test]

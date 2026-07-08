@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Semantic code search (Sprint 4 - Track 1)
 //!
 //! Provides type-aware code search capabilities:
@@ -20,6 +22,7 @@ use crate::type_inference::ty::Type;
 
 /// A semantic search query.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct SearchQuery {
     /// Type of search
     pub kind: SearchKind,
@@ -31,6 +34,7 @@ pub struct SearchQuery {
 
 /// Type of semantic search.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub enum SearchKind {
     /// Find by type signature
     ByTypeSignature {
@@ -60,6 +64,7 @@ pub enum SearchKind {
 
 /// Direction for call hierarchy search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub enum CallDirection {
     /// Find callers (incoming calls)
     Callers,
@@ -69,6 +74,7 @@ pub enum CallDirection {
 
 /// Direction for type hierarchy search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub enum TypeHierarchyDirection {
     /// Find supertypes (parents)
     Supertypes,
@@ -80,6 +86,7 @@ pub enum TypeHierarchyDirection {
 
 /// Scope for search operations.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub enum SearchScope {
     /// Current file only
     CurrentFile(PathBuf),
@@ -97,6 +104,7 @@ pub enum SearchScope {
 
 /// Result of a semantic search.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct SearchResult {
     /// Matching items
     pub matches: Vec<SearchMatch>,
@@ -108,6 +116,7 @@ pub struct SearchResult {
 
 /// A single search match.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct SearchMatch {
     /// File containing the match
     pub file: PathBuf,
@@ -125,6 +134,7 @@ pub struct SearchMatch {
 
 /// Kind of search match.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub enum MatchKind {
     /// Function definition
     FunctionDef,
@@ -146,6 +156,7 @@ pub enum MatchKind {
 
 /// Context around a match.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct MatchContext {
     /// Lines before match
     pub before: Vec<String>,
@@ -157,6 +168,7 @@ pub struct MatchContext {
 
 /// Search statistics.
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct SearchStats {
     /// Files searched
     pub files_searched: usize,
@@ -166,6 +178,7 @@ pub struct SearchStats {
     pub truncated: bool,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 impl SearchResult {
     /// Create empty result.
     pub fn empty() -> Self {
@@ -192,6 +205,7 @@ impl SearchResult {
 // ============================================================================
 
 /// Engine for semantic code search.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct SemanticSearchEngine {
     /// Type inferencer
     inferencer: DeepTypeInferencer,
@@ -205,6 +219,7 @@ pub struct SemanticSearchEngine {
 
 /// Location of a symbol.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct SymbolLocation {
     /// File path
     pub file: PathBuf,
@@ -222,6 +237,7 @@ pub struct SymbolLocation {
 
 /// Location of a type.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct TypeLocation {
     /// File path
     pub file: PathBuf,
@@ -233,6 +249,7 @@ pub struct TypeLocation {
 
 /// A call site in the code.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct CallSite {
     /// File where the call occurs
     pub file: PathBuf,
@@ -246,6 +263,7 @@ pub struct CallSite {
 
 /// Call graph for tracking function calls.
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 pub struct CallGraph {
     /// Map from function name to calls it makes
     pub calls: HashMap<String, Vec<CallSite>>,
@@ -253,6 +271,7 @@ pub struct CallGraph {
     pub called_by: HashMap<String, Vec<CallSite>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 impl CallGraph {
     pub fn new() -> Self {
         Self::default()
@@ -288,6 +307,7 @@ impl CallGraph {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 impl SemanticSearchEngine {
     /// Create a new search engine.
     pub fn new() -> Self {
@@ -1533,6 +1553,7 @@ impl SemanticSearchEngine {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-semantic-search-rs.md#source
 impl Default for SemanticSearchEngine {
     fn default() -> Self {
         Self::new()
@@ -2408,3 +2429,4 @@ def contains_at_end():
         assert!(exact_match.score > contains_in_middle.score);
     }
 }
+// CODEGEN-END

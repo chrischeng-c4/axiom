@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/h2c/tech-design/semantic/source/libs-h2c-examples-conn-sweep-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Reproducible evidence for the `ln(concurrency)` heuristic.
 //!
 //! Spins a local hyper server that speaks both HTTP/1.1 and h2c, then sweeps
@@ -83,3 +85,4 @@ async fn main() {
         println!("    {} conns", recommended_h2c_connections_for(conc, cores));
     }
 }
+// CODEGEN-END

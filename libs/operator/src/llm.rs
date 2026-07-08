@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/operator/tech-design/semantic/source/libs-operator-src-llm-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! LLM topic provider for the shared Kubernetes operator scaffold.
 
 /// Agent-facing topic describing the shared operator primitive.
@@ -38,6 +40,7 @@ must document an explicit handoff.
 };
 
 /// Return the shared operator topic for CLI composition.
+/// @spec libs/operator/tech-design/semantic/source/libs-operator-src-llm-rs.md#source
 pub fn topic() -> &'static cli_std::llm::Topic {
     &TOPIC
 }
@@ -52,3 +55,4 @@ mod tests {
         assert!(topic.body.contains("server-side apply"));
     }
 }
+// CODEGEN-END

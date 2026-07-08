@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-proto-sym-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Protocol Buffer (proto3) symbol extraction (line-based)
 //!
 //! Extracts symbols from proto files:
@@ -10,6 +12,7 @@
 use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::{Position, Range};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-proto-sym-rs.md#source
 impl SymbolTableBuilder {
     /// Visit proto source and extract symbols.
     pub(crate) fn visit_proto_lines(&mut self, source: &str) {
@@ -269,3 +272,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

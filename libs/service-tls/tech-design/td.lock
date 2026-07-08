@@ -1,0 +1,19 @@
+version = 2
+project = "service-tls"
+ir_kind = "td"
+td_path = "libs/service-tls/tech-design"
+generated_at = "2026-07-07T15:58:25.669056+00:00"
+digest = "sha256:063f0cd3c794f01ba6229fb56ca1550ce2b932c9b192f3f76b78f636915eebc3"
+source_digest = "sha256:063f0cd3c794f01ba6229fb56ca1550ce2b932c9b192f3f76b78f636915eebc3"
+ir_digest = "sha256:461f012141f0e00e11ae8c5e8bee92625224df2235c729e7eb8c29c8930b2e04"
+
+[[files]]
+path = "semantic/service-tls-libs-service-tls.md"
+digest = "sha256:2d42d534ee888730edf9e5ac0db0a00aa4a70120e44c7c7be47bdd93aff1cef6"
+parse_error = "schema:15-56: section 'schema' at lines 15..56: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-service-tls-src-lib-rs.md"
+digest = "sha256:77090ef5f503aa86d7efa7f52e8fc1a0e12554f40308ba700687160d379ccd19"
+ir_digest = "sha256:ab3e78354355f93161a22dc2ef21c5ca644db9dc65c73606d67bddac33737111"
+section_count = 3

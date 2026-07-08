@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-sql-sym-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! SQL symbol extraction (line-based)
 //!
 //! Extracts symbols from SQL files:
@@ -9,6 +11,7 @@
 use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::{Position, Range};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-sql-sym-rs.md#source
 impl SymbolTableBuilder {
     /// Visit SQL source and extract symbols.
     pub(crate) fn visit_sql_lines(&mut self, source: &str) {
@@ -288,3 +291,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

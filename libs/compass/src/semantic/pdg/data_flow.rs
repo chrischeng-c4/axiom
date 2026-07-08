@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Data Flow Analysis for PDG
 //!
 //! Implements reaching definitions and def-use chain tracking
@@ -10,6 +12,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A variable definition
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md#source
 pub struct Definition {
     /// Variable name
     pub name: String,
@@ -25,6 +28,7 @@ pub struct Definition {
 
 /// A variable use
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md#source
 pub struct Use {
     /// Variable name
     pub name: String,
@@ -40,6 +44,7 @@ pub struct Use {
 
 /// A def-use chain: connects a definition to its uses
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md#source
 pub struct DefUseChain {
     /// The definition
     pub def: Definition,
@@ -49,6 +54,7 @@ pub struct DefUseChain {
 
 /// A use-def chain: connects a use to its possible definitions
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md#source
 pub struct UseDefChain {
     /// The use
     pub use_site: Use,
@@ -58,6 +64,7 @@ pub struct UseDefChain {
 
 /// Data dependencies between statements
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md#source
 pub struct DataDependencies {
     /// Def-use chains: definition -> uses
     pub def_use: HashMap<Definition, Vec<Use>>,
@@ -73,6 +80,7 @@ pub struct DataDependencies {
     pub reaching_out: HashMap<BlockId, HashSet<Definition>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-pdg-data-flow-rs.md#source
 impl DataDependencies {
     /// Compute data dependencies from CFG and source
     pub fn compute(cfg: &ControlFlowGraph, file: &ParsedFile) -> Self {
@@ -584,3 +592,4 @@ mod tests {
         assert!(!self_deps.contains(&0));
     }
 }
+// CODEGEN-END

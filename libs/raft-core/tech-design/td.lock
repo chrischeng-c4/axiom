@@ -1,0 +1,31 @@
+version = 2
+project = "raft-core"
+ir_kind = "td"
+td_path = "libs/raft-core/tech-design"
+generated_at = "2026-07-07T15:58:25.354794+00:00"
+digest = "sha256:86a8a6038b035db86a0daaf9171c0550098c3e5a95acf1577a7b7324bbda41cc"
+source_digest = "sha256:86a8a6038b035db86a0daaf9171c0550098c3e5a95acf1577a7b7324bbda41cc"
+ir_digest = "sha256:cc10ec08115428a650d84650524ccb2d6ba387d76d3df9a298577f215d734950"
+
+[[files]]
+path = "semantic/raft-core-libs-raft-core.md"
+digest = "sha256:8b526d9d2a1cf42f4233e4dcc43f2ee744a244db1facc22760ecb4252fba5f62"
+parse_error = "schema:15-76: section 'schema' at lines 15..76: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-raft-core-src-lib-rs.md"
+digest = "sha256:3022e88b7b79e4d1a792ac7a771e7c88aae16ad90d89487e1a391c8eb14332af"
+ir_digest = "sha256:cc015e2b729c40e9bebe947a3066f77bc8280319bd13a0f6fa27797dc765473f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-raft-core-tests-consensus-rs.md"
+digest = "sha256:3457d070accfd540583a6b46b1713718d49c427f31441a4b0294d6f00d4370b7"
+ir_digest = "sha256:4478d389b57dbd39521b98f8df423c11ae221922d15bc1d192112a859381ec49"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-raft-core-tests-snapshot-rs.md"
+digest = "sha256:3334fc73529a57e851446936fb546ac6ee1024e331d76091e01b972dbbd5c401"
+ir_digest = "sha256:8cbb8ba64fb0aad61b88de67afff7ac1a109d6e3ab03ae4724c1e2f3b084a834"
+section_count = 3

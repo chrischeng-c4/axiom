@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-custom-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Configuration-driven custom linting engine (R3)
 //!
 //! Loads user-defined lint rules from `cclab/.index/rules.toml` and evaluates
@@ -44,6 +46,7 @@ use crate::syntax::ParsedFile;
 /// Matching strategy for a custom rule
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-custom-rs.md#source
 pub enum RuleKind {
     /// Match a regular expression against each source line
     Regex,
@@ -53,6 +56,7 @@ pub enum RuleKind {
 
 /// A single user-defined rule entry from `rules.toml`
 #[derive(Debug, Clone, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-custom-rs.md#source
 pub struct CustomRuleConfig {
     /// Short rule identifier — will be surfaced as `CUSTOM_<id>` in diagnostics
     pub id: String,
@@ -74,6 +78,7 @@ fn default_severity() -> String {
     "warning".to_string()
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-custom-rs.md#source
 impl CustomRuleConfig {
     /// Returns the canonical diagnostic code: `CUSTOM_<ID>`
     pub fn code(&self) -> String {
@@ -94,6 +99,7 @@ impl CustomRuleConfig {
 
 /// Top-level structure of `rules.toml`
 #[derive(Debug, Clone, Deserialize, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-custom-rs.md#source
 pub struct CustomRulesFile {
     /// List of rules (TOML array-of-tables `[[rule]]`)
     #[serde(default, rename = "rule")]
@@ -123,11 +129,13 @@ struct CompiledQueryRule {
 ///
 /// Create once with `from_rules_file()` or `load_from_workspace()`, then call
 /// `check()` for each file you want to lint.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-custom-rs.md#source
 pub struct CustomLintEngine {
     regex_rules: Vec<CompiledRegexRule>,
     query_rules: Vec<CompiledQueryRule>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-custom-rs.md#source
 impl CustomLintEngine {
     /// Build an engine from an already-parsed `CustomRulesFile`.
     ///
@@ -517,3 +525,4 @@ message = "a"
         assert!(codes.contains(&"CUSTOM_ALPHA".to_string()));
     }
 }
+// CODEGEN-END

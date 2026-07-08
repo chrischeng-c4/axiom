@@ -23,6 +23,8 @@ No public AST symbols.
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-bench-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 // @spec projects/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#logic
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -208,6 +210,7 @@ fn run_bool_filter(args: &RunArgs) -> Result<BenchReport> {
                     ]),
                     limit: 20,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: false,
                     collapse: None,
@@ -257,6 +260,7 @@ fn sorted_page_request(limit: u32) -> SearchRequest {
         }),
         limit,
         cursor: None,
+        routing_key: None,
         sort: Some(vec![SortSpec {
             field: "age".into(),
             order: SortOrder::Asc,
@@ -317,6 +321,7 @@ fn spec(field_type: FieldType) -> FieldSpec {
         quantize: None,
     }
 }
+// CODEGEN-END
 ````
 
 ## Changes

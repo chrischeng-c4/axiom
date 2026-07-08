@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! HTTP transport: the h2c serve loop + the standard request-tracing layer.
 //! @spec projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
@@ -18,6 +20,7 @@ use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 /// In-flight connections
 /// get a bounded grace period after `shutdown` resolves before the process
 /// exits.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub async fn serve(
     listener: TcpListener,
     app: axum::Router,
@@ -42,6 +45,8 @@ pub async fn serve(
 /// Returns the concrete `TraceLayer` so callers `.layer()` it directly. For a
 /// different classifier/make-span, build `TraceLayer::new_for_http()` inline
 /// instead.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, DefaultMakeSpan> {
     http_server::trace_layer()
 }
+// CODEGEN-END

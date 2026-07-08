@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Top-level file checking orchestrator
 //!
 //! Provides the public `check_paths` API and supporting types (`FileResult`,
@@ -14,6 +16,7 @@ use crate::type_inference::{
 use std::path::{Path, PathBuf};
 
 /// Check files and return diagnostics
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#source
 pub fn check_paths(paths: &[&Path], config: &LintConfig) -> Vec<FileResult> {
     let registry = CheckerRegistry::new();
 
@@ -49,6 +52,7 @@ pub fn check_paths(paths: &[&Path], config: &LintConfig) -> Vec<FileResult> {
 ///
 /// This is the preferred entry point when cross-file type resolution is
 /// desired (e.g., for `type_at` / `hover` accuracy).
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#source
 pub fn check_paths_with_propagation(
     paths: &[&Path],
     config: &LintConfig,
@@ -166,12 +170,14 @@ fn check_directory(
 
 /// Result of checking a single file
 #[derive(Debug)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#source
 pub struct FileResult {
     pub path: std::path::PathBuf,
     pub language: Language,
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#source
 impl FileResult {
     pub fn has_errors(&self) -> bool {
         self.diagnostics
@@ -196,12 +202,14 @@ impl FileResult {
 
 /// Lint configuration
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#source
 pub struct LintConfig {
     pub languages: Vec<Language>,
     pub exclude_patterns: Vec<String>,
     pub min_severity: DiagnosticSeverity,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#source
 impl Default for LintConfig {
     fn default() -> Self {
         Self {
@@ -218,6 +226,7 @@ impl Default for LintConfig {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-checker-rs.md#source
 impl LintConfig {
     pub fn is_language_enabled(&self, lang: Language) -> bool {
         self.languages.contains(&lang)
@@ -228,3 +237,4 @@ impl LintConfig {
         self.exclude_patterns.iter().any(|p| path_str.contains(p))
     }
 }
+// CODEGEN-END

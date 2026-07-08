@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-gitlab-ci-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! GitLab CI YAML symbol extraction (line-based)
 //!
 //! Extracts: jobs, stages, variables, templates from `.gitlab-ci.yml`.
@@ -20,6 +22,7 @@ const RESERVED: &[&str] = &[
     "pages",
 ];
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-gitlab-ci-rs.md#source
 impl SymbolTableBuilder {
     pub(crate) fn visit_gitlab_ci_lines(&mut self, source: &str) {
         let lines: Vec<&str> = source.lines().collect();
@@ -262,3 +265,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

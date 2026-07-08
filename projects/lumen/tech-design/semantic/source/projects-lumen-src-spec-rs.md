@@ -514,8 +514,11 @@ Lumen's current contract.
 | Document TTL / expiry | Caller-owned lifecycle. Delete/reindex expired `external_id`s from the source-of-truth event stream; collection soft-delete grace is not per-document TTL. |
 
 ## Connection
-HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. When the
-node runs with `LUMEN_AUTH=required`, send `Authorization: Bearer <LUMEN_TOKEN>`.
+HTTP/1.1 or HTTP/2 cleartext on `:7373` — any REST client, no driver. HTTP/1.1
+is the compatibility/smoke path; the performance target is high-QPS, large
+corpus traffic over pooled HTTP/2 streams, where multiplexing and connection
+reuse dominate per-request overhead. When the node runs with
+`LUMEN_AUTH=required`, send `Authorization: Bearer <LUMEN_TOKEN>`.
 Production server pods load the token registry from
 `LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json`; on GKE
 that file should be materialized from GCP Secret Manager through Kubernetes
@@ -784,8 +787,8 @@ from your upstream source-of-truth before reopening writes.
 The durable `raft` PVC protects against pod reschedule/eviction/node loss,
 but it is not an off-node backup: it does not protect against a bad write, a
 namespace deletion, or a lost PVC/PV. Lumen already exposes a safe,
-consistent, manual snapshot-restore procedure over its admin API; the
-operator can optionally schedule it.
+consistent, manual snapshot-restore procedure over its admin API; production
+CRs schedule the same snapshot bytes to object storage.
 
 ### Manual admin API (always available)
 Every serving node — regardless of `replicasPerShard` — answers three admin
@@ -823,11 +826,12 @@ verbs do not add a new format, merge mode, or partial import semantics:
 load/import still replace all engine state via `/admin/restore`. `--token`
 uses the same `LUMEN_BACKUP_TOKEN` fallback as `lumen backup`.
 
-### Optional scheduled backup: `spec.serving.backup`
-Set `spec.serving.backup` on the CR to make the operator render a
-`<name>-backup` `batch/v1` CronJob that runs `lumen backup` on a schedule.
-This adds no new snapshot mechanism — it only *schedules and transports* the
-same `GET /admin/backup` bytes above to a destination:
+### Required production scheduled backup: `spec.serving.backup`
+Production Lumen CRs set `spec.serving.backup` so the operator renders a
+`<name>-backup` `batch/v1` CronJob that runs `lumen backup` on a schedule and
+writes the snapshot to object storage. This adds no new snapshot mechanism — it
+only *schedules and transports* the same `GET /admin/backup` bytes above to a
+destination:
 
 ```yaml
 spec:
@@ -839,12 +843,15 @@ spec:
       adminTokenSecret: lumen-backup-token  # optional Secret{token: ...}
 ```
 
-Use `file://` or `s3://` for production today. `gs://` stays in the schema so
-CRDs and CLI input can validate/round-trip, but `lumen backup` still fails
-loudly until `libs/service-backup` ships a real GCS adapter.
+Use `s3://` for production object-storage snapshots today. `file://` remains a
+local-dev, migration, or break-glass sink and does not satisfy the production
+service archetype. `gs://` stays in the schema so CRDs and CLI input can
+validate/round-trip, but `lumen backup` still fails loudly until
+`libs/service-backup` ships a real GCS adapter.
 
-Omitting `spec.serving.backup` renders no CronJob; the admin API above is
-still reachable manually either way.
+Omitting `spec.serving.backup` renders no CronJob. That is acceptable for local
+development or manual recovery exercises, but a production Lumen instance is not
+service-archetype complete until the scheduled object snapshot is configured.
 
 ### `lumen backup` CLI verb
 The CronJob (and any ad hoc invocation) drives the same verb:

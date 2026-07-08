@@ -1,0 +1,31 @@
+version = 1
+project = "service-backup"
+ir_kind = "ec"
+ec_path = "libs/service-backup/external-contracts"
+inventory_path = "libs/service-backup/aw.toml"
+generated_at = "2026-07-07T14:12:33.883100+00:00"
+ir_digest = "sha256:e99760641de57a123361427fa1e09091f98d893fe979341c0346352843dd38e5"
+source_digest = "sha256:ba3e179fd3731271938ab19614aeef55b7583c2611cd71354683ef27ed698d2a"
+tool_contracts = []
+
+[[sources]]
+path = "libs/service-backup/external-contracts/behavior/shared-service-backup-contract.md"
+digest = "sha256:ef8d4ee74ecea8a0aec2761e60da25167a60522b383baa281a2718db835d1a9d"
+
+[[cases]]
+id = "shared-service-backup-contract"
+capability_id = "shared-service-backup-contract"
+claim_id = "shared-service-backup-contract"
+contract_id = "shared-service-backup-contract"
+dimension = "behavior"
+source_ref = "libs/service-backup/external-contracts/behavior/shared-service-backup-contract.md#shared-service-backup-contract"
+test_path = "libs/service-backup/tests/behavior_shared_service_backup_contract.rs"
+command = "cargo test -p service-backup"
+required_for_production = true
+assertions = [
+    "Shared Service Backup Contract public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:db1cc76c96f362887686af7179b8458acd2c5987008a9db3d60137065e06cec8"

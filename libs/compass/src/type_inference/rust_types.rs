@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Rust-specific type system extensions
 //!
 //! This module provides Rust-specific type constructs for the Lens type system,
@@ -11,10 +13,12 @@ use super::ty::{Type, TypeVarId};
 
 /// Unique identifier for lifetimes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct LifetimeId(pub usize);
 
 /// Rust lifetime representation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub enum Lifetime {
     /// Named lifetime ('a, 'b, etc.)
     Named { id: LifetimeId, name: String },
@@ -26,6 +30,7 @@ pub enum Lifetime {
     Inferred(LifetimeId),
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 impl Lifetime {
     /// Create a new named lifetime
     pub fn named(id: LifetimeId, name: impl Into<String>) -> Self {
@@ -52,10 +57,12 @@ impl Lifetime {
 
 /// Unique identifier for traits
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct TraitId(pub usize);
 
 /// Rust trait definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct TraitDef {
     /// Trait identifier
     pub id: TraitId,
@@ -81,6 +88,7 @@ pub struct TraitDef {
 
 /// Trait bound (e.g., T: Clone + Send)
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct TraitBound {
     /// The trait being bounded
     pub trait_ref: TraitRef,
@@ -92,6 +100,7 @@ pub struct TraitBound {
 
 /// Reference to a trait with type arguments
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct TraitRef {
     /// Trait identifier
     pub trait_id: TraitId,
@@ -105,6 +114,7 @@ pub struct TraitRef {
 
 /// Associated type in a trait
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct AssociatedType {
     /// Name of the associated type
     pub name: String,
@@ -116,6 +126,7 @@ pub struct AssociatedType {
 
 /// Trait method signature
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct TraitMethod {
     /// Method name
     pub name: String,
@@ -137,6 +148,7 @@ pub struct TraitMethod {
 
 /// Self parameter in a method
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub enum SelfParam {
     /// self
     Value,
@@ -154,6 +166,7 @@ pub enum SelfParam {
 
 /// Rust-specific type representation
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub enum RustType {
     /// Primitive types
     Unit,
@@ -260,6 +273,7 @@ pub enum RustType {
 
 /// Closure kind (Fn, FnMut, FnOnce)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub enum ClosureKind {
     Fn,
     FnMut,
@@ -268,6 +282,7 @@ pub enum ClosureKind {
 
 /// Rust type parameter with bounds
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct RustTypeParam {
     /// Parameter name
     pub name: String,
@@ -281,6 +296,7 @@ pub struct RustTypeParam {
 
 /// Rust function/method parameter
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct RustParam {
     /// Parameter name
     pub name: String,
@@ -292,6 +308,7 @@ pub struct RustParam {
 
 /// Where clause predicate
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub enum WherePredicate {
     /// Type bound (T: Trait)
     TypeBound {
@@ -313,6 +330,7 @@ pub enum WherePredicate {
 
 /// Impl block representation
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct ImplBlock {
     /// Type parameters
     pub type_params: Vec<RustTypeParam>,
@@ -336,6 +354,7 @@ pub struct ImplBlock {
 
 /// Method in an impl block
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct ImplMethod {
     /// Method name
     pub name: String,
@@ -349,6 +368,7 @@ pub struct ImplMethod {
 
 /// Visibility modifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub enum Visibility {
     Public,
     Crate,
@@ -363,6 +383,7 @@ pub enum Visibility {
 
 /// Rust struct definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct StructDef {
     /// Struct name
     pub name: String,
@@ -380,6 +401,7 @@ pub struct StructDef {
 
 /// Struct field variants
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub enum StructFields {
     /// Named fields (struct { field: Type })
     Named(Vec<StructField>),
@@ -391,6 +413,7 @@ pub enum StructFields {
 
 /// Named struct field
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct StructField {
     /// Field name
     pub name: String,
@@ -402,6 +425,7 @@ pub struct StructField {
 
 /// Rust enum definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct EnumDef {
     /// Enum name
     pub name: String,
@@ -419,6 +443,7 @@ pub struct EnumDef {
 
 /// Enum variant
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 pub struct EnumVariant {
     /// Variant name
     pub name: String,
@@ -432,6 +457,7 @@ pub struct EnumVariant {
 // Conversion Utilities
 // ============================================================================
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 impl RustType {
     /// Convert to the generic Type enum (for cross-language operations)
     pub fn to_generic_type(&self) -> Type {
@@ -571,6 +597,7 @@ impl RustType {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-rust-types-rs.md#source
 impl Default for RustType {
     fn default() -> Self {
         RustType::Infer
@@ -793,3 +820,4 @@ mod tests {
         assert!(!RustType::I32.implements_trait(&copy_trait, &impls));
     }
 }
+// CODEGEN-END

@@ -119,6 +119,10 @@ pub struct Workspace {
     /// Shell command to run the workspace test suite. Omitted when the required tool/lock file is not present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_cmd: Option<String>,
+    /// Run this workspace through TD-only cold rebuild verification during
+    /// production health checks.
+    #[serde(default)]
+    pub verify_cold: bool,
     /// Optional codegen profile override for this workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codegen: Option<CodegenProfile>,

@@ -1,0 +1,33 @@
+[project]
+name = "service-durability"
+cap_path = "README.md"
+label = "project:service-durability"
+
+[[workspaces]]
+name = "service-durability"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p service-durability"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "service-durability"
+generated_from_td_digest = "sha256:db4e12963841860b4b014e49ed089b568dbe93ad831150546af868fd54b86363"
+
+[[aw.ec.generated.cases]]
+id = "shared-service-durability-contract"
+capability_id = "shared-service-durability-contract"
+claim_id = "shared-service-durability-contract"
+contract_id = "shared-service-durability-contract"
+category = "behavior"
+td_ref = "libs/service-durability/external-contracts/behavior/shared-service-durability-contract.md#shared-service-durability-contract"
+test_path = "libs/service-durability/tests/behavior_shared_service_durability_contract.rs"
+command = "cargo test -p service-durability"
+required_for_production = true
+assertions = [
+    "Shared Service Durability Contract public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

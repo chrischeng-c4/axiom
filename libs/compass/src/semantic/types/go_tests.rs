@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-types-go-tests-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tests for Go type inference (go.rs)
 
 use super::go::*;
@@ -247,3 +249,4 @@ type Circle struct {
         other => panic!("expected Struct, got {:?}", other),
     }
 }
+// CODEGEN-END

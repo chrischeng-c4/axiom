@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-builtins-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Builtin type definitions for Python
 //!
 //! This module provides type bindings for Python builtin functions.
@@ -6,6 +8,7 @@ use super::ty::{Param, ParamKind, Type};
 use super::type_env::TypeEnv;
 
 /// Add Python builtin function types to the environment
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-builtins-rs.md#source
 pub fn add_builtins(env: &mut TypeEnv) {
     // Builtin functions
     env.bind(
@@ -83,3 +86,4 @@ pub fn add_builtins(env: &mut TypeEnv) {
         Type::callable(vec![Type::Any, Type::Str], Type::Any),
     );
 }
+// CODEGEN-END

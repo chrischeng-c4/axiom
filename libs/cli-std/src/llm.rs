@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-llm-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `<tool> llm` — offline agent-facing self-documentation.
 //!
 //! Each CLI supplies its own `&[Topic]` (the single in-code source of truth for
@@ -5,6 +7,7 @@
 //! shapes so the command is uniform across the ecosystem.
 
 /// One agent-facing documentation topic.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-llm-rs.md#source
 pub struct Topic {
     pub id: &'static str,
     pub summary: &'static str,
@@ -13,11 +16,13 @@ pub struct Topic {
 
 /// Output format for `llm`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-llm-rs.md#source
 pub enum Format {
     Md,
     Json,
 }
 
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-llm-rs.md#source
 impl Format {
     /// Parse `md`/`json` (case-insensitive; anything else → `Md`).
     pub fn parse(s: &str) -> Self {
@@ -31,6 +36,7 @@ impl Format {
 
 /// Render `<tool> llm --topic <topic> --format <fmt>`. `topic == "outline"` (the
 /// default) prints the topic map + the standard-command footer.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-llm-rs.md#source
 pub fn render(
     project: &str,
     version: &str,
@@ -122,3 +128,4 @@ mod tests {
         assert_eq!(Format::parse("md"), Format::Md);
     }
 }
+// CODEGEN-END

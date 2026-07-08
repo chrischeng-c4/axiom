@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Language-specific checkers
 
 mod asyncapi;
@@ -60,6 +62,7 @@ pub use typescript::TypeScriptChecker;
 pub use yaml_dispatch::YamlDispatcher;
 
 /// Trait for language-specific checkers
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mod-rs.md#source
 pub trait Checker: Send + Sync {
     fn language(&self) -> Language;
     fn check(&self, file: &ParsedFile, config: &LintConfig) -> Vec<Diagnostic>;
@@ -67,10 +70,12 @@ pub trait Checker: Send + Sync {
 }
 
 /// Registry of all checkers
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mod-rs.md#source
 pub struct CheckerRegistry {
     checkers: HashMap<Language, Box<dyn Checker>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mod-rs.md#source
 impl CheckerRegistry {
     pub fn new() -> Self {
         let mut checkers: HashMap<Language, Box<dyn Checker>> = HashMap::new();
@@ -101,8 +106,10 @@ impl CheckerRegistry {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-mod-rs.md#source
 impl Default for CheckerRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
+// CODEGEN-END

@@ -1,0 +1,577 @@
+---
+id: libs-openapi-codegen-src-emit-ts-client-emit-rs
+summary: Lossless rust-source-unit coverage for `libs/openapi-codegen/src/emit/ts/client_emit.rs`.
+capability_refs:
+  - id: multi-language-openapi-client-generation
+    role: primary
+    claim: multi-language-openapi-client-generation-contract
+    coverage: full
+    rationale: "The source, tests, and manifest implement the Openapi Codegen library contract."
+fill_sections: [overview, source, changes]
+---
+
+# Standardized libs/openapi-codegen/src/emit/ts/client_emit.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `libs/openapi-codegen/src/emit/ts/client_emit.rs` captured during libs codegen standardization.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `emit_runtime` | libs/openapi-codegen/src/emit/ts/client_emit.rs | function | pub | 14 | pub fn emit_runtime(http_client: HttpClient) -> String { |
+| `emit_client` | libs/openapi-codegen/src/emit/ts/client_emit.rs | function | pub | 290 | pub fn emit_client(plans: &[OperationPlan], opts: &GenOptions) -> String { |
+| `type_import` | libs/openapi-codegen/src/emit/ts/client_emit.rs | function | pub | 414 | pub fn type_import(plans: &[OperationPlan]) -> String { |
+
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
+//! Emits `runtime.ts` (the fetch or axios base) and `client.ts` (a `createClient`
+//! factory with one typed function per operation, taking a grouped `data` arg).
+
+use crate::emit::ts::plan::OperationPlan;
+use crate::emit::ts::types_emit::HEADER;
+use crate::ir::names::{self, is_ident};
+use crate::{GenOptions, HttpClient};
+use std::collections::BTreeSet;
+
+/// Static request runtime shared by every generated client. The body depends
+/// only on the chosen [`HttpClient`] backend — the `ClientConfig`/`request`
+/// contract is the same, so `client.ts` and `hooks.ts` never change.
+///
+pub fn emit_runtime(http_client: HttpClient) -> String {
+    let body = match http_client {
+        HttpClient::Fetch => FETCH_RUNTIME,
+        HttpClient::Axios => AXIOS_RUNTIME,
+    };
+    format!("{HEADER}{body}")
+}
+
+const FETCH_RUNTIME: &str = r##"export interface ClientConfig {
+  baseUrl: string;
+  fetch?: typeof fetch;
+  headers?: Record<string, string>;
+  transport?: TransportPolicy;
+}
+
+export interface TransportPolicy {
+  targetConcurrency?: number;
+  maxConnections?: number;
+  maxInFlightPerOrigin?: number;
+  maxKeepaliveConnections?: number;
+  keepaliveExpiryMs?: number;
+  poolTimeoutMs?: number;
+}
+
+const DEFAULT_MAX_CONNECTIONS = 128;
+const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;
+const DEFAULT_KEEPALIVE_EXPIRY_MS = 5000;
+const DEFAULT_POOL_TIMEOUT_MS = 5000;
+
+export function recommendedH2Connections(concurrency: number, parallelism = 1): number {
+  const cap = Math.max(1, parallelism);
+  if (concurrency <= 2) return 1;
+  return Math.max(1, Math.min(cap, Math.ceil(Math.log(concurrency))));
+}
+
+class Admission {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+  constructor(private readonly maxInFlight: number) {}
+
+  async acquire(timeoutMs: number): Promise<() => void> {
+    if (this.active < this.maxInFlight) {
+      this.active += 1;
+      return () => this.release();
+    }
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const wake = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.active += 1;
+        resolve(() => this.release());
+      };
+      timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        const index = this.waiters.indexOf(wake);
+        if (index >= 0) this.waiters.splice(index, 1);
+        reject(new Error(`pool timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.waiters.push(wake);
+    });
+  }
+
+  private release(): void {
+    this.active = Math.max(0, this.active - 1);
+    const wake = this.waiters.shift();
+    if (wake) wake();
+  }
+}
+
+const admissions = new WeakMap<ClientConfig, Map<string, Admission>>();
+
+function policy(config: ClientConfig): Required<TransportPolicy> {
+  const p = config.transport ?? {};
+  const maxConnections = Math.max(1, p.maxConnections ?? DEFAULT_MAX_CONNECTIONS);
+  return {
+    targetConcurrency: Math.max(1, p.targetConcurrency ?? maxConnections),
+    maxConnections,
+    maxInFlightPerOrigin: Math.max(1, p.maxInFlightPerOrigin ?? p.targetConcurrency ?? maxConnections),
+    maxKeepaliveConnections: Math.max(0, p.maxKeepaliveConnections ?? DEFAULT_MAX_KEEPALIVE_CONNECTIONS),
+    keepaliveExpiryMs: Math.max(0, p.keepaliveExpiryMs ?? DEFAULT_KEEPALIVE_EXPIRY_MS),
+    poolTimeoutMs: Math.max(0, p.poolTimeoutMs ?? DEFAULT_POOL_TIMEOUT_MS),
+  };
+}
+
+async function acquireAdmission(config: ClientConfig, url: URL): Promise<() => void> {
+  const p = policy(config);
+  let byOrigin = admissions.get(config);
+  if (!byOrigin) {
+    byOrigin = new Map();
+    admissions.set(config, byOrigin);
+  }
+  const key = url.origin;
+  let admission = byOrigin.get(key);
+  if (!admission) {
+    admission = new Admission(p.maxInFlightPerOrigin);
+    byOrigin.set(key, admission);
+  }
+  return admission.acquire(p.poolTimeoutMs);
+}
+
+export interface RequestArgs {
+  method: string;
+  path: string;
+  query?: Record<string, unknown>;
+  body?: unknown;
+  headers?: Record<string, string>;
+  expectBody?: boolean;
+}
+
+export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
+  const doFetch = config.fetch ?? fetch;
+  const url = new URL(config.baseUrl + args.path);
+  if (args.query) {
+    for (const [key, value] of Object.entries(args.query)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.set(key, String(value));
+      }
+    }
+  }
+  const release = await acquireAdmission(config, url);
+  try {
+    const response = await doFetch(url.toString(), {
+      method: args.method,
+      headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
+      body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    if (args.expectBody === false || response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
+  } finally {
+    release();
+  }
+}
+"##;
+
+const AXIOS_RUNTIME: &str = r##"import axios from "axios";
+import type { AxiosInstance } from "axios";
+
+export interface ClientConfig {
+  baseUrl: string;
+  axios?: AxiosInstance;
+  headers?: Record<string, string>;
+  transport?: TransportPolicy;
+}
+
+export interface TransportPolicy {
+  targetConcurrency?: number;
+  maxConnections?: number;
+  maxInFlightPerOrigin?: number;
+  maxKeepaliveConnections?: number;
+  keepaliveExpiryMs?: number;
+  poolTimeoutMs?: number;
+}
+
+const DEFAULT_MAX_CONNECTIONS = 128;
+const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;
+const DEFAULT_KEEPALIVE_EXPIRY_MS = 5000;
+const DEFAULT_POOL_TIMEOUT_MS = 5000;
+
+export function recommendedH2Connections(concurrency: number, parallelism = 1): number {
+  const cap = Math.max(1, parallelism);
+  if (concurrency <= 2) return 1;
+  return Math.max(1, Math.min(cap, Math.ceil(Math.log(concurrency))));
+}
+
+class Admission {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+  constructor(private readonly maxInFlight: number) {}
+
+  async acquire(timeoutMs: number): Promise<() => void> {
+    if (this.active < this.maxInFlight) {
+      this.active += 1;
+      return () => this.release();
+    }
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const wake = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.active += 1;
+        resolve(() => this.release());
+      };
+      timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        const index = this.waiters.indexOf(wake);
+        if (index >= 0) this.waiters.splice(index, 1);
+        reject(new Error(`pool timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.waiters.push(wake);
+    });
+  }
+
+  private release(): void {
+    this.active = Math.max(0, this.active - 1);
+    const wake = this.waiters.shift();
+    if (wake) wake();
+  }
+}
+
+const admissions = new WeakMap<ClientConfig, Map<string, Admission>>();
+
+function policy(config: ClientConfig): Required<TransportPolicy> {
+  const p = config.transport ?? {};
+  const maxConnections = Math.max(1, p.maxConnections ?? DEFAULT_MAX_CONNECTIONS);
+  return {
+    targetConcurrency: Math.max(1, p.targetConcurrency ?? maxConnections),
+    maxConnections,
+    maxInFlightPerOrigin: Math.max(1, p.maxInFlightPerOrigin ?? p.targetConcurrency ?? maxConnections),
+    maxKeepaliveConnections: Math.max(0, p.maxKeepaliveConnections ?? DEFAULT_MAX_KEEPALIVE_CONNECTIONS),
+    keepaliveExpiryMs: Math.max(0, p.keepaliveExpiryMs ?? DEFAULT_KEEPALIVE_EXPIRY_MS),
+    poolTimeoutMs: Math.max(0, p.poolTimeoutMs ?? DEFAULT_POOL_TIMEOUT_MS),
+  };
+}
+
+async function acquireAdmission(config: ClientConfig, url: URL): Promise<() => void> {
+  const p = policy(config);
+  let byOrigin = admissions.get(config);
+  if (!byOrigin) {
+    byOrigin = new Map();
+    admissions.set(config, byOrigin);
+  }
+  const key = url.origin;
+  let admission = byOrigin.get(key);
+  if (!admission) {
+    admission = new Admission(p.maxInFlightPerOrigin);
+    byOrigin.set(key, admission);
+  }
+  return admission.acquire(p.poolTimeoutMs);
+}
+
+export interface RequestArgs {
+  method: string;
+  path: string;
+  query?: Record<string, unknown>;
+  body?: unknown;
+  headers?: Record<string, string>;
+  expectBody?: boolean;
+}
+
+export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
+  const instance = config.axios ?? axios.create();
+  const url = new URL(config.baseUrl + args.path);
+  const release = await acquireAdmission(config, url);
+  try {
+    const response = await instance.request<T>({
+      method: args.method,
+      baseURL: config.baseUrl,
+      url: args.path,
+      params: args.query,
+      data: args.body,
+      headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
+    });
+    if (args.expectBody === false) {
+      return undefined as T;
+    }
+    return response.data;
+  } finally {
+    release();
+  }
+}
+"##;
+
+/// Render `client.ts`.
+///
+pub fn emit_client(plans: &[OperationPlan], opts: &GenOptions) -> String {
+    let mut out = String::from(HEADER);
+    out.push_str("import type { ClientConfig } from \"./runtime\";\n");
+    out.push_str("import { request } from \"./runtime\";\n");
+    out.push_str(&type_import(plans));
+    out.push('\n');
+
+    let factory = &opts.client_name;
+    out.push_str(&format!(
+        "export function {factory}(config: ClientConfig) {{\n"
+    ));
+    out.push_str("  return {\n");
+    for p in plans {
+        out.push_str(&emit_method(p));
+    }
+    out.push_str("  };\n");
+    out.push_str("}\n\n");
+    out.push_str(&format!(
+        "export type ApiClient = ReturnType<typeof {factory}>;\n"
+    ));
+    out
+}
+
+fn emit_method(p: &OperationPlan) -> String {
+    let sig = match &p.data_type_name {
+        Some(name) => format!("(data: {name})"),
+        None => "()".to_string(),
+    };
+
+    let mut args = vec![
+        format!("method: \"{}\"", p.http_method),
+        format!("path: {}", path_template(p)),
+    ];
+    if !p.query_params.is_empty() {
+        let entries = p
+            .query_params
+            .iter()
+            .map(|f| {
+                format!(
+                    "{}: {}",
+                    names::prop_key(&f.name),
+                    access("data.query", !p.query_required(), &f.name)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        args.push(format!("query: {{ {entries} }}"));
+    }
+    if !p.header_params.is_empty() {
+        let entries = p
+            .header_params
+            .iter()
+            .map(|f| {
+                format!(
+                    "{}: String({})",
+                    names::prop_key(&f.name),
+                    access("data.headers", !p.headers_required(), &f.name)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        args.push(format!("headers: {{ {entries} }}"));
+    }
+    if p.body.is_some() {
+        args.push("body: data.body".to_string());
+    }
+    if p.response_type == "void" {
+        args.push("expectBody: false".to_string());
+    }
+
+    let resp = &p.response_type_name;
+    format!(
+        "    {name}{sig}: Promise<{resp}> {{\n      return request<{resp}>(config, {{ {args} }});\n    }},\n",
+        name = p.fn_name,
+        sig = sig,
+        resp = resp,
+        args = args.join(", "),
+    )
+}
+
+/// `/pets/{petId}` → `` `/pets/${data.path.petId}` ``.
+fn path_template(p: &OperationPlan) -> String {
+    let mut out = String::from("`");
+    let mut chars = p.path_raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let mut name = String::new();
+            for c in chars.by_ref() {
+                if c == '}' {
+                    break;
+                }
+                name.push(c);
+            }
+            out.push_str("${");
+            out.push_str(&access("data.path", false, &name));
+            out.push('}');
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('`');
+    out
+}
+
+/// Member access against a grouped sub-object, e.g. `data.query?.limit` or
+/// `data.headers["X-Id"]`.
+fn access(base: &str, optional: bool, name: &str) -> String {
+    if is_ident(name) {
+        if optional {
+            format!("{base}?.{name}")
+        } else {
+            format!("{base}.{name}")
+        }
+    } else {
+        let key = name.replace('\\', "\\\\").replace('"', "\\\"");
+        if optional {
+            format!("{base}?.[\"{key}\"]")
+        } else {
+            format!("{base}[\"{key}\"]")
+        }
+    }
+}
+
+/// `import type { ... } from "./types";` for the per-operation type names.
+pub fn type_import(plans: &[OperationPlan]) -> String {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for p in plans {
+        if let Some(d) = &p.data_type_name {
+            names.insert(d.clone());
+        }
+        names.insert(p.response_type_name.clone());
+    }
+    if names.is_empty() {
+        return String::new();
+    }
+    let list = names.into_iter().collect::<Vec<_>>().join(", ");
+    format!("import type {{ {list} }} from \"./types\";\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::emit::ts::plan;
+    use crate::ir::openapi::Spec;
+    use crate::{build_type_map, GenOptions};
+    use std::path::PathBuf;
+
+    fn opts() -> GenOptions {
+        GenOptions {
+            lang: crate::Lang::Ts,
+            spec_path: PathBuf::new(),
+            out_dir: PathBuf::new(),
+            client_name: "createClient".to_string(),
+            http_client: HttpClient::Fetch,
+            emit_types: true,
+            emit_client: true,
+            emit_hooks: true,
+        }
+    }
+
+    fn render(json: &str) -> String {
+        let s: Spec = serde_json::from_str(json).unwrap();
+        let tm = build_type_map(&s);
+        let plans = plan::build(&s, &tm);
+        emit_client(&plans, &opts())
+    }
+
+    #[test]
+    fn client_method_takes_grouped_data() {
+        let out = render(
+            r##"{"components":{"schemas":{"Pet":{"type":"object","properties":{"id":{"type":"integer"}}}}},
+            "paths":{"/pets/{petId}":{"get":{"operationId":"getPetById",
+              "parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
+              "responses":{"200":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Pet"}}}}}}}}}"##,
+        );
+        assert!(
+            out.contains("import type { GetPetByIdData, GetPetByIdResponse } from \"./types\";")
+        );
+        assert!(out.contains("getPetById(data: GetPetByIdData): Promise<GetPetByIdResponse> {"));
+        assert!(out.contains("return request<GetPetByIdResponse>(config, { method: \"GET\", path: `/pets/${data.path.petId}` });"));
+    }
+
+    #[test]
+    fn client_query_and_body_access() {
+        let out = render(
+            r##"{"paths":{"/pets":{
+              "get":{"operationId":"listPets","parameters":[{"name":"limit","in":"query","required":false,"schema":{"type":"integer"}}],
+                "responses":{"200":{"content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}},
+              "post":{"operationId":"createPet","requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+                "responses":{"201":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}}"##,
+        );
+        assert!(out.contains("listPets(data: ListPetsData): Promise<ListPetsResponse> {"));
+        assert!(out.contains("query: { limit: data.query?.limit }"));
+        assert!(out.contains("createPet(data: CreatePetData): Promise<CreatePetResponse> {"));
+        assert!(out.contains("body: data.body"));
+    }
+
+    #[test]
+    fn no_input_operation_takes_no_arg() {
+        let out = render(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"content":{"application/json":{"schema":{"type":"boolean"}}}}}}}}}"##,
+        );
+        assert!(out.contains("health(): Promise<HealthResponse> {"));
+        assert!(out.contains("import type { HealthResponse } from \"./types\";"));
+    }
+
+    #[test]
+    fn void_operation_marks_runtime_to_skip_body_parse() {
+        let out = render(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"description":"ok"}}}}}}"##,
+        );
+        assert!(out.contains("health(): Promise<HealthResponse> {"));
+        assert!(out.contains(
+            "return request<HealthResponse>(config, { method: \"GET\", path: `/health`, expectBody: false });"
+        ));
+    }
+
+    #[test]
+    fn runtime_fetch_and_axios() {
+        let fetch = emit_runtime(HttpClient::Fetch);
+        assert!(fetch.contains("export interface TransportPolicy"));
+        assert!(fetch.contains("const DEFAULT_MAX_CONNECTIONS = 128;"));
+        assert!(fetch.contains("const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;"));
+        assert!(fetch.contains("export function recommendedH2Connections"));
+        assert!(fetch.contains("async function acquireAdmission"));
+        assert!(fetch.contains("const doFetch = config.fetch ?? fetch;"));
+        assert!(fetch.contains("const release = await acquireAdmission(config, url);"));
+        assert!(fetch.contains("args.expectBody === false || response.status === 204"));
+        assert!(!fetch.contains("axios"));
+        let axios = emit_runtime(HttpClient::Axios);
+        assert!(axios.contains("export interface TransportPolicy"));
+        assert!(axios.contains("const DEFAULT_MAX_CONNECTIONS = 128;"));
+        assert!(axios.contains("const DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 16;"));
+        assert!(axios.contains("async function acquireAdmission"));
+        assert!(axios.contains("import axios from \"axios\";"));
+        assert!(axios.contains("config.axios ?? axios.create()"));
+        assert!(axios.contains("const release = await acquireAdmission(config, url);"));
+        assert!(axios.contains("if (args.expectBody === false)"));
+        assert!(axios.contains("return response.data;"));
+    }
+}
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "libs/openapi-codegen/src/emit/ts/client_emit.rs"
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+    description: |
+      rust-source-unit (td_ast) source for `libs/openapi-codegen/src/emit/ts/client_emit.rs` captured during libs codegen standardization.
+```

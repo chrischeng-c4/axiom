@@ -40,6 +40,7 @@ fn make_project(name: &str, target: Language, test_cmd: Option<&str>) -> Project
             paths: vec![format!("crates/{}/**", name)],
             target,
             test_cmd: test_cmd.map(|s| s.to_string()),
+            verify_cold: false,
             codegen: None,
         }],
     }

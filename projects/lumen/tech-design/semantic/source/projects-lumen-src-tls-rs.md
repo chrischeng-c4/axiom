@@ -80,6 +80,7 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
 impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
     fn from(cfg: service_tls::PeerTlsConfig) -> Self {
         Self {
@@ -91,6 +92,7 @@ impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
 impl From<PeerTlsConfig> for service_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
@@ -261,7 +263,6 @@ LkjT2UdpFBDZGWHwqDRhXX8k
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

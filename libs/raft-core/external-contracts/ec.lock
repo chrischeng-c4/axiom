@@ -1,0 +1,31 @@
+version = 1
+project = "raft-core"
+ir_kind = "ec"
+ec_path = "libs/raft-core/external-contracts"
+inventory_path = "libs/raft-core/aw.toml"
+generated_at = "2026-07-07T14:12:33.688581+00:00"
+ir_digest = "sha256:b4bfd58d35a9ce31128d6184099edcafb0e713dfab9f450e34cb6348e7572975"
+source_digest = "sha256:b9edf52522bbfebb8b80b30f8493edbf125017969b23aba1fb865630c78a129f"
+tool_contracts = []
+
+[[sources]]
+path = "libs/raft-core/external-contracts/behavior/step-driven-raft-consensus-core-contract.md"
+digest = "sha256:5b9db3d2cb5e4f367cd5ab08f9ec9aeb7291de31050d6e0d53df414a27981a4a"
+
+[[cases]]
+id = "step-driven-raft-consensus-core-contract"
+capability_id = "step-driven-raft-consensus-core"
+claim_id = "step-driven-raft-consensus-core-contract"
+contract_id = "step-driven-raft-consensus-core-contract"
+dimension = "behavior"
+source_ref = "libs/raft-core/external-contracts/behavior/step-driven-raft-consensus-core-contract.md#step-driven-raft-consensus-core-contract"
+test_path = "libs/raft-core/tests/behavior_step_driven_raft_consensus_core_contract.rs"
+command = "cargo test -p raft-core"
+required_for_production = true
+assertions = [
+    "Step-Driven Raft Consensus Core public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9438d569f05dea2b060b1238b967155b8d2e2caf0985a09829f2410642de718e"

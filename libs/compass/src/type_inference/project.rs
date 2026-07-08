@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-project-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Project-wide analysis
 //!
 //! This module provides:
@@ -44,6 +46,7 @@ const EXCLUDED_DIRS: &[&str] = &[
 
 /// Project configuration (from pyproject.toml)
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-project-rs.md#source
 pub struct ProjectConfig {
     /// Project root directory
     pub root: PathBuf,
@@ -59,6 +62,7 @@ pub struct ProjectConfig {
     pub type_checking_mode: String,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-project-rs.md#source
 impl ProjectConfig {
     pub fn new(root: PathBuf) -> Self {
         Self {
@@ -154,6 +158,7 @@ impl ProjectConfig {
 }
 
 /// Project analyzer
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-project-rs.md#source
 pub struct ProjectAnalyzer {
     /// Project configuration
     config: ProjectConfig,
@@ -171,6 +176,7 @@ pub struct ProjectAnalyzer {
     errors: HashMap<String, Vec<TypeError>>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-project-rs.md#source
 impl ProjectAnalyzer {
     pub fn new(config: ProjectConfig) -> Result<Self> {
         let mut stubs = StubLoader::new();
@@ -688,3 +694,4 @@ typeCheckingMode = "strict"
         assert_eq!(config.type_checking_mode, "strict");
     }
 }
+// CODEGEN-END

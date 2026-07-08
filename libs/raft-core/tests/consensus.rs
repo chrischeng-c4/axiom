@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-core/tech-design/semantic/source/libs-raft-core-tests-consensus-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Deterministic in-process simulation of the raft_core consensus engine — no
 //! network, no clock, commands are opaque bytes. A bus pumps every node's outbox
 //! into its target's handler until quiescent.
@@ -12,6 +14,7 @@ struct Cluster {
     applied: HashMap<NodeId, Vec<Vec<u8>>>,
 }
 
+/// @spec libs/raft-core/tech-design/semantic/source/libs-raft-core-tests-consensus-rs.md#source
 impl Cluster {
     fn new(n: u64) -> Cluster {
         let m = auto_membership(n);
@@ -181,3 +184,4 @@ fn stale_leader_steps_down_on_higher_term() {
     assert_eq!(c.nodes[&leader].role(), Role::Follower);
     assert_eq!(c.nodes[&leader].current_term(), term + 5);
 }
+// CODEGEN-END

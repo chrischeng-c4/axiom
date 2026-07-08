@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Intermediate representation for spec-to-code generation
 //!
 //! SpecIR serves as the common representation between spec parsers
@@ -7,6 +9,7 @@ use crate::type_inference::Type;
 
 /// Main SpecIR enum representing different spec types
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum SpecIR {
     /// Data model specification (from JSON Schema, Mermaid classDiagram/ERD)
     DataModel(DataModelSpec),
@@ -22,6 +25,7 @@ pub enum SpecIR {
 
 /// Data model specification containing models, enums, and relationships
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct DataModelSpec {
     /// Model definitions
     pub models: Vec<ModelDef>,
@@ -33,6 +37,7 @@ pub struct DataModelSpec {
 
 /// Model definition (class/struct/interface)
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct ModelDef {
     /// Model name (PascalCase)
     pub name: String,
@@ -54,6 +59,7 @@ pub struct ModelDef {
     pub collection_name: Option<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl Default for ModelDef {
     fn default() -> Self {
         Self {
@@ -72,6 +78,7 @@ impl Default for ModelDef {
 
 /// Field definition with type, constraints, and metadata
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct FieldDef {
     /// Field name (snake_case)
     pub name: String,
@@ -99,6 +106,7 @@ pub struct FieldDef {
     pub alias: Option<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl Default for FieldDef {
     fn default() -> Self {
         Self {
@@ -120,6 +128,7 @@ impl Default for FieldDef {
 
 /// Field constraints for validation
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct FieldConstraints {
     // String constraints
     pub min_length: Option<usize>,
@@ -142,6 +151,7 @@ pub struct FieldConstraints {
 
 /// String format types
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum StringFormat {
     Email,
     Uri,
@@ -161,6 +171,7 @@ pub enum StringFormat {
 
 /// Foreign key reference
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct ForeignKey {
     /// Referenced model name
     pub model: String,
@@ -174,6 +185,7 @@ pub struct ForeignKey {
 
 /// Foreign key actions
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum ForeignKeyAction {
     #[default]
     NoAction,
@@ -185,6 +197,7 @@ pub enum ForeignKeyAction {
 
 /// Method definition (from Mermaid classDiagram)
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct MethodDef {
     /// Method name
     pub name: String,
@@ -204,6 +217,7 @@ pub struct MethodDef {
 
 /// Parameter definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct ParamDef {
     pub name: String,
     pub ty: Type,
@@ -212,6 +226,7 @@ pub struct ParamDef {
 
 /// Visibility modifier
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum Visibility {
     #[default]
     Public,
@@ -221,6 +236,7 @@ pub enum Visibility {
 
 /// Generic type parameter
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct TypeParam {
     pub name: String,
     pub bound: Option<Type>,
@@ -229,6 +245,7 @@ pub struct TypeParam {
 
 /// Enum definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct EnumDef {
     pub name: String,
     pub description: Option<String>,
@@ -237,6 +254,7 @@ pub struct EnumDef {
 
 /// Enum variant
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct EnumVariant {
     pub name: String,
     pub value: Option<EnumValue>,
@@ -245,6 +263,7 @@ pub struct EnumVariant {
 
 /// Enum value type
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum EnumValue {
     Int(i64),
     String(String),
@@ -252,6 +271,7 @@ pub enum EnumValue {
 
 /// Relationship between models (for ERD/ORM)
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct Relationship {
     /// Source model name
     pub from_model: String,
@@ -267,6 +287,7 @@ pub struct Relationship {
 
 /// Relationship cardinality
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum RelationType {
     /// 1:1 relationship
     OneToOne,
@@ -284,6 +305,7 @@ pub enum RelationType {
 
 /// REST API specification
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct RestApiSpec {
     /// API title
     pub title: String,
@@ -303,6 +325,7 @@ pub struct RestApiSpec {
 
 /// Server definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct ServerDef {
     pub url: String,
     pub description: Option<String>,
@@ -310,6 +333,7 @@ pub struct ServerDef {
 
 /// API endpoint definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct EndpointDef {
     /// HTTP path (e.g., "/users/{id}")
     pub path: String,
@@ -339,6 +363,7 @@ pub struct EndpointDef {
 
 /// HTTP methods
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum HttpMethod {
     Get,
     Post,
@@ -349,6 +374,7 @@ pub enum HttpMethod {
     Options,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl std::fmt::Display for HttpMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -365,6 +391,7 @@ impl std::fmt::Display for HttpMethod {
 
 /// Query parameter
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct QueryParam {
     pub name: String,
     pub ty: Type,
@@ -375,6 +402,7 @@ pub struct QueryParam {
 
 /// Request body definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct RequestBody {
     /// Content type (e.g., "application/json")
     pub content_type: String,
@@ -388,6 +416,7 @@ pub struct RequestBody {
 
 /// Response definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct ResponseDef {
     /// HTTP status code
     pub status_code: u16,
@@ -401,6 +430,7 @@ pub struct ResponseDef {
 
 /// Security scheme
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct SecurityScheme {
     pub name: String,
     pub scheme_type: SecuritySchemeType,
@@ -409,6 +439,7 @@ pub struct SecurityScheme {
 
 /// Security scheme types
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum SecuritySchemeType {
     ApiKey {
         in_header: bool,
@@ -432,6 +463,7 @@ pub enum SecuritySchemeType {
 
 /// Event-driven API specification
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct EventApiSpec {
     /// API title
     pub title: String,
@@ -447,6 +479,7 @@ pub struct EventApiSpec {
 
 /// Channel (topic/queue) definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct ChannelDef {
     /// Channel name/path
     pub name: String,
@@ -460,6 +493,7 @@ pub struct ChannelDef {
 
 /// Channel operation definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct OperationDef {
     pub operation_id: Option<String>,
     pub summary: Option<String>,
@@ -474,6 +508,7 @@ pub struct OperationDef {
 
 /// State machine specification
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct StateMachineSpec {
     /// State machine name
     pub name: String,
@@ -489,6 +524,7 @@ pub struct StateMachineSpec {
 
 /// State definition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct StateDef {
     pub name: String,
     pub description: Option<String>,
@@ -502,6 +538,7 @@ pub struct StateDef {
 
 /// State transition
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct TransitionDef {
     pub from: String,
     pub to: String,
@@ -516,6 +553,7 @@ pub struct TransitionDef {
 
 /// Control flow specification
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct ControlFlowSpec {
     /// Flow name
     pub name: String,
@@ -527,6 +565,7 @@ pub struct ControlFlowSpec {
 
 /// Flow node types
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct FlowNode {
     pub id: String,
     pub label: String,
@@ -535,6 +574,7 @@ pub struct FlowNode {
 
 /// Flow node type
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub enum FlowNodeType {
     Start,
     End,
@@ -547,6 +587,7 @@ pub enum FlowNodeType {
 
 /// Flow edge
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 pub struct FlowEdge {
     pub from: String,
     pub to: String,
@@ -559,6 +600,7 @@ pub struct FlowEdge {
 // Utility implementations
 // ============================================================================
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl DataModelSpec {
     pub fn new() -> Self {
         Self::default()
@@ -587,6 +629,7 @@ impl DataModelSpec {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl ModelDef {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -609,6 +652,7 @@ impl ModelDef {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl FieldDef {
     pub fn new(name: impl Into<String>, ty: Type) -> Self {
         Self {
@@ -640,6 +684,7 @@ impl FieldDef {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl RestApiSpec {
     pub fn new(title: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
@@ -650,6 +695,7 @@ impl RestApiSpec {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-spec-ir-rs.md#source
 impl StateMachineSpec {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -704,3 +750,4 @@ mod tests {
         assert!(spec.get_model("Post").is_some());
     }
 }
+// CODEGEN-END

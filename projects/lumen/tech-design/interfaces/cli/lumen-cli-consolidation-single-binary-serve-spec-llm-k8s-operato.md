@@ -74,6 +74,54 @@ capability_refs:
     claim: "lumen-crd-reconcile-loop-kube-rs-operator"
     coverage: partial
     rationale: "Defines the operator entrypoint and CRD generation CLI used by the kube-rs operator."
+  - id: "cli-standard-surface"
+    role: primary
+    gap: "shared-llm-entrypoint-surface"
+    claim: "shared-llm-entrypoint-surface"
+    coverage: full
+    rationale: "Defines the standard `lumen llm` command group and topic entrypoint."
+  - id: "cli-standard-surface"
+    role: primary
+    gap: "shared-upgrade-check-surface"
+    claim: "shared-upgrade-check-surface"
+    coverage: full
+    rationale: "Defines the top-level shared `lumen upgrade` command group."
+  - id: "cli-standard-surface"
+    role: primary
+    gap: "shared-issue-search-view-create-comment-surface"
+    claim: "shared-issue-search-view-create-comment-surface"
+    coverage: full
+    rationale: "Defines the top-level shared `lumen issue` command group."
+  - id: "chainable-output-conformance"
+    role: primary
+    gap: "artifact-render-follow-ups"
+    claim: "artifact-render-follow-ups"
+    coverage: full
+    rationale: "Defines file-writing artifact render commands whose stdout carries runnable follow-up commands."
+  - id: "chainable-output-conformance"
+    role: primary
+    gap: "shared-issue-upgrade-terminal-markers"
+    claim: "shared-issue-upgrade-terminal-markers"
+    coverage: full
+    rationale: "Defines the shared CLI dry-run/read terminal marker surface through issue and upgrade commands."
+  - id: "standard-operational-endpoints"
+    role: primary
+    gap: "service-http-standard-probe-routes"
+    claim: "service-http-standard-probe-routes"
+    coverage: full
+    rationale: "Defines the serving binary surface that exposes standard service probes and operational metadata routes."
+  - id: "standard-operational-endpoints"
+    role: primary
+    gap: "live-openapi-and-swagger-ui-surface"
+    claim: "live-openapi-and-swagger-ui-surface"
+    coverage: full
+    rationale: "Defines the live OpenAPI and docs endpoints served by the service binary."
+  - id: "standard-operational-endpoints"
+    role: primary
+    gap: "offline-openapi-matches-operational-surface"
+    claim: "offline-openapi-matches-operational-surface"
+    coverage: full
+    rationale: "Defines the offline `lumen spec` OpenAPI route inventory."
   - id: "backup-restore"
     role: primary
     gap: "periodic-snapshotter-serve"

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Type narrowing based on control flow analysis
 //!
 //! This module handles type narrowing for:
@@ -12,6 +14,7 @@ use super::ty::Type;
 
 /// Represents a condition that can narrow types
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub enum NarrowingCondition {
     /// isinstance(x, T) or isinstance(x, (T1, T2))
     IsInstance { var_name: String, types: Vec<Type> },
@@ -61,6 +64,7 @@ pub enum NarrowingCondition {
 
 /// Type narrower that tracks narrowed types in different branches
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub struct TypeNarrower {
     /// Stack of narrowing scopes (for nested if/else)
     scopes: Vec<NarrowingScope>,
@@ -68,11 +72,13 @@ pub struct TypeNarrower {
 
 /// A narrowing scope tracks type refinements in a specific branch
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub struct NarrowingScope {
     /// Narrowed types for variables in this scope
     pub narrowed: HashMap<String, Type>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 impl TypeNarrower {
     pub fn new() -> Self {
         Self { scopes: vec![] }
@@ -337,6 +343,7 @@ impl TypeNarrower {
 }
 
 /// Negate a narrowing condition (public helper)
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub fn negate_condition(condition: &NarrowingCondition) -> NarrowingCondition {
     match condition {
         NarrowingCondition::IsNone { var_name } => NarrowingCondition::IsNotNone {
@@ -406,6 +413,7 @@ pub fn negate_condition(condition: &NarrowingCondition) -> NarrowingCondition {
 /// Represents a match case pattern for type narrowing (PEP 634)
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub enum MatchPattern {
     /// Literal pattern: case 42, case "hello"
     Literal(Type),
@@ -429,6 +437,7 @@ pub enum MatchPattern {
 
 /// Parse a match case pattern and derive narrowing condition
 #[allow(dead_code)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub fn parse_match_pattern(
     source: &str,
     subject_var: &str,
@@ -509,6 +518,7 @@ pub fn parse_match_pattern(
 
 /// Parse a match statement and get the subject variable
 #[allow(dead_code)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub fn get_match_subject(source: &str, node: &tree_sitter::Node) -> Option<String> {
     if node.kind() != "match_statement" {
         return None;
@@ -528,6 +538,7 @@ pub fn get_match_subject(source: &str, node: &tree_sitter::Node) -> Option<Strin
 /// e.g., `assert isinstance(x, int)` -> IsInstance { var_name: "x", types: [int] }
 /// e.g., `assert x is not None` -> IsNotNone { var_name: "x" }
 #[allow(dead_code)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub fn parse_assert(source: &str, node: &tree_sitter::Node) -> NarrowingCondition {
     // assert statements have the condition as the first child
     if node.kind() != "assert_statement" {
@@ -546,6 +557,7 @@ pub fn parse_assert(source: &str, node: &tree_sitter::Node) -> NarrowingConditio
 }
 
 /// Parse a condition expression into a NarrowingCondition
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-narrow-rs.md#source
 pub fn parse_condition(source: &str, node: &tree_sitter::Node) -> NarrowingCondition {
     let node_text =
         |n: &tree_sitter::Node| -> &str { n.utf8_text(source.as_bytes()).unwrap_or("") };
@@ -823,3 +835,4 @@ fn parse_simple_type_name(name: &str) -> Type {
 #[cfg(test)]
 #[path = "narrow_tests.rs"]
 mod tests;
+// CODEGEN-END

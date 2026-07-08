@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Refactoring operations (Sprint 3 - Track 1)
 //!
 //! Provides type-aware refactoring operations:
@@ -23,6 +25,7 @@ use tree_sitter::Node;
 
 /// A request for a refactoring operation.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub struct RefactorRequest {
     /// Type of refactoring
     pub kind: RefactorKind,
@@ -36,6 +39,7 @@ pub struct RefactorRequest {
 
 /// Type of refactoring operation.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub enum RefactorKind {
     /// Extract code into a new function
     ExtractFunction { name: String },
@@ -55,6 +59,7 @@ pub enum RefactorKind {
 
 /// Options for refactoring operations.
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub struct RefactorOptions {
     /// Preview changes without applying
     pub preview_only: bool,
@@ -68,6 +73,7 @@ pub struct RefactorOptions {
 
 /// Changes to a function signature.
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub struct SignatureChanges {
     /// New parameters (name, type_annotation, default)
     pub new_params: Vec<(String, Option<String>, Option<String>)>,
@@ -85,6 +91,7 @@ pub struct SignatureChanges {
 
 /// Result of a refactoring operation.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub struct RefactorResult {
     /// Edits to apply per file
     pub file_edits: HashMap<PathBuf, Vec<TextEdit>>,
@@ -100,6 +107,7 @@ pub struct RefactorResult {
 
 /// A text edit to apply.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub struct TextEdit {
     /// Span to replace
     pub span: Span,
@@ -109,6 +117,7 @@ pub struct TextEdit {
 
 /// A change to imports.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub enum ImportChange {
     /// Add an import
     Add { module: String, names: Vec<String> },
@@ -124,6 +133,7 @@ pub enum ImportChange {
 
 /// A diagnostic from refactoring.
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub struct RefactorDiagnostic {
     /// Severity level
     pub level: DiagnosticLevel,
@@ -137,6 +147,7 @@ pub struct RefactorDiagnostic {
 
 /// Diagnostic severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub enum DiagnosticLevel {
     Error,
     Warning,
@@ -144,6 +155,7 @@ pub enum DiagnosticLevel {
     Hint,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 impl RefactorResult {
     /// Create an empty result.
     pub fn empty() -> Self {
@@ -203,6 +215,7 @@ struct DataFlow {
 }
 
 /// Engine for performing refactoring operations.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 pub struct RefactoringEngine {
     /// Type inferencer for type information
     inferencer: DeepTypeInferencer,
@@ -212,6 +225,7 @@ pub struct RefactoringEngine {
     search_engine: SemanticSearchEngine,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 impl RefactoringEngine {
     /// Create a new refactoring engine.
     pub fn new() -> Self {
@@ -1447,6 +1461,7 @@ impl RefactoringEngine {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-refactoring-rs.md#source
 impl Default for RefactoringEngine {
     fn default() -> Self {
         Self::new()
@@ -1995,3 +2010,4 @@ print(result)"#;
         assert_eq!(edits.unwrap().len(), 2);
     }
 }
+// CODEGEN-END

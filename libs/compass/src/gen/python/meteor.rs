@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-meteor-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! cclab.meteor event handler generator
 //!
 //! Generates task handlers from AsyncAPI specs for the cclab.meteor task queue.
@@ -7,8 +9,10 @@ use crate::gen::traits::{CodeGenerator, GenContext, GenResult, GeneratedCode, La
 use crate::spec::ir::{ChannelDef, DataModelSpec, EventApiSpec, OperationDef};
 
 /// Swarm (event handlers) code generator
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-meteor-rs.md#source
 pub struct SwarmGenerator;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-meteor-rs.md#source
 impl SwarmGenerator {
     pub fn new() -> Self {
         Self
@@ -208,12 +212,14 @@ impl SwarmGenerator {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-meteor-rs.md#source
 impl Default for SwarmGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-gen-python-meteor-rs.md#source
 impl CodeGenerator for SwarmGenerator {
     fn name(&self) -> &str {
         "meteor"
@@ -343,3 +349,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

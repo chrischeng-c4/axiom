@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Core type definitions for the Argus type system
 
 use std::collections::HashMap;
@@ -5,14 +7,17 @@ use std::fmt;
 
 /// Unique identifier for type variables
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub struct TypeVarId(pub usize);
 
 /// Unique identifier for ParamSpec (PEP 612)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub struct ParamSpecId(pub usize);
 
 /// Unique identifier for TypeVarTuple (PEP 646)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub struct TypeVarTupleId(pub usize);
 
 /// Variance of a TypeVar for generic types
@@ -22,6 +27,7 @@ pub struct TypeVarTupleId(pub usize);
 /// - Covariant: T[A] is a subtype of T[B] if A is a subtype of B (e.g., Sequence, return types)
 /// - Contravariant: T[A] is a subtype of T[B] if B is a subtype of A (e.g., function params)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub enum Variance {
     /// Default: A and B must be exactly equal
     #[default]
@@ -32,6 +38,7 @@ pub enum Variance {
     Contravariant,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 impl Variance {
     /// Check if this variance allows subtyping in the given direction
     ///
@@ -49,6 +56,7 @@ impl Variance {
 
 /// Parameter kind in function signatures
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub enum ParamKind {
     /// Regular positional parameter
     Positional,
@@ -64,6 +72,7 @@ pub enum ParamKind {
 
 /// Function parameter
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub struct Param {
     pub name: String,
     pub ty: Type,
@@ -73,6 +82,7 @@ pub struct Param {
 
 /// Literal value for Literal types
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub enum LiteralValue {
     Int(i64),
     Float(f64),
@@ -83,6 +93,7 @@ pub enum LiteralValue {
 
 /// The core Type enum representing all possible types
 #[derive(Debug, Clone, PartialEq)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 pub enum Type {
     // === Primitive types ===
     /// The bottom type (NoReturn in Python, never in TypeScript)
@@ -220,6 +231,7 @@ pub enum Type {
     Error,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 impl Type {
     /// Create an Optional type
     pub fn optional(inner: Type) -> Self {
@@ -656,6 +668,7 @@ impl Type {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-ty-rs.md#source
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -828,3 +841,4 @@ impl fmt::Display for Type {
 #[cfg(test)]
 #[path = "ty_tests.rs"]
 mod tests;
+// CODEGEN-END

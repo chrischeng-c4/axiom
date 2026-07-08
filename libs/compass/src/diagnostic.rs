@@ -1,9 +1,12 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Diagnostic types (LSP-compatible)
 
 use serde::{Deserialize, Serialize};
 
 /// Diagnostic severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 pub enum DiagnosticSeverity {
     Error = 1,
     Warning = 2,
@@ -11,6 +14,7 @@ pub enum DiagnosticSeverity {
     Hint = 4,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 impl DiagnosticSeverity {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -24,6 +28,7 @@ impl DiagnosticSeverity {
 
 /// Diagnostic category
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 pub enum DiagnosticCategory {
     Syntax,
     Type,
@@ -35,6 +40,7 @@ pub enum DiagnosticCategory {
     Custom,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 impl DiagnosticCategory {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -51,11 +57,13 @@ impl DiagnosticCategory {
 
 /// Position in a text document (0-indexed)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 pub struct Position {
     pub line: u32,
     pub character: u32,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 impl Position {
     pub fn new(line: u32, character: u32) -> Self {
         Self { line, character }
@@ -64,11 +72,13 @@ impl Position {
 
 /// Range in a text document
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 pub struct Range {
     pub start: Position,
     pub end: Position,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 impl Range {
     pub fn new(start: Position, end: Position) -> Self {
         Self { start, end }
@@ -99,6 +109,7 @@ impl Range {
 
 /// Quick fix action
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 pub struct QuickFix {
     pub title: String,
     pub edits: Vec<TextEdit>,
@@ -106,6 +117,7 @@ pub struct QuickFix {
 
 /// Text edit for quick fixes
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 pub struct TextEdit {
     pub range: Range,
     pub new_text: String,
@@ -113,6 +125,7 @@ pub struct TextEdit {
 
 /// A code diagnostic
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 pub struct Diagnostic {
     pub range: Range,
     pub severity: DiagnosticSeverity,
@@ -123,6 +136,7 @@ pub struct Diagnostic {
     pub quick_fixes: Vec<QuickFix>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-diagnostic-rs.md#source
 impl Diagnostic {
     pub fn new(
         range: Range,
@@ -167,3 +181,4 @@ impl Diagnostic {
         self
     }
 }
+// CODEGEN-END

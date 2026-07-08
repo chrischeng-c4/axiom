@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-toml-sym-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! TOML symbol extraction (line-based)
 //!
 //! Extracts symbols from TOML files:
@@ -8,6 +10,7 @@
 use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::{Position, Range};
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-toml-sym-rs.md#source
 impl SymbolTableBuilder {
     /// Visit TOML source and extract symbols.
     pub(crate) fn visit_toml_lines(&mut self, source: &str) {
@@ -159,3 +162,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

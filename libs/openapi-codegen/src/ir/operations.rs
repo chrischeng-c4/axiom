@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-operations-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Language-neutral per-operation plan.
 //!
 //! Holds the HTTP shape of each operation and the *schema references* of its
@@ -10,6 +12,7 @@ use crate::ir::openapi::{Operation, Parameter, RefOr, Response, Schema, Spec};
 /// A parameter (path / query / header). `schema == None` means an untyped
 /// parameter, which emitters default to a string.
 #[derive(Debug, Clone)]
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-operations-rs.md#source
 pub struct ParamIR {
     pub name: String,
     pub schema: Option<RefOr<Schema>>,
@@ -18,6 +21,7 @@ pub struct ParamIR {
 
 /// The JSON request body, if any.
 #[derive(Debug, Clone)]
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-operations-rs.md#source
 pub struct BodyIR {
     pub schema: RefOr<Schema>,
     pub required: bool,
@@ -25,6 +29,7 @@ pub struct BodyIR {
 
 /// One HTTP operation, fully structural (no language-specific names or types).
 #[derive(Debug, Clone)]
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-operations-rs.md#source
 pub struct OperationIR {
     /// `operationId` if present (emitters fall back to method+path otherwise).
     pub operation_id: Option<String>,
@@ -44,6 +49,7 @@ pub struct OperationIR {
     pub response: Option<RefOr<Schema>>,
 }
 
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-operations-rs.md#source
 impl OperationIR {
     pub fn has_inputs(&self) -> bool {
         !self.path_params.is_empty()
@@ -57,6 +63,7 @@ const METHODS: &[&str] = &["get", "post", "put", "patch", "delete"];
 
 /// Walk every path/method and produce a structural plan per operation, in a
 /// deterministic order.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-operations-rs.md#source
 pub fn build(spec: &Spec) -> Vec<OperationIR> {
     let mut ops = Vec::new();
     for (path, item) in &spec.paths {
@@ -164,3 +171,4 @@ fn pick_response(op: &Operation) -> Option<&RefOr<Response>> {
         .get("2XX")
         .or_else(|| op.responses.get("default"))
 }
+// CODEGEN-END

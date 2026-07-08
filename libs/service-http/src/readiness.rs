@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-readiness-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Readiness seam for `/readyz`.
 //!
 //! A service supplies a type that reports whether it is currently draining
@@ -9,7 +11,9 @@
 
 /// Reports whether the service is draining (shutting down). `/readyz` returns
 /// 503 when this is `true`, 200 otherwise.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-readiness-rs.md#source
 pub trait ReadinessHook: Send + Sync {
     /// `true` once graceful shutdown has begun, so `/readyz` should report 503.
     fn is_draining(&self) -> bool;
 }
+// CODEGEN-END

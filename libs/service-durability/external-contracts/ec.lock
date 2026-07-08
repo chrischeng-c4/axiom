@@ -1,0 +1,31 @@
+version = 1
+project = "service-durability"
+ir_kind = "ec"
+ec_path = "libs/service-durability/external-contracts"
+inventory_path = "libs/service-durability/aw.toml"
+generated_at = "2026-07-08T05:37:31.013628+00:00"
+ir_digest = "sha256:8c008eba09cb0dadb873249945ec5cafc583f5f661d2c41655e1a27f0fe314ca"
+source_digest = "sha256:9327619323d666f2990fcde65b1cd4e7ede2a168bb9734630b3cd0e023ec9248"
+tool_contracts = []
+
+[[sources]]
+path = "libs/service-durability/external-contracts/behavior/shared-service-durability-contract.md"
+digest = "sha256:cb5fb02af51a80fae41e7941a0de068d7eab22e1ebbd187b9a05f4cc15887964"
+
+[[cases]]
+id = "shared-service-durability-contract"
+capability_id = "shared-service-durability-contract"
+claim_id = "shared-service-durability-contract"
+contract_id = "shared-service-durability-contract"
+dimension = "behavior"
+source_ref = "libs/service-durability/external-contracts/behavior/shared-service-durability-contract.md#shared-service-durability-contract"
+test_path = "libs/service-durability/tests/behavior_shared_service_durability_contract.rs"
+command = "cargo test -p service-durability"
+required_for_production = true
+assertions = [
+    "Shared Service Durability Contract public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b50f91a5959430b406a078087210732ca8710140b424a8aacf904d3b57d5973d"

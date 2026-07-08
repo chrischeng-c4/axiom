@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-gen-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Code generation module for spec-to-code
 //!
 //! Contains generators for various technology stacks:
@@ -13,3 +15,4 @@ pub mod traits;
 
 pub use registry::GeneratorRegistry;
 pub use traits::*;
+// CODEGEN-END

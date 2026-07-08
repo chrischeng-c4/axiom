@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use std::future::Future;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -12,6 +14,7 @@ const OBJECT_NAME_PREFIX: &str = "backup-";
 const OBJECT_NAME_SUFFIX: &str = ".json";
 
 #[derive(Clone)]
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 pub(crate) struct S3Sink {
     bucket: String,
     prefix: String,
@@ -19,6 +22,7 @@ pub(crate) struct S3Sink {
     endpoint: Option<String>,
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 impl S3Sink {
     pub(crate) fn from_destination(destination: &BackupDestination) -> Result<Self> {
         let BackupDestination::S3 {
@@ -59,6 +63,7 @@ impl S3Sink {
     }
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 impl BackupSink for S3Sink {
     fn put(&self, timestamp: SystemTime, payload: &[u8]) -> Result<String> {
         let bucket = self.bucket.clone();
@@ -104,6 +109,7 @@ impl BackupSink for S3Sink {
     }
 }
 
+/// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-s3-rs.md#source
 pub(crate) fn get_object(bucket: String, key: String) -> Result<Vec<u8>> {
     block_on_in_thread(async move {
         let client = build_client(None, None).await?;
@@ -331,3 +337,4 @@ mod tests {
         })
     }
 }
+// CODEGEN-END

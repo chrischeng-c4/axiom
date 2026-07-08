@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-server-auto-discover-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Auto-discovery of project scopes from marker files (#1127)
 //!
 //! Scans a monorepo root for:
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Returns scopes sorted by root path depth (deepest first) for
 /// longest-prefix-match routing.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-auto-discover-rs.md#source
 pub fn discover_scopes(project_root: &Path) -> Vec<ScopeConfig> {
     let mut scopes = Vec::new();
 
@@ -187,6 +190,7 @@ fn slugify(path: &Path) -> String {
 }
 
 /// Find the scope that best matches a file path (longest prefix match).
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-server-auto-discover-rs.md#source
 pub fn resolve_scope<'a>(file_path: &Path, scopes: &'a [ScopeConfig]) -> Option<&'a ScopeConfig> {
     // Scopes are pre-sorted by root length descending.
     // Empty root acts as catch-all fallback — skip during first pass.
@@ -327,3 +331,4 @@ mod tests {
         assert_eq!(slugify(Path::new("")), "");
     }
 }
+// CODEGEN-END

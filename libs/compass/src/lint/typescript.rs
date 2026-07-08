@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-typescript-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! TypeScript code checker
 
 use crate::checker::LintConfig;
@@ -5,8 +7,10 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Rang
 use crate::syntax::{Language, ParsedFile};
 
 /// TypeScript checker
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-typescript-rs.md#source
 pub struct TypeScriptChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-typescript-rs.md#source
 impl TypeScriptChecker {
     pub fn new() -> Self {
         Self
@@ -464,12 +468,14 @@ impl TypeScriptChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-typescript-rs.md#source
 impl Default for TypeScriptChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-typescript-rs.md#source
 impl super::Checker for TypeScriptChecker {
     fn language(&self) -> Language {
         Language::TypeScript
@@ -533,3 +539,4 @@ impl super::Checker for TypeScriptChecker {
         ]
     }
 }
+// CODEGEN-END

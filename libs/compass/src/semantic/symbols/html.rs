@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-html-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! HTML symbol extraction (tree-sitter)
 //!
 //! Extracts symbols from HTML documents:
@@ -11,6 +13,7 @@ use super::{SymbolKind, SymbolTableBuilder};
 use crate::diagnostic::Range;
 use crate::syntax::ParsedFile;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-semantic-symbols-html-rs.md#source
 impl SymbolTableBuilder {
     /// Walk HTML AST to extract symbols
     pub(crate) fn visit_html_node(&mut self, node: &tree_sitter::Node<'_>, file: &ParsedFile) {
@@ -278,3 +281,4 @@ mod tests {
         assert!(names.contains(&"login"), "got: {:?}", names);
     }
 }
+// CODEGEN-END

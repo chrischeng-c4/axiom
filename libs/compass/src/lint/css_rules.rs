@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rules-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Extended CSS lint rules (CSS006 - CSS010)
 //!
 //! Split from css.rs to keep files under 500 lines.
@@ -22,6 +24,7 @@ const SHORTHAND_GROUPS: &[(&str, &[&str])] = &[
     ]),
 ];
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-css-rules-rs.md#source
 impl CssChecker {
     /// CSS006: Vendor prefix without standard property
     ///
@@ -289,3 +292,4 @@ fn has_property_in_block(
     }
     false
 }
+// CODEGEN-END

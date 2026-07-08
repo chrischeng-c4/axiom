@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-host/tech-design/semantic/source/libs-raft-host-src-store-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Durable storage for a raft node's hard state.
 //!
 //! Persists [`PersistedState`] (term, votedFor, log, snapshot) to a single file
@@ -6,30 +8,21 @@
 //! node's outbox, so no vote or ack is sent before the decision that produced it
 //! is durable. (Lifted from lumen/relay's identical `raft_store`.)
 
-use std::fs::{create_dir_all, File};
-use std::io::{self, Write};
+use std::fs::create_dir_all;
+use std::io;
 use std::path::PathBuf;
 
 use raft_core::{NodeId, PersistedState};
-
-/// How aggressively hard state is flushed to disk.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum FsyncPolicy {
-    /// `sync_all` after every write (strongest, default — hard state is tiny).
-    #[default]
-    Always,
-    /// Flush the writer but defer the OS fsync.
-    Interval,
-    /// Leave flushing to the OS page cache (fastest, weakest).
-    Os,
-}
+pub use service_durability::FsyncPolicy;
 
 /// File-backed persistence for one raft node.
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-store-rs.md#source
 pub struct RaftStore {
     path: PathBuf,
     fsync: FsyncPolicy,
 }
 
+/// @spec libs/raft-host/tech-design/semantic/source/libs-raft-host-src-store-rs.md#source
 impl RaftStore {
     /// Open (creating the dir if needed) the state file `raft-<node_id>.state`.
     pub fn open(dir: &str, node_id: NodeId, fsync: FsyncPolicy) -> io::Result<RaftStore> {
@@ -46,16 +39,8 @@ impl RaftStore {
     pub fn save(&self, state: &PersistedState) -> io::Result<()> {
         let bytes =
             serde_json::to_vec(state).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let tmp = self.path.with_extension("tmp");
-        {
-            let mut f = File::create(&tmp)?;
-            f.write_all(&bytes)?;
-            if self.fsync != FsyncPolicy::Os {
-                f.sync_all()?;
-            }
-        }
-        std::fs::rename(&tmp, &self.path)?;
-        Ok(())
+        service_durability::atomic_write(&self.path, &bytes, self.fsync)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
     /// Load the persisted hard state, or `None` if this node has none yet.
@@ -71,3 +56,4 @@ impl RaftStore {
         }
     }
 }
+// CODEGEN-END

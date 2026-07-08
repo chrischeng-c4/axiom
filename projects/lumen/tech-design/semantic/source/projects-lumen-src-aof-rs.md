@@ -87,45 +87,32 @@ Public API manifest for `projects/lumen/src/aof.rs` generated from AST during Sc
 //! - [`FsyncPolicy::Always`] — fsync after every append (tests / strict
 //!   durability).
 
-use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+pub use service_durability::FsyncPolicy;
+use service_durability::{FramedLogReader, FramedLogWriter};
+
+#[cfg(test)]
+use std::fs::OpenOptions;
+#[cfg(test)]
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::wal::WalRecord;
 
 /// Fixed per-frame header width: `seq(8) + len(4) + crc(4)`.
+#[cfg(test)]
 const HEADER_LEN: usize = 16;
 
-/// Encode a [`WalRecord`] payload with ciborium (compact CBOR).
+/// Encode a [`WalRecord`] payload. Common high-QPS index records use Lumen's
+/// fast binary WAL codec; uncommon records fall back to compact CBOR.
 fn encode_payload(rec: &WalRecord) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    ciborium::ser::into_writer(rec, &mut buf).context("ciborium-encode AOF record")?;
-    Ok(buf)
+    rec.encode().context("encode AOF record")
 }
 
-/// Decode a ciborium payload back into a [`WalRecord`].
+/// Decode an AOF payload back into a [`WalRecord`].
 fn decode_payload(bytes: &[u8]) -> Result<WalRecord> {
-    ciborium::de::from_reader(bytes).context("ciborium-decode AOF record")
-}
-
-/// When to fsync the AOF to durable storage. Mirrors Redis `appendfsync`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
-pub enum FsyncPolicy {
-    /// fsync at most once per second, off the append hot path (the default).
-    EverySec,
-    /// fsync after every append (strict durability; used by tests).
-    Always,
-}
-
-/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
-impl Default for FsyncPolicy {
-    fn default() -> Self {
-        FsyncPolicy::EverySec
-    }
+    WalRecord::decode(bytes).context("decode AOF record")
 }
 
 /// Append-only writer keyed by applied seq. Frames are appended in seq order;
@@ -133,15 +120,7 @@ impl Default for FsyncPolicy {
 /// always starts in a clean, fully-decodable state.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
 pub struct AofWriter {
-    path: PathBuf,
-    file: BufWriter<File>,
-    policy: FsyncPolicy,
-    /// Last time we fsynced (for `EverySec`).
-    last_sync: Instant,
-    /// fsync cadence for `EverySec`.
-    sync_every: Duration,
-    /// Whether un-fsynced bytes exist (so `maybe_sync` can no-op when clean).
-    dirty: bool,
+    inner: FramedLogWriter,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
@@ -149,7 +128,7 @@ impl AofWriter {
     /// Open `path` for appending with the default [`FsyncPolicy::EverySec`],
     /// first truncating any torn tail.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
-        Self::open_with_policy(path, FsyncPolicy::default())
+        Self::open_with_policy(path, FsyncPolicy::EverySec)
     }
 
     /// Open `path` for appending, first truncating any torn tail (a partial
@@ -157,116 +136,27 @@ impl AofWriter {
     /// good frame. Creates the file (and parent dirs) if absent.
     pub fn open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> {
         let path = path.into();
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("create AOF dir {}", parent.display()))?;
-            }
-        }
-
-        // Scan existing frames to find the end of the last GOOD frame; truncate
-        // anything past it (a torn tail). A fresh/absent file scans to 0.
-        let good_end = if path.exists() {
-            Self::scan_good_end(&path)?
-        } else {
-            0
-        };
-        if path.exists() {
-            // Truncate the torn tail (no-op when `good_end` == file len).
-            let f = OpenOptions::new()
-                .write(true)
-                .open(&path)
-                .with_context(|| format!("open AOF for truncate {}", path.display()))?;
-            f.set_len(good_end)
-                .with_context(|| format!("truncate AOF tail {}", path.display()))?;
-            f.sync_all().ok();
-        }
-
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .with_context(|| format!("open AOF for append {}", path.display()))?;
         Ok(Self {
-            path,
-            file: BufWriter::new(file),
-            policy,
-            last_sync: Instant::now(),
-            sync_every: Duration::from_secs(1),
-            dirty: false,
+            inner: FramedLogWriter::open(&path, policy)?,
         })
-    }
-
-    /// Scan from the start, returning the byte offset just past the last fully
-    /// readable + crc-valid frame. A torn tail (short header, `len` overrun, or
-    /// crc mismatch) stops the scan with no error.
-    fn scan_good_end(path: &Path) -> Result<u64> {
-        let mut f = File::open(path).with_context(|| format!("open AOF {}", path.display()))?;
-        let total = f.metadata()?.len();
-        let mut off: u64 = 0;
-        let mut header = [0u8; HEADER_LEN];
-        loop {
-            if off + HEADER_LEN as u64 > total {
-                break; // not enough bytes for a header → torn tail
-            }
-            f.seek(SeekFrom::Start(off))?;
-            if f.read_exact(&mut header).is_err() {
-                break;
-            }
-            let len = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as u64;
-            let crc = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
-            let frame_end = off + HEADER_LEN as u64 + len;
-            if frame_end > total {
-                break; // payload overruns EOF → torn tail
-            }
-            let mut payload = vec![0u8; len as usize];
-            if f.read_exact(&mut payload).is_err() {
-                break;
-            }
-            if crc32fast::hash(&payload) != crc {
-                break; // corrupt payload → torn tail
-            }
-            off = frame_end;
-        }
-        Ok(off)
     }
 
     /// Append one applied `(seq, record)` frame. Buffered; durability follows the
     /// fsync policy (`Always` fsyncs now, `EverySec` defers to `maybe_sync`).
     pub fn append(&mut self, seq: u64, record: &WalRecord) -> Result<()> {
         let payload = encode_payload(record)?;
-        let len = u32::try_from(payload.len()).context("AOF payload too large for u32 len")?;
-        let crc = crc32fast::hash(&payload);
-
-        let mut header = [0u8; HEADER_LEN];
-        header[0..8].copy_from_slice(&seq.to_le_bytes());
-        header[8..12].copy_from_slice(&len.to_le_bytes());
-        header[12..16].copy_from_slice(&crc.to_le_bytes());
-
-        self.file.write_all(&header).context("write AOF header")?;
-        self.file.write_all(&payload).context("write AOF payload")?;
-        self.dirty = true;
-
-        if self.policy == FsyncPolicy::Always {
-            self.sync()?;
-        }
-        Ok(())
+        self.inner.append(seq, &payload)
     }
 
     /// Flush the buffered writer to the OS (does NOT fsync). Cheap; safe to call
     /// often.
     pub fn flush(&mut self) -> Result<()> {
-        self.file.flush().context("flush AOF buffer")?;
-        Ok(())
+        self.inner.flush()
     }
 
     /// Flush + fsync NOW, unconditionally. Resets the everysec timer.
     pub fn sync(&mut self) -> Result<()> {
-        self.flush()?;
-        self.file.get_ref().sync_all().context("fsync AOF")?;
-        self.last_sync = Instant::now();
-        self.dirty = false;
-        Ok(())
+        self.inner.sync()
     }
 
     /// Call-driven everysec fsync: fsync only if dirty AND ≥ the cadence has
@@ -274,13 +164,7 @@ impl AofWriter {
     /// synced on append). Meant to be called off the apply hot path (a periodic
     /// tick or after a batch), so the apply loop never blocks on fsync.
     pub fn maybe_sync(&mut self) -> Result<()> {
-        if self.policy == FsyncPolicy::Always {
-            return Ok(());
-        }
-        if self.dirty && self.last_sync.elapsed() >= self.sync_every {
-            self.sync()?;
-        }
-        Ok(())
+        self.inner.maybe_sync()
     }
 
     /// Drop every frame with `seq <= through`, keeping only newer frames. Called
@@ -293,79 +177,7 @@ impl AofWriter {
     /// AOF intact (un-checkpointed frames are never lost); a crash after leaves
     /// the compacted AOF. The temp is removed first if a prior attempt left one.
     pub fn truncate_through(&mut self, through: u64) -> Result<()> {
-        // Make sure our own buffered appends are on disk before we copy.
-        self.flush()?;
-
-        let good_end = Self::scan_good_end(&self.path)?;
-        let tmp = self.tmp_path();
-        let _ = std::fs::remove_file(&tmp);
-
-        {
-            let mut src = File::open(&self.path)
-                .with_context(|| format!("open AOF to compact {}", self.path.display()))?;
-            let mut dst = BufWriter::new(
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(&tmp)
-                    .with_context(|| format!("create AOF compaction temp {}", tmp.display()))?,
-            );
-            let mut off: u64 = 0;
-            let mut header = [0u8; HEADER_LEN];
-            while off + HEADER_LEN as u64 <= good_end {
-                src.seek(SeekFrom::Start(off))?;
-                src.read_exact(&mut header)
-                    .context("read frame header for compaction")?;
-                let seq = u64::from_le_bytes([
-                    header[0], header[1], header[2], header[3], header[4], header[5], header[6],
-                    header[7],
-                ]);
-                let len = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as u64;
-                let frame_end = off + HEADER_LEN as u64 + len;
-                if frame_end > good_end {
-                    break; // defensive: torn tail inside the good region cannot happen
-                }
-                let mut payload = vec![0u8; len as usize];
-                src.read_exact(&mut payload)
-                    .context("read frame payload for compaction")?;
-                if seq > through {
-                    dst.write_all(&header).context("write surviving header")?;
-                    dst.write_all(&payload).context("write surviving payload")?;
-                }
-                off = frame_end;
-            }
-            dst.flush().context("flush AOF compaction temp")?;
-            dst.get_ref()
-                .sync_all()
-                .context("fsync AOF compaction temp")?;
-        }
-
-        std::fs::rename(&tmp, &self.path).with_context(|| {
-            format!(
-                "commit AOF compaction {} -> {}",
-                tmp.display(),
-                self.path.display()
-            )
-        })?;
-
-        // Re-open the append handle on the freshly compacted file; the old handle
-        // pointed at the now-replaced inode.
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .with_context(|| format!("re-open compacted AOF {}", self.path.display()))?;
-        self.file = BufWriter::new(file);
-        self.dirty = false;
-        self.last_sync = Instant::now();
-        Ok(())
-    }
-
-    fn tmp_path(&self) -> PathBuf {
-        let mut s = self.path.clone().into_os_string();
-        s.push(".compact.tmp");
-        PathBuf::from(s)
+        self.inner.truncate_through(through)
     }
 }
 
@@ -389,52 +201,14 @@ impl AofReader {
         from_seq: u64,
         mut apply: impl FnMut(u64, WalRecord),
     ) -> Result<u64> {
-        let path = path.as_ref();
-        if !path.exists() {
-            return Ok(0);
-        }
-        let mut f = File::open(path).with_context(|| format!("open AOF {}", path.display()))?;
-        let total = f.metadata()?.len();
-        let mut off: u64 = 0;
         let mut max_seq = 0u64;
-        let mut header = [0u8; HEADER_LEN];
-        loop {
-            if off + HEADER_LEN as u64 > total {
-                break; // torn tail (short header)
-            }
-            f.seek(SeekFrom::Start(off))?;
-            if f.read_exact(&mut header).is_err() {
-                break;
-            }
-            let seq = u64::from_le_bytes([
-                header[0], header[1], header[2], header[3], header[4], header[5], header[6],
-                header[7],
-            ]);
-            let len = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as u64;
-            let crc = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
-            let frame_end = off + HEADER_LEN as u64 + len;
-            if frame_end > total {
-                break; // torn tail (payload overruns EOF)
-            }
-            let mut payload = vec![0u8; len as usize];
-            if f.read_exact(&mut payload).is_err() {
-                break;
-            }
-            if crc32fast::hash(&payload) != crc {
-                break; // torn tail (corrupt payload)
-            }
-            // A frame may fail to decode only if the codec/version changed under a
-            // valid crc — treat as the end of recoverable history rather than
-            // panicking.
-            let rec = match decode_payload(&payload) {
+        for frame in FramedLogReader::read_frames(path, from_seq)? {
+            let rec = match decode_payload(&frame.payload) {
                 Ok(r) => r,
                 Err(_) => break,
             };
-            if seq > from_seq {
-                apply(seq, rec);
-                max_seq = max_seq.max(seq);
-            }
-            off = frame_end;
+            apply(frame.seq, rec);
+            max_seq = max_seq.max(frame.seq);
         }
         Ok(max_seq)
     }
@@ -812,6 +586,7 @@ mod crux_recovery_tests {
             query,
             limit,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -1129,7 +904,6 @@ mod crux_recovery_tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

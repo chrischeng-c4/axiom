@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-rust-checker-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Rust code checker
 
 use crate::checker::LintConfig;
@@ -5,8 +7,10 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Rang
 use crate::syntax::{Language, ParsedFile};
 
 /// Rust checker
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-rust-checker-rs.md#source
 pub struct RustChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-rust-checker-rs.md#source
 impl RustChecker {
     pub fn new() -> Self {
         Self
@@ -442,12 +446,14 @@ impl RustChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-rust-checker-rs.md#source
 impl Default for RustChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-rust-checker-rs.md#source
 impl super::Checker for RustChecker {
     fn language(&self) -> Language {
         Language::Rust
@@ -511,3 +517,4 @@ impl super::Checker for RustChecker {
         ]
     }
 }
+// CODEGEN-END

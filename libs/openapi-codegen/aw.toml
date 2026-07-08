@@ -1,0 +1,34 @@
+[project]
+name = "openapi-codegen"
+aliases = ["cclab-openapi-codegen"]
+cap_path = "README.md"
+label = "project:openapi-codegen"
+
+[[workspaces]]
+name = "openapi-codegen"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-openapi-codegen"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "openapi-codegen"
+generated_from_td_digest = "sha256:aa32c5ad016948a612eba44d1505620125c9b3f4637949a0451403675a8f0348"
+
+[[aw.ec.generated.cases]]
+id = "multi-language-openapi-client-generation-contract"
+capability_id = "multi-language-openapi-client-generation"
+claim_id = "multi-language-openapi-client-generation-contract"
+contract_id = "multi-language-openapi-client-generation-contract"
+category = "behavior"
+td_ref = "libs/openapi-codegen/external-contracts/behavior/multi-language-openapi-client-generation-contract.md#multi-language-openapi-client-generation-contract"
+test_path = "libs/openapi-codegen/tests/behavior_multi_language_openapi_client_generation_contract.rs"
+command = "cargo test -p cclab-openapi-codegen"
+required_for_production = true
+assertions = [
+    "Multi-Language OpenAPI Client Generation public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

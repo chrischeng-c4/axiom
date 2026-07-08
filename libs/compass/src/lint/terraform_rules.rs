@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-terraform-rules-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Additional Terraform lint rules (TF002, TF003, TF007, TF009, TF010)
 
 use super::terraform::TerraformChecker;
@@ -228,3 +230,4 @@ pub(super) fn check_s3_encryption(
 
     diagnostics
 }
+// CODEGEN-END

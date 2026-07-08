@@ -8251,7 +8251,7 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 const SNAPSHOT_VERSION: u32 = 1;
 
 /// Top-level snapshot document. JSON-serialisable.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct SnapshotV1 {
     /// Format version. Bump when the wire layout changes
@@ -8260,7 +8260,7 @@ pub struct SnapshotV1 {
     pub collections: BTreeMap<String, CollectionSnapshot>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct CollectionSnapshot {
     pub schema: BTreeMap<String, FieldSpec>,
@@ -8269,7 +8269,7 @@ pub struct CollectionSnapshot {
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum FieldIndexSnapshot {
@@ -9882,6 +9882,7 @@ mod segment_predicate_diff_tests {
             query,
             limit: 100_000, // larger than any corpus → page == full match set
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10141,6 +10142,7 @@ mod segment_keyword_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10379,6 +10381,7 @@ mod segment_keyword_inverted_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10929,6 +10932,7 @@ mod segment_number_range_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -10940,6 +10944,7 @@ mod segment_number_range_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: field.into(),
                 order,
@@ -11791,6 +11796,7 @@ mod segment_set_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -12045,6 +12051,7 @@ mod segment_set_inverted_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -12599,6 +12606,7 @@ mod segment_text_diff_tests {
             query,
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -13283,6 +13291,7 @@ mod segment_hash_diff_tests {
             }),
             limit: 100_000,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -13428,6 +13437,7 @@ mod segment_vector_diff_tests {
             }),
             limit: k,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -13631,6 +13641,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: Some(vec![crate::types::SortSpec {
                         field: "bio".into(),
                         order: SortOrder::Asc,
@@ -13689,6 +13700,7 @@ mod tests {
                 }),
                 limit: 2,
                 cursor: None,
+                routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
                     field: "email".into(),
                     order,
@@ -13743,6 +13755,7 @@ mod tests {
             }),
             limit: 2,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![
                 crate::types::SortSpec {
                     field: "email".into(),
@@ -13822,6 +13835,7 @@ mod tests {
             }),
             limit: 2,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: "email".into(),
                 order: SortOrder::Asc,
@@ -13871,6 +13885,7 @@ mod tests {
                 }),
                 limit: 7,
                 cursor: None,
+                routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
@@ -13930,6 +13945,7 @@ mod tests {
             }),
             limit: 4,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Desc,
@@ -13988,6 +14004,7 @@ mod tests {
             }),
             limit: 6,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -14037,6 +14054,7 @@ mod tests {
             }),
             limit: 10,
             cursor: Some(make_cursor(25)),
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -14102,6 +14120,7 @@ mod tests {
                 }),
                 limit: 5,
                 cursor: None,
+                routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
                     field: "age".into(),
                     order,
@@ -14157,6 +14176,7 @@ mod tests {
             }),
             limit: 10,
             cursor: None,
+            routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
                 field: "age".into(),
                 order: SortOrder::Asc,
@@ -14353,6 +14373,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14399,6 +14420,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14434,6 +14456,7 @@ mod tests {
             }),
             limit: 10,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -14495,6 +14518,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14512,6 +14536,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14552,6 +14577,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14609,6 +14635,7 @@ mod tests {
                     query: q,
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -14683,6 +14710,7 @@ mod tests {
                     query,
                     limit: 100,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15058,6 +15086,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15099,6 +15128,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15116,6 +15146,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15151,6 +15182,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15261,6 +15293,7 @@ mod tests {
                 }),
                 limit: 50,
                 cursor: None,
+                routing_key: None,
                 sort: None,
                 track_total: true,
                 collapse: None,
@@ -15563,6 +15596,7 @@ mod tests {
                     ]),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15613,6 +15647,7 @@ mod tests {
                     ]),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15652,6 +15687,7 @@ mod tests {
                     }))),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15686,6 +15722,7 @@ mod tests {
                     query: q,
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15753,6 +15790,7 @@ mod tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15815,6 +15853,7 @@ mod tests {
                     query: QueryNode::Range(q),
                     limit: 50,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -15951,6 +15990,7 @@ mod triple_path_diff_tests {
             query,
             limit,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -16372,6 +16412,7 @@ mod checkpoint_engine_tests {
             query,
             limit,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -16879,6 +16920,7 @@ mod offset_sort_guard_tests {
             query: cat_x(),
             limit: 2,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -17012,6 +17054,7 @@ mod external_version_lww_tests {
             }),
             limit: 100,
             cursor: None,
+            routing_key: None,
             sort: None,
             track_total: true,
             collapse: None,
@@ -17143,6 +17186,7 @@ mod sort_missing_tests {
                 }),
                 limit,
                 cursor,
+                routing_key: None,
                 sort: Some(vec![SortSpec {
                     field: "price".into(),
                     order: SortOrder::Asc,
@@ -17326,6 +17370,7 @@ mod has_child_sort_tests {
                 query,
                 limit: 100,
                 cursor: None,
+                routing_key: None,
                 sort,
                 track_total: true,
                 collapse: None,
@@ -17378,6 +17423,7 @@ mod has_child_sort_tests {
                     }),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: sort_ts_desc(),
                     track_total: true,
                     collapse: None,
@@ -17468,6 +17514,7 @@ mod ids_query_tests {
                 query,
                 limit: 100,
                 cursor: None,
+                routing_key: None,
                 sort,
                 track_total: true,
                 collapse: None,
@@ -17610,6 +17657,7 @@ mod multikey_sort_cap_tests {
                     query: all(),
                     limit: 100,
                     cursor: None,
+                    routing_key: None,
                     sort: Some(sort_asc(&["a", "b", "c"])),
                     track_total: true,
                     collapse: None,
@@ -17634,6 +17682,7 @@ mod multikey_sort_cap_tests {
                     query: all(),
                     limit: 10,
                     cursor: None,
+                    routing_key: None,
                     sort: Some(sort_asc(&["a", "b", "c", "a", "b"])), // 5 keys
                     track_total: true,
                     collapse: None,
@@ -17648,7 +17697,6 @@ mod multikey_sort_cap_tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

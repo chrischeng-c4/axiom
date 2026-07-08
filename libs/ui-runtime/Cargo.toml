@@ -1,4 +1,5 @@
-# HANDWRITE-BEGIN gap="missing-generator:ui-runtime-manifest" tracker="pending-tracker" reason="Shared component runtime extracted from jet-wasm so desktop and WASM renderers reuse the same hooks/mount/flush layer."
+# SPEC-MANAGED: libs/ui-runtime/tech-design/semantic/source/libs-ui-runtime-cargo-toml.md#text-source-unit
+# CODEGEN-BEGIN
 [package]
 name = "cclab-ui-runtime"
 version.workspace = true
@@ -14,4 +15,4 @@ debug = ["serde_json"]
 [dependencies]
 cclab-surface = { path = "../surface" }
 serde_json = { version = "1", optional = true }
-# HANDWRITE-END
+# CODEGEN-END

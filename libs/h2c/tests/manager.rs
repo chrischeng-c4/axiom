@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/h2c/tech-design/semantic/source/libs-h2c-tests-manager-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Integration tests for the frame-level [`h2c::H2cManager`] against a real,
 //! controllable local hyper server speaking HTTP/2 cleartext (h2c).
 
@@ -53,6 +55,7 @@ struct TestServer {
     handle: JoinHandle<()>,
 }
 
+/// @spec libs/h2c/tech-design/semantic/source/libs-h2c-tests-manager-rs.md#source
 impl TestServer {
     async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -271,3 +274,4 @@ async fn connect_failure_is_reported() {
         .unwrap_err();
     assert!(err.is_connection_lost(), "got {err:?}");
 }
+// CODEGEN-END

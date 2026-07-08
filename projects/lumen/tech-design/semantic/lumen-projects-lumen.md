@@ -62,7 +62,7 @@ semantic_domain:
       - path: "projects/lumen/llms.txt"
         language: "llms"
         ownership_state: "codegen"
-        generator_primitives: ["source_unit"]
+        generator_primitives: ["project_root_llms"]
         source_evidence_node:
           layer: "source"
           ecosystem: "llms"
@@ -105,10 +105,9 @@ changes:
     action: modify
     section: schema
     description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
+      Existing source behavior is covered by this feature/domain semantic TD;
+      concrete replay ownership lives in semantic-lumen-build-script.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:#4158>"
   - path: "projects/lumen/install.sh"
     action: modify
     section: schema

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-output-agent-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Agent output builder: constructs symbol-centric JSON from analysis results.
 //!
 //! Combines SymbolTable, ImportGraph, and lint diagnostics into a compact
@@ -14,6 +16,7 @@ use crate::semantic::symbols::{SymbolKind, SymbolTable};
 use super::agent_types::{AgentIssue, AgentOutput, AgentStats, SymbolDef};
 
 /// Builder that orchestrates construction of agent-format output.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-output-agent-rs.md#source
 pub struct AgentOutputBuilder<'a> {
     /// Project root for computing relative paths.
     project_root: &'a Path,
@@ -907,3 +910,4 @@ mod tests {
         assert!(output.stats.impact_edges > 0);
     }
 }
+// CODEGEN-END

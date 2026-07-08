@@ -1,0 +1,33 @@
+[project]
+name = "claimtoken"
+cap_path = "README.md"
+label = "project:claimtoken"
+
+[[workspaces]]
+name = "claimtoken"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p claimtoken"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "claimtoken"
+generated_from_td_digest = "sha256:4a26d7cc808f4f597b12a6d40b4dc79517539d35425e6cd250d85c0eebee2ed8"
+
+[[aw.ec.generated.cases]]
+id = "scoped-claim-tokens-contract"
+capability_id = "scoped-claim-tokens"
+claim_id = "scoped-claim-tokens-contract"
+contract_id = "scoped-claim-tokens-contract"
+category = "behavior"
+td_ref = "libs/claimtoken/external-contracts/behavior/scoped-claim-tokens-contract.md#scoped-claim-tokens-contract"
+test_path = "libs/claimtoken/tests/behavior_scoped_claim_tokens_contract.rs"
+command = "cargo test -p claimtoken"
+required_for_production = true
+assertions = [
+    "Scoped Claim Tokens public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

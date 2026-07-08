@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-autofix-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Auto-fix: apply quick fixes from diagnostics
 //!
 //! Provides utilities to apply single or batch fixes to source code.
@@ -6,6 +8,7 @@ use crate::diagnostic::{Diagnostic, QuickFix, Range, TextEdit};
 
 /// Result of applying a fix
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-autofix-rs.md#source
 pub struct FixResult {
     /// The modified source code
     pub source: String,
@@ -19,6 +22,7 @@ pub struct FixResult {
 ///
 /// Edits within the fix are sorted by position (reverse order) and applied
 /// from bottom to top to avoid offset invalidation.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-autofix-rs.md#source
 pub fn apply_fix(source: &str, fix: &QuickFix) -> FixResult {
     let mut result = source.to_string();
     let mut edits: Vec<&TextEdit> = fix.edits.iter().collect();
@@ -53,6 +57,7 @@ pub fn apply_fix(source: &str, fix: &QuickFix) -> FixResult {
 /// Only diagnostics with at least one quick fix are considered.
 /// Uses the first (preferred) fix from each diagnostic.
 /// Non-overlapping edits are applied; overlapping ones are skipped.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-autofix-rs.md#source
 pub fn apply_all_fixes(source: &str, diagnostics: &[Diagnostic]) -> FixResult {
     // Collect all edits from the first fix of each diagnostic
     let mut all_edits: Vec<&TextEdit> = Vec::new();
@@ -226,3 +231,4 @@ mod tests {
         assert_eq!(position_to_offset(source, &Position::new(10, 0)), 8);
     }
 }
+// CODEGEN-END

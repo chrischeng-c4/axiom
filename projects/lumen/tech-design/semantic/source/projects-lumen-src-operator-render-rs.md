@@ -13,6 +13,24 @@ capability_refs:
     claim: "lumen-crd-reconcile-loop-kube-rs-operator"
     coverage: full
     rationale: "render.rs is the pure operator child-object renderer covered by the operator_render EC."
+  - id: "kubernetes-native-deployment"
+    role: primary
+    gap: "operator-owned-storage-topology-and-reshard-status"
+    claim: "operator-owned-storage-topology-and-reshard-status"
+    coverage: full
+    rationale: "The pure renderer owns StatefulSet storage topology and reshard status shape for the Kubernetes-native deployment path."
+  - id: "dynamic-shard-topology"
+    role: primary
+    gap: "storage-pressure-operator-split-policy"
+    claim: "storage-pressure-operator-split-policy"
+    coverage: full
+    rationale: "The renderer exposes storage pressure and reshard recommendations without changing HPA-owned serving scale."
+  - id: "dynamic-shard-topology"
+    role: primary
+    gap: "multi-shard-replica-kind-e2e"
+    claim: "multi-shard-replica-kind-e2e"
+    coverage: partial
+    rationale: "The operator render shape is the static proof behind the live kind multi-shard and replicated-shard profiles."
 fill_sections: [overview, source, changes]
 ---
 

@@ -48,6 +48,7 @@ members = [
     "libs/service-http",
     "libs/service-auth",
     "libs/service-backup",
+    "libs/service-durability",
     "libs/service-tls",
     "libs/service-metrics",
     "libs/build-stamp",

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-class-info-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Class information for type inference
 
 use std::collections::HashMap;
@@ -6,6 +8,7 @@ use super::ty::{Type, TypeVarId, Variance};
 
 /// Information about a generic type parameter on a class
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-class-info-rs.md#source
 pub struct GenericParam {
     /// TypeVar ID
     pub id: TypeVarId,
@@ -19,6 +22,7 @@ pub struct GenericParam {
     pub constraints: Vec<Type>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-class-info-rs.md#source
 impl GenericParam {
     pub fn new(id: TypeVarId, name: String) -> Self {
         Self {
@@ -48,6 +52,7 @@ impl GenericParam {
 
 /// Information about a class definition
 #[derive(Debug, Clone, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-class-info-rs.md#source
 pub struct ClassInfo {
     /// Class name
     pub name: String,
@@ -67,6 +72,7 @@ pub struct ClassInfo {
     pub is_abstract: bool,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-class-info-rs.md#source
 impl ClassInfo {
     pub fn new(name: String) -> Self {
         Self {
@@ -161,3 +167,4 @@ mod tests {
         assert_eq!(info.variance_at(1), Variance::Covariant);
     }
 }
+// CODEGEN-END

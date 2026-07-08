@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-lint-terraform-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Terraform/HCL lint checker (tree-sitter-hcl AST)
 
 use super::terraform_rules;
@@ -7,8 +9,10 @@ use crate::syntax::{Language, ParsedFile};
 use std::collections::HashSet;
 
 /// Terraform/HCL checker
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-terraform-rs.md#source
 pub struct TerraformChecker;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-terraform-rs.md#source
 impl TerraformChecker {
     pub fn new() -> Self {
         Self
@@ -314,12 +318,14 @@ impl TerraformChecker {
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-terraform-rs.md#source
 impl Default for TerraformChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-lint-terraform-rs.md#source
 impl super::Checker for TerraformChecker {
     fn language(&self) -> Language {
         Language::Hcl
@@ -358,3 +364,4 @@ impl super::Checker for TerraformChecker {
         ]
     }
 }
+// CODEGEN-END

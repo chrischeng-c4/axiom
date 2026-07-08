@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-signature-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Change-signature refactoring
 //!
 //! Modifies a function's parameter list (add, remove, reorder) and updates
@@ -16,8 +18,10 @@ use super::signature_helpers::{
 use super::{FileContext, ProjectContext, RefactoringOp};
 
 /// Engine for changing a function signature and updating call sites.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-signature-rs.md#source
 pub struct SignatureEngine;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-signature-rs.md#source
 impl RefactoringOp for SignatureEngine {
     fn apply(
         &self,
@@ -128,3 +132,4 @@ impl RefactoringOp for SignatureEngine {
         Ok(result)
     }
 }
+// CODEGEN-END

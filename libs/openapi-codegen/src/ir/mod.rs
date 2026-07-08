@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-ir-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Language-neutral OpenAPI intermediate representation shared by every emitter:
 //! the document model ([`openapi`]), identifier naming ([`names`]), and the
 //! schema-key → type-name map ([`typemap`]).
@@ -11,3 +13,4 @@ pub mod operations;
 pub mod typemap;
 
 pub use typemap::{build_type_map, TypeMap};
+// CODEGEN-END

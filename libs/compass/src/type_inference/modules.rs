@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-modules-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Module graph for cross-file analysis
 //!
 //! This module provides:
@@ -13,6 +15,7 @@ use super::imports::ModuleInfo;
 
 /// A node in the module graph
 #[derive(Debug, Clone)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-modules-rs.md#source
 pub struct ModuleNode {
     /// Module name (e.g., "mypackage.submodule")
     pub name: String,
@@ -28,6 +31,7 @@ pub struct ModuleNode {
     pub info: Option<ModuleInfo>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-modules-rs.md#source
 impl ModuleNode {
     pub fn new(name: &str) -> Self {
         Self {
@@ -52,6 +56,7 @@ impl ModuleNode {
 
 /// Module dependency graph
 #[derive(Debug, Default)]
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-modules-rs.md#source
 pub struct ModuleGraph {
     /// All modules in the graph
     modules: HashMap<String, ModuleNode>,
@@ -59,6 +64,7 @@ pub struct ModuleGraph {
     roots: HashSet<String>,
 }
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-modules-rs.md#source
 impl ModuleGraph {
     pub fn new() -> Self {
         Self {
@@ -656,3 +662,4 @@ mod tests {
         assert!(!services.imported_by.contains("app"));
     }
 }
+// CODEGEN-END

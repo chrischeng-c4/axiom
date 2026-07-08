@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `<tool> upgrade` — self-update the installed binary from the tool's own
 //! GitHub releases (`<project>@X.Y.Z` tags, `<project>-<target>.tar.gz` assets
 //! with a `.sha256` sidecar, inner layout `<project>-<target>/<project>`).
@@ -12,6 +14,7 @@ use std::io::Read;
 
 /// Flags for an upgrade run.
 #[derive(Clone, Debug, Default)]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub struct Options {
     /// Report current vs latest without changing the binary.
     pub check: bool,
@@ -25,6 +28,7 @@ pub struct Options {
 
 /// Decision after comparing the installed and selected versions.
 #[derive(Debug, PartialEq, Eq)]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub enum Action {
     UpToDate,
     Install,
@@ -32,12 +36,14 @@ pub enum Action {
 
 /// Parse a release tag (`<prefix>X.Y.Z`) into a semver, or `None` if it is not
 /// this tool's tag or not valid semver.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub fn parse_tag(tag: &str, prefix: &str) -> Option<Version> {
     Version::parse(tag.strip_prefix(prefix)?).ok()
 }
 
 /// Pick the `(tag, version)` to install: an exact `pin` (accepting `X.Y.Z` or
 /// `<prefix>X.Y.Z`), else the highest stable (non-prerelease) release.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub fn select_version(
     tags: &[String],
     prefix: &str,
@@ -58,6 +64,7 @@ pub fn select_version(
 
 /// Verify `bytes` hash to the expected sha256 hex digest (case-insensitive;
 /// surrounding whitespace ignored).
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub fn verify_sha256(bytes: &[u8], expected: &str) -> bool {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -75,6 +82,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 /// Extract the inner binary bytes (`<inner_path>`) from a gzip tarball.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub fn extract_binary(tar_gz: &[u8], inner_path: &str) -> Result<Vec<u8>> {
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(tar_gz));
     for entry in archive.entries().context("read tar entries")? {
@@ -94,6 +102,7 @@ pub fn extract_binary(tar_gz: &[u8], inner_path: &str) -> Result<Vec<u8>> {
 }
 
 /// Decide whether to install: a no-op when already on `selected` unless `force`.
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub fn decide_action(current: &Version, selected: &Version, force: bool) -> Action {
     if !force && selected == current {
         Action::UpToDate
@@ -114,6 +123,7 @@ fn check_next_command(tool: &ToolInfo, current: &Version, selected: &Version) ->
 /// Run `<tool> upgrade`. Offline builds (no `online` feature) only support the
 /// install path through a clear error; `--check` still degrades clearly.
 #[cfg(feature = "online")]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
     let prefix = tool.tag_prefix();
     let current = Version::parse(tool.version).context("parse current version")?;
@@ -200,6 +210,7 @@ pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
 
 /// Without the `online` feature the HTTP client is not linked.
 #[cfg(not(feature = "online"))]
+/// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-upgrade-rs.md#source
 pub async fn run(tool: &ToolInfo, opts: Options) -> Result<()> {
     if opts.check {
         println!("current: {}", tool.version);
@@ -351,3 +362,4 @@ mod tests {
         built_at: "1700000000",
     };
 }
+// CODEGEN-END

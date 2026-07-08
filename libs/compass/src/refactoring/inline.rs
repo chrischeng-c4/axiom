@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-inline-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Inline refactoring
 //!
 //! Replaces every reference to a symbol with its definition body, then
@@ -17,8 +19,10 @@ use super::{FileContext, ProjectContext, RefactoringOp};
 // ============================================================================
 
 /// Engine that inlines a variable or simple function.
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-inline-rs.md#source
 pub struct InlineEngine;
 
+/// @spec libs/compass/tech-design/semantic/source/libs-compass-src-refactoring-inline-rs.md#source
 impl RefactoringOp for InlineEngine {
     fn apply(
         &self,
@@ -347,3 +351,4 @@ fn line_col_to_byte(source: &str, line: u32, col: u32) -> usize {
     }
     source.len()
 }
+// CODEGEN-END

@@ -378,6 +378,61 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/lumen/tests"
+      - path: "projects/lumen/tests/generated_clients_crud_e2e.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "LumenServer"
+            kind: "struct"
+            public: false
+          - name: "opts"
+            kind: "function"
+            public: false
+          - name: "unique_temp_dir"
+            kind: "function"
+            public: false
+          - name: "write_output"
+            kind: "function"
+            public: false
+          - name: "command_exists"
+            kind: "function"
+            public: false
+          - name: "generated_python_typescript_and_rust_clients_run_crud_happypath"
+            kind: "function"
+            public: false
+          - name: "generated_python_client_runs_crud_happypath"
+            kind: "function"
+            public: false
+          - name: "generated_typescript_client_runs_crud_happypath"
+            kind: "function"
+            public: false
+          - name: "generated_rust_client_runs_crud_happypath"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/lumen/tests"
+      - path: "projects/lumen/tests/protocol_transport_e2e.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "LumenTransportServer"
+            kind: "struct"
+            public: false
+          - name: "lumen_server_accepts_http1_and_h2c_clients_on_one_socket"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/cli_convention.rs"
         language: "rust"
         ownership_state: "handwrite"
@@ -1531,6 +1586,18 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/lumen/tests/generated_clients_crud_e2e.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
+    impl_mode: codegen
+  - path: "projects/lumen/tests/protocol_transport_e2e.rs"
+    action: modify
+    section: unit-test
+    description: |
+      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
+    impl_mode: codegen
   - path: "projects/lumen/tests/cli_convention.rs"
     action: modify
     section: unit-test

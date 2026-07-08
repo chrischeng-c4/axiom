@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/raft-host/tech-design/semantic/source/libs-raft-host-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `raft-host` — the ecosystem's shared raft driver.
 //!
 //! `libs/raft-core` is the step-driven consensus core; this crate is the **host**
@@ -148,3 +150,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
+// CODEGEN-END

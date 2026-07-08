@@ -1,9 +1,12 @@
+// SPEC-MANAGED: libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Maps an OpenAPI [`Schema`] to a Python type expression (pydantic-flavored).
 
 use crate::ir::openapi::{AdditionalProperties, RefOr, Schema};
 use crate::ir::typemap::TypeMap;
 
 /// Python type expression for a schema (or `$ref`), including `Optional`.
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
 pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap) -> String {
     match node {
         RefOr::Ref(r) => tm
@@ -21,6 +24,7 @@ pub fn type_expr(node: &RefOr<Schema>, tm: &TypeMap) -> String {
 }
 
 /// Wrap in `Optional[...]` unless it already is (or is `Any`/`None`).
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
 pub fn optional(ty: &str) -> String {
     if ty == "Any" || ty == "None" || ty.starts_with("Optional[") {
         ty.to_string()
@@ -50,11 +54,11 @@ fn base_expr(schema: &Schema, tm: &TypeMap) -> String {
 
     let types = schema.type_names();
     if types.len() > 1 {
-        return types
+        let members = types
             .iter()
             .map(|t| scalar(t, schema))
-            .collect::<Vec<_>>()
-            .join(" | ");
+            .collect::<Vec<_>>();
+        return union_expr(members);
     }
 
     match types.first().map(String::as_str) {
@@ -103,6 +107,7 @@ fn array_expr(schema: &Schema, tm: &TypeMap) -> String {
 
 /// Inline object → a typed mapping (pydantic can't synthesize a nested model
 /// inline; `additionalProperties` drives the value type, else `Any`).
+/// @spec libs/openapi-codegen/tech-design/semantic/source/libs-openapi-codegen-src-emit-py-pymap-rs.md#source
 pub fn object_expr(schema: &Schema, tm: &TypeMap) -> String {
     match &schema.additional_properties {
         Some(AdditionalProperties::Schema(s)) => format!("dict[str, {}]", type_expr(s, tm)),
@@ -130,11 +135,21 @@ fn enum_literal(schema: &Schema) -> String {
 }
 
 fn union(items: &[RefOr<Schema>], tm: &TypeMap) -> String {
-    items
+    let members = items
         .iter()
         .map(|i| type_expr(i, tm))
-        .collect::<Vec<_>>()
-        .join(" | ")
+        .collect::<Vec<_>>();
+    union_expr(members)
+}
+
+fn union_expr(members: Vec<String>) -> String {
+    if members.is_empty() {
+        "Any".to_string()
+    } else if members.len() == 1 {
+        members[0].clone()
+    } else {
+        format!("Union[{}]", members.join(", "))
+    }
 }
 
 #[cfg(test)]
@@ -177,5 +192,10 @@ mod tests {
             type_expr(&s(r##"{"type":"string","enum":["a","b"]}"##), &tm()),
             "Literal[\"a\", \"b\"]"
         );
+        assert_eq!(
+            type_expr(&s(r##"{"type":["string","number"]}"##), &tm()),
+            "Union[str, float]"
+        );
     }
 }
+// CODEGEN-END

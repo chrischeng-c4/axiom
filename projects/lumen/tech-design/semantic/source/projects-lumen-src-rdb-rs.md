@@ -48,11 +48,12 @@ Public API manifest for `projects/lumen/src/rdb.rs` generated from AST during Sc
 //! behind the same trait (the bytes and layout are identical, only the
 //! put/get changes).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use service_durability::{FsyncPolicy, SnapshotFileStore};
 
 use crate::storage::{Engine, SnapshotV1};
 
@@ -119,38 +120,16 @@ pub trait RdbStore: Send + Sync {
 #[derive(Debug, Clone)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 pub struct LocalFsRdbStore {
-    root: PathBuf,
+    inner: SnapshotFileStore,
 }
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 impl LocalFsRdbStore {
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
-        std::fs::create_dir_all(&root)
-            .with_context(|| format!("create RDB dir {}", root.display()))?;
-        Ok(Self { root })
-    }
-
-    fn seq_of(path: &Path) -> Option<u64> {
-        path.file_stem()?
-            .to_str()?
-            .strip_prefix("rdb-")?
-            .parse()
-            .ok()
-    }
-
-    fn snapshots(&self) -> Result<Vec<(u64, PathBuf)>> {
-        let mut out = Vec::new();
-        for entry in std::fs::read_dir(&self.root)? {
-            let path = entry?.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("lrb") {
-                if let Some(seq) = Self::seq_of(&path) {
-                    out.push((seq, path));
-                }
-            }
-        }
-        out.sort_by_key(|(seq, _)| *seq);
-        Ok(out)
+        Ok(Self {
+            inner: SnapshotFileStore::new(root, "rdb", "lrb", FsyncPolicy::Always)?,
+        })
     }
 }
 
@@ -159,14 +138,10 @@ impl LocalFsRdbStore {
 impl RdbStore for LocalFsRdbStore {
     async fn save(&self, rdb: &RdbSnapshot) -> Result<()> {
         let bytes = rdb.encode()?;
-        let path = self.root.join(format!("rdb-{}.lrb", rdb.up_to_seq));
-        // Write to a temp file then rename for atomic visibility.
-        let tmp = self.root.join(format!(".rdb-{}.lrb.tmp", rdb.up_to_seq));
-        let (tmp2, path2) = (tmp.clone(), path.clone());
+        let store = self.inner.clone();
+        let seq = rdb.up_to_seq;
         tokio::task::spawn_blocking(move || -> Result<()> {
-            std::fs::write(&tmp2, &bytes).with_context(|| format!("write {}", tmp2.display()))?;
-            std::fs::rename(&tmp2, &path2)
-                .with_context(|| format!("rename to {}", path2.display()))?;
+            store.save(seq, &bytes)?;
             Ok(())
         })
         .await
@@ -175,28 +150,21 @@ impl RdbStore for LocalFsRdbStore {
     }
 
     async fn load_latest(&self) -> Result<Option<RdbSnapshot>> {
-        let Some((_, path)) = self.snapshots()?.into_iter().last() else {
+        let store = self.inner.clone();
+        let Some(bytes) = tokio::task::spawn_blocking(move || store.load_latest())
+            .await
+            .context("spawn_blocking join")??
+        else {
             return Ok(None);
         };
-        let bytes = tokio::task::spawn_blocking(move || std::fs::read(&path))
-            .await
-            .context("spawn_blocking join")??;
         Ok(Some(RdbSnapshot::decode(&bytes)?))
     }
 
     async fn prune(&self, keep: usize) -> Result<usize> {
-        let all = self.snapshots()?;
-        if all.len() <= keep {
-            return Ok(0);
-        }
-        let to_drop = all.len() - keep;
-        let mut removed = 0;
-        for (_, path) in all.into_iter().take(to_drop) {
-            if std::fs::remove_file(&path).is_ok() {
-                removed += 1;
-            }
-        }
-        Ok(removed)
+        let store = self.inner.clone();
+        tokio::task::spawn_blocking(move || store.prune(keep))
+            .await
+            .context("spawn_blocking join")?
     }
 }
 
@@ -295,7 +263,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

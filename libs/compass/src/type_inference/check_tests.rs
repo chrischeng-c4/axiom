@@ -1,3 +1,5 @@
+// SPEC-MANAGED: libs/compass/tech-design/semantic/source/libs-compass-src-type-inference-check-tests-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Tests for type checking
 
 use super::*;
@@ -299,3 +301,4 @@ make_sound(d)
         "Should allow subclass assignment to parent type"
     );
 }
+// CODEGEN-END
