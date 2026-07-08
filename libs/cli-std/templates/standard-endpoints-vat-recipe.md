@@ -5,7 +5,7 @@ baseline capability (`CONTRIBUTING.md` § "Standard endpoints — one
 operational surface, one contract three ways", trait table row
 `standard_endpoints` → baseline cap `standard-operational-endpoints`). Follows
 the meter/guard recipe format already in `apps/relay/vat.toml` /
-`projects/keep/vat.toml`: vat owns the build + workspace isolation, a plain
+`apps/keep/vat.toml`: vat owns the build + workspace isolation, a plain
 curl-based probe script is the assertion, and one `aw.toml` `ec.*` binding
 wires it into `aw ec check` / `aw health --verify-ec`.
 

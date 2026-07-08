@@ -422,16 +422,16 @@ codegen.profile = "rust/score-crate"
 
 [[projects]]
 name = "keep"
-path = "projects/keep"
-td_path = "projects/keep/tech-design"
-cap_path = "projects/keep/README.md"
+path = "apps/keep"
+td_path = ".aw/tech-design/projects/keep"
+cap_path = "apps/keep/README.md"
 label = "project:keep"
-ec.efficiency = { tool = "meter", meter = "projects/keep", command = "cd projects/keep && ../../target/debug/vat run meter-efficiency" }
-ec.security = { tool = "guard", dir = "projects/keep", command = "cd projects/keep && ../../target/debug/vat run guard-security" }
+ec.efficiency = { tool = "meter", meter = "apps/keep", command = "cd apps/keep && ../../target/debug/vat run meter-efficiency" }
+ec.security = { tool = "guard", dir = "apps/keep", command = "cd apps/keep && ../../target/debug/vat run guard-security" }
 
 [[projects.workspaces]]
 name = "keep"
-paths = ["projects/keep/**"]
+paths = ["apps/keep/**", ".aw/tech-design/projects/keep/**"]
 target = "rust"
 test_cmd = "cargo test -p keep"
 verify_cold = true
