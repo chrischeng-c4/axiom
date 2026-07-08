@@ -475,12 +475,19 @@ unsafe extern "C" fn m_runcall(self_v: MbValue, args: MbValue) -> MbValue {
 // ── module-level constructors / functions (flat `(args_ptr, nargs)` ABI —
 //    the convention `mb_call_spread`'s native fast path recognizes) ──
 
-unsafe extern "C" fn dispatch_profile_new(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_profile_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     crate::icf_guard!();
     // Profile(timer=None, timeunit=0.0, subcalls=True, builtins=True) — a
     // deterministic wall-clock profiler has no pluggable timer, so the
-    // constructor args are accepted (for call-signature compatibility) and
-    // ignored.
+    // timer itself is not invoked, but the public `profile.Profile`
+    // contract still requires it to be callable or None.
+    if nargs > 0 && !args_ptr.is_null() {
+        let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        let timer = args.first().copied().unwrap_or_else(MbValue::none);
+        if !timer.is_none() && super::super::builtins::mb_callable(timer).as_bool() != Some(true) {
+            return raise_type_error("profile.Profile timer must be callable or None");
+        }
+    }
     let id = alloc_profiler_id();
     new_profile_instance("Profile", id)
 }
