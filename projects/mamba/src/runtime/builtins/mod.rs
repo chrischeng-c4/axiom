@@ -31,6 +31,7 @@ mod map_filter;
 mod memoryview;
 mod numeric_format;
 mod object_identity;
+mod operand_type_name;
 mod power;
 mod range_slice;
 mod set_constructors;
@@ -83,6 +84,7 @@ pub use map_filter::{
 pub use memoryview::mb_memoryview;
 pub use numeric_format::{mb_divmod, mb_format, mb_round};
 pub use object_identity::mb_id;
+pub(crate) use operand_type_name::add_operand_type_name;
 pub use power::{mb_pow, mb_pow_mod};
 pub use range_slice::{
     mb_range, mb_range_2, mb_range_3, mb_range_no_args, mb_range_too_many_args, mb_slice,
@@ -1809,41 +1811,6 @@ pub(crate) fn complex_cmp_dunder(method: &str, a: MbValue, b: MbValue) -> Option
         "__lt__" | "__le__" | "__gt__" | "__ge__" => Some(MbValue::not_implemented()),
         _ => None,
     }
-}
-
-/// Arithmetic helpers used by compiled code.
-/// Best-effort Python type name of an operand, for `+` TypeError messages.
-fn add_operand_type_name(v: MbValue) -> &'static str {
-    if v.is_int() {
-        return "int";
-    }
-    if v.is_float() {
-        return "float";
-    }
-    if v.is_bool() {
-        return "bool";
-    }
-    if v.is_none() {
-        return "NoneType";
-    }
-    if let Some(ptr) = v.as_ptr() {
-        unsafe {
-            return match &(*ptr).data {
-                ObjData::Str(_) => "str",
-                ObjData::List(_) => "list",
-                ObjData::Dict(_) => "dict",
-                ObjData::Tuple(_) => "tuple",
-                ObjData::Set(_) => "set",
-                ObjData::FrozenSet(_) => "frozenset",
-                ObjData::Bytes(_) => "bytes",
-                ObjData::ByteArray(_) => "bytearray",
-                ObjData::BigInt(_) => "int",
-                ObjData::Complex(_, _) => "complex",
-                _ => "object",
-            };
-        }
-    }
-    "object"
 }
 
 fn is_array_handle_value(v: MbValue) -> bool {
