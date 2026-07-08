@@ -237,4 +237,5 @@ Gate Inventory:
 | Managed and semantic production gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib semantic_coverage_prioritizes_missing_td_before_generator_gap` |
 | Traceability closure gate | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib traceability` covers command, TD, source, and CB closure |
 | CB and cold verification gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_cold_rebuild_targets_include_codegen_changes` |
+| Shared service kit substrate | change | #1241 | planned | planned | none | projects/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md |
 | Regenerability maturity loop (optional) | epic | - | out_of_scope | none | none | - |

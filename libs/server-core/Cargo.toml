@@ -1,0 +1,14 @@
+[package]
+name = "server-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared server substrate: bind config, drain/readiness signals, connection budgets, shutdown hooks, and metrics hooks for TCP, HTTP, and k8s-native service runtimes."
+
+[lib]
+name = "server_core"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
