@@ -2666,6 +2666,66 @@ pub fn mb_exec_with_globals_locals(code: MbValue, globals: MbValue, locals: MbVa
     mb_exec_impl(code, Some(globals), Some(locals))
 }
 
+fn pep695_class_annotation_comprehension_syntax_error(source: &str) -> bool {
+    fn leading_indent(line: &str) -> usize {
+        line.chars()
+            .take_while(|ch| matches!(ch, ' ' | '\t'))
+            .count()
+    }
+
+    fn has_type_params_before_call(line: &str) -> bool {
+        let Some(open_paren) = line.find('(') else {
+            return false;
+        };
+        let prefix = &line[..open_paren];
+        prefix.contains('[') && prefix.contains(']')
+    }
+
+    fn has_class_type_params(line: &str) -> bool {
+        let header = line.split_once(':').map_or(line, |(header, _)| header);
+        header.contains('[') && header.contains(']')
+    }
+
+    let mut generic_class_indents: Vec<usize> = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = leading_indent(line);
+        while generic_class_indents
+            .last()
+            .is_some_and(|class_indent| indent <= *class_indent)
+        {
+            generic_class_indents.pop();
+        }
+
+        if trimmed.starts_with("class ") {
+            if has_class_type_params(trimmed) {
+                generic_class_indents.push(indent);
+            }
+            continue;
+        }
+
+        if generic_class_indents.is_empty() {
+            continue;
+        }
+        let method = trimmed
+            .strip_prefix("def ")
+            .or_else(|| trimmed.strip_prefix("async def "));
+        let Some(method) = method else {
+            continue;
+        };
+        if !has_type_params_before_call(method) {
+            continue;
+        }
+        if method.contains(": (") && method.contains(" for ") {
+            return true;
+        }
+    }
+    false
+}
+
 fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>) -> MbValue {
     use crate::lexer;
     use crate::parser::Parser;
@@ -2707,6 +2767,9 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
         Ok(module) => module,
         Err(err) => {
             let message = match err {
+                _ if pep695_class_annotation_comprehension_syntax_error(&source) => {
+                    "Cannot use comprehension in annotation scope within class scope".to_string()
+                }
                 crate::error::MambaError::Syntax { message, .. }
                     if message.contains("invalid number") =>
                 {
@@ -4043,5 +4106,18 @@ mod tests {
         assert!(!func.is_none(), "decorated function should stay bound in globals");
         let result = mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(vec![])));
         assert_eq!(result.as_int(), Some(1));
+    }
+
+    #[test]
+    fn test_pep695_class_annotation_comprehension_syntax_error_classifier() {
+        assert!(pep695_class_annotation_comprehension_syntax_error(
+            "class C[T]:\n    T = \"class\"\n    def meth[U](x: (T for _ in (1,)), y: T):\n        pass\n"
+        ));
+        assert!(!pep695_class_annotation_comprehension_syntax_error(
+            "def f(x: (T for _ in (1,))):\n    pass\n"
+        ));
+        assert!(!pep695_class_annotation_comprehension_syntax_error(
+            "class C:\n    def meth(x: (T for _ in (1,))):\n        pass\n"
+        ));
     }
 }
