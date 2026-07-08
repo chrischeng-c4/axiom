@@ -24,7 +24,7 @@ user asks whether a project is healthy, production-ready, blocked, or why
    - `project-<token>` -> run `aw health --project <token>`.
    - Example: branch `project-aw` -> `aw health --project aw`.
 3. If the inferred token is rejected as an unknown project, read
-   `.aw/config.toml` and resolve the token against `[[projects]].name` and
+   `aw.toml` and resolve the token against `[[projects]].name` and
    `[[projects]].aliases`, then rerun with the matching project name.
 4. If the branch is not `project-<token>` and the user did not provide a
    project, stop and ask for the project name.

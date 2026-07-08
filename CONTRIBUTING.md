@@ -673,12 +673,12 @@ be present. A `next` that doesn't resolve against the binary's own `--help`
 is worse than no `next` at all.
 
 The reference implementation is `aw`'s `aw.cli.v1` envelope
-(`projects/agentic-workflow/src/runtime/envelope.rs`): `invoke.command` names
+(`apps/agentic-workflow/src/runtime/envelope.rs`): `invoke.command` names
 the command an agent runs next, `next.command` carries the workflow loop's
 next step, and `completion.workflow_complete=true` is the only terminal
 marker — `action=done` on one child root is not workflow completion by
 itself. Executability is enforced, not just documented:
-`projects/agentic-workflow/src/cli/chain.rs`
+`apps/agentic-workflow/src/cli/chain.rs`
 (`validate_aw_command_string` + the `EMIT_REGISTRY` catalogue of every
 command-emitting site) re-parses each emitted string through the real
 `Commands` clap tree plus a chain-policy table of positionals that are
@@ -718,14 +718,16 @@ agent how to operate in this checkout. The only live root meta docs are:
 | `AGENTS.md` | repo-level agent operating manual for Codex; generated/mirrored from `CLAUDE.md` plus Codex-only inserts |
 | `LICENSE` | legal license text; the only root uppercase meta file without a `.md` extension |
 
-**Project layer** is for one project's product contract and scoped local
-conventions. Allowed project-layer meta docs are:
+**Project/app layer** is for one deliverable's product contract and scoped
+local conventions. `apps/<name>` is for app-facing binaries/services; legacy
+and library-like deliverables may still live under `projects/<name>`. Allowed
+project/app-layer meta docs are:
 
 | Doc | Ownership |
 |-----|-----------|
-| `projects/<name>/README.md` | fixed orientation shell: `## Brief`, `## Contributing`, and `## Capability Contract`; the latter two include a short brief extracted from the linked project-layer docs |
-| `projects/<name>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules that are too specific for this repo-wide file; must include `## Brief` |
-| `projects/<name>/CAPABILITIES.md` | project capability contract using the canonical capability schema; must include `## Brief`; README links here rather than restating the full contract |
+| `apps/<name>/README.md` or `projects/<name>/README.md` | fixed orientation shell: `## Brief`, `## Contributing`, and `## Capability Contract`; the latter two include a short brief extracted from the linked project/app-layer docs |
+| `apps/<name>/CONTRIBUTING.md` or `projects/<name>/CONTRIBUTING.md` | local authoring, verification, migration, and contribution rules that are too specific for this repo-wide file; must include `## Brief` |
+| `apps/<name>/CAPABILITIES.md` or `projects/<name>/CAPABILITIES.md` | capability contract using the canonical capability schema; must include `## Brief`; README links here rather than restating the full contract |
 | scoped convention docs | only when placed next to the tree they govern, e.g. test fixture layout rules under the fixture tree |
 | generated evidence/docs | only when backed by an explicit producer, validator, or policy-only marker |
 
@@ -734,7 +736,8 @@ this project promising?", "where is the source of truth?", "what am I allowed
 to edit?", and "how do I prove the change?" without making the agent read a
 full design book.
 
-`projects/<name>/CAPABILITIES.md` is the product contract. It is hierarchical:
+`apps/<name>/CAPABILITIES.md` / `projects/<name>/CAPABILITIES.md` is the
+product contract. It is hierarchical:
 a top-level capability may be a product area, a narrower capability may be a
 feature or surface, and the smallest useful capability may be one API endpoint,
 CLI command, event, background job, or documented behavior if it can be
@@ -761,10 +764,10 @@ independent verification: if an agent can build, test, or close it separately,
 it is allowed to be a capability. Private implementation details stay out
 unless they are user-visible, release-blocking, or needed as named evidence.
 
-`projects/<name>/CONTRIBUTING.md` is the project-local operating guide. It
-does not restate root authoring rules and does not carry product promises that
-belong in CAPABILITIES. It explains how an agent safely changes this project.
-The required shape is:
+`apps/<name>/CONTRIBUTING.md` / `projects/<name>/CONTRIBUTING.md` is the local
+operating guide. It does not restate root authoring rules and does not carry
+product promises that belong in CAPABILITIES. It explains how an agent safely
+changes this deliverable. The required shape is:
 
 - `# <Project> Contributing`
 - `## Brief` — one to three sentences, copied into the project README's
@@ -809,8 +812,9 @@ Enforcement, so this is a contract and not a reminder:
   as they are wired.
 - The repo-root doc allowlist test — the root carries only the doc files this
   contract names; a stray file is a defect, not a new home.
-- The project-layer agent-doc test — `projects/**/{CLAUDE,AGENTS}.md` is
-  forbidden except for declared template-source files.
+- The project/app-layer agent-doc test — `apps/**/{CLAUDE,AGENTS}.md` and
+  `projects/**/{CLAUDE,AGENTS}.md` are forbidden except for declared
+  template-source files.
 - `root_doc_mirror_test` — CLAUDE and AGENTS stay one document in two
   agent-runtime flavors via an explicit whitelist, not freehand divergence.
 - `aw capability check` plus rule R7g — a project's README-owned capability
@@ -831,7 +835,7 @@ diagram are CLI-rendered projections; prose-only payloads remain Markdown.
 Every project build skill and project `build.sh` must use the same two-mode
 contract. The agent-facing entry points are `<project>:build:debug` and
 `<project>:build:release`; the generic dispatcher is `aw:build:{debug,release}`
-using the project entry in `.aw/config.toml`.
+using the project entry in `aw.toml`.
 
 ### Debug builds
 

@@ -1,1 +1,0 @@
-#998 Add native stdlib: __main__ — top-level script environment. Simple module that sets __name__ = __main__ for script execution context. Crate: cclab-mamba

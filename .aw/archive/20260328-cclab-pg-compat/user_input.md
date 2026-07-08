@@ -1,1 +1,0 @@
-Complete cclab.pg compat layer — add Connection, Pool, create_pool, session_factory, get_session, Migration, run_migrations re-exports so Conductor real backend can run without direct sqlalchemy imports

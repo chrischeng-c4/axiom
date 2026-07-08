@@ -58,7 +58,7 @@ the CRRR collapse but DO self-heal via `td_phase::normalize` at every
 issue-read site, so they remain safe, documented resume states even though
 you should rarely observe them directly.
 
-3. For phases that need the spec_path, find it by scanning `projects/agentic-workflow/tech-design/` in the current checkout for `.md` files with `fill_sections` in their frontmatter.
+3. For phases that need the spec_path, find it by scanning `apps/agentic-workflow/tech-design/` in the current checkout for `.md` files with `fill_sections` in their frontmatter.
 
 4. Run the mainthread loop directly from the envelope protocol in `AGENTS.md`.
    Do not author status updates by hand; the CLI updates WI projection and git

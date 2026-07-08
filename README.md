@@ -9,7 +9,7 @@ details.
 <!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
-| [agentic-workflow](projects/agentic-workflow/README.md) | Workflow protocol and CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle execution, and production-readiness rollup. |
+| [agentic-workflow](apps/agentic-workflow/README.md) | Workflow protocol and CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle execution, and production-readiness rollup. |
 | [cap](projects/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
 | [vat](projects/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
 | [loom](projects/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
@@ -68,7 +68,7 @@ an installer yet are marked _coming soon_.
 
 | Project | Binary | Install |
 |---------|--------|---------|
-| [agentic-workflow](projects/agentic-workflow/README.md) | `aw` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/agentic-workflow/install.sh \| sh` |
+| [agentic-workflow](apps/agentic-workflow/README.md) | `aw` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/agentic-workflow/install.sh \| sh` |
 | [arena](projects/arena/README.md) | `arena` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/arena/install.sh \| sh` |
 | [cap](projects/cap/README.md) | `cap` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/cap/install.sh \| sh` |
 | [guard](projects/guard/README.md) | `guard` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/guard/install.sh \| sh` |

@@ -1,1 +1,0 @@
-feat(sdd): session-based project isolation for shared HTTP MCP server #484

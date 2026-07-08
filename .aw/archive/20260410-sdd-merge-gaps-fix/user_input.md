@@ -1,1 +1,0 @@
-Fix 3 merge gaps: auto-PR, issue close matching, commit sha reporting #bug-sdd-merge-gaps-autopr-issue-close-commit-sha

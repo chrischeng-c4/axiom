@@ -14,7 +14,7 @@
 //!
 //! ## Consumers
 //!
-//! - `projects/agentic-workflow/` — local Rust CLI (direct dependency)
+//! - `apps/agentic-workflow/` — local Rust CLI (direct dependency)
 //! - `projects/conductor/` — cloud web
 //! - `sdd` — library crate re-exports compass for backward compat
 

@@ -1,1 +1,0 @@
-Fix gen apply parser to accept both path: and file: in ## Changes YAML #bug-score-gen-apply-expects-path-but-specs-use-file-si

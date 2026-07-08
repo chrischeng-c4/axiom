@@ -1,1 +1,0 @@
-Wire score init command and bootstrap .claude agents/hooks/skills #enhancement-score-init-command-bootstrap-claude-assets

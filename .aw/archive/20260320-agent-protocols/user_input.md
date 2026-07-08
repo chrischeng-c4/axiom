@@ -1,1 +1,0 @@
-feat(agent): add protocols module — domain contracts (IssueProtocol, SpecProtocol, ChangeProtocol, ProjectProtocol, CodeIndexProtocol) for all 5 SDD domains. Agents operate on these types. Consumers map their ORM to/from protocols. #958

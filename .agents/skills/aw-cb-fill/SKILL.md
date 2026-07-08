@@ -21,9 +21,9 @@ per-marker fill loop → `aw td code-check`.
 > and writes deterministic git trailers. There is no `Agent(subagent_type=...)`
 > dispatch anywhere in this loop.
 
-@spec projects/agentic-workflow/tech-design/surface/specs/aw-cb-fill-crrr.md
-@spec projects/agentic-workflow/tech-design/surface/specs/aw-mainthread-only-execution.md
-@spec projects/agentic-workflow/tech-design/surface/specs/aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
+@spec apps/agentic-workflow/tech-design/surface/specs/aw-cb-fill-crrr.md
+@spec apps/agentic-workflow/tech-design/surface/specs/aw-mainthread-only-execution.md
+@spec apps/agentic-workflow/tech-design/surface/specs/aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
 
 ## Usage
 
