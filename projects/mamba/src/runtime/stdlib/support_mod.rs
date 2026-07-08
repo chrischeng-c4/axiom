@@ -73,6 +73,30 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+fn dedent_run_code(source: &str) -> String {
+    let indent = source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            line.chars()
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .count()
+        })
+        .min()
+        .unwrap_or(0);
+    source
+        .lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                line.chars().skip(indent).collect::<String>()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn dict_get_kw(dict: MbValue, key: &str) -> Option<MbValue> {
     dict.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -107,6 +131,19 @@ unsafe extern "C" fn dispatch_identity(args: *const MbValue, n: usize) -> MbValu
 /// the import-unblock goal.
 unsafe extern "C" fn dispatch_empty_iter(_args: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
+}
+
+/// `test.support.run_code(code)` — dedent and exec the snippet into a fresh
+/// namespace dict, returning that namespace like CPython's helper.
+unsafe extern "C" fn dispatch_run_code(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    let Some(source) = a.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    let ns = super::super::dict_ops::mb_dict_new();
+    let code = MbValue::from_ptr(MbObject::new_str(dedent_run_code(&source)));
+    let _ = super::super::builtins::mb_exec_with_globals(code, ns);
+    ns
 }
 
 /// `test.support.findfile(name, subdir=...)` for CPython stdlib test data.
@@ -379,6 +416,7 @@ pub fn register() {
     let noop = func(dispatch_noop as usize);
     let identity = func(dispatch_identity as usize);
     let empty_iter = func(dispatch_empty_iter as usize);
+    let run_code = func(dispatch_run_code as usize);
     let import_module = func(dispatch_import_module as usize);
     let findfile = func(dispatch_findfile as usize);
     let captured_out = func(dispatch_captured_stdout as usize);
@@ -407,6 +445,7 @@ pub fn register() {
             // mode, so keep the predicate false and let tests reach their body.
             ("has_no_debug_ranges", MbValue::from_bool(false)),
             ("findfile", findfile),
+            ("run_code", run_code),
             // Make the top-level captured_* match the real context-manager behavior:
             // __enter__ pushes a StringIO onto the stdout/stderr redirect stack so
             // print() inside the block is captured, and yields it for getvalue().

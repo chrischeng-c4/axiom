@@ -8629,6 +8629,45 @@ def f():
         assert_eq!(y.as_int(), Some(15));
     }
 
+    #[test]
+    fn test_exec_runs_pep695_function_attr_assignment() {
+        crate::runtime::exception::mb_clear_exception();
+        let code = mb_compile(
+            make_str(
+                "def func[A]():\n    pass\nfunc.__type_params__ = ()\nparams = func.__type_params__\n",
+            ),
+            make_str("<test>"),
+            make_str("exec"),
+        );
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(code, globals);
+        let params =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("params"), MbValue::none());
+        assert!(extract_items(params).is_empty());
+        crate::runtime::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_exec_runs_pep695_class_binding_and_attr_assignment() {
+        crate::runtime::exception::mb_clear_exception();
+        let code = mb_compile(
+            make_str(
+                "class ClassA[A]():\n    pass\nClassA.__type_params__ = ()\nparams = ClassA.__type_params__\n",
+            ),
+            make_str("<test>"),
+            make_str("exec"),
+        );
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(code, globals);
+        let class_a =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("ClassA"), MbValue::none());
+        let params =
+            crate::runtime::dict_ops::mb_dict_get(globals, make_str("params"), MbValue::none());
+        assert!(!class_a.is_none());
+        assert!(extract_items(params).is_empty());
+        crate::runtime::exception::mb_clear_exception();
+    }
+
     /// AC2b: compile("x = 1", "<test>", "eval") raises SyntaxError.
     #[test]
     fn test_compile_eval_rejects_statement() {
