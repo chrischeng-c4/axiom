@@ -843,7 +843,7 @@ pub async fn info(State(st): State<AppState>) -> Json<InfoResponse> {
 }
 
 /// Cluster topology + sharding view. Clients route a key with
-/// `crc32(key) % shard_count -> shard -> node` (see HA.md).
+/// `crc32(key) % shard_count -> shard -> node` (see the HA / Raft capability).
 #[utoipa::path(
     get,
     path = "/cluster",

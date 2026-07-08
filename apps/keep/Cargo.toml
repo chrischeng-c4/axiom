@@ -103,7 +103,7 @@ default = []
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
 client = ["dep:reqwest", "dep:h2c", "rustls-provider"]
 # raft — raft-host-backed consensus (HA phase C; per-shard hosts + h2c peer
-# transport; see HA.md). raft-host is always linked for topology derivation.
+# transport; see the keep HA / Raft capability). raft-host is always linked for topology derivation.
 raft = ["rustls-provider"]
 # Online (HTTPS) paths of the standard CLI ops (#471): `upgrade` self-install +
 # `issue` search/view/create. Offline paths (llm, `upgrade --check`, `issue

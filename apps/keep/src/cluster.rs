@@ -5,7 +5,8 @@
 //! nodes; a client routes a key with `crc32(key) % shard_count -> shard ->
 //! node`. This module is the addressing/membership substrate that both the
 //! client-routing story and a future raft consensus layer build on. It does NOT
-//! itself replicate or coordinate — that's phase C (see HA.md).
+//! itself replicate or coordinate — that's phase C (see the keep HA / Raft
+//! capability and TD roadmap).
 //!
 //! Single-node default (node_count = 1): one node owns every shard.
 

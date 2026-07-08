@@ -1,4 +1,10 @@
-# keep perf-gate (#126)
+---
+id: keep-meter-performance-gates
+summary: Keep meter-owned engine throughput and server resource gates, including commands, thresholds, and reference baselines for capability keep:competitor-performance.
+fill_sections: [tool-contract, e2e-test]
+---
+
+# EC: Keep Meter Performance Gates (#126)
 
 Two complementary gates, both driven by `meter` (the workspace's resource
 measurement tool). One guards **engine throughput** (regressions in the store

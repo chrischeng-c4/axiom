@@ -15,7 +15,8 @@
 //!
 //! This replaces the earlier hand-rolled `RaftKv`/`ShardedRaft` glue (a
 //! single-node-only `raft_core` group with no transport); the routing shell
-//! ([`ClusterConfig`]) is unchanged. See HA.md.
+//! ([`ClusterConfig`]) is unchanged. See the keep HA / Raft capability and TD
+//! roadmap.
 
 use std::collections::HashMap;
 use std::path::Path;

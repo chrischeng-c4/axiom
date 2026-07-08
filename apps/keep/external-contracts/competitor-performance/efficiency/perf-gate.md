@@ -11,6 +11,10 @@ The current vat runner delegates through meter and keeps the transient benchmark
 workspace isolated. Redis/Dragonfly comparison remains a dogfood work root until
 the external services are part of the required gate.
 
+Gate commands, thresholds, reference baselines, and the Redis/Dragonfly dogfood
+boundary are preserved in
+[`meter-performance-gates.md`](meter-performance-gates.md).
+
 ## External Contract
 <!-- type: e2e-test lang: yaml -->
 

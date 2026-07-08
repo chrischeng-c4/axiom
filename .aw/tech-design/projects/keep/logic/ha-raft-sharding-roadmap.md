@@ -1,8 +1,15 @@
-# keep — high availability (#121)
+---
+id: keep-ha-raft-sharding-roadmap
+summary: Keep HA sharding and raft rollout design, preserving the phase plan behind capability keep:ha-raft and keep:primary-replicas.
+fill_sections: [logic, e2e-test]
+---
 
-HA lands in phases. **Phase A is implemented** (this commit); B and C are the
-staged plan. The phases share one substrate: node identity + the keyspace split
-(`src/cluster.rs`).
+# TD: Keep HA / Raft Sharding Roadmap (#121)
+
+HA lands in phases. **Phase A is implemented**; Phase C's raft-host substrate
+and HTTP write propose path are implemented behind the `raft` feature; the
+remaining staged work is failover/read-consistency hardening. The phases share
+one substrate: node identity + the keyspace split (`src/cluster.rs`).
 
 ## Phase A — sharded scale-out (DONE)
 
@@ -34,45 +41,46 @@ bounded-staleness reads. Failover = promote a replica. Cheap, but a crash loses
 the unreplicated tail → does **not** meet #114 "durable before ack" under node
 loss. A middle ground, optional.
 
-## Phase C — raft / quorum via `raftcore` (per-shard groups)
+## Phase C — raft / quorum via `raft-host` (per-shard groups)
 
-**Consensus core + per-shard structure: DONE** (behind the `raft` feature,
-`src/raft.rs`). keep now uses the shared **`raftcore`** crate (`libs/raftcore`,
-serde-only) — the same verified, k8s-failover-tested engine relay uses —
-**replacing openraft** (the heavy `openraft` dependency is gone). Proven by
-`tests/raft_node.rs` (`cargo test -p keep --features raft`). What's implemented:
+**Consensus core + per-shard structure: implemented** (behind the `raft`
+feature, `src/raft.rs`). keep uses the shared **`raft-host`** driver over
+`raft-core`, with h2c peer transport, snapshots, compaction, and read-your-write
+`propose`. Proven by `tests/raft_node.rs` and the feature-gated HTTP API raft
+replication test (`cargo test -p keep --features raft`). What's implemented:
 
 - **Command = `WalOp`** (the logical mutation — same type the WAL/recovery use),
   serialized as the Raft log entry; `Response { applied }`.
-- **`RaftKv`** — one raftcore group fronting the engine. `write()` proposes →
-  commits → applies via `RecoveryManager::apply_one` (the exact WAL-replay path).
-  `snapshot()` dumps the engine (`KvEngine::dump_values`) and `compact`s the log;
-  a follower that has fallen behind is shipped the snapshot (InstallSnapshot) and
-  loads it via `load_values` — so a lagging/new replica never replays full history.
-- **`ShardedRaft`** — **one raft group per owned shard** (`cluster.owned_shards()`):
-  a write routes by `crc32(key) % shard_count → shard → group`, so each shard is
-  its own independently-replicated consensus group (the natural fit for Phase A's
-  keyspace split). Single node = one sole-voter group per shard.
-- voter/learner membership comes from `raftcore::auto_membership` (odd voter set;
-  the trailing even node is a read-only learner).
+- **`KvStateMachine`** — one raft state machine fronting a shard of the engine.
+  `ShardHosts::write()` proposes → commits → applies via
+  `RecoveryManager::apply_one` (the exact WAL-replay path). `snapshot()` dumps
+  the engine (`KvEngine::dump_values`) and filters to the shard keyspace; a
+  follower that has fallen behind is shipped the snapshot (InstallSnapshot) and
+  loads it via `load_values`.
+- **`ShardHosts`** — one `RaftHost` per shard group hosted by this node. A write
+  routes by `crc32(key) % shard_count → shard → group`, so each shard is its own
+  independently replicated consensus group. In replica mode, every participating
+  replica node hosts the shard group; single node = one sole-voter group per
+  shard.
+- **HTTP write path** — replica-mode `AppState` carries `ShardHosts`; data-plane
+  mutations are encoded as `WalOp` and routed through `host.propose` before the
+  handler acknowledges. Default/single-node mode keeps the direct engine path.
+- voter/learner membership comes from the StatefulSet-derived topology and
+  `raft-host` membership wiring.
 
-**Remaining (the multi-node networking slice):**
-1. **h2c driver** — feed each group's `handle`/`take_outgoing`/`tick` over HTTP/2
-   (`/raft/*` POSTs to `ClusterConfig::peers`), mirroring relay's `raft_driver`.
-   raftcore already emits AppendEntries/RequestVote/InstallSnapshot; this wires the
-   transport + the tick/flush loop + persistence (`raftcore::PersistedState`).
-2. **Durable raft log** — back `PersistedState` with keep's on-disk WAL so the
-   public write path moves from `engine.set → log_wal` to `raft write`;
-   durable-before-ack becomes replicated-and-fsynced-before-ack (strictly stronger).
-3. **Membership / discovery** — derive voters from the StatefulSet ordinal set
-   (`keep-<i>.keep-headless`); promote/demote on scale.
-4. **Reads** — leader reads + bounded-lag follower reads via `x-read-consistency`.
+**Remaining staged work:**
+1. **Failover gate** — promote a surviving replica under real process loss and
+   prove committed data survives under the service-level HTTP path.
+2. **Read consistency** — leader reads + bounded-lag follower reads via
+   `x-read-consistency`.
+3. **Membership changes** — promote/demote on scale events beyond the initial
+   StatefulSet ordinal-derived set (`keep-<i>.keep-headless`).
 
-The consensus core, per-shard structure, snapshot/compaction, and apply path are
-done + validated; the multi-node h2c driver reuses the pattern relay already
-proved on a real kind cluster.
+The consensus core, per-shard structure, peer transport, snapshot/compaction,
+apply path, and HTTP write propose path are implemented + validated. The
+remaining slice is service-level failover/read-consistency hardening.
 
-### Original design notes (openraft 0.9)
+### Original design notes (historical openraft 0.9 sketch)
 
 1. **TypeConfig** (`declare_raft_types!`): node id = pod ordinal; request =
    `Command` (an enum mirroring `WalOp` — the existing logical mutations);
@@ -99,8 +107,8 @@ proved on a real kind cluster.
 6. **Reads**: leader reads by default; bounded-lag follower reads via a
    `x-read-consistency` header (mirror lumen's `ReadConsistency`).
 
-**Why staged, not done here:** (3) reworks the durability/write path that the WAL
-+ durable-before-ack commits just hardened, and correctness can only be trusted
-with a multi-node test harness (partition / leader-loss / log-truncation cases).
-Rushing it would risk the durability guarantees already shipped. Phase A is the
-safe, useful, non-breaking increment; C is a dedicated effort on top of it.
+**Current staged risk:** the raft-host substrate and HTTP write propose path are
+implemented, but service-level failover and read-consistency semantics still
+need the dedicated multi-process harness for partition, leader-loss, and
+log-truncation cases. Those gates remain tracked under the HA / Raft and Primary
+Replicas capability work roots.
