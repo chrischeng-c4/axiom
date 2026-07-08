@@ -115,6 +115,8 @@ dispatch_varargs!(dispatch_readlink, mb_os_readlink_v);
 dispatch_varargs!(dispatch_mkfifo, mb_os_mkfifo_v);
 dispatch_varargs!(dispatch_w_predicate_false, mb_os_w_predicate_false);
 dispatch_varargs!(dispatch_w_zero, mb_os_w_zero);
+dispatch_varargs!(dispatch_fdopen, mb_os_fdopen_v);
+dispatch_varargs!(dispatch_spawnv, mb_os_spawnv_v);
 dispatch_varargs!(dispatch_get_exec_path, mb_os_get_exec_path);
 dispatch_varargs!(dispatch_makedirs_v, mb_os_makedirs_v);
 dispatch_varargs!(dispatch_removedirs_v, mb_os_removedirs_v);
@@ -671,7 +673,7 @@ pub fn register() {
         ("pwrite", dispatch_w_zero as *const () as usize),
         ("preadv", dispatch_w_zero as *const () as usize),
         ("pwritev", dispatch_w_zero as *const () as usize),
-        ("fdopen", dispatch_noop_none as *const () as usize),
+        ("fdopen", dispatch_fdopen as *const () as usize),
         ("pipe", dispatch_pipe as *const () as usize),
         ("openpty", dispatch_noop_none as *const () as usize),
         ("device_encoding", dispatch_noop_none as *const () as usize),
@@ -760,10 +762,10 @@ pub fn register() {
         ("spawnle", dispatch_w_zero as *const () as usize),
         ("spawnlp", dispatch_w_zero as *const () as usize),
         ("spawnlpe", dispatch_w_zero as *const () as usize),
-        ("spawnv", dispatch_w_zero as *const () as usize),
-        ("spawnve", dispatch_w_zero as *const () as usize),
-        ("spawnvp", dispatch_w_zero as *const () as usize),
-        ("spawnvpe", dispatch_w_zero as *const () as usize),
+        ("spawnv", dispatch_spawnv as *const () as usize),
+        ("spawnve", dispatch_spawnv as *const () as usize),
+        ("spawnvp", dispatch_spawnv as *const () as usize),
+        ("spawnvpe", dispatch_spawnv as *const () as usize),
         ("popen", dispatch_noop_none as *const () as usize),
         // Type-like callables (presence + callable()).
         ("DirEntry", dispatch_DirEntry as *const () as usize),
@@ -2825,6 +2827,29 @@ fn mb_os_w_predicate_false(_args: &[MbValue]) -> MbValue {
     MbValue::from_bool(false)
 }
 fn mb_os_w_zero(_args: &[MbValue]) -> MbValue {
+    MbValue::from_int(0)
+}
+
+fn require_int_arg(args: &[MbValue], idx: usize, name: &str) -> Option<MbValue> {
+    if let Some(value) = args.get(idx) {
+        if value.as_int_pyint().is_none() {
+            return Some(raise("TypeError", format!("an integer is required for {name}")));
+        }
+    }
+    None
+}
+
+fn mb_os_fdopen_v(args: &[MbValue]) -> MbValue {
+    if let Some(err) = require_int_arg(args, 0, "fd") {
+        return err;
+    }
+    MbValue::none()
+}
+
+fn mb_os_spawnv_v(args: &[MbValue]) -> MbValue {
+    if let Some(err) = require_int_arg(args, 0, "mode") {
+        return err;
+    }
     MbValue::from_int(0)
 }
 
