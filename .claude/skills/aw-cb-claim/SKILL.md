@@ -8,7 +8,7 @@ user-invocable: true
 
 Adopt existing source code into the Agentic Workflow lifecycle. `aw td code-claim`
 runs the fillback pipeline on the supplied path, writes the generated
-TD spec to the configured `td_path` (`projects/agentic-workflow/tech-design/` for this project), and (when invoked inside an
+TD spec to the configured `td_path` (`apps/agentic-workflow/tech-design/` for this project), and (when invoked inside an
 initialized git checkout) commits a `Lifecycle-Stage: Cb-Claim` trailer.
 
 This is the canonical Phase 2 recovery verb for adopting existing source.
@@ -21,7 +21,7 @@ aw td code-claim <code-path> [--init] [--no-issue] [--group <name>] [--project <
 
 | Flag | Effect |
 |------|--------|
-| `--init` | Create `.aw/` workspace when absent (otherwise exits 1). |
+| `--init` | Initialize missing `aw.toml` / project TD metadata when supported; never create repo-root `.aw/`. |
 | `--no-issue` | Opt out of the default-on tracker-issue creation (issue #925). By default `code-claim` files or reuses a real `aw wi create` work-item for traceability; pass this for offline/sandboxed runs with no issue backend configured. The claim itself (spec write + commit) still completes either way. |
 | `--group <name>` | Override the tech-design group dir. Inferred from the code path otherwise. |
 | `--project <name>` | Project name for project-scoped TD utility routing. |
@@ -32,13 +32,13 @@ aw td code-claim <code-path> [--init] [--no-issue] [--group <name>] [--project <
 
 ```mermaid
 flowchart TB
-    Start[aw td code-claim CODE_PATH] --> AW{.aw/ exists?}
+    Start[aw td code-claim CODE_PATH] --> AW{aw.toml + project TD root resolvable?}
     AW -- no --> Init{--init?}
-    Init -- yes --> CreateAw[Create .aw/]
-    Init -- no --> Err1([exit 1: .aw/ missing])
+    Init -- yes --> CreateAw[Initialize aw.toml / project TD metadata]
+    Init -- no --> Err1([exit 1: AW metadata missing])
     AW -- yes --> Fill
     CreateAw --> Fill[Run fillback pipeline]
-    Fill --> Spec[Write spec to projects/agentic-workflow/tech-design/]
+    Fill --> Spec[Write spec to apps/agentic-workflow/tech-design/]
     Spec --> Issue{--no-issue?}
     Issue -- no default --> CreateIssue[aw wi create tracker issue]
     Issue -- yes --> Trail
@@ -53,7 +53,7 @@ flowchart TB
 ```
 
 Errors emit `{ "action": "error", "message": "..." }` with exit code 1
-(missing path / fillback failure / `.aw/` missing without `--init`).
+(missing path / fillback failure / AW metadata missing without `--init`).
 
 ## See also
 

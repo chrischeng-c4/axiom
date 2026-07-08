@@ -1,1 +1,0 @@
-Implement P0 foundation for cclab-agent: accurate token counting (#786), smart auto-compact with LLM summarization and tool-call pairing (#876), and structured output with JSON schema response (#792)

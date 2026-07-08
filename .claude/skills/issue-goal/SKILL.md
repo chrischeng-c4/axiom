@@ -50,7 +50,7 @@ Sort per config `pick_order`:
 
 Skip a candidate if:
 - It has `flagged:needs-human` or `blocked:*` labels.
-- `.aw/handoffs/<n>-patrol-handoff.md` exists with mtime < 24h (recent failure).
+- `/tmp/aw/workspaces/<workspace>/handoffs/<n>-patrol-handoff.md` exists with mtime < 24h (recent failure).
 - It's already been deferred in this session (track in-conversation, don't re-pick).
 
 ### 2. Plan + implement

@@ -23,11 +23,11 @@ Layer 1: Runtime    — mamba, jet, kv, core, cli
 Layer 2: Libraries  — pg, fetch, log, schema, array, frame, sci, learn, plot, media, text, grid
 Layer 3: Framework  — api, queue, agent, guard, meter, server
 Layer 4: Agkit      — agkit (domain models + UI + prompts), @cclab/ui, spec-viewer, pipeline
-Projects            — agentic-workflow
+Apps                — agentic-workflow
 ```
 
 Full project and shared-library inventory: `README.md`. Domain model schemas:
-`projects/agentic-workflow/schemas/`.
+`apps/agentic-workflow/schemas/`.
 
 ## Codex Operational Rules
 
@@ -78,7 +78,7 @@ explicitly asks for Claude-specific behavior.
 | `aw td` | Tech-design and generated-code lifecycle |
 | `aw ec` | External-contract lifecycle: generate tests/tool configs and verify EC gates |
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
-| `aw conf` | Manage `.aw/config.toml` and Agentic Workflow configuration producers |
+| `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
 | `aw standardize` | Existing-project workflow guidance and bounded remediation |
 <!-- aw:cli-table:workflow:end -->
 
@@ -160,7 +160,7 @@ deliberately separate commands.
 | `aw view` | Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app |
 <!-- aw:cli-table:support:end -->
 
-`aw conf check` verifies `.aw/config.toml`'s generated project registry block
+`aw conf check` verifies `aw.toml`'s generated project registry block
 without writing; `aw conf sync` auto-discovers projects and refreshes that
 block. Other projected artifacts are owned by their own producer commands and
 should be routed through `aw health` once those health checks are wired.
@@ -222,11 +222,12 @@ CLI surface.
 - One issue-platform id is one workflow root; do not invent a second slug.
 - Draft/CRRR intermediate state lives under `/tmp/aw/workspaces/<workspace>/workitems/{project}`.
 - Published state is projected to the issue platform configured in
-  `.aw/config.toml`.
-- `.aw/issues/{open,closed}` is retired from the AW ecosystem. Do not create,
-  read, or commit issue lifecycle/cache files there; ephemeral issue working
-  copies live under `/tmp/aw`.
-- Backend selection comes from `.aw/config.toml`; do not add ad-hoc backend
+  `aw.toml`.
+- Repo-root `.aw/` is retired from the AW ecosystem. Do not create, read, or
+  commit repo-root `.aw/*` lifecycle/cache files; ephemeral working copies live
+  under `/tmp/aw`, root configuration lives in `aw.toml`, and durable project
+  artifacts live under their project directories.
+- Backend selection comes from `aw.toml`; do not add ad-hoc backend
   flags to `aw wi`.
 - `--label` is not the public create path. Labels are derived from typed flags:
   `--type`, `--project`, `--priority`, and `--agent`.
@@ -237,7 +238,7 @@ CLI surface.
 
 ## SDD and Codegen Rules
 
-Specs are the source of truth. Consult `projects/agentic-workflow/tech-design/` first;
+Specs are the source of truth. Consult `apps/agentic-workflow/tech-design/` first;
 fall back to source code only when needed, then consider `aw td code-claim`.
 
 New TD test taxonomy is artifact-oriented: use `unit-test` for generated unit
@@ -366,7 +367,7 @@ command string an agent can execute verbatim — or an explicit terminal marker
 meaning "done — report completion to the user"; errors carry a remediation
 next step. Emitted commands must actually be executable (multi-level verbs
 exist, chain-required args present). aw's aw.cli.v1 envelope is the reference
-implementation, enforced by `projects/agentic-workflow/src/cli/chain.rs`
+implementation, enforced by `apps/agentic-workflow/src/cli/chain.rs`
 (`validate_aw_command_string` + `EMIT_REGISTRY`). `aw health` measures
 completeness; this convention guarantees handoff executability — the two are
 complementary, not overlapping. Full spec: **`CONTRIBUTING.md` → "CLI

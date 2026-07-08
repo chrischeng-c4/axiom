@@ -4,7 +4,7 @@ set -euo pipefail
 # /aw:build:debug dispatcher.
 #
 # This skill is intentionally AW-only. It delegates to
-# projects/agentic-workflow/build.sh debug and rejects other project names.
+# apps/agentic-workflow/build.sh debug and rejects other project names.
 
 MODE="debug"
 ROOT="$(git rev-parse --show-toplevel)"
@@ -40,7 +40,7 @@ case "$TARGET" in
     ;;
 esac
 
-BUILD="projects/agentic-workflow/build.sh"
+BUILD="apps/agentic-workflow/build.sh"
 if [[ ! -x "$BUILD" ]]; then
   echo "error: $BUILD not found or not executable" >&2
   exit 4

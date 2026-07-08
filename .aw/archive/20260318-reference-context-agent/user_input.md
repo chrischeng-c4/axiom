@@ -1,1 +1,0 @@
-feat(agent): add ReferenceContextAgent — explores existing specs, scores relevance, builds reference context for ChangeSpecAgent. Maps to SDD phases 4+5. Uses SpecStore + CRR cycle for quality review. #928

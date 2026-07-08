@@ -1,6 +1,6 @@
-# Lens daemon index and runtime files
-.aw/.index/
-.aw/issues/
+# Legacy AW repo-root state; canonical config is ./aw.toml, runtime state lives
+# under /tmp/aw, and project artifacts live under their project directories.
+.aw/
 
 # qc per-run report cache (.qc/last-report.json) — written under the cwd a qc
 # verb runs in (often the repo root); process output, never source.
@@ -109,8 +109,6 @@ tests/fixtures/python-project/.venv/
 # Playwright MCP artifacts
 .playwright-mcp/
 test-results/
-.aw/worktrees/
-.aw/codegen_markers.yaml
 .claude/worktrees/
 
 # tdc local state

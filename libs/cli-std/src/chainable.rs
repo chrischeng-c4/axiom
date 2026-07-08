@@ -6,9 +6,9 @@
 //! The convention recognizes two real shapes, both accepted here:
 //!
 //! - **The full `aw.cli.v1` envelope** — `aw`'s reference implementation,
-//!   split across two real call sites: `projects/agentic-workflow/src/runtime/envelope.rs`'s
+//!   split across two real call sites: `apps/agentic-workflow/src/runtime/envelope.rs`'s
 //!   `Envelope::Dispatch` carries a runnable step at `invoke.command`;
-//!   `projects/agentic-workflow/src/cli/run.rs`'s `WorkflowEnvelope` (the
+//!   `apps/agentic-workflow/src/cli/run.rs`'s `WorkflowEnvelope` (the
 //!   `aw run` loop-driver output) carries it at `next.command` instead, and
 //!   its sole terminal marker is `completion.workflow_complete == true` (a
 //!   terminal envelope omits `next.command` entirely — see

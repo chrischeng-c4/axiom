@@ -88,7 +88,7 @@ If a PR exists:
 - If checks passed and mergeable → `gh pr merge <pr-url> --<merge_strategy>`,
   then `git pull --rebase origin <pr.base>` if `pr.rebase_after_merge` is true,
   push, STOP.
-- If checks failed → write `.aw/handoffs/<n>-patrol-handoff.md` with the
+- If checks failed → write `/tmp/aw/workspaces/<workspace>/handoffs/<n>-patrol-handoff.md` with the
   failure summary; `gh issue edit <n> --add-label flagged:needs-human`; STOP.
 - If conflicts → STOP and flag (don't auto-resolve in cron context).
 
@@ -110,7 +110,7 @@ Sort per `pick_order`:
 - `oldest-first` → lowest issue number first.
 - `priority` → `priority:p0` > p1 > p2 > p3 > none; tiebreak oldest first.
 
-Skip a candidate if `.aw/handoffs/<n>-patrol-handoff.md` exists with
+Skip a candidate if `/tmp/aw/workspaces/<workspace>/handoffs/<n>-patrol-handoff.md` exists with
 mtime < 24h.
 
 Pick the winner `#N`. Read its body via `gh issue view <N>`. Make a

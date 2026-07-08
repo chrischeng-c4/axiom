@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(tech-design/**)",
+      "Write(tech-design/**)",
+      "MultiEdit(tech-design/**)"
+    ]
+  }
+}

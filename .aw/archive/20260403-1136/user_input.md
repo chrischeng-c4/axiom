@@ -1,1 +1,0 @@
-feat(sdd): platform config restructure (issue/repo/spec/docs platforms) + merge workflow auto git commit and optional auto PR

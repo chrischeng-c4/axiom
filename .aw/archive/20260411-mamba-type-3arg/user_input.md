@@ -1,1 +1,0 @@
-implement type(name, bases, dict) 3-arg dynamic class creation in cclab-mamba #974

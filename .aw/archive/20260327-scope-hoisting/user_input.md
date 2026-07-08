@@ -1,1 +1,0 @@
-jet build: scope hoisting (module concatenation) — inline single-importer modules, reduce wrapper overhead, enable cross-module DCE. Target: bundle size within 2% of Vite. #1120
