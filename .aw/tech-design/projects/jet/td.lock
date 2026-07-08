@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = ".aw/tech-design/projects/jet"
-generated_at = "2026-07-01T14:11:49.620281+00:00"
-digest = "sha256:9a7dadffcce83f42d6c78af8abf7a0e9b6fb4eca1c4c979c096f6f987abe4cf9"
-source_digest = "sha256:9a7dadffcce83f42d6c78af8abf7a0e9b6fb4eca1c4c979c096f6f987abe4cf9"
-ir_digest = "sha256:6702bf8531e10234bbf2d138149e9f3d170c58d225f2c83781d679c45db8bb1e"
+generated_at = "2026-07-08T07:33:03.715495+00:00"
+digest = "sha256:9fd57c1fe539a1088f820a5d7222f17a188a40b05a56cbf3765598e075d4144d"
+source_digest = "sha256:9fd57c1fe539a1088f820a5d7222f17a188a40b05a56cbf3765598e075d4144d"
+ir_digest = "sha256:4061af86b45d2bfbb1ebb312cdc88c9e80c88175c6dba08c2d44a0d2f95dbadc"
 
 [[files]]
 path = "config/jet-build-lib-lib-config-section-css-merge-raw-copy-referenced-i.md"
@@ -18,6 +18,12 @@ path = "config/jet-config-validation.md"
 digest = "sha256:bcb9b27a79e5e25828452e682592b0916eeb64d1f227731db64c4fd3e65e0881"
 ir_digest = "sha256:c0e16014fb2aca957077f2c10c6806c69d5b1af0a2269f7c360077d833422216"
 section_count = 2
+
+[[files]]
+path = "config/jet-publish-ignores-publishconfig-registry-and-npmrc-scope-regis.md"
+digest = "sha256:27f13d985544b9ff54957be58b45b46ddecfd95f144e0b5aa709729075fe5018"
+ir_digest = "sha256:203f0e27ea3c089c023ec4eef5bcb0854c1d112b9b4ddd88688ed7fad21a938f"
+section_count = 3
 
 [[files]]
 path = "interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md"
@@ -264,6 +270,12 @@ path = "logic/jet-build-lib-preserve-modules-iife-library-output-modes.md"
 digest = "sha256:c4ec343be259977b0805768fee97d7b64f2bbde98dcd058a232a116894fbb106"
 ir_digest = "sha256:6e5e5ce3304b4c45546a24c03d538af8a1bce3dcc8192e8c66fdba6d94379b2a"
 section_count = 2
+
+[[files]]
+path = "logic/jet-install-sh-published-installer-is-broken-leaked-internal-han.md"
+digest = "sha256:56f63c4a07bfd5ae1e74ec97a4973b21433c1cda1bce8d162c0f1edd8ca5706a"
+ir_digest = "sha256:2a5e4962584d78a82fdb06896a8df732172fcf21fd13303c2c2b1927ff1d2e1a"
+section_count = 3
 
 [[files]]
 path = "logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md"
@@ -1973,6 +1985,12 @@ section_count = 3
 path = "semantic/jet-wasm-build.md"
 digest = "sha256:317ec5d9102f9bf63ce549b3cf1df7ea92dc84c6eec76c2632fbf9c8932d9492"
 ir_digest = "sha256:e9206e7af9abc527f18db37e172191c1f21102d5ce90e0a551bf08ab00a1c5f2"
+section_count = 3
+
+[[files]]
+path = "semantic/jet-wasm-complete-multi-target-readiness-phase-2-3.md"
+digest = "sha256:82046094591225b394bd1355dac4a1ea18e106cd501fbc1a3825dd226b16b3bc"
+ir_digest = "sha256:d2884bb585db1e415fc02ee516a0b63beae2b209a7c15b7f6199f76e1ad2a7d0"
 section_count = 3
 
 [[files]]
