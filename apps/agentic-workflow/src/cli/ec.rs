@@ -2362,6 +2362,7 @@ fn native_manifest_path(ctx: &EcProjectContext, manifest_rel: &str) -> PathBuf {
     let manifest = Path::new(manifest_rel);
     if manifest.is_absolute()
         || manifest_rel.starts_with("projects/")
+        || manifest_rel.starts_with("apps/")
         || manifest_rel.starts_with("crates/")
         || manifest_rel.starts_with("packages/")
         || manifest_rel.starts_with(".")
@@ -2405,6 +2406,7 @@ fn normalize_external_category(raw: Option<&str>, fallback: &str) -> Result<Stri
 fn normalize_project_relative_path(ctx: &EcProjectContext, value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.starts_with("projects/")
+        || trimmed.starts_with("apps/")
         || trimmed.starts_with("crates/")
         || trimmed.starts_with("packages/")
         || trimmed.starts_with(".")
@@ -2643,10 +2645,10 @@ fn generate_case_skeletons(ctx: &EcProjectContext, manifest: &EcManifest) -> Res
                 let Some(target) = cargo_test_target(&case.command) else {
                     continue;
                 };
-                let test_dir = Path::new(&case.test_path)
+                let path = ec_case_test_path(ctx, &case.test_path)
                     .parent()
-                    .unwrap_or_else(|| Path::new("tests"));
-                let path = ctx.project_root.join(test_dir).join(format!("{target}.rs"));
+                    .map(|dir| dir.join(format!("{target}.rs")))
+                    .unwrap_or_else(|| ctx.project_root.join("tests").join(format!("{target}.rs")));
                 let fn_name = sanitize_ident(target);
                 let body = render_native_rust_skeleton(case, &fn_name);
                 write_skeleton_if_absent(&path, &body)?;
@@ -4210,11 +4212,45 @@ fn generated_ec_test_files(
         .cases
         .iter()
         .map(|case| {
-            let path = ctx.project_root.join(&case.test_path);
+            let path = ec_case_test_path(ctx, &case.test_path);
             let content = render_ec_test(ctx, case);
             (path, content)
         })
         .collect()
+}
+
+fn ec_case_test_path(ctx: &EcProjectContext, test_path: &str) -> PathBuf {
+    let path = Path::new(test_path);
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    if let Some(source_root_rel) = source_root_suffix(&ctx.project_root) {
+        let normalized = test_path.replace('\\', "/");
+        if let Some(rest) = normalized
+            .strip_prefix(&source_root_rel)
+            .and_then(|rest| rest.strip_prefix('/'))
+        {
+            return ctx.project_root.join(rest);
+        }
+    }
+    ctx.project_root.join(path)
+}
+
+fn source_root_suffix(path: &Path) -> Option<String> {
+    let parts = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    let name = parts.last()?;
+    let parent = parts.iter().rev().nth(1)?;
+    if matches!(
+        *parent,
+        "apps" | "projects" | "crates" | "libs" | "packages"
+    ) {
+        Some(format!("{parent}/{name}"))
+    } else {
+        None
+    }
 }
 
 fn render_ec_test(ctx: &EcProjectContext, case: &EcManifestCase) -> String {
@@ -4649,6 +4685,35 @@ e2e_tests:
             evidence: Vec::new(),
             evaluators: Vec::new(),
         }
+    }
+
+    #[test]
+    fn ec_case_test_path_does_not_double_prefix_app_source_root() {
+        let root = Path::new("/repo/apps/tape");
+        let ctx = EcProjectContext {
+            project_root: root.to_path_buf(),
+            project: "tape".to_string(),
+            source_root: root.to_path_buf(),
+            ec_root: root.join("external-contracts"),
+            td_root: root.join("tech-design"),
+            tests_root: root.join("tests"),
+            inventory_path: root.join("aw.toml"),
+            legacy_manifest_path: root.join("tests/aw-ec.toml"),
+            project_aw_path: root.join("aw.toml"),
+            doc_path: root.join("docs/aw-ec-manual.md"),
+            target: "rust".to_string(),
+            package_name: "tape".to_string(),
+            ec_bindings: BTreeMap::new(),
+        };
+
+        assert_eq!(
+            ec_case_test_path(&ctx, "apps/tape/tests/behavior.rs"),
+            root.join("tests/behavior.rs")
+        );
+        assert_eq!(
+            ec_case_test_path(&ctx, "tests/behavior.rs"),
+            root.join("tests/behavior.rs")
+        );
     }
 
     #[test]

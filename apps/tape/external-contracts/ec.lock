@@ -1,0 +1,215 @@
+version = 1
+project = "tape"
+ir_kind = "ec"
+ec_path = "apps/tape/external-contracts"
+inventory_path = "apps/tape/aw.toml"
+generated_at = "2026-07-08T07:14:38.230339+00:00"
+ir_digest = "sha256:9e06bbab904314bbd38236af752f41973d001905165030a25dd89d42bc4e3fd0"
+source_digest = "sha256:69828575e591490eea55484ccf39c6d90fd8148a6de671d6a47b2596575b7c23"
+tool_contracts = []
+
+[[sources]]
+path = "apps/tape/external-contracts/claim-closure/production-claims.md"
+digest = "sha256:93ea1b2c0fd9bc0b9c7534854a9e74a45f61e6b7745116f67f2a77928fc5a1c1"
+
+[[sources]]
+path = "apps/tape/external-contracts/competitor-feature-parity/behavior/topic-exchange-functional.md"
+digest = "sha256:acf0ef8e87dfefa731d7c9a42a11f9875cf036ff22a39a4178030f48f2702f78"
+
+[[sources]]
+path = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
+digest = "sha256:24410664ddfa350036d4582529142a565dc8aa9eb26ddf9a10226c1b2f4b362f"
+
+[[cases]]
+id = "tape-chainable-output-conformance"
+capability_id = "chainable-output-conformance"
+claim_id = "local-replay-command-next-markers"
+contract_id = "tape-local-command-chainability"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-chainable-output-conformance"
+test_path = "apps/tape/tests/behavior_tape_claim_chainable_output.rs"
+command = "cargo test -p tape --test cli_contract append_replay_checkpoint_roundtrip -- --exact --nocapture"
+required_for_production = true
+assertions = ["Append, replay, and checkpoint commands emit parseable JSON payloads with next-step markers for agent chaining."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cbeb3b9c744bb62546b899dbb79929838c137025da978b1c9afd8e920a10ee43"
+
+[[cases]]
+id = "tape-cli-interface-replay-verbs"
+capability_id = "cli-interface"
+claim_id = "tape-cli-convention-and-replay-verbs"
+contract_id = "tape-cli-command-surface-and-replay-ergonomics"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-cli-interface-replay-verbs"
+test_path = "apps/tape/tests/behavior_tape_claim_cli_interface.rs"
+command = "cargo test -p tape --test cli_contract -- --nocapture"
+required_for_production = true
+assertions = [
+    "The tape binary exposes append, replay, checkpoint, spec, llm, upgrade, and issue commands.",
+    "The local append/replay/checkpoint workflow runs end to end through the CLI.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:dd69fd220fce6f2f8b6aac7b3060120d4d6f7a21c29dcc6925808b16b97f2d1f"
+
+[[cases]]
+id = "tape-cli-standard-surface"
+capability_id = "cli-standard-surface"
+claim_id = "shared-llm-upgrade-issue-surface"
+contract_id = "tape-shared-cli-std-surface"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-cli-standard-surface"
+test_path = "apps/tape/tests/behavior_tape_claim_cli_standard_surface.rs"
+command = "cargo test -p tape --test cli_contract help_ships_standard_and_replay_commands -- --exact --nocapture"
+required_for_production = true
+assertions = ["The mandatory llm, upgrade, and issue command groups remain visible on top-level help."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2c5714b3c0278ceb69320f541fea8859dbcab9eabeac84e50876b37e6d646d0c"
+
+[[cases]]
+id = "tape-competitor-feature-parity-topic-exchange-functional"
+capability_id = "competitor-feature-parity"
+claim_id = "topic-replay-competitor-feature-matrix"
+contract_id = "topic-replay-vs-log-and-exchange-functional-correctness"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/competitor-feature-parity/behavior/topic-exchange-functional.md#tape-competitor-feature-parity-topic-exchange-functional"
+test_path = "apps/tape/tests/behavior_tape_claim_competitor_feature_topic_exchange_functional.rs"
+command = "cargo test -p tape --test competitor_feature_parity -- --nocapture"
+required_for_production = true
+assertions = [
+    "Tape validates ordered append, offset replay, timestamp replay, and durable consumer checkpoints through the local journal core.",
+    "Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams are classified as replay-log baselines for feature parity.",
+    "RabbitMQ topic exchange is included as a topic-routing/fanout comparison row, but is not treated as Tape's offset/time replay baseline.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b957cc891e49c8d45fa24d061878cbcff33a8a0b202d6f031603ebd8a1429112"
+
+[[cases]]
+id = "tape-competitor-performance-claim-closure"
+capability_id = "competitor-performance"
+claim_id = "topic-replay-competitor-performance-baseline"
+contract_id = "topic-replay-performance-local-and-nats-win"
+dimension = "efficiency"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-competitor-performance-claim-closure"
+test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_claim_closure.rs"
+command = "cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+required_for_production = true
+assertions = [
+    "The local Tape performance regression gate passes for append, replay, and checkpoint operations.",
+    "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
+    "Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b5f93b599848353b7f7e991d24c85ec4d762b3985202c5b46596043652a652ec"
+
+[[cases]]
+id = "tape-competitor-performance-local-regression-and-calibration-ledger"
+capability_id = "competitor-performance"
+claim_id = "topic-replay-competitor-performance-baseline"
+contract_id = "topic-replay-local-performance-and-peer-calibration"
+dimension = "efficiency"
+source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger"
+test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance.rs"
+command = "cargo test -p tape --test tape_perf_gate -- --nocapture"
+required_for_production = true
+assertions = [
+    "Tape's local append/replay/checkpoint benchmark stays inside conservative regression budgets.",
+    "Kafka, Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.",
+    "RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f4cded925e1ac9dba33d00cbac0d35ff70d4a9169a50d03f1790ddf84a186114"
+
+[[cases]]
+id = "tape-competitor-performance-nats-jetstream-replay-win"
+capability_id = "competitor-performance"
+claim_id = "topic-replay-competitor-performance-baseline"
+contract_id = "topic-replay-nats-jetstream-local-backlog-win"
+dimension = "efficiency"
+source_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-nats-jetstream-replay-win"
+test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_nats_jetstream.rs"
+command = "cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+required_for_production = true
+assertions = [
+    "The test starts a real local nats-server with JetStream enabled.",
+    "Tape and JetStream replay the same 20,000-event, 128-byte-payload backlog workload from the beginning.",
+    "Tape's zero-copy full-replay latency is at least 1.5x faster than NATS JetStream for the local backlog replay workload.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:219f85e6e3365b928601ef4e1e3c16a9f596953657e85cd9d1ddcc160a6cb522"
+
+[[cases]]
+id = "tape-consumer-checkpoints"
+capability_id = "consumer-checkpoints"
+claim_id = "durable-consumer-cursor-contract"
+contract_id = "tape-durable-consumer-checkpoint"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-consumer-checkpoints"
+test_path = "apps/tape/tests/behavior_tape_claim_consumer_checkpoints.rs"
+command = "cargo test -p tape tests::checkpoints_advance_and_reject_stale_offsets --lib -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "Tape stores consumer checkpoints.",
+    "Tape rejects stale checkpoint writes.",
+    "Tape rejects checkpoints beyond the topic end offset.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cf9434ca2b5610d9980ec6a617a6711c696a3fe63273a18fc0a961da6f187db1"
+
+[[cases]]
+id = "tape-http2-api-list"
+capability_id = "http2-api-list"
+claim_id = "h2c-openapi-route-list"
+contract_id = "tape-offline-openapi-route-inventory"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-http2-api-list"
+test_path = "apps/tape/tests/behavior_tape_claim_http2_api_list.rs"
+command = "cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "The offline route inventory includes topic append, replay, and checkpoint routes.",
+    "The offline route inventory includes the OpenAPI route.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fab80980e713c8b4338a6e39e034ca6e2cae18d5eafec5402c6fd63de4c377b4"
+
+[[cases]]
+id = "tape-standard-operational-endpoints"
+capability_id = "standard-operational-endpoints"
+claim_id = "standard-service-route-inventory"
+contract_id = "tape-standard-service-endpoint-inventory"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-standard-operational-endpoints"
+test_path = "apps/tape/tests/behavior_tape_claim_standard_operational_endpoints.rs"
+command = "cargo test -p tape --test cli_contract spec_routes_list_topic_contract -- --exact --nocapture"
+required_for_production = true
+assertions = ["The offline route inventory includes /healthz, /readyz, /metrics, /openapi.json, and /docs."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:c81a7fef888ad40eb57c816b5d184401061d409822fa884fec7aa21d2a3b70f6"
+
+[[cases]]
+id = "tape-topic-replay-journal"
+capability_id = "topic-replay-journal"
+claim_id = "append-and-replay-contract"
+contract_id = "tape-append-replay-local-journal"
+dimension = "behavior"
+source_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-topic-replay-journal"
+test_path = "apps/tape/tests/behavior_tape_claim_topic_replay_journal.rs"
+command = "cargo test -p tape tests::append_and_replay_by_offset_and_time --lib -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "Tape assigns ordered offsets per topic.",
+    "Tape replays by offset and by timestamp.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b9fa06a36dc692732a6c90e79082746bd7a6ac5017ba77dd2e99e98b56999c14"
