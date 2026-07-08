@@ -5,7 +5,9 @@
 //!
 //! * every `[T]`-syntax parameter becomes a runtime TypeVar instance bound to
 //!   a same-named variable in the enclosing (non-class) scope, created by the
-//!   `__mb_pep695_typevar__` intrinsic just before the def/class statement;
+//!   `__mb_pep695_typevar__` intrinsic around the def/class statement
+//!   (classes before the statement; functions immediately after it so defaults
+//!   and decorators still raise CPython's out-of-scope `NameError`);
 //! * the function/class gains a `__type_params__` tuple (classes also gain a
 //!   matching `__parameters__`) assigned right after the definition;
 //! * `type X = V` additionally binds `X` to a TypeAliasType instance built by
@@ -1241,8 +1243,15 @@ fn desugar_block(
                             span,
                         });
                     } else {
-                        out.extend(tv_assigns);
+                        // Function defaults/decorators execute as part of the
+                        // `def` statement, before the PEP 695 annotation scope
+                        // becomes visible at runtime. Emit the runtime TypeVar
+                        // bindings after the `def` so reads like
+                        // `def f[T](x=list[T]()): ...` still raise NameError,
+                        // while the body can resolve `T` later through the
+                        // enclosing scope.
                         out.push(st);
+                        out.extend(tv_assigns);
                         out.push(attr_tuple_assign(&[name], "__type_params__", &tps, span));
                     }
                 }
@@ -1498,14 +1507,31 @@ mod tests {
     #[test]
     fn generic_fn_injects_typevar_and_type_params() {
         let m = desugared("def f[T]():\n    return T\n");
-        // T = __mb_pep695_typevar__(...), def f, f.__type_params__ = (T,)
+        // def f, T = __mb_pep695_typevar__(...), f.__type_params__ = (T,)
         assert_eq!(m.stmts.len(), 3);
+        assert!(matches!(&m.stmts[0].node, Stmt::FnDef { .. }));
         assert!(matches!(
-            &m.stmts[0].node,
+            &m.stmts[1].node,
             Stmt::Assign { target, .. }
                 if matches!(&target.node, Expr::Ident(n) if n == "T")
         ));
-        assert!(matches!(&m.stmts[1].node, Stmt::FnDef { .. }));
+        assert!(matches!(
+            &m.stmts[2].node,
+            Stmt::Assign { target, .. }
+                if matches!(&target.node, Expr::Attr { attr, .. } if attr == "__type_params__")
+        ));
+    }
+
+    #[test]
+    fn generic_fn_defaults_stay_outside_type_param_scope() {
+        let m = desugared("def f[T](x = list[T]()):\n    return x\n");
+        assert_eq!(m.stmts.len(), 3);
+        assert!(matches!(&m.stmts[0].node, Stmt::FnDef { .. }));
+        assert!(matches!(
+            &m.stmts[1].node,
+            Stmt::Assign { target, .. }
+                if matches!(&target.node, Expr::Ident(n) if n == "T")
+        ));
         assert!(matches!(
             &m.stmts[2].node,
             Stmt::Assign { target, .. }

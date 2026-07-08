@@ -4068,6 +4068,17 @@ impl<'a> AstLowerer<'a> {
                     decorators,
                     ..
                 } => {
+                    // PEP 695 desugaring now places `T = __mb_pep695_typevar__`
+                    // after the `def`, but the resolver still sees that later
+                    // binding. Mark the names as temporarily unbound so
+                    // default values and decorators lower to the deferred
+                    // NameError path until the generated assignment statement
+                    // runs.
+                    self.module_del_stmt_names.extend(
+                        type_params
+                            .iter()
+                            .map(|param| param.name.clone()),
+                    );
                     // Register param info for kwargs resolution at call sites.
                     let (param_info, default_setup) =
                         self.frozen_param_info(name, params, stmt.span);
@@ -4245,6 +4256,11 @@ impl<'a> AstLowerer<'a> {
                     decorators,
                     ..
                 } => {
+                    self.module_del_stmt_names.extend(
+                        type_params
+                            .iter()
+                            .map(|param| param.name.clone()),
+                    );
                     let (param_info, default_setup) =
                         self.frozen_param_info(name, params, stmt.span);
                     self.func_param_info
@@ -13527,6 +13543,78 @@ async def main():
             HirExpr::Dict { entries, .. }
                 if matches!(entries.as_slice(), [(HirExpr::StrLit(name, _), _)] if name == "default")
         ));
+    }
+
+    #[test]
+    fn test_lower_generic_fn_default_keeps_type_param_unbound_until_typevar_assign() {
+        fn contains_deferred_name_read(expr: &HirExpr, name: &str) -> bool {
+            match expr {
+                HirExpr::Call { func, args, .. } => {
+                    matches!(
+                        func.as_ref(),
+                        HirExpr::StrLit(func_name, _) if func_name == "mb_deferred_name_read"
+                    ) && matches!(args.as_slice(), [HirExpr::StrLit(arg_name, _)] if arg_name == name)
+                        || contains_deferred_name_read(func, name)
+                        || args.iter().any(|arg| contains_deferred_name_read(arg, name))
+                }
+                HirExpr::Attr { object, .. } => contains_deferred_name_read(object, name),
+                HirExpr::Index { object, index, .. } => {
+                    contains_deferred_name_read(object, name)
+                        || contains_deferred_name_read(index, name)
+                }
+                HirExpr::List { elements, .. }
+                | HirExpr::Set { elements, .. }
+                | HirExpr::Tuple { elements, .. } => elements
+                    .iter()
+                    .any(|element| contains_deferred_name_read(element, name)),
+                HirExpr::Dict { entries, .. } => entries.iter().any(|(key, value)| {
+                    contains_deferred_name_read(key, name)
+                        || contains_deferred_name_read(value, name)
+                }),
+                HirExpr::UnaryOp { operand, .. } => contains_deferred_name_read(operand, name),
+                HirExpr::BinOp { lhs, rhs, .. } => {
+                    contains_deferred_name_read(lhs, name)
+                        || contains_deferred_name_read(rhs, name)
+                }
+                HirExpr::IfExpr {
+                    cond,
+                    then_val,
+                    else_val,
+                    ..
+                } => {
+                    contains_deferred_name_read(cond, name)
+                        || contains_deferred_name_read(then_val, name)
+                        || contains_deferred_name_read(else_val, name)
+                }
+                HirExpr::Slice {
+                    start, stop, step, ..
+                } => start
+                    .iter()
+                    .chain(stop.iter())
+                    .chain(step.iter())
+                    .any(|expr| contains_deferred_name_read(expr, name)),
+                HirExpr::Lambda { defaults, body, .. } => {
+                    defaults.iter().flatten().any(|expr| contains_deferred_name_read(expr, name))
+                        || contains_deferred_name_read(body, name)
+                }
+                _ => false,
+            }
+        }
+
+        let mut module = crate::parser::parse("def f[T](x = list[T]()):\n    return x\n", FileId(0))
+            .expect("parse failed");
+        crate::lower::pep695::desugar_module(&mut module);
+        let mut checker = TypeChecker::new();
+        let _ = checker.check_module(&module);
+        let hir = lower_module(&module, &checker).expect("lower failed");
+
+        let HirStmt::Let { value, .. } = &hir.top_level[0] else {
+            panic!("expected frozen default setup before function binding");
+        };
+        assert!(
+            contains_deferred_name_read(value, "T"),
+            "generic function default should lower through mb_deferred_name_read before the typevar assignment"
+        );
     }
 
     #[test]
