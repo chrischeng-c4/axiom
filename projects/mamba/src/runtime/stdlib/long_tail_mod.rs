@@ -154,11 +154,37 @@ unsafe extern "C" fn imap_idler_exit(_self_v: MbValue, _args: MbValue) -> MbValu
     MbValue::from_bool(false)
 }
 
+unsafe extern "C" fn pydoc_error_during_import_init(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    let filename = items.first().copied().unwrap_or_else(MbValue::none);
+    if !filename.is_none()
+        && filename
+            .as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+            != Some(true)
+    {
+        return raise_type_error("ErrorDuringImport.__init__() filename argument must be str");
+    }
+    MbValue::none()
+}
+
 fn register_variadic_method_class(class_name: &str, method_name: &str, addr: usize) {
     super::super::module::register_variadic_func(addr as u64);
     let mut methods = HashMap::new();
     methods.insert(method_name.to_string(), MbValue::from_func(addr));
     super::super::class::mb_class_register(class_name, vec!["object".to_string()], methods);
+}
+
+fn register_variadic_method_class_with_bases(
+    class_name: &str,
+    bases: Vec<String>,
+    method_name: &str,
+    addr: usize,
+) {
+    super::super::module::register_variadic_func(addr as u64);
+    let mut methods = HashMap::new();
+    methods.insert(method_name.to_string(), MbValue::from_func(addr));
+    super::super::class::mb_class_register(class_name, bases, methods);
 }
 
 fn register_addrs(addrs: &[usize]) {
@@ -526,7 +552,7 @@ fn register_optparse() {
 }
 
 fn register_pydoc() {
-    let attrs = build_attrs(
+    let mut attrs = build_attrs(
         &["Helper", "ModuleScanner", "TextDoc", "HTMLDoc", "Doc"],
         70,
         &[
@@ -545,6 +571,20 @@ fn register_pydoc() {
         ],
         &[],
         &[],
+    );
+    // `render_doc`/`doc`/`resolve`/`writedoc` take `str | object` in
+    // typeshed/CPython, so tightening them here would break real pydoc usage
+    // on ordinary instances. `ErrorDuringImport.__init__` is the concrete wall:
+    // its `filename` field is a real `str` contract.
+    attrs.insert(
+        "ErrorDuringImport".into(),
+        make_type_obj("ErrorDuringImport", "pydoc"),
+    );
+    register_variadic_method_class_with_bases(
+        "ErrorDuringImport",
+        vec!["Exception".to_string()],
+        "__init__",
+        pydoc_error_during_import_init as *const () as usize,
     );
     super::register_module("pydoc", attrs);
 }
