@@ -3816,6 +3816,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64],
             I64
         ),
+        rt_sym!(
+            "mb_typing_unpack_alias",
+            super::stdlib::typing_mod::mb_typing_unpack_alias
+                as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
         // ── Stdlib: threading (#417) ──
         rt_sym!(
             "mb_threading_current_thread",
