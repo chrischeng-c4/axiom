@@ -918,16 +918,12 @@ pub(crate) fn alias_subscript(self_v: MbValue, key: MbValue) -> MbValue {
     substitute_typevars(self_v, &sub)
 }
 
-/// Human repr of an alias argument (class reprs use the bare name).
+/// Human repr of an alias argument.
 fn arg_repr(v: MbValue) -> String {
     if let Some(cls) = instance_class_of(v) {
         match cls.as_str() {
             "type" => {
-                let n = instance_field_of(v, "__name__")
-                    .and_then(|x| extract_str(x))
-                    .unwrap_or_default();
-                // CPython spells type(None) as NoneType inside alias reprs.
-                return n;
+                return super::super::builtins::type_object_display_name(v).unwrap_or_default();
             }
             "typing.SpecialForm" => {
                 let n = instance_field_of(v, "_name")
@@ -1877,6 +1873,34 @@ mod tests {
             d_paramspec_ctor as *const () as u64,
         ] {
             assert!(super::super::super::module::is_kwargs_func(addr));
+        }
+    }
+
+    #[test]
+    fn test_user_generic_alias_repr_qualifies_origin_module() {
+        let origin = super::super::super::builtins::make_type_object("TypingBox1116");
+        super::super::super::builtins::set_type_object_attr(
+            "TypingBox1116",
+            "__module__",
+            MbValue::from_ptr(MbObject::new_str("__main__".to_string())),
+        );
+        let repr_name = super::super::super::builtins::type_object_display_name(origin)
+            .expect("user class display name");
+        let alias = user_generic_subscript(
+            origin,
+            super::super::super::builtins::make_type_object("int"),
+            &repr_name,
+        );
+        let repr = super::super::super::builtins::mb_repr(alias);
+
+        unsafe {
+            let ptr = repr.as_ptr().expect("repr string");
+            match &(*ptr).data {
+                super::super::super::rc::ObjData::Str(s) => {
+                    assert_eq!(s, "__main__.TypingBox1116[int]")
+                }
+                _ => panic!("expected repr string"),
+            }
         }
     }
 

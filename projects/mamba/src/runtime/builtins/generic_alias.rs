@@ -1,5 +1,5 @@
 use super::super::rc::{InstanceFields, MbRwLock};
-use super::{mb_repr, pep695_display_name, str_value, MbValue, ObjData};
+use super::{mb_repr, pep695_display_name, str_value, type_object_display_name, MbValue, ObjData};
 
 pub(super) fn generic_alias_origin_args(
     class_name: &str,
@@ -25,20 +25,6 @@ pub(super) fn generic_alias_origin_args(
         })
         .unwrap_or_else(|| vec![args_val]);
     Some((origin, args))
-}
-
-fn type_object_display_name(v: MbValue) -> Option<String> {
-    let ptr = v.as_ptr()?;
-    unsafe {
-        match &(*ptr).data {
-            ObjData::Instance { class_name, fields } if class_name == "type" => fields
-                .read()
-                .ok()
-                .and_then(|f| f.get("__name__").copied())
-                .and_then(str_value),
-            _ => None,
-        }
-    }
 }
 
 fn generic_alias_repr_part(v: MbValue) -> String {
