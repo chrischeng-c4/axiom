@@ -7867,7 +7867,12 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "socket",
         name: "__init__",
         kind: SigKind::Method,
-        params: &[p("family", CoreTy::Typed, false), p("type", CoreTy::Typed, false), p("proto", CoreTy::Typed, false), p("fileno", CoreTy::Typed, false)],
+        params: &[
+            p("family", CoreTy::Int, false),
+            p("type", CoreTy::Int, false),
+            p("proto", CoreTy::Int, false),
+            p("fileno", CoreTy::Typed, false),
+        ],
         enforceable: true,
         ret: CoreTy::Unknown,
     },

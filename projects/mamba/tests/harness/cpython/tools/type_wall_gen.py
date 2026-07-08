@@ -360,7 +360,8 @@ except Exception as e:
 # contract, and is deliberately conservative:
 #   * ANY *args / *  param         -> enforceable = false (alignment uncertain)
 #   * SINGLE signature row         -> enforceable if any param is not Unknown
-#   * OVERLOADED 3.12 row set      -> fold each always-typed position to Typed
+#   * OVERLOADED 3.12 row set      -> keep identical always-typed CoreTy,
+#                                     else fold always-typed positions to Typed
 #   * NO checkable param           -> enforceable = false (nothing to check)
 # The row is still EMITTED in every case (documented negative / skip), exactly
 # like the PoC's b64encode/factorial guards — the hook reads `enforceable`.
@@ -1253,14 +1254,12 @@ def _core_ty_rust(ct: str) -> str:
 def merge_overload_params(rows):
     """Merge a real @overload chain (>=2 signatures applicable to 3.12 at once)
     into ONE folded row for the 3.12-applicable set: a position is checkable
-    only when EVERY overload has a non-Unknown contract there, and folded
-    overloaded positions always degrade to `Typed` rather than preserving a
-    concrete scalar/type-tag wall. That keeps overload groups conservative:
-    they can reject a bare sentinel against positions that are always typed,
-    but never guess which concrete scalar wall applies across the whole set.
-    Positions missing from some overload, or carrying Unknown in any branch,
-    collapse to Unknown. Conservative on arity: only positions present in
-    EVERY overload are considered."""
+    only when EVERY overload has a non-Unknown contract there. If every branch
+    agrees on the same CoreTy, keep that wall; otherwise degrade to `Typed` so
+    overloaded groups still reject a bare sentinel without guessing which
+    concrete scalar wall applies. Positions missing from some overload, or
+    carrying Unknown in any branch, collapse to Unknown. Conservative on arity:
+    only positions present in EVERY overload are considered."""
     base = dict(rows[0])
     param_lists = [r["params"] for r in rows]
     n = min(len(pl) for pl in param_lists)
@@ -1269,7 +1268,7 @@ def merge_overload_params(rows):
         ctys = {pl[i][1] for pl in param_lists}
         name = param_lists[0][i][0]
         if all(ct != "Unknown" for ct in ctys):
-            merged.append((name, "Typed"))
+            merged.append((name, next(iter(ctys)) if len(ctys) == 1 else "Typed"))
         else:
             merged.append((name, "Unknown"))
     has_star = any(r.get("has_star") for r in rows)
@@ -1336,8 +1335,8 @@ def render_rust() -> str:
         "//! A single-signature row is `enforceable` when its fixed positional\n"
         "//! prefix has at least one checkable param; a trailing `*args` is\n"
         "//! rendered as one star/Unknown tail row and skipped. A 3.12 overload\n"
-        "//! set folds positions that are non-Unknown in every branch to\n"
-        "//! `CoreTy::Typed`; divergent or missing positions become\n"
+        "//! set keeps identical non-Unknown `CoreTy` positions and folds\n"
+        "//! divergent non-Unknown positions to `CoreTy::Typed`; missing positions become\n"
         "//! `CoreTy::Unknown`.\n"
         "//!\n"
         "//! #887: each row also carries `ret`, the callable's typeshed RETURN\n"
