@@ -158,6 +158,16 @@ pub(crate) fn current_active_module_name() -> String {
         .unwrap_or_else(|| "__main__".to_string())
 }
 
+pub(crate) fn caller_active_module_name() -> String {
+    ACTIVE_MODULE_NAMES.with(|names| {
+        let names = names.borrow();
+        match names.len() {
+            0 | 1 => "__main__".to_string(),
+            len => names[len - 2].clone(),
+        }
+    })
+}
+
 fn scoped_symbol_key(symbol: i64) -> ScopedSymbolKey {
     ScopedSymbolKey {
         module: current_active_module_name(),
