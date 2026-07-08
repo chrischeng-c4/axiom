@@ -64,3 +64,20 @@ flowchart TD
     r1[R1 shell syntax] --> sh_n_projects_jet_install_sh[sh -n projects/jet/install.sh]
     r2[R2 repo install scripts] --> find_name_install_sh_exec_sh_n_print[find . -name install.sh -exec sh -n {} ; -print]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: "projects/jet/install.sh"
+    action: modify
+    section: logic
+    description: |
+      Change the HANDWRITE wrapper lines from JavaScript-style // markers to POSIX shell comments so the published installer parses under sh before executing bootstrap logic.
+    impl_mode: hand-written
+    verifies:
+      - "sh -n projects/jet/install.sh"
+      - "find . -name install.sh -exec sh -n {} ; -print"
+```
