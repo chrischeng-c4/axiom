@@ -495,6 +495,7 @@ struct ExecFunctionBinding {
     name: String,
     is_async: bool,
     globals: Option<MbValue>,
+    captures: Vec<FxHashMap<String, MbValue>>,
     function: ExecFunction,
 }
 
@@ -887,7 +888,7 @@ fn exec_lookup_builtin_name(name: &str) -> Option<MbValue> {
 }
 
 fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
-    if let Some(frame) = ctx.frames.last() {
+    for frame in ctx.frames.iter().rev() {
         if let Some(&value) = frame.get(name) {
             return Some(value);
         }
@@ -1195,13 +1196,29 @@ fn exec_leading_docstring(
     }
 }
 
+fn exec_capture_frames(ctx: &ExecContext) -> Vec<FxHashMap<String, MbValue>> {
+    let mut captures = Vec::with_capacity(ctx.frames.len());
+    for frame in &ctx.frames {
+        let mut captured = FxHashMap::default();
+        for (name, value) in frame {
+            unsafe {
+                crate::runtime::rc::retain_if_ptr(*value);
+            }
+            captured.insert(name.clone(), *value);
+        }
+        captures.push(captured);
+    }
+    captures
+}
+
 fn make_exec_function_body_value(
     name: &str,
     is_async: bool,
     function: ExecFunction,
-    globals: Option<MbValue>,
+    ctx: &ExecContext,
     doc: Option<String>,
 ) -> MbValue {
+    let globals = ctx.globals;
     if let Some(globals) = globals {
         unsafe {
             crate::runtime::rc::retain_if_ptr(globals);
@@ -1214,6 +1231,7 @@ fn make_exec_function_body_value(
             }
         }
     }
+    let captures = exec_capture_frames(ctx);
     let id = NEXT_EXEC_FUNCTION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     EXEC_FUNCTIONS.write().unwrap().insert(
         id,
@@ -1221,6 +1239,7 @@ fn make_exec_function_body_value(
             name: name.to_string(),
             is_async,
             globals,
+            captures,
             function,
         },
     );
@@ -1390,9 +1409,14 @@ pub fn mb_exec_function_is_async(func: MbValue) -> bool {
 pub fn mb_exec_function_call(func: MbValue, args: Vec<MbValue>) -> MbValue {
     if let Some(id) = exec_function_field(func, "__function_id__").and_then(|value| value.as_int())
     {
-        if let Some(binding) = EXEC_FUNCTIONS.read().unwrap().get(&(id as u64)).cloned() {
+        let binding = {
+            let registry = EXEC_FUNCTIONS.read().unwrap();
+            registry.get(&(id as u64)).cloned()
+        };
+        if let Some(binding) = binding {
             let mut ctx = ExecContext {
                 globals: binding.globals,
+                frames: binding.captures,
                 ..ExecContext::default()
             };
             let return_value = exec_call_function(&mut ctx, &binding.function, &args);
@@ -1972,7 +1996,7 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
                     body.span,
                 )],
             };
-            make_exec_function_body_value("<lambda>", false, function, ctx.globals, None)
+            make_exec_function_body_value("<lambda>", false, function, ctx, None)
         }
         Expr::Call { func, args } => {
             let values = match exec_eval_call_args(ctx, args) {
@@ -2537,8 +2561,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 body: body.clone(),
             };
             let doc = exec_leading_docstring(body);
-            let func_value =
-                make_exec_function_body_value(name, false, function.clone(), ctx.globals, doc);
+            let func_value = make_exec_function_body_value(name, false, function.clone(), ctx, doc);
             crate::runtime::pep695::instance_field_set_pub(
                 func_value,
                 "__annotations__",
@@ -2636,8 +2659,7 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                     body: body.clone(),
                 };
                 let doc = exec_leading_docstring(body);
-                let func_value =
-                    make_exec_function_body_value(name, true, function, ctx.globals, doc);
+                let func_value = make_exec_function_body_value(name, true, function, ctx, doc);
                 crate::runtime::pep695::instance_field_set_pub(
                     func_value,
                     "__annotations__",

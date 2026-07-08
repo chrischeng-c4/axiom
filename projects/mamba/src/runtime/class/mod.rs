@@ -4599,6 +4599,15 @@ fn make_bound_method(func: MbValue, recv: MbValue) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
+fn is_exec_function_value(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. } if class_name == "__exec_function__"
+        )
+    })
+}
+
 fn inherited_builtin_unbound_method(class_name: &str, method_name: &str) -> Option<MbValue> {
     if !class_is_registered(class_name) {
         return None;
@@ -7855,6 +7864,9 @@ fn mb_getattr_impl(
                             return invoke_descriptor_get(class_attr, obj);
                         }
                         if super::closure::mb_func_is_registered(class_attr) {
+                            return make_bound_method(class_attr, obj);
+                        }
+                        if is_exec_function_value(class_attr) {
                             return make_bound_method(class_attr, obj);
                         }
                         if let Some(addr) = class_attr.as_func() {
