@@ -162,6 +162,105 @@ fn lib_build_consumes_local_scss_side_effect_imports() {
         code.contains("Button"),
         "entry source should still be bundled, got:\n{code}"
     );
+
+    let css = std::fs::read_to_string(root.join("dist/style.css"))
+        .expect("SCSS side-effect import should emit dist/style.css");
+    assert!(
+        css.contains(".button") && css.contains("color") && css.contains("red"),
+        "style import should be materialized as publishable CSS, got:\n{css}"
+    );
+    assert!(
+        result
+            .assets
+            .iter()
+            .any(|asset| asset.path.ends_with("style.css")),
+        "style.css should be reported as a library asset, got {:?}",
+        result.assets
+    );
+}
+
+#[test]
+fn lib_build_materializes_exported_style_css_from_source_scss_import() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "exported-style-lib",
+            "version": "1.0.0",
+            "type": "module",
+            "exports": {
+                ".": {
+                    "types": "./dist/index.d.ts",
+                    "import": "./dist/index.js"
+                },
+                "./style.css": "./dist/style.css"
+            }
+        }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        "import './style.scss';\nexport const Button = (): string => 'button';\n",
+    );
+    write_file(
+        root,
+        "src/style.scss",
+        "$brand: #c00;\n.button { color: $brand; }\n",
+    );
+
+    let mut options = LibBuildOptions {
+        project_root: root.to_path_buf(),
+        out_dir: root.join("dist"),
+        formats: vec![OutputFormat::Esm],
+        conditions: vec!["import".to_string(), "default".to_string()],
+        extra_externals: HashSet::new(),
+        preserve_modules: false,
+        declaration: false,
+        library_global_name: None,
+        entry: Vec::new(),
+        css_merge: Vec::new(),
+        raw_copy: Vec::new(),
+        sourcemap: SourceMapOption::None,
+    };
+    let result = build_library(options.clone())
+        .expect("exported CSS should be emitted from source style import");
+    assert_eq!(
+        result.entries.len(),
+        1,
+        "asset export must not become a JS entry"
+    );
+    assert_eq!(result.entries[0].subpath, ".");
+    assert!(
+        !result.entries[0].code.contains("style.scss"),
+        "source SCSS import must be consumed from JS output: {}",
+        result.entries[0].code
+    );
+    let css = std::fs::read_to_string(root.join("dist/style.css"))
+        .expect("package export ./style.css points at a real dist/style.css");
+    assert!(
+        css.contains(".button") && css.contains("#c00"),
+        "compiled SCSS should back the exported style.css, got:\n{css}"
+    );
+    assert!(
+        result
+            .assets
+            .iter()
+            .any(|asset| asset.path.ends_with("style.css")),
+        "style.css should be part of LibBuildResult assets, got {:?}",
+        result.assets
+    );
+
+    options.css_merge = vec!["dist/style.css".to_string()];
+    build_library(options)
+        .expect("css_merge may name the generated exported style.css without duplication");
+    let merged = std::fs::read_to_string(root.join("dist/style.css")).unwrap();
+    assert_eq!(
+        css, merged,
+        "css_merge should not duplicate generated dist/style.css when it names the output path"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

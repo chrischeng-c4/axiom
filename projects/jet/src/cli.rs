@@ -2398,10 +2398,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     crate::task_runner::config::JetConfig::default()
                 }
             };
-            let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
-            if let Some(conds) = build_config.resolve_conditions() {
-                resolve_options.conditions = conds.to_vec();
-            }
+            let resolve_options = browser_production_resolve_options(&root_dir, &build_config);
 
             let bundle_opts = crate::bundler::BundleOptions {
                 entry: entry.clone(),
@@ -3739,6 +3736,37 @@ fn path_to_file_url(path: &Path) -> String {
     }
 }
 
+fn load_jet_build_config_or_default(
+    root_dir: &Path,
+    context_label: &str,
+) -> crate::task_runner::config::JetConfig {
+    match crate::task_runner::config::JetConfig::load(root_dir) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("[{context_label}] Failed to parse jet.toml: {e:#}");
+            eprintln!(
+                "[{context_label}] Continuing with built-in defaults; [resolve.conditions] / [alias] from the file will NOT take effect until the parse error is fixed."
+            );
+            crate::task_runner::config::JetConfig::default()
+        }
+    }
+}
+
+fn browser_production_resolve_options(
+    root_dir: &Path,
+    build_config: &crate::task_runner::config::JetConfig,
+) -> crate::resolver::ResolveOptions {
+    let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
+    resolve_options.base_dirs = vec![root_dir.to_path_buf()];
+    if let Some(conds) = build_config.resolve_conditions() {
+        resolve_options.conditions = conds.to_vec();
+    }
+    resolve_options.alias =
+        crate::resolver::alias::AliasResolver::load(root_dir, &build_config.alias)
+            .to_resolve_aliases();
+    resolve_options
+}
+
 /// Execute a build across an Nx workspace in topological dependency order.
 ///
 /// 1. Fetches the project graph via `nx graph --json`.
@@ -3772,6 +3800,8 @@ async fn run_nx_build(
     };
 
     println!("Building {} project(s) in dependency order…", targets.len());
+
+    let build_config = load_jet_build_config_or_default(&nx_mgr.root, "jet build --nx");
 
     let start = std::time::Instant::now();
     let mut built = 0usize;
@@ -3829,12 +3859,23 @@ async fn run_nx_build(
             from_project_json || from_graph || from_path
         };
 
+        let mut resolve_options = browser_production_resolve_options(&nx_mgr.root, &build_config);
+        if project_root != nx_mgr.root {
+            resolve_options.base_dirs.push(project_root.clone());
+        }
+
         let bundle_opts = crate::bundler::BundleOptions {
             entry: entry.clone(),
             output_dir: output_dir.clone(),
             minify: false,
             source_maps: true,
+            resolve_options,
             externalize_all_packages: is_lib,
+            transform_options: crate::transform::TransformOptions {
+                dev_mode: false,
+                ..Default::default()
+            },
+            defines: crate::bundler::define::production_defines(),
             ..Default::default()
         };
 
@@ -6641,4 +6682,39 @@ mod gh3803_sourcemap_entry_path_warn_tests {
         );
     }
 }
+#[cfg(test)]
+mod gh1258_nx_resolve_options_tests {
+    use super::browser_production_resolve_options;
+    use crate::task_runner::config::JetConfig;
+
+    #[test]
+    fn nx_workspace_tsconfig_base_aliases_feed_build_resolver() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("tsconfig.base.json"),
+            r#"{
+              "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                  "@operations/tech-platform-lib": ["libs/tech-platform-lib/src/index.ts"]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let options = browser_production_resolve_options(dir.path(), &JetConfig::default());
+
+        assert_eq!(options.base_dirs, vec![dir.path().to_path_buf()]);
+        assert!(
+            options.alias.iter().any(|(prefix, path)| {
+                prefix == "@operations/tech-platform-lib"
+                    && path == &dir.path().join("libs/tech-platform-lib/src/index.ts")
+            }),
+            "Nx tsconfig.base alias must feed production resolver: {:?}",
+            options.alias
+        );
+    }
+}
+
 // CODEGEN-END
