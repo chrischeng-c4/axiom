@@ -792,6 +792,17 @@ fn exec_store_global(ctx: &ExecContext, name: &str, value: MbValue) {
     );
 }
 
+fn exec_lookup_builtin_name(name: &str) -> Option<MbValue> {
+    let value = crate::runtime::module::mb_builtin_get(MbValue::from_ptr(MbObject::new_str(
+        name.to_string(),
+    )));
+    if value.is_none() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
     if let Some(frame) = ctx.frames.last() {
         if let Some(&value) = frame.get(name) {
@@ -823,7 +834,7 @@ fn exec_lookup_name(ctx: &ExecContext, name: &str) -> Option<MbValue> {
             MbValue::none(),
         ))
     } else {
-        None
+        exec_lookup_builtin_name(name)
     }
 }
 
@@ -839,6 +850,109 @@ fn exec_store_name(ctx: &mut ExecContext, name: &str, value: MbValue) {
     } else {
         exec_store_global(ctx, name, value);
     }
+}
+
+enum ExecMaskedNameScope {
+    Frame,
+    Locals,
+    Globals,
+}
+
+struct ExecMaskedName {
+    name: String,
+    scope: ExecMaskedNameScope,
+    value: MbValue,
+}
+
+fn exec_take_name_binding(ctx: &mut ExecContext, name: &str) -> Option<ExecMaskedName> {
+    if let Some(frame) = ctx.frames.last_mut() {
+        return frame.remove(name).map(|value| ExecMaskedName {
+            name: name.to_string(),
+            scope: ExecMaskedNameScope::Frame,
+            value,
+        });
+    }
+    let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    if let Some(locals) = ctx.locals {
+        if crate::runtime::dict_ops::mb_dict_contains(locals, key)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            let value = crate::runtime::dict_ops::mb_dict_get(locals, key, MbValue::none());
+            unsafe {
+                crate::runtime::rc::retain_if_ptr(value);
+            }
+            crate::runtime::dict_ops::mb_dict_delitem(locals, key);
+            return Some(ExecMaskedName {
+                name: name.to_string(),
+                scope: ExecMaskedNameScope::Locals,
+                value,
+            });
+        }
+    }
+    let globals = ctx.globals?;
+    if crate::runtime::dict_ops::mb_dict_contains(globals, key)
+        .as_bool()
+        .unwrap_or(false)
+    {
+        let value = crate::runtime::dict_ops::mb_dict_get(globals, key, MbValue::none());
+        unsafe {
+            crate::runtime::rc::retain_if_ptr(value);
+        }
+        crate::runtime::dict_ops::mb_dict_delitem(globals, key);
+        return Some(ExecMaskedName {
+            name: name.to_string(),
+            scope: ExecMaskedNameScope::Globals,
+            value,
+        });
+    }
+    None
+}
+
+fn exec_restore_name_bindings(ctx: &mut ExecContext, masked: Vec<ExecMaskedName>) {
+    for masked_name in masked {
+        match masked_name.scope {
+            ExecMaskedNameScope::Frame => {
+                if let Some(frame) = ctx.frames.last_mut() {
+                    frame.insert(masked_name.name, masked_name.value);
+                }
+            }
+            ExecMaskedNameScope::Locals => {
+                if let Some(locals) = ctx.locals {
+                    crate::runtime::dict_ops::mb_dict_setitem(
+                        locals,
+                        MbValue::from_ptr(MbObject::new_str(masked_name.name)),
+                        masked_name.value,
+                    );
+                    unsafe {
+                        crate::runtime::rc::release_if_ptr(masked_name.value);
+                    }
+                }
+            }
+            ExecMaskedNameScope::Globals => {
+                if let Some(globals) = ctx.globals {
+                    crate::runtime::dict_ops::mb_dict_setitem(
+                        globals,
+                        MbValue::from_ptr(MbObject::new_str(masked_name.name)),
+                        masked_name.value,
+                    );
+                    unsafe {
+                        crate::runtime::rc::release_if_ptr(masked_name.value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn exec_mask_type_param_bindings(
+    ctx: &mut ExecContext,
+    type_params: &[crate::parser::ast::TypeParam],
+) -> Vec<ExecMaskedName> {
+    type_params
+        .iter()
+        .filter_map(|param| exec_take_name_binding(ctx, &param.name))
+        .collect()
 }
 
 fn make_exec_function_value(name: &str, is_async: bool, return_value: MbValue) -> MbValue {
@@ -1458,6 +1572,113 @@ fn exec_class_bases_value(
     Some(MbValue::from_ptr(MbObject::new_list(base_values)))
 }
 
+fn exec_instance_field(value: MbValue, field: &str) -> Option<MbValue> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(field).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn exec_is_generic_alias(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if matches!(
+                    class_name.as_str(),
+                    "GenericAlias" | "types.GenericAlias" | "typing.Alias"
+                )
+        )
+    })
+}
+
+fn exec_generic_alias_parameters(bases: &[MbValue]) -> Vec<MbValue> {
+    let mut params = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for base in bases {
+        let Some(alias_params) = exec_instance_field(*base, "__parameters__") else {
+            continue;
+        };
+        for param in extract_items(alias_params) {
+            if seen.insert(param.to_bits()) {
+                params.push(param);
+            }
+        }
+    }
+    params
+}
+
+fn exec_pep695_generic_alias(
+    ctx: &ExecContext,
+    type_params: &[crate::parser::ast::TypeParam],
+) -> Option<MbValue> {
+    if type_params.is_empty() {
+        return None;
+    }
+    let mut params = Vec::with_capacity(type_params.len());
+    for param in type_params {
+        params.push(exec_lookup_name(ctx, &param.name)?);
+    }
+    let args = if params.len() == 1 {
+        params[0]
+    } else {
+        MbValue::from_ptr(MbObject::new_tuple(params))
+    };
+    Some(crate::runtime::stdlib::typing_mod::generic_subscript(
+        make_type_object("typing.Generic"),
+        args,
+    ))
+}
+
+struct ExecClassGenericMetadata {
+    runtime_bases: MbValue,
+    orig_bases: Option<MbValue>,
+    parameters: Option<MbValue>,
+}
+
+fn exec_prepare_class_generic_metadata(
+    ctx: &ExecContext,
+    type_params: &[crate::parser::ast::TypeParam],
+    base_values: MbValue,
+) -> ExecClassGenericMetadata {
+    let mut bases = extract_items(base_values);
+    let has_generic_alias = bases.iter().any(|base| exec_is_generic_alias(*base));
+    if !has_generic_alias && type_params.is_empty() {
+        return ExecClassGenericMetadata {
+            runtime_bases: base_values,
+            orig_bases: None,
+            parameters: None,
+        };
+    }
+    if let Some(generic_alias) = exec_pep695_generic_alias(ctx, type_params) {
+        bases.push(generic_alias);
+    }
+    let original_bases = MbValue::from_ptr(MbObject::new_tuple(bases.clone()));
+    let params = exec_generic_alias_parameters(&bases);
+    ExecClassGenericMetadata {
+        runtime_bases: MbValue::from_ptr(MbObject::new_list(bases)),
+        orig_bases: Some(original_bases),
+        parameters: Some(MbValue::from_ptr(MbObject::new_tuple(params))),
+    }
+}
+
+fn exec_class_metaclass_name(
+    ctx: &mut ExecContext,
+    keyword_args: &[(String, crate::source::Spanned<crate::parser::ast::Expr>)],
+) -> Option<String> {
+    let (_, expr) = keyword_args
+        .iter()
+        .find(|(name, _)| name == "metaclass")?;
+    let value = exec_eval_expr(ctx, &expr.node);
+    if exec_has_pending_exception() {
+        return None;
+    }
+    crate::runtime::class::resolve_class_name(value)
+}
+
 fn exec_assignment_target_names(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) -> bool {
     use crate::parser::ast::Expr;
     match expr {
@@ -1595,9 +1816,11 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             ExecFlow::Normal
         }
         Stmt::ClassDef {
+            decorators,
             name,
             type_params,
             bases,
+            keyword_args,
             body,
             ..
         } => {
@@ -1605,6 +1828,17 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             if exec_has_pending_exception() {
                 return ExecFlow::Normal;
             }
+            let mut decorator_values = Vec::with_capacity(decorators.len());
+            let masked_type_params = exec_mask_type_param_bindings(ctx, type_params);
+            for decorator in decorators {
+                let value = exec_eval_expr(ctx, &decorator.node);
+                if exec_has_pending_exception() {
+                    exec_restore_name_bindings(ctx, masked_type_params);
+                    return ExecFlow::Normal;
+                }
+                decorator_values.push(value);
+            }
+            exec_restore_name_bindings(ctx, masked_type_params);
             let mut match_args = None;
             for class_stmt in body {
                 match &class_stmt.node {
@@ -1633,17 +1867,63 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             let Some(base_values) = exec_class_bases_value(ctx, bases) else {
                 return ExecFlow::Normal;
             };
+            let explicit_metaclass = exec_class_metaclass_name(ctx, keyword_args);
+            if exec_has_pending_exception() {
+                return ExecFlow::Normal;
+            }
             let class_name = MbValue::from_ptr(MbObject::new_str(name.clone()));
+            let generic_metadata =
+                exec_prepare_class_generic_metadata(ctx, type_params, base_values);
             crate::runtime::class::mb_class_define_multi(
                 class_name,
-                base_values,
+                generic_metadata.runtime_bases,
                 MbValue::from_ptr(MbObject::new_list(Vec::new())),
                 MbValue::from_ptr(MbObject::new_list(Vec::new())),
             );
+            if let Some(meta_name) = explicit_metaclass {
+                crate::runtime::class::mb_class_set_metaclass(
+                    class_name,
+                    MbValue::from_ptr(MbObject::new_str(meta_name)),
+                );
+            }
+            if let Some(orig_bases) = generic_metadata.orig_bases {
+                crate::runtime::class::mb_class_set_class_attr(
+                    class_name,
+                    MbValue::from_ptr(MbObject::new_str("__orig_bases__".to_string())),
+                    orig_bases,
+                );
+            }
+            if let Some(parameters) = generic_metadata.parameters {
+                crate::runtime::class::mb_class_set_class_attr(
+                    class_name,
+                    MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
+                    parameters,
+                );
+            }
             if let Some(match_args) = match_args {
                 crate::runtime::class::mb_class_set_match_args(class_name, match_args);
             }
-            exec_store_name(ctx, name, make_type_object(name));
+            let mut class_value = make_type_object(name);
+            for decorator in decorator_values.into_iter().rev() {
+                if mb_callable(decorator).as_bool() != Some(true) {
+                    let type_name = exec_match_type_name(decorator);
+                    crate::runtime::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{type_name}' object is not callable"
+                        ))),
+                    );
+                    return ExecFlow::Normal;
+                }
+                class_value = mb_call_spread(
+                    decorator,
+                    MbValue::from_ptr(MbObject::new_list(vec![class_value])),
+                );
+                if exec_has_pending_exception() {
+                    return ExecFlow::Normal;
+                }
+            }
+            exec_store_name(ctx, name, class_value);
             ExecFlow::Normal
         }
         Stmt::FnDef {
@@ -3210,3 +3490,28 @@ pub fn mb_locals() -> MbValue {
     crate::runtime::closure::build_globals_dict()
 }
 // HANDWRITE-END
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_exec_lookup_globals_miss_falls_back_to_builtins() {
+        crate::runtime::module::mb_register_builtins();
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        let ctx = ExecContext {
+            globals: Some(globals),
+            ..ExecContext::default()
+        };
+
+        let dict_value = exec_lookup_name(&ctx, "dict").expect("dict builtin should resolve");
+        assert_eq!(
+            eval_str_value(mb_repr(dict_value)).as_deref(),
+            Some("<class 'dict'>")
+        );
+        assert!(
+            exec_lookup_name(&ctx, "__definitely_missing_exec_name__").is_none(),
+            "unknown names should still miss"
+        );
+    }
+}
