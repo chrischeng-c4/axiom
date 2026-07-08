@@ -18258,7 +18258,7 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "sleep",
         kind: SigKind::ModuleFn,
-        params: &[p("delay", CoreTy::Typed, false)],
+        params: &[p("delay", CoreTy::Float, false)],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
