@@ -18,60 +18,34 @@ capability_refs:
 
 ```mermaid
 ---
-id: shared-server-substrate-runtime-layers
-entry: app_runtime
+id: shared-server-substrate-contract
+entry: start
 nodes:
-  app_runtime: { kind: start, label: "Apps and service runtimes" }
-  service_http: { kind: process, label: "libs/service-http service archetype shell" }
-  http_server: { kind: process, label: "libs/http-server HTTP runtime" }
-  tcp_server: { kind: process, label: "libs/tcp-server TCP accept/runtime" }
-  server_core: { kind: process, label: "libs/server-core lifecycle and budgets" }
-  h2c: { kind: process, label: "libs/h2c HTTP/1.1 + h2c transport" }
-  bind: { kind: terminal, label: "bind config" }
-  drain: { kind: terminal, label: "shutdown and drain signal" }
-  budget: { kind: terminal, label: "connection budget" }
-  socket: { kind: terminal, label: "socket options + TCP_NODELAY" }
-  tasks: { kind: terminal, label: "per-connection JoinSet supervision" }
-  streams: { kind: terminal, label: "tunable max concurrent streams" }
+  start: { kind: start, label: "Shared server substrate contract" }
+  core: { kind: process, label: "server-core owns bind config, drain state, shutdown signal, connection budget, metrics hook" }
+  tcp: { kind: process, label: "tcp-server owns socket bind, TCP_NODELAY, accept loop, zero-boxing handler API, JoinSet supervision" }
+  http: { kind: process, label: "http-server owns HTTP runtime facade and request tracing" }
+  h2c: { kind: process, label: "h2c owns hyper-util HTTP/1.1 + h2c transport and tunable server options" }
+  service: { kind: terminal, label: "service-http remains service archetype shell and delegates runtime to http-server" }
+  future: { kind: terminal, label: "Jet and Postgres pooler can adopt http-server or tcp-server later without service-http policy" }
 edges:
-  - { from: app_runtime, to: service_http }
-  - { from: app_runtime, to: http_server }
-  - { from: service_http, to: http_server }
-  - { from: http_server, to: tcp_server }
-  - { from: http_server, to: server_core }
-  - { from: http_server, to: h2c }
-  - { from: tcp_server, to: server_core }
-  - { from: server_core, to: bind }
-  - { from: server_core, to: drain }
-  - { from: server_core, to: budget }
-  - { from: tcp_server, to: socket }
-  - { from: tcp_server, to: tasks }
-  - { from: h2c, to: streams }
+  - { from: start, to: core }
+  - { from: core, to: tcp }
+  - { from: tcp, to: http }
+  - { from: http, to: h2c }
+  - { from: http, to: service }
+  - { from: tcp, to: future }
+  - { from: http, to: future }
 ---
 flowchart TD
-    AppRuntime[Apps and service runtimes]
-    ServiceHttp[libs/service-http\nservice archetype shell]
-    HttpServer[libs/http-server\nHTTP runtime]
-    TcpServer[libs/tcp-server\nTCP accept/runtime]
-    ServerCore[libs/server-core\nlifecycle and budgets]
-    H2c[libs/h2c\nHTTP/1.1 + h2c transport]
-
-    AppRuntime --> ServiceHttp
-    AppRuntime --> HttpServer
-    ServiceHttp --> HttpServer
-    HttpServer --> TcpServer
-    HttpServer --> ServerCore
-    HttpServer --> H2c
-    TcpServer --> ServerCore
-
-    ServerCore --> Bind[bind config]
-    ServerCore --> Drain[shutdown and drain signal]
-    ServerCore --> Budget[connection budget]
-    TcpServer --> Socket[socket options + TCP_NODELAY]
-    TcpServer --> Tasks[per-connection JoinSet supervision]
-    H2c --> Streams[tunable max concurrent streams]
+  start([Shared server substrate]) --> core[server-core: lifecycle, bind, drain, budgets, metrics]
+  core --> tcp[tcp-server: socket options, nodelay, accept loop, generic handler, JoinSet]
+  tcp --> http[http-server: HTTP runtime facade + tracing]
+  http --> h2c[h2c: HTTP/1.1 + h2c transport options]
+  http --> service[service-http delegates runtime; keeps service archetype policy]
+  tcp --> future[future raw TCP apps: pooler/proxy]
+  http --> future_http[future HTTP apps: Jet dev/serve]
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
