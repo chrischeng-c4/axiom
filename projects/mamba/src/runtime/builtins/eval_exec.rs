@@ -561,6 +561,9 @@ fn exec_is_typevar_constructor(expr: &crate::parser::ast::Expr) -> bool {
     };
     matches!(
         eval_dotted_path(&func.node).as_deref(),
+        Some([name]) if name == crate::lower::pep695::TYPEVAR_INTRINSIC
+    ) || matches!(
+        eval_dotted_path(&func.node).as_deref(),
         Some([name]) if name == "TypeVar"
     ) || matches!(
         eval_dotted_path(&func.node).as_deref(),
@@ -1319,6 +1322,16 @@ fn exec_eval_expr(ctx: &mut ExecContext, expr: &crate::parser::ast::Expr) -> MbV
                 None => return MbValue::none(),
             };
             if let Expr::Ident(name) = &func.node {
+                if name == crate::lower::pep695::TYPEVAR_INTRINSIC && values.len() == 5 {
+                    return crate::runtime::pep695::mb_pep695_typevar(
+                        values[0], values[1], values[2], values[3], values[4],
+                    );
+                }
+                if name == crate::lower::pep695::TYPE_ALIAS_INTRINSIC && values.len() == 3 {
+                    return crate::runtime::pep695::mb_pep695_type_alias(
+                        values[0], values[1], values[2],
+                    );
+                }
                 if name == "range" {
                     return exec_range_values(&values);
                 }
@@ -1408,6 +1421,41 @@ fn exec_bind_targets(ctx: &mut ExecContext, targets: &[String], value: MbValue) 
     for (name, item) in targets.iter().zip(items) {
         exec_store_name(ctx, name, item);
     }
+}
+
+fn exec_assign_attr_target(
+    ctx: &mut ExecContext,
+    object: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+    attr: &str,
+    value: &crate::source::span::Spanned<crate::parser::ast::Expr>,
+) {
+    let receiver = exec_eval_expr(ctx, &object.node);
+    if exec_has_pending_exception() {
+        return;
+    }
+    let assigned = exec_eval_expr(ctx, &value.node);
+    if exec_has_pending_exception() {
+        return;
+    }
+    crate::runtime::class::mb_setattr(
+        receiver,
+        MbValue::from_ptr(MbObject::new_str(attr.to_string())),
+        assigned,
+    );
+}
+
+fn exec_class_bases_value(
+    ctx: &mut ExecContext,
+    bases: &[crate::source::span::Spanned<crate::parser::ast::Expr>],
+) -> Option<MbValue> {
+    let mut base_values = Vec::with_capacity(bases.len());
+    for base in bases {
+        base_values.push(exec_eval_expr(ctx, &base.node));
+        if exec_has_pending_exception() {
+            return None;
+        }
+    }
+    Some(MbValue::from_ptr(MbObject::new_list(base_values)))
 }
 
 fn exec_assignment_target_names(expr: &crate::parser::ast::Expr, out: &mut Vec<String>) -> bool {
@@ -1514,6 +1562,10 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
             ExecFlow::Normal
         }
         Stmt::Assign { target, value } => {
+            if let crate::parser::ast::Expr::Attr { object, attr } = &target.node {
+                exec_assign_attr_target(ctx, object, attr, value);
+                return ExecFlow::Normal;
+            }
             let mut target_names = Vec::new();
             if exec_assignment_target_names(&target.node, &mut target_names) {
                 if exec_is_typevar_constructor(&value.node) {
@@ -1578,6 +1630,20 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 }
             }
             ctx.class_match_args.insert(name.clone(), match_args);
+            let Some(base_values) = exec_class_bases_value(ctx, bases) else {
+                return ExecFlow::Normal;
+            };
+            let class_name = MbValue::from_ptr(MbObject::new_str(name.clone()));
+            crate::runtime::class::mb_class_define_multi(
+                class_name,
+                base_values,
+                MbValue::from_ptr(MbObject::new_list(Vec::new())),
+                MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            );
+            if let Some(match_args) = match_args {
+                crate::runtime::class::mb_class_set_match_args(class_name, match_args);
+            }
+            exec_store_name(ctx, name, make_type_object(name));
             ExecFlow::Normal
         }
         Stmt::FnDef {
@@ -2015,6 +2081,8 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
     if let Some(ptr) = code.as_ptr() {
         unsafe {
             if let ObjData::CodeObject { ast, .. } = &(*ptr).data {
+                let mut ast = ast.clone();
+                crate::lower::pep695::desugar_module(&mut ast);
                 let mut ctx = ExecContext {
                     globals,
                     locals,
@@ -2042,7 +2110,7 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
     let tokens = lexer::lex(&source, file_id);
     let mut parser = Parser::new(tokens, &source, file_id);
     parser.skip_newlines();
-    let module = match parser.parse_module() {
+    let mut module = match parser.parse_module() {
         Ok(module) => module,
         Err(err) => {
             let message = match err {
@@ -2060,6 +2128,7 @@ fn mb_exec_impl(code: MbValue, globals: Option<MbValue>, locals: Option<MbValue>
             return MbValue::none();
         }
     };
+    crate::lower::pep695::desugar_module(&mut module);
     let mut ctx = ExecContext {
         globals,
         locals,
