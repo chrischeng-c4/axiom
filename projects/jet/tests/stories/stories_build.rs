@@ -116,12 +116,12 @@ fn build_emits_manager_previews_and_modules() {
     assert!(manager.contains("class=\"jet-docs-link\""));
     assert!(manager.contains("Button component description."));
     assert!(manager.contains("Main label shown in the button."));
-    assert!(manager.contains("<code>string</code>"));
+    assert!(manager.contains(r#"<span class="jet-docs-pill">string</span>"#));
     assert!(manager.contains("preview/components-button--primary.html"));
     let index_json = fs::read_to_string(out.join("index.json")).expect("read index json");
     assert!(index_json.contains("\"schemaVersion\":1"));
     assert!(index_json.contains("\"id\":\"components-button--primary\""));
-    assert!(index_json.contains("\"importPath\":\"src/components/Button.stories.tsx\""));
+    assert!(index_json.contains("\"importPath\":\"./src/components/Button.stories.tsx\""));
     assert!(index_json.contains("\"docs\":["));
 
     // One preview per story, by id.
@@ -565,6 +565,50 @@ fn build_emits_svg_and_png_assets_as_url_strings() {
     assert!(
         !component.contains("import iconUrl") && !component.contains("import defaultImage"),
         "asset imports must not remain as browser module imports: {component}"
+    );
+}
+
+#[test]
+fn build_rewrites_svg_reactcomponent_barrel_reexports() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path();
+
+    write(
+        root.join("src/components/IconBox.stories.tsx"),
+        "import { IconBox } from './IconBox';\nexport default { title: 'Components/IconBox', component: IconBox };\nexport const Primary = { args: {} };\n",
+    );
+    write(
+        root.join("src/components/IconBox.tsx"),
+        "import { ErrorIcon } from './assets';\nexport const IconBox = () => ErrorIcon;\n",
+    );
+    write(
+        root.join("src/components/assets/index.tsx"),
+        "export { ReactComponent as ErrorIcon } from './error.svg';\n",
+    );
+    write(
+        root.join("src/components/assets/error.svg"),
+        r#"<svg viewBox="0 0 16 16"><path d="M0 0h16v16H0z"/></svg>"#,
+    );
+
+    let out = root.join("dist-stories");
+    let result = build_stories_static(root, &out).expect("build");
+
+    let barrel = fs::read_to_string(out.join("modules/src/components/assets/index.js"))
+        .expect("read emitted asset barrel");
+    assert!(
+        barrel.contains("React.forwardRef") && barrel.contains("export { SvgErrorIcon as ErrorIcon };"),
+        "SVG ReactComponent barrel re-export should become an inline React component export: {barrel}"
+    );
+    assert!(
+        !barrel.contains("from './error.svg'") && !barrel.contains("from \"./error.svg\""),
+        "browser JS must not keep a module export from raw SVG: {barrel}"
+    );
+    assert!(
+        result
+            .emitted
+            .iter()
+            .any(|p| p == Path::new("modules/src/components/assets/error.svg")),
+        "raw SVG file should still be emitted for URL consumers"
     );
 }
 

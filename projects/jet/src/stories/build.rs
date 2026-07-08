@@ -471,6 +471,7 @@ fn rewrite_imports(
     let mut styles: Vec<StyleAsset> = Vec::new();
     let mut assets: Vec<RawAsset> = Vec::new();
     let mut style_specs: Vec<String> = Vec::new();
+    let mut svg_component_reexports: Vec<(String, PathBuf)> = Vec::new();
     let mut asset_rewrites: BTreeMap<String, String> = BTreeMap::new();
     let mut rewrites: BTreeMap<String, String> = BTreeMap::new();
 
@@ -486,6 +487,9 @@ fn rewrite_imports(
                 continue;
             }
             if is_raw_asset_path(&target_file) {
+                if is_svg_component_reexport(code, &spec) {
+                    svg_component_reexports.push((spec.clone(), target_file.clone()));
+                }
                 let asset = raw_asset_for_file(root, &target_file);
                 let new_spec = relative_emitted_specifier(importer_emitted, &asset.emitted_path);
                 asset_rewrites.insert(spec.clone(), new_spec);
@@ -509,6 +513,9 @@ fn rewrite_imports(
                 continue; // not installed locally — leave for the importmap
             };
             if is_raw_asset_path(&dep_file) {
+                if is_svg_component_reexport(code, &spec) {
+                    svg_component_reexports.push((spec.clone(), dep_file.clone()));
+                }
                 let asset = raw_asset_for_file(root, &dep_file);
                 let new_spec = relative_emitted_specifier(importer_emitted, &asset.emitted_path);
                 asset_rewrites.insert(spec.clone(), new_spec);
@@ -528,6 +535,9 @@ fn rewrite_imports(
     let mut out = code.to_string();
     for spec in &style_specs {
         out = remove_static_import_for_spec(&out, spec);
+    }
+    for (spec, source_file) in &svg_component_reexports {
+        out = rewrite_svg_component_reexport_for_spec(&out, spec, source_file);
     }
     for (spec, new_spec) in &asset_rewrites {
         out = rewrite_asset_import_for_spec(&out, spec, new_spec);
@@ -655,6 +665,150 @@ fn rewrite_asset_import_for_spec(code: &str, spec: &str, new_spec: &str) -> Stri
         out.push_str(newline);
     }
     out
+}
+
+fn is_svg_component_reexport(code: &str, spec: &str) -> bool {
+    code.split_inclusive(';').any(|segment| {
+        let trimmed = segment.trim();
+        trimmed.starts_with("export ")
+            && trimmed.contains("ReactComponent")
+            && trimmed.contains(" from ")
+            && (trimmed.contains(&format!("\"{spec}\"")) || trimmed.contains(&format!("'{spec}'")))
+    })
+}
+
+fn rewrite_svg_component_reexport_for_spec(code: &str, spec: &str, source_file: &Path) -> String {
+    let mut out = String::with_capacity(code.len());
+    for line in code.split_inclusive('\n') {
+        let newline = if line.ends_with('\n') { "\n" } else { "" };
+        let body = line.trim_end_matches('\n');
+
+        let mut rewritten_body = String::with_capacity(body.len());
+        for segment in body.split_inclusive(';') {
+            let leading_len = segment.len() - segment.trim_start().len();
+            let leading = &segment[..leading_len];
+            let trimmed = segment.trim_start();
+            if let Some(replacement) =
+                svg_component_reexport_replacement(trimmed, spec, source_file)
+            {
+                rewritten_body.push_str(leading);
+                rewritten_body.push_str(&replacement);
+            } else {
+                rewritten_body.push_str(segment);
+            }
+        }
+        if !body.ends_with(';') {
+            let trailing = body.rsplit_once(';').map(|(_, tail)| tail).unwrap_or(body);
+            if !trailing.is_empty() && !rewritten_body.ends_with(trailing) {
+                let leading_len = trailing.len() - trailing.trim_start().len();
+                let leading = &trailing[..leading_len];
+                let trimmed = trailing.trim_start();
+                if let Some(replacement) =
+                    svg_component_reexport_replacement(trimmed, spec, source_file)
+                {
+                    rewritten_body.push_str(leading);
+                    rewritten_body.push_str(&replacement);
+                }
+            }
+        }
+        out.push_str(&rewritten_body);
+        out.push_str(newline);
+    }
+    out
+}
+
+fn svg_component_reexport_replacement(
+    trimmed_line: &str,
+    spec: &str,
+    source_file: &Path,
+) -> Option<String> {
+    if !(trimmed_line.starts_with("export ")
+        && trimmed_line.contains("ReactComponent")
+        && trimmed_line.contains(" from ")
+        && (trimmed_line.contains(&format!("\"{spec}\""))
+            || trimmed_line.contains(&format!("'{spec}'"))))
+    {
+        return None;
+    }
+    let aliases = svgr_reexport_aliases(trimmed_line);
+    if aliases.is_empty() {
+        return None;
+    }
+    let svg_src = std::fs::read_to_string(source_file).ok()?;
+    let mut module =
+        crate::asset::transform_svg_to_component(&svg_src, crate::asset::SvgrExportType::Named)
+            .ok()?;
+    let local_name = svg_component_local_name(&aliases[0], source_file);
+    module = module.replace("const ReactComponent =", &format!("const {local_name} ="));
+    let reexports = aliases
+        .iter()
+        .map(|alias| format!("{local_name} as {alias}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(module.replace(
+        "export { ReactComponent };",
+        &format!("export {{ {reexports} }};"),
+    ))
+}
+
+fn svgr_reexport_aliases(text: &str) -> Vec<String> {
+    let Some(open) = text.find('{') else {
+        return Vec::new();
+    };
+    let Some(close) = text[open..].find('}').map(|idx| open + idx) else {
+        return Vec::new();
+    };
+    text[open + 1..close]
+        .split(',')
+        .filter_map(|binding| svgr_reexport_alias(binding.trim()))
+        .collect()
+}
+
+fn svgr_reexport_alias(binding: &str) -> Option<String> {
+    let mut parts = binding.split_whitespace();
+    let first = parts.next()?;
+    if first != "ReactComponent" {
+        return None;
+    }
+    match (parts.next(), parts.next(), parts.next()) {
+        (None, None, None) => Some(first.to_string()),
+        (Some("as"), Some(alias), None) if is_js_identifier(alias) => Some(alias.to_string()),
+        _ => None,
+    }
+}
+
+fn svg_component_local_name(public_alias: &str, source_file: &Path) -> String {
+    let seed = if public_alias == "ReactComponent" {
+        source_file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Icon")
+    } else {
+        public_alias
+    };
+    format!("Svg{}", sanitize_identifier_part(seed))
+}
+
+fn sanitize_identifier_part(seed: &str) -> String {
+    let mut out = String::new();
+    let mut uppercase_next = true;
+    for ch in seed.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if uppercase_next {
+                out.push(ch.to_ascii_uppercase());
+                uppercase_next = false;
+            } else {
+                out.push(ch);
+            }
+        } else {
+            uppercase_next = true;
+        }
+    }
+    if out.is_empty() {
+        "Icon".to_string()
+    } else {
+        out
+    }
 }
 
 fn asset_import_replacement(trimmed_line: &str, spec: &str, new_spec: &str) -> Option<String> {

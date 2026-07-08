@@ -380,6 +380,7 @@ fn infer_variable_declarator_type(node: Node, source: &str) -> Option<String> {
         return Some(inferred);
     }
     infer_object_literal_type(value, source)
+        .or_else(|| infer_single_arrow_property_object_literal_type(value, source))
 }
 
 // @spec .aw/tech-design/projects/jet/logic/jet-lib-dts-isolateddeclarations-false-positive-on-arrow-functio.md#logic
@@ -517,6 +518,25 @@ fn infer_object_literal_type(node: Node, source: &str) -> Option<String> {
 
 fn is_supported_object_literal_key(key: &str) -> bool {
     is_identifier(key) || is_string_literal(key) || is_number_literal(key)
+}
+
+fn infer_single_arrow_property_object_literal_type(node: Node, source: &str) -> Option<String> {
+    if node.kind() != "object" {
+        return None;
+    }
+    let text = node_text(node, source).trim();
+    let inner = text.strip_prefix('{')?.strip_suffix('}')?.trim();
+    let (key, value) = split_once_top_level(inner, ':')?;
+    let key = key.trim();
+    if !is_supported_object_literal_key(key) {
+        return None;
+    }
+    let ty = infer_arrow_function_type_from_text(value.trim().trim_end_matches(','))?;
+    Some(format!(
+        "{{
+    {key}: {ty};
+}}"
+    ))
 }
 
 fn infer_object_method_member_type(property: &str) -> Option<String> {
