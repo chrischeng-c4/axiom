@@ -20,6 +20,7 @@ mod boxing;
 mod breakpoint;
 mod bytes_like;
 mod callable;
+mod cell_compare;
 mod char_radix;
 mod collection_operands;
 mod complex_constructor;
@@ -74,6 +75,7 @@ pub use boxing::{
 pub use breakpoint::{mb_breakpoint, mb_breakpoint_call};
 pub use bytes_like::try_bytes_like;
 pub use callable::mb_callable;
+use cell_compare::{cell_values_eq, cell_values_lt};
 pub(crate) use char_radix::resolve_index_value;
 pub use char_radix::{mb_bin, mb_chr, mb_hex, mb_oct, mb_ord};
 use collection_operands::{
@@ -2554,61 +2556,6 @@ pub fn mb_match_bool_literal(subject: MbValue, expected: i64) -> MbValue {
 /// `nan == nan` stays False.
 fn mb_richcmp_eq(a: MbValue, b: MbValue) -> bool {
     mb_values_identical(a, b) || mb_values_eq(a, b)
-}
-
-fn cell_values_eq(a: MbValue, b: MbValue) -> Option<bool> {
-    use super::closure::CellCompareValue::{Empty, NotACell, Value};
-
-    match (
-        super::closure::mb_cell_compare_value(a),
-        super::closure::mb_cell_compare_value(b),
-    ) {
-        (NotACell, NotACell) => None,
-        (Empty, Empty) => Some(true),
-        (Empty, _) | (_, Empty) => Some(false),
-        (Value(av), Value(bv)) => {
-            if let (Some(ai), Some(bf)) = (av.as_int_pyint(), bv.as_float()) {
-                return Some((ai as f64) == bf);
-            }
-            if let (Some(af), Some(bi)) = (av.as_float(), bv.as_int_pyint()) {
-                return Some(af == (bi as f64));
-            }
-            if let (Some(ai), Some(bi)) = (av.as_int_pyint(), bv.as_int_pyint()) {
-                return Some(ai == bi);
-            }
-            Some(mb_values_eq(av, bv))
-        }
-        (Value(av), NotACell) => Some(mb_values_eq(av, b)),
-        (NotACell, Value(bv)) => Some(mb_values_eq(a, bv)),
-    }
-}
-
-fn cell_values_lt(a: MbValue, b: MbValue) -> Option<bool> {
-    use super::closure::CellCompareValue::{Empty, NotACell, Value};
-
-    match (
-        super::closure::mb_cell_compare_value(a),
-        super::closure::mb_cell_compare_value(b),
-    ) {
-        (NotACell, NotACell) => None,
-        (Empty, Empty) => Some(false),
-        (Empty, _) => Some(true),
-        (_, Empty) => Some(false),
-        (Value(av), Value(bv)) => {
-            if let (Some(ai), Some(bf)) = (av.as_int_pyint(), bv.as_float()) {
-                return Some((ai as f64) < bf);
-            }
-            if let (Some(af), Some(bi)) = (av.as_float(), bv.as_int_pyint()) {
-                return Some(af < (bi as f64));
-            }
-            if let (Some(ai), Some(bi)) = (av.as_int_pyint(), bv.as_int_pyint()) {
-                return Some(ai < bi);
-            }
-            Some(mb_values_lt(av, bv))
-        }
-        (Value(av), NotACell) => Some(mb_values_lt(av, b)),
-        (NotACell, Value(bv)) => Some(mb_values_lt(a, bv)),
-    }
 }
 
 pub(super) fn str_value(v: MbValue) -> Option<String> {
