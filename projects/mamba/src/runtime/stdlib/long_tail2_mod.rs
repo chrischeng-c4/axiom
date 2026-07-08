@@ -156,6 +156,20 @@ unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
 
+unsafe extern "C" fn dispatch_gettext_find(args: *const MbValue, nargs: usize) -> MbValue {
+    if nargs > 0 && extract_str(*args).is_none() {
+        return raise_type_error("find() argument 'domain' must be str");
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn dispatch_gettext_translation(args: *const MbValue, nargs: usize) -> MbValue {
+    if nargs > 0 && extract_str(*args).is_none() {
+        return raise_type_error("translation() argument 'domain' must be str");
+    }
+    MbValue::from_ptr(MbObject::new_dict())
+}
+
 fn new_str(s: &str) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s.to_string()))
 }
@@ -1691,9 +1705,12 @@ pub fn register() {
         &["GNUTranslations", "NullTranslations"],
         &[
             ("Catalog", dispatch_class_shell as *const () as usize),
-            ("translation", dispatch_class_shell as *const () as usize),
+            (
+                "translation",
+                dispatch_gettext_translation as *const () as usize,
+            ),
             ("install", dispatch_noop as *const () as usize),
-            ("find", dispatch_noop as *const () as usize),
+            ("find", dispatch_gettext_find as *const () as usize),
             ("c2py", dispatch_class_shell as *const () as usize),
             ("textdomain", dispatch_empty_str as *const () as usize),
             ("bindtextdomain", dispatch_empty_str as *const () as usize),

@@ -62,6 +62,15 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+fn require_str_arg(val: MbValue, func: &str, arg: &str) -> Result<String, MbValue> {
+    extract_str(val).ok_or_else(|| {
+        raise(
+            "TypeError",
+            format!("{func}() argument '{arg}' must be str"),
+        )
+    })
+}
+
 fn extract_bytes(val: MbValue) -> Option<Vec<u8>> {
     val.as_ptr().and_then(|ptr| unsafe {
         match &(*ptr).data {
@@ -381,10 +390,13 @@ extern "C" fn m_contains(this: MbValue, name: MbValue) -> MbValue {
 unsafe extern "C" fn m_get(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let name = pos
-        .first()
-        .and_then(|v| extract_str(*v))
-        .unwrap_or_default();
+    let name = match pos.first().copied() {
+        Some(value) => match require_str_arg(value, "Message.get", "name") {
+            Ok(value) => value,
+            Err(err) => return err,
+        },
+        None => String::new(),
+    };
     let failobj = pos.get(1).copied().unwrap_or_else(MbValue::none);
     match header_get_first(this, &name) {
         Some(v) => {
@@ -401,10 +413,13 @@ unsafe extern "C" fn m_get(this: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_get_all(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let name = pos
-        .first()
-        .and_then(|v| extract_str(*v))
-        .unwrap_or_default();
+    let name = match pos.first().copied() {
+        Some(value) => match require_str_arg(value, "Message.get_all", "name") {
+            Ok(value) => value,
+            Err(err) => return err,
+        },
+        None => String::new(),
+    };
     let failobj = pos.get(1).copied().unwrap_or_else(MbValue::none);
     let lname = name.to_lowercase();
     let mut out = Vec::new();
@@ -620,10 +635,13 @@ unsafe extern "C" fn m_get_params(this: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_get_param(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let param = pos
-        .first()
-        .and_then(|v| extract_str(*v))
-        .unwrap_or_default();
+    let param = match pos.first().copied() {
+        Some(value) => match require_str_arg(value, "Message.get_param", "param") {
+            Ok(value) => value,
+            Err(err) => return err,
+        },
+        None => String::new(),
+    };
     let failobj = pos.get(1).copied().unwrap_or_else(MbValue::none);
     let header = kwarg(&items, "header")
         .and_then(extract_str)
@@ -1514,10 +1532,13 @@ fn build_message_from_text(text: &str, class_name: &str) -> MbValue {
 unsafe extern "C" fn dispatch_message_from_string(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let text = pos
-        .first()
-        .and_then(|v| extract_str(*v))
-        .unwrap_or_default();
+    let text = match pos.first().copied() {
+        Some(value) => match require_str_arg(value, "message_from_string", "s") {
+            Ok(value) => value,
+            Err(err) => return err,
+        },
+        None => String::new(),
+    };
     build_message_from_text(&text, "Message")
 }
 
