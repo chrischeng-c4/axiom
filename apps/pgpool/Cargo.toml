@@ -1,0 +1,38 @@
+# <HANDWRITE gap="missing-generator:project-bootstrap" tracker="#pgpool-bootstrap" reason="Initial working-name app scaffold before pgpool has a generated TD source unit.">
+[package]
+name = "pgpool"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "working-name PostgreSQL pooler service built on server-core/tcp-server/http-server"
+build = "build.rs"
+
+[lib]
+name = "pgpool"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pgpool"
+path = "src/bin/pgpool.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+cli-std = { path = "../../libs/cli-std", default-features = false }
+http-server = { path = "../../libs/http-server" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+server-core = { path = "../../libs/server-core" }
+tcp-server = { path = "../../libs/tcp-server" }
+tokio = { workspace = true }
+
+[build-dependencies]
+build-stamp = { path = "../../libs/build-stamp" }
+
+[features]
+default = []
+self-update = ["cli-std/online"]
+issue = ["cli-std/online"]
+# </HANDWRITE>

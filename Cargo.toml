@@ -3,6 +3,7 @@ members = [
     "apps/relay",
     "apps/defer",
     "apps/loom",
+    "apps/pgpool",
     "apps/tape",
     "apps/preview",
     "projects/mamba/mambalibs/mongokit",
