@@ -10,6 +10,7 @@ use rustc_hash::FxHashMap;
 mod absolute;
 mod aggregate_kwargs;
 mod any_all;
+mod array_handle;
 mod ascii;
 mod assertions;
 mod async_iteration;
@@ -47,6 +48,7 @@ pub use aggregate_kwargs::{
     key_unary_arity_error, mb_max_kwargs, mb_min_kwargs, mb_sorted_kwargs, mb_sum_with_start,
 };
 pub use any_all::{mb_all, mb_any};
+pub(crate) use array_handle::is_array_handle_value;
 pub use ascii::mb_ascii;
 pub use assertions::{mb_assertion_error, mb_assertion_error_no_msg};
 pub use async_iteration::{mb_aiter, mb_anext, mb_anext_default};
@@ -1811,11 +1813,6 @@ pub(crate) fn complex_cmp_dunder(method: &str, a: MbValue, b: MbValue) -> Option
         "__lt__" | "__le__" | "__gt__" | "__ge__" => Some(MbValue::not_implemented()),
         _ => None,
     }
-}
-
-fn is_array_handle_value(v: MbValue) -> bool {
-    v.as_int()
-        .is_some_and(|id| super::stdlib::array_mod::is_array_handle(id as u64))
 }
 
 /// #2129 carve-out: `decimal.Decimal` and `fractions.Fraction` values are
