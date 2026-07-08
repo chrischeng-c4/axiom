@@ -182,7 +182,6 @@ flowchart TD
     r3[R3 stale source root references are bounded] --> rg_stale_projects_defer_source_root_scan[rg stale projects/defer source-root scan]
     r4[R4 defer local checks still run] --> cargo_test_p_defer[cargo test -p defer]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
