@@ -1,1 +1,0 @@
-feat(agent): add RestructureCodebaseAgent — workspace-aware codebase decomposition with agentic loop. Reads manifests, lists folder summaries, estimates tokens, LLM decides grouping with budget constraint, recursive drill-down. #953

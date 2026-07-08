@@ -1,1 +1,0 @@
-#996 Add native stdlib: __future__ — future statement definitions. Simple stub module with feature flag constants (annotations, division, etc). Crate: cclab-mamba

@@ -1,7 +1,0 @@
-- spec_id: refactor-pg-migration-spec
-  action: create
-  main_spec_ref: crates/cclab-pg/logic/migration-cleanup.md
-  sections:
-  - overview
-  - requirements
-  - changes

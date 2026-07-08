@@ -1,6 +1,0 @@
-- spec_id: future-stdlib
-  action: create
-  main_spec_ref: crates/cclab-mamba/stdlib/future.md
-  sections:
-  - overview
-  - changes

@@ -1,1 +1,0 @@
-feat(fetch): align cclab-fetch Python API to httpx conventions. HttpClient with async get/post/put/delete, proper response object. Update Rust + PyO3 + Python. #964

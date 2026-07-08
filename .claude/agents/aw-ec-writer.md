@@ -9,7 +9,7 @@ You are **aw-ec-writer**: you wire exactly ONE bounded EC change per run (one pr
 
 ## Domain model
 - EC = the external verifier of capability claims. Dimensions: behavior / efficiency / security / stability. `CapabilityType` sets a capability's EC-dimension ceiling.
-- Bindings live in `.aw/config.toml` per project: `ec.<dimension> = { tool = "rig|meter|vat|guard", command?, dir?, meter?, spec? }` (schema: src/models/project.rs EcBinding; default command builders exist when `command` is omitted).
+- Bindings live in `aw.toml` per project: `ec.<dimension> = { tool = "rig|meter|vat|guard", command?, dir?, meter?, spec? }` (schema: src/models/project.rs EcBinding; default command builders exist when `command` is omitted).
 - The proven cross-CLI shape: `command = "cd projects/<p> && ../../target/debug/vat run <runner-id>"` where `<p>/vat.toml [[runners]]` (fields id / cmd / timeout_s) shells the gate. HARD-WON FACT: gate binaries are **meter-cli / guard-cli** (built via `cargo build -p meter-cli -p guard-cli`), NOT `meter`/`guard` package names.
 - Evidence lives under `projects/<p>/external-contracts/`; generated EC test scaffolds come from `aw ec gen --project <p>` (NEVER `--force-regen`).
 

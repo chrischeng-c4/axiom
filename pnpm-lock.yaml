@@ -6,7 +6,7 @@ settings:
 
 importers:
 
-  projects/agentic-workflow/packages/@sdd/app:
+  apps/agentic-workflow/packages/@sdd/app:
     dependencies:
       '@sdd/core':
         specifier: workspace:*
@@ -46,7 +46,7 @@ importers:
         specifier: ^5.0.11
         version: 5.4.21(@types/node@25.5.0)
 
-  projects/agentic-workflow/packages/@sdd/core:
+  apps/agentic-workflow/packages/@sdd/core:
     dependencies:
       react:
         specifier: '>=18'
@@ -59,7 +59,7 @@ importers:
         specifier: ^5.3.3
         version: 5.9.3
 
-  projects/agentic-workflow/packages/@sdd/pipeline:
+  apps/agentic-workflow/packages/@sdd/pipeline:
     dependencies:
       react:
         specifier: '>=18'
@@ -78,7 +78,7 @@ importers:
         specifier: ^5.3.3
         version: 5.9.3
 
-  projects/agentic-workflow/packages/@sdd/spec-viewer:
+  apps/agentic-workflow/packages/@sdd/spec-viewer:
     dependencies:
       mermaid:
         specifier: ^11.12.3
@@ -100,7 +100,7 @@ importers:
         specifier: ^5.3.3
         version: 5.9.3
 
-  projects/agentic-workflow/packages/@sdd/ui:
+  apps/agentic-workflow/packages/@sdd/ui:
     dependencies:
       clsx:
         specifier: ^2.1.0
@@ -168,19 +168,19 @@ importers:
     dependencies:
       '@sdd/app':
         specifier: workspace:*
-        version: link:../../../projects/agentic-workflow/packages/@sdd/app
+        version: link:../../../apps/agentic-workflow/packages/@sdd/app
       '@sdd/core':
         specifier: workspace:*
-        version: link:../../../projects/agentic-workflow/packages/@sdd/core
+        version: link:../../../apps/agentic-workflow/packages/@sdd/core
       '@sdd/pipeline':
         specifier: workspace:*
-        version: link:../../../projects/agentic-workflow/packages/@sdd/pipeline
+        version: link:../../../apps/agentic-workflow/packages/@sdd/pipeline
       '@sdd/spec-viewer':
         specifier: workspace:*
-        version: link:../../../projects/agentic-workflow/packages/@sdd/spec-viewer
+        version: link:../../../apps/agentic-workflow/packages/@sdd/spec-viewer
       '@sdd/ui':
         specifier: workspace:*
-        version: link:../../../projects/agentic-workflow/packages/@sdd/ui
+        version: link:../../../apps/agentic-workflow/packages/@sdd/ui
       '@tanstack/react-query':
         specifier: ^5.17.19
         version: 5.95.2(react@18.3.1)

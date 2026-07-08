@@ -25,7 +25,7 @@ configured test gates -- live entirely in `aw health`, and `aw health`'s
 
 ## Workflow
 
-1. Resolve the project from the prompt, current branch, or `.aw/config.toml`.
+1. Resolve the project from the prompt, current branch, or `aw.toml`.
 2. Run the audit-first preservation check before any remediation:
    ```bash
    aw standardize audit check --project <project>
