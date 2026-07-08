@@ -339,6 +339,39 @@ unsafe extern "C" fn transport_socket_noop(_self_v: MbValue, _args: MbValue) -> 
     MbValue::none()
 }
 
+fn require_trsock_int_arg(args: &[MbValue], idx: usize, name: &str) -> Option<MbValue> {
+    if let Some(value) = args.get(idx) {
+        if value.as_int_pyint().is_none() {
+            return Some(raise_type_error(&format!(
+                "TransportSocket argument {name} must be int"
+            )));
+        }
+    }
+    None
+}
+
+unsafe extern "C" fn transport_socket_getsockopt(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(err) = require_trsock_int_arg(&items, 0, "level") {
+        return err;
+    }
+    if let Some(err) = require_trsock_int_arg(&items, 1, "optname") {
+        return err;
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn transport_socket_setsockopt(_self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_args(args);
+    if let Some(err) = require_trsock_int_arg(&items, 0, "level") {
+        return err;
+    }
+    if let Some(err) = require_trsock_int_arg(&items, 1, "optname") {
+        return err;
+    }
+    MbValue::none()
+}
+
 unsafe extern "C" fn curses_bool_flag(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     raise_type_error("curses flag must be bool")
 }
@@ -570,6 +603,8 @@ fn register_asyncio_transports() {
 
 fn register_asyncio_trsock() {
     let addr = transport_socket_noop as *const () as usize;
+    let getsockopt_addr = transport_socket_getsockopt as *const () as usize;
+    let setsockopt_addr = transport_socket_setsockopt as *const () as usize;
     register_variadic_method_class_many(
         "TransportSocket",
         &[
@@ -589,7 +624,7 @@ fn register_asyncio_trsock() {
             ("getpeername", addr),
             ("getsockbyname", addr),
             ("getsockname", addr),
-            ("getsockopt", addr),
+            ("getsockopt", getsockopt_addr),
             ("gettimeout", addr),
             ("ioctl", addr),
             ("listen", addr),
@@ -608,7 +643,7 @@ fn register_asyncio_trsock() {
             ("sendto", addr),
             ("set_inheritable", addr),
             ("setblocking", addr),
-            ("setsockopt", addr),
+            ("setsockopt", setsockopt_addr),
             ("settimeout", addr),
             ("share", addr),
             ("shutdown", addr),
