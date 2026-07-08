@@ -102,3 +102,46 @@ flowchart TD
     fix --> smoke
     stale -- no --> done([Defer resolves through apps/defer while identity remains project:defer])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+repo_taxonomy_migration:
+  project: defer
+  canonical_source_root: apps/defer
+  legacy_source_root: projects/defer
+  preserved_identity:
+    aw_project: defer
+    github_label: project:defer
+    persistent_branch: project-defer
+    td_bucket: projects/defer/tech-design
+  rewrite_classes:
+    - root_readme_inventory_link
+    - cargo_workspace_member
+    - aw_project_path
+    - aw_cap_path
+    - project_local_aw_toml_path
+    - install_or_build_script_path
+    - test_fixture_or_manifest_path
+    - generated_evidence_source_root_path
+  preserve_classes:
+    - historical_release_notes
+    - issue_body_reference_context
+    - td_bucket_path
+    - git_branch_name
+    - github_label
+  verification:
+    aw_resolution:
+      - aw wi show 1217
+      - aw wi list --project defer --state open
+      - aw capability check --project defer
+    local_checks:
+      - cargo test -p defer
+      - aw td check projects/defer/tech-design
+    stale_source_root_scan:
+      command: rg -n "projects/defer" README.md CONTRIBUTING.md aw.toml .aw/config.toml Cargo.toml apps projects .github
+      allowed_contexts:
+        - projects/defer/tech-design
+        - historical text that explicitly names the retired source root
+```
