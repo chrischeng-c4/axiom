@@ -1636,16 +1636,33 @@ pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
         _ => return,
     };
     let mut bases = Vec::new();
+    let mut raw_bases = Vec::new();
     if let Some(ptr) = bases_list.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 for item in items.iter() {
+                    raw_bases.push(*item);
                     if let Some(base_name) = resolve_class_name(*item) {
                         bases.push(base_name);
                     }
                 }
             }
+        }
+    }
+    if !raw_bases.is_empty() {
+        mb_class_set_class_attr(
+            MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+            MbValue::from_ptr(MbObject::new_str("__orig_bases__".to_string())),
+            MbValue::from_ptr(MbObject::new_tuple(raw_bases.clone())),
+        );
+        let params = class_generic_alias_parameters(&raw_bases);
+        if !params.is_empty() {
+            mb_class_set_class_attr(
+                MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+                MbValue::from_ptr(MbObject::new_str("__parameters__".to_string())),
+                MbValue::from_ptr(MbObject::new_tuple(params)),
+            );
         }
     }
     let mro = compute_mro(&class_name, &bases);
@@ -1791,6 +1808,88 @@ fn class_bases_tuple(class_name: &str) -> MbValue {
             .map(|base| make_type_object(&base))
             .collect(),
     ))
+}
+
+fn class_instance_field(value: MbValue, field: &str) -> Option<MbValue> {
+    value.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(field).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn class_value_is_generic_alias(value: MbValue) -> bool {
+    value.as_ptr().is_some_and(|ptr| unsafe {
+        matches!(
+            &(*ptr).data,
+            ObjData::Instance { class_name, .. }
+                if matches!(
+                    class_name.as_str(),
+                    "GenericAlias" | "types.GenericAlias" | "typing.Alias"
+                )
+        )
+    })
+}
+
+fn class_generic_alias_parameters(items: &[MbValue]) -> Vec<MbValue> {
+    let mut params = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in items {
+        let Some(alias_params) = class_instance_field(*item, "__parameters__") else {
+            continue;
+        };
+        for param in super::builtins::extract_items(alias_params) {
+            if seen.insert(param.to_bits()) {
+                params.push(param);
+            }
+        }
+    }
+    params
+}
+
+fn normalize_runtime_generic_orig_bases(class_name: &str) {
+    let Some(orig_bases) = class_attr_lookup(class_name, "__orig_bases__") else {
+        return;
+    };
+    let Some(parameters) = class_attr_lookup(class_name, "__parameters__") else {
+        return;
+    };
+    let param_items = super::builtins::extract_items(parameters);
+    if param_items.is_empty() {
+        return;
+    }
+    let generic_args = if param_items.len() == 1 {
+        param_items[0]
+    } else {
+        MbValue::from_ptr(MbObject::new_tuple(param_items))
+    };
+    let generic_alias = super::stdlib::typing_mod::generic_subscript(
+        super::builtins::make_type_object("typing.Generic"),
+        generic_args,
+    );
+    let mut changed = false;
+    let normalized: Vec<MbValue> = super::builtins::extract_items(orig_bases)
+        .into_iter()
+        .map(|base| {
+            if !class_value_is_generic_alias(base)
+                && resolve_class_name(base).as_deref() == Some("typing.Generic")
+            {
+                changed = true;
+                generic_alias
+            } else {
+                base
+            }
+        })
+        .collect();
+    if changed {
+        mb_class_set_class_attr(
+            MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+            MbValue::from_ptr(MbObject::new_str("__orig_bases__".to_string())),
+            MbValue::from_ptr(MbObject::new_tuple(normalized)),
+        );
+    }
 }
 
 fn build_class_namespace_dict(class_name: &str) -> MbValue {
@@ -2027,6 +2126,7 @@ pub fn mb_class_finalize_definition(class_name: MbValue) {
         Some(name) if !name.is_empty() => name,
         _ => return,
     };
+    normalize_runtime_generic_orig_bases(&name);
     let snapshot = CLASS_REGISTRY.with(|reg| {
         reg.borrow().get(&name).map(|cls| {
             (
@@ -2061,6 +2161,7 @@ pub fn mb_class_finalize_definition_with_namespace(class_name: MbValue, namespac
         Some(name) if !name.is_empty() => name,
         _ => return,
     };
+    normalize_runtime_generic_orig_bases(&name);
     let snapshot = CLASS_REGISTRY.with(|reg| {
         reg.borrow().get(&name).map(|cls| {
             (
