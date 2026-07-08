@@ -145,3 +145,42 @@ repo_taxonomy_migration:
         - projects/defer/tech-design
         - historical text that explicitly names the retired source root
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: defer-app-source-root-taxonomy-verification
+requirements:
+  defer_local_checks_still_run:
+    id: R4
+    text: "Defer's targeted local verification continues to run after the source-root move."
+    kind: functional
+    risk: medium
+    verify: cargo test -p defer
+  project_identity_is_preserved:
+    id: R2
+    text: "The migration preserves AW project name defer, GitHub label project:defer, persistent branch project-defer, and the projects/defer/tech-design TD bucket."
+    kind: regression
+    risk: medium
+    verify: aw wi list --project defer --state open
+  source_root_routes_to_apps_defer:
+    id: R1
+    text: "Repository routing resolves Defer's live app source root through apps/defer rather than projects/defer."
+    kind: functional
+    risk: high
+    verify: aw capability check --project defer
+  stale_source_root_references_are_bounded:
+    id: R3
+    text: "No live source-root command or routing artifact emits projects/defer except intentionally preserved TD or historical references."
+    kind: regression
+    risk: medium
+    verify: rg stale projects/defer source-root scan
+---
+flowchart TD
+    r1[R1 source root routes to apps defer] --> aw_capability_check_project_defer[aw capability check --project defer]
+    r2[R2 project identity is preserved] --> aw_wi_list_project_defer_state_open[aw wi list --project defer --state open]
+    r3[R3 stale source root references are bounded] --> rg_stale_projects_defer_source_root_scan[rg stale projects/defer source-root scan]
+    r4[R4 defer local checks still run] --> cargo_test_p_defer[cargo test -p defer]
+```
