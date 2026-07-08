@@ -348,6 +348,18 @@ fn is_list_value(val: MbValue) -> bool {
         .unwrap_or(false)
 }
 
+/// Supported `sample()` populations in the current runtime: plain lists,
+/// tuples, strings, and range/iterator handles once materialized into a list.
+/// Returns `None` for every other shape so the caller can raise the Sequence
+/// type wall instead of silently accepting an arbitrary object.
+fn sample_population_items(pop: MbValue) -> Option<Vec<MbValue>> {
+    let pop = materialize_arg(pop);
+    if let Some(items) = extract_list(pop) {
+        return Some(items);
+    }
+    population_len(pop).map(|_| population_as_items(pop))
+}
+
 // ── Module-level functions (receiver-less; route to default handle) ──
 // All also exposed as instance methods via the integer-handle protocol.
 
@@ -503,7 +515,8 @@ pub fn mb_random_method_shuffle(receiver: MbValue, lst: MbValue) -> MbValue {
     // CPython mutates x in place via x[i], x[j] = x[j], x[i]; an immutable
     // sequence (e.g. str/tuple) raises TypeError on item assignment.
     if !is_list_value(lst) {
-        return raise_type_error("'str' object does not support item assignment");
+        let type_name = super::super::builtins::value_type_name(lst);
+        return raise_type_error(&format!("'{type_name}' object does not support item assignment"));
     }
     if let Some(ptr) = lst.as_ptr() {
         unsafe {
@@ -527,35 +540,12 @@ pub fn mb_random_method_sample(receiver: MbValue, pop: MbValue, k: MbValue) -> M
         .unwrap_or_else(default_handle);
     // CPython 3.11+ requires a sequence; sets/dicts raise TypeError
     // ("Population must be a sequence ...").
-    let items = match extract_list(pop) {
+    let items = match sample_population_items(pop) {
         Some(v) => v,
         None => {
-            // range objects are sequences in CPython — materialize a handle.
-            let drained = if pop.as_int().is_some() {
-                let handle = super::super::iter::mb_iter(pop);
-                if handle.is_none() {
-                    None
-                } else {
-                    let mut out = Vec::new();
-                    loop {
-                        if super::super::iter::mb_has_next(handle).as_bool() != Some(true) {
-                            break;
-                        }
-                        out.push(super::super::iter::mb_next(handle));
-                    }
-                    Some(out)
-                }
-            } else {
-                None
-            };
-            match drained {
-                Some(v) => v,
-                None => {
-                    return raise_type_error(
-                        "Population must be a sequence.  For dicts or sets, use sorted(d).",
-                    );
-                }
-            }
+            return raise_type_error(
+                "Population must be a sequence.  For dicts or sets, use sorted(d).",
+            );
         }
     };
 
@@ -1317,6 +1307,12 @@ unsafe extern "C" fn dispatch_sample(args_ptr: *const MbValue, nargs: usize) -> 
         a.get(1).copied().unwrap_or_else(MbValue::none),
     )
 }
+extern "C" fn random_instance_shuffle(receiver: MbValue, lst: MbValue) -> MbValue {
+    mb_random_method_shuffle(handle_for_instance(receiver), lst)
+}
+extern "C" fn random_instance_sample(receiver: MbValue, pop: MbValue, k: MbValue) -> MbValue {
+    mb_random_method_sample(handle_for_instance(receiver), pop, k)
+}
 unsafe extern "C" fn dispatch_choices(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (weights, cum_weights, k) = parse_choices_kwargs(a);
@@ -1808,7 +1804,15 @@ pub fn register() {
             "setstate",
             "binomialvariate",
         ] {
-            methods.insert(name.to_string(), stub);
+            let func = match name {
+                // `object.__new__(Random)` builds a bare instance, so exact-base
+                // bound method calls must resolve through the instance handle
+                // instead of reusing the constructor stub.
+                "shuffle" => MbValue::from_func(random_instance_shuffle as usize),
+                "sample" => MbValue::from_func(random_instance_sample as usize),
+                _ => stub,
+            };
+            methods.insert(name.to_string(), func);
         }
         super::super::class::mb_class_register(cls, vec![], methods);
     }
@@ -1971,6 +1975,36 @@ mod tests {
     }
 
     #[test]
+    fn test_sample_rejects_non_sequence_instance() {
+        super::super::super::exception::mb_clear_exception();
+        let not_sequence = MbValue::from_ptr(MbObject::new_instance("_W".to_string()));
+        let r = mb_random_method_sample(MbValue::none(), not_sequence, MbValue::from_int(0));
+        assert!(r.is_none(), "wrong-typed sample population must not return a value");
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+        );
+        super::super::super::exception::mb_clear_exception();
+    }
+
+    #[test]
+    fn test_sample_accepts_range_handle_population() {
+        seed_default(17);
+        let range = super::super::super::builtins::mb_range_2(
+            MbValue::from_int(0),
+            MbValue::from_int(5),
+        );
+        let s = mb_random_method_sample(MbValue::none(), range, MbValue::from_int(2));
+        unsafe {
+            if let ObjData::List(ref lk) = (*s.as_ptr().unwrap()).data {
+                assert_eq!(lk.read().unwrap().len(), 2);
+            } else {
+                panic!("expected list");
+            }
+        }
+    }
+
+    #[test]
     fn test_shuffle_preserves_elements() {
         seed_default(100);
         let list = MbValue::from_ptr(MbObject::new_list(vec![
@@ -1990,6 +2024,19 @@ mod tests {
                 assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
             }
         }
+    }
+
+    #[test]
+    fn test_shuffle_rejects_non_mutable_sequence_instance() {
+        super::super::super::exception::mb_clear_exception();
+        let not_mutable_sequence = MbValue::from_ptr(MbObject::new_instance("_W".to_string()));
+        let r = mb_random_method_shuffle(MbValue::none(), not_mutable_sequence);
+        assert!(r.is_none(), "wrong-typed shuffle input must not return a value");
+        assert_eq!(
+            super::super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+        );
+        super::super::super::exception::mb_clear_exception();
     }
 
     #[test]
