@@ -33,6 +33,7 @@ mod map_filter;
 mod memoryview;
 mod numeric_format;
 mod numeric_parsing;
+mod numeric_subclass;
 mod object_identity;
 mod operand_type_name;
 mod power;
@@ -92,6 +93,12 @@ pub use numeric_format::{mb_divmod, mb_format, mb_round};
 pub(crate) use numeric_parsing::{
     parse_pyfloat_text, strip_float_underscores, strip_pep515_underscores,
 };
+use numeric_subclass::{
+    float_subclass_payload_for_dunder, int_enum_like_value, int_subclass_numeric_operands,
+    int_subclass_payload_for_dunder, numeric_subclass_operands, str_subclass_ordering_operands,
+    value_is_float_check, value_is_long_check,
+};
+pub(crate) use numeric_subclass::{int_subclass_unary_operand, numeric_subclass_unary_operand};
 pub use object_identity::mb_id;
 pub(crate) use operand_type_name::add_operand_type_name;
 pub use power::{mb_pow, mb_pow_mod};
@@ -1109,150 +1116,6 @@ fn print_repr(val: MbValue) {
 /// Print a dict key: integers without quotes, strings with quotes.
 fn print_dict_key(k: &super::dict_ops::DictKey) {
     mb_out!("{}", super::dict_ops::dict_key_display(k));
-}
-
-fn int_enum_like_value(val: MbValue) -> Option<MbValue> {
-    super::stdlib::enum_class::int_member_value(val)
-        .or_else(|| super::stdlib::signal_mod::signal_enum_int_value(val))
-        .or_else(|| super::stdlib::http_mod::http_status_member_value(val))
-}
-
-fn int_subclass_payload_for_dunder(val: MbValue, dunder: &str) -> Option<MbValue> {
-    val.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Instance {
-            ref class_name,
-            ref fields,
-        } = (*p).data
-        {
-            if !super::class::check_class_hierarchy(class_name, "int")
-                || super::class::class_defines_own_method(class_name, dunder)
-            {
-                return None;
-            }
-            fields
-                .read()
-                .unwrap()
-                .get(super::class::INT_SUBCLASS_VALUE_FIELD)
-                .copied()
-        } else {
-            None
-        }
-    })
-}
-
-fn float_subclass_payload_for_dunder(val: MbValue, dunder: &str) -> Option<MbValue> {
-    val.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Instance {
-            ref class_name,
-            ref fields,
-        } = (*p).data
-        {
-            if !super::class::check_class_hierarchy(class_name, "float")
-                || super::class::class_defines_own_method(class_name, dunder)
-            {
-                return None;
-            }
-            fields
-                .read()
-                .unwrap()
-                .get(super::class::FLOAT_SUBCLASS_VALUE_FIELD)
-                .copied()
-        } else {
-            None
-        }
-    })
-}
-
-/// CPython's `PyLong_Check` — used to validate `__int__`/`__index__`
-/// dunder-loop results before returning them: plain int, bool, BigInt, and
-/// int-subclass instances all pass; anything else (float, str, ...) is a
-/// `TypeError` per CPython's return-type contract for these dunders. (#1063)
-fn value_is_long_check(v: MbValue) -> bool {
-    if v.is_int() || v.is_bool() {
-        return true;
-    }
-    if unsafe { super::bigint_ops::extract_bigint(v) }.is_some() {
-        return true;
-    }
-    v.as_ptr().is_some_and(|p| unsafe {
-        matches!(&(*p).data, ObjData::Instance { class_name, .. }
-            if super::class::check_class_hierarchy(class_name, "int"))
-    })
-}
-
-/// CPython's `PyFloat_Check` — used to validate `__float__` dunder-loop
-/// results: plain float or a float-subclass instance pass; anything else
-/// (int, bool, str, ...) is a `TypeError`. (#1063)
-fn value_is_float_check(v: MbValue) -> bool {
-    if v.is_float() {
-        return true;
-    }
-    v.as_ptr().is_some_and(|p| unsafe {
-        matches!(&(*p).data, ObjData::Instance { class_name, .. }
-            if super::class::check_class_hierarchy(class_name, "float"))
-    })
-}
-
-fn int_subclass_numeric_operands(
-    a: MbValue,
-    b: MbValue,
-    dunder: &str,
-) -> Option<(MbValue, MbValue)> {
-    let av = int_subclass_payload_for_dunder(a, dunder);
-    let bv = int_subclass_payload_for_dunder(b, dunder);
-    if av.is_some() || bv.is_some() {
-        Some((av.unwrap_or(a), bv.unwrap_or(b)))
-    } else {
-        None
-    }
-}
-
-fn str_subclass_ordering_operands(
-    a: MbValue,
-    b: MbValue,
-    dunder: &str,
-) -> Option<(MbValue, MbValue)> {
-    let av = super::class::builtin_data_payload_if_unoverridden(a, dunder)
-        .filter(|(base, _)| *base == "str")
-        .map(|(_, payload)| payload);
-    let bv = super::class::builtin_data_payload_if_unoverridden(b, dunder)
-        .filter(|(base, _)| *base == "str")
-        .map(|(_, payload)| payload);
-    if av.is_some() || bv.is_some() {
-        Some((av.unwrap_or(a), bv.unwrap_or(b)))
-    } else {
-        None
-    }
-}
-
-fn numeric_subclass_operands(a: MbValue, b: MbValue, dunder: &str) -> Option<(MbValue, MbValue)> {
-    let av = int_subclass_payload_for_dunder(a, dunder)
-        .or_else(|| float_subclass_payload_for_dunder(a, dunder));
-    let bv = int_subclass_payload_for_dunder(b, dunder)
-        .or_else(|| float_subclass_payload_for_dunder(b, dunder));
-    if av.is_some() || bv.is_some() {
-        Some((av.unwrap_or(a), bv.unwrap_or(b)))
-    } else {
-        None
-    }
-}
-
-/// Unary counterpart of `numeric_subclass_operands`: unwrap a single
-/// int/float-SUBCLASS instance (`class P(int): pass` / `class F(float):
-/// pass`) to its raw payload for the unary `+`/`-` fallbacks (`mb_neg`,
-/// `mb_dispatch_unaryop`'s pos/neg arms). `None` when `a` isn't an
-/// unoverridden numeric-derived-class instance (plain int/float, a
-/// non-numeric class, or a subclass that defines its own override for
-/// `dunder` — the caller's override check/invocation keeps priority). (#1030)
-pub(crate) fn numeric_subclass_unary_operand(a: MbValue, dunder: &str) -> Option<MbValue> {
-    int_subclass_payload_for_dunder(a, dunder)
-        .or_else(|| float_subclass_payload_for_dunder(a, dunder))
-}
-
-/// Int-only unary counterpart for `~` (`__invert__`) — float has no
-/// `__invert__`, so only an int-derived-class instance unwraps here. (#1030)
-pub(crate) fn int_subclass_unary_operand(a: MbValue, dunder: &str) -> Option<MbValue> {
-    int_subclass_payload_for_dunder(a, dunder)
 }
 
 /// int(value) — convert to integer.
