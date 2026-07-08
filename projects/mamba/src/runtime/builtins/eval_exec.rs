@@ -1004,6 +1004,12 @@ fn exec_drop_masked_name(masked_name: ExecMaskedName) {
     }
 }
 
+fn exec_drop_name_bindings(masked: Vec<ExecMaskedName>) {
+    for masked_name in masked {
+        exec_drop_masked_name(masked_name);
+    }
+}
+
 fn exec_commit_temporary_names(ctx: &mut ExecContext, bindings: Vec<ExecTemporaryName>) {
     for binding in bindings {
         if let Some(previous) = binding.previous {
@@ -2232,58 +2238,62 @@ fn exec_stmt_flow(ctx: &mut ExecContext, stmt: &crate::parser::ast::Stmt) -> Exe
                 exec_restore_temporary_names(ctx, annotation_type_params);
                 return ExecFlow::Normal;
             };
-            exec_commit_temporary_names(ctx, annotation_type_params);
-            let mut decorator_values = Vec::with_capacity(decorators.len());
-            for decorator in decorators {
-                let value = exec_eval_expr(ctx, &decorator.node);
-                if exec_has_pending_exception() {
-                    return ExecFlow::Normal;
-                }
-                decorator_values.push(value);
-            }
-            let mut decorated_value = MbValue::none();
-            for decorator in decorator_values.into_iter().rev() {
-                if mb_callable(decorator).as_bool() != Some(true) {
-                    let type_name = exec_match_type_name(decorator);
-                    crate::runtime::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'{type_name}' object is not callable"
-                        ))),
-                    );
-                    return ExecFlow::Normal;
-                }
-                decorated_value = mb_call_spread(
-                    decorator,
-                    MbValue::from_ptr(MbObject::new_list(vec![decorated_value])),
-                );
-                if exec_has_pending_exception() {
-                    return ExecFlow::Normal;
-                }
-            }
-            ctx.functions.insert(
-                name.clone(),
-                ExecFunction {
-                    params: param_names,
-                    defaults,
-                    body: body.clone(),
-                },
+            let function = ExecFunction {
+                params: param_names,
+                defaults,
+                body: body.clone(),
+            };
+            let doc = exec_leading_docstring(body);
+            let func_value =
+                make_exec_function_body_value(name, false, function.clone(), ctx.globals, doc);
+            crate::runtime::pep695::instance_field_set_pub(
+                func_value,
+                "__annotations__",
+                annotations,
             );
             if decorators.is_empty() {
-                let function = ctx.functions.get(name).cloned().unwrap_or(ExecFunction {
-                    params: Vec::new(),
-                    defaults: Vec::new(),
-                    body: body.clone(),
-                });
-                let doc = exec_leading_docstring(body);
-                let func_value =
-                    make_exec_function_body_value(name, false, function, ctx.globals, doc);
-                crate::runtime::pep695::instance_field_set_pub(
-                    func_value,
-                    "__annotations__",
-                    annotations,
-                );
+                exec_commit_temporary_names(ctx, annotation_type_params);
+                ctx.functions.insert(name.clone(), function);
                 exec_store_name(ctx, name, func_value);
+            } else {
+                let mut decorator_values = Vec::with_capacity(decorators.len());
+                let masked_type_params = exec_mask_type_param_bindings(ctx, type_params);
+                for decorator in decorators {
+                    let value = exec_eval_expr(ctx, &decorator.node);
+                    if exec_has_pending_exception() {
+                        exec_drop_name_bindings(masked_type_params);
+                        exec_restore_temporary_names(ctx, annotation_type_params);
+                        return ExecFlow::Normal;
+                    }
+                    decorator_values.push(value);
+                }
+                let mut decorated_value = func_value;
+                for decorator in decorator_values.into_iter().rev() {
+                    if mb_callable(decorator).as_bool() != Some(true) {
+                        let type_name = exec_match_type_name(decorator);
+                        crate::runtime::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "'{type_name}' object is not callable"
+                            ))),
+                        );
+                        exec_drop_name_bindings(masked_type_params);
+                        exec_restore_temporary_names(ctx, annotation_type_params);
+                        return ExecFlow::Normal;
+                    }
+                    decorated_value = mb_call_spread(
+                        decorator,
+                        MbValue::from_ptr(MbObject::new_list(vec![decorated_value])),
+                    );
+                    if exec_has_pending_exception() {
+                        exec_drop_name_bindings(masked_type_params);
+                        exec_restore_temporary_names(ctx, annotation_type_params);
+                        return ExecFlow::Normal;
+                    }
+                }
+                exec_restore_name_bindings(ctx, masked_type_params);
+                exec_commit_temporary_names(ctx, annotation_type_params);
+                exec_store_name(ctx, name, decorated_value);
             }
             ExecFlow::Normal
         }
@@ -3887,6 +3897,24 @@ mod tests {
             Some("NameError")
         );
         crate::runtime::exception::mb_clear_exception();
+        assert_eq!(
+            crate::runtime::dict_ops::mb_dict_contains(
+                globals,
+                MbValue::from_ptr(MbObject::new_str("T".to_string())),
+            )
+            .as_bool(),
+            Some(false),
+            "failed generic-function default should not leak its type param"
+        );
+        assert_eq!(
+            crate::runtime::dict_ops::mb_dict_contains(
+                globals,
+                MbValue::from_ptr(MbObject::new_str("func".to_string())),
+            )
+            .as_bool(),
+            Some(false),
+            "failed generic-function default should not bind the function"
+        );
     }
 
     #[test]
@@ -3940,5 +3968,80 @@ mod tests {
             }
         });
         assert_eq!(name_text.as_deref(), Some("T"));
+    }
+
+    #[test]
+    fn test_exec_generic_fn_decorator_does_not_see_type_param() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "def my_decorator(a):\n    return lambda f: f\n@my_decorator(T)\ndef func[T]():\n    pass\n"
+                    .to_string(),
+            )),
+            globals,
+        );
+
+        assert!(
+            crate::runtime::exception::mb_has_exception()
+                .as_bool()
+                .unwrap_or(false),
+            "exec should raise NameError for a generic-function decorator reading its type param",
+        );
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("NameError")
+        );
+        crate::runtime::exception::mb_clear_exception();
+        assert_eq!(
+            crate::runtime::dict_ops::mb_dict_contains(
+                globals,
+                MbValue::from_ptr(MbObject::new_str("T".to_string())),
+            )
+            .as_bool(),
+            Some(false),
+            "failed decorated generic function should not leak its type param"
+        );
+        assert_eq!(
+            crate::runtime::dict_ops::mb_dict_contains(
+                globals,
+                MbValue::from_ptr(MbObject::new_str("func".to_string())),
+            )
+            .as_bool(),
+            Some(false),
+            "failed decorated generic function should not bind the function"
+        );
+    }
+
+    #[test]
+    fn test_exec_decorated_fn_applies_to_function_value() {
+        crate::runtime::module::mb_register_builtins();
+        crate::runtime::exception::mb_clear_exception();
+
+        let globals = crate::runtime::dict_ops::mb_dict_new();
+        mb_exec_with_globals(
+            MbValue::from_ptr(MbObject::new_str(
+                "def deco(func):\n    return func\n@deco\ndef func():\n    return 1\n"
+                    .to_string(),
+            )),
+            globals,
+        );
+
+        assert!(
+            !crate::runtime::exception::mb_has_exception()
+                .as_bool()
+                .unwrap_or(false),
+            "exec should apply decorators to the function object"
+        );
+        let func = crate::runtime::dict_ops::mb_dict_get(
+            globals,
+            MbValue::from_ptr(MbObject::new_str("func".to_string())),
+            MbValue::none(),
+        );
+        assert!(!func.is_none(), "decorated function should stay bound in globals");
+        let result = mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(vec![])));
+        assert_eq!(result.as_int(), Some(1));
     }
 }
