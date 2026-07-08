@@ -50,9 +50,9 @@ enum Command {
     /// verifies its sha256, and atomically replaces the executable. `--check`
     /// reports the available version without changing anything.
     Upgrade(UpgradeArgs),
-    /// Search, view, and file keep issues on the axiom tracker
-    /// (`search`/`view`/`create`). `create` bundles a diagnostics block and
-    /// auto-tags `project:keep`; `search` is filtered to keep's own issues.
+    /// Search, view, file, and follow up on keep issues on the axiom tracker
+    /// (`search`/`view`/`create`/`comment`). `create` bundles diagnostics and
+    /// auto-tags `project:keep`; `comment` reopens before posting diagnostics.
     Issue(IssueArgs),
     /// Kubernetes artifacts split by layer: the cluster-scoped CRD, the operator
     /// control plane, and app-namespace Keep instances. Render paths are offline
@@ -215,7 +215,7 @@ struct UpgradeArgs {
     yes: bool,
 }
 
-/// `keep issue <search|view|create>` — search, read, and file keep issues.
+/// `keep issue <search|view|create|comment>` — manage keep issues.
 /// Positional slots are reserved for the verb + its primary object, so the rest
 /// are flags (the CLI convention).
 #[derive(clap::Args, Debug)]
@@ -232,6 +232,8 @@ enum IssueCommand {
     View(IssueViewArgs),
     /// File a structured issue (auto-tagged `project:keep`).
     Create(IssueCreateArgs),
+    /// Reopen if needed and add a diagnostics-rich follow-up comment.
+    Comment(IssueCommentArgs),
 }
 
 /// `keep issue search [query] [--state] [--limit]` flags.
@@ -265,6 +267,19 @@ struct IssueCreateArgs {
     #[arg(long)]
     dry_run: bool,
     /// Free-text description of the problem.
+    #[arg(num_args = 0..)]
+    message: Vec<String>,
+}
+
+/// `keep issue comment <number> [message...]` flags.
+#[derive(clap::Args, Debug)]
+struct IssueCommentArgs {
+    /// Issue number.
+    number: u64,
+    /// Print the comment/reopen request without changing GitHub state.
+    #[arg(long)]
+    dry_run: bool,
+    /// Free-text follow-up note.
     #[arg(num_args = 0..)]
     message: Vec<String>,
 }
@@ -871,8 +886,9 @@ fn ensure_trailing_newline(input: &str) -> String {
     }
 }
 
-/// `keep issue <verb>` — dispatch search/view/create to cli-std. `create` always
-/// tags `project:keep`; `search` is filtered to keep's own issues.
+/// `keep issue <verb>` — dispatch search/view/create/comment to cli-std.
+/// `create` always tags `project:keep`; `search` is filtered to keep's own
+/// issues; `comment` reopens before adding the diagnostics-rich note.
 async fn dispatch_issue(args: IssueArgs) -> Result<()> {
     match args.cmd {
         IssueCommand::Search(m) => {
@@ -908,6 +924,20 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
                     url: None,
                     repo: None,
                     label: vec!["project:keep".to_string()],
+                    dry_run: m.dry_run,
+                    yes: true,
+                },
+            )
+            .await
+        }
+        IssueCommand::Comment(m) => {
+            let msg = m.message.join(" ");
+            cli_std::issue::comment(
+                &TOOL,
+                cli_std::issue::CommentOptions {
+                    number: m.number,
+                    message: (!msg.trim().is_empty()).then_some(msg),
+                    repo: None,
                     dry_run: m.dry_run,
                     yes: true,
                 },
@@ -1158,9 +1188,9 @@ mod tests {
         Cli::command().debug_assert();
     }
 
-    /// `keep issue search/view/create` parse with their convention flags (#540).
+    /// `keep issue search/view/create/comment` parse with their convention flags.
     #[test]
-    fn issue_group_parses_search_view_create() {
+    fn issue_group_parses_search_view_create_comment() {
         let cli = Cli::try_parse_from([
             "keep", "issue", "search", "drain", "--state", "all", "--limit", "5",
         ])
@@ -1205,6 +1235,27 @@ mod tests {
                 assert_eq!(a.message, vec!["it".to_string(), "broke".to_string()]);
             }
             other => panic!("expected issue create, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "keep",
+            "issue",
+            "comment",
+            "926",
+            "--dry-run",
+            "still",
+            "failing",
+        ])
+        .expect("issue comment should parse");
+        match cli.cmd {
+            Some(Command::Issue(IssueArgs {
+                cmd: IssueCommand::Comment(a),
+            })) => {
+                assert_eq!(a.number, 926);
+                assert!(a.dry_run);
+                assert_eq!(a.message, vec!["still".to_string(), "failing".to_string()]);
+            }
+            other => panic!("expected issue comment, got {other:?}"),
         }
     }
 
