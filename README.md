@@ -15,7 +15,7 @@ details.
 | [loom](projects/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
 | [preview](projects/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
 | [tape](apps/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
-| [defer](projects/defer/README.md) | Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack. |
+| [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack. |
 | [cube](projects/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
 | [beam](projects/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
 | [arena](projects/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
@@ -75,7 +75,7 @@ an installer yet are marked _coming soon_.
 | [jet](projects/jet/README.md) | `jet` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/jet/install.sh \| sh` |
 | [beam](projects/beam/README.md) | `beam` | _coming soon_ |
 | [cube](projects/cube/README.md) | `cube` | _coming soon_ |
-| [defer](projects/defer/README.md) | `defer` | _coming soon_ |
+| [defer](apps/defer/README.md) | `defer` | _coming soon_ |
 | [keep](apps/keep/README.md) | `keep` | _coming soon_ |
 | [loom](projects/loom/README.md) | `loom` | _coming soon_ |
 | [lumen](projects/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/lumen/install.sh \| sh` |
