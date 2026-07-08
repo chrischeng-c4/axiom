@@ -729,6 +729,59 @@ conventions. Allowed project-layer meta docs are:
 | scoped convention docs | only when placed next to the tree they govern, e.g. test fixture layout rules under the fixture tree |
 | generated evidence/docs | only when backed by an explicit producer, validator, or policy-only marker |
 
+Project-layer docs are written for agents first: they should answer "what is
+this project promising?", "where is the source of truth?", "what am I allowed
+to edit?", and "how do I prove the change?" without making the agent read a
+full design book.
+
+`projects/<name>/CAPABILITIES.md` is the product contract. It is hierarchical:
+a top-level capability may be a product area, a narrower capability may be a
+feature or surface, and the smallest useful capability may be one API endpoint,
+CLI command, event, background job, or documented behavior if it can be
+implemented and verified independently. Do not flatten agent-addressable
+endpoint/command promises into prose under a larger heading when a future WI,
+TD, EC, or test gate will need to refer to them directly.
+
+The required shape is:
+
+- `# <Project> Capabilities`
+- `## Brief` — one to three sentences, copied into the project README's
+  `## Capability Contract` section.
+- `## Capabilities`
+- `### Capability Index` — compact scan table for every release-significant or
+  agent-addressable capability.
+- `### <Capability>` roots — each root uses field-style lines for `ID`,
+  `Type`, `Surfaces`, `EC Dimensions`, `Root WI`, `Status`,
+  `Required Verification`, `Promise`, and `Gate Inventory`, followed by a
+  `Work Root` table for child WIs, TDs, EC gates, tests, and evidence.
+
+Large capabilities should own child work roots or nested capability headings;
+small leaf capabilities can have one work-root row. The sizing rule is
+independent verification: if an agent can build, test, or close it separately,
+it is allowed to be a capability. Private implementation details stay out
+unless they are user-visible, release-blocking, or needed as named evidence.
+
+`projects/<name>/CONTRIBUTING.md` is the project-local operating guide. It
+does not restate root authoring rules and does not carry product promises that
+belong in CAPABILITIES. It explains how an agent safely changes this project.
+The required shape is:
+
+- `# <Project> Contributing`
+- `## Brief` — one to three sentences, copied into the project README's
+  `## Contributing` section.
+- `## Authoritative Inputs` — ordered source-of-truth list for product,
+  behavior, generated code, external contracts, and local conventions.
+- `## Local Workflow` — the commands, generators, lifecycle routes, and edit
+  boundaries an agent should use for this project.
+- `## Verification` — exact local checks, test gates, service dependencies,
+  skip rules, and evidence commands needed before claiming completion.
+
+Optional sections are allowed when they save an agent from guessing:
+`## Architecture Boundaries`, `## Data and Services`, `## Migration and
+Compatibility`, `## Release`, and `## Meta Docs`. Keep them scoped to this
+project. If a rule applies to every project, move it back to this root
+CONTRIBUTING instead.
+
 `CLAUDE.md` and `AGENTS.md` are **not** project-layer docs. Project-specific
 agent behavior must be expressed through the project
 README/CONTRIBUTING/CAPABILITIES contract, scoped convention docs,
