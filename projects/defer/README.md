@@ -2,18 +2,26 @@
 
 ## Brief
 
-Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack.
+Defer is the Cloud Tasks-like delayed push-queue dispatch service in the Axiom
+stack.
 
-It owns scheduled execution, HTTP target dispatch, per-queue rate limits,
-leases/acks, retries, dead-letter queues, and dedupe keys. It is intentionally
-separate from `relay`: Relay is a broker for message delivery and worker queues;
-Defer is a task execution control plane where every item has a target, schedule,
-attempt policy, and terminal outcome.
+It owns scheduled execution, HTTP target dispatch, per-queue controls, rate
+limits, leases/acks, retries, dead-letter queues, and dedupe keys. It is
+intentionally separate from `relay`: Relay is the pull queue for worker-leased
+delivery; Defer is the push queue for scheduled HTTP dispatch, where every item
+has a target, schedule, attempt policy, and terminal outcome.
+
+Task priority uses the same field shape as relay: an unsigned byte where `0` is
+lowest, `255` is highest, and omitted priority defaults to `10`. Defer first
+filters tasks by schedule/ETA and queue rate/concurrency limits; priority orders
+only the due, dispatch-eligible candidates, with same-priority tasks remaining
+FIFO by task creation order.
 
 ## Boundaries
 
-- `relay` owns online broker delivery and opaque queue leases.
-- `defer` owns scheduled task lifecycle, target dispatch, retry policy, and DLQ.
+- `relay` owns pull-queue broker delivery and opaque worker leases.
+- `defer` owns scheduled task lifecycle, target dispatch, retry policy, DLQ, and
+  rate/concurrency-limited push dispatch.
 - `loom` may use Defer for timers/callbacks, but workflow state remains in Loom.
 - `keep` may store large request/response bodies by reference.
 
@@ -23,14 +31,14 @@ attempt policy, and terminal outcome.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Delayed Task Lifecycle | #766 | planned | planned | none | not_ready | create, schedule, lease, ack, cancel, and inspect tasks |
-| HTTP Dispatch And Retries | #766 | planned | planned | none | not_ready | HTTP target delivery with retry/DLQ policy |
-| Queue Rate Limits | #766 | planned | planned | none | not_ready | per-queue concurrency, QPS, and backoff enforcement |
+| Delayed Task Lifecycle | #766 | implemented | passing | conformance | not_ready | in-memory core: create, schedule, priority, lease, ack, cancel, and inspect tasks |
+| HTTP Dispatch And Retries | #766 | partial | passing | smoke | not_ready | retry/DLQ core implemented; HTTP target delivery pending |
+| Queue Rate Limits | #766 | implemented | passing | conformance | not_ready | per-queue pause/resume/disable, max-in-flight, dispatch budget, and token-bucket dispatch rate implemented in core |
 | HTTP/2 API List | #766 | planned | planned | none | not_ready | h2c/OpenAPI endpoint inventory |
 | Kubernetes-Native Deployment | #766 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape |
 | Primary Replicas | #766 | planned | planned | none | not_ready | raft-backed task state and timers |
 | CLI Interface | #766 | planned | planned | none | not_ready | `defer` CLI for queue/task/admin and agent docs |
-| Long-Running Stability | #766 | planned | planned | none | not_ready | timer, retry, DLQ, and recovery gates |
+| Long-Running Stability | #766 | partial | passing | smoke | not_ready | in-memory timer, retry, lease expiry, and DLQ gates |
 | Security Hardening | #766 | planned | planned | none | not_ready | target signing, authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #766 | planned | planned | none | not_ready | Cloud Tasks/Celery/Sidekiq-style delayed task feature matrix |
 | Competitor Performance | #766 | planned | planned | none | not_ready | pinned schedule/dispatch baseline, rerun only on scope change |
@@ -60,18 +68,18 @@ ID: long-running-stability
 Type: Runtime
 Root WI: #766
 Status: confirmed
-Surfaces: Runtime: timer wheel, lease store, retry scheduler, DLQ writer, snapshot, and recovery paths.
-EC Dimensions: stability: pending long-running task gate - soak, restart, timer recovery, duplicate prevention, bounded memory, and backpressure
+Surfaces: Runtime: timer wheel, priority-ready set, queue control state, rate bucket, lease store, retry scheduler, DLQ writer, snapshot, and recovery paths.
+EC Dimensions: stability: `cargo test -p defer --test task_lifecycle --test rate_limits` - in-memory timer, retry, lease expiry, duplicate prevention, per-queue control, and dispatch backpressure smoke
 Required Verification: conformance, dogfood
 Promise:
 Defer remains stable under sustained scheduled-task load, retries, DLQ writes,
 and restart cycles without losing committed tasks or duplicating terminal acks.
 Gate Inventory:
-- pending: projects/defer/tests/long_running_stability.rs
+- projects/defer/tests/task_lifecycle.rs; projects/defer/tests/rate_limits.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| delayed-task-soak-and-recovery | epic | #766 | planned | planned | none | pending long-running task gate |
+| delayed-task-soak-and-recovery | epic | #766 | partial | passing | smoke | projects/defer/tests/task_lifecycle.rs; projects/defer/tests/rate_limits.rs |
 
 ### Security Hardening
 
@@ -137,18 +145,21 @@ ID: delayed-task-lifecycle
 Type: RuntimeTool
 Root WI: #766
 Status: confirmed
-Surfaces: HTTP: `/v1/queues/{queue}/tasks` - create, schedule, lease, ack, cancel, and inspect delayed tasks.
-EC Dimensions: behavior: pending task lifecycle conformance gate - schedule ordering, cancellation, leases, and terminal states
+Surfaces: Rust API: `DeferScheduler` - create, schedule, priority, lease, ack, cancel, and inspect delayed tasks.; HTTP: `/v1/queues/{queue}/tasks` - future transport wrapper.
+EC Dimensions: behavior: `cargo test -p defer --test task_lifecycle` - schedule ordering, priority ordering among due tasks, cancellation, leases, and terminal states
 Required Verification: smoke, conformance
 Promise:
 Defer manages delayed task state from creation through terminal success,
-failure, cancellation, or dead-letter handoff.
+failure, cancellation, or dead-letter handoff. Task priority is `u8`
+(`0..=255`, default `10`); it is applied only after the task is due and the
+queue can dispatch more work.
 Gate Inventory:
-- pending: projects/defer/tests/task_lifecycle.rs
+- projects/defer/tests/task_lifecycle.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| delayed-task-state-machine | epic | #766 | planned | planned | none | pending task lifecycle conformance gate |
+| delayed-task-state-machine | epic | #766 | implemented | passing | conformance | projects/defer/tests/task_lifecycle.rs |
+| due-task-priority-ordering | epic | #766 | implemented | passing | conformance | projects/defer/tests/task_lifecycle.rs |
 
 ### HTTP Dispatch And Retries
 
@@ -156,18 +167,18 @@ ID: http-dispatch-and-retries
 Type: RuntimeTool
 Root WI: #766
 Status: confirmed
-Surfaces: HTTP worker target dispatch - signed delivery attempts, retry policy, and DLQ transitions.
-EC Dimensions: behavior: pending dispatch gate - target call, retry backoff, idempotency key, and DLQ behavior
+Surfaces: Rust API: `DeferScheduler::lease_due` / `nack` - dispatch attempt, retry policy, and DLQ transitions.; HTTP worker target dispatch - future signed target call wrapper.
+EC Dimensions: behavior: `cargo test -p defer --test task_lifecycle` - retry backoff, idempotency key, and DLQ behavior; pending HTTP target call gate
 Required Verification: smoke, conformance, negative
 Promise:
 Defer dispatches tasks to HTTP targets with bounded retries, dedupe keys, and
 explicit dead-letter behavior.
 Gate Inventory:
-- pending: projects/defer/tests/http_dispatch.rs
+- projects/defer/tests/task_lifecycle.rs; pending: projects/defer/tests/http_dispatch.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| http-target-attempt-contract | epic | #766 | planned | planned | none | pending dispatch/retry gate |
+| http-target-attempt-contract | epic | #766 | partial | passing | smoke | projects/defer/tests/task_lifecycle.rs; pending HTTP target dispatch gate |
 
 ### Queue Rate Limits
 
@@ -175,18 +186,18 @@ ID: queue-rate-limits
 Type: RuntimeTool
 Root WI: #766
 Status: confirmed
-Surfaces: HTTP/Admin: queue config and runtime scheduler - QPS, concurrency, backoff, and pause/resume controls.
-EC Dimensions: behavior: pending rate-limit gate - per-queue QPS/concurrency enforcement and pause/resume
+Surfaces: Rust API: `QueuePolicy` and queue control methods - max dispatch per tick, max dispatches per second, max burst size, max in-flight, pause/resume/disable, queue snapshot, priority among due tasks, and backoff.; HTTP/Admin: future queue config transport wrapper.
+EC Dimensions: behavior: `cargo test -p defer --test rate_limits --test task_lifecycle` - per-queue dispatch budget/concurrency/rate enforcement, pause/resume/disable controls, policy update isolation, and priority-preserving dispatch among eligible tasks
 Required Verification: smoke, conformance
 Promise:
-Defer enforces per-queue rate limits and concurrency limits before dispatching
-tasks to external targets.
+Defer enforces Cloud Tasks-style per-queue controls, rate limits, and
+concurrency limits before dispatching tasks to external targets.
 Gate Inventory:
-- pending: projects/defer/tests/rate_limits.rs
+- projects/defer/tests/rate_limits.rs; projects/defer/tests/task_lifecycle.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| per-queue-rate-limit-contract | epic | #766 | planned | planned | none | pending rate-limit conformance gate |
+| per-queue-rate-limit-contract | epic | #766 | implemented | passing | conformance | projects/defer/tests/rate_limits.rs; projects/defer/tests/task_lifecycle.rs |
 
 ### HTTP/2 API List
 

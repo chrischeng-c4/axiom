@@ -1,0 +1,34 @@
+# relay base Services: a headless Service for stable per-pod StatefulSet DNS
+# (relay-0.relay-headless.<ns>.svc.cluster.local — also the raft peer DNS
+# template when a topology scales into HA) and a ClusterIP client Service for
+# producers/consumers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay-headless
+  labels:
+    app: relay
+spec:
+  clusterIP: None # headless: no load balancing; DNS resolves to each pod
+  publishNotReadyAddresses: true
+  selector:
+    app: relay
+  ports:
+    - name: http
+      port: 7000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay
+  labels:
+    app: relay
+spec:
+  type: ClusterIP
+  selector:
+    app: relay
+  ports:
+    - name: http
+      port: 7000
+      targetPort: http
