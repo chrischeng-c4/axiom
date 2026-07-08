@@ -127,7 +127,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/raft_sm.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "OUTCOME_WINDOW"
@@ -164,6 +164,53 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "applied_seq"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen/src"
+      - path: "projects/lumen/src/reshard.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "BucketMove"
+            kind: "struct"
+            public: true
+          - name: "ReshardBatch"
+            kind: "struct"
+            public: true
+          - name: "bucket_moves"
+            kind: "function"
+            public: true
+          - name: "snapshot_reshard_batches"
+            kind: "function"
+            public: true
+          - name: "merge_snapshot_delta"
+            kind: "function"
+            public: true
+          - name: "ids_map_from_pairs"
+            kind: "function"
+            public: false
+          - name: "snapshot_subset"
+            kind: "function"
+            public: false
+          - name: "collection_subset"
+            kind: "function"
+            public: false
+          - name: "merge_collection_delta"
+            kind: "function"
+            public: false
+          - name: "merge_field_index_delta"
+            kind: "function"
+            public: false
+          - name: "field_index_subset"
             kind: "function"
             public: false
           - name: "tests"
@@ -608,6 +655,9 @@ semantic_domain:
             kind: "module"
             public: true
           - name: "rdb"
+            kind: "module"
+            public: true
+          - name: "reshard"
             kind: "module"
             public: true
           - name: "routing"
@@ -1507,11 +1557,50 @@ semantic_domain:
         ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
+          - name: "DEFAULT_VIRTUAL_BUCKET_COUNT"
+            kind: "constant"
+            public: true
           - name: "shard_index"
             kind: "function"
             public: true
           - name: "document_shard_index"
             kind: "function"
+            public: true
+          - name: "ShardRoute"
+            kind: "struct"
+            public: true
+          - name: "VirtualBucketShardMap"
+            kind: "struct"
+            public: true
+          - name: "balanced"
+            kind: "function"
+            public: true
+          - name: "single"
+            kind: "function"
+            public: true
+          - name: "version"
+            kind: "function"
+            public: true
+          - name: "virtual_bucket_count"
+            kind: "function"
+            public: true
+          - name: "physical_shard_count"
+            kind: "function"
+            public: true
+          - name: "assignment_for_bucket"
+            kind: "function"
+            public: true
+          - name: "route_document"
+            kind: "function"
+            public: true
+          - name: "route_key"
+            kind: "function"
+            public: true
+          - name: "search_target"
+            kind: "function"
+            public: true
+          - name: "SearchShardTarget"
+            kind: "enum"
             public: true
           - name: "shard_host"
             kind: "function"
@@ -1520,6 +1609,9 @@ semantic_domain:
             kind: "struct"
             public: true
           - name: "new"
+            kind: "function"
+            public: true
+          - name: "new_with_shard_map"
             kind: "function"
             public: true
           - name: "len"
@@ -1535,6 +1627,9 @@ semantic_domain:
             kind: "struct"
             public: true
           - name: "new"
+            kind: "function"
+            public: true
+          - name: "new_with_shard_map"
             kind: "function"
             public: true
           - name: "len"
@@ -1856,12 +1951,16 @@ changes:
     impl_mode: hand-written
   - path: "projects/lumen/src/raft_sm.rs"
     action: modify
+    section: rust-source-unit
+    description: |
+      Full-file rust-source-unit artifact is replayed from its SPEC-MANAGED CODEGEN block.
+    impl_mode: codegen
+  - path: "projects/lumen/src/reshard.rs"
+    action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:standardize-gap-projects-lumen-src-raft-sm-rs>"
   - path: "projects/lumen/src/wal.rs"
     action: modify
     section: schema

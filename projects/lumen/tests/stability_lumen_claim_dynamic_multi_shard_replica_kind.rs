@@ -1,24 +1,21 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients
+// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-multi-shard-replica-kind
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec lumen-cli-interface-generated-clients
-// @capability cli-interface
-// @claim lumen-spec-schema-openapi-json-yaml-json-schema-offline
-// @contract spec-gen-generated-clients-public-api-journey
-// @category behavior
+// @ec lumen-claim-dynamic-multi-shard-replica-kind
+// @capability dynamic-shard-topology
+// @claim multi-shard-replica-kind-e2e
+// @contract dynamic-multi-shard-replica-kind
+// @category stability
 // @required_for_production true
-// @command cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture
+// @command projects/lumen/scripts/kind-e2e.sh
 // AW-EC-END
 
-// Contract: lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document.
-// Contract: generated Python, TypeScript, and Rust clients compile or import as real downstream consumers.
-// Contract: each generated client drives create collection, index, search, stats, delete indexed id, and forced drop against a real Lumen service.
-// Contract: the generated Python client uses the bundled h2c runtime; the TypeScript and Rust clients exercise the same public API over their native HTTP runtimes.
+// Contract: The live kind dogfood path covers multi-shard and replicated-shard operator profiles.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn lumen_cli_interface_generated_clients() {
-    let command = "cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture";
-    let id = "lumen-cli-interface-generated-clients";
+fn lumen_claim_dynamic_multi_shard_replica_kind() {
+    let command = "projects/lumen/scripts/kind-e2e.sh";
+    let id = "lumen-claim-dynamic-multi-shard-replica-kind";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

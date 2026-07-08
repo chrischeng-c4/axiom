@@ -1,3 +1,41 @@
+---
+id: projects-lumen-src-raft-sm-rs
+capability_refs:
+  - id: "long-running-stability"
+    role: primary
+    gap: "log-fan-out-rebuild-from-log"
+    claim: "log-fan-out-rebuild-from-log"
+    coverage: full
+    rationale: "This source unit owns the raft-host backed state-machine path for replaying committed log entries into Lumen Engine state."
+  - id: "replica-sync-bootstrap"
+    role: primary
+    gap: "raft-log-replica-sync-existing-pvc"
+    claim: "raft-log-replica-sync-existing-pvc"
+    coverage: full
+    rationale: "This source unit applies committed raft log entries into Engine state and snapshots/restores through RDB for replica catch-up."
+fill_sections: [overview, source, changes]
+---
+
+# Standardized projects/lumen/src/raft_sm.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/lumen/src/raft_sm.rs` generated from AST during Lumen AW health remediation.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `EngineSm` | projects/lumen/src/raft_sm.rs | struct | pub | 33 |  |
+| `new` | projects/lumen/src/raft_sm.rs | function | pub | 40 | new(engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
+| `take_outcome` | projects/lumen/src/raft_sm.rs | function | pub | 53 | take_outcome(&self, index: u64) -> Result<ApplyOutcome> |
+| `RaftWriteSink` | projects/lumen/src/raft_sm.rs | struct | pub | 101 |  |
+| `new` | projects/lumen/src/raft_sm.rs | function | pub | 107 | new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self |
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `EngineSm` — lumen's [`Engine`] as a [`raft_host::RaftStateMachine`].
@@ -208,3 +246,17 @@ mod tests {
     }
 }
 // CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: "projects/lumen/src/raft_sm.rs"
+    action: modify
+    section: rust-source-unit
+    description: |
+      Existing raft-host state-machine source is captured as a per-file rust-source-unit so replay ownership is codegen-verifiable.
+    impl_mode: codegen
+```

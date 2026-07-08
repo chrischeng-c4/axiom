@@ -242,7 +242,7 @@ Gate Inventory:
 | role-based-authz-matrix-per-route | epic | - | implemented | passing | conformance | projects/lumen/tests/authz_matrix_e2e.rs |
 | adversarial-query-safety | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
 | score-confidentiality | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
-| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen tls`<br>projects/lumen/src/tls.rs |
+| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>projects/lumen/src/tls.rs |
 
 ### HTTP/2 API List
 

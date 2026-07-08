@@ -286,6 +286,13 @@ pub struct SearchRequest {
     pub limit: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Optional caller-owned routing key for sharded deployments. When present,
+    /// a sharded router can target the one shard that owns
+    /// `(collection_id, routing_key)` instead of scatter/gathering every shard.
+    /// Writes default to `external_id` as the routing key, so one large
+    /// collection can still spread across shards without caller help.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing_key: Option<String>,
     /// Sort results by one or more fields instead of by relevance score.
     /// When absent, results are ranked by score (BM25 / constant) then
     /// external_id. Number and keyword fields are sortable (up to 4 keys);
@@ -863,7 +870,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 ## Changes
 <!-- type: changes lang: yaml -->

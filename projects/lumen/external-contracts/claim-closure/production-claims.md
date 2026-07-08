@@ -32,6 +32,81 @@ e2e_tests:
     assertions:
       - "The operator-facing command surface renders CRD and serving objects used by the deployment path."
 
+  - id: lumen-claim-cli-standard-llm-entrypoint
+    capability_id: cli-standard-surface
+    claim_id: shared-llm-entrypoint-surface
+    contract_id: cli-standard-llm-entrypoint
+    category: behavior
+    command: "cargo test -p lumen --test spec_cli llm_outline_maps_agent_topics -- --exact --nocapture"
+    assertions:
+      - "The shared `lumen llm` entrypoint publishes the agent topic set through the standard CLI convention."
+  - id: lumen-claim-cli-standard-upgrade-check
+    capability_id: cli-standard-surface
+    claim_id: shared-upgrade-check-surface
+    contract_id: cli-standard-upgrade-check
+    category: behavior
+    command: "cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact --nocapture"
+    assertions:
+      - "The shared upgrade check surface remains available and emits an explicit terminal marker."
+  - id: lumen-claim-cli-standard-issue-surface
+    capability_id: cli-standard-surface
+    claim_id: shared-issue-search-view-create-comment-surface
+    contract_id: cli-standard-issue-surface
+    category: behavior
+    command: "cargo test -p lumen --test cli_convention issue_help_lists_search_view_create_comment -- --exact --nocapture"
+    assertions:
+      - "The shared issue group exposes search, view, create, and comment under `lumen issue`."
+
+  - id: lumen-claim-chainable-artifact-render-follow-ups
+    capability_id: chainable-output-conformance
+    claim_id: artifact-render-follow-ups
+    contract_id: chainable-artifact-render-follow-ups
+    category: behavior
+    command: "cargo test -p lumen --test cli_convention chainable_output_next_line_file_writing_vs_stream -- --exact --nocapture"
+    assertions:
+      - "Artifact render commands write exactly one runnable trailing `next:` line when writing files and keep stream mode raw."
+  - id: lumen-claim-chainable-backup-export-import-next
+    capability_id: chainable-output-conformance
+    claim_id: backup-export-import-next-contract
+    contract_id: chainable-backup-export-import-next
+    category: behavior
+    command: "cargo test -p lumen --features backup --test cli_convention backup_export_import_outputs_are_chainable -- --exact --nocapture"
+    assertions:
+      - "Backup, export, and import helpers emit machine-readable next or terminal markers through the built binary."
+  - id: lumen-claim-chainable-issue-upgrade-terminal
+    capability_id: chainable-output-conformance
+    claim_id: shared-issue-upgrade-terminal-markers
+    contract_id: chainable-issue-upgrade-terminal
+    category: behavior
+    command: "cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact --nocapture"
+    assertions:
+      - "Shared issue dry-run paths and upgrade check terminate with explicit `next: done` markers."
+
+  - id: lumen-claim-ec-generated-inventory-dispatch
+    capability_id: ec-gates-configured
+    claim_id: aw-ec-generated-inventory-and-dispatch
+    contract_id: ec-generated-inventory-dispatch
+    category: behavior
+    command: "./target/debug/aw ec check --project lumen"
+    assertions:
+      - "The generated AW EC inventory stays in sync with claim tests and dispatch commands."
+  - id: lumen-claim-ec-vat-managed-runners
+    capability_id: ec-gates-configured
+    claim_id: vat-managed-meter-and-rig-runners
+    contract_id: ec-vat-managed-runners
+    category: behavior
+    command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
+    assertions:
+      - "The vat-managed meter runner remains executable for Lumen efficiency EC dispatch."
+  - id: lumen-claim-ec-claim-closure-evidence
+    capability_id: ec-gates-configured
+    claim_id: external-contract-claim-closure-evidence
+    contract_id: ec-claim-closure-evidence
+    category: behavior
+    command: "./target/debug/aw ec check --project lumen"
+    assertions:
+      - "The production claim-closure document remains synchronized with generated EC cases."
+
   - id: lumen-claim-competitor-feature-search-breadth
     capability_id: competitor-feature-parity
     claim_id: search-feature-breadth
@@ -136,7 +211,7 @@ e2e_tests:
     claim_id: tls-rustls
     contract_id: security-tls-rustls
     category: security
-    command: "cargo test -p lumen tls"
+    command: "cargo test -p lumen --lib tls"
     assertions:
       - "The rustls-backed TLS surface passes the runtime TLS gate."
 
@@ -164,6 +239,31 @@ e2e_tests:
     command: "cargo test -p lumen --test spec_cli -- --nocapture"
     assertions:
       - "The offline spec commands publish the supported HTTP API inventory."
+
+  - id: lumen-claim-standard-service-probe-routes
+    capability_id: standard-operational-endpoints
+    claim_id: service-http-standard-probe-routes
+    contract_id: standard-service-probe-routes
+    category: behavior
+    command: "cargo test -p lumen --test api_e2e -- --nocapture"
+    assertions:
+      - "The service exposes health, readiness, version, metrics, indexing, and search routes through the binary-served API."
+  - id: lumen-claim-standard-live-openapi-swagger
+    capability_id: standard-operational-endpoints
+    claim_id: live-openapi-and-swagger-ui-surface
+    contract_id: standard-live-openapi-swagger
+    category: behavior
+    command: "cargo test -p lumen --test api_e2e openapi_spec_served -- --exact --nocapture && cargo test -p lumen --test coverage_gaps_e2e s8_swagger_docs_endpoint_returns_html -- --exact --nocapture"
+    assertions:
+      - "The live service serves OpenAPI JSON and Swagger UI against the operational route surface."
+  - id: lumen-claim-standard-offline-openapi
+    capability_id: standard-operational-endpoints
+    claim_id: offline-openapi-matches-operational-surface
+    contract_id: standard-offline-openapi
+    category: behavior
+    command: "cargo test -p lumen --test spec_cli openapi_is_valid_json_with_search_path -- --exact --nocapture"
+    assertions:
+      - "The offline `lumen spec` OpenAPI output remains valid and includes the operational search route."
 
   - id: lumen-claim-search-core-planner
     capability_id: search-core
@@ -351,6 +451,14 @@ e2e_tests:
     command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
     assertions:
       - "The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."
+  - id: lumen-claim-k8s-operator-storage-topology-reshard
+    capability_id: kubernetes-native-deployment
+    claim_id: operator-owned-storage-topology-and-reshard-status
+    contract_id: k8s-operator-storage-topology-reshard
+    category: behavior
+    command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+    assertions:
+      - "The operator render gate proves fixed StatefulSet storage topology and reshard status exposure."
   - id: lumen-claim-k8s-stateless-kind
     capability_id: kubernetes-native-deployment
     claim_id: kind-api-recovery-no-relay
@@ -359,6 +467,40 @@ e2e_tests:
     command: "projects/lumen/scripts/kind-e2e.sh"
     assertions:
       - "The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."
+
+  - id: lumen-claim-dynamic-versioned-virtual-bucket-map
+    capability_id: dynamic-shard-topology
+    claim_id: versioned-virtual-bucket-shard-map
+    contract_id: dynamic-versioned-virtual-bucket-map
+    category: behavior
+    command: "cargo test -p lumen --lib routing -- --nocapture"
+    assertions:
+      - "Versioned virtual-bucket routing remains the stable shard ownership contract."
+  - id: lumen-claim-dynamic-storage-pressure-split-policy
+    capability_id: dynamic-shard-topology
+    claim_id: storage-pressure-operator-split-policy
+    contract_id: dynamic-storage-pressure-split-policy
+    category: behavior
+    command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+    assertions:
+      - "The operator exposes storage-pressure reshard recommendations without changing HPA-owned serving scale."
+  - id: lumen-claim-dynamic-multi-shard-replica-kind
+    capability_id: dynamic-shard-topology
+    claim_id: multi-shard-replica-kind-e2e
+    contract_id: dynamic-multi-shard-replica-kind
+    category: stability
+    command: "projects/lumen/scripts/kind-e2e.sh"
+    assertions:
+      - "The live kind dogfood path covers multi-shard and replicated-shard operator profiles."
+
+  - id: lumen-claim-topology-empty-pvc-bootstrap-seed
+    capability_id: replica-sync-bootstrap
+    claim_id: empty-pvc-object-store-seed-before-raft-catch-up
+    contract_id: topology-empty-pvc-bootstrap-seed
+    category: behavior
+    command: "cargo test -p lumen --bin lumen bootstrap_seed_file_restores_snapshot_before_catchup -- --nocapture"
+    assertions:
+      - "A fresh serving process restores a configured SnapshotV1 seed before WAL or raft catch-up."
 
   - id: lumen-claim-agent-offline-spec
     capability_id: agent-offline-integration

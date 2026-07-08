@@ -1,3 +1,28 @@
+---
+id: projects-lumen-tests-generated-clients-crud-e2e-rs
+capability_refs:
+  - id: "cli-interface"
+    role: primary
+    claim: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+    coverage: full
+    rationale: "This source unit backs EC contract `spec-gen-generated-clients-public-api-journey` for the Lumen CLI/API interface."
+fill_sections: [overview, source, changes]
+---
+
+# Standardized projects/lumen/tests/generated_clients_crud_e2e.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/lumen/tests/generated_clients_crud_e2e.rs` generated from AST during Lumen AW health remediation.
+
+### Symbols
+
+No public AST symbols.
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-tests-generated_clients_crud_e2e-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // @contract spec-gen-generated-clients-public-api-journey
@@ -478,3 +503,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let _ = fs::remove_dir_all(&dir);
 }
 // CODEGEN-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: "projects/lumen/tests/generated_clients_crud_e2e.rs"
+    action: modify
+    section: rust-source-unit
+    description: |
+      Generated-client CRUD e2e source is captured as a codegen replay unit while retaining the EC contract marker.
+    impl_mode: codegen
+```

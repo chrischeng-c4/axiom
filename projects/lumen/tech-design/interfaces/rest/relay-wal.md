@@ -1,13 +1,16 @@
 ---
 id: lumen-relay-wal
-summary: lumen can explicitly tail relay's broadcast as a broker-backed WAL backend (#124). RelayWal publishes compact `WalRecord::encode()` payload envelopes through relay, subscribes with a per-pod subscriber id, uses process-unique message ids to avoid restart dedupe collisions, and reads relay `/len` for latest_seq. The backend is wired as `--wal relay` behind the `relay-wal` feature and uses plaintext h2c. This is the explicit external-broker mode; Lumen primary/replica is the multi-pod auto direction.
+summary: Historical relay-backed WAL design for Lumen. The explicit broker-log
+  mode has been retired from the active source tree in favor of raft-host backed
+  primary/replica durability, so this TD is retained as design history only and
+  must not replay deleted `wal_relay` artifacts.
 capability_refs:
   - id: "long-running-stability"
     role: primary
     gap: "log-fan-out-rebuild-from-log"
     claim: "log-fan-out-rebuild-from-log"
     coverage: full
-    rationale: "RelayWal is the feature-gated broker-log backend for lumen's log fan-out and rebuild-from-log capability."
+    rationale: "Historical RelayWal design notes are retained under the rebuild-from-log capability, but active source ownership is now raft-host based."
 fill_sections: [logic, unit-test, changes]
 ---
 
@@ -84,36 +87,16 @@ flowchart TD
 
 ```yaml
 changes:
-  - path: projects/lumen/src/wal_relay.rs
-    action: create
+  - path: projects/lumen/tech-design/interfaces/rest/relay-wal.md
+    action: annotate
     section: logic
     impl_mode: hand-written
-    reason: "RelayWal: a WalLog backed by relay's broadcast. publish CBOR POSTs to relay /v1/{subject}/publish (payload=versioned WalRecord::encode() envelope, publisher-unique message_id); subscribe GETs /v1/{subject}/subscribe with a per-pod subscriber_id and decodes relay's length-prefixed CBOR LogEntry frames, mapping each to (seq+1, WalRecord); latest_seq reads relay /len."
-  - path: projects/lumen/src/lib.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: "Declare the feature-gated module: #[cfg(feature = \"relay-wal\")] pub mod wal_relay;"
-  - path: projects/lumen/src/bin/lumen.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: "Add WalBackend::Relay (feature-gated) + --relay-url/--relay-subject/--relay-subscriber-id args + a match arm constructing RelayWal."
-  - path: projects/lumen/Cargo.toml
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: "Optional relay (path) + reqwest deps; relay-wal feature = [dep:relay, dep:reqwest]."
-  - path: projects/lumen/tests/wal_relay.rs
-    action: create
+    reason: "Historical RelayWal design retained without active source replay targets; raft-host is the active durable primary/replica log path."
+  - path: projects/lumen/tech-design/interfaces/rest/relay-wal.md
+    action: annotate
     section: unit-test
     impl_mode: hand-written
-    reason: "Integration tests (feature relay-wal): publish/tail, latest_seq, two-node fan-out, restart dedupe safety, reconnect from last seq, and invalid payload reporting against an in-process relay."
-  - path: apps/relay/src/server.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: "Expose GET /v1/{subject}/len so RelayWal.latest_seq has a concrete broker source."
+    reason: "Historical RelayWal test plan retained without active source replay targets."
 ```
 
 # Reviews

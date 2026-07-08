@@ -1,24 +1,21 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients
+// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-operator-storage-topology-reshard
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec lumen-cli-interface-generated-clients
-// @capability cli-interface
-// @claim lumen-spec-schema-openapi-json-yaml-json-schema-offline
-// @contract spec-gen-generated-clients-public-api-journey
+// @ec lumen-claim-k8s-operator-storage-topology-reshard
+// @capability kubernetes-native-deployment
+// @claim operator-owned-storage-topology-and-reshard-status
+// @contract k8s-operator-storage-topology-reshard
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture
+// @command cargo test -p lumen --features operator --test operator_render -- --nocapture
 // AW-EC-END
 
-// Contract: lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document.
-// Contract: generated Python, TypeScript, and Rust clients compile or import as real downstream consumers.
-// Contract: each generated client drives create collection, index, search, stats, delete indexed id, and forced drop against a real Lumen service.
-// Contract: the generated Python client uses the bundled h2c runtime; the TypeScript and Rust clients exercise the same public API over their native HTTP runtimes.
+// Contract: The operator render gate proves fixed StatefulSet storage topology and reshard status exposure.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn lumen_cli_interface_generated_clients() {
-    let command = "cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture";
-    let id = "lumen-cli-interface-generated-clients";
+fn lumen_claim_k8s_operator_storage_topology_reshard() {
+    let command = "cargo test -p lumen --features operator --test operator_render -- --nocapture";
+    let id = "lumen-claim-k8s-operator-storage-topology-reshard";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

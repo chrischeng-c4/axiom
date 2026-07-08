@@ -326,6 +326,7 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
                     }),
                     limit,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -358,6 +359,7 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
                     ]),
                     limit,
                     cursor: None,
+                    routing_key: None,
                     sort: None,
                     track_total: true,
                     collapse: None,
@@ -562,6 +564,7 @@ mod tests {
                 }),
                 limit: 10,
                 cursor: None,
+                routing_key: None,
                 sort: None,
                 track_total: true,
                 collapse: None,
@@ -583,7 +586,6 @@ mod tests {
     }
 }
 // CODEGEN-END
-
 ````
 
 ## Changes

@@ -20,14 +20,14 @@ traits = ["service", "long_running", "cli_facing", "competitive_replacement", "n
 name = "lumen"
 paths = ["**"]
 target = "rust"
-test_cmd = "cargo test -p lumen"
+test_cmd = "cargo test -p lumen --lib --bins"
 codegen.profile = "rust/score-crate"
 
 # AW-EC-BEGIN
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:e6d526ed3206227539345e4e00d44663529354ade2f6c89745c6d5f08e1fd798"
+generated_from_td_digest = "sha256:906397908b3499651a9f25eeba1acc6027c4f6bb248200f186769c9521c2a65f"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -90,6 +90,42 @@ required_for_production = true
 assertions = ["RDB snapshots restore through the LocalFsRdbStore baseline as a cold restore and future bootstrap seed surface."]
 
 [[aw.ec.generated.cases]]
+id = "lumen-claim-chainable-artifact-render-follow-ups"
+capability_id = "chainable-output-conformance"
+claim_id = "artifact-render-follow-ups"
+contract_id = "chainable-artifact-render-follow-ups"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-chainable-artifact-render-follow-ups"
+test_path = "projects/lumen/tests/behavior_lumen_claim_chainable_artifact_render_follow_ups.rs"
+command = "cargo test -p lumen --test cli_convention chainable_output_next_line_file_writing_vs_stream -- --exact --nocapture"
+required_for_production = true
+assertions = ["Artifact render commands write exactly one runnable trailing `next:` line when writing files and keep stream mode raw."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-chainable-backup-export-import-next"
+capability_id = "chainable-output-conformance"
+claim_id = "backup-export-import-next-contract"
+contract_id = "chainable-backup-export-import-next"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-chainable-backup-export-import-next"
+test_path = "projects/lumen/tests/behavior_lumen_claim_chainable_backup_export_import_next.rs"
+command = "cargo test -p lumen --features backup --test cli_convention backup_export_import_outputs_are_chainable -- --exact --nocapture"
+required_for_production = true
+assertions = ["Backup, export, and import helpers emit machine-readable next or terminal markers through the built binary."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-chainable-issue-upgrade-terminal"
+capability_id = "chainable-output-conformance"
+claim_id = "shared-issue-upgrade-terminal-markers"
+contract_id = "chainable-issue-upgrade-terminal"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-chainable-issue-upgrade-terminal"
+test_path = "projects/lumen/tests/behavior_lumen_claim_chainable_issue_upgrade_terminal.rs"
+command = "cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact --nocapture"
+required_for_production = true
+assertions = ["Shared issue dry-run paths and upgrade check terminate with explicit `next: done` markers."]
+
+[[aw.ec.generated.cases]]
 id = "lumen-claim-cli-deployment-operator-command-surface"
 capability_id = "cli-interface"
 claim_id = "deployment-operator-command-surface"
@@ -112,6 +148,42 @@ test_path = "projects/lumen/tests/behavior_lumen_claim_cli_service_process_inter
 command = "cargo test -p lumen --test api_e2e -- --nocapture"
 required_for_production = true
 assertions = ["The long-running service exposes health, readiness, version, metrics, indexing, and search routes through the binary-served API."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-cli-standard-issue-surface"
+capability_id = "cli-standard-surface"
+claim_id = "shared-issue-search-view-create-comment-surface"
+contract_id = "cli-standard-issue-surface"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-standard-issue-surface"
+test_path = "projects/lumen/tests/behavior_lumen_claim_cli_standard_issue_surface.rs"
+command = "cargo test -p lumen --test cli_convention issue_help_lists_search_view_create_comment -- --exact --nocapture"
+required_for_production = true
+assertions = ["The shared issue group exposes search, view, create, and comment under `lumen issue`."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-cli-standard-llm-entrypoint"
+capability_id = "cli-standard-surface"
+claim_id = "shared-llm-entrypoint-surface"
+contract_id = "cli-standard-llm-entrypoint"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-standard-llm-entrypoint"
+test_path = "projects/lumen/tests/behavior_lumen_claim_cli_standard_llm_entrypoint.rs"
+command = "cargo test -p lumen --test spec_cli llm_outline_maps_agent_topics -- --exact --nocapture"
+required_for_production = true
+assertions = ["The shared `lumen llm` entrypoint publishes the agent topic set through the standard CLI convention."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-cli-standard-upgrade-check"
+capability_id = "cli-standard-surface"
+claim_id = "shared-upgrade-check-surface"
+contract_id = "cli-standard-upgrade-check"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-standard-upgrade-check"
+test_path = "projects/lumen/tests/behavior_lumen_claim_cli_standard_upgrade_check.rs"
+command = "cargo test -p lumen --test cli_convention issue_create_comment_and_upgrade_check_outputs_are_chainable -- --exact --nocapture"
+required_for_production = true
+assertions = ["The shared upgrade check surface remains available and emits an explicit terminal marker."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-competitor-feature-schema-metadata"
@@ -184,6 +256,78 @@ test_path = "projects/lumen/tests/behavior_lumen_claim_duplicates_group_by.rs"
 command = "cargo test -p lumen --test api_e2e duplicates_finds_groups -- --exact --nocapture"
 required_for_production = true
 assertions = ["Duplicate detection returns groups of external IDs sharing a field value."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-dynamic-multi-shard-replica-kind"
+capability_id = "dynamic-shard-topology"
+claim_id = "multi-shard-replica-kind-e2e"
+contract_id = "dynamic-multi-shard-replica-kind"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-multi-shard-replica-kind"
+test_path = "projects/lumen/tests/stability_lumen_claim_dynamic_multi_shard_replica_kind.rs"
+command = "projects/lumen/scripts/kind-e2e.sh"
+required_for_production = true
+assertions = ["The live kind dogfood path covers multi-shard and replicated-shard operator profiles."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-dynamic-storage-pressure-split-policy"
+capability_id = "dynamic-shard-topology"
+claim_id = "storage-pressure-operator-split-policy"
+contract_id = "dynamic-storage-pressure-split-policy"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-storage-pressure-split-policy"
+test_path = "projects/lumen/tests/behavior_lumen_claim_dynamic_storage_pressure_split_policy.rs"
+command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+required_for_production = true
+assertions = ["The operator exposes storage-pressure reshard recommendations without changing HPA-owned serving scale."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-dynamic-versioned-virtual-bucket-map"
+capability_id = "dynamic-shard-topology"
+claim_id = "versioned-virtual-bucket-shard-map"
+contract_id = "dynamic-versioned-virtual-bucket-map"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-versioned-virtual-bucket-map"
+test_path = "projects/lumen/tests/behavior_lumen_claim_dynamic_versioned_virtual_bucket_map.rs"
+command = "cargo test -p lumen --lib routing -- --nocapture"
+required_for_production = true
+assertions = ["Versioned virtual-bucket routing remains the stable shard ownership contract."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-ec-claim-closure-evidence"
+capability_id = "ec-gates-configured"
+claim_id = "external-contract-claim-closure-evidence"
+contract_id = "ec-claim-closure-evidence"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-claim-closure-evidence"
+test_path = "projects/lumen/tests/behavior_lumen_claim_ec_claim_closure_evidence.rs"
+command = "./target/debug/aw ec check --project lumen"
+required_for_production = true
+assertions = ["The production claim-closure document remains synchronized with generated EC cases."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-ec-generated-inventory-dispatch"
+capability_id = "ec-gates-configured"
+claim_id = "aw-ec-generated-inventory-and-dispatch"
+contract_id = "ec-generated-inventory-dispatch"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-generated-inventory-dispatch"
+test_path = "projects/lumen/tests/behavior_lumen_claim_ec_generated_inventory_dispatch.rs"
+command = "./target/debug/aw ec check --project lumen"
+required_for_production = true
+assertions = ["The generated AW EC inventory stays in sync with claim tests and dispatch commands."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-ec-vat-managed-runners"
+capability_id = "ec-gates-configured"
+claim_id = "vat-managed-meter-and-rig-runners"
+contract_id = "ec-vat-managed-runners"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-vat-managed-runners"
+test_path = "projects/lumen/tests/behavior_lumen_claim_ec_vat_managed_runners.rs"
+command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
+required_for_production = true
+assertions = ["The vat-managed meter runner remains executable for Lumen efficiency EC dispatch."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-elastic-disk-tier"
@@ -292,6 +436,18 @@ test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_reconcile.rs
 command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
 required_for_production = true
 assertions = ["The kube-rs operator render path reconciles Lumen CRD inputs into serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-k8s-operator-storage-topology-reshard"
+capability_id = "kubernetes-native-deployment"
+claim_id = "operator-owned-storage-topology-and-reshard-status"
+contract_id = "k8s-operator-storage-topology-reshard"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-operator-storage-topology-reshard"
+test_path = "projects/lumen/tests/behavior_lumen_claim_k8s_operator_storage_topology_reshard.rs"
+command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+required_for_production = true
+assertions = ["The operator render gate proves fixed StatefulSet storage topology and reshard status exposure."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-k8s-stateless-kind"
@@ -522,6 +678,54 @@ required_for_production = true
 assertions = ["The rustls-backed TLS surface passes the runtime TLS gate."]
 
 [[aw.ec.generated.cases]]
+id = "lumen-claim-standard-live-openapi-swagger"
+capability_id = "standard-operational-endpoints"
+claim_id = "live-openapi-and-swagger-ui-surface"
+contract_id = "standard-live-openapi-swagger"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-standard-live-openapi-swagger"
+test_path = "projects/lumen/tests/behavior_lumen_claim_standard_live_openapi_swagger.rs"
+command = "cargo test -p lumen --test api_e2e openapi_spec_served -- --exact --nocapture && cargo test -p lumen --test coverage_gaps_e2e s8_swagger_docs_endpoint_returns_html -- --exact --nocapture"
+required_for_production = true
+assertions = ["The live service serves OpenAPI JSON and Swagger UI against the operational route surface."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-standard-offline-openapi"
+capability_id = "standard-operational-endpoints"
+claim_id = "offline-openapi-matches-operational-surface"
+contract_id = "standard-offline-openapi"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-standard-offline-openapi"
+test_path = "projects/lumen/tests/behavior_lumen_claim_standard_offline_openapi.rs"
+command = "cargo test -p lumen --test spec_cli openapi_is_valid_json_with_search_path -- --exact --nocapture"
+required_for_production = true
+assertions = ["The offline `lumen spec` OpenAPI output remains valid and includes the operational search route."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-standard-service-probe-routes"
+capability_id = "standard-operational-endpoints"
+claim_id = "service-http-standard-probe-routes"
+contract_id = "standard-service-probe-routes"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-standard-service-probe-routes"
+test_path = "projects/lumen/tests/behavior_lumen_claim_standard_service_probe_routes.rs"
+command = "cargo test -p lumen --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = ["The service exposes health, readiness, version, metrics, indexing, and search routes through the binary-served API."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-claim-topology-empty-pvc-bootstrap-seed"
+capability_id = "replica-sync-bootstrap"
+claim_id = "empty-pvc-object-store-seed-before-raft-catch-up"
+contract_id = "topology-empty-pvc-bootstrap-seed"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-topology-empty-pvc-bootstrap-seed"
+test_path = "projects/lumen/tests/behavior_lumen_claim_topology_empty_pvc_bootstrap_seed.rs"
+command = "cargo test -p lumen --bin lumen bootstrap_seed_file_restores_snapshot_before_catchup -- --nocapture"
+required_for_production = true
+assertions = ["A fresh serving process restores a configured SnapshotV1 seed before WAL or raft catch-up."]
+
+[[aw.ec.generated.cases]]
 id = "lumen-claim-vector-filtered-knn"
 capability_id = "vector-hash-search"
 claim_id = "filtered-knn-no-recall-collapse"
@@ -565,12 +769,13 @@ contract_id = "spec-gen-generated-clients-public-api-journey"
 category = "behavior"
 td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients"
 test_path = "projects/lumen/tests/behavior_lumen_cli_interface_generated_clients.rs"
-command = "PATH=$HOME/.pyenv/shims:$PATH cargo test -p lumen --test spec_gen_e2e generated_client_live_h2c_public_api_journey -- --exact --ignored --nocapture"
+command = "cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture"
 required_for_production = true
 assertions = [
     "lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document.",
-    "generated clients drive health, readiness, version, collection creation, indexing, search, duplicates, stats, and forced drop against a live h2c Lumen service.",
-    "the generated Python client validates recursive pydantic QueryNode union shapes while using the bundled h2c runtime.",
+    "generated Python, TypeScript, and Rust clients compile or import as real downstream consumers.",
+    "each generated client drives create collection, index, search, stats, delete indexed id, and forced drop against a real Lumen service.",
+    "the generated Python client uses the bundled h2c runtime; the TypeScript and Rust clients exercise the same public API over their native HTTP runtimes.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -604,6 +809,22 @@ assertions = [
     "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
     "lumen llm outline, workflow, integration, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals.",
     "lumen llm integration recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-cli-interface-protocol-transport"
+capability_id = "cli-interface"
+claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+contract_id = "service-listener-http1-and-h2c"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-protocol-transport"
+test_path = "projects/lumen/tests/behavior_lumen_cli_interface_protocol_transport.rs"
+command = "cargo test -p lumen --test protocol_transport_e2e -- --nocapture"
+required_for_production = true
+assertions = [
+    "the Lumen service entrypoint accepts HTTP/1.1 and h2c prior-knowledge HTTP/2 on the same listener.",
+    "HTTP/1.1 and h2c clients both receive the same JSON public API response for GET /collections.",
+    "the observed response protocol versions are HTTP/1.1 for an HTTP/1-only client and HTTP/2 for the h2c client.",
 ]
 
 [[aw.ec.generated.cases]]

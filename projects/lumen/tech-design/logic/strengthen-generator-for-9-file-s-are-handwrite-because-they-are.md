@@ -63,21 +63,11 @@ changes:
   - path: projects/lumen/src/raft_sm.rs
     action: modify
     section: rust-source-unit
-    impl_mode: hand-written
-    description: "Promote the raft state-machine implementation to a per-file rust-source-unit TD."
-  - path: projects/lumen/src/wal_relay.rs
-    action: modify
-    section: rust-source-unit
     impl_mode: codegen
-    description: "Promote the relay-backed WalLog adapter to a per-file rust-source-unit TD."
+    description: "Promote the raft state-machine implementation to a per-file rust-source-unit TD."
   - path: projects/lumen/tests/spec_gen_e2e.rs
     action: modify
     section: rust-source-unit
     impl_mode: hand-written
     description: "Promote the spec-gen integration test to a per-file rust-source-unit TD."
-  - path: projects/lumen/tests/wal_relay.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: codegen
-    description: "Promote the relay WAL integration test to a per-file rust-source-unit TD."
 ```

@@ -1,24 +1,22 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-generated-clients
+// SPEC-MANAGED: projects/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-standard-live-openapi-swagger
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec lumen-cli-interface-generated-clients
-// @capability cli-interface
-// @claim lumen-spec-schema-openapi-json-yaml-json-schema-offline
-// @contract spec-gen-generated-clients-public-api-journey
+// @ec lumen-claim-standard-live-openapi-swagger
+// @capability standard-operational-endpoints
+// @claim live-openapi-and-swagger-ui-surface
+// @contract standard-live-openapi-swagger
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture
+// @command cargo test -p lumen --test api_e2e openapi_spec_served -- --exact --nocapture && cargo test -p lumen --test coverage_gaps_e2e s8_swagger_docs_endpoint_returns_html -- --exact --nocapture
 // AW-EC-END
 
-// Contract: lumen spec gen emits Python, TypeScript, and Rust clients from the offline OpenAPI document.
-// Contract: generated Python, TypeScript, and Rust clients compile or import as real downstream consumers.
-// Contract: each generated client drives create collection, index, search, stats, delete indexed id, and forced drop against a real Lumen service.
-// Contract: the generated Python client uses the bundled h2c runtime; the TypeScript and Rust clients exercise the same public API over their native HTTP runtimes.
+// Contract: The live service serves OpenAPI JSON and Swagger UI against the operational route surface.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn lumen_cli_interface_generated_clients() {
-    let command = "cargo test -p lumen --test generated_clients_crud_e2e -- --nocapture";
-    let id = "lumen-cli-interface-generated-clients";
+fn lumen_claim_standard_live_openapi_swagger() {
+    let command =
+        "cargo test -p lumen --test api_e2e openapi_spec_served -- --exact --nocapture && cargo test -p lumen --test coverage_gaps_e2e s8_swagger_docs_endpoint_returns_html -- --exact --nocapture";
+    let id = "lumen-claim-standard-live-openapi-swagger";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

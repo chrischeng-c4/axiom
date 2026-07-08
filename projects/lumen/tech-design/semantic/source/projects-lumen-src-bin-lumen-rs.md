@@ -3,9 +3,16 @@ id: projects-lumen-src-bin-lumen-rs
 capability_refs:
   - id: "competitor-feature-parity"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
+  - id: "replica-sync-bootstrap"
+    role: primary
+    gap: "empty-pvc-object-store-seed-before-raft-catch-up"
+    claim: "empty-pvc-object-store-seed-before-raft-catch-up"
+    coverage: full
+    rationale: "The serving binary owns bootstrap seed restore before WAL or raft catch-up."
 fill_sections: [overview, source, changes]
 ---
 
