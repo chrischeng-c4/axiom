@@ -184,3 +184,56 @@ flowchart TD
     r3[R3 stale source root references are bounded] --> rg_stale_projects_defer_source_root_scan[rg stale projects/defer source-root scan]
     r4[R4 defer local checks still run] --> cargo_test_p_defer[cargo test -p defer]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/defer
+    action: move
+    target: apps/defer
+    section: logic
+    impl_mode: hand-written
+    reason: "Defer's live app source root moves to the apps/ taxonomy."
+  - path: README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Root project inventory and install/discovery links should point at apps/defer for Defer."
+  - path: Cargo.toml
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Workspace membership and package routing must resolve the Defer crate under apps/defer."
+  - path: aw.toml
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Project discovery must include app-local aw.toml files so defer resolves through apps/defer."
+  - path: .aw/config.toml
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "AW project path and cap_path for project defer must point at apps/defer while retaining name defer and label project:defer."
+  - path: apps/defer/README.md
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Project-local capability docs and verification paths should use apps/defer or path-relative references for the live source root."
+  - path: apps/defer/aw.toml
+    action: update
+    section: config
+    impl_mode: hand-written
+    reason: "Project-local AW metadata should describe the moved app path without changing project identity."
+  - path: apps/defer/tests
+    action: update
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Any project-local tests or manifests that hard-code projects/defer as source root should use apps/defer or relative paths."
+  - path: projects/defer/tech-design
+    action: preserve
+    section: config
+    impl_mode: hand-written
+    reason: "The issue explicitly keeps the TD project bucket under projects/defer/tech-design until a separate TD-platform migration exists."
+```
